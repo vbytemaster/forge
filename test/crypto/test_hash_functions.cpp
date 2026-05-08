@@ -1,12 +1,40 @@
 #include <boost/test/unit_test.hpp>
 
 #include <fc/crypto/hex.hpp>
+#include <fc/crypto/ripemd160.hpp>
+#include <fc/crypto/sha1.hpp>
+#include <fc/crypto/sha224.hpp>
+#include <fc/crypto/sha256.hpp>
 #include <fc/crypto/sha3.hpp>
+#include <fc/crypto/sha512.hpp>
 #include <fc/utility.hpp>
 
 using namespace fc;
 
 BOOST_AUTO_TEST_SUITE(hash_functions)
+
+BOOST_AUTO_TEST_CASE(evp_digest_vectors) try {
+   const std::string empty;
+   const std::string abc = "abc";
+
+   BOOST_CHECK_EQUAL(fc::sha1::hash(empty).str(), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+   BOOST_CHECK_EQUAL(fc::sha1::hash(abc).str(), "a9993e364706816aba3e25717850c26c9cd0d89d");
+
+   BOOST_CHECK_EQUAL(fc::sha224::hash(empty).str(), "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f");
+   BOOST_CHECK_EQUAL(fc::sha224::hash(abc).str(), "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7");
+
+   BOOST_CHECK_EQUAL(fc::sha256::hash(empty).str(), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+   BOOST_CHECK_EQUAL(fc::sha256::hash(abc).str(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+
+   BOOST_CHECK_EQUAL(fc::sha512::hash(empty).str(),
+                     "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e");
+   BOOST_CHECK_EQUAL(fc::sha512::hash(abc).str(),
+                     "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f");
+
+   BOOST_CHECK_EQUAL(fc::ripemd160::hash(empty).str(), "9c1185a5c5e9fc54612808977ee8f548b2258d31");
+   BOOST_CHECK_EQUAL(fc::ripemd160::hash(abc).str(), "8eb208f7e05d987a9b044a8e98c6b087f15a0bfc");
+} FC_LOG_AND_RETHROW();
+
 BOOST_AUTO_TEST_CASE(sha3) try {
 
    using test_sha3 = std::tuple<std::string, std::string>;

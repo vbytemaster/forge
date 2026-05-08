@@ -1,11 +1,11 @@
 #include <fc/crypto/hex.hpp>
 #include <fc/crypto/hmac.hpp>
 #include <fc/fwd_impl.hpp>
-#include <openssl/sha.h>
 #include <string.h>
 #include <fc/crypto/sha224.hpp>
 #include <fc/variant.hpp>
 #include "_digest_common.hpp"
+#include "_evp_digest.hpp"
 
 namespace fc {
 
@@ -25,7 +25,7 @@ namespace fc {
     const char* sha224::data() const { return (const char*)&_hash[0]; }
 
     struct sha224::encoder::impl {
-       SHA256_CTX ctx;
+       fc::detail::evp_digest_context ctx;
     };
 
     sha224::encoder::~encoder() {}
@@ -43,15 +43,15 @@ namespace fc {
     }
 
     void sha224::encoder::write( const char* d, uint32_t dlen ) {
-      SHA224_Update( &my->ctx, d, dlen);
+      fc::detail::evp_digest_update(my->ctx.get(), d, dlen);
     }
     sha224 sha224::encoder::result() {
       sha224 h;
-      SHA224_Final((uint8_t*)h.data(), &my->ctx );
+      fc::detail::evp_digest_final(my->ctx.get(), h.data(), h.data_size());
       return h;
     }
     void sha224::encoder::reset() {
-      SHA224_Init( &my->ctx);
+      fc::detail::evp_digest_init(my->ctx.get(), EVP_sha224());
     }
 
     sha224 operator << ( const sha224& h1, uint32_t i ) {

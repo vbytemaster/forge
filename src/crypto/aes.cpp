@@ -8,12 +8,6 @@
 
 #include <fc/log/logger.hpp>
 
-#include <openssl/opensslconf.h>
-#ifndef OPENSSL_THREADS
-# error "OpenSSL must be configured to support threads"
-#endif
-#include <openssl/crypto.h>
-
 #if defined(_WIN32)
 # include <windows.h>
 #endif

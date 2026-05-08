@@ -23,7 +23,7 @@ namespace fc {
     typedef fc::array<char,72>          signature;
     typedef fc::array<unsigned char,65> compact_signature;
 
-    int ECDSA_SIG_recover_key_GFp(EC_KEY *eckey, ECDSA_SIG *ecsig, const unsigned char *msg, int msglen, int recid, int check);
+    public_key_data recover_public_key_data(const compact_signature& c, const fc::sha256& digest, bool check_canonical = true);
 
     /**
      *  @class public_key
@@ -64,8 +64,7 @@ namespace fc {
 
         private:
           friend class private_key;
-          friend compact_signature signature_from_ecdsa(const EC_KEY* key, const public_key_data& pub_data, fc::ecdsa_sig& sig, const fc::sha256& d);
-          fc::fwd<detail::public_key_impl,8> my;
+          fc::fwd<detail::public_key_impl,40> my;
     };
 
     /**
@@ -118,7 +117,7 @@ namespace fc {
            }
 
         private:
-           fc::fwd<detail::private_key_impl,8> my;
+           fc::fwd<detail::private_key_impl,32> my;
     };
 
      /**
@@ -167,8 +166,7 @@ namespace fc {
         }
      };
 
-     //key here is just an optimization for getting the curve's parameters from an already constructed curve
-     compact_signature signature_from_ecdsa(const EC_KEY* key, const public_key_data& pub, fc::ecdsa_sig& sig, const fc::sha256& d);
+     compact_signature signature_from_ecdsa(const public_key_data& pub, fc::ecdsa_sig& sig, const fc::sha256& d);
 
   } // namespace r1
   } // namespace crypto

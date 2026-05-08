@@ -6,6 +6,8 @@
 #include <fc/crypto/signature.hpp>
 #include <fc/utility.hpp>
 
+#include <openssl/bn.h>
+
 using namespace fc::crypto;
 using namespace fc;
 using namespace std::literals;
@@ -35,6 +37,41 @@ static fc::crypto::webauthn::signature make_webauthn_sig(const fc::crypto::r1::p
    return ret;
 }
 
+struct high_s_webauthn_signature {
+   fc::crypto::webauthn::signature webauthn_signature;
+   fc::crypto::r1::compact_signature compact_signature;
+};
+
+static high_s_webauthn_signature make_high_s_webauthn_sig(const fc::crypto::r1::private_key& priv_key,
+                                                          std::vector<uint8_t>& auth_data,
+                                                          const std::string& json) {
+   fc::crypto::webauthn::signature sig = make_webauthn_sig(priv_key, auth_data, json);
+   char buff[8192];
+   datastream<char*> ds(buff, sizeof(buff));
+   fc::raw::pack(ds, sig);
+
+   BIGNUM* order = nullptr;
+   BN_hex2bn(&order, "FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551");
+   BIGNUM* s = BN_bin2bn(reinterpret_cast<unsigned char*>(&buff[33]), 32, nullptr);
+   BIGNUM* high_s = BN_new();
+   BOOST_REQUIRE(order != nullptr);
+   BOOST_REQUIRE(s != nullptr);
+   BOOST_REQUIRE(high_s != nullptr);
+   BOOST_REQUIRE(BN_sub(high_s, order, s) == 1);
+   memset(&buff[33], 0, 32);
+   BOOST_REQUIRE(BN_bn2binpad(high_s, reinterpret_cast<unsigned char*>(&buff[33]), 32) == 32);
+   buff[0] = static_cast<char>((((static_cast<unsigned char>(buff[0]) - 31) ^ 1) + 31));
+   BN_free(high_s);
+   BN_free(s);
+   BN_free(order);
+
+   high_s_webauthn_signature ret;
+   memcpy(ret.compact_signature.data, buff, ret.compact_signature.size());
+   ds.seekp(0);
+   fc::raw::unpack(ds, ret.webauthn_signature);
+   return ret;
+}
+
 //used for many below
 static const r1::private_key priv = fc::crypto::r1::private_key::generate();
 static const r1::public_key pub = priv.get_public_key();
@@ -53,6 +90,23 @@ BOOST_AUTO_TEST_CASE(good) try {
    memcpy(auth_data.data(), origin_hash.data(), sizeof(origin_hash));
 
    BOOST_CHECK_EQUAL(wa_pub, make_webauthn_sig(priv, auth_data, json).recover(d, true));
+} FC_LOG_AND_RETHROW();
+
+// WebAuthn authenticators may emit valid ECDSA signatures without low-S normalization.
+BOOST_AUTO_TEST_CASE(good_high_s) try {
+   webauthn::public_key wa_pub(pub.serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE, "fctesting.invalid");
+   std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" + fc::base64url_encode(d.data(), d.data_size()) + "\"}";
+
+   std::vector<uint8_t> auth_data(37);
+   memcpy(auth_data.data(), origin_hash.data(), sizeof(origin_hash));
+
+   auto high_s_sig = make_high_s_webauthn_sig(priv, auth_data, json);
+   BOOST_CHECK_EQUAL(wa_pub, high_s_sig.webauthn_signature.recover(d, true));
+   BOOST_CHECK_EXCEPTION(r1::public_key(high_s_sig.compact_signature, fc::sha256::hash("not webauthn"s), true),
+                         fc::exception,
+                         [](const fc::exception& e) {
+                            return e.to_detail_string().find("invalid high s-value encountered in r1 signature") != std::string::npos;
+                         });
 } FC_LOG_AND_RETHROW();
 
 //A valid signature but shouldn't match public key due to presence difference

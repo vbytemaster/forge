@@ -1,7 +1,5 @@
 #include <fc/crypto/hex.hpp>
 #include <fc/fwd_impl.hpp>
-#include <openssl/sha.h>
-#include <openssl/ripemd.h>
 #include <string.h>
 #include <fc/crypto/ripemd160.hpp>
 #include <fc/crypto/sha512.hpp>
@@ -9,6 +7,7 @@
 #include <fc/variant.hpp>
 #include <vector>
 #include "_digest_common.hpp"
+#include "_evp_digest.hpp"
 
 namespace fc
 {
@@ -29,11 +28,7 @@ char* ripemd160::data()const { return (char*)&_hash[0]; }
 
 
 struct ripemd160::encoder::impl {
-   impl()
-   {
-        memset( (char*)&ctx, 0, sizeof(ctx) );
-   }
-   RIPEMD160_CTX ctx;
+   fc::detail::evp_digest_context ctx;
 };
 
 ripemd160::encoder::~encoder() {}
@@ -59,15 +54,15 @@ ripemd160 ripemd160::hash( const std::string& s ) {
 }
 
 void ripemd160::encoder::write( const char* d, uint32_t dlen ) {
-  RIPEMD160_Update( &my->ctx, d, dlen);
+  fc::detail::evp_digest_update(my->ctx.get(), d, dlen);
 }
 ripemd160 ripemd160::encoder::result() {
   ripemd160 h;
-  RIPEMD160_Final((uint8_t*)h.data(), &my->ctx );
+  fc::detail::evp_digest_final(my->ctx.get(), h.data(), h.data_size());
   return h;
 }
 void ripemd160::encoder::reset() {
-  RIPEMD160_Init( &my->ctx);
+  fc::detail::evp_digest_init(my->ctx.get(), EVP_ripemd160());
 }
 
 ripemd160 operator << ( const ripemd160& h1, uint32_t i ) {

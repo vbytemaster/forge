@@ -147,23 +147,6 @@ namespace fc { namespace ecc {
         return regenerate( secret );
     }
 
-    fc::sha256 private_key::get_secret( const EC_KEY * const k )
-    {
-       if( !k )
-       {
-          return fc::sha256();
-       }
-
-       fc::sha256 sec;
-       const BIGNUM* bn = EC_KEY_get0_private_key(k);
-       if( bn == NULL )
-       {
-         FC_THROW_EXCEPTION( exception, "get private key failed" );
-       }
-       int nbytes = BN_num_bytes(bn);
-       BN_bn2bin(bn, &((unsigned char*)&sec)[32-nbytes] );
-       return sec;
-    }
 }
 
 }

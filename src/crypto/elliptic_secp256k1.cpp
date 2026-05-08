@@ -125,13 +125,11 @@ namespace fc { namespace ecc {
         if( *front == 0 ){}
         else
         {
-            EC_KEY *key = EC_KEY_new_by_curve_name( NID_secp256k1 );
-            key = o2i_ECPublicKey( &key, (const unsigned char**)&front, sizeof(dat) );
-            FC_ASSERT( key );
-            EC_KEY_set_conv_form( key, POINT_CONVERSION_COMPRESSED );
-            unsigned char* buffer = (unsigned char*) my->_key.begin();
-            i2o_ECPublicKey( key, &buffer ); // FIXME: questionable memory handling
-            EC_KEY_free( key );
+            secp256k1_pubkey pub;
+            FC_ASSERT( secp256k1_ec_pubkey_parse(detail::_get_context(), &pub, reinterpret_cast<const unsigned char*>(front), sizeof(dat)) );
+            size_t serialized_size = my->_key.size();
+            FC_ASSERT( secp256k1_ec_pubkey_serialize(detail::_get_context(), reinterpret_cast<unsigned char*>(my->_key.data), &serialized_size, &pub, SECP256K1_EC_COMPRESSED) );
+            FC_ASSERT( serialized_size == my->_key.size() );
         }
     }
 

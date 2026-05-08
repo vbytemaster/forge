@@ -21,8 +21,8 @@ endif()
 
 if(APPLE)
    message(STATUS "Configuring storlane-fc on macOS")
-   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wno-deprecated-declarations")
-   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-deprecated-declarations")
+   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
+   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
 else()
    message(STATUS "Configuring storlane-fc on Linux")
    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
@@ -30,9 +30,6 @@ else()
    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -latomic")
 endif()
 
-# BoringSSL is vendored under libraries/boringssl and must remain the only OpenSSL-compatible
-# implementation in the build graph to avoid symbol collisions with external OpenSSL consumers.
-set(CMAKE_DISABLE_FIND_PACKAGE_OpenSSL On)
 add_compile_definitions(BOOST_TEST_DEFAULTS_TO_CORE_DUMP)
 add_compile_definitions(BOOST_UNORDERED_DISABLE_NEON)
 
@@ -44,6 +41,8 @@ find_package(
    Boost 1.90 REQUIRED CONFIG
    COMPONENTS headers date_time chrono iostreams thread
 )
+
+find_package(OpenSSL 3 REQUIRED COMPONENTS Crypto)
 
 function(fc_add_header_only_boost_target component)
    if(NOT TARGET Boost::${component})
@@ -115,7 +114,6 @@ add_subdirectory(libraries/bn256/src)
 # Keep donor submodules clean and avoid building their standalone tests/benchmarks
 # as part of the default fc build.
 add_subdirectory(libraries/bls12-381 EXCLUDE_FROM_ALL)
-add_subdirectory(libraries/boringssl)
 
 if(NOT FC_ENABLE_VENDOR_TESTS)
    file(
@@ -187,6 +185,12 @@ file(GLOB_RECURSE fc_headers "${CMAKE_CURRENT_SOURCE_DIR}" *.hpp *.h)
 
 add_library(fc ${fc_sources} ${fc_headers})
 
+target_compile_definitions(
+   fc
+   PUBLIC OPENSSL_API_COMPAT=0x30000000L
+          OPENSSL_NO_DEPRECATED
+)
+
 find_path(GMP_INCLUDE_DIR NAMES gmp.h)
 find_library(GMP_LIBRARY gmp)
 if(NOT GMP_LIBRARY MATCHES ${CMAKE_SHARED_LIBRARY_SUFFIX})
@@ -238,7 +242,7 @@ target_link_libraries(
       Boost::thread
       Boost::crc
       Threads::Threads
-      boringssl
+      OpenSSL::Crypto
       ZLIB::ZLIB
       ${PLATFORM_SPECIFIC_LIBS}
       ${CMAKE_DL_LIBS}

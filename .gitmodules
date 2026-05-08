@@ -10,6 +10,3 @@
 [submodule "libraries/bls12-381"]
 	path = libraries/bls12-381
 	url = https://github.com/AntelopeIO/bls12-381
-[submodule "libraries/boringssl/bssl"]
-	path = libraries/boringssl/bssl
-	url = https://github.com/google/boringssl.git

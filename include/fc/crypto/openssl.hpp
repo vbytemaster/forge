@@ -5,8 +5,6 @@
 #include <openssl/conf.h>
 #include <openssl/err.h>
 #include <openssl/ecdsa.h>
-#include <openssl/ecdh.h>
-#include <openssl/sha.h>
 #include <openssl/obj_mac.h>
 #include <openssl/bn.h>
 
@@ -46,7 +44,6 @@ namespace fc
     SSL_TYPE(ecdsa_sig,      ECDSA_SIG,      ECDSA_SIG_free)
     SSL_TYPE(bn_ctx,         BN_CTX,         BN_CTX_free)
     SSL_TYPE(evp_cipher_ctx, EVP_CIPHER_CTX, EVP_CIPHER_CTX_free )
-    SSL_TYPE(ec_key,         EC_KEY,         EC_KEY_free)
 
     /** allocates a bignum by default.. */
     struct ssl_bignum : public ssl_wrapper<BIGNUM>

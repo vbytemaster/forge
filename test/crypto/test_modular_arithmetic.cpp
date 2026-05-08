@@ -118,7 +118,7 @@ BOOST_AUTO_TEST_CASE(modexp) try {
 
 } FC_LOG_AND_RETHROW();
 
-BOOST_AUTO_TEST_CASE(modexp_boringssl_vectors) try {
+BOOST_AUTO_TEST_CASE(modexp_vectors) try {
    struct modexp_test_params {
       std::string ModExp;
       std::string A;

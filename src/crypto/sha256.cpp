@@ -1,13 +1,13 @@
 #include <fc/crypto/hex.hpp>
 #include <fc/crypto/hmac.hpp>
 #include <fc/fwd_impl.hpp>
-#include <openssl/sha.h>
 #include <string.h>
 #include <cmath>
 #include <fc/crypto/sha256.hpp>
 #include <fc/variant.hpp>
 #include <fc/exception/exception.hpp>
 #include "_digest_common.hpp"
+#include "_evp_digest.hpp"
 
 namespace fc {
 
@@ -33,7 +33,7 @@ namespace fc {
 
 
     struct sha256::encoder::impl {
-       SHA256_CTX ctx;
+       fc::detail::evp_digest_context ctx;
     };
 
     sha256::encoder::~encoder() {}
@@ -57,15 +57,15 @@ namespace fc {
     }
 
     void sha256::encoder::write( const char* d, uint32_t dlen ) {
-      SHA256_Update( &my->ctx, d, dlen);
+      fc::detail::evp_digest_update(my->ctx.get(), d, dlen);
     }
     sha256 sha256::encoder::result() {
       sha256 h;
-      SHA256_Final((uint8_t*)h.data(), &my->ctx );
+      fc::detail::evp_digest_final(my->ctx.get(), h.data(), h.data_size());
       return h;
     }
     void sha256::encoder::reset() {
-      SHA256_Init( &my->ctx);
+      fc::detail::evp_digest_init(my->ctx.get(), EVP_sha256());
     }
 
     sha256 operator << ( const sha256& h1, uint32_t i ) {

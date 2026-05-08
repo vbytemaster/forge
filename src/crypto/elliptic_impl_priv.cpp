@@ -58,12 +58,6 @@ namespace fc { namespace ecc {
         return my->_key;
     }
 
-    private_key::private_key( EC_KEY* k )
-    {
-       my->_key = get_secret( k );
-       EC_KEY_free(k);
-    }
-
     public_key private_key::get_public_key()const
     {
        FC_ASSERT( my->_key != empty_priv );

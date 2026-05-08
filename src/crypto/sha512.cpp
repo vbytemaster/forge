@@ -1,11 +1,11 @@
 #include <fc/crypto/hex.hpp>
 #include <fc/crypto/hmac.hpp>
 #include <fc/fwd_impl.hpp>
-#include <openssl/sha.h>
 #include <string.h>
 #include <fc/crypto/sha512.hpp>
 #include <fc/variant.hpp>
 #include "_digest_common.hpp"
+#include "_evp_digest.hpp"
 
 namespace fc {
 
@@ -26,7 +26,7 @@ namespace fc {
 
 
     struct sha512::encoder::impl {
-       SHA512_CTX ctx;
+       fc::detail::evp_digest_context ctx;
     };
 
     sha512::encoder::~encoder() {}
@@ -44,15 +44,15 @@ namespace fc {
     }
 
     void sha512::encoder::write( const char* d, uint32_t dlen ) {
-      SHA512_Update( &my->ctx, d, dlen);
+      fc::detail::evp_digest_update(my->ctx.get(), d, dlen);
     }
     sha512 sha512::encoder::result() {
       sha512 h;
-      SHA512_Final((uint8_t*)h.data(), &my->ctx );
+      fc::detail::evp_digest_final(my->ctx.get(), h.data(), h.data_size());
       return h;
     }
     void sha512::encoder::reset() {
-      SHA512_Init( &my->ctx);
+      fc::detail::evp_digest_init(my->ctx.get(), EVP_sha512());
     }
 
     sha512 operator << ( const sha512& h1, uint32_t i ) {

@@ -1,11 +1,11 @@
 #include <fc/crypto/hex.hpp>
 #include <fc/fwd_impl.hpp>
-#include <openssl/sha.h>
 #include <string.h>
 #include <fc/crypto/sha1.hpp>
 #include <fc/variant.hpp>
 #include <vector>
 #include "_digest_common.hpp"
+#include "_evp_digest.hpp"
 
 namespace fc
 {
@@ -27,7 +27,7 @@ const char* sha1::data()const { return (char*)&_hash[0]; }
 
 
 struct sha1::encoder::impl {
-   SHA_CTX ctx;
+   fc::detail::evp_digest_context ctx;
 };
 
 sha1::encoder::~encoder() {}
@@ -45,15 +45,15 @@ sha1 sha1::hash( const std::string& s ) {
 }
 
 void sha1::encoder::write( const char* d, uint32_t dlen ) {
-  SHA1_Update( &my->ctx, d, dlen);
+  fc::detail::evp_digest_update(my->ctx.get(), d, dlen);
 }
 sha1 sha1::encoder::result() {
   sha1 h;
-  SHA1_Final((uint8_t*)h.data(), &my->ctx );
+  fc::detail::evp_digest_final(my->ctx.get(), h.data(), h.data_size());
   return h;
 }
 void sha1::encoder::reset() {
-  SHA1_Init( &my->ctx);
+  fc::detail::evp_digest_init(my->ctx.get(), EVP_sha1());
 }
 
 sha1 operator << ( const sha1& h1, uint32_t i ) {

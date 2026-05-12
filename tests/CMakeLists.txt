@@ -190,6 +190,19 @@ add_custom_target(
       --test-command fcl_package_core_lightweight
    DEPENDS test_fcl_package_install
 )
+add_custom_target(
+   test_fcl_package_all_missing_dependency
+   COMMAND ${CMAKE_COMMAND}
+      -DFCL_PACKAGE_TEST_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_all_missing_dependency
+      -DFCL_PACKAGE_TEST_BINARY_DIR=${CMAKE_BINARY_DIR}/fcl-package-all-missing-dependency
+      -DFCL_PACKAGE_TEST_PREFIX=${FCL_PACKAGE_INSTALL_PREFIX}
+      -DFCL_PACKAGE_TEST_GENERATOR=${CMAKE_GENERATOR}
+      -DFCL_PACKAGE_TEST_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+      -DFCL_PACKAGE_TEST_C_COMPILER=${CMAKE_C_COMPILER}
+      -DFCL_PACKAGE_TEST_OSX_SYSROOT=${CMAKE_OSX_SYSROOT}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/package_all_missing_dependency/expect_configure_failure.cmake
+   DEPENDS test_fcl_package_install
+)
 
 add_test(
    NAME test_fcl_package_install
@@ -222,3 +235,16 @@ add_test(
       --test-command fcl_package_core_lightweight
 )
 set_tests_properties(test_fcl_package_core_lightweight PROPERTIES DEPENDS test_fcl_package_install)
+add_test(
+   NAME test_fcl_package_all_missing_dependency
+   COMMAND ${CMAKE_COMMAND}
+      -DFCL_PACKAGE_TEST_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_all_missing_dependency
+      -DFCL_PACKAGE_TEST_BINARY_DIR=${CMAKE_BINARY_DIR}/fcl-package-all-missing-dependency
+      -DFCL_PACKAGE_TEST_PREFIX=${FCL_PACKAGE_INSTALL_PREFIX}
+      -DFCL_PACKAGE_TEST_GENERATOR=${CMAKE_GENERATOR}
+      -DFCL_PACKAGE_TEST_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+      -DFCL_PACKAGE_TEST_C_COMPILER=${CMAKE_C_COMPILER}
+      -DFCL_PACKAGE_TEST_OSX_SYSROOT=${CMAKE_OSX_SYSROOT}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/package_all_missing_dependency/expect_configure_failure.cmake
+)
+set_tests_properties(test_fcl_package_all_missing_dependency PROPERTIES DEPENDS test_fcl_package_install)

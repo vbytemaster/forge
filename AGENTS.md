@@ -10,8 +10,11 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 
 - Target language: C++23.
 - Public API style: C++ modules first.
-- Public module files live under `libraries/<lib>/include/fcl/<lib>/.../*.cppm`.
-- `.hpp` files are allowed only for macros, compatibility glue, C/platform shims, and legacy compatibility.
+- Public module files live under `libraries/<lib>/include/fcl/<lib>/*.cppm`.
+- Public module declarations should use explicit `export namespace fcl... { ... }`; broad `export { ... }` blocks are forbidden unless a narrow compiler-proven exception is documented next to the code.
+- Use C++17 nested namespace syntax (`namespace fcl::raw { ... }`), not legacy nested braces (`namespace fcl { namespace raw { ... } }`).
+- Public `.hpp` / `.h` files under `include/fcl` are forbidden except macro-only headers. Macro-only headers must not declare public types, functions, templates or old header-wrapper APIs.
+- Do not create nested public include directories under `include/fcl/<lib>`.
 - Do not use `import std;` until the supported toolchain and CI explicitly prove it is stable.
 
 ## Library Shape
@@ -21,43 +24,51 @@ The repository must stay neutral. Public APIs must not contain downstream produc
   - `fcl_core`
   - `fcl_reflect`
   - `fcl_raw`
+  - `fcl_schema`
+  - `fcl_config`
   - `fcl_yaml`
+  - `fcl_program_options`
   - `fcl_json`
   - `fcl_crypto`
   - `fcl_runtime`
   - `fcl_log`
-  - `fcl_config`
   - `fcl_app`
-  - `fcl_net_http`
-  - `fcl_net_websocket`
-  - `fcl_net_quic`
-  - `fcl_net_p2p`
+  - `fcl_http`
+  - `fcl_websocket`
+  - `fcl_quic`
+  - `fcl_p2p`
   - `fcl_tui`
 - Heavy classes that own sockets, event loops, crypto contexts, terminal state, or other external resources should use pimpl.
 - Value types, protocol records, and simple POD-like structs should not use pimpl.
 
 ## Reflection And Serialization
 
-- New canonical reflection uses Boost.Describe or thin FCL wrappers over it.
-- `FCL_REFLECT` remains a temporary textual macro layer until the Boost.Describe pass.
-- Do not map `FCL_REFLECT` directly to Boost.Describe with a broad macro alias.
+- New canonical reflection uses Boost.Describe directly.
+- Do not add broad reflection macro aliases over Boost.Describe.
+- Legacy reflection macro APIs are forbidden in FCL code.
+- Old reflect macro families must not return as public reflection APIs; use Boost.Describe directly.
 - Binary serialization compatibility with the old FC raw byte layout is a hard gate.
 - Any replacement for raw serialization must prove byte-for-byte compatibility with golden tests.
 - Reflection field order must be explicit and stable.
 
-## YAML, JSON, And Schema
+## JSON, YAML, And Schema
 
-- YAML and JSON APIs must use described types plus an FCL-owned schema layer.
+- JSON and YAML APIs must use namespace-style typed codec functions over described types plus an FCL-owned schema layer.
+- Legacy JSON class APIs, parser facade APIs and parser classes are forbidden.
 - Backend parser types must not leak through public module interfaces.
+- Glaze is the JSON/YAML backend dependency. `glz::*` types and Glaze reflection metadata must not appear in public `.cppm` files.
 - Validation belongs in schema rules, not in ad hoc parser code.
 - Diagnostics must include clear paths, field names, and expected values.
 - Secret-like fields must support redaction in configs, logs, diagnostics, and error context.
+- `Boost.Program_options` is a backend dependency of `fcl_program_options` only. App/plugin core must not expose `variables_map`, `options_description`, or other CLI parser types.
+- Config merge order is schema defaults, config file, environment/custom adapters, then CLI.
 
 ## Errors And Logging
 
-- New error APIs should be `std`-based and support structured context.
-- `fcl::exception` and `FCL_CAPTURE_*` remain transitional APIs until the std-based error pass.
-- New context capture must support source location and redaction.
+- FCL errors are `std`-based and support structured context through `fcl::error::context_error`.
+- Use `FCL_THROW`, `FCL_ASSERT`, deadline checks and capture/log helpers with explicit `fcl::error::ctx(...)` or `fcl::error::secret(...)` fields.
+- The old FC exception hierarchy, old declare/throw macros and variant-backed exception serialization are removed and must not reappear.
+- Context capture must preserve source location and redact secret fields.
 - Logging core should stay small: console/file/JSONL-style sinks and structured fields.
 - External logging integrations must be optional adapters, not core dependencies.
 - Do not log secrets, passphrases, private keys, token values, or raw key material.
@@ -77,6 +88,8 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - Synchronous wrappers are allowed, but must not be the only API for heavy operations.
 - Boost.Asio and Boost.Beast are valid dependencies for future runtime and network targets.
 - Legacy networking code from the old codebase must not define the new network API.
+- The network family is a set of independent root libraries: `fcl_http`, `fcl_websocket`, `fcl_quic`, and `fcl_p2p`.
+- Do not create `libraries/network`, legacy net-prefixed target, module, or namespace forms.
 - Runtime workers must have explicit cancellation, bounded queues where needed, and deterministic shutdown.
 - Do not introduce `std::async`, ad hoc polling loops, or unmanaged background threads as core runtime behavior.
 
@@ -88,6 +101,8 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - Adapters connect concrete backends and external systems.
 - Events may support diagnostics, but must not become hidden business-flow coupling.
 - Lifecycle order and reverse shutdown order must be testable.
+- Plugins describe config through `describe_config()` and receive typed views through `configure(...)`; plugin core must not parse CLI argv or own YAML parser state.
+- Plugin lifecycle methods that may touch resources use `boost::asio::awaitable<void>`: `configure`, `initialize`, `startup`, and `shutdown`. `request_stop()` remains synchronous and `noexcept`.
 
 ## TUI
 
@@ -102,6 +117,8 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - Optional features must be behind CMake options.
 - Avoid dependencies in low-level targets if they are only needed by future FCL targets.
 - Donor or reference code must not become a build dependency unless explicitly accepted as a dependency.
+- Domain targets must form a real directed acyclic graph. A shared CMake BMI-producer target is forbidden; each domain target owns its public `.cppm` files through `FILE_SET CXX_MODULES`.
+- If a domain needs reverse imports to build, split the domain instead of hiding the cycle behind an umbrella target.
 
 ## Tests
 
@@ -111,12 +128,39 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - Do not delete crypto tests during non-crypto cleanup.
 - Static checks should enforce that removed legacy zones do not reappear.
 
+## Documentation
+
+- Every `libraries/<lib>` directory must have a `README.md`.
+- Library README files describe only the local library: problem, target, public modules, dependencies, examples, tests and boundaries.
+- A library README must be useful to a new user without reading implementation files first: state when to use the library, when not to use it, include working module imports and API-shaped examples, name common mistakes, and call out security/redaction concerns when relevant.
+- README examples must use real public module names and symbols from the current tree. Do not document future API as if it already exists.
+- Cross-cutting architecture belongs under `docs/`, not inside a single library README.
+- Markdown links must be relative to the current repository and must point to existing files.
+- Absolute local machine paths are forbidden in docs, examples and generated report markdown.
+- Downstream product vocabulary belongs only in donor/provenance notes when explicitly needed; reusable FCL docs must stay product-neutral.
+
 ## Current Iteration Guardrails
 
 - Keep the repository name unchanged until repository migration is planned.
-- Do not introduce Boost.Describe rewrites before the raw binary compatibility test baseline exists.
+- Boost.Describe migration must preserve the raw binary compatibility test baseline.
 - Do not move neutral libraries from downstream projects until the FCL target structure exists.
 - Do not remove crypto primitives in the first pruning pass.
-- Public headers must live under `libraries/<lib>/include/fcl/...`; root `include/` and old `include/fc/` are forbidden.
+- `fcl_core` is a low-level foundation only. It must not import `fcl.crypto`, `fcl.raw`, `fcl.variant`, `fcl.json` or `fcl.log`.
+- `fcl_core` may own neutral diagnostic helpers such as type names, but must not own Boost.Describe member traversal or variant conversion.
+- `fcl_reflect` owns only Boost.Describe metadata helpers. It must not import or link `fcl_variant`.
+- `fcl_variant` owns described-type conversion to and from `fcl::variant`; described variant mapping must not live in `fcl_reflect`.
+- The umbrella `fcl` target must not collect external dependencies "just in case"; put each dependency on the target that owns the include/link usage.
+- Raw serialization belongs only to `libraries/raw`; do not define `namespace fcl::raw` or raw overloads in `core`.
+- Filesystem/config/path-layout helpers are not part of the FCL core foundation. Use `std::filesystem` directly or keep app-specific helpers in consuming projects.
+- Removed FC-like source APIs must not return as public FCL APIs: `fcl::array`, `fcl::fwd`, `fcl::safe`, `fcl::filesystem`, flat/interprocess containers, mock time and compatibility mutexes.
+- Public time values use `std::chrono`. FCL core may provide chrono formatting and old FC wire helpers, but old FC-style time source APIs must not return.
+- Deterministic tests must pass explicit chrono values instead of relying on a global mock clock.
+- Empty/self-export module files are forbidden. Aggregate modules are allowed only as library-level `export import` lists.
+- Public APIs must live under `libraries/<lib>/include/fcl/<lib>/*.cppm`; root include trees and old compatibility include roots are forbidden.
+- Real module interfaces must contain their declarations directly; `.cppm` files that only include private/public headers are forbidden.
+- Macro-only `.hpp` files under `include/fcl` are allowed only for preprocessor macros, because C++ modules cannot export macros.
+- `libraries/<lib>/private/fcl` is forbidden.
+- Public modules are owned by their domain targets. Do not introduce a global module bridge, shared BMI pool, umbrella module-owner target or dependency shortcut for module ordering.
 - Implementation `.cpp` files live directly in `libraries/<lib>/`; nested `src/` directories are forbidden for FCL-owned libraries.
 - Third-party source and submodules live under root `vendor/`; `libraries/` contains only FCL-owned code.
+- Public module interfaces must not hide private implementation inside `.cppm`; private implementation belongs in module implementation units or private root-level helpers.

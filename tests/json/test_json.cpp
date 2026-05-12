@@ -1,7 +1,10 @@
 #include <boost/describe.hpp>
 #include <boost/test/unit_test.hpp>
 
+#include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -104,6 +107,42 @@ BOOST_AUTO_TEST_CASE(json_typed_read_uses_schema_defaults_validation_and_unknown
 
    const auto invalid = fcl::json::read<fcl_json_tests::http_config>(R"({"bind-port":0})");
    BOOST_TEST(!invalid.ok());
+}
+
+BOOST_AUTO_TEST_CASE(json_typed_load_uses_same_unknown_policy_as_read) {
+   const auto path = std::filesystem::temp_directory_path() /
+                     ("fcl_json_unknown_policy_" +
+                      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".json");
+   {
+      auto out = std::ofstream{path};
+      out << R"({"bind-port":9090,"extra":1})";
+   }
+   struct cleanup {
+      std::filesystem::path path;
+      ~cleanup() {
+         std::error_code ignored;
+         std::filesystem::remove(path, ignored);
+      }
+   } remove_file{path};
+
+   const auto warned = fcl::json::load<fcl_json_tests::http_config>(path);
+   BOOST_REQUIRE(warned.ok());
+   BOOST_REQUIRE_EQUAL(warned.diagnostics.size(), 1U);
+   BOOST_TEST(warned.diagnostics.front().code == "json.unknown");
+
+   auto rejected_options = fcl::json::read_options{};
+   rejected_options.unknown_fields = fcl::json::unknown_field_policy::error;
+   const auto rejected = fcl::json::load<fcl_json_tests::http_config>(path, rejected_options);
+   BOOST_TEST(!rejected.ok());
+   BOOST_REQUIRE_EQUAL(rejected.diagnostics.size(), 1U);
+   BOOST_TEST(rejected.diagnostics.front().code == "json.unknown");
+
+   auto ignored_options = fcl::json::read_options{};
+   ignored_options.unknown_fields = fcl::json::unknown_field_policy::ignore;
+   const auto ignored = fcl::json::load<fcl_json_tests::http_config>(path, ignored_options);
+   BOOST_REQUIRE(ignored.ok());
+   BOOST_TEST(ignored.diagnostics.empty());
+   BOOST_TEST(ignored.value.bind_port == 9090U);
 }
 
 BOOST_AUTO_TEST_CASE(json_malformed_input_returns_fcl_diagnostic) {

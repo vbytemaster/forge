@@ -71,6 +71,7 @@ using engine_peer_verifier = std::function<bool(const engine_peer_certificate&)>
 struct engine_security_options {
    bool verify_peer = true;
    std::optional<std::string> expected_sha256_fingerprint;
+   std::string trusted_ca_pem;
    engine_peer_verifier verifier;
 };
 

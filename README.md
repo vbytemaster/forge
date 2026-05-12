@@ -110,6 +110,12 @@ if (!parsed.ok()) {
 | [p2p](libraries/p2p/README.md) | `fcl_p2p` | Peer identity, sessions, protocols, relay, path manager. | `fcl_quic`, `fcl_asio`. |
 | [tui](libraries/tui/README.md) | `fcl_tui` | Terminal UI value models, render helpers, runner. | Notcurses core privately and optionally. |
 
+`fcl` is an all-in aggregate target for consumers that intentionally want the
+whole library set. Production code that needs a small dependency footprint
+should link concrete leaf targets such as `fcl_config`, `fcl_json` or
+`fcl_quic`; external backends like OpenSSL, ngtcp2, Glaze and Boost components
+belong to the leaf target that actually owns their API or implementation use.
+
 ## Архитектурные Документы
 
 - [docs/index.md](docs/index.md) — карта документации.

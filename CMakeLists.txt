@@ -304,12 +304,6 @@ add_library(fcl STATIC ${FCL_OBJECT_SOURCES})
 
 target_include_directories(fcl PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 
-target_compile_definitions(
-   fcl
-   PUBLIC OPENSSL_API_COMPAT=0x30000000L
-          OPENSSL_NO_DEPRECATED
-)
-
 target_link_libraries(
    fcl PUBLIC
       fcl_core
@@ -330,30 +324,10 @@ target_link_libraries(
       fcl_quic
       fcl_p2p
       fcl_app
-      GMP::gmp
-      Threads::Threads
-      OpenSSL::SSL
-      OpenSSL::Crypto
-      Ngtcp2::ngtcp2
-      Ngtcp2::crypto_ossl
-      ${PLATFORM_SPECIFIC_LIBS}
-      ${CMAKE_DL_LIBS}
-      secp256k1
-      bls12-381
 )
 
 if(TARGET fcl_tui)
    target_link_libraries(fcl PUBLIC fcl_tui)
-endif()
-
-if(WIN32)
-   target_link_libraries(fcl PUBLIC ws2_32 mswsock userenv)
-endif()
-
-if(APPLE)
-   find_library(security_framework Security)
-   find_library(corefoundation_framework CoreFoundation)
-   target_link_libraries(fcl PUBLIC ${security_framework} ${corefoundation_framework})
 endif()
 
 if(DEFINED BUILD_TESTING AND BUILD_TESTING)

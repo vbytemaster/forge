@@ -57,6 +57,17 @@ options.security.expected_sha256_fingerprint = expected_server_fingerprint;
 auto connection = co_await connector.async_connect(endpoint, options);
 ```
 
+For CA-based verification, trust is explicit and host-bound:
+
+```cpp
+options.security = fcl::quic::security_options{
+   .verify_peer = true,
+   .trusted_ca_pem = trusted_ca_bundle_pem,
+};
+// The certificate must be valid for endpoint.host through DNS/IP SAN matching.
+auto connection = co_await connector.async_connect(endpoint, options);
+```
+
 ### Accept Connections
 
 ```cpp
@@ -116,8 +127,11 @@ typed failures instead of vague network errors.
 ## Security Notes
 
 OpenSSL 3 is the supported TLS backend. Fingerprint and mTLS failures are
-correctness failures, not warnings. Test certificates must not become product
-defaults.
+correctness failures, not warnings. CA-based client verification binds the peer
+certificate to the requested endpoint host; SNI alone is not treated as identity
+verification. Pinned fingerprints and custom verifiers are explicit trust paths;
+they do not implicitly opt into CA hostname checks. Test certificates must not
+become product defaults.
 
 ## Typical Mistakes
 

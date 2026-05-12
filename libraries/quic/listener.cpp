@@ -75,6 +75,7 @@ namespace {
    auto mapped = detail::engine_security_options{
       .verify_peer = security.verify_peer,
       .expected_sha256_fingerprint = security.expected_sha256_fingerprint,
+      .trusted_ca_pem = security.trusted_ca_pem,
    };
    if (security.verifier) {
       mapped.verifier = [verifier = security.verifier](const detail::engine_peer_certificate& certificate) {

@@ -1,7 +1,10 @@
 #include <boost/describe.hpp>
 #include <boost/test/unit_test.hpp>
 
+#include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -105,6 +108,42 @@ BOOST_AUTO_TEST_CASE(yaml_typed_read_uses_schema_defaults_validation_and_unknown
 
    const auto invalid = fcl::yaml::read<fcl_yaml_tests::http_config>("bind-port: 0\n");
    BOOST_TEST(!invalid.ok());
+}
+
+BOOST_AUTO_TEST_CASE(yaml_typed_load_uses_same_unknown_policy_as_read) {
+   const auto path = std::filesystem::temp_directory_path() /
+                     ("fcl_yaml_unknown_policy_" +
+                      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".yaml");
+   {
+      auto out = std::ofstream{path};
+      out << "bind-port: 9090\nextra: 1\n";
+   }
+   struct cleanup {
+      std::filesystem::path path;
+      ~cleanup() {
+         std::error_code ignored;
+         std::filesystem::remove(path, ignored);
+      }
+   } remove_file{path};
+
+   const auto warned = fcl::yaml::load<fcl_yaml_tests::http_config>(path);
+   BOOST_REQUIRE(warned.ok());
+   BOOST_REQUIRE_EQUAL(warned.diagnostics.size(), 1U);
+   BOOST_TEST(warned.diagnostics.front().code == "yaml.unknown");
+
+   auto rejected_options = fcl::yaml::read_options{};
+   rejected_options.unknown_fields = fcl::yaml::unknown_field_policy::error;
+   const auto rejected = fcl::yaml::load<fcl_yaml_tests::http_config>(path, rejected_options);
+   BOOST_TEST(!rejected.ok());
+   BOOST_REQUIRE_EQUAL(rejected.diagnostics.size(), 1U);
+   BOOST_TEST(rejected.diagnostics.front().code == "yaml.unknown");
+
+   auto ignored_options = fcl::yaml::read_options{};
+   ignored_options.unknown_fields = fcl::yaml::unknown_field_policy::ignore;
+   const auto ignored = fcl::yaml::load<fcl_yaml_tests::http_config>(path, ignored_options);
+   BOOST_REQUIRE(ignored.ok());
+   BOOST_TEST(ignored.diagnostics.empty());
+   BOOST_TEST(ignored.value.bind_port == 9090U);
 }
 
 BOOST_AUTO_TEST_CASE(yaml_malformed_input_returns_fcl_diagnostic) {

@@ -25,8 +25,12 @@
 #include <boost/asio/use_awaitable.hpp>
 
 #include <openssl/bio.h>
+#include <openssl/buffer.h>
+#include <openssl/evp.h>
 #include <openssl/pem.h>
+#include <openssl/rsa.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 
 import fcl.asio.blocking;
 import fcl.asio.runtime;
@@ -109,6 +113,79 @@ struct x509_deleter {
       X509_free(certificate);
    }
 };
+
+struct evp_pkey_deleter {
+   void operator()(EVP_PKEY* key) const noexcept {
+      EVP_PKEY_free(key);
+   }
+};
+
+struct x509_extension_deleter {
+   void operator()(X509_EXTENSION* extension) const noexcept {
+      X509_EXTENSION_free(extension);
+   }
+};
+
+struct generated_identity {
+   std::string certificate_pem;
+   std::string private_key_pem;
+};
+
+std::string bio_to_string(BIO* bio) {
+   BUF_MEM* memory = nullptr;
+   BIO_get_mem_ptr(bio, &memory);
+   BOOST_REQUIRE(memory != nullptr);
+   return std::string{memory->data, memory->length};
+}
+
+void add_certificate_extension(X509* certificate, int nid, std::string_view value) {
+   auto context = X509V3_CTX{};
+   X509V3_set_ctx_nodb(&context);
+   X509V3_set_ctx(&context, certificate, certificate, nullptr, nullptr, 0);
+   auto extension = std::unique_ptr<X509_EXTENSION, x509_extension_deleter>{
+      X509V3_EXT_conf_nid(nullptr, &context, nid, std::string{value}.c_str())};
+   BOOST_REQUIRE(extension != nullptr);
+   BOOST_REQUIRE(X509_add_ext(certificate, extension.get(), -1) == 1);
+}
+
+generated_identity generate_test_identity(std::string_view subject_alt_name) {
+   auto key = std::unique_ptr<EVP_PKEY, evp_pkey_deleter>{EVP_RSA_gen(2048)};
+   BOOST_REQUIRE(key != nullptr);
+   auto certificate = std::unique_ptr<X509, x509_deleter>{X509_new()};
+   BOOST_REQUIRE(certificate != nullptr);
+
+   BOOST_REQUIRE(ASN1_INTEGER_set(X509_get_serialNumber(certificate.get()), 1) == 1);
+   BOOST_REQUIRE(X509_gmtime_adj(X509_getm_notBefore(certificate.get()), -60) != nullptr);
+   BOOST_REQUIRE(X509_gmtime_adj(X509_getm_notAfter(certificate.get()), 60 * 60) != nullptr);
+   BOOST_REQUIRE(X509_set_pubkey(certificate.get(), key.get()) == 1);
+
+   auto* name = X509_get_subject_name(certificate.get());
+   BOOST_REQUIRE(name != nullptr);
+   const auto common_name = std::string{"fcl-quic-test"};
+   BOOST_REQUIRE(X509_NAME_add_entry_by_txt(
+                    name,
+                    "CN",
+                    MBSTRING_ASC,
+                    reinterpret_cast<const unsigned char*>(common_name.data()),
+                    static_cast<int>(common_name.size()),
+                    -1,
+                    0) == 1);
+   BOOST_REQUIRE(X509_set_issuer_name(certificate.get(), name) == 1);
+   add_certificate_extension(certificate.get(), NID_basic_constraints, "critical,CA:TRUE");
+   add_certificate_extension(certificate.get(), NID_subject_alt_name, subject_alt_name);
+   BOOST_REQUIRE(X509_sign(certificate.get(), key.get(), EVP_sha256()) > 0);
+
+   auto certificate_bio = std::unique_ptr<BIO, bio_deleter>{BIO_new(BIO_s_mem())};
+   auto private_key_bio = std::unique_ptr<BIO, bio_deleter>{BIO_new(BIO_s_mem())};
+   BOOST_REQUIRE(certificate_bio != nullptr);
+   BOOST_REQUIRE(private_key_bio != nullptr);
+   BOOST_REQUIRE(PEM_write_bio_X509(certificate_bio.get(), certificate.get()) == 1);
+   BOOST_REQUIRE(PEM_write_bio_PrivateKey(private_key_bio.get(), key.get(), nullptr, nullptr, 0, nullptr, nullptr) == 1);
+   return generated_identity{
+      .certificate_pem = bio_to_string(certificate_bio.get()),
+      .private_key_pem = bio_to_string(private_key_bio.get()),
+   };
+}
 
 struct scoped_quic_connect_failpoint {
    explicit scoped_quic_connect_failpoint(std::string_view name) {
@@ -1112,6 +1189,66 @@ BOOST_AUTO_TEST_CASE(quic_loopback_verifies_pinned_peer_fingerprint) {
 
    BOOST_TEST(connection.valid());
    fcl::asio::blocking::run(runtime, connection.async_close());
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(quic_loopback_verifies_ca_certificate_hostname) {
+   const auto identity = generate_test_identity("DNS:localhost,IP:127.0.0.1");
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server_options_value = loopback_server_options();
+   server_options_value.certificate_pem = identity.certificate_pem;
+   server_options_value.private_key_pem = identity.private_key_pem;
+   auto server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, std::move(server_options_value)};
+   auto client = connector{runtime};
+
+   auto client_options_value = loopback_client_options();
+   client_options_value.security = security_options{
+      .verify_peer = true,
+      .trusted_ca_pem = identity.certificate_pem,
+   };
+   auto connection = run_with_deadline(
+      runtime,
+      client.async_connect(server.local_endpoint(), std::move(client_options_value)),
+      std::chrono::milliseconds{5'000},
+      "CA verified hostname connect");
+
+   BOOST_TEST(connection.valid());
+   run_with_deadline(runtime, connection.async_close(), std::chrono::milliseconds{5'000}, "CA verified hostname close");
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(quic_loopback_rejects_ca_certificate_hostname_mismatch) {
+   const auto identity = generate_test_identity("DNS:example.invalid,IP:127.0.0.2");
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server_options_value = loopback_server_options();
+   server_options_value.handshake_timeout = std::chrono::milliseconds{500};
+   server_options_value.certificate_pem = identity.certificate_pem;
+   server_options_value.private_key_pem = identity.private_key_pem;
+   auto server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, std::move(server_options_value)};
+   auto client = connector{runtime};
+
+   auto client_options_value = loopback_client_options();
+   client_options_value.security = security_options{
+      .verify_peer = true,
+      .trusted_ca_pem = identity.certificate_pem,
+   };
+   try {
+      (void)run_with_deadline(
+         runtime,
+         client.async_connect(server.local_endpoint(), std::move(client_options_value)),
+         std::chrono::milliseconds{5'000},
+         "CA hostname mismatch connect");
+      BOOST_FAIL("expected QUIC hostname verification failure");
+   } catch (const quic_error& error) {
+      const auto acceptable =
+         error.kind() == error_kind::tls_failed ||
+         error.kind() == error_kind::peer_verification_failed ||
+         error.kind() == error_kind::handshake_timeout ||
+         error.kind() == error_kind::canceled;
+      BOOST_TEST_CONTEXT("error kind=" << static_cast<int>(error.kind()) << " message=" << error.what()) {
+         BOOST_TEST(acceptable);
+      }
+   }
    server.stop();
 }
 

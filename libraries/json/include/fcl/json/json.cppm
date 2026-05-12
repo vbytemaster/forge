@@ -164,14 +164,25 @@ template <typename T>
 
    const auto rules = schema::rules<T>::define();
    if (!rules.fields().empty()) {
-      auto parsed_document = load_document(path, std::move(options));
+      auto parsed_document = load_document(path, options);
       output.diagnostics = std::move(parsed_document.diagnostics);
       if (!parsed_document.ok()) {
          return output;
       }
       auto decoded = config::decode<T>(parsed_document.value);
       output.value = std::move(decoded.value);
-      output.diagnostics.insert(output.diagnostics.end(), decoded.diagnostics.entries.begin(), decoded.diagnostics.entries.end());
+      for (auto entry : std::move(decoded.diagnostics.entries)) {
+         if (entry.code == "config.unknown") {
+            if (options.unknown_fields == unknown_field_policy::ignore) {
+               continue;
+            }
+            entry.code = "json.unknown";
+            if (options.unknown_fields == unknown_field_policy::error) {
+               entry.level = schema::severity::error;
+            }
+         }
+         output.diagnostics.push_back(std::move(entry));
+      }
       return output;
    }
 

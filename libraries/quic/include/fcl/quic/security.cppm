@@ -27,6 +27,7 @@ using peer_verifier = std::function<bool(const peer_certificate&)>;
 struct security_options {
    bool verify_peer = true;
    std::optional<std::string> expected_sha256_fingerprint;
+   std::string trusted_ca_pem;
    peer_verifier verifier;
 };
 

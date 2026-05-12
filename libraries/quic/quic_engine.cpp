@@ -22,6 +22,7 @@
 #include <openssl/sha.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
+#include <openssl/x509_vfy.h>
 
 #include <algorithm>
 #include <atomic>
@@ -265,6 +266,68 @@ using pkey_ptr = std::unique_ptr<EVP_PKEY, pkey_deleter>;
       throw_engine(engine_error_kind::tls_failed, "invalid QUIC server private key: " + openssl_error());
    }
    return pkey_ptr{key};
+}
+
+void add_trusted_certificate(SSL_CTX* ctx, std::string_view pem) {
+   auto* bio = BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size()));
+   if (bio == nullptr) {
+      throw_engine(engine_error_kind::tls_failed, openssl_error());
+   }
+   auto bio_guard = std::unique_ptr<BIO, decltype(&BIO_free)>{bio, BIO_free};
+   auto* store = SSL_CTX_get_cert_store(ctx);
+   if (store == nullptr) {
+      throw_engine(engine_error_kind::tls_failed, "failed to access QUIC TLS trust store");
+   }
+
+   auto loaded = false;
+   while (auto* raw = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr)) {
+      loaded = true;
+      auto certificate = x509_ptr{raw};
+      if (X509_STORE_add_cert(store, certificate.get()) != 1) {
+         const auto code = ERR_peek_last_error();
+         if (ERR_GET_REASON(code) == X509_R_CERT_ALREADY_IN_HASH_TABLE) {
+            ERR_clear_error();
+            continue;
+         }
+         throw_engine(engine_error_kind::tls_failed, "failed to add trusted QUIC CA certificate: " + openssl_error());
+      }
+   }
+
+   const auto code = ERR_peek_last_error();
+   if (code != 0 && ERR_GET_REASON(code) != PEM_R_NO_START_LINE) {
+      throw_engine(engine_error_kind::tls_failed, "failed to parse trusted QUIC CA certificate: " + openssl_error());
+   }
+   ERR_clear_error();
+   if (!loaded) {
+      throw_engine(engine_error_kind::tls_failed, "trusted QUIC CA PEM does not contain a certificate");
+   }
+}
+
+void configure_default_trust(SSL_CTX* ctx, const engine_security_options& security) {
+   if (!security.trusted_ca_pem.empty()) {
+      add_trusted_certificate(ctx, security.trusted_ca_pem);
+      return;
+   }
+   if (SSL_CTX_set_default_verify_paths(ctx) != 1) {
+      throw_engine(engine_error_kind::tls_failed, "failed to load default QUIC TLS trust paths: " + openssl_error());
+   }
+}
+
+[[nodiscard]] bool configure_verify_peer_name(SSL* ssl, std::string_view host) {
+   auto* params = SSL_get0_param(ssl);
+   if (params == nullptr) {
+      throw_engine(engine_error_kind::tls_failed, "failed to access QUIC TLS verification parameters");
+   }
+
+   const auto peer_name = host.empty() ? std::string{"localhost"} : std::string{host};
+   if (X509_VERIFY_PARAM_set1_ip_asc(params, peer_name.c_str()) == 1) {
+      return false;
+   }
+   ERR_clear_error();
+   if (SSL_set1_host(ssl, peer_name.c_str()) != 1) {
+      throw_engine(engine_error_kind::tls_failed, "failed to bind QUIC TLS peer hostname: " + openssl_error());
+   }
+   return true;
 }
 
 [[nodiscard]] std::vector<std::uint8_t> der_from_certificate(X509* certificate) {
@@ -1298,7 +1361,7 @@ void configure_client_tls(
    }
    if (options.security.verify_peer && !options.security.expected_sha256_fingerprint && !options.security.verifier) {
       SSL_CTX_set_verify(connection.ssl_ctx.get(), SSL_VERIFY_PEER, nullptr);
-      SSL_CTX_set_default_verify_paths(connection.ssl_ctx.get());
+      configure_default_trust(connection.ssl_ctx.get(), options.security);
    } else {
       SSL_CTX_set_verify(connection.ssl_ctx.get(), SSL_VERIFY_NONE, nullptr);
    }
@@ -1334,8 +1397,11 @@ void configure_client_tls(
    if (SSL_set_alpn_protos(connection.ssl.get(), alpn.data(), static_cast<unsigned>(alpn.size())) != 0) {
       throw_engine(engine_error_kind::tls_failed, "failed to set QUIC ALPN");
    }
-   const auto* sni = remote.host.empty() ? "localhost" : remote.host.c_str();
-   SSL_set_tlsext_host_name(connection.ssl.get(), const_cast<char*>(sni));
+   const auto use_sni = configure_verify_peer_name(connection.ssl.get(), remote.host);
+   if (use_sni) {
+      const auto* sni = remote.host.empty() ? "localhost" : remote.host.c_str();
+      SSL_set_tlsext_host_name(connection.ssl.get(), const_cast<char*>(sni));
+   }
 }
 
 void configure_server_tls(engine_connection::impl& connection, const engine_server_options& options) {
@@ -1361,7 +1427,7 @@ void configure_server_tls(engine_connection::impl& connection, const engine_serv
          SSL_CTX_set_verify(connection.ssl_ctx.get(), verify_mode, accept_any_certificate_cb);
       } else {
          SSL_CTX_set_verify(connection.ssl_ctx.get(), verify_mode, nullptr);
-         SSL_CTX_set_default_verify_paths(connection.ssl_ctx.get());
+         configure_default_trust(connection.ssl_ctx.get(), options.security);
       }
    } else {
       SSL_CTX_set_verify(connection.ssl_ctx.get(), SSL_VERIFY_NONE, nullptr);

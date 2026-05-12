@@ -15,6 +15,7 @@ void fill_random(std::span<std::uint8_t> out);
 
 [[nodiscard]] bytes random_bytes(std::size_t size);
 [[nodiscard]] aes256_key generate_key();
+[[nodiscard]] aes256_key generate_aes256_key();
 
 template<std::size_t Size>
 [[nodiscard]] std::array<std::uint8_t, Size> random_array()

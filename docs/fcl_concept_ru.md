@@ -769,10 +769,10 @@ libraries/{lib}/CMakeLists.txt
 libraries/crypto/
   include/fcl/crypto/types.cppm
   include/fcl/crypto/random.cppm
-  include/fcl/crypto/aes256_gcm.cppm
+  include/fcl/crypto/aes.cppm
   crypto.cpp
   random.cpp
-  aes256_gcm.cpp
+  aes.cpp
   CMakeLists.txt
 ```
 

@@ -33,7 +33,7 @@ Keys and signatures:
 
 Other primitives:
 
-- `fcl.crypto.types`, `random`, `kdf`, `aes256_gcm`, `aes`, `rand`,
+- `fcl.crypto.types`, `random`, `kdf`, `aes`, `rand`,
   `bigint`, `modular_arithmetic`, `packhash`, `openssl`, `bls_*`, `common`.
 
 Target: `fcl_crypto`.
@@ -104,7 +104,7 @@ fcl::rand_bytes(seed.data(), static_cast<int>(seed.size()));
 
 auto token = fcl::crypto::random_bytes(32);
 auto nonce = fcl::crypto::random_array<12>();
-auto key = fcl::crypto::generate_key();
+auto key = fcl::crypto::generate_aes256_key();
 ```
 
 Random bytes are secret until proven otherwise. Do not log generated material;
@@ -219,21 +219,20 @@ for their latency and memory budget and keep salts non-secret but unique.
 ### AES-256-GCM Authenticated Encryption
 
 ```cpp
-import fcl.crypto.aes256_gcm;
+import fcl.crypto.aes;
 import fcl.crypto.random;
-import fcl.crypto.types;
 
-auto key = fcl::crypto::generate_key();
+auto key = fcl::crypto::generate_aes256_key();
 auto nonce = fcl::crypto::random_bytes(fcl::crypto::aes_gcm_nonce_size);
 
-auto encrypted = fcl::crypto::aes256_gcm::encrypt({
+auto encrypted = fcl::crypto::encrypt_aes256_gcm({
    .key = key,
    .nonce = nonce,
    .plaintext = {'s', 'e', 'c', 'r', 'e', 't'},
    .aad = {'m', 'e', 't', 'a'},
 });
 
-auto plaintext = fcl::crypto::aes256_gcm::decrypt({
+auto plaintext = fcl::crypto::decrypt_aes256_gcm({
    .key = key,
    .encrypted = encrypted,
    .aad = {'m', 'e', 't', 'a'},
@@ -244,26 +243,29 @@ AES-GCM requires nonce uniqueness per key. FCL validates sizes and tag
 authentication, but callers own key lifecycle, nonce policy and secret
 redaction.
 
-### Retained AES-CBC Helper
+### AES-256-CBC Compatibility Helper
 
 ```cpp
-#include <vector>
-
 import fcl.crypto.aes;
-import fcl.crypto.sha512;
+import fcl.crypto.random;
 
-auto key = fcl::sha512::hash("test key");
-auto plain = std::vector<char>{'s', 'e', 'c', 'r', 'e', 't'};
+auto key = fcl::crypto::generate_aes256_key();
+auto iv = fcl::crypto::random_bytes(fcl::crypto::aes_cbc_iv_size);
 
-auto cipher = fcl::aes_encrypt(key, plain);
-auto roundtrip = fcl::aes_decrypt(key, cipher);
+auto cipher = fcl::crypto::encrypt_aes256_cbc({
+   .key = key,
+   .iv = iv,
+   .plaintext = {'s', 'e', 'c', 'r', 'e', 't'},
+});
+
+auto roundtrip = fcl::crypto::decrypt_aes256_cbc({
+   .key = key,
+   .encrypted = cipher,
+});
 ```
 
-This is a primitive helper. Product code still owns key derivation, vault
-storage, passphrase policy and redaction.
-
-Prefer `fcl.crypto.aes256_gcm` for new authenticated encryption; the retained
-AES-CBC helper exists for compatibility with old FC-style payloads.
+CBC is retained for compatibility-oriented payloads. Prefer AES-256-GCM for new
+authenticated encryption; CBC does not authenticate ciphertext by itself.
 
 ### Hash Structured Data With Raw-Compatible Packing
 

@@ -1,63 +1,21 @@
 module;
-#include <filesystem>
-#include <memory>
-#include <vector>
 
 export module fcl.crypto.aes;
 
-import fcl.crypto.sha512;
-import fcl.crypto.sha256;
-import fcl.core.uint128;
+import fcl.crypto.types;
 
+export namespace fcl::crypto {
 
-export namespace fcl {
+[[nodiscard]] aes256_gcm_ciphertext encrypt_aes256_gcm(
+   const aes256_gcm_encrypt_request& request);
 
-    class aes_encoder
-    {
-       public:
-         aes_encoder();
-         ~aes_encoder();
-         void init( const fcl::sha256& key, const fcl::uint128& init_value );
-         uint32_t encode( const char* plaintxt, uint32_t len, char* ciphertxt );
- //        uint32_t final_encode( char* ciphertxt );
+[[nodiscard]] bytes decrypt_aes256_gcm(
+   const aes256_gcm_decrypt_request& request);
 
-       private:
-         struct      impl;
-         std::unique_ptr<impl> my;
-    };
-    class aes_decoder
-    {
-       public:
-         aes_decoder();
-         ~aes_decoder();
-         void     init( const fcl::sha256& key, const fcl::uint128& init_value );
-         uint32_t decode( const char* ciphertxt, uint32_t len, char* plaintext );
-//         uint32_t final_decode( char* plaintext );
+[[nodiscard]] aes256_cbc_ciphertext encrypt_aes256_cbc(
+   const aes256_cbc_encrypt_request& request);
 
-       private:
-         struct      impl;
-         std::unique_ptr<impl> my;
-    };
+[[nodiscard]] bytes decrypt_aes256_cbc(
+   const aes256_cbc_decrypt_request& request);
 
-    unsigned aes_encrypt(unsigned char *plaintext, int plaintext_len, unsigned char *key,
-                         unsigned char *iv, unsigned char *ciphertext);
-    unsigned aes_decrypt(unsigned char *ciphertext, int ciphertext_len, unsigned char *key,
-                         unsigned char *iv, unsigned char *plaintext);
-    unsigned aes_cfb_decrypt(unsigned char *ciphertext, int ciphertext_len, unsigned char *key,
-                             unsigned char *iv, unsigned char *plaintext);
-
-    std::vector<char> aes_encrypt( const fcl::sha512& key, const std::vector<char>& plain_text  );
-    std::vector<char> aes_decrypt( const fcl::sha512& key, const std::vector<char>& cipher_text );
-
-    /** encrypts plain_text and then includes a checksum that enables us to verify the integrety of
-     * the file / key prior to decryption.
-     */
-    void              aes_save( const std::filesystem::path& file, const fcl::sha512& key, std::vector<char> plain_text );
-
-    /**
-     *  recovers the plain_text saved via aes_save()
-     */
-    std::vector<char> aes_load( const std::filesystem::path& file, const fcl::sha512& key );
-
-} // namespace fcl
-
+} // namespace fcl::crypto

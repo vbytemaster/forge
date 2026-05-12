@@ -37,6 +37,11 @@ bytes random_bytes(std::size_t size)
 
 aes256_key generate_key()
 {
+   return generate_aes256_key();
+}
+
+aes256_key generate_aes256_key()
+{
    auto key = aes256_key{};
    fill_random(key.bytes);
    return key;

@@ -14,6 +14,7 @@ export namespace fcl::crypto {
 using bytes = std::vector<std::uint8_t>;
 
 inline constexpr auto aes256_key_size = std::size_t{32};
+inline constexpr auto aes_cbc_iv_size = std::size_t{16};
 inline constexpr auto aes_gcm_nonce_size = std::size_t{12};
 inline constexpr auto aes_gcm_tag_size = std::size_t{16};
 
@@ -57,6 +58,22 @@ struct aes256_gcm_decrypt_request {
    aes256_key key;
    aes256_gcm_ciphertext encrypted;
    bytes aad;
+};
+
+struct aes256_cbc_ciphertext {
+   bytes iv;
+   bytes ciphertext;
+};
+
+struct aes256_cbc_encrypt_request {
+   aes256_key key;
+   bytes iv;
+   bytes plaintext;
+};
+
+struct aes256_cbc_decrypt_request {
+   aes256_key key;
+   aes256_cbc_ciphertext encrypted;
 };
 
 struct hkdf_sha256_request {

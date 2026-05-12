@@ -1,382 +1,224 @@
 module;
-#include <fcl/exception/macros.hpp>
 
-#if defined(_WIN32)
-# include <windows.h>
-#endif
-
-#include <openssl/err.h>
 #include <openssl/evp.h>
 
-#include <thread>
-#include <mutex>
-#include <fstream>
-#include <functional>
+#include <array>
+#include <cstddef>
+#include <limits>
 #include <memory>
+#include <string>
 
 module fcl.crypto.aes;
 
-import fcl.crypto.openssl;
-import fcl.crypto.sha256;
-import fcl.core.uint128;
-import fcl.exception.exception;
-import fcl.raw.raw;
+namespace fcl::crypto {
+namespace {
 
-namespace fcl {
+using ctx_ptr = std::unique_ptr<EVP_CIPHER_CTX, decltype(&EVP_CIPHER_CTX_free)>;
 
-struct aes_encoder::impl
+[[nodiscard]] ctx_ptr make_context()
 {
-   evp_cipher_ctx ctx;
-};
-
-aes_encoder::aes_encoder()
-: my( std::make_unique<impl>() )
-{}
-
-aes_encoder::~aes_encoder() = default;
-
-
-void aes_encoder::init( const fcl::sha256& key, const fcl::uint128& init_value )
-{
-    my->ctx.obj = EVP_CIPHER_CTX_new();
-    /* Create and initialise the context */
-    if(!my->ctx)
-    {
-        FCL_THROW("error allocating evp cipher context",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-
-    /* Initialise the encryption operation. IMPORTANT - ensure you use a key
-    *    and IV size appropriate for your cipher
-    *    In this example we are using 256 bit AES (i.e. a 256 bit key). The
-    *    IV size for *most* modes is the same as the block size. For AES this
-    *    is 128 bits */
-    if(1 != EVP_EncryptInit_ex(my->ctx, EVP_aes_256_cbc(), NULL, (unsigned char*)&key, (unsigned char*)&init_value))
-    {
-        FCL_THROW("error during aes 256 cbc encryption init",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-    EVP_CIPHER_CTX_set_padding( my->ctx, 0 );
+   auto context = ctx_ptr{EVP_CIPHER_CTX_new(), EVP_CIPHER_CTX_free};
+   if (!context) {
+      throw error{error_kind::backend_error, "failed to allocate AES context"};
+   }
+   return context;
 }
 
-uint32_t aes_encoder::encode( const char* plaintxt, uint32_t plaintext_len, char* ciphertxt )
+[[nodiscard]] int checked_update_size(std::size_t size, const char* label)
 {
-    int ciphertext_len = 0;
-    /* Provide the message to be encrypted, and obtain the encrypted output.
-    *    * EVP_EncryptUpdate can be called multiple times if necessary
-    *       */
-    if(1 != EVP_EncryptUpdate(my->ctx, (unsigned char*)ciphertxt, &ciphertext_len, (const unsigned char*)plaintxt, plaintext_len))
-    {
-        FCL_THROW("error during aes 256 cbc encryption update",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-    FCL_ASSERT(ciphertext_len == static_cast<int>(plaintext_len),
-               "unexpected AES ciphertext length",
-               fcl::error::ctx("ciphertext_len", ciphertext_len),
-               fcl::error::ctx("plaintext_len", plaintext_len));
-    return ciphertext_len;
-}
-#if 0
-uint32_t aes_encoder::final_encode( char* ciphertxt )
-{
-    int ciphertext_len = 0;
-    /* Finalise the encryption. Further ciphertext bytes may be written at
-    *    * this stage.
-    *       */
-    if(1 != EVP_EncryptFinal_ex(my->ctx, (unsigned char*)ciphertxt, &ciphertext_len))
-    {
-        FCL_THROW("error during aes 256 cbc encryption final", fcl::error::ctx("s", ERR_error_string( ERR_get_error(), nullptr) ));
-    }
-    return ciphertext_len;
-}
-#endif
-
-
-struct aes_decoder::impl
-{
-   evp_cipher_ctx ctx;
-};
-
-aes_decoder::aes_decoder()
-: my( std::make_unique<impl>() )
-{}
-
-aes_decoder::~aes_decoder() = default;
-
-void aes_decoder::init( const fcl::sha256& key, const fcl::uint128& init_value )
-{
-    my->ctx.obj = EVP_CIPHER_CTX_new();
-    /* Create and initialise the context */
-    if(!my->ctx)
-    {
-        FCL_THROW("error allocating evp cipher context",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-
-    /* Initialise the encryption operation. IMPORTANT - ensure you use a key
-    *    and IV size appropriate for your cipher
-    *    In this example we are using 256 bit AES (i.e. a 256 bit key). The
-    *    IV size for *most* modes is the same as the block size. For AES this
-    *    is 128 bits */
-    if(1 != EVP_DecryptInit_ex(my->ctx, EVP_aes_256_cbc(), NULL, (unsigned char*)&key, (unsigned char*)&init_value))
-    {
-        FCL_THROW("error during aes 256 cbc encryption init",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-    EVP_CIPHER_CTX_set_padding( my->ctx, 0 );
+   if (size > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+      throw error{error_kind::invalid_options, std::string(label) + " is too large"};
+   }
+   return static_cast<int>(size);
 }
 
-uint32_t aes_decoder::decode( const char* ciphertxt, uint32_t ciphertxt_len, char* plaintext )
+void require_size(const bytes& value, std::size_t expected, const char* message, error_kind kind)
 {
-    int plaintext_len = 0;
-    /* Provide the message to be decrypted, and obtain the decrypted output.
-    *    * EVP_DecryptUpdate can be called multiple times if necessary
-    *       */
-	if (1 != EVP_DecryptUpdate(my->ctx, (unsigned char*)plaintext, &plaintext_len, (const unsigned char*)ciphertxt, ciphertxt_len))
-    {
-        FCL_THROW("error during aes 256 cbc decryption update",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-    FCL_ASSERT(ciphertxt_len == static_cast<unsigned>(plaintext_len),
-               "unexpected AES plaintext length",
-               fcl::error::ctx("ciphertxt_len", ciphertxt_len),
-               fcl::error::ctx("plaintext_len", plaintext_len));
-	return plaintext_len;
-}
-#if 0
-uint32_t aes_decoder::final_decode( char* plaintext )
-{
-    return 0;
-    int ciphertext_len = 0;
-    /* Finalise the encryption. Further ciphertext bytes may be written at
-    *    * this stage.
-    *       */
-    if(1 != EVP_DecryptFinal_ex(my->ctx, (unsigned char*)plaintext, &ciphertext_len))
-    {
-        FCL_THROW("error during aes 256 cbc encryption final", fcl::error::ctx("s", ERR_error_string( ERR_get_error(), nullptr) ));
-    }
-    return ciphertext_len;
-}
-#endif
-
-
-
-
-
-
-
-
-
-
-
-
-/** example method from wiki.opensslfoundation.com */
-unsigned aes_encrypt(unsigned char *plaintext, int plaintext_len, unsigned char *key,
-                     unsigned char *iv, unsigned char *ciphertext)
-{
-    evp_cipher_ctx ctx( EVP_CIPHER_CTX_new() );
-
-    int len = 0;
-    unsigned ciphertext_len = 0;
-
-    /* Create and initialise the context */
-    if(!ctx)
-    {
-        FCL_THROW("error allocating evp cipher context",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-
-    /* Initialise the encryption operation. IMPORTANT - ensure you use a key
-    *    and IV size appropriate for your cipher
-    *    In this example we are using 256 bit AES (i.e. a 256 bit key). The
-    *    IV size for *most* modes is the same as the block size. For AES this
-    *    is 128 bits */
-    if(1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv))
-    {
-        FCL_THROW("error during aes 256 cbc encryption init",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-
-    /* Provide the message to be encrypted, and obtain the encrypted output.
-    *    * EVP_EncryptUpdate can be called multiple times if necessary
-    *       */
-    if(1 != EVP_EncryptUpdate(ctx, ciphertext, &len, plaintext, plaintext_len))
-    {
-        FCL_THROW("error during aes 256 cbc encryption update",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-    ciphertext_len = len;
-
-    /* Finalise the encryption. Further ciphertext bytes may be written at
-    *    * this stage.
-    *       */
-    if(1 != EVP_EncryptFinal_ex(ctx, ciphertext + len, &len))
-    {
-        FCL_THROW("error during aes 256 cbc encryption final",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-    ciphertext_len += len;
-
-    return ciphertext_len;
+   if (value.size() != expected) {
+      throw error{kind, message};
+   }
 }
 
-unsigned aes_decrypt(unsigned char *ciphertext, int ciphertext_len, unsigned char *key,
-                     unsigned char *iv, unsigned char *plaintext)
+void require_gcm_nonce(const bytes& nonce)
 {
-    evp_cipher_ctx ctx( EVP_CIPHER_CTX_new() );
-    int len = 0;
-    unsigned plaintext_len = 0;
-
-    /* Create and initialise the context */
-    if(!ctx)
-    {
-        FCL_THROW("error allocating evp cipher context",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-
-    /* Initialise the decryption operation. IMPORTANT - ensure you use a key
-    *    * and IV size appropriate for your cipher
-    *       * In this example we are using 256 bit AES (i.e. a 256 bit key). The
-    *          * IV size for *most* modes is the same as the block size. For AES this
-    *             * is 128 bits */
-    if(1 != EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv))
-    {
-        FCL_THROW("error during aes 256 cbc decrypt init",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-
-    /* Provide the message to be decrypted, and obtain the plaintext output.
-    *    * EVP_DecryptUpdate can be called multiple times if necessary
-    *       */
-    if(1 != EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len))
-    {
-        FCL_THROW("error during aes 256 cbc decrypt update",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-
-    plaintext_len = len;
-
-    /* Finalise the decryption. Further plaintext bytes may be written at
-    *    * this stage.
-    *       */
-    if(1 != EVP_DecryptFinal_ex(ctx, plaintext + len, &len))
-    {
-        FCL_THROW("error during aes 256 cbc decrypt final",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-    plaintext_len += len;
-
-    return plaintext_len;
+   require_size(nonce, aes_gcm_nonce_size, "AES-256-GCM requires 12-byte nonce", error_kind::invalid_nonce);
 }
 
-unsigned aes_cfb_decrypt(unsigned char *ciphertext, int ciphertext_len, unsigned char *key,
-                         unsigned char *iv, unsigned char *plaintext)
+void require_gcm_tag(const bytes& tag)
 {
-    evp_cipher_ctx ctx( EVP_CIPHER_CTX_new() );
-    int len = 0;
-    unsigned plaintext_len = 0;
-
-    /* Create and initialise the context */
-    if(!ctx)
-    {
-        FCL_THROW("error allocating evp cipher context",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-
-    /* Initialise the decryption operation. IMPORTANT - ensure you use a key
-    *    * and IV size appropriate for your cipher
-    *       * In this example we are using 256 bit AES (i.e. a 256 bit key). The
-    *          * IV size for *most* modes is the same as the block size. For AES this
-    *             * is 128 bits */
-    if(1 != EVP_DecryptInit_ex(ctx, EVP_aes_256_cfb128(), NULL, key, iv))
-    {
-        FCL_THROW("error during aes 256 cbc decrypt init",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-
-    /* Provide the message to be decrypted, and obtain the plaintext output.
-    *    * EVP_DecryptUpdate can be called multiple times if necessary
-    *       */
-    if(1 != EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len))
-    {
-        FCL_THROW("error during aes 256 cbc decrypt update",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-
-    plaintext_len = len;
-
-    /* Finalise the decryption. Further plaintext bytes may be written at
-    *    * this stage.
-    *       */
-    if(1 != EVP_DecryptFinal_ex(ctx, plaintext + len, &len))
-    {
-        FCL_THROW("error during aes 256 cbc decrypt final",
-                  fcl::error::ctx("s", ERR_error_string(ERR_get_error(), nullptr)));
-    }
-    plaintext_len += len;
-
-    return plaintext_len;
+   require_size(tag, aes_gcm_tag_size, "AES-256-GCM requires 16-byte tag", error_kind::invalid_tag);
 }
 
-std::vector<char> aes_encrypt( const fcl::sha512& key, const std::vector<char>& plain_text  )
+void require_cbc_iv(const bytes& iv)
 {
-    std::vector<char> cipher_text(plain_text.size()+16);
-    auto cipher_len = aes_encrypt( (unsigned char*)plain_text.data(), (int)plain_text.size(),
-                                   (unsigned char*)&key, ((unsigned char*)&key)+32,
-                                   (unsigned char*)cipher_text.data() );
-    FCL_ASSERT( cipher_len <= cipher_text.size() );
-    cipher_text.resize(cipher_len);
-    return cipher_text;
-
-}
-std::vector<char> aes_decrypt( const fcl::sha512& key, const std::vector<char>& cipher_text )
-{
-    std::vector<char> plain_text( cipher_text.size() );
-    auto plain_len = aes_decrypt( (unsigned char*)cipher_text.data(), (int)cipher_text.size(),
-                                 (unsigned char*)&key, ((unsigned char*)&key)+32,
-                                 (unsigned char*)plain_text.data() );
-    plain_text.resize(plain_len);
-    return plain_text;
+   require_size(iv, aes_cbc_iv_size, "AES-256-CBC requires 16-byte IV", error_kind::invalid_nonce);
 }
 
+} // namespace
 
-/** encrypts plain_text and then includes a checksum that enables us to verify the integrety of
- * the file / key prior to decryption.
- */
-void              aes_save( const std::filesystem::path& file, const fcl::sha512& key, std::vector<char> plain_text )
-{ try {
-   auto cipher = aes_encrypt( key, plain_text );
-   fcl::sha512::encoder check_enc;
-   fcl::raw::pack( check_enc, key );
-   fcl::raw::pack( check_enc, cipher );
-   auto check = check_enc.result();
+aes256_gcm_ciphertext encrypt_aes256_gcm(const aes256_gcm_encrypt_request& request)
+{
+   require_gcm_nonce(request.nonce);
 
-   std::ofstream out(file.generic_string().c_str());
-   fcl::raw::pack( out, check );
-   fcl::raw::pack( out, cipher );
-} FCL_CAPTURE_AND_RETHROW("AES file operation failed", fcl::error::ctx("file", file.generic_string())) }
+   auto context = make_context();
+   auto out = bytes(request.plaintext.size());
+   auto out_size = int{};
+   auto total_size = int{};
+   auto tag = bytes(aes_gcm_tag_size);
+   auto final_out = std::array<std::uint8_t, aes_gcm_tag_size>{};
 
-/**
- *  recovers the plain_text saved via aes_save()
- */
-std::vector<char> aes_load( const std::filesystem::path& file, const fcl::sha512& key )
-{ try {
-   FCL_ASSERT( std::filesystem::exists( file ) );
+   if (EVP_EncryptInit_ex(context.get(), EVP_aes_256_gcm(), nullptr, nullptr, nullptr) != 1 ||
+       EVP_CIPHER_CTX_ctrl(context.get(), EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(request.nonce.size()), nullptr) != 1 ||
+       EVP_EncryptInit_ex(context.get(), nullptr, nullptr, request.key.bytes.data(), request.nonce.data()) != 1) {
+      throw error{error_kind::backend_error, "failed to initialize AES-GCM encryption"};
+   }
+   if (!request.aad.empty() &&
+       EVP_EncryptUpdate(
+          context.get(),
+          nullptr,
+          &out_size,
+          request.aad.data(),
+          checked_update_size(request.aad.size(), "AES-GCM AAD")) != 1) {
+      throw error{error_kind::backend_error, "failed to apply AES-GCM AAD"};
+   }
+   out_size = 0;
+   if (!request.plaintext.empty() &&
+       EVP_EncryptUpdate(
+          context.get(),
+          out.data(),
+          &out_size,
+          request.plaintext.data(),
+          checked_update_size(request.plaintext.size(), "AES-GCM plaintext")) != 1) {
+      throw error{error_kind::backend_error, "failed to encrypt AES-GCM payload"};
+   }
+   total_size = out_size;
+   if (EVP_EncryptFinal_ex(context.get(), final_out.data(), &out_size) != 1) {
+      throw error{error_kind::backend_error, "failed to finalize AES-GCM encryption"};
+   }
+   total_size += out_size;
+   out.resize(static_cast<std::size_t>(total_size));
+   if (EVP_CIPHER_CTX_ctrl(context.get(), EVP_CTRL_GCM_GET_TAG, static_cast<int>(tag.size()), tag.data()) != 1) {
+      throw error{error_kind::backend_error, "failed to read AES-GCM tag"};
+   }
 
-   std::ifstream in( file.generic_string().c_str(), std::ifstream::binary );
-   fcl::sha512 check;
-   std::vector<char> cipher;
+   return aes256_gcm_ciphertext{
+      .nonce = request.nonce,
+      .tag = std::move(tag),
+      .ciphertext = std::move(out),
+   };
+}
 
-   fcl::raw::unpack( in, check );
-   fcl::raw::unpack( in, cipher );
+bytes decrypt_aes256_gcm(const aes256_gcm_decrypt_request& request)
+{
+   require_gcm_nonce(request.encrypted.nonce);
+   require_gcm_tag(request.encrypted.tag);
 
-   fcl::sha512::encoder check_enc;
-   fcl::raw::pack( check_enc, key );
-   fcl::raw::pack( check_enc, cipher );
+   auto context = make_context();
+   auto out = bytes(request.encrypted.ciphertext.size());
+   auto out_size = int{};
+   auto total_size = int{};
+   auto final_out = std::array<std::uint8_t, aes_gcm_tag_size>{};
 
-   FCL_ASSERT( check_enc.result() == check );
+   if (EVP_DecryptInit_ex(context.get(), EVP_aes_256_gcm(), nullptr, nullptr, nullptr) != 1 ||
+       EVP_CIPHER_CTX_ctrl(context.get(), EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(request.encrypted.nonce.size()), nullptr) != 1 ||
+       EVP_DecryptInit_ex(context.get(), nullptr, nullptr, request.key.bytes.data(), request.encrypted.nonce.data()) != 1) {
+      throw error{error_kind::backend_error, "failed to initialize AES-GCM decryption"};
+   }
+   if (!request.aad.empty() &&
+       EVP_DecryptUpdate(
+          context.get(),
+          nullptr,
+          &out_size,
+          request.aad.data(),
+          checked_update_size(request.aad.size(), "AES-GCM AAD")) != 1) {
+      throw error{error_kind::backend_error, "failed to apply AES-GCM AAD"};
+   }
+   out_size = 0;
+   if (!request.encrypted.ciphertext.empty() &&
+       EVP_DecryptUpdate(
+          context.get(),
+          out.data(),
+          &out_size,
+          request.encrypted.ciphertext.data(),
+          checked_update_size(request.encrypted.ciphertext.size(), "AES-GCM ciphertext")) != 1) {
+      throw error{error_kind::backend_error, "failed to decrypt AES-GCM payload"};
+   }
+   total_size = out_size;
+   if (EVP_CIPHER_CTX_ctrl(
+          context.get(),
+          EVP_CTRL_GCM_SET_TAG,
+          static_cast<int>(request.encrypted.tag.size()),
+          const_cast<std::uint8_t*>(request.encrypted.tag.data())) != 1 ||
+       EVP_DecryptFinal_ex(context.get(), final_out.data(), &out_size) != 1) {
+      throw error{error_kind::authentication_failed, "AES-GCM authentication failed"};
+   }
+   total_size += out_size;
+   out.resize(static_cast<std::size_t>(total_size));
+   return out;
+}
 
-   return aes_decrypt( key, cipher );
-} FCL_CAPTURE_AND_RETHROW("AES file operation failed", fcl::error::ctx("file", file.generic_string())) }
+aes256_cbc_ciphertext encrypt_aes256_cbc(const aes256_cbc_encrypt_request& request)
+{
+   require_cbc_iv(request.iv);
 
-}  // namespace fcl
+   auto context = make_context();
+   auto out = bytes(request.plaintext.size() + aes_cbc_iv_size);
+   auto out_size = int{};
+   auto total_size = int{};
+
+   if (EVP_EncryptInit_ex(context.get(), EVP_aes_256_cbc(), nullptr, request.key.bytes.data(), request.iv.data()) != 1) {
+      throw error{error_kind::backend_error, "failed to initialize AES-CBC encryption"};
+   }
+   if (!request.plaintext.empty() &&
+       EVP_EncryptUpdate(
+          context.get(),
+          out.data(),
+          &out_size,
+          request.plaintext.data(),
+          checked_update_size(request.plaintext.size(), "AES-CBC plaintext")) != 1) {
+      throw error{error_kind::backend_error, "failed to encrypt AES-CBC payload"};
+   }
+   total_size = out_size;
+   if (EVP_EncryptFinal_ex(context.get(), out.data() + total_size, &out_size) != 1) {
+      throw error{error_kind::backend_error, "failed to finalize AES-CBC encryption"};
+   }
+   total_size += out_size;
+   out.resize(static_cast<std::size_t>(total_size));
+
+   return aes256_cbc_ciphertext{
+      .iv = request.iv,
+      .ciphertext = std::move(out),
+   };
+}
+
+bytes decrypt_aes256_cbc(const aes256_cbc_decrypt_request& request)
+{
+   require_cbc_iv(request.encrypted.iv);
+
+   auto context = make_context();
+   auto out = bytes(request.encrypted.ciphertext.size());
+   auto out_size = int{};
+   auto total_size = int{};
+
+   if (EVP_DecryptInit_ex(context.get(), EVP_aes_256_cbc(), nullptr, request.key.bytes.data(), request.encrypted.iv.data()) != 1) {
+      throw error{error_kind::backend_error, "failed to initialize AES-CBC decryption"};
+   }
+   if (!request.encrypted.ciphertext.empty() &&
+       EVP_DecryptUpdate(
+          context.get(),
+          out.data(),
+          &out_size,
+          request.encrypted.ciphertext.data(),
+          checked_update_size(request.encrypted.ciphertext.size(), "AES-CBC ciphertext")) != 1) {
+      throw error{error_kind::backend_error, "failed to decrypt AES-CBC payload"};
+   }
+   total_size = out_size;
+   if (EVP_DecryptFinal_ex(context.get(), out.data() + total_size, &out_size) != 1) {
+      throw error{error_kind::authentication_failed, "AES-CBC decryption failed"};
+   }
+   total_size += out_size;
+   out.resize(static_cast<std::size_t>(total_size));
+   return out;
+}
+
+} // namespace fcl::crypto

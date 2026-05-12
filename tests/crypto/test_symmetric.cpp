@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <string>
 
-import fcl.crypto.aes256_gcm;
+import fcl.crypto.aes;
 import fcl.crypto.kdf;
 import fcl.crypto.random;
 import fcl.crypto.types;
@@ -18,7 +18,7 @@ BOOST_AUTO_TEST_CASE(random_bytes_and_key_have_requested_sizes) try {
    const auto nonce = fcl::crypto::random_bytes(12);
    const auto empty = fcl::crypto::random_bytes(0);
    const auto fixed = fcl::crypto::random_array<24>();
-   const auto key = fcl::crypto::generate_key();
+   const auto key = fcl::crypto::generate_aes256_key();
 
    BOOST_CHECK_EQUAL(nonce.size(), 12U);
    BOOST_CHECK(empty.empty());
@@ -55,7 +55,7 @@ BOOST_AUTO_TEST_CASE(aes256_gcm_roundtrips_with_aad) try {
    auto key = fcl::crypto::aes256_key{};
    std::fill(key.bytes.begin(), key.bytes.end(), std::uint8_t{0x42});
 
-   auto encrypted = fcl::crypto::aes256_gcm::encrypt(fcl::crypto::aes256_gcm_encrypt_request{
+   auto encrypted = fcl::crypto::encrypt_aes256_gcm(fcl::crypto::aes256_gcm_encrypt_request{
       .key = key,
       .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
       .plaintext = {'p', 'a', 'y', 'l', 'o', 'a', 'd'},
@@ -67,7 +67,7 @@ BOOST_AUTO_TEST_CASE(aes256_gcm_roundtrips_with_aad) try {
    const auto expected = fcl::crypto::bytes{'p', 'a', 'y', 'l', 'o', 'a', 'd'};
    BOOST_CHECK(encrypted.ciphertext != expected);
 
-   const auto plaintext = fcl::crypto::aes256_gcm::decrypt(fcl::crypto::aes256_gcm_decrypt_request{
+   const auto plaintext = fcl::crypto::decrypt_aes256_gcm(fcl::crypto::aes256_gcm_decrypt_request{
       .key = key,
       .encrypted = encrypted,
       .aad = {'m', 'e', 't', 'a'},
@@ -81,8 +81,8 @@ BOOST_AUTO_TEST_CASE(aes256_gcm_roundtrips_with_aad) try {
 } FCL_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(aes256_gcm_rejects_bad_tag) try {
-   const auto key = fcl::crypto::generate_key();
-   auto encrypted = fcl::crypto::aes256_gcm::encrypt(fcl::crypto::aes256_gcm_encrypt_request{
+   const auto key = fcl::crypto::generate_aes256_key();
+   auto encrypted = fcl::crypto::encrypt_aes256_gcm(fcl::crypto::aes256_gcm_encrypt_request{
       .key = key,
       .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
       .plaintext = {'p', 'a', 'y', 'l', 'o', 'a', 'd'},
@@ -92,7 +92,7 @@ BOOST_AUTO_TEST_CASE(aes256_gcm_rejects_bad_tag) try {
    encrypted.tag.front() ^= std::uint8_t{0x01};
 
    const auto decrypt_with_bad_tag = [&] {
-      (void)fcl::crypto::aes256_gcm::decrypt(fcl::crypto::aes256_gcm_decrypt_request{
+      (void)fcl::crypto::decrypt_aes256_gcm(fcl::crypto::aes256_gcm_decrypt_request{
          .key = key,
          .encrypted = encrypted,
          .aad = {'m', 'e', 't', 'a'},
@@ -105,6 +105,32 @@ BOOST_AUTO_TEST_CASE(aes256_gcm_rejects_bad_tag) try {
       [](const fcl::crypto::error& error) {
          return error.kind() == fcl::crypto::error_kind::authentication_failed;
       });
+} FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(aes256_cbc_roundtrips_compatibility_payload) try {
+   auto key = fcl::crypto::aes256_key{};
+   std::fill(key.bytes.begin(), key.bytes.end(), std::uint8_t{0x24});
+
+   auto encrypted = fcl::crypto::encrypt_aes256_cbc(fcl::crypto::aes256_cbc_encrypt_request{
+      .key = key,
+      .iv = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+      .plaintext = {'c', 'o', 'm', 'p', 'a', 't'},
+   });
+
+   BOOST_CHECK_EQUAL(encrypted.iv.size(), fcl::crypto::aes_cbc_iv_size);
+   const auto expected = fcl::crypto::bytes{'c', 'o', 'm', 'p', 'a', 't'};
+   BOOST_CHECK(encrypted.ciphertext != expected);
+
+   const auto plaintext = fcl::crypto::decrypt_aes256_cbc(fcl::crypto::aes256_cbc_decrypt_request{
+      .key = key,
+      .encrypted = encrypted,
+   });
+
+   BOOST_CHECK_EQUAL_COLLECTIONS(
+      plaintext.begin(),
+      plaintext.end(),
+      expected.begin(),
+      expected.end());
 } FCL_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_SUITE_END()

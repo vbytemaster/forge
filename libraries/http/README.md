@@ -86,12 +86,11 @@ import fcl.http.server;
 auto runtime = fcl::asio::runtime{};
 auto server = fcl::http::server{
    runtime,
-   {.bind_address = "127.0.0.1", .port = 0},
+   {.bind_address = "127.0.0.1", .port = 8080},
    std::move(router),
 };
 
 server.start();
-auto bound_port = server.port();
 ```
 
 ### Use The Client

@@ -60,7 +60,7 @@ router.websocket("/events", [](std::shared_ptr<fcl::websocket::connection> conne
       -> boost::asio::awaitable<void> {
       co_await ws.send(std::move(message));
    });
-   connection->start_read_loop();
+   // fcl::http::server starts the WebSocket read loop after this callback.
 });
 ```
 

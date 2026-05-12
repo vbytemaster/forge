@@ -38,6 +38,17 @@ OpenSSL.
 import fcl.http.base_url;
 
 auto endpoint = fcl::http::parse_base_url("https://127.0.0.1:8443/api");
+auto target = endpoint.make_target("/healthz"); // "/api/healthz"
+```
+
+### Parse A Request Target
+
+```cpp
+import fcl.http.target;
+
+auto parsed = fcl::http::parse_target("/v1/items?limit=10&cursor=abc");
+auto first_segment = parsed.segments.front(); // "v1"
+auto query = parsed.query_params.front();
 ```
 
 ### Route Requests
@@ -52,6 +63,37 @@ router.get("/healthz", [](fcl::http::route_context& ctx) {
 });
 ```
 
+### Add Middleware
+
+```cpp
+router.use([](fcl::http::route_context& ctx, fcl::http::next_handler next) {
+   if (ctx.request.find(fcl::http::field::authorization) == ctx.request.end()) {
+      return fcl::http::make_text_response(
+         ctx.request,
+         fcl::http::status::unauthorized,
+         "missing authorization");
+   }
+   return next();
+});
+```
+
+### Start A Local Server
+
+```cpp
+import fcl.asio.runtime;
+import fcl.http.server;
+
+auto runtime = fcl::asio::runtime{};
+auto server = fcl::http::server{
+   runtime,
+   {.bind_address = "127.0.0.1", .port = 0},
+   std::move(router),
+};
+
+server.start();
+auto bound_port = server.port();
+```
+
 ### Use The Client
 
 ```cpp
@@ -61,9 +103,23 @@ auto client = fcl::http::client{runtime, endpoint};
 auto response = co_await client.async_get("/readyz");
 ```
 
+### Send JSON Without Owning JSON DTOs
+
+```cpp
+auto response = co_await client.async_post_json(
+   "/v1/actions",
+   R"({"dry_run":true})");
+
+if (response.result() != fcl::http::status::ok) {
+   handle_http_error(response.result(), response.body());
+}
+```
+
 ### WebSocket Upgrade Route
 
 ```cpp
+import fcl.websocket.connection;
+
 router.websocket("/events", [](std::shared_ptr<fcl::websocket::connection> ws) {
    // Own the connection lifecycle in the caller.
 });
@@ -83,6 +139,8 @@ boundary.
 - Do not put WebSocket server lifecycle in a separate `websocket::server`; v1
   upgrade starts from the HTTP server/router.
 - Do not log headers or bodies containing credentials without redaction.
+- Do not put authentication policy in `fcl_http`; middleware can call a consumer
+  auth service, but the policy owner is outside this library.
 
 ## Tests
 

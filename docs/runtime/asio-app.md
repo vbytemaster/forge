@@ -56,6 +56,29 @@ All heavy lifecycle methods return `boost::asio::awaitable<void>`. `request_stop
 is intentionally synchronous/noexcept: it signals intent, it does not perform
 cleanup.
 
+## Integration Example
+
+```cpp
+auto runtime = fcl::asio::runtime{{.worker_threads = 2}};
+auto scheduler = fcl::asio::task_scheduler{runtime, {.max_active_tasks = 4}};
+auto ports = fcl::app::port_registry{};
+auto signals = fcl::app::signal_bus{};
+auto events = fcl::app::event_bus{};
+auto diagnostics = fcl::app::diagnostics_store{};
+auto context = fcl::app::plugin_context{scheduler, ports, signals, events, &diagnostics};
+
+auto app = fcl::app::application_runtime{context, std::move(plugins), &diagnostics};
+auto registry = app.describe_config();
+auto cli = fcl::program_options::parse(argc, argv, registry);
+
+co_await app.configure(cli.document);
+co_await app.initialize();
+co_await app.startup();
+```
+
+The program shell owns CLI/YAML/JSON adapters. The `application_runtime` sees
+only an already-merged `config::document`.
+
 ## Failure And Rollback
 
 - Configure failures stop before any runtime side effects should begin.

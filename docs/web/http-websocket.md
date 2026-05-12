@@ -46,6 +46,33 @@ authentication and business routing live above both.
 - Writes are serialized by connection-level mechanics.
 - Reconnect/subscription policy is caller-owned.
 
+## Integration Example
+
+```cpp
+auto router = fcl::http::router{};
+router.get("/healthz", [](fcl::http::route_context& ctx) {
+   return fcl::http::make_text_response(ctx.request, fcl::http::status::ok, "ok");
+});
+
+router.websocket("/events", [](std::shared_ptr<fcl::websocket::connection> ws) {
+   ws->on_message([](fcl::websocket::connection& connection, std::string message)
+      -> boost::asio::awaitable<void> {
+      co_await connection.send(std::move(message));
+   });
+   ws->start_read_loop();
+});
+
+auto server = fcl::http::server{
+   runtime,
+   {.bind_address = "127.0.0.1", .port = 8080},
+   std::move(router),
+};
+server.start();
+```
+
+This example intentionally keeps auth, JSON DTOs and product actions outside
+`fcl_http` and `fcl_websocket`.
+
 ## Security Boundary
 
 HTTP/WebSocket do not provide authority by themselves. Authentication, bearer

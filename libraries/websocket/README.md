@@ -56,7 +56,31 @@ auto target = endpoint.make_target("events"); // "/api/events"
 import fcl.http.router;
 
 router.websocket("/events", [](std::shared_ptr<fcl::websocket::connection> connection) {
-   // Start caller-owned read/write loop.
+   connection->on_message([](fcl::websocket::connection& ws, std::string message)
+      -> boost::asio::awaitable<void> {
+      co_await ws.send(std::move(message));
+   });
+   connection->start_read_loop();
+});
+```
+
+### Send, Ping And Close
+
+```cpp
+import fcl.websocket.connection;
+
+co_await connection->send(R"({"type":"hello"})");
+co_await connection->ping("health");
+auto metrics = connection->metrics();
+co_await connection->close();
+```
+
+### Observe Close
+
+```cpp
+connection->on_close([](fcl::websocket::connection& ws) {
+   auto metrics = ws.metrics();
+   record_disconnect(metrics.close_count);
 });
 ```
 
@@ -72,6 +96,8 @@ stay explicit and should not be hidden behind broad "dev" defaults.
 - Do not leak bearer tokens in query strings when rendering endpoint diagnostics.
 - Do not assume WebSocket reconnection is automatic product behavior; callers own
   policy.
+- Do not make message handlers mutate shared state without a strand/serialization
+  rule in the caller.
 
 ## Tests
 

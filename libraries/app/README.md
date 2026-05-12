@@ -31,6 +31,34 @@ Dependencies: `fcl_asio`, `fcl_config`, Boost headers.
 
 ## Examples
 
+### Publish Config For A Plugin
+
+```cpp
+#include <boost/describe.hpp>
+
+#include <cstdint>
+
+struct http_config {
+   std::uint16_t bind_port = 8080;
+   bool tls_enabled = false;
+};
+
+BOOST_DESCRIBE_STRUCT(http_config, (), (bind_port, tls_enabled))
+
+import fcl.config;
+import fcl.schema;
+
+template <>
+struct fcl::schema::rules<http_config> {
+   static fcl::schema::object_schema<http_config> define() {
+      auto schema = fcl::schema::object<http_config>();
+      schema.field<&http_config::bind_port>("bind-port").default_value(8080).range(1, 65535);
+      schema.field<&http_config::tls_enabled>("tls-enabled").default_value(false);
+      return schema;
+   }
+};
+```
+
 ### Implement A Plugin
 
 ```cpp
@@ -60,6 +88,63 @@ private:
 };
 ```
 
+### Install And Consume Ports
+
+Ports are typed interfaces. They are how plugins share runtime services without
+stringly-typed event coupling.
+
+```cpp
+import fcl.app.ports;
+
+class clock_port {
+public:
+   virtual ~clock_port() = default;
+   virtual std::chrono::system_clock::time_point now() const = 0;
+};
+
+context.ports().install<clock_port>(std::make_shared<system_clock_port>());
+
+auto clock = context.ports().get<clock_port>();
+auto now = clock->now();
+```
+
+### Publish Events Without Creating Business Flow
+
+Events are for diagnostics and operator visibility. They should not replace
+typed ports or direct API calls between components.
+
+```cpp
+import fcl.app.events;
+
+context.events().publish(
+   fcl::app::event_severity::info,
+   "http.startup",
+   "server is listening");
+
+auto subscription = context.events().subscribe({
+   .topic = "http",
+   .min_severity = fcl::app::event_severity::warning,
+   .include_child_topics = true,
+});
+
+while (auto event = subscription.poll()) {
+   render_event(*event);
+}
+```
+
+### Read Diagnostics Snapshot
+
+```cpp
+import fcl.app.diagnostics;
+
+auto snapshot = diagnostics.snapshot(events);
+for (const auto& plugin : snapshot.plugins) {
+   if (!plugin.last_error.empty()) {
+      report(plugin.id, plugin.last_error);
+   }
+}
+```
+
 ### Runtime Flow
 
 ```cpp
@@ -72,6 +157,25 @@ co_await runtime.initialize();
 co_await runtime.startup();
 runtime.request_stop();
 co_await runtime.shutdown();
+```
+
+### Compose Config From Adapters Outside `fcl_app`
+
+```cpp
+import fcl.config;
+import fcl.program_options;
+import fcl.yaml;
+
+auto registry = runtime.describe_config();
+auto file = fcl::yaml::load_document(config_path);
+auto cli = fcl::program_options::parse(argc, argv, registry);
+
+auto effective = fcl::config::merge({
+   file.value,
+   cli.document,
+});
+
+co_await runtime.configure(effective);
 ```
 
 ## Lifecycle Contract
@@ -93,6 +197,9 @@ possible and records diagnostics.
 - Do not make plugin constructors perform I/O; use `initialize`.
 - Do not assume `request_stop()` awaits cleanup; it is synchronous and noexcept.
 - Do not keep parser-specific types in plugin APIs.
+- Do not use the event bus for request/response control flow.
+- Do not install broad concrete implementation classes as ports; expose narrow
+  interfaces.
 
 ## Tests
 

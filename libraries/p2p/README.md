@@ -33,6 +33,7 @@ Dependencies: `fcl_asio`, `fcl_quic`, Boost.Asio.
 ### Start A Node
 
 ```cpp
+import fcl.p2p.identity;
 import fcl.p2p.node;
 import fcl.quic.endpoint;
 
@@ -41,6 +42,7 @@ auto options = fcl::p2p::node_options{
    .private_key_pem = private_key_pem,
 };
 
+auto peer = fcl::p2p::make_peer_id_from_certificate_pem(certificate_pem);
 auto node = fcl::p2p::node{runtime, options};
 co_await node.async_listen(fcl::quic::parse_endpoint("127.0.0.1:9443"));
 ```
@@ -66,6 +68,43 @@ auto session = co_await node.async_connect(remote_endpoint, {
 auto stream = co_await node.async_open_protocol_stream(
    session.remote_peer,
    fcl::p2p::protocol_id{.value = "/example/1"});
+```
+
+### Learn Endpoints And Probe Reachability
+
+```cpp
+import fcl.p2p.peer_store;
+
+node.peers().learn_endpoint(
+   remote_peer,
+   fcl::quic::parse_endpoint("127.0.0.1:9444"),
+   {.bits = fcl::p2p::capabilities::direct_quic | fcl::p2p::capabilities::peer_exchange});
+
+auto reachability = co_await node.async_probe_reachability(observer_peer);
+if (reachability == fcl::p2p::reachability_state::relay_only) {
+   schedule_relay_setup(remote_peer);
+}
+```
+
+### Reserve Relay Explicitly
+
+```cpp
+auto reservation = co_await node.async_reserve_relay(
+   relay_peer,
+   {.ttl = std::chrono::milliseconds{60'000}, .max_streams = 8});
+
+auto relayed = co_await node.async_open_protocol_stream(
+   remote_peer,
+   fcl::p2p::protocol_id{.value = "/example/1"},
+   {.allow_relay = true, .relay_peer = reservation.relay_peer});
+```
+
+### Stop Cleanly
+
+```cpp
+co_await node.async_stop();
+// or, from a synchronous signal path:
+node.stop();
 ```
 
 ## Security Notes

@@ -1,4 +1,4 @@
-add_library(fcl_exception OBJECT exception.cpp)
+add_library(fcl_exception STATIC exception.cpp)
 fcl_target_modules(fcl_exception exception)
 
 target_include_directories(fcl_exception PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})

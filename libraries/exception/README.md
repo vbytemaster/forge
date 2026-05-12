@@ -43,12 +43,32 @@ import fcl.exception.exception;
 
 FCL_THROW(
    "cannot open vault",
-   fcl::error::ctx("path", "/tmp/fcl.vault"),
+   fcl::error::ctx("path", "fcl.vault"),
    fcl::error::secret("passphrase", "not logged"));
 ```
 
 `secret(...)` values render as `<redacted>` in `what()`,
 `format_exception_chain()` and log helpers.
+
+### Assert With Debug Context
+
+```cpp
+#include <fcl/exception/macros.hpp>
+
+import fcl.exception.exception;
+
+void open_slot(std::uint32_t index, std::uint32_t capacity) {
+   FCL_ASSERT(
+      index < capacity,
+      "slot index is out of range",
+      fcl::error::ctx("index", index),
+      fcl::error::ctx("capacity", capacity));
+}
+```
+
+`FCL_ASSERT` throws a std-compatible `context_error`; callers should still catch
+`std::exception` at process boundaries because other FCL layers intentionally use
+standard exceptions such as `std::invalid_argument` and `std::out_of_range`.
 
 ### Preserve Nested Cause
 
@@ -67,6 +87,26 @@ try {
 The rethrow uses `std::throw_with_nested`, so callers can inspect the outer
 `fcl::error::context_error` and the original inner exception.
 
+### Format A Nested Exception Chain
+
+```cpp
+#include <fcl/exception/macros.hpp>
+
+import fcl.exception.exception;
+
+try {
+   try {
+      parse_config();
+   } FCL_CAPTURE_AND_RETHROW(
+      "config load failed",
+      fcl::error::ctx("source", "service.yaml"),
+      fcl::error::secret("passphrase", passphrase))
+} catch (const std::exception& error) {
+   auto chain = fcl::error::format_exception_chain(error);
+   // chain contains outer context, inner std::exception::what(), and redacted secrets.
+}
+```
+
 ### Deadline Check
 
 ```cpp
@@ -76,6 +116,42 @@ FCL_CHECK_DEADLINE(deadline, fcl::error::ctx("phase", "handshake"));
 ```
 
 This throws a std-compatible `context_error` with `std::errc::timed_out`.
+
+### Route Capture Logs To `fcl_log`
+
+`fcl_exception` exposes a neutral callback. The consuming program may route that
+callback to `fcl_log`, syslog, a test capture vector or any other sink.
+
+```cpp
+#include <fcl/exception/macros.hpp>
+
+import fcl.exception.exception;
+import fcl.log.logger;
+import fcl.log.record;
+
+auto log = fcl::logger{"worker"};
+
+fcl::error::set_log_sink([&](std::string_view chain) {
+   log.error(
+      "cleanup failed",
+      {
+         fcl::log_ctx("exception-chain", chain),
+         fcl::log_secret("session-token", token),
+      });
+});
+
+try {
+   cleanup_best_effort();
+} FCL_CAPTURE_AND_LOG(
+   "cleanup best-effort path failed",
+   fcl::error::ctx("phase", "shutdown"),
+   fcl::error::secret("session-token", token))
+```
+
+`FCL_CAPTURE_AND_LOG` deliberately swallows the current exception after routing
+it to the callback. Use it only for cleanup paths where continuing is correct.
+For correctness paths, use `FCL_CAPTURE_AND_RETHROW` or
+`FCL_CAPTURE_LOG_AND_RETHROW`.
 
 ## Typical Mistakes
 

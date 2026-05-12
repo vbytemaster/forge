@@ -1,5 +1,5 @@
 add_library(
-   fcl_websocket OBJECT
+   fcl_websocket STATIC
    connection.cpp
    client.cpp
 )

@@ -1,4 +1,4 @@
-add_library(fcl_yaml OBJECT yaml.cpp)
+add_library(fcl_yaml STATIC yaml.cpp)
 fcl_target_modules(fcl_yaml yaml)
 
 target_include_directories(fcl_yaml PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})

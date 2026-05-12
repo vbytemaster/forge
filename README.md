@@ -120,6 +120,7 @@ belong to the leaf target that actually owns their API or implementation use.
 
 - [docs/index.md](docs/index.md) — карта документации.
 - [docs/roadmap.md](docs/roadmap.md) — release readiness and migration gates.
+- [docs/migration/storlane-fc-to-fcl.md](docs/migration/storlane-fc-to-fcl.md) — migration guide for downstream consumers.
 - [docs/runtime/asio-app.md](docs/runtime/asio-app.md) — runtime, scheduler and async app lifecycle.
 - [docs/web/http-websocket.md](docs/web/http-websocket.md) — HTTP/WebSocket layering.
 - [docs/network/quic-p2p.md](docs/network/quic-p2p.md) — QUIC and P2P model.
@@ -175,3 +176,26 @@ rg "glz::|YAML::Node|notcurses" libraries/*/include -g '*.cppm'
 
 Expected result: no product hits, except explicitly documented macro-only
 headers such as `libraries/exception/include/fcl/exception/macros.hpp`.
+
+## Install And Consume
+
+```bash
+cmake --install build/fcl-debug --prefix build/fcl-install --component dev
+```
+
+Consumer CMake:
+
+```cmake
+find_package(FCL CONFIG REQUIRED)
+
+target_link_libraries(my_program PRIVATE
+   FCL::fcl_raw
+   FCL::fcl_crypto
+   FCL::fcl_app
+   FCL::fcl_log
+)
+```
+
+The repository also contains an external smoke project under
+[`tests/package_consumer`](tests/package_consumer) that verifies installed
+targets and module imports through `find_package(FCL CONFIG REQUIRED)`.

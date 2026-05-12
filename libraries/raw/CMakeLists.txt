@@ -1,5 +1,5 @@
 add_library(
-   fcl_raw OBJECT
+   fcl_raw STATIC
    datastream.cpp
    raw.cpp
    varint.cpp

@@ -1,5 +1,5 @@
 add_library(
-   fcl_p2p OBJECT
+   fcl_p2p STATIC
    errors.cpp
    identity.cpp
    scoring.cpp

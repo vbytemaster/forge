@@ -1,5 +1,5 @@
 add_library(
-   fcl_variant OBJECT
+   fcl_variant STATIC
    variant_chrono.cpp
    variant.cpp
    variant_format.cpp

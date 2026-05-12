@@ -17,6 +17,11 @@ FCL.
 - Separate HTTP, WebSocket, QUIC and P2P libraries.
 - Optional Notcurses-backed TUI library.
 - Production-grade library READMEs and cross-cutting docs.
+- Synchronous logger v2 with structured records, sinks, redaction and private
+  stacktrace backend.
+- CMake install/export package with external consumer smoke.
+- Buildable app/exception examples that downstream programs can copy as
+  starting patterns.
 
 ## Library Families
 
@@ -32,6 +37,8 @@ FCL.
   boundary and diagnostics.
 - [Config](config/schema-config-program-options.md): schema rules, neutral
   config documents, CLI adapter and redaction.
+- [Migration Guide](migration/storlane-fc-to-fcl.md): target mapping, raw
+  compatibility, Boost.Describe, chrono, exception and logger migration.
 
 ## Release Gates
 
@@ -66,10 +73,8 @@ Security gates:
 ## Remaining Before Downstream Migration
 
 - Confirm full regression on the target toolchain.
-- Review CMake install/export packaging for consumers.
-- Produce a migration guide from old FC/FCL transitional names to final FCL
-  modules.
-- Decide which examples should become buildable sample programs.
+- Re-run package install plus external `find_package(FCL CONFIG REQUIRED)`
+  consumer smoke after review fixes.
 - Run external review focused on documentation quality, architecture boundaries,
   dependency hygiene, security and production readiness.
 

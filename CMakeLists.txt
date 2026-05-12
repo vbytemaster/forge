@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.31)
 project(storlane-fc VERSION 0.1.0 LANGUAGES C CXX ASM)
 
 include(GNUInstallDirs)
+include(CheckCXXSourceCompiles)
+include(CMakePackageConfigHelpers)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
@@ -48,6 +50,22 @@ find_package(
    Boost 1.90 REQUIRED CONFIG
    COMPONENTS headers date_time iostreams url program_options
 )
+find_package(boost_stacktrace_basic CONFIG QUIET)
+check_cxx_source_compiles(
+   "#include <stacktrace>
+   #ifndef __cpp_lib_stacktrace
+   #error no std stacktrace feature macro
+   #endif
+   int main() { auto trace = std::stacktrace::current(); return static_cast<int>(trace.size()); }"
+   FCL_HAS_STD_STACKTRACE
+)
+if(FCL_HAS_STD_STACKTRACE)
+   message(STATUS "FCL log stacktrace backend: std::stacktrace")
+elseif(TARGET Boost::stacktrace_basic)
+   message(STATUS "FCL log stacktrace backend: Boost::stacktrace_basic")
+else()
+   message(STATUS "FCL log stacktrace backend: unavailable")
+endif()
 
 find_package(OpenSSL 3.5 REQUIRED COMPONENTS SSL Crypto)
 find_package(Ngtcp2 REQUIRED)
@@ -155,7 +173,7 @@ set_target_properties(
 )
 
 set(
-   FCL_PUBLIC_INCLUDE_DIRS
+   FCL_SOURCE_INCLUDE_DIRS
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/core/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/exception/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/reflect/include"
@@ -177,9 +195,14 @@ set(
 )
 
 if(FCL_ENABLE_TUI AND FCL_TUI_NOTCURSES_TARGET)
-   list(APPEND FCL_PUBLIC_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/libraries/tui/include")
+   list(APPEND FCL_SOURCE_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/libraries/tui/include")
 endif()
 
+set(FCL_PUBLIC_INCLUDE_DIRS)
+foreach(_fcl_include_dir IN LISTS FCL_SOURCE_INCLUDE_DIRS)
+   list(APPEND FCL_PUBLIC_INCLUDE_DIRS "$<BUILD_INTERFACE:${_fcl_include_dir}>")
+endforeach()
+list(APPEND FCL_PUBLIC_INCLUDE_DIRS "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
 
 function(fcl_target_modules target lib)
    file(
@@ -197,11 +220,15 @@ function(fcl_target_modules target lib)
          BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include"
          FILES ${_fcl_target_module_files}
    )
+   target_compile_features(${target} PUBLIC cxx_std_23)
 endfunction()
 
 
 add_library(secp256k1-internal INTERFACE)
-target_include_directories(secp256k1-internal INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/secp256k1/src")
+target_include_directories(
+   secp256k1-internal INTERFACE
+      "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/vendor/secp256k1/src>"
+)
 target_compile_definitions(
    secp256k1-internal INTERFACE
       ENABLE_MODULE_RECOVERY=1
@@ -223,8 +250,9 @@ add_library(
 )
 target_include_directories(
    secp256k1 PUBLIC
-      "${CMAKE_CURRENT_SOURCE_DIR}/vendor/secp256k1"
-      "${CMAKE_CURRENT_SOURCE_DIR}/vendor/secp256k1/include"
+      "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/vendor/secp256k1>"
+      "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/vendor/secp256k1/include>"
+      "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
 target_link_libraries(secp256k1 PRIVATE secp256k1-internal)
 
@@ -243,6 +271,11 @@ endif()
 
 add_subdirectory(vendor/bn256/src)
 add_subdirectory(vendor/bls12-381 EXCLUDE_FROM_ALL)
+set_property(
+   TARGET bls12-381 PROPERTY INTERFACE_INCLUDE_DIRECTORIES
+      "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/vendor/bls12-381/include>"
+      "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
 
 if(NOT FCL_ENABLE_VENDOR_TESTS)
    file(
@@ -275,69 +308,60 @@ if(FCL_ENABLE_TUI AND FCL_TUI_NOTCURSES_TARGET)
 endif()
 
 set(
-   FCL_OBJECT_SOURCES
-   $<TARGET_OBJECTS:fcl_core>
-   $<TARGET_OBJECTS:fcl_exception>
-   $<TARGET_OBJECTS:fcl_reflect>
-   $<TARGET_OBJECTS:fcl_schema>
-   $<TARGET_OBJECTS:fcl_variant>
-   $<TARGET_OBJECTS:fcl_raw>
-   $<TARGET_OBJECTS:fcl_config>
-   $<TARGET_OBJECTS:fcl_json>
-   $<TARGET_OBJECTS:fcl_yaml>
-   $<TARGET_OBJECTS:fcl_program_options>
-   $<TARGET_OBJECTS:fcl_log>
-   $<TARGET_OBJECTS:fcl_crypto>
-   $<TARGET_OBJECTS:fcl_asio>
-   $<TARGET_OBJECTS:fcl_http>
-   $<TARGET_OBJECTS:fcl_websocket>
-   $<TARGET_OBJECTS:fcl_quic>
-   $<TARGET_OBJECTS:fcl_p2p>
-   $<TARGET_OBJECTS:fcl_app>
+   FCL_LEAF_TARGETS
+   fcl_core
+   fcl_exception
+   fcl_reflect
+   fcl_schema
+   fcl_variant
+   fcl_raw
+   fcl_config
+   fcl_json
+   fcl_yaml
+   fcl_program_options
+   fcl_log
+   fcl_crypto
+   fcl_asio
+   fcl_http
+   fcl_websocket
+   fcl_quic
+   fcl_p2p
+   fcl_app
 )
 
 if(TARGET fcl_tui)
-   list(APPEND FCL_OBJECT_SOURCES $<TARGET_OBJECTS:fcl_tui>)
+   list(APPEND FCL_LEAF_TARGETS fcl_tui)
 endif()
 
-add_library(fcl STATIC ${FCL_OBJECT_SOURCES})
+add_library(fcl STATIC fcl.cpp)
 
 target_include_directories(fcl PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
    fcl PUBLIC
-      fcl_core
-      fcl_exception
-      fcl_reflect
-      fcl_schema
-      fcl_variant
-      fcl_raw
-      fcl_config
-      fcl_json
-      fcl_yaml
-      fcl_program_options
-      fcl_log
-      fcl_crypto
-      fcl_asio
-      fcl_http
-      fcl_websocket
-      fcl_quic
-      fcl_p2p
-      fcl_app
+      ${FCL_LEAF_TARGETS}
 )
 
-if(TARGET fcl_tui)
-   target_link_libraries(fcl PUBLIC fcl_tui)
-endif()
-
 if(DEFINED BUILD_TESTING AND BUILD_TESTING)
+   add_subdirectory(examples)
    add_subdirectory(tests)
 endif()
 
 install(
-   TARGETS fcl
-   LIBRARY DESTINATION ${CMAKE_INSTALL_FULL_LIBDIR} COMPONENT dev EXCLUDE_FROM_ALL
-   ARCHIVE DESTINATION ${CMAKE_INSTALL_FULL_LIBDIR} COMPONENT dev EXCLUDE_FROM_ALL
+   TARGETS fcl ${FCL_LEAF_TARGETS}
+   EXPORT FCLTargets
+   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT dev EXCLUDE_FROM_ALL
+   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT dev EXCLUDE_FROM_ALL
+   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT dev EXCLUDE_FROM_ALL
+   FILE_SET CXX_MODULES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
+)
+
+install(
+   TARGETS secp256k1-internal secp256k1 bls12-381
+   EXPORT FCLTargets
+   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT dev EXCLUDE_FROM_ALL
+   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT dev EXCLUDE_FROM_ALL
+   PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/bls12-381 COMPONENT dev EXCLUDE_FROM_ALL
 )
 
 install(
@@ -359,12 +383,62 @@ install(
              libraries/quic/include/fcl
              libraries/p2p/include/fcl
              libraries/app/include/fcl
-   DESTINATION ${CMAKE_INSTALL_FULL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
+   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
 )
 
 if(TARGET fcl_tui)
    install(
       DIRECTORY libraries/tui/include/fcl
-      DESTINATION ${CMAKE_INSTALL_FULL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
+      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
    )
 endif()
+
+install(
+   DIRECTORY vendor/secp256k1/include/
+   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+   COMPONENT dev
+   EXCLUDE_FROM_ALL
+)
+install(
+   DIRECTORY vendor/bls12-381/include/
+   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+   COMPONENT dev
+   EXCLUDE_FROM_ALL
+)
+
+install(
+   EXPORT FCLTargets
+   FILE FCLTargets.cmake
+   NAMESPACE FCL::
+   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/FCL
+   COMPONENT dev
+   EXCLUDE_FROM_ALL
+)
+
+configure_package_config_file(
+   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FCLConfig.cmake.in"
+   "${CMAKE_CURRENT_BINARY_DIR}/FCLConfig.cmake"
+   INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/FCL"
+)
+write_basic_package_version_file(
+   "${CMAKE_CURRENT_BINARY_DIR}/FCLConfigVersion.cmake"
+   VERSION ${PROJECT_VERSION}
+   COMPATIBILITY SameMajorVersion
+)
+install(
+   FILES
+      "${CMAKE_CURRENT_BINARY_DIR}/FCLConfig.cmake"
+      "${CMAKE_CURRENT_BINARY_DIR}/FCLConfigVersion.cmake"
+   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/FCL
+   COMPONENT dev
+   EXCLUDE_FROM_ALL
+)
+install(
+   DIRECTORY cmake/
+   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/FCL/modules
+   COMPONENT dev
+   EXCLUDE_FROM_ALL
+   FILES_MATCHING
+      PATTERN "*.cmake"
+      PATTERN "FCLConfig.cmake.in" EXCLUDE
+)

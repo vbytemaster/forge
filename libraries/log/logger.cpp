@@ -2,7 +2,10 @@ module;
 #include <memory>
 #include <iostream>
 #include <mutex>
+#include <source_location>
 #include <string>
+#include <sstream>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -10,10 +13,22 @@ module fcl.log.logger;
 
 import fcl.log.log_message;
 import fcl.log.appender;
+import fcl.log.record;
 import fcl.log.logger_config;
 import fcl.core.utility;
+import fcl.core.chrono;
 
 namespace fcl {
+
+namespace {
+
+std::string current_thread_id() {
+   auto out = std::ostringstream{};
+   out << std::this_thread::get_id();
+   return out.str();
+}
+
+} // namespace
 
 static void ensure_default_logging_configured() {
    static const bool configured = configure_logging(logging_config::default_config());
@@ -29,6 +44,7 @@ class logger::impl {
    log_level _level;
 
    std::vector<appender::ptr> _appenders;
+   std::vector<std::shared_ptr<sink>> _sinks;
 };
 
 logger::logger() : my(new impl()) {}
@@ -92,6 +108,65 @@ void logger::log(log_message m) {
    }
 }
 
+void logger::log(log_record record) {
+   std::unique_lock g(log_config::get().log_mutex);
+   record.logger = my->_name;
+
+   if (!my->_sinks.empty()) {
+      const auto sinks = my->_sinks;
+      g.unlock();
+      for (const auto& current_sink : sinks) {
+         try {
+            current_sink->log(record);
+         } catch (const std::exception& e) {
+            std::cerr << "ERROR: logger::log sink std::exception: " << e.what() << std::endl;
+         } catch (...) {
+            std::cerr << "ERROR: logger::log sink unknown exception" << std::endl;
+         }
+      }
+   } else if (my->_parent != nullptr) {
+      logger parent = my->_parent;
+      g.unlock();
+      parent.log(std::move(record));
+   }
+}
+
+void logger::log(log_level level, std::string message, log_fields fields, std::source_location location) {
+   if (!is_enabled(level)) {
+      return;
+   }
+
+   auto record = log_record{
+       .level = level,
+       .message = std::move(message),
+       .fields = std::move(fields),
+       .timestamp = fcl::chrono::now_us(),
+       .thread_id = current_thread_id(),
+       .thread_name = fcl::get_thread_name(),
+       .location = location,
+   };
+   if (static_cast<int>(level) >= static_cast<int>(log_level::error)) {
+      record.stacktrace = capture_stacktrace(1);
+   }
+   log(std::move(record));
+}
+
+void logger::debug(std::string message, log_fields fields, std::source_location location) {
+   log(log_level::debug, std::move(message), std::move(fields), location);
+}
+
+void logger::info(std::string message, log_fields fields, std::source_location location) {
+   log(log_level::info, std::move(message), std::move(fields), location);
+}
+
+void logger::warn(std::string message, log_fields fields, std::source_location location) {
+   log(log_level::warn, std::move(message), std::move(fields), location);
+}
+
+void logger::error(std::string message, log_fields fields, std::source_location location) {
+   log(log_level::error, std::move(message), std::move(fields), location);
+}
+
 void logger::set_name(const std::string& n) {
    my->_name = n;
 }
@@ -131,6 +206,13 @@ logger& logger::set_log_level(log_level ll) {
 
 void logger::add_appender(const std::shared_ptr<appender>& a) {
    my->_appenders.push_back(a);
+}
+
+void logger::add_sink(std::shared_ptr<sink> sink) {
+   if (!sink) {
+      throw std::invalid_argument{"cannot add null log sink"};
+   }
+   my->_sinks.push_back(std::move(sink));
 }
 
 } // namespace fcl

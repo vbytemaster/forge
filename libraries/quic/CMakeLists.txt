@@ -1,5 +1,5 @@
 add_library(
-   fcl_quic OBJECT
+   fcl_quic STATIC
    errors.cpp
    endpoint.cpp
    security.cpp

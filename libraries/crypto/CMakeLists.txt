@@ -1,6 +1,6 @@
 file(GLOB FCL_CRYPTO_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 
-add_library(fcl_crypto OBJECT ${FCL_CRYPTO_SOURCES})
+add_library(fcl_crypto STATIC ${FCL_CRYPTO_SOURCES})
 fcl_target_modules(fcl_crypto crypto)
 
 target_include_directories(

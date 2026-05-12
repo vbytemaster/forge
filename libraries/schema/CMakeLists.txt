@@ -1,4 +1,4 @@
-add_library(fcl_schema OBJECT schema.cpp)
+add_library(fcl_schema STATIC schema.cpp)
 fcl_target_modules(fcl_schema schema)
 
 target_include_directories(fcl_schema PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})

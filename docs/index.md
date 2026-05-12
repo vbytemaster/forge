@@ -15,6 +15,7 @@ cross-library architecture decisions.
 | [tui/notcurses-component-library.md](tui/notcurses-component-library.md) | TUI value models, deterministic rendering, navigation and Notcurses boundary. |
 | [codecs/json-yaml-glaze.md](codecs/json-yaml-glaze.md) | JSON/YAML API shape, Glaze backend isolation and diagnostics. |
 | [config/schema-config-program-options.md](config/schema-config-program-options.md) | Schema, config documents, CLI adapter, merge order and redaction. |
+| [migration/storlane-fc-to-fcl.md](migration/storlane-fc-to-fcl.md) | Migration map from old FC-style APIs to final FCL modules and targets. |
 | [fcl_concept_ru.md](fcl_concept_ru.md) | Original Russian concept and long-form design motivation. |
 
 ## Library Guides

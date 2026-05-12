@@ -1,0 +1,7 @@
+add_executable(fcl_example_app_lifecycle application_lifecycle.cpp)
+target_link_libraries(fcl_example_app_lifecycle PRIVATE fcl)
+add_test(NAME test_fcl_example_app_lifecycle COMMAND fcl_example_app_lifecycle WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(fcl_example_exception_logging exception_logging.cpp)
+target_link_libraries(fcl_example_exception_logging PRIVATE fcl)
+add_test(NAME test_fcl_example_exception_logging COMMAND fcl_example_exception_logging WORKING_DIRECTORY ${CMAKE_BINARY_DIR})

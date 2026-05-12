@@ -1,5 +1,5 @@
 add_library(
-   fcl_http OBJECT
+   fcl_http STATIC
    base_url.cpp
    target.cpp
    route_context.cpp

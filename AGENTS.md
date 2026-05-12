@@ -76,6 +76,12 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - Logging core should stay small: console/file/JSONL-style sinks and structured fields.
 - External logging integrations must be optional adapters, not core dependencies.
 - Do not log secrets, passphrases, private keys, token values, or raw key material.
+- `fcl_log` is synchronous in core. It must not import `fcl_asio`, own a
+  background queue or encode runtime policy; async logging belongs in a future
+  adapter.
+- Stack traces are diagnostic snapshots behind FCL-owned public types. Prefer
+  `std::stacktrace` when available, private Boost.Stacktrace fallback otherwise,
+  and expose neither backend type from public modules.
 
 ## Crypto
 
@@ -158,6 +164,9 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - `fcl_reflect` owns only Boost.Describe metadata helpers. It must not import or link `fcl_variant`.
 - `fcl_variant` owns described-type conversion to and from `fcl::variant`; described variant mapping must not live in `fcl_reflect`.
 - The umbrella `fcl` target must not collect external dependencies "just in case"; put each dependency on the target that owns the include/link usage.
+- Installed consumers should link leaf targets such as `FCL::fcl_raw`,
+  `FCL::fcl_crypto` or `FCL::fcl_app` when they need a small dependency
+  footprint. `FCL::fcl` is intentionally the whole feature set.
 - Raw serialization belongs only to `libraries/raw`; do not define `namespace fcl::raw` or raw overloads in `core`.
 - Filesystem/config/path-layout helpers are not part of the FCL core foundation. Use `std::filesystem` directly or keep app-specific helpers in consuming projects.
 - Removed FC-like source APIs must not return as public FCL APIs: `fcl::array`, `fcl::fwd`, `fcl::safe`, `fcl::filesystem`, flat/interprocess containers, mock time and compatibility mutexes.

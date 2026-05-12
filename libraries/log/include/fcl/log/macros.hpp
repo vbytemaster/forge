@@ -28,6 +28,12 @@
 #define FCL_LOG_MESSAGE(LOG_LEVEL, FORMAT, ...)                                                                        \
    fcl::log_message(FCL_LOG_CONTEXT(LOG_LEVEL), FORMAT, fcl::mutable_variant_object() __VA_ARGS__)
 
+#define fcl_log(LOGGER, LOG_LEVEL, MESSAGE, ...)                                                                       \
+   FCL_MULTILINE_MACRO_BEGIN                                                                                           \
+   if ((LOGGER).is_enabled(LOG_LEVEL))                                                                                 \
+      (LOGGER).log((LOG_LEVEL), (MESSAGE), fcl::make_log_fields(__VA_ARGS__), std::source_location::current());        \
+   FCL_MULTILINE_MACRO_END
+
 // suppress warning "conditional expression is constant" in the while(0) for visual c++
 // http://cnicholson.net/2009/03/stupid-c-tricks-dowhile0-and-c4127/
 #define FCL_MULTILINE_MACRO_BEGIN do {

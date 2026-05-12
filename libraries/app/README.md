@@ -67,7 +67,6 @@ public:
    void request_stop() noexcept override {
       app_.request_stop();
       scheduler_.stop();
-      runtime_.stop();
    }
 
    boost::asio::awaitable<void> shutdown() override {
@@ -91,7 +90,12 @@ private:
 
 The class above is intentionally thin. Product code may add CLI/YAML loading,
 PID files or platform service integration around it, but the plugin lifecycle
-stays in `application_runtime`.
+stays in `application_runtime`. Notice that `request_stop()` does not stop the
+runtime directly: async `shutdown()` still needs the runtime to run cleanup.
+
+Buildable versions of this pattern live in
+[`examples/app/application_lifecycle.cpp`](../../examples/app/application_lifecycle.cpp)
+and [`examples/app/exception_logging.cpp`](../../examples/app/exception_logging.cpp).
 
 ### Publish Config For A Plugin
 
@@ -317,6 +321,31 @@ runtime.request_stop();
 co_await runtime.shutdown();
 ```
 
+### Handle Startup Failure With Rollback
+
+`application_runtime::startup()` rolls back already-started plugins through
+`shutdown()` when a later plugin fails. A program should still record the failure
+and request stop before returning an error code.
+
+```cpp
+#include <fcl/exception/macros.hpp>
+
+import fcl.app;
+import fcl.exception.exception;
+
+try {
+   co_await runtime.configure(config_document);
+   co_await runtime.initialize();
+   co_await runtime.startup();
+} FCL_CAPTURE_AND_RETHROW(
+   "application startup failed",
+   fcl::error::ctx("program", "service"))
+```
+
+The diagnostics store keeps the plugin lifecycle state, so operator-facing
+tools can show which plugin failed and which plugins were shut down during
+rollback.
+
 ### Compose Config From Adapters Outside `fcl_app`
 
 ```cpp
@@ -334,6 +363,32 @@ auto effective = fcl::config::merge({
 });
 
 co_await runtime.configure(effective);
+```
+
+### Shape A Program Entrypoint
+
+The recommended foreground shape is explicit: configure, initialize, startup,
+wait for a stop signal, then shutdown. Tests can replace `wait_for_stop_signal`
+with a deterministic hook.
+
+```cpp
+import fcl.asio.blocking;
+
+int main(int argc, char** argv) {
+   auto app = service_app{make_plugins()};
+
+   try {
+      fcl::asio::blocking::run(app.runtime(), app.initialize());
+      fcl::asio::blocking::run(app.runtime(), app.startup());
+      wait_for_stop_signal([&] { app.request_stop(); });
+      fcl::asio::blocking::run(app.runtime(), app.shutdown());
+      return 0;
+   } catch (...) {
+      app.request_stop();
+      fcl::asio::blocking::run(app.runtime(), app.shutdown());
+      throw;
+   }
+}
 ```
 
 ## Lifecycle Contract

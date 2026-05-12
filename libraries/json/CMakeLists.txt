@@ -1,4 +1,4 @@
-add_library(fcl_json OBJECT json.cpp)
+add_library(fcl_json STATIC json.cpp)
 fcl_target_modules(fcl_json json)
 
 target_include_directories(fcl_json PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})

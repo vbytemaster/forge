@@ -1,5 +1,5 @@
 add_library(
-   fcl_config OBJECT
+   fcl_config STATIC
    key_path.cpp
    document.cpp
    component.cpp

@@ -33,6 +33,14 @@ target_link_libraries(test_fcl_exception fcl Boost::included_unit_test_framework
 add_test(NAME test_fcl_exception COMMAND test_fcl_exception WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
+   test_fcl_log
+   unit/main.cpp
+   log/log_tests.cpp
+)
+target_link_libraries(test_fcl_log fcl Boost::included_unit_test_framework)
+add_test(NAME test_fcl_log COMMAND test_fcl_log WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(
    test_fcl_json
    unit/main.cpp
    json/test_json.cpp
@@ -141,3 +149,24 @@ if(TARGET fcl_tui)
 else()
    message(STATUS "Skipping test_fcl_tui: fcl_tui is not available")
 endif()
+
+set(FCL_PACKAGE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/fcl-package-install")
+add_test(
+   NAME test_fcl_package_install
+   COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${FCL_PACKAGE_INSTALL_PREFIX} --component dev
+)
+add_test(
+   NAME test_fcl_package_consumer
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_consumer
+      ${CMAKE_BINARY_DIR}/fcl-package-consumer
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options
+         -DCMAKE_PREFIX_PATH=${FCL_PACKAGE_INSTALL_PREFIX}
+         -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+         -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+         -DCMAKE_OSX_SYSROOT=${CMAKE_OSX_SYSROOT}
+      --test-command fcl_package_consumer
+)
+set_tests_properties(test_fcl_package_consumer PROPERTIES DEPENDS test_fcl_package_install)

@@ -1,5 +1,5 @@
 add_library(
-   fcl_asio OBJECT
+   fcl_asio STATIC
    runtime.cpp
    task_scheduler.cpp
 )

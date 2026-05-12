@@ -1,5 +1,5 @@
 add_library(
-   fcl_app OBJECT
+   fcl_app STATIC
    application.cpp
    ports.cpp
    events.cpp

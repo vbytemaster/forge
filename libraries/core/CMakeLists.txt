@@ -6,7 +6,7 @@ configure_file(
 )
 
 add_library(
-   fcl_core OBJECT
+   fcl_core STATIC
    chrono.cpp
    string.cpp
    uint128.cpp

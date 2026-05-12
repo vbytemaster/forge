@@ -1,5 +1,5 @@
 add_library(
-   fcl_tui OBJECT
+   fcl_tui STATIC
    render.cpp
    navigation.cpp
    runner.cpp

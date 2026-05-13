@@ -23,6 +23,9 @@ namespace {
 namespace po = boost::program_options;
 
 [[nodiscard]] std::string option_name(const config::component_descriptor& component, const std::string& field) {
+   if (component.section.empty()) {
+      return field;
+   }
    return component.section + "." + field;
 }
 

@@ -148,6 +148,13 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - Library README files describe only the local library: problem, target, public modules, dependencies, examples, tests and boundaries.
 - A library README must be useful to a new user without reading implementation files first: state when to use the library, when not to use it, include working module imports and API-shaped examples, name common mistakes, and call out security/redaction concerns when relevant.
 - README examples must use real public module names and symbols from the current tree. Do not document future API as if it already exists.
+- README examples must teach production patterns, not test shortcuts. Crypto
+  examples that hash, sign or encrypt product DTOs should prefer the path
+  `Boost.Describe -> fcl::raw::pack -> hash/sign/encrypt` instead of ad-hoc
+  strings, JSON text or manual field concatenation.
+- Runtime-sensitive README files must call out technical risks and
+  anti-patterns that lead to abort-driven error handling, detached background
+  work, secret leaks, unbounded queues or unstable shutdown states.
 - Cross-cutting architecture belongs under `docs/`, not inside a single library README.
 - Markdown links must be relative to the current repository and must point to existing files.
 - Absolute local machine paths are forbidden in docs, examples and generated report markdown.

@@ -117,6 +117,33 @@ FCL_CHECK_DEADLINE(deadline, fcl::error::ctx("phase", "handshake"));
 
 This throws a std-compatible `context_error` with `std::errc::timed_out`.
 
+### Process Boundary With Graceful Shutdown
+
+At a daemon boundary, catch `std::exception`, format the chain, request
+shutdown, and return an error. Do not turn recoverable startup failures into
+`abort()` or detached cleanup.
+
+```cpp
+#include <fcl/exception/macros.hpp>
+
+import fcl.exception.exception;
+
+int run_service() {
+   try {
+      return run_foreground();
+   } catch (const std::exception& error) {
+      auto chain = fcl::error::format_exception_chain(error);
+      report_startup_failure(chain);
+      request_stop_noexcept();
+      shutdown_best_effort();
+      return 1;
+   }
+}
+```
+
+The chain is diagnostic text, not a control-flow taxonomy. Product code should
+use typed domain errors for decisions such as retry, backoff or user messaging.
+
 ### Route Capture Logs To `fcl_log`
 
 `fcl_exception` exposes a neutral callback. The consuming program may route that
@@ -160,6 +187,10 @@ For correctness paths, use `FCL_CAPTURE_AND_RETHROW` or
 - Do not put secrets into the plain message string. Use `secret(key, value)`.
 - Do not use `FCL_CAPTURE_AND_LOG` on correctness paths if the error must
   propagate; logging must not become silent recovery.
+- Do not call `std::terminate()`/`abort()` just to get a stack trace. Capture
+  context, log the chain, and let the application lifecycle shut down.
+- Do not branch on substrings from `what()`. Context fields are for diagnostics;
+  product control flow should use typed errors or explicit result codes.
 
 ## Tests
 

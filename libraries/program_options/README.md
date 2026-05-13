@@ -68,6 +68,10 @@ auto effective = fcl::config::merge({
 });
 ```
 
+CLI should be the last high-precedence source in a normal daemon bootstrap.
+Keep the precedence visible near the program entrypoint so operators can reason
+about why a value won.
+
 ## Diagnostics
 
 Conversion and parser failures return diagnostics such as
@@ -80,6 +84,11 @@ diagnostic/log pipeline.
   descriptors; the application shell decides which adapters are active.
 - Do not encode config source precedence in this library. Use `fcl_config::merge`.
 - Do not document aliases that are not present in schema descriptors.
+- Do not pass secrets on argv unless the product explicitly accepts the process
+  list/history risk. Prefer config files with permissions, stdin or a product
+  secret store.
+- Do not bridge YAML `options:` arrays into argv. Parse YAML as config and CLI
+  as CLI, then merge documents.
 
 ## Tests
 

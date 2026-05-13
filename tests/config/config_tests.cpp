@@ -66,6 +66,30 @@ BOOST_AUTO_TEST_CASE(config_document_paths_merge_and_decode) {
    BOOST_TEST(decoded.value.tags[1] == "beta");
 }
 
+BOOST_AUTO_TEST_CASE(config_document_erase_and_rename_nested_keys) {
+   auto doc = fcl::config::document{};
+   doc.set("http.bind-port", 8080);
+   doc.set("http.host", "127.0.0.1");
+   doc.set("legacy.timeout", 30);
+
+   BOOST_TEST(doc.rename("http.host", "http.bind-host"));
+   BOOST_TEST(doc.try_get("http.host") == nullptr);
+   const auto* host = doc.try_get("http.bind-host");
+   BOOST_REQUIRE(host != nullptr);
+   BOOST_TEST(std::get<std::string>(host->storage) == "127.0.0.1");
+
+   BOOST_CHECK_THROW(static_cast<void>(doc.rename("http.bind-port", "http.bind-host")), std::invalid_argument);
+   BOOST_TEST(doc.rename("http.bind-port", "http.bind-host", true));
+   const auto* overwritten = doc.try_get("http.bind-host");
+   BOOST_REQUIRE(overwritten != nullptr);
+   BOOST_TEST(std::get<std::int64_t>(overwritten->storage) == 8080);
+
+   BOOST_TEST(doc.erase("legacy.timeout"));
+   BOOST_TEST(doc.try_get("legacy.timeout") == nullptr);
+   BOOST_TEST(!doc.erase("legacy.timeout"));
+   BOOST_TEST(!doc.rename("missing.value", "http.missing"));
+}
+
 BOOST_AUTO_TEST_CASE(config_reports_required_unknown_deprecated_and_redacts) {
    auto doc = fcl::config::document{};
    doc.set("http.bind-host", "127.0.0.1");
@@ -88,4 +112,46 @@ BOOST_AUTO_TEST_CASE(config_registry_rejects_duplicate_aliases) {
    auto registry = fcl::config::component_registry{};
    registry.add(fcl::config::describe_component<http_config>("http"));
    BOOST_CHECK_THROW(registry.add(fcl::config::describe_component<http_config>("http")), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(config_migration_chain_updates_document_version) {
+   auto doc = fcl::config::document{};
+   doc.set("http.port", 8080);
+
+   auto plan = fcl::config::migration_plan{};
+   plan.step(0, 1, "rename port", [](fcl::config::document& input) {
+      static_cast<void>(input.rename("http.port", "http.bind-port"));
+   });
+   plan.step(1, 2, "add host", [](fcl::config::document& input) {
+      input.set("http.bind-host", "127.0.0.1");
+   });
+
+   const auto migrated = fcl::config::migrate(std::move(doc), plan);
+   BOOST_TEST(migrated.ok());
+   BOOST_TEST(migrated.from_version == 0U);
+   BOOST_TEST(migrated.to_version == 2U);
+   BOOST_TEST(migrated.value.try_get("http.port") == nullptr);
+   BOOST_REQUIRE(migrated.value.try_get("http.bind-port") != nullptr);
+   BOOST_REQUIRE(migrated.value.try_get("http.bind-host") != nullptr);
+   const auto* version = migrated.value.try_get("version");
+   BOOST_REQUIRE(version != nullptr);
+   BOOST_TEST(std::get<std::uint64_t>(version->storage) == 2U);
+}
+
+BOOST_AUTO_TEST_CASE(config_migration_reports_missing_and_future_versions) {
+   auto plan = fcl::config::migration_plan{};
+   plan.step(0, 1, "first", [](fcl::config::document&) {});
+   plan.step(2, 3, "gap", [](fcl::config::document&) {});
+
+   auto missing = fcl::config::migrate(fcl::config::document{}, plan);
+   BOOST_TEST(!missing.ok());
+   BOOST_REQUIRE_EQUAL(missing.diagnostics.size(), 1U);
+   BOOST_TEST(missing.diagnostics.front().code == "config.migration.missing-step");
+
+   auto future_doc = fcl::config::document{};
+   future_doc.set("version", 9U);
+   auto future = fcl::config::migrate(std::move(future_doc), plan);
+   BOOST_TEST(!future.ok());
+   BOOST_REQUIRE_EQUAL(future.diagnostics.size(), 1U);
+   BOOST_TEST(future.diagnostics.front().code == "config.migration.future-version");
 }

@@ -90,7 +90,7 @@ class application_shell : public application_base {
 
  private:
    void ensure_plugins_registered();
-   void ensure_plugins_instantiated();
+   void instantiate_plugins(const fcl::config::document& document);
    [[nodiscard]] fcl::config::component_registry collect_config();
    [[nodiscard]] fcl::config::document make_effective_config(const fcl::config::document& document);
    boost::asio::awaitable<void> apply_effective_config(fcl::config::document document);

@@ -24,6 +24,8 @@ struct document {
    std::map<std::string, source_location> locations;
 
    void set(std::string dotted_path, value input, source_location location = {});
+   bool erase(std::string_view dotted_path);
+   bool rename(std::string_view from_path, std::string_view to_path, bool overwrite = false);
    [[nodiscard]] const value* try_get(std::string_view dotted_path) const;
    [[nodiscard]] const value::object_type* object_at(std::string_view dotted_path) const;
 };

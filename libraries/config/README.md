@@ -24,6 +24,7 @@ decodes typed objects and redacts secret fields using schema metadata.
 - `fcl.config.document` — `document`, `merge`, `effective_document`.
 - `fcl.config.component` — component descriptors, registry, views, redaction.
 - `fcl.config.decode` — `decode<T>`, `defaults_for<T>`, `describe_component<T>`.
+- `fcl.config.migration` — document migrations before typed decode.
 - `fcl.config` — aggregate import.
 
 Target: `fcl_config`.
@@ -82,6 +83,32 @@ auto host = view.get_or<std::string>("bind-host", "127.0.0.1");
 auto port = view.get_or<std::uint16_t>("bind-port", 8080);
 ```
 
+### Migrate Before Typed Decode
+
+Migrations are document-level cleanup for old config files. They run before
+`decode<T>()`; schema remains responsible for typed validation.
+
+```cpp
+import fcl.config;
+
+auto plan = fcl::config::migration_plan{};
+plan.step(0, 1, "rename http port", [](fcl::config::document& doc) {
+   static_cast<void>(doc.rename("http.port", "http.bind-port"));
+});
+plan.step(1, 2, "add default host", [](fcl::config::document& doc) {
+   if (!doc.try_get("http.bind-host")) {
+      doc.set("http.bind-host", "127.0.0.1");
+   }
+});
+
+auto migrated = fcl::config::migrate(std::move(document), plan);
+if (!migrated.ok()) {
+   // migrated.diagnostics explains missing steps, future versions or apply errors.
+}
+
+auto decoded = fcl::config::decode<http_config>(migrated.value, "http");
+```
+
 ## Typical Mistakes
 
 - Do not emit raw config documents to logs before redaction.
@@ -90,8 +117,12 @@ auto port = view.get_or<std::uint16_t>("bind-port", 8080);
   deterministic conflict rule.
 - Do not bypass `component_registry` for plugin config collection; duplicate
   fields/aliases must be detected before runtime startup.
+- Do not turn migrations into product validation. Keep them mechanical:
+  rename, remove or add defaults, then let `fcl_schema` validate the typed
+  config.
 
 ## Tests
 
 `test_fcl_config` covers dotted path handling, merge precedence, typed decode,
-unknown/deprecated diagnostics, redaction and duplicate registry rejection.
+unknown/deprecated diagnostics, redaction, document migrations and duplicate
+registry rejection.

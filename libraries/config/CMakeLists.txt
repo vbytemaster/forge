@@ -4,6 +4,7 @@ add_library(
    document.cpp
    component.cpp
    decode.cpp
+   migration.cpp
    config.cpp
 )
 fcl_target_modules(fcl_config config)

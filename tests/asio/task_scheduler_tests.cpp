@@ -1,10 +1,18 @@
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
+#if defined(__APPLE__) || defined(__linux__)
+#include <pthread.h>
+#endif
+
 #include <boost/test/unit_test.hpp>
+
+#include <boost/asio/awaitable.hpp>
 
 import fcl.asio.blocking;
 import fcl.asio.runtime;
@@ -22,7 +30,28 @@ void wait_task(fcl::asio::runtime& runtime, const task_handle& handle) {
    fcl::asio::blocking::run(runtime, handle.wait());
 }
 
+#if defined(__APPLE__) || defined(__linux__)
+boost::asio::awaitable<std::string> current_thread_name() {
+   char name[64] = {};
+   if (pthread_getname_np(pthread_self(), name, sizeof(name)) != 0) {
+      co_return std::string{};
+   }
+   co_return std::string{name};
+}
+#endif
+
 } // namespace
+
+BOOST_AUTO_TEST_CASE(runtime_applies_custom_worker_thread_name_when_observable) {
+#if defined(__APPLE__) || defined(__linux__)
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1, .thread_name = "fcltest"}};
+   const auto name = fcl::asio::blocking::run(runtime, current_thread_name());
+   BOOST_TEST(name == "fcltest");
+#else
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1, .thread_name = "fcltest"}};
+   runtime.stop();
+#endif
+}
 
 BOOST_AUTO_TEST_CASE(task_scheduler_orders_by_numeric_priority_then_fifo) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};

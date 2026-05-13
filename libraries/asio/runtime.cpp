@@ -4,13 +4,35 @@ module;
 #include <boost/asio/io_context.hpp>
 
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
+#if defined(__APPLE__) || defined(__linux__)
+#include <pthread.h>
+#endif
+
 module fcl.asio.runtime;
 
 namespace fcl::asio {
+namespace {
+
+void set_current_thread_name(const std::string& name) noexcept {
+   if (name.empty()) {
+      return;
+   }
+#if defined(__APPLE__)
+   static_cast<void>(pthread_setname_np(name.c_str()));
+#elif defined(__linux__)
+   auto limited = name.substr(0, 15);
+   static_cast<void>(pthread_setname_np(pthread_self(), limited.c_str()));
+#else
+   static_cast<void>(name);
+#endif
+}
+
+} // namespace
 
 struct runtime::impl {
    explicit impl(runtime_options options_value)
@@ -21,7 +43,10 @@ struct runtime::impl {
 
       workers.reserve(options.worker_threads);
       for (std::size_t index = 0; index < options.worker_threads; ++index) {
-         workers.emplace_back([this] { io_context.run(); });
+         workers.emplace_back([this] {
+            set_current_thread_name(options.thread_name);
+            io_context.run();
+         });
       }
    }
 

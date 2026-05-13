@@ -1,8 +1,12 @@
 #include <boost/test/unit_test.hpp>
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/use_awaitable.hpp>
 #include <boost/describe.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -250,6 +254,81 @@ class shell_dependency_plugin final : public fcl::app::plugin {
    lifecycle_log* log_ = nullptr;
 };
 
+class scheduler_cleanup_plugin final : public fcl::app::plugin {
+ public:
+   explicit scheduler_cleanup_plugin(lifecycle_log& log) : log_{&log} {}
+
+   fcl::app::plugin_id id() const override {
+      return fcl::app::plugin_id{.value = "cleanup"};
+   }
+
+   std::string version() const override {
+      return "1";
+   }
+
+   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+      scheduler_ = &context.scheduler();
+      log_->entries.push_back("initialize:cleanup");
+      co_return;
+   }
+
+   boost::asio::awaitable<void> startup() override {
+      log_->entries.push_back("startup:cleanup");
+      co_return;
+   }
+
+   void request_stop() noexcept override {
+      log_->entries.push_back("request_stop:cleanup");
+   }
+
+   boost::asio::awaitable<void> shutdown() override {
+      auto handle = scheduler_->submit(fcl::asio::scheduled_task{
+         .priority = fcl::asio::priority{1},
+         .name = "cleanup-flush",
+         .work = [this] {
+            log_->entries.push_back("cleanup.scheduler.work");
+         },
+      });
+      co_await handle.wait();
+      log_->entries.push_back("shutdown:cleanup");
+   }
+
+ private:
+   lifecycle_log* log_ = nullptr;
+   fcl::asio::task_scheduler* scheduler_ = nullptr;
+};
+
+class failing_initialize_plugin final : public fcl::app::plugin {
+ public:
+   explicit failing_initialize_plugin(lifecycle_log& log) : log_{&log} {}
+
+   fcl::app::plugin_id id() const override {
+      return fcl::app::plugin_id{.value = "init-fail"};
+   }
+
+   std::string version() const override {
+      return "1";
+   }
+
+   boost::asio::awaitable<void> initialize(fcl::app::plugin_context&) override {
+      log_->entries.push_back("initialize:init-fail");
+      throw std::runtime_error{"initialize failed"};
+   }
+
+   boost::asio::awaitable<void> startup() override {
+      log_->entries.push_back("startup:init-fail");
+      co_return;
+   }
+
+   boost::asio::awaitable<void> shutdown() override {
+      log_->entries.push_back("shutdown:init-fail");
+      co_return;
+   }
+
+ private:
+   lifecycle_log* log_ = nullptr;
+};
+
 class shell_test_application final : public fcl::app::application_shell {
  public:
    explicit shell_test_application(lifecycle_log& log)
@@ -342,6 +421,57 @@ class shell_failure_application final : public fcl::app::application_shell {
          {fcl::app::plugin_id{.value = "store"}},
          true,
          true));
+   }
+
+ private:
+   lifecycle_log* log_ = nullptr;
+};
+
+class shell_initialize_failure_application final : public fcl::app::application_shell {
+ public:
+   explicit shell_initialize_failure_application(lifecycle_log& log) : log_{&log} {}
+
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(fcl::app::plugin_descriptor{
+         .id = fcl::app::plugin_id{.value = "init-fail"},
+         .factory = [this] {
+            return std::make_unique<failing_initialize_plugin>(*log_);
+         },
+      });
+   }
+
+ private:
+   lifecycle_log* log_ = nullptr;
+};
+
+class shell_scheduler_cleanup_application final : public fcl::app::application_shell {
+ public:
+   explicit shell_scheduler_cleanup_application(lifecycle_log& log) : log_{&log} {}
+
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(fcl::app::plugin_descriptor{
+         .id = fcl::app::plugin_id{.value = "cleanup"},
+         .factory = [this] {
+            return std::make_unique<scheduler_cleanup_plugin>(*log_);
+         },
+      });
+   }
+
+ private:
+   lifecycle_log* log_ = nullptr;
+};
+
+class shell_selection_application final : public fcl::app::application_shell {
+ public:
+   explicit shell_selection_application(lifecycle_log& log) : log_{&log} {}
+
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(descriptor("store", *log_));
+      registry.register_plugin(descriptor("api", *log_, {fcl::app::plugin_id{.value = "store"}}));
+      registry.register_plugin(descriptor("metrics", *log_, {}, false));
    }
 
  private:
@@ -560,9 +690,10 @@ BOOST_AUTO_TEST_CASE(application_shell_owns_config_plugin_lifecycle_and_context)
    auto app = shell_test_application{log};
 
    const auto registry = app.describe_config();
-   BOOST_REQUIRE_EQUAL(registry.components().size(), 2U);
+   BOOST_REQUIRE_EQUAL(registry.components().size(), 3U);
    BOOST_TEST(registry.components()[0].section == "service");
-   BOOST_TEST(registry.components()[1].section == "http");
+   BOOST_TEST(registry.components()[1].section == "plugins");
+   BOOST_TEST(registry.components()[2].section == "http");
 
    auto document = fcl::config::document{};
    document.set("service.workers", 4);
@@ -629,6 +760,114 @@ BOOST_AUTO_TEST_CASE(application_shell_rolls_back_started_plugins_on_startup_fai
    const auto snapshot = app.diagnostics().snapshot(app.events());
    BOOST_TEST(static_cast<int>(snapshot.state) == static_cast<int>(fcl::app::lifecycle_state::failed));
    BOOST_TEST(snapshot.last_error == "startup failed");
+}
+
+BOOST_AUTO_TEST_CASE(application_shell_keeps_scheduler_available_until_shutdown_finishes) {
+   auto log = lifecycle_log{};
+   auto app = shell_scheduler_cleanup_application{log};
+
+   fcl::asio::blocking::run(app.runtime(), app.startup());
+   app.request_stop();
+   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+
+   const auto cleanup = std::ranges::find(log.entries, "cleanup.scheduler.work");
+   const auto shutdown = std::ranges::find(log.entries, "shutdown:cleanup");
+   BOOST_REQUIRE(cleanup != log.entries.end());
+   BOOST_REQUIRE(shutdown != log.entries.end());
+   BOOST_CHECK(cleanup < shutdown);
+}
+
+BOOST_AUTO_TEST_CASE(application_shell_initialize_failure_transitions_to_stopped) {
+   auto log = lifecycle_log{};
+   auto app = shell_initialize_failure_application{log};
+
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.initialize()), std::runtime_error);
+   BOOST_TEST(static_cast<int>(app.state()) == static_cast<int>(fcl::app::application_state::stopped));
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.startup()), std::logic_error);
+
+   const auto expected = std::vector<std::string>{
+      "initialize:init-fail",
+   };
+   BOOST_TEST(log.entries == expected, boost::test_tools::per_element());
+}
+
+BOOST_AUTO_TEST_CASE(application_shell_applies_plugin_selection_from_config) {
+   auto log = lifecycle_log{};
+   auto app = shell_selection_application{log};
+
+   const auto registry = app.describe_config();
+   auto found_plugins_section = false;
+   for (const auto& component : registry.components()) {
+      if (component.section == "plugins") {
+         found_plugins_section = true;
+         BOOST_REQUIRE_EQUAL(component.fields.size(), 3U);
+         BOOST_TEST(component.fields[0].name == "store.enabled");
+         BOOST_TEST(component.fields[1].name == "api.enabled");
+         BOOST_TEST(component.fields[2].name == "metrics.enabled");
+         BOOST_TEST(component.fields[0].has_default);
+         BOOST_TEST(std::get<bool>(component.fields[0].default_value.storage));
+         BOOST_TEST(!std::get<bool>(component.fields[2].default_value.storage));
+      }
+   }
+   BOOST_TEST(found_plugins_section);
+
+   auto document = fcl::config::document{};
+   document.set("plugins.api.enabled", false);
+   document.set("plugins.metrics.enabled", true);
+   app.configure(document);
+   fcl::asio::blocking::run(app.runtime(), app.startup());
+   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+
+   const auto expected = std::vector<std::string>{
+      "initialize:store",
+      "initialize:metrics",
+      "startup:store",
+      "startup:metrics",
+      "shutdown:metrics",
+      "shutdown:store",
+   };
+   BOOST_TEST(log.entries == expected, boost::test_tools::per_element());
+}
+
+BOOST_AUTO_TEST_CASE(application_shell_rejects_enabled_plugin_with_disabled_dependency) {
+   auto log = lifecycle_log{};
+   auto app = shell_selection_application{log};
+
+   auto document = fcl::config::document{};
+   document.set("plugins.store.enabled", false);
+   document.set("plugins.api.enabled", true);
+
+   BOOST_CHECK_THROW(app.configure(document), std::logic_error);
+   BOOST_TEST(log.entries.empty());
+}
+
+BOOST_AUTO_TEST_CASE(run_application_executes_lifecycle_and_custom_stop_waiter) {
+   auto log = lifecycle_log{};
+   auto app = shell_order_application{log};
+
+   auto options = fcl::app::run_options{};
+   options.handle_sigint = false;
+   options.handle_sigterm = false;
+   options.wait_for_stop = [](fcl::app::application_shell& shell) -> boost::asio::awaitable<void> {
+      auto timer = boost::asio::steady_timer{shell.runtime().context()};
+      timer.expires_after(std::chrono::milliseconds{5});
+      co_await timer.async_wait(boost::asio::use_awaitable);
+      co_return;
+   };
+
+   const auto exit_code = fcl::app::run_application(app, fcl::config::document{}, options);
+   BOOST_TEST(exit_code == 0);
+   BOOST_TEST(static_cast<int>(app.state()) == static_cast<int>(fcl::app::application_state::stopped));
+
+   const auto expected = std::vector<std::string>{
+      "initialize:store",
+      "initialize:api",
+      "startup:store",
+      "startup:api",
+      "shutdown:api",
+      "shutdown:store",
+   };
+   BOOST_TEST(log.entries == expected, boost::test_tools::per_element());
 }
 
 BOOST_AUTO_TEST_CASE(application_builder_creates_shell_and_applies_config_handlers) {
@@ -710,8 +949,9 @@ BOOST_AUTO_TEST_CASE(application_builder_collects_plugin_config_and_preserves_de
 
    auto app = std::move(builder).build();
    const auto registry = app->describe_config();
-   BOOST_REQUIRE_EQUAL(registry.components().size(), 1U);
-   BOOST_TEST(registry.components()[0].section == "http");
+   BOOST_REQUIRE_EQUAL(registry.components().size(), 2U);
+   BOOST_TEST(registry.components()[0].section == "plugins");
+   BOOST_TEST(registry.components()[1].section == "http");
 
    app->configure(fcl::config::document{});
    fcl::asio::blocking::run(app->runtime(), app->startup());

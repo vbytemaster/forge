@@ -7,6 +7,7 @@ module;
 #include <string>
 #include <utility>
 #include <vector>
+#include <variant>
 
 module fcl.app.application_shell;
 
@@ -14,6 +15,7 @@ import fcl.asio.blocking;
 import fcl.asio.runtime;
 import fcl.asio.task_scheduler;
 import fcl.config;
+import fcl.schema.value_kind;
 import fcl.app.application;
 import fcl.app.diagnostics;
 import fcl.app.events;
@@ -42,6 +44,52 @@ void publish_application_event(event_bus& events, event_severity severity, std::
       message = transition;
    }
    events.publish(severity, "app." + std::move(name) + "." + std::move(transition), std::move(message));
+}
+
+[[nodiscard]] std::vector<plugin_config> enabled_config_for_all_plugins(const plugin_registry& registry) {
+   auto out = std::vector<plugin_config>{};
+   for (const auto& descriptor : registry.descriptors()) {
+      out.push_back(plugin_config{
+         .id = descriptor.id,
+         .enabled = true,
+      });
+   }
+   return out;
+}
+
+[[nodiscard]] fcl::config::component_descriptor plugin_selection_descriptor(const plugin_registry& registry) {
+   auto descriptor = fcl::config::component_descriptor{.section = "plugins"};
+   for (const auto& plugin : registry.descriptors()) {
+      descriptor.fields.push_back(fcl::config::field_descriptor{
+         .name = plugin.id.value + ".enabled",
+         .kind = fcl::schema::value_kind::boolean,
+         .has_default = true,
+         .default_value = plugin.enabled_by_default,
+         .description = "Enable plugin " + plugin.id.value,
+      });
+   }
+   return descriptor;
+}
+
+[[nodiscard]] std::vector<plugin_config> plugin_selection_from_document(const plugin_registry& registry,
+                                                                        const fcl::config::document& document) {
+   auto out = std::vector<plugin_config>{};
+   for (const auto& descriptor : registry.descriptors()) {
+      auto enabled = descriptor.enabled_by_default;
+      const auto path = "plugins." + descriptor.id.value + ".enabled";
+      if (const auto* configured = document.try_get(path)) {
+         const auto* value = std::get_if<bool>(&configured->storage);
+         if (!value) {
+            throw std::invalid_argument{"plugin enabled flag must be boolean: " + path};
+         }
+         enabled = *value;
+      }
+      out.push_back(plugin_config{
+         .id = descriptor.id,
+         .enabled = enabled,
+      });
+   }
+   return out;
 }
 
 } // namespace
@@ -110,7 +158,6 @@ struct application_shell::impl {
    std::unique_ptr<application_runtime> plugin_runtime;
    fcl::config::document effective_config;
    bool plugins_registered = false;
-   bool plugins_instantiated = false;
    bool configured = false;
    bool ports_installed = false;
    application_state state = application_state::created;
@@ -144,38 +191,46 @@ void application_shell::ensure_plugins_registered() {
    impl_->plugins_registered = true;
 }
 
-void application_shell::ensure_plugins_instantiated() {
-   if (impl_->plugins_instantiated) {
-      return;
-   }
+void application_shell::instantiate_plugins(const fcl::config::document& document) {
    ensure_plugins_registered();
+   impl_->plugin_runtime.reset();
+   impl_->plugin_context_value.reset();
    impl_->plugin_context_value =
        std::make_unique<plugin_context>(impl_->scheduler, impl_->ports, impl_->signals, impl_->events, &impl_->diagnostics);
    impl_->plugin_runtime = std::make_unique<application_runtime>(
       *impl_->plugin_context_value,
-      impl_->registry.instantiate_enabled({}),
+      impl_->registry.instantiate_enabled(plugin_selection_from_document(impl_->registry, document)),
       &impl_->diagnostics);
-   impl_->plugins_instantiated = true;
 }
 
 fcl::config::component_registry application_shell::collect_config() {
-   ensure_plugins_instantiated();
+   ensure_plugins_registered();
    auto registry = fcl::config::component_registry{};
    on_describe_config(registry);
-   for (auto descriptor : impl_->plugin_runtime->describe_config().components()) {
+   if (!impl_->registry.descriptors().empty()) {
+      registry.add(plugin_selection_descriptor(impl_->registry));
+   }
+
+   auto plugin_context_value =
+       plugin_context{impl_->scheduler, impl_->ports, impl_->signals, impl_->events, &impl_->diagnostics};
+   auto plugin_runtime = application_runtime{
+      plugin_context_value,
+      impl_->registry.instantiate_enabled(enabled_config_for_all_plugins(impl_->registry)),
+      &impl_->diagnostics};
+   for (auto descriptor : plugin_runtime.describe_config().components()) {
       registry.add(std::move(descriptor));
    }
    return registry;
 }
 
 fcl::config::document application_shell::make_effective_config(const fcl::config::document& document) {
-   ensure_plugins_instantiated();
    auto registry = collect_config();
    return fcl::config::merge({fcl::config::defaults_for(registry), document});
 }
 
 boost::asio::awaitable<void> application_shell::apply_effective_config(fcl::config::document document) {
    impl_->effective_config = std::move(document);
+   instantiate_plugins(impl_->effective_config);
    auto context = configure_context{impl_->effective_config};
    co_await on_configure(context);
    co_await impl_->plugin_runtime->configure(impl_->effective_config);
@@ -213,8 +268,10 @@ boost::asio::awaitable<void> application_shell::initialize() {
       publish_application_event(impl_->events, event_severity::info, impl_->options.name, "initialized");
    } catch (...) {
       const auto message = current_exception_message();
+      impl_->state = application_state::stopped;
       impl_->diagnostics.set_application_state(lifecycle_state::failed, "initialize", message);
       publish_application_event(impl_->events, event_severity::error, impl_->options.name, "failed", message);
+      impl_->scheduler.stop();
       throw;
    }
 }
@@ -271,13 +328,13 @@ boost::asio::awaitable<void> application_shell::shutdown() {
    impl_->diagnostics.set_application_state(lifecycle_state::stopped, "shutdown");
    impl_->signals.application_stopped(application_signal{.name = impl_->options.name});
    publish_application_event(impl_->events, event_severity::info, impl_->options.name, "stopped");
+   impl_->scheduler.stop();
 }
 
 void application_shell::request_stop() noexcept {
    if (impl_->plugin_runtime) {
       impl_->plugin_runtime->request_stop();
    }
-   impl_->scheduler.stop();
 }
 
 int application_shell::run() {

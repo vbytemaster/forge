@@ -32,6 +32,54 @@ void document::set(std::string dotted_path, value input, source_location locatio
    locations[std::move(dotted_path)] = std::move(location);
 }
 
+bool document::erase(std::string_view dotted_path) {
+   auto segments = key_path{.value = std::string{dotted_path}}.segments();
+   if (segments.empty()) {
+      return false;
+   }
+
+   auto* object = &root;
+   for (std::size_t i = 0; i + 1 < segments.size(); ++i) {
+      const auto found = object->find(segments[i]);
+      if (found == object->end()) {
+         return false;
+      }
+      object = found->second.as_object();
+      if (!object) {
+         return false;
+      }
+   }
+
+   const auto erased = object->erase(segments.back()) > 0;
+   if (erased) {
+      locations.erase(std::string{dotted_path});
+   }
+   return erased;
+}
+
+bool document::rename(std::string_view from_path, std::string_view to_path, bool overwrite) {
+   if (from_path == to_path) {
+      return try_get(from_path) != nullptr;
+   }
+   const auto* existing = try_get(from_path);
+   if (!existing) {
+      return false;
+   }
+   if (!overwrite && try_get(to_path)) {
+      throw std::invalid_argument{"config rename target already exists"};
+   }
+
+   auto moved_value = *existing;
+   auto location = source_location{};
+   if (const auto found = locations.find(std::string{from_path}); found != locations.end()) {
+      location = found->second;
+   }
+
+   set(std::string{to_path}, std::move(moved_value), std::move(location));
+   static_cast<void>(erase(from_path));
+   return true;
+}
+
 const value* document::try_get(std::string_view dotted_path) const {
    auto segments = key_path{.value = std::string{dotted_path}}.segments();
    if (segments.empty()) {

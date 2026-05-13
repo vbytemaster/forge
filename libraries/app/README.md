@@ -32,6 +32,7 @@ reimplement plugin order manually.
 - `fcl.app.application_shell` — production app shell and hook contexts.
 - `fcl.app.application_builder` — convenience builder that creates an
   `application_shell`.
+- `fcl.app.runner` — foreground lifecycle runner with signal policy.
 - `fcl.app.application` — lower-level `application_base` and
   `application_runtime`.
 - `fcl.app.plugin`, `fcl.app.plugin_context`, `fcl.app.plugin_registry`.
@@ -127,6 +128,46 @@ class http_plugin final : public fcl::app::plugin {
    std::uint16_t bind_port_ = 8080;
    bool tls_enabled_ = false;
 };
+```
+
+## Plugin Enable/Disable
+
+Every registered plugin gets a shell-owned selection key:
+
+```yaml
+plugins:
+   http:
+      enabled: true
+   metrics:
+      enabled: false
+```
+
+The default comes from `plugin_descriptor.enabled_by_default`. Disabled plugins
+are not configured, initialized, started or shut down. If an enabled plugin
+depends on a disabled plugin, the shell fails before lifecycle side effects.
+
+```cpp
+void on_register_plugins(fcl::app::plugin_registry& registry) override {
+   registry.register_plugin(fcl::app::plugin_descriptor{
+      .id = {.value = "store"},
+      .factory = [] { return std::make_unique<store_plugin>(); },
+   });
+   registry.register_plugin(fcl::app::plugin_descriptor{
+      .id = {.value = "api"},
+      .dependencies = {fcl::app::plugin_id{.value = "store"}},
+      .factory = [] { return std::make_unique<api_plugin>(); },
+   });
+   registry.register_plugin(fcl::app::plugin_descriptor{
+      .id = {.value = "metrics"},
+      .enabled_by_default = false,
+      .factory = [] { return std::make_unique<metrics_plugin>(); },
+   });
+}
+
+auto document = fcl::config::document{};
+document.set("plugins.metrics.enabled", true);
+document.set("plugins.api.enabled", false);
+app.configure(document);
 ```
 
 ## Application Shell Example
@@ -259,11 +300,44 @@ fcl::asio::blocking::run(app.runtime(), app.shutdown());
 created state. Tests may call `initialize()` explicitly when they need to assert
 port installation before startup.
 
+For production foreground daemons prefer `run_application(...)`. It
+standardizes the common flow: configure, startup, wait, request stop, shutdown.
+
+```cpp
+import fcl.app;
+import fcl.config;
+
+auto app = service_application{};
+auto document = fcl::config::document{};
+document.set("service.workers", 4U);
+
+auto options = fcl::app::run_options{
+   .handle_sigint = true,
+   .handle_sigterm = true,
+   .shutdown_timeout = std::chrono::seconds{10},
+};
+
+return fcl::app::run_application(app, document, options);
+```
+
+Tests and embedders can replace OS signals with a custom async waiter:
+
+```cpp
+options.handle_sigint = false;
+options.handle_sigterm = false;
+options.wait_for_stop = [](fcl::app::application_shell& app) -> boost::asio::awaitable<void> {
+   auto timer = boost::asio::steady_timer{app.runtime().context()};
+   timer.expires_after(std::chrono::milliseconds{50});
+   co_await timer.async_wait(boost::asio::use_awaitable);
+};
+```
+
 ## Signal Bridge
 
-`request_stop()` is synchronous and `noexcept`; that makes it safe to call from
-OS signal bridges and platform service callbacks. Cleanup still happens in
-async `shutdown()`.
+`request_stop()` remains synchronous and `noexcept`; that makes it safe to call
+from OS signal bridges and platform service callbacks. Use the runner for
+normal foreground daemons; write a manual bridge only when embedding FCL into a
+larger host runtime.
 
 ```cpp
 #include <boost/asio/co_spawn.hpp>

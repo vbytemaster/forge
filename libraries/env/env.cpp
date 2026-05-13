@@ -202,28 +202,33 @@ void add_binding(binding_build_result& result, field_binding candidate, bool cas
 
 [[nodiscard]] std::vector<schema::diagnostic> validate_write_bindings(const config::component_registry& registry,
                                                                       const write_options& options) {
-   auto seen = std::map<std::string, field_binding>{};
-   auto diagnostics = std::vector<schema::diagnostic>{};
+   auto result = binding_build_result{};
    for (const auto& component : registry.components()) {
       for (const auto& field : component.fields) {
          const auto canonical_env = env_name_for(options.prefix, component.section, field.name);
+         const auto canonical_path = path_for(component.section, field.name);
          auto candidate = field_binding{
-             .path = path_for(component.section, field.name),
+             .path = canonical_path,
              .env_name = canonical_env,
              .canonical_env_name = canonical_env,
              .field = field,
              .alias = false,
          };
+         add_binding(result, std::move(candidate), false);
 
-         const auto found = seen.find(canonical_env);
-         if (found != seen.end()) {
-            add_name_conflict(diagnostics, found->second, candidate);
-            continue;
+         for (const auto& alias : field.aliases) {
+            auto alias_binding = field_binding{
+                .path = canonical_path,
+                .env_name = env_name_for(options.prefix, component.section, alias),
+                .canonical_env_name = canonical_env,
+                .field = field,
+                .alias = true,
+            };
+            add_binding(result, std::move(alias_binding), false);
          }
-         seen.emplace(canonical_env, std::move(candidate));
       }
    }
-   return diagnostics;
+   return result.diagnostics;
 }
 
 [[nodiscard]] bool has_error(const std::vector<schema::diagnostic>& diagnostics) {

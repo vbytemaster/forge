@@ -295,3 +295,35 @@ BOOST_AUTO_TEST_CASE(env_write_example_rejects_name_collisions_after_normalizati
    BOOST_REQUIRE(conflict != nullptr);
    BOOST_TEST(conflict->message.find("STORLANE_LOG_LEVEL") != std::string::npos);
 }
+
+BOOST_AUTO_TEST_CASE(env_write_example_rejects_alias_name_collisions_after_normalization) {
+   auto registry = fcl::config::component_registry{};
+   registry.add(fcl::config::describe_component<alias_collision_config>("auth"));
+
+   const auto example = fcl::env::write_example(registry, fcl::env::write_options{.prefix = "STORLANE"});
+   BOOST_TEST(!example.ok());
+
+   const auto* conflict = find_diagnostic(example.diagnostics, "env.name_conflict");
+   BOOST_REQUIRE(conflict != nullptr);
+   BOOST_TEST(conflict->message.find("STORLANE_AUTH_AUTH_TOKEN") != std::string::npos);
+   BOOST_TEST(conflict->message.find("auth.token") != std::string::npos);
+   BOOST_TEST(conflict->message.find("auth.auth_token") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(env_write_document_rejects_alias_name_collisions_after_normalization) {
+   auto registry = fcl::config::component_registry{};
+   registry.add(fcl::config::describe_component<alias_collision_config>("auth"));
+
+   auto document = fcl::config::document{};
+   document.set("auth.token", "token-value");
+   document.set("auth.auth_token", "auth-token-value");
+
+   const auto written = fcl::env::write_document(document, registry, fcl::env::write_options{.prefix = "STORLANE"});
+   BOOST_TEST(!written.ok());
+
+   const auto* conflict = find_diagnostic(written.diagnostics, "env.name_conflict");
+   BOOST_REQUIRE(conflict != nullptr);
+   BOOST_TEST(conflict->message.find("STORLANE_AUTH_AUTH_TOKEN") != std::string::npos);
+   BOOST_TEST(conflict->message.find("auth.token") != std::string::npos);
+   BOOST_TEST(conflict->message.find("auth.auth_token") != std::string::npos);
+}

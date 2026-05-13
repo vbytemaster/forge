@@ -433,6 +433,11 @@ The app should still call `request_stop()` and `shutdown()` from the outer
 entrypoint cleanup path. Both calls are idempotent enough for normal failure
 handling.
 
+The cleanup path is not optional ceremony. It keeps failed startup paths from
+leaving ports, background jobs or plugins in half-started states. Prefer
+`run_application(...)` for normal foreground daemons because it centralizes that
+flow.
+
 ## Lower-Level Escape Hatch
 
 `application_runtime` remains available when a host framework already owns
@@ -459,6 +464,27 @@ co_await runtime.shutdown();
 - Do not parse `argv`, `YAML::Node` or backend parser objects inside plugins.
 - Do not put secrets into events or diagnostics without redaction first.
 - Do not assume `request_stop()` waits for cleanup; it only requests shutdown.
+- Do not stop the scheduler or `io_context` from a stop callback or hook.
+  Plugins may still need async cleanup work during `shutdown()`.
+- Do not ignore failed `initialize()` or `startup()`. Treat the shell as stopped
+  and create a new instance if the product wants another attempt.
+- Do not use `abort()` from signal handlers or lifecycle catches. Request stop,
+  run shutdown at the product boundary, then return an error.
+
+## Runtime Risks And Anti-Patterns
+
+- A plugin that starts background work must own cancellation and shutdown.
+  Hidden detached work is a process-lifetime leak.
+- Ports must be installed before plugins initialize and must outlive plugin
+  shutdown. Removing ports early creates use-after-shutdown failures.
+- Event subscribers should keep their connection lifetime explicit. Capturing a
+  short-lived object in a long-lived signal/event callback is a common crash
+  source.
+- Events and diagnostics are observability surfaces, not recovery. Log/report
+  them, but still propagate correctness-path failures to the caller.
+- Lower-level `application_runtime` users must preserve the same lifecycle
+  ordering as the shell. If they cannot, they should use `application_shell`
+  instead of reimplementing daemon plumbing.
 
 ## Tests
 

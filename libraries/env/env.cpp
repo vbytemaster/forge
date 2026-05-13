@@ -243,6 +243,10 @@ void add_binding(binding_build_result& result, field_binding candidate, bool cas
 
 [[nodiscard]] config::value split_list_value(std::string_view input) {
    auto array = config::value::array_type{};
+   if (input.empty()) {
+      return array;
+   }
+
    auto current = std::string{};
    auto escaped = false;
    for (const auto ch : input) {

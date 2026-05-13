@@ -185,6 +185,18 @@ BOOST_AUTO_TEST_CASE(env_reads_dotenv_document_with_aliases_flat_fields_and_list
    BOOST_TEST(decoded_flat.value.log_level == "debug");
 }
 
+BOOST_AUTO_TEST_CASE(env_reads_empty_list_value_as_empty_vector) {
+   const auto registry = make_registry();
+
+   const auto parsed = fcl::env::read_document(
+       "STORLANE_HTTP_TAGS=\n", registry, fcl::env::read_options{.prefix = "STORLANE"});
+   BOOST_TEST(parsed.ok());
+
+   const auto decoded_http = fcl::config::decode<http_config>(parsed.value, "http");
+   BOOST_TEST(decoded_http.ok());
+   BOOST_TEST(decoded_http.value.tags.empty());
+}
+
 BOOST_AUTO_TEST_CASE(env_reports_dotenv_parse_duplicate_and_source_locations) {
    const auto registry = make_registry();
    const auto input = std::string{
@@ -281,6 +293,24 @@ BOOST_AUTO_TEST_CASE(env_writes_dotenv_and_examples_with_secret_redaction) {
    BOOST_TEST(example.text.find("STORLANE_HTTP_TOKEN=") != std::string::npos);
    BOOST_TEST(example.text.find("<redacted>") == std::string::npos);
    BOOST_TEST(example.text.find("STORLANE_LOG_LEVEL=info") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(env_write_document_empty_list_roundtrips_as_empty_vector) {
+   const auto registry = make_registry();
+   auto document = fcl::config::document{};
+   document.set("http.tags", fcl::config::value::array_type{});
+
+   const auto written = fcl::env::write_document(document, registry, fcl::env::write_options{.prefix = "STORLANE"});
+   BOOST_TEST(written.ok());
+   BOOST_TEST(written.text.find("STORLANE_HTTP_TAGS=\n") != std::string::npos);
+
+   const auto parsed =
+       fcl::env::read_document(written.text, registry, fcl::env::read_options{.prefix = "STORLANE"});
+   BOOST_TEST(parsed.ok());
+
+   const auto decoded_http = fcl::config::decode<http_config>(parsed.value, "http");
+   BOOST_TEST(decoded_http.ok());
+   BOOST_TEST(decoded_http.value.tags.empty());
 }
 
 BOOST_AUTO_TEST_CASE(env_rejects_canonical_name_collisions_after_normalization) {

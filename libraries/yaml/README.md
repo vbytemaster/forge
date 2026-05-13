@@ -61,6 +61,10 @@ auto safe = fcl::config::redact(document, registry);
 auto output = fcl::yaml::write_document(safe);
 ```
 
+Write redacted documents for diagnostics and `--print-effective-config`.
+Persisting the redacted document back as the real config would replace secrets
+with placeholders and break the next startup.
+
 ### Value Mode For Tools
 
 ```cpp
@@ -82,6 +86,10 @@ name and path metadata should be set by callers via `read_options` where useful.
 - Do not put YAML-specific policy into `fcl_config`.
 - Do not silently ignore unknown fields in production tools unless the caller
   explicitly uses `unknown_field_policy::ignore`.
+- Do not load YAML directly inside plugins. The application or daemon bootstrap
+  loads source documents, merges them, and passes component views to plugins.
+- Do not use YAML text as the bytes for signatures or hashes. Use
+  `fcl::raw::pack` for protocol bytes and YAML only for human-authored config.
 
 ## Tests
 

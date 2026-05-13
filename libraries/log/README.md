@@ -155,6 +155,33 @@ Use `FCL_CAPTURE_AND_LOG` only for explicit cleanup/best-effort paths. If the
 operation must fail the caller, use `FCL_CAPTURE_AND_RETHROW` or
 `FCL_CAPTURE_LOG_AND_RETHROW`.
 
+### Log Runtime Failures Without Turning Logs Into Recovery
+
+```cpp
+#include <fcl/exception/macros.hpp>
+
+import fcl.exception.exception;
+import fcl.log.logger;
+import fcl.log.record;
+
+try {
+   co_await app.startup();
+} catch (const std::exception& error) {
+   log.error(
+      "startup failed",
+      {
+         fcl::log_ctx("exception-chain", fcl::error::format_exception_chain(error)),
+         fcl::log_secret("bootstrap-token", token),
+      });
+   app.request_stop();
+   co_await app.shutdown();
+   throw;
+}
+```
+
+The log call records context; it does not make the application healthy. Product
+code still owns rollback, shutdown and the returned exit status.
+
 ### Format A Record Without A Sink
 
 ```cpp
@@ -182,6 +209,18 @@ This is useful for tests and adapters that need deterministic formatting.
   to error messages.
 - Sinks are synchronous. If a file sink points to slow storage, the caller pays
   that cost.
+
+## Runtime Risks And Anti-Patterns
+
+- Do not log raw serialized payloads or private keys to “debug signatures”.
+  Log safe IDs, hashes or redacted config paths instead.
+- Do not allocate expensive fields before checking the log level. Use
+  `fcl_log(...)` with `log_field_provider` for expensive diagnostics.
+- Do not install a slow network filesystem path as a synchronous file sink on a
+  hot request path. Route hot-path telemetry through a product-owned trace layer
+  or a bounded adapter.
+- Do not hide errors by logging and continuing unless the code path is explicitly
+  best-effort cleanup.
 
 ## Typical Mistakes
 

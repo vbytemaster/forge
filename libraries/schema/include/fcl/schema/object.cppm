@@ -103,7 +103,7 @@ template <typename T> class object_schema {
  public:
    object_schema() : fields_{std::make_shared<std::vector<field_rule<T>>>()} {}
 
-   template <auto Member> [[nodiscard]] field_builder<T> field(std::string name) {
+   template <auto Member> field_builder<T> field(std::string name) {
       using pointer_traits = member_pointer_traits<decltype(Member)>;
       using object_type = typename pointer_traits::object_type;
       using member_type = std::remove_cvref_t<typename pointer_traits::member_type>;
@@ -292,7 +292,7 @@ template <typename T> class field_builder {
       return *this;
    }
 
-   template <auto Member> [[nodiscard]] field_builder field(std::string name) {
+   template <auto Member> field_builder field(std::string name) {
       return schema_.template field<Member>(std::move(name));
    }
 

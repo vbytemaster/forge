@@ -43,7 +43,54 @@ Dependencies: `fcl_core`, `fcl_exception`, `fcl_raw`, `fcl_reflect`,
 
 ## Examples
 
-### Hash Data And Stream Into An Encoder
+### Hash A Domain Object With Raw-Compatible Bytes
+
+Product protocols should hash stable binary payloads, not ad-hoc strings. The
+recommended pattern is: describe the DTO, keep member order stable, pack it with
+`fcl::raw::pack`, then hash or sign the packed bytes.
+
+```cpp
+#include <boost/describe.hpp>
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+import fcl.crypto.sha256;
+import fcl.raw.datastream;
+import fcl.raw.raw;
+
+struct transfer_digest_payload {
+   std::uint64_t account = 0;
+   std::uint64_t sequence = 0;
+   std::string memo;
+};
+
+BOOST_DESCRIBE_STRUCT(transfer_digest_payload, (), (account, sequence, memo))
+
+auto payload = transfer_digest_payload{
+   .account = 42,
+   .sequence = 7,
+   .memo = "approve",
+};
+
+auto packed = std::vector<char>{};
+packed.resize(fcl::raw::pack_size(payload));
+
+auto stream = fcl::datastream<char*>{packed.data(), packed.size()};
+fcl::raw::pack(stream, payload);
+
+auto digest = fcl::sha256::hash(packed.data(), packed.size());
+auto hex = digest.str();
+```
+
+`BOOST_DESCRIBE_STRUCT` order is the hash contract. Reordering fields changes
+the digest and breaks signatures, caches and contract compatibility.
+
+### Hash Test Vectors And Byte Streams
+
+String hashing is useful for vectors, probes and small tooling. Do not copy this
+as the product protocol pattern when the payload is a C++ DTO.
 
 ```cpp
 import fcl.crypto.sha256;
@@ -114,14 +161,32 @@ if you need to show an identifier, derive and render a public fingerprint.
 ### Generate And Use A K1 Key
 
 ```cpp
+#include <boost/describe.hpp>
+
+#include <cstdint>
+#include <string>
+
 import fcl.crypto.private_key;
 import fcl.crypto.public_key;
 import fcl.crypto.sha256;
 import fcl.crypto.signature;
+import fcl.raw.raw;
+
+struct signed_action {
+   std::uint64_t actor = 0;
+   std::uint64_t nonce = 0;
+   std::string operation;
+};
+
+BOOST_DESCRIBE_STRUCT(signed_action, (), (actor, nonce, operation))
 
 auto private_key = fcl::crypto::private_key::generate();
 auto public_key = private_key.get_public_key();
-auto digest = fcl::sha256::hash("message");
+auto digest = fcl::sha256::hash(signed_action{
+   .actor = 42,
+   .nonce = 9,
+   .operation = "grant",
+});
 auto signature = private_key.sign(digest);
 auto recovered_public_key = fcl::crypto::public_key{signature, digest};
 auto verified = recovered_public_key == public_key;
@@ -129,14 +194,22 @@ auto verified = recovered_public_key == public_key;
 
 ### Generate An R1 Key Explicitly
 
+This snippet reuses the `signed_action` DTO from the K1 example above. Keep the
+same packed payload shape when comparing K1/R1 behavior.
+
 ```cpp
 import fcl.crypto.elliptic_r1;
 import fcl.crypto.private_key;
 import fcl.crypto.public_key;
 import fcl.crypto.sha256;
+import fcl.raw.raw;
 
 auto private_key = fcl::crypto::private_key::generate<fcl::crypto::r1::private_key_shim>();
-auto digest = fcl::sha256::hash("message");
+auto digest = fcl::sha256::hash(signed_action{
+   .actor = 42,
+   .nonce = 10,
+   .operation = "webauthn-check",
+});
 auto signature = private_key.sign(digest);
 auto public_key = private_key.get_public_key();
 auto recovered_public_key = fcl::crypto::public_key{signature, digest};
@@ -219,6 +292,11 @@ for their latency and memory budget and keep salts non-secret but unique.
 
 ### AES-256-GCM Authenticated Encryption
 
+One-shot encryption is fine for small already-materialized buffers, such as a
+config secret after validation. For product DTOs and large payloads, prefer the
+streaming encoder below so `fcl::raw::pack` writes directly into authenticated
+encryption.
+
 ```cpp
 import fcl.crypto.aes;
 import fcl.crypto.random;
@@ -252,16 +330,16 @@ redaction.
 #include <cstdint>
 #include <string>
 
+import fcl.crypto.aes;
+import fcl.crypto.random;
+import fcl.raw.raw;
+
 struct sealed_payload {
    std::uint64_t nonce = 0;
    std::string body;
 };
 
 BOOST_DESCRIBE_STRUCT(sealed_payload, (), (nonce, body))
-
-import fcl.crypto.aes;
-import fcl.crypto.random;
-import fcl.raw.raw;
 
 auto ciphertext = fcl::crypto::bytes{};
 auto key = fcl::crypto::generate_aes256_key();
@@ -341,15 +419,15 @@ authenticated encryption; CBC does not authenticate ciphertext by itself.
 #include <cstdint>
 #include <string>
 
+import fcl.crypto.sha256;
+import fcl.raw.raw;
+
 struct signed_payload {
    std::uint64_t nonce = 0;
    std::string body;
 };
 
 BOOST_DESCRIBE_STRUCT(signed_payload, (), (nonce, body))
-
-import fcl.crypto.sha256;
-import fcl.raw.raw;
 
 auto digest = fcl::sha256::hash(signed_payload{.nonce = 7, .body = "approve"});
 ```
@@ -380,22 +458,41 @@ redaction.
 ### BLS Sign And Verify
 
 ```cpp
+#include <boost/describe.hpp>
+
 #include <cstdint>
+#include <string>
 #include <vector>
 
 import fcl.crypto.bls_private_key;
 import fcl.crypto.bls_public_key;
 import fcl.crypto.bls_signature;
 import fcl.crypto.bls_utils;
+import fcl.crypto.sha256;
+import fcl.raw.raw;
 
 using namespace fcl::crypto::blslib;
+
+struct bls_vote_payload {
+   std::uint64_t round = 0;
+   std::string decision;
+};
+
+BOOST_DESCRIBE_STRUCT(bls_vote_payload, (), (round, decision))
 
 auto seed = std::vector<std::uint8_t>{
    0, 50, 6, 244, 24, 199, 1, 25,
    52, 88, 192, 19, 18, 12, 89, 6,
    220, 18, 102, 58, 209, 82, 12, 62,
    89, 110, 182, 9, 44, 20, 254, 22};
-auto message = std::vector<std::uint8_t>{1, 2, 3, 4};
+auto message_digest = fcl::sha256::hash(bls_vote_payload{
+   .round = 12,
+   .decision = "commit",
+});
+auto message = std::vector<std::uint8_t>{
+   message_digest.to_uint8_span().begin(),
+   message_digest.to_uint8_span().end(),
+};
 
 auto private_key = bls_private_key{seed};
 auto public_key = private_key.get_public_key();
@@ -420,10 +517,26 @@ auto digest = fcl::blake2b(rounds, h, message, t0_offset, t1_offset, final_block
 ### WebAuthn Boundary
 
 ```cpp
+#include <boost/describe.hpp>
+
+#include <cstdint>
+#include <string>
+
 import fcl.crypto.elliptic_webauthn;
 import fcl.crypto.sha256;
+import fcl.raw.raw;
 
-auto digest = fcl::sha256::hash("challenge");
+struct webauthn_challenge_payload {
+   std::uint64_t session = 0;
+   std::string origin;
+};
+
+BOOST_DESCRIBE_STRUCT(webauthn_challenge_payload, (), (session, origin))
+
+auto digest = fcl::sha256::hash(webauthn_challenge_payload{
+   .session = 42,
+   .origin = "https://example.invalid",
+});
 auto recovered = webauthn_signature.recover(digest, true);
 ```
 
@@ -442,12 +555,31 @@ tests together when touching this code.
 - Canonical signature behavior is compatibility-sensitive; changes require
   regression tests for low/high-s and WebAuthn cases.
 
+## Runtime Risks And Anti-Patterns
+
+- Do not hash `std::format(...)`, JSON text or manually joined strings for
+  protocol signatures. Whitespace, field order and locale choices will fork
+  consensus. Use `fcl::raw::pack` over a described DTO.
+- Do not verify a signature against bytes reconstructed differently from the
+  signing path. Put the digest DTO next to the product protocol and cover it
+  with golden raw bytes.
+- Do not reuse AES-GCM nonce/key pairs. A repeated nonce under the same key is a
+  confidentiality break, not a recoverable runtime warning.
+- Do not treat plaintext emitted by `aes256_gcm_decoder` as committed before
+  `finalize()` succeeds. For files, write a temporary artifact and rename only
+  after tag verification.
+- Do not call `abort()` on crypto failures in daemons. Return typed errors or
+  throw std-compatible exceptions with redacted context so shutdown and
+  diagnostics still run.
+
 ## Typical Mistakes
 
 - Do not weaken canonical signature checks to make tests pass.
 - Do not introduce another TLS backend through crypto dependencies.
 - Do not put certificate issuance or identity enrollment product flows in
   `fcl_crypto`; this library provides primitives, not workflows.
+- Do not copy vector examples into product protocols without a named DTO and
+  `BOOST_DESCRIBE_STRUCT` order review.
 
 ## Tests
 

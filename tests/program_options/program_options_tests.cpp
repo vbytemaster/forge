@@ -85,3 +85,19 @@ BOOST_AUTO_TEST_CASE(program_options_supports_empty_component_section_as_flat_fl
    BOOST_TEST(decoded.ok());
    BOOST_TEST(decoded.value.log_level == "debug");
 }
+
+BOOST_AUTO_TEST_CASE(program_options_supports_flat_component_section) {
+   auto registry = fcl::config::component_registry{};
+   registry.add(fcl::config::describe_component<http_config>(""));
+
+   const char* argv[] = {"tool", "--bind-port=8081", "--tls-enabled=false", "--tags=daemon"};
+   const auto parsed = fcl::program_options::parse(4, argv, registry);
+   BOOST_TEST(parsed.ok());
+
+   const auto decoded = fcl::config::decode<http_config>(parsed.document);
+   BOOST_TEST(decoded.ok());
+   BOOST_TEST(decoded.value.bind_port == 8081U);
+   BOOST_TEST(!decoded.value.tls_enabled);
+   BOOST_REQUIRE_EQUAL(decoded.value.tags.size(), 1U);
+   BOOST_TEST(decoded.value.tags.front() == "daemon");
+}

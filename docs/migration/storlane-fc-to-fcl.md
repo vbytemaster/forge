@@ -66,9 +66,13 @@ Field order is compatibility-critical. If an old raw layout used
 ## Raw Serialization
 
 ```cpp
+#include <vector>
+
+import fcl.raw.datastream;
 import fcl.raw.raw;
 
 auto bytes = std::vector<char>{};
+bytes.resize(fcl::raw::pack_size(value));
 auto stream = fcl::datastream<char*>{bytes.data(), bytes.size()};
 fcl::raw::pack(stream, value);
 ```
@@ -151,13 +155,36 @@ needed.
 ## Crypto
 
 ```cpp
+#include <boost/describe.hpp>
+
+#include <cstdint>
+#include <string>
+
+import fcl.crypto.private_key;
 import fcl.crypto.sha256;
-import fcl.crypto.aes;
-import fcl.crypto.random;
+import fcl.raw.raw;
+
+struct signed_payload {
+   std::uint64_t account = 0;
+   std::uint64_t sequence = 0;
+   std::string action;
+};
+
+BOOST_DESCRIBE_STRUCT(signed_payload, (), (account, sequence, action))
+
+auto private_key = fcl::crypto::private_key::generate();
+auto digest = fcl::sha256::hash(signed_payload{
+   .account = 42,
+   .sequence = 7,
+   .action = "commit",
+});
+auto signature = private_key.sign(digest);
 ```
 
 OpenSSL 3.0+ is the backend baseline. FCL does not shell out to `openssl`. AES-GCM
 is the preferred modern symmetric API; CBC/CFB remain compatibility surfaces.
+For signatures and protocol hashes, use `fcl::raw::pack` through described DTOs;
+do not sign JSON text, formatted strings or manually concatenated fields.
 
 ## App And Runtime
 

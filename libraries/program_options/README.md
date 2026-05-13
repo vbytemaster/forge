@@ -84,6 +84,10 @@ const char* argv[] = {"daemon", "--log-level=debug"};
 auto parsed = fcl::program_options::parse(2, argv, registry);
 ```
 
+CLI should be the last high-precedence source in a normal daemon bootstrap.
+Keep the precedence visible near the program entrypoint so operators can reason
+about why a value won.
+
 ## Diagnostics
 
 Conversion and parser failures return diagnostics such as
@@ -98,6 +102,11 @@ diagnostic/log pipeline.
 - Do not document aliases that are not present in schema descriptors.
 - Do not parse environment variables here. Use `fcl_env` for process env and
   `.env` files.
+- Do not pass secrets on argv unless the product explicitly accepts the process
+  list/history risk. Prefer config files with permissions, stdin or a product
+  secret store.
+- Do not bridge YAML `options:` arrays into argv. Parse YAML as config and CLI
+  as CLI, then merge documents.
 
 ## Tests
 

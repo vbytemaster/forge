@@ -43,6 +43,9 @@ Boost headers and Boost.Multiprecision.
 #include <cstdint>
 #include <vector>
 
+import fcl.raw.datastream;
+import fcl.raw.raw;
+
 struct transfer {
    std::uint64_t id = 0;
    std::uint32_t amount = 0;
@@ -50,14 +53,57 @@ struct transfer {
 
 BOOST_DESCRIBE_STRUCT(transfer, (), (id, amount))
 
-import fcl.raw.datastream;
-import fcl.raw.raw;
-
 auto bytes = std::vector<char>{};
 bytes.resize(fcl::raw::pack_size(transfer{.id = 7, .amount = 42}));
 auto stream = fcl::datastream<char*>{bytes.data(), bytes.size()};
 fcl::raw::pack(stream, transfer{.id = 7, .amount = 42});
 ```
+
+### Use Raw Bytes As The Hash/Signature Contract
+
+When a product signs or hashes a C++ structure, the signed bytes must come from
+the same `fcl::raw::pack` path that the verifier uses. Do not rebuild bytes with
+string concatenation, JSON or hand-written field loops.
+
+```cpp
+#include <boost/describe.hpp>
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+import fcl.crypto.private_key;
+import fcl.crypto.sha256;
+import fcl.raw.datastream;
+import fcl.raw.raw;
+
+struct signed_command {
+   std::uint64_t account = 0;
+   std::uint64_t sequence = 0;
+   std::string command;
+};
+
+BOOST_DESCRIBE_STRUCT(signed_command, (), (account, sequence, command))
+
+auto command = signed_command{
+   .account = 42,
+   .sequence = 11,
+   .command = "rotate-key",
+};
+
+auto bytes = std::vector<char>{};
+bytes.resize(fcl::raw::pack_size(command));
+
+auto stream = fcl::datastream<char*>{bytes.data(), bytes.size()};
+fcl::raw::pack(stream, command);
+
+auto private_key = fcl::crypto::private_key::generate();
+auto digest = fcl::sha256::hash(bytes.data(), bytes.size());
+auto signature = private_key.sign(digest);
+```
+
+Store golden raw bytes for protocol DTOs in tests. That catches accidental
+member reordering before it becomes an interoperability break.
 
 ### Calculate Size Before Writing
 
@@ -93,17 +139,17 @@ instantiations for a frequently used DTO, while other translation units only see
 #include <cstdint>
 #include <string>
 
+import fcl.crypto.sha256;
+import fcl.raw.datastream;
+import fcl.raw.raw;
+import fcl.variant;
+
 struct action_payload {
    std::uint64_t id = 0;
    std::string actor;
 };
 
 BOOST_DESCRIBE_STRUCT(action_payload, (), (id, actor))
-
-import fcl.crypto.sha256;
-import fcl.raw.datastream;
-import fcl.raw.raw;
-import fcl.variant;
 
 FCL_DECLARE_SERIALIZATION(action_payload)
 ```
@@ -134,6 +180,18 @@ FCL_IMPLEMENT_SERIALIZATION(action_payload)
 - `sys_time<microseconds>` packs as old FC `time_point` (`uint64` microseconds).
 - `sys_seconds` packs as old FC `time_point_sec` (`uint32` seconds).
 - `std::chrono::microseconds` packs as old FC microseconds (`uint64` bit layout).
+
+## Runtime Risks And Anti-Patterns
+
+- Do not pack runtime resources such as file handles, sockets, executors or
+  pointers. Raw is for value DTOs with deterministic ownership.
+- Do not use raw bytes as diagnostics output. Convert to JSON/YAML or render
+  explicit safe fields after redaction.
+- Do not continue after `std::out_of_range` from unpack as if the stream were
+  partially valid. Treat it as a malformed input boundary and fail the operation.
+- Do not add raw overloads in unrelated libraries to “make it compile”. The
+  owning domain should describe the value type or provide a narrowly reviewed
+  compatibility overload.
 
 ## Typical Mistakes
 

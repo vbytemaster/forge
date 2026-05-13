@@ -96,6 +96,33 @@ registry.add(fcl::config::describe_component<http_config>("http"));
 auto safe = fcl::config::redact(merged, registry);
 ```
 
+### Compose Sources Before Application Startup
+
+Use `fcl_config` as a glue layer between source adapters. Product code owns the
+precedence order; plugins only publish descriptors and receive a component view.
+
+```cpp
+import fcl.config;
+import fcl.program_options;
+import fcl.yaml;
+
+auto registry = application.describe_config();
+auto yaml = fcl::yaml::load_document(config_path);
+auto cli = fcl::program_options::parse(argc, argv, registry);
+
+auto effective = fcl::config::merge({
+   fcl::config::effective_document(registry),
+   yaml.value,
+   cli.document,
+});
+
+auto safe_for_logs = fcl::config::redact(effective, registry);
+co_await application.configure(effective);
+```
+
+Never print `effective` before redaction. It may contain tokens, private paths
+or other operator-provided secrets.
+
 ### Configure A Component View
 
 ```cpp
@@ -117,6 +144,11 @@ auto port = view.get_or<std::uint16_t>("bind-port", 8080);
 - Do not make a second generic config document/parser layer in a consuming
   product. Use `fcl_yaml`, `fcl_json`, `fcl_env` or `fcl_program_options` as
   source adapters over this document model.
+- Do not put product validation that requires I/O, credentials or live network
+  checks into `fcl_config`. Decode config first, then run product validation in
+  the owning program/plugin.
+- Do not treat config merge as recovery from invalid config. Diagnostics must
+  fail startup before plugins initialize.
 
 ## Tests
 

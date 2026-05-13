@@ -158,6 +158,9 @@ boost::asio::awaitable<void> run_small_job(fcl::asio::runtime& runtime) {
 }
 ```
 
+Queue rejection is a product signal. A daemon should surface a typed busy or
+backpressure error, not spawn an unbounded fallback thread to “make progress”.
+
 ### Use Numeric Priorities Without Product Vocabulary
 
 The scheduler only knows numbers. A product can define its own named constants
@@ -236,6 +239,19 @@ boost::asio::awaitable<void> stop_with_pending_work(fcl::asio::task_scheduler& s
 `task_scheduler_options::max_pending_tasks` is a correctness knob. Saturated
 queues reject work instead of growing without bound. `stop()` cancels pending
 work and lets tests verify deterministic shutdown behavior.
+
+## Runtime Risks And Anti-Patterns
+
+- Do not detach raw `std::thread` workers around the scheduler. That bypasses
+  cancellation, metrics and deterministic shutdown.
+- Do not use `std::async` as a daemon worker pool. It has no FCL backpressure or
+  lifecycle integration.
+- Do not sleep in polling loops on runtime threads. Use timers, task handles and
+  explicit cancellation.
+- Do not call `stop()` before consumers have awaited cleanup handles. A stopped
+  scheduler rejects new cleanup work by design.
+- Do not capture stack references in queued tasks unless the owner awaits or
+  cancels the handle before the referenced object can die.
 
 ## Typical Mistakes
 

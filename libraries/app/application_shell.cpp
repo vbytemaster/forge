@@ -78,11 +78,17 @@ void publish_application_event(event_bus& events, event_severity severity, std::
       auto enabled = descriptor.enabled_by_default;
       const auto path = "plugins." + descriptor.id.value + ".enabled";
       if (const auto* configured = document.try_get(path)) {
-         const auto* value = std::get_if<bool>(&configured->storage);
-         if (!value) {
+         if (const auto* value = std::get_if<bool>(&configured->storage)) {
+            enabled = *value;
+         } else if (const auto* text = std::get_if<std::string>(&configured->storage)) {
+            auto parsed = false;
+            if (!fcl::config::parse_bool_text(*text, parsed)) {
+               throw std::invalid_argument{"plugin enabled flag must be boolean: " + path};
+            }
+            enabled = parsed;
+         } else {
             throw std::invalid_argument{"plugin enabled flag must be boolean: " + path};
          }
-         enabled = *value;
       }
       out.push_back(plugin_config{
          .id = descriptor.id,

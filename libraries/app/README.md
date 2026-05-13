@@ -66,11 +66,11 @@ public:
 
    void request_stop() noexcept override {
       app_.request_stop();
+      scheduler_.stop();
    }
 
    boost::asio::awaitable<void> shutdown() override {
       co_await app_.shutdown();
-      scheduler_.stop();
       co_return;
    }
 
@@ -92,9 +92,6 @@ The class above is intentionally thin. Product code may add CLI/YAML loading,
 PID files or platform service integration around it, but the plugin lifecycle
 stays in `application_runtime`. Notice that `request_stop()` does not stop the
 runtime directly: async `shutdown()` still needs the runtime to run cleanup.
-The same rule applies to the scheduler: stop intent is synchronous, cleanup is
-asynchronous, and queued cleanup work needs the scheduler to stay alive until
-shutdown has completed.
 
 Buildable versions of this pattern live in
 [`examples/app/application_lifecycle.cpp`](../../examples/app/application_lifecycle.cpp)
@@ -107,15 +104,15 @@ and [`examples/app/exception_logging.cpp`](../../examples/app/exception_logging.
 
 #include <cstdint>
 
-import fcl.config;
-import fcl.schema;
-
 struct http_config {
    std::uint16_t bind_port = 8080;
    bool tls_enabled = false;
 };
 
 BOOST_DESCRIBE_STRUCT(http_config, (), (bind_port, tls_enabled))
+
+import fcl.config;
+import fcl.schema;
 
 template <>
 struct fcl::schema::rules<http_config> {
@@ -202,9 +199,6 @@ try {
    throw;
 }
 ```
-
-The catch block is not optional ceremony. It keeps failed startup paths from
-leaving ports, background jobs or plugins in half-started states.
 
 ### Bridge OS Signals Into `request_stop()`
 
@@ -415,28 +409,10 @@ possible and records diagnostics.
 
 - Do not make plugin constructors perform I/O; use `initialize`.
 - Do not assume `request_stop()` awaits cleanup; it is synchronous and noexcept.
-- Do not stop the scheduler or `io_context` inside `request_stop()`. Plugins may
-  still need async cleanup work during `shutdown()`.
 - Do not keep parser-specific types in plugin APIs.
 - Do not use the event bus for request/response control flow.
 - Do not install broad concrete implementation classes as ports; expose narrow
   interfaces.
-- Do not ignore failed `initialize()` or `startup()`. Treat them as terminal for
-  that runtime instance unless the application explicitly documents recovery.
-- Do not use `abort()` from signal handlers or lifecycle catches. Request stop,
-  run shutdown at the product boundary, then return an error.
-
-## Runtime Risks And Anti-Patterns
-
-- A plugin that starts background work must also own cancellation and shutdown.
-  Hidden detached work is a process-lifetime leak.
-- Ports must be installed before plugins initialize and must outlive plugin
-  shutdown. Removing ports early creates use-after-shutdown failures.
-- Event subscribers should keep their connection lifetime explicit. Capturing a
-  short-lived object in a long-lived signal/event callback is a common crash
-  source.
-- Lifecycle diagnostics are not recovery. Log/report them, but still propagate
-  correctness-path failures to the caller.
 
 ## Tests
 

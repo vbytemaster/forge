@@ -43,5 +43,5 @@ This is a deliberate source-breaking pass:
 cmake --build build/fcl-glaze-codec-debug -j 1 --target test_fcl_json test_fcl_yaml
 ctest --test-dir build/fcl-glaze-codec-debug --output-on-failure -R "^(test_fcl_json|test_fcl_yaml)$" --timeout 120
 rg "legacy parser facade|old YAML backend|backend node type" AGENTS.md docs libraries tests CMakeLists.txt
-rg "backend parser namespace|backend parser metadata" libraries/json/include libraries/yaml/include
+rg "glz::|glaze/" libraries/json/include libraries/yaml/include
 ```

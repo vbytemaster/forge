@@ -103,7 +103,7 @@ Static gates:
 
 ```sh
 rg "boost/program_options|program_options" libraries/app
-rg "backend parser namespace|backend parser metadata" libraries/yaml/include libraries/json/include tests
+rg "glz::|glaze/" libraries/yaml/include libraries/json/include tests
 rg "app_config|config_program_options" libraries tests docs AGENTS.md
 git diff --check
 ```

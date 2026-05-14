@@ -122,6 +122,14 @@ target_link_libraries(test_fcl_program_options fcl Boost::included_unit_test_fra
 add_test(NAME test_fcl_program_options COMMAND test_fcl_program_options WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
+   test_fcl_env
+   unit/main.cpp
+   env/env_tests.cpp
+)
+target_link_libraries(test_fcl_env fcl Boost::included_unit_test_framework)
+add_test(NAME test_fcl_env COMMAND test_fcl_env WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(
    test_fcl_http_websocket
    unit/main.cpp
    http_websocket/network_tests.cpp
@@ -191,6 +199,22 @@ add_custom_target(
    DEPENDS test_fcl_package_install
 )
 add_custom_target(
+   test_fcl_package_env_lightweight
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_env_lightweight
+      ${CMAKE_BINARY_DIR}/fcl-package-env-lightweight
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options
+         ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+         -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
+         -DCMAKE_DISABLE_FIND_PACKAGE_Ngtcp2=ON
+         -DCMAKE_DISABLE_FIND_PACKAGE_glaze=ON
+         -DCMAKE_DISABLE_FIND_PACKAGE_Notcurses=ON
+      --test-command fcl_package_env_lightweight
+   DEPENDS test_fcl_package_install
+)
+add_custom_target(
    test_fcl_package_all_missing_dependency
    COMMAND ${CMAKE_COMMAND}
       -DFCL_PACKAGE_TEST_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_all_missing_dependency
@@ -235,6 +259,22 @@ add_test(
       --test-command fcl_package_core_lightweight
 )
 set_tests_properties(test_fcl_package_core_lightweight PROPERTIES DEPENDS test_fcl_package_install)
+add_test(
+   NAME test_fcl_package_env_lightweight
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_env_lightweight
+      ${CMAKE_BINARY_DIR}/fcl-package-env-lightweight
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options
+         ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+         -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
+         -DCMAKE_DISABLE_FIND_PACKAGE_Ngtcp2=ON
+         -DCMAKE_DISABLE_FIND_PACKAGE_glaze=ON
+         -DCMAKE_DISABLE_FIND_PACKAGE_Notcurses=ON
+      --test-command fcl_package_env_lightweight
+)
+set_tests_properties(test_fcl_package_env_lightweight PROPERTIES DEPENDS test_fcl_package_install)
 add_test(
    NAME test_fcl_package_all_missing_dependency
    COMMAND ${CMAKE_COMMAND}

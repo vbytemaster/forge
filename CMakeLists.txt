@@ -184,6 +184,7 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/config/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/yaml/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/program_options/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/env/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/log/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/crypto/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/asio/include"
@@ -295,6 +296,7 @@ add_subdirectory(libraries/config)
 add_subdirectory(libraries/json)
 add_subdirectory(libraries/yaml)
 add_subdirectory(libraries/program_options)
+add_subdirectory(libraries/env)
 add_subdirectory(libraries/log)
 add_subdirectory(libraries/crypto)
 add_subdirectory(libraries/asio)
@@ -319,6 +321,7 @@ set(
    fcl_json
    fcl_yaml
    fcl_program_options
+   fcl_env
    fcl_log
    fcl_crypto
    fcl_asio
@@ -375,6 +378,7 @@ install(
              libraries/config/include/fcl
              libraries/yaml/include/fcl
              libraries/program_options/include/fcl
+             libraries/env/include/fcl
              libraries/log/include/fcl
              libraries/crypto/include/fcl
              libraries/asio/include/fcl

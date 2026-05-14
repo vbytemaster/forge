@@ -1,15 +1,15 @@
 # fcl_config
 
-`fcl_config` is the neutral configuration model between schema, YAML, JSON, CLI
-and application plugins. It stores dotted-key documents, merges layers,
+`fcl_config` is the neutral configuration model between schema, YAML, JSON,
+environment, CLI and application plugins. It stores dotted-key documents, merges layers,
 decodes typed objects and redacts secret fields using schema metadata.
 
 ## When To Use
 
 - You need one config document shape independent of file format or CLI parser.
-- You need merge precedence such as defaults `<` file `<` env/custom `<` CLI.
+- You need merge precedence such as defaults `<` file `<` `.env` `<` process env `<` CLI.
 - A plugin/library wants to publish config descriptors without depending on
-  Boost.Program_options or Glaze.
+  Boost.Program_options, Glaze or environment parsing.
 
 ## When Not To Use
 
@@ -47,6 +47,30 @@ cli.set("http.bind-port", 9090);
 
 auto merged = fcl::config::merge({defaults, cli});
 auto* port = merged.try_get("http.bind-port");
+```
+
+### Merge Independent Source Adapters
+
+`fcl_config` does not parse YAML, JSON, `.env` or argv itself. Those libraries
+return documents, and the product decides precedence.
+
+```cpp
+import fcl.config;
+import fcl.env;
+import fcl.program_options;
+import fcl.yaml;
+
+auto file = fcl::yaml::load_document(workspace / "config.yml");
+auto dotenv = fcl::env::load_document(workspace / ".env", registry, {.prefix = "STORLANE"});
+auto env = fcl::env::read_process_document(registry, {.prefix = "STORLANE"});
+auto cli = fcl::program_options::parse(argc, argv, registry);
+
+auto input = fcl::config::merge({
+   file.value,
+   dotenv.value,
+   env.value,
+   cli.document,
+});
 ```
 
 ### Decode A Typed Section
@@ -144,6 +168,9 @@ auto decoded = fcl::config::decode<http_config>(migrated.value, "http");
   deterministic conflict rule.
 - Do not bypass `component_registry` for plugin config collection; duplicate
   fields/aliases must be detected before runtime startup.
+- Do not make a second generic config document/parser layer in a consuming
+  product. Use `fcl_yaml`, `fcl_json`, `fcl_env` or `fcl_program_options` as
+  source adapters over this document model.
 - Do not turn migrations into product validation. Keep them mechanical:
   rename, remove or add defaults, then let `fcl_schema` validate the typed
   config.
@@ -156,5 +183,5 @@ auto decoded = fcl::config::decode<http_config>(migrated.value, "http");
 ## Tests
 
 `test_fcl_config` covers dotted path handling, merge precedence, typed decode,
-unknown/deprecated diagnostics, redaction, document migrations and duplicate
-registry rejection.
+unknown/deprecated diagnostics, redaction, flat component sections, document
+migrations and duplicate registry rejection.

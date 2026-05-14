@@ -36,7 +36,7 @@ FCL.
 - [Codecs](codecs/json-yaml-glaze.md): JSON/YAML namespace APIs, Glaze backend
   boundary and diagnostics.
 - [Config](config/schema-config-program-options.md): schema rules, neutral
-  config documents, CLI adapter and redaction.
+  config documents, env/CLI adapters and redaction.
 - [Migration Guide](migration/storlane-fc-to-fcl.md): target mapping, raw
   compatibility, Boost.Describe, chrono, exception and logger migration.
 
@@ -48,7 +48,7 @@ Build/test gates:
 cmake --build build/fcl-debug -j 1 \
   --target fcl test_fcl test_fcl_exception test_fcl_raw test_fcl_json test_fcl_crypto \
   test_fcl_asio test_fcl_app test_fcl_schema test_fcl_config test_fcl_yaml \
-  test_fcl_program_options test_fcl_http_websocket test_fcl_quic_p2p test_fcl_tui
+  test_fcl_program_options test_fcl_env test_fcl_http_websocket test_fcl_quic_p2p test_fcl_tui
 
 ctest --test-dir build/fcl-debug --output-on-failure
 git diff --check

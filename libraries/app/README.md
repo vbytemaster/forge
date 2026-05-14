@@ -16,6 +16,8 @@ reimplement plugin order manually.
 - A daemon needs one place to collect app config and plugin config.
 - You want deterministic startup, rollback, reverse shutdown and diagnostics.
 - You want typed ports between plugins without coupling them through globals.
+- Plugins must publish config descriptors without knowing whether values came
+  from source adapters such as YAML, JSON, env or CLI.
 
 ## When Not To Use
 

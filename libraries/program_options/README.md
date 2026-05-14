@@ -8,7 +8,7 @@ types.
 ## When To Use
 
 - Build command-line flags from a `config::component_registry`.
-- Merge CLI values with defaults and YAML/JSON config documents.
+- Merge CLI values with defaults and YAML/JSON/env config documents.
 - Keep application plugins independent from CLI parser implementation.
 
 ## When Not To Use
@@ -64,8 +64,24 @@ import fcl.config;
 auto effective = fcl::config::merge({
    fcl::config::defaults_for<http_config>("http"),
    yaml_document,
+   dotenv_document,
+   process_env_document,
    parsed.document,
 });
+```
+
+### Flat Root Flags
+
+An empty component section maps fields directly to flag names. This keeps
+bootstrap flags such as `--log-level` flat instead of forcing a synthetic
+section.
+
+```cpp
+auto registry = fcl::config::component_registry{};
+registry.add(fcl::config::describe_component<daemon_config>(""));
+
+const char* argv[] = {"daemon", "--log-level=debug"};
+auto parsed = fcl::program_options::parse(2, argv, registry);
 ```
 
 CLI should be the last high-precedence source in a normal daemon bootstrap.
@@ -84,6 +100,8 @@ diagnostic/log pipeline.
   descriptors; the application shell decides which adapters are active.
 - Do not encode config source precedence in this library. Use `fcl_config::merge`.
 - Do not document aliases that are not present in schema descriptors.
+- Do not parse environment variables here. Use `fcl_env` for process env and
+  `.env` files.
 - Do not pass secrets on argv unless the product explicitly accepts the process
   list/history risk. Prefer config files with permissions, stdin or a product
   secret store.
@@ -92,5 +110,5 @@ diagnostic/log pipeline.
 
 ## Tests
 
-`test_fcl_program_options` covers dotted flags, explicit boolean false,
-repeated list flags, aliases and conversion errors.
+`test_fcl_program_options` covers dotted flags, flat root flags, explicit
+boolean false, repeated list flags, aliases and conversion errors.

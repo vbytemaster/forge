@@ -19,9 +19,14 @@ struct http_config {
    std::string token;
 };
 
+struct flat_config {
+   std::string log_level;
+};
+
 } // namespace
 
 BOOST_DESCRIBE_STRUCT(http_config, (), (bind_port, bind_host, tls_enabled, tags, token))
+BOOST_DESCRIBE_STRUCT(flat_config, (), (log_level))
 
 template <> struct fcl::schema::rules<http_config> {
    [[nodiscard]] static fcl::schema::object_schema<http_config> define() {
@@ -31,6 +36,14 @@ template <> struct fcl::schema::rules<http_config> {
       schema.field<&http_config::tls_enabled>("tls-enabled").default_value(false);
       static_cast<void>(schema.field<&http_config::tags>("tags"));
       schema.field<&http_config::token>("token").secret().deprecated("use vault-ref");
+      return schema;
+   }
+};
+
+template <> struct fcl::schema::rules<flat_config> {
+   [[nodiscard]] static fcl::schema::object_schema<flat_config> define() {
+      auto schema = fcl::schema::object<flat_config>();
+      schema.field<&flat_config::log_level>("log-level").default_value("info");
       return schema;
    }
 };
@@ -112,6 +125,23 @@ BOOST_AUTO_TEST_CASE(config_registry_rejects_duplicate_aliases) {
    auto registry = fcl::config::component_registry{};
    registry.add(fcl::config::describe_component<http_config>("http"));
    BOOST_CHECK_THROW(registry.add(fcl::config::describe_component<http_config>("http")), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(config_registry_supports_empty_component_sections) {
+   auto registry = fcl::config::component_registry{};
+   registry.add(fcl::config::describe_component<flat_config>(""));
+
+   auto doc = fcl::config::document{};
+   doc.set("log-level", "debug");
+
+   const auto view = fcl::config::component_view{doc, ""};
+   BOOST_TEST(view.get_or<std::string>("log-level", "info") == "debug");
+
+   const auto decoded = fcl::config::decode<flat_config>(doc);
+   BOOST_TEST(decoded.ok());
+   BOOST_TEST(decoded.value.log_level == "debug");
+   BOOST_REQUIRE_EQUAL(registry.components().front().fields.size(), 1U);
+   BOOST_TEST(registry.components().front().fields.front().has_default);
 }
 
 BOOST_AUTO_TEST_CASE(config_migration_chain_updates_document_version) {

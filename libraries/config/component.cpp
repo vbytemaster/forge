@@ -12,32 +12,36 @@ import fcl.config.document;
 import fcl.config.value;
 
 namespace fcl::config {
+namespace {
+
+[[nodiscard]] std::string field_path(std::string_view section, std::string_view field) {
+   auto output = std::string{section};
+   if (!output.empty()) {
+      output += ".";
+   }
+   output += field;
+   return output;
+}
+
+} // namespace
 
 void component_registry::add(component_descriptor descriptor) {
-   auto path_for = [](const component_descriptor& component, std::string_view field) {
-      auto path = component.section;
-      if (!path.empty()) {
-         path += ".";
-      }
-      path += field;
-      return path;
-   };
    auto known = std::set<std::string>{};
    for (const auto& existing : components_) {
       for (const auto& field : existing.fields) {
-         known.insert(path_for(existing, field.name));
+         known.insert(field_path(existing.section, field.name));
          for (const auto& alias : field.aliases) {
-            known.insert(path_for(existing, alias));
+            known.insert(field_path(existing.section, alias));
          }
       }
    }
    for (const auto& field : descriptor.fields) {
-      const auto canonical = path_for(descriptor, field.name);
+      const auto canonical = field_path(descriptor.section, field.name);
       if (!known.insert(canonical).second) {
          throw std::invalid_argument{"duplicate config field: " + canonical};
       }
       for (const auto& alias : field.aliases) {
-         const auto alias_path = path_for(descriptor, alias);
+         const auto alias_path = field_path(descriptor.section, alias);
          if (!known.insert(alias_path).second) {
             throw std::invalid_argument{"duplicate config field alias: " + alias_path};
          }
@@ -61,11 +65,7 @@ document redact(document input, const component_registry& registry) {
          if (!field.secret) {
             continue;
          }
-         auto path = component.section;
-         if (!path.empty()) {
-            path += ".";
-         }
-         path += field.name;
+         const auto path = field_path(component.section, field.name);
          if (input.try_get(path)) {
             input.set(path, std::string{"<redacted>"});
          }

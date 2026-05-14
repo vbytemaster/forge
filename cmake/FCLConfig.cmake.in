@@ -16,6 +16,7 @@ set(
    yaml
    config
    program_options
+   env
    log
    crypto
    asio
@@ -60,6 +61,9 @@ macro(_fcl_add_component component)
       elseif("${component}" STREQUAL "config")
          _fcl_add_component(schema)
       elseif("${component}" STREQUAL "program_options")
+         _fcl_add_component(config)
+         _fcl_add_component(schema)
+      elseif("${component}" STREQUAL "env")
          _fcl_add_component(config)
          _fcl_add_component(schema)
       elseif("${component}" STREQUAL "log")

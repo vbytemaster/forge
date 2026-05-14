@@ -66,6 +66,13 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - Secret-like fields must support redaction in configs, logs, diagnostics, and error context.
 - `Boost.Program_options` is a backend dependency of `fcl_program_options` only. App/plugin core must not expose `variables_map`, `options_description`, or other CLI parser types.
 - Config merge order is schema defaults, config file, environment/custom adapters, then CLI.
+- Environment and `.env` loading belongs to `fcl_env`, not to `fcl_app` or plugins.
+- `fcl_env` is a source adapter like `fcl_program_options`: it maps process env
+  and explicit `.env` files into `fcl::config::document` using
+  `component_registry`. It must not mutate global environment, implicitly search
+  parent directories or expose downstream product variable names.
+- Products decide source precedence explicitly before calling
+  `application_shell::configure`.
 
 ## Errors And Logging
 

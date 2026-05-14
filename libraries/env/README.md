@@ -1,0 +1,220 @@
+# fcl_env
+
+`fcl_env` converts process environment variables and explicit `.env` files into
+`fcl::config::document`. It is a config source adapter, like
+`fcl_program_options` for CLI flags: plugins and applications publish schema
+descriptors, `fcl_env` maps prefixed variables to canonical config keys, and
+the caller decides merge precedence.
+
+## When To Use
+
+- CI/CD, containers, systemd, launchd or Kubernetes need config through
+  environment variables.
+- A generated workspace should include a `.env.example` without writing real
+  secrets.
+- Tests need deterministic config input without mutating global process env.
+- You want schema-aware diagnostics for aliases, unknown names, deprecated
+  fields and conversion errors.
+
+## When Not To Use
+
+- Do not hide environment loading inside `fcl_app`; app receives a ready
+  `config::document`.
+- Do not use env vars as the only high-value secret transport. Environment
+  values may leak through process inspection, CI logs or crash dumps.
+- Do not rely on implicit `.env` discovery from the current directory. The
+  caller must pass an explicit path.
+- Do not put product bootstrap names such as workspace/config-file discovery in
+  FCL. That belongs to the consuming product.
+
+## Public Module
+
+- `fcl.env`
+
+Target: `fcl_env`.
+
+Dependencies: `fcl_config`, `fcl_schema`.
+
+No dependency on `fcl_app`, Glaze, Boost.Program_options, OpenSSL, ngtcp2,
+Notcurses or crypto backends.
+
+## Naming
+
+Variables are generated from the config registry:
+
+```text
+<PREFIX>_<SECTION>_<FIELD>
+```
+
+`-`, `.`, `/` and repeated separators become `_`, then names are uppercased:
+
+```text
+http.bind-port    -> STORLANE_HTTP_BIND_PORT
+http.tls-enabled  -> STORLANE_HTTP_TLS_ENABLED
+log-level         -> STORLANE_LOG_LEVEL
+```
+
+Aliases are accepted when enabled, but values are written to the canonical
+dotted config path.
+
+## Examples
+
+### Read A `.env` File
+
+```cpp
+import fcl.config;
+import fcl.env;
+
+auto registry = fcl::config::component_registry{};
+registry.add(fcl::config::describe_component<http_config>("http"));
+
+auto dotenv = fcl::env::load_document(
+   workspace / ".env",
+   registry,
+   fcl::env::read_options{
+      .prefix = "STORLANE",
+      .source_name = "workspace/.env",
+   });
+
+if (!dotenv.ok()) {
+   // dotenv.diagnostics contains env.parse/env.convert/env.unknown entries.
+}
+```
+
+### Merge With YAML And CLI
+
+`fcl_env` does not own precedence. Keep it explicit at the composition layer:
+
+```cpp
+auto file = fcl::yaml::load_document(workspace / "config.yml");
+auto dotenv = fcl::env::load_document(workspace / ".env", registry, {.prefix = "STORLANE"});
+auto env = fcl::env::read_process_document(registry, {.prefix = "STORLANE"});
+auto cli = fcl::program_options::parse(argc, argv, registry);
+
+auto input = fcl::config::merge({
+   file.value,
+   dotenv.value,
+   env.value,
+   cli.document,
+});
+
+app.configure(input);
+```
+
+Recommended product precedence is:
+
+```text
+schema defaults < config file < .env < process env < CLI
+```
+
+### Typed Single-Section Read
+
+For a small tool or test, the typed helper can build the registry from one
+described config type:
+
+```cpp
+auto parsed = fcl::env::read<http_config>(
+   "STORLANE_HTTP_BIND_PORT=9090\n",
+   "http",
+   {.prefix = "STORLANE"});
+
+if (parsed.ok()) {
+   start_http(parsed.value);
+}
+```
+
+### Deterministic Environment Tests
+
+Avoid mutating global process environment in tests. Use `read_variables()`:
+
+```cpp
+auto vars = std::vector<fcl::env::environment_variable>{
+   {.name = "STORLANE_HTTP_BIND_PORT", .value = "9090"},
+};
+
+auto parsed = fcl::env::read_variables(vars, registry, {.prefix = "STORLANE"});
+```
+
+### Generate `.env.example`
+
+```cpp
+auto example = fcl::env::write_example(registry, {.prefix = "STORLANE"});
+if (example.ok()) {
+   fcl::env::save_example(workspace / ".env.example", registry, {.prefix = "STORLANE"});
+}
+```
+
+Secret fields are emitted as empty placeholders in examples:
+
+```dotenv
+# HTTP bearer token.
+# Secret value. Prefer a platform secret manager in production.
+STORLANE_HTTP_TOKEN=
+```
+
+### Write Current Overrides
+
+```cpp
+auto redacted = fcl::env::write_document(document, registry, {.prefix = "STORLANE"});
+```
+
+Secret values are never written back as real values; they render as
+`<redacted>`.
+
+## `.env` Syntax
+
+Supported v1 syntax:
+
+```dotenv
+# comment
+export STORLANE_HTTP_BIND_PORT=9090
+STORLANE_HTTP_TLS_ENABLED=true
+STORLANE_HTTP_TOKEN="secret value"
+STORLANE_HTTP_TAGS=blue,green
+```
+
+Supported:
+
+- blank lines and comments;
+- optional `export`;
+- whitespace around `=`;
+- single and double quotes;
+- double-quoted escapes: `\n`, `\r`, `\t`, `\\`, `\"`;
+- comma-separated `string_list` with `\,` for literal comma.
+
+Not supported in v1:
+
+- variable expansion like `${HOME}`;
+- command substitution;
+- multiline values;
+- implicit parent-directory search;
+- JSON object values.
+
+## Diagnostics
+
+Common diagnostic codes:
+
+- `env.parse` — malformed `.env` line.
+- `env.duplicate` — duplicate variable, later value wins.
+- `env.unknown` — prefixed variable not present in registry.
+- `env.alias_conflict` — canonical and alias variables disagree.
+- `env.deprecated` — deprecated field was provided.
+- `env.convert` — value cannot be converted to schema kind.
+
+Unknown prefixed variables warn by default and can be made fatal with
+`unknown_variable_policy::error`.
+
+## Security Notes
+
+- Treat `.env` as local secret material and usually gitignore it.
+- Generate `.env.example`, not `.env` with real secrets.
+- Redact effective config before logging.
+- Prefer secret managers, mounted secret files or stdin for high-value secrets.
+- Do not let plugins call `std::getenv()` directly; keep precedence and
+  diagnostics centralized.
+
+## Tests
+
+`test_fcl_env` covers env name mapping, flat sections, aliases, dotenv syntax,
+source-line diagnostics, injected process env snapshots, conversions, unknowns,
+deprecated fields, alias conflicts and secret-safe output.

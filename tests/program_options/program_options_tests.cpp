@@ -17,9 +17,14 @@ struct http_config {
    std::vector<std::string> tags;
 };
 
+struct flat_config {
+   std::string log_level;
+};
+
 } // namespace
 
 BOOST_DESCRIBE_STRUCT(http_config, (), (bind_port, tls_enabled, tags))
+BOOST_DESCRIBE_STRUCT(flat_config, (), (log_level))
 
 template <> struct fcl::schema::rules<http_config> {
    [[nodiscard]] static fcl::schema::object_schema<http_config> define() {
@@ -27,6 +32,14 @@ template <> struct fcl::schema::rules<http_config> {
       schema.field<&http_config::bind_port>("bind-port").alias("port").range(1, 65535);
       schema.field<&http_config::tls_enabled>("tls-enabled").default_value(true);
       static_cast<void>(schema.field<&http_config::tags>("tags"));
+      return schema;
+   }
+};
+
+template <> struct fcl::schema::rules<flat_config> {
+   [[nodiscard]] static fcl::schema::object_schema<flat_config> define() {
+      auto schema = fcl::schema::object<flat_config>();
+      schema.field<&flat_config::log_level>("log-level").default_value("info");
       return schema;
    }
 };
@@ -58,6 +71,19 @@ BOOST_AUTO_TEST_CASE(program_options_reports_conversion_errors) {
    BOOST_TEST(!parsed.ok());
    BOOST_REQUIRE_EQUAL(parsed.diagnostics.size(), 1U);
    BOOST_TEST(parsed.diagnostics.front().code == "program_options.convert");
+}
+
+BOOST_AUTO_TEST_CASE(program_options_supports_empty_component_section_as_flat_flags) {
+   auto registry = fcl::config::component_registry{};
+   registry.add(fcl::config::describe_component<flat_config>(""));
+
+   const char* argv[] = {"tool", "--log-level=debug"};
+   const auto parsed = fcl::program_options::parse(2, argv, registry);
+   BOOST_TEST(parsed.ok());
+
+   const auto decoded = fcl::config::decode<flat_config>(parsed.document);
+   BOOST_TEST(decoded.ok());
+   BOOST_TEST(decoded.value.log_level == "debug");
 }
 
 BOOST_AUTO_TEST_CASE(program_options_supports_flat_component_section) {

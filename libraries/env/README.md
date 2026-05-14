@@ -77,7 +77,7 @@ auto dotenv = fcl::env::load_document(
    });
 
 if (!dotenv.ok()) {
-   // dotenv.diagnostics contains env.parse/env.convert/env.unknown entries.
+   report_diagnostics(dotenv.diagnostics);
 }
 ```
 
@@ -91,14 +91,29 @@ auto dotenv = fcl::env::load_document(workspace / ".env", registry, {.prefix = "
 auto env = fcl::env::read_process_document(registry, {.prefix = "STORLANE"});
 auto cli = fcl::program_options::parse(argc, argv, registry);
 
-auto input = fcl::config::merge({
-   file.value,
-   dotenv.value,
-   env.value,
-   cli.document,
-});
+if (!file.ok()) {
+   report_diagnostics(file.diagnostics);
+}
+if (!dotenv.ok()) {
+   report_diagnostics(dotenv.diagnostics);
+}
+if (!env.ok()) {
+   report_diagnostics(env.diagnostics);
+}
+if (!cli.ok()) {
+   report_diagnostics(cli.diagnostics);
+}
 
-app.configure(input);
+if (file.ok() && dotenv.ok() && env.ok() && cli.ok()) {
+   auto input = fcl::config::merge({
+      file.value,
+      dotenv.value,
+      env.value,
+      cli.document,
+   });
+
+   app.configure(input);
+}
 ```
 
 Recommended product precedence is:
@@ -156,6 +171,9 @@ STORLANE_HTTP_TOKEN=
 
 ```cpp
 auto redacted = fcl::env::write_document(document, registry, {.prefix = "STORLANE"});
+if (!redacted.ok()) {
+   report_diagnostics(redacted.diagnostics);
+}
 ```
 
 Secret values are never written back as real values; they render as
@@ -212,6 +230,19 @@ Unknown prefixed variables warn by default and can be made fatal with
 - Prefer secret managers, mounted secret files or stdin for high-value secrets.
 - Do not let plugins call `std::getenv()` directly; keep precedence and
   diagnostics centralized.
+
+## Runtime Risks And Anti-Patterns
+
+- Do not mutate global process environment in tests. Use `read_variables()` so
+  tests stay deterministic and parallel-safe.
+- Do not silently ignore `env.name_conflict`, `env.alias_conflict` or
+  `env.convert`; bad environment input must stop startup before ports/plugins
+  initialize.
+- Do not search parent directories for `.env` files. Implicit discovery can
+  bind a program to the wrong workspace or leak local developer settings into
+  production.
+- Do not write real secret values into generated `.env.example` files or logs.
+  Use placeholders/redaction and product-owned secret storage.
 
 ## Tests
 

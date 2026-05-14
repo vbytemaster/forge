@@ -70,20 +70,27 @@ string concatenation, JSON or hand-written field loops.
 
 #include <cstdint>
 #include <string>
-#include <vector>
 
 import fcl.crypto.private_key;
+import fcl.crypto.public_key;
 import fcl.crypto.sha256;
-import fcl.raw.datastream;
 import fcl.raw.raw;
 
 struct signed_command {
    std::uint64_t account = 0;
    std::uint64_t sequence = 0;
    std::string command;
+
+   [[nodiscard]] fcl::sha256 digest() const;
 };
 
 BOOST_DESCRIBE_STRUCT(signed_command, (), (account, sequence, command))
+
+inline fcl::sha256 signed_command::digest() const {
+   auto encoder = fcl::sha256::encoder{};
+   fcl::raw::pack(encoder, *this);
+   return encoder.result();
+}
 
 auto command = signed_command{
    .account = 42,
@@ -91,19 +98,27 @@ auto command = signed_command{
    .command = "rotate-key",
 };
 
-auto bytes = std::vector<char>{};
-bytes.resize(fcl::raw::pack_size(command));
-
-auto stream = fcl::datastream<char*>{bytes.data(), bytes.size()};
-fcl::raw::pack(stream, command);
-
 auto private_key = fcl::crypto::private_key::generate();
-auto digest = fcl::sha256::hash(bytes.data(), bytes.size());
+auto expected_public_key = private_key.get_public_key();
+
+auto digest = command.digest();
 auto signature = private_key.sign(digest);
+
+auto recovered_public_key = fcl::crypto::public_key{signature, digest};
+auto verified = recovered_public_key == expected_public_key;
 ```
 
 Store golden raw bytes for protocol DTOs in tests. That catches accidental
 member reordering before it becomes an interoperability break.
+
+Avoid shortcuts in signing code:
+
+- Do not sign JSON/YAML text, `to_string()` output or manually concatenated
+  fields.
+- Do not materialize a temporary byte buffer only to hash it when the sink
+  accepts `fcl::raw::pack` directly.
+- Do not treat a recoverable signature as authorized until the recovered public
+  key equals the expected signer.
 
 ### Calculate Size Before Writing
 

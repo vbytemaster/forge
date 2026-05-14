@@ -590,7 +590,10 @@ fcl::http::router router;
 router.get("/healthz", [](auto& ctx) {
    return ctx.json({{"ok", true}});
 });
-co_await server.listen(endpoint);
+
+boost::asio::awaitable<void> run_server() {
+   co_await server.listen(endpoint);
+}
 ```
 
 ### 10.2 WebSocket
@@ -649,7 +652,10 @@ FCL P2P должен позволять:
 import fcl.p2p;
 
 node.register_protocol("/my/product/1", handler);
-auto stream = co_await node.open_protocol(peer, "/my/product/1");
+boost::asio::awaitable<void> open_product_stream() {
+   auto open = node.open_protocol(peer, "/my/product/1");
+   use_stream(co_await std::move(open));
+}
 ```
 
 ---
@@ -688,12 +694,14 @@ fcl::app::ports ports;
 ports.install<my_port>(...);
 
 fcl::app::runtime app{context, plugins};
-co_await app.configure(effective_config);
-co_await app.initialize();
-co_await app.startup();
-...
-app.request_stop();
-co_await app.shutdown();
+boost::asio::awaitable<void> run_app() {
+   co_await app.configure(effective_config);
+   co_await app.initialize();
+   co_await app.startup();
+   // ...
+   app.request_stop();
+   co_await app.shutdown();
+}
 ```
 
 ---

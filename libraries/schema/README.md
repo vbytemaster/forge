@@ -41,6 +41,8 @@ Dependencies: `fcl_reflect` and Boost.Describe headers.
 #include <cstdint>
 #include <string>
 
+import fcl.schema;
+
 struct http_config {
    std::uint16_t bind_port = 0;
    std::string bind_host;
@@ -48,8 +50,6 @@ struct http_config {
 };
 
 BOOST_DESCRIBE_STRUCT(http_config, (), (bind_port, bind_host, token))
-
-import fcl.schema;
 
 template <>
 struct fcl::schema::rules<http_config> {
@@ -97,6 +97,15 @@ Diagnostics carry:
 - `code` — stable machine-readable reason;
 - `level` — info/warning/error/critical;
 - `message` — human-facing explanation.
+
+## Risks And Anti-Patterns
+
+- Do not use schema rules as authorization, live connectivity or credential
+  validation. Schema validates local value shape before product checks run.
+- Do not hide parser-specific decisions in schema metadata. JSON, YAML, env and
+  CLI adapters each own their source diagnostics.
+- Do not mark a field `secret()` and then print the raw document. Redaction is an
+  explicit config/log/UI step.
 
 ## Typical Mistakes
 

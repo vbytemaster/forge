@@ -47,26 +47,32 @@ Dependencies: `fcl_core`, `fcl_exception`, `fcl_raw`, `fcl_reflect`,
 
 Product protocols should hash stable binary payloads, not ad-hoc strings. The
 recommended pattern is: describe the DTO, keep member order stable, pack it with
-`fcl::raw::pack`, then hash or sign the packed bytes.
+`fcl::raw::pack` directly into a hash encoder, then sign that digest if needed.
 
 ```cpp
 #include <boost/describe.hpp>
 
 #include <cstdint>
 #include <string>
-#include <vector>
 
 import fcl.crypto.sha256;
-import fcl.raw.datastream;
 import fcl.raw.raw;
 
 struct transfer_digest_payload {
    std::uint64_t account = 0;
    std::uint64_t sequence = 0;
    std::string memo;
+
+   [[nodiscard]] fcl::sha256 digest() const;
 };
 
 BOOST_DESCRIBE_STRUCT(transfer_digest_payload, (), (account, sequence, memo))
+
+inline fcl::sha256 transfer_digest_payload::digest() const {
+   auto encoder = fcl::sha256::encoder{};
+   fcl::raw::pack(encoder, *this);
+   return encoder.result();
+}
 
 auto payload = transfer_digest_payload{
    .account = 42,
@@ -74,13 +80,7 @@ auto payload = transfer_digest_payload{
    .memo = "approve",
 };
 
-auto packed = std::vector<char>{};
-packed.resize(fcl::raw::pack_size(payload));
-
-auto stream = fcl::datastream<char*>{packed.data(), packed.size()};
-fcl::raw::pack(stream, payload);
-
-auto digest = fcl::sha256::hash(packed.data(), packed.size());
+auto digest = payload.digest();
 auto hex = digest.str();
 ```
 
@@ -176,17 +176,37 @@ struct signed_action {
    std::uint64_t actor = 0;
    std::uint64_t nonce = 0;
    std::string operation;
+
+   [[nodiscard]] fcl::sha256 digest() const;
+   [[nodiscard]] fcl::sha256 sig_digest(const fcl::sha256& chain_id) const;
 };
 
 BOOST_DESCRIBE_STRUCT(signed_action, (), (actor, nonce, operation))
 
+inline fcl::sha256 signed_action::digest() const {
+   auto encoder = fcl::sha256::encoder{};
+   fcl::raw::pack(encoder, *this);
+   return encoder.result();
+}
+
+inline fcl::sha256 signed_action::sig_digest(const fcl::sha256& chain_id) const {
+   auto encoder = fcl::sha256::encoder{};
+   fcl::raw::pack(encoder, chain_id);
+   fcl::raw::pack(encoder, *this);
+   return encoder.result();
+}
+
 auto private_key = fcl::crypto::private_key::generate();
 auto public_key = private_key.get_public_key();
-auto digest = fcl::sha256::hash(signed_action{
+
+auto chain_id = fcl::sha256{}; // Replace with the real chain/domain id.
+auto action = signed_action{
    .actor = 42,
    .nonce = 9,
    .operation = "grant",
-});
+};
+
+auto digest = action.sig_digest(chain_id);
 auto signature = private_key.sign(digest);
 auto recovered_public_key = fcl::crypto::public_key{signature, digest};
 auto verified = recovered_public_key == public_key;
@@ -204,19 +224,33 @@ import fcl.crypto.public_key;
 import fcl.crypto.sha256;
 import fcl.raw.raw;
 
-auto private_key = fcl::crypto::private_key::generate<fcl::crypto::r1::private_key_shim>();
-auto digest = fcl::sha256::hash(signed_action{
+auto private_key = fcl::crypto::private_key::generate_r1();
+auto public_key = private_key.get_public_key();
+
+auto chain_id = fcl::sha256{}; // Replace with the real chain/domain id.
+auto action = signed_action{
    .actor = 42,
    .nonce = 10,
    .operation = "webauthn-check",
-});
+};
+
+auto digest = action.sig_digest(chain_id);
 auto signature = private_key.sign(digest);
-auto public_key = private_key.get_public_key();
 auto recovered_public_key = fcl::crypto::public_key{signature, digest};
+auto verified = recovered_public_key == public_key;
 ```
 
 K1 and R1 have different compatibility expectations. Keep tests for both when
 changing shared signature code.
+
+Signature anti-patterns:
+
+- Do not sign JSON, YAML, pretty-printed strings or manually concatenated
+  fields for protocol authorization.
+- Do not verify against bytes reconstructed from a different DTO or a different
+  `BOOST_DESCRIBE_STRUCT` field order.
+- Do not accept a recoverable signature just because recovery succeeded; compare
+  the recovered public key with the expected signer.
 
 ### Parse Existing Key Strings
 
@@ -425,15 +459,23 @@ import fcl.raw.raw;
 struct signed_payload {
    std::uint64_t nonce = 0;
    std::string body;
+
+   [[nodiscard]] fcl::sha256 digest() const;
 };
 
 BOOST_DESCRIBE_STRUCT(signed_payload, (), (nonce, body))
 
-auto digest = fcl::sha256::hash(signed_payload{.nonce = 7, .body = "approve"});
+inline fcl::sha256 signed_payload::digest() const {
+   auto encoder = fcl::sha256::encoder{};
+   fcl::raw::pack(encoder, *this);
+   return encoder.result();
+}
+
+auto digest = signed_payload{.nonce = 7, .body = "approve"}.digest();
 ```
 
-`sha256::hash(T)` uses `fcl::raw::pack`, so field order is binary
-compatibility-sensitive.
+The encoder path is the same path used by `fcl::raw::pack`, so field order is
+binary compatibility-sensitive.
 
 ### Serialize Through Variant Without Revealing Secrets
 
@@ -476,19 +518,27 @@ using namespace fcl::crypto::blslib;
 struct bls_vote_payload {
    std::uint64_t round = 0;
    std::string decision;
+
+   [[nodiscard]] fcl::sha256 digest() const;
 };
 
 BOOST_DESCRIBE_STRUCT(bls_vote_payload, (), (round, decision))
+
+inline fcl::sha256 bls_vote_payload::digest() const {
+   auto encoder = fcl::sha256::encoder{};
+   fcl::raw::pack(encoder, *this);
+   return encoder.result();
+}
 
 auto seed = std::vector<std::uint8_t>{
    0, 50, 6, 244, 24, 199, 1, 25,
    52, 88, 192, 19, 18, 12, 89, 6,
    220, 18, 102, 58, 209, 82, 12, 62,
    89, 110, 182, 9, 44, 20, 254, 22};
-auto message_digest = fcl::sha256::hash(bls_vote_payload{
+auto message_digest = bls_vote_payload{
    .round = 12,
    .decision = "commit",
-});
+}.digest();
 auto message = std::vector<std::uint8_t>{
    message_digest.to_uint8_span().begin(),
    message_digest.to_uint8_span().end(),
@@ -529,14 +579,22 @@ import fcl.raw.raw;
 struct webauthn_challenge_payload {
    std::uint64_t session = 0;
    std::string origin;
+
+   [[nodiscard]] fcl::sha256 digest() const;
 };
 
 BOOST_DESCRIBE_STRUCT(webauthn_challenge_payload, (), (session, origin))
 
-auto digest = fcl::sha256::hash(webauthn_challenge_payload{
+inline fcl::sha256 webauthn_challenge_payload::digest() const {
+   auto encoder = fcl::sha256::encoder{};
+   fcl::raw::pack(encoder, *this);
+   return encoder.result();
+}
+
+auto digest = webauthn_challenge_payload{
    .session = 42,
    .origin = "https://example.invalid",
-});
+}.digest();
 auto recovered = webauthn_signature.recover(digest, true);
 ```
 

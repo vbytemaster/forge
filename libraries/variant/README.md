@@ -84,6 +84,15 @@ auto restored = value.as<std::chrono::sys_time<std::chrono::microseconds>>();
 `variant` does not know what is secret. Redaction belongs to config/schema/log/UI
 layers before rendering or serialization.
 
+## Risks And Anti-Patterns
+
+- Do not use `variant` as the primary model for product config when a typed
+  Boost.Describe struct exists.
+- Do not rely on dynamic field lookup for protocol compatibility. Raw contracts
+  need typed DTOs and stable field order.
+- Do not render arbitrary variants to logs before redaction. The value layer has
+  no schema metadata.
+
 ## Typical Mistakes
 
 - Do not move `variant` into `core`; many upper layers depend on it, but `core`

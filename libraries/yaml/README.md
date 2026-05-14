@@ -1,8 +1,8 @@
 # fcl_yaml
 
 `fcl_yaml` is the YAML codec boundary. Its API mirrors `fcl_json` so callers can
-switch between JSON and YAML without learning two different public models.
-Glaze is the backend implementation detail.
+switch between JSON and YAML without learning two different public models. The
+parser backend is an implementation detail.
 
 ## When To Use
 
@@ -12,7 +12,7 @@ Glaze is the backend implementation detail.
 
 ## When Not To Use
 
-- Do not expose backend parser nodes or `YAML::Node`; yaml-cpp is not public API.
+- Do not expose backend parser nodes in public APIs.
 - Do not use YAML for machine-stable binary compatibility.
 - Do not rely on YAML formatting for secret safety; redact first.
 
@@ -22,7 +22,8 @@ Glaze is the backend implementation detail.
 
 Target: `fcl_yaml`.
 
-Dependencies: `fcl_config`, `fcl_schema`, `fcl_variant`; Glaze is private.
+Dependencies: `fcl_config`, `fcl_schema`, `fcl_variant`; the parser backend is
+private.
 
 ## Examples
 
@@ -49,6 +50,9 @@ import fcl.yaml;
 auto config = fcl::yaml::read<http_config>(
    "bind-port: 9090\n"
    "tls-enabled: false\n");
+if (!config.ok()) {
+   report_diagnostics(config.diagnostics);
+}
 ```
 
 ### Write A Redacted Effective Config
@@ -59,6 +63,9 @@ import fcl.yaml;
 
 auto safe = fcl::config::redact(document, registry);
 auto output = fcl::yaml::write_document(safe);
+if (!output.ok()) {
+   report_diagnostics(output.diagnostics);
+}
 ```
 
 Write redacted documents for diagnostics and `--print-effective-config`.
@@ -71,13 +78,36 @@ with placeholders and break the next startup.
 import fcl.yaml;
 
 auto value = fcl::yaml::read_value("items:\n  - alpha\n  - beta\n");
-auto compact = fcl::yaml::write_value(value.value, {.flow_style = true});
+if (!value.ok()) {
+   report_diagnostics(value.diagnostics);
+} else {
+   auto compact = fcl::yaml::write_value(value.value, {.flow_style = true});
+   if (!compact.ok()) {
+      report_diagnostics(compact.diagnostics);
+   }
+}
 ```
 
 ## Diagnostics
 
 YAML parse/type/schema failures become `fcl::schema::diagnostic` entries. Source
 name and path metadata should be set by callers via `read_options` where useful.
+
+```cpp
+for (const auto& diagnostic : parsed.diagnostics) {
+   std::cerr << diagnostic.path << " [" << diagnostic.code << "] "
+             << diagnostic.message << "\n";
+}
+```
+
+## Risks And Anti-Patterns
+
+- Do not load YAML inside plugins. The application/daemon bootstrap loads
+  source documents and passes typed component views.
+- Do not use YAML as a protocol byte representation for signatures or hashes.
+  Use `fcl::raw::pack` for deterministic binary contracts.
+- Do not continue with `.value` after failed parse diagnostics. Bad config must
+  stop before ports or plugins initialize.
 
 ## Typical Mistakes
 
@@ -86,10 +116,6 @@ name and path metadata should be set by callers via `read_options` where useful.
 - Do not put YAML-specific policy into `fcl_config`.
 - Do not silently ignore unknown fields in production tools unless the caller
   explicitly uses `unknown_field_policy::ignore`.
-- Do not load YAML directly inside plugins. The application or daemon bootstrap
-  loads source documents, merges them, and passes component views to plugins.
-- Do not use YAML text as the bytes for signatures or hashes. Use
-  `fcl::raw::pack` for protocol bytes and YAML only for human-authored config.
 
 ## Tests
 

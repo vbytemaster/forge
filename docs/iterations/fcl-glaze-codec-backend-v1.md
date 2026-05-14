@@ -20,7 +20,8 @@ FCL JSON and YAML now use Glaze as the single codec backend. FCL still owns the 
 - No `FetchContent`.
 - No fallback to the legacy parser.
 - YAML no longer depends on the previous backend.
-- Public module files must not mention `glz::` or Glaze reflection metadata.
+- Public module files must not mention `glz::`, `glaze/`, or Glaze reflection
+  metadata.
 - Large integer handling uses Glaze generic JSON with `num_mode::u64`, so unsigned 64-bit values are not silently converted to double.
 
 ## Diagnostics

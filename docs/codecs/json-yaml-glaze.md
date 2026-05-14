@@ -57,8 +57,9 @@ This policy only has meaning when schema rules can provide known field names.
 
 ## Backend Boundary
 
-- `glz::*` does not appear in public `.cppm`.
-- `YAML::Node` is not used or exposed by FCL YAML after the Glaze migration.
+- Backend parser types do not appear in public `.cppm`.
+- YAML parser nodes are not used or exposed by FCL YAML after the codec
+  migration.
 - Large integer behavior is tested to prevent silent double conversion.
 - Pretty/flow-style output options are codec concerns; schema and config stay
   parser-neutral.

@@ -68,15 +68,18 @@ auto node = fcl::p2p::node{runtime, options};
 node.register_protocol_handler(
    fcl::p2p::protocol_id{.value = "/example/1"},
    [](fcl::p2p::incoming_protocol_stream incoming) -> boost::asio::awaitable<void> {
-      auto frame = co_await incoming.stream.async_read_frame();
+      std::vector<std::uint8_t> frame = co_await incoming.stream.async_read_frame();
       co_await incoming.stream.async_write_frame(frame);
    });
 
-co_await node.async_listen(fcl::quic::parse_endpoint("127.0.0.1:9443"));
-auto session = co_await node.async_connect(remote_endpoint, {.expected_peer = remote_peer});
-auto stream = co_await node.async_open_protocol_stream(
-   session.remote_peer,
-   fcl::p2p::protocol_id{.value = "/example/1"});
+boost::asio::awaitable<void> connect_example(fcl::p2p::node& node) {
+   co_await node.async_listen(fcl::quic::parse_endpoint("127.0.0.1:9443"));
+   fcl::p2p::session_info session = co_await node.async_connect(remote_endpoint, {.expected_peer = remote_peer});
+   fcl::quic::framed_stream stream = co_await node.async_open_protocol_stream(
+      session.remote_peer,
+      fcl::p2p::protocol_id{.value = "/example/1"});
+   use_stream(std::move(stream));
+}
 ```
 
 The protocol ID identifies a stream contract. The protocol still owns its own

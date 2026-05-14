@@ -45,6 +45,7 @@ Use `blocking::run` at the edge of a command-line tool, test, migration or
 small utility. Do not push it into reusable async APIs.
 
 ```cpp
+#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
@@ -56,7 +57,7 @@ import fcl.asio.blocking;
 import fcl.asio.runtime;
 
 boost::asio::awaitable<int> calculate_after_delay() {
-   auto executor = co_await boost::asio::this_coro::executor;
+   boost::asio::any_io_executor executor = co_await boost::asio::this_coro::executor;
    auto timer = boost::asio::steady_timer{executor, std::chrono::milliseconds{25}};
    co_await timer.async_wait(boost::asio::use_awaitable);
    co_return 42;
@@ -198,12 +199,13 @@ handle.cancel();
 ### Use Timers Instead Of Poll Loops
 
 ```cpp
+#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
 boost::asio::awaitable<void> retry_later() {
-   auto executor = co_await boost::asio::this_coro::executor;
+   boost::asio::any_io_executor executor = co_await boost::asio::this_coro::executor;
    auto timer = boost::asio::steady_timer{executor, std::chrono::milliseconds{200}};
    co_await timer.async_wait(boost::asio::use_awaitable);
    co_await retry_once();

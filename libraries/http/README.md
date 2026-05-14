@@ -96,23 +96,52 @@ server.start();
 ### Use The Client
 
 ```cpp
+#include <boost/asio/awaitable.hpp>
+
 import fcl.http.client;
+import fcl.http.types;
 
-auto client = fcl::http::client{runtime, endpoint};
-auto response = co_await client.async_get("/readyz");
-```
-
-### Send JSON Without Owning JSON DTOs
-
-```cpp
-auto response = co_await client.async_post_json(
-   "/v1/actions",
-   R"({"dry_run":true})");
-
-if (response.result() != fcl::http::status::ok) {
-   handle_http_error(response.result(), response.body());
+boost::asio::awaitable<void> check_ready(fcl::http::client& client) {
+   fcl::http::response response = co_await client.async_get("/readyz");
+   if (response.result() != fcl::http::status::ok) {
+      report_http_error(response.result(), response.body());
+   }
 }
 ```
+
+### Send A JSON DTO
+
+```cpp
+#include <boost/asio/awaitable.hpp>
+#include <boost/describe.hpp>
+
+import fcl.http.client;
+import fcl.http.types;
+import fcl.json;
+
+struct action_request {
+   bool dry_run = false;
+};
+
+BOOST_DESCRIBE_STRUCT(action_request, (), (dry_run))
+
+boost::asio::awaitable<void> submit_action(fcl::http::client& client) {
+   auto body = fcl::json::write(action_request{.dry_run = true});
+   if (!body.ok()) {
+      report_diagnostics(body.diagnostics);
+      co_return;
+   }
+
+   fcl::http::response response = co_await client.async_post_json("/v1/actions", body.text);
+   if (response.result() != fcl::http::status::ok) {
+      handle_http_error(response.result(), response.body());
+   }
+}
+```
+
+Raw JSON string literals are fine for tests and probes, but product APIs should
+prefer described DTOs plus `fcl_json` so field names and diagnostics stay in one
+place.
 
 ### WebSocket Upgrade Route
 
@@ -130,6 +159,15 @@ Client requests are serialized through a per-connection queue. Retry behavior is
 restricted to safe/idempotent cases covered by tests. Middleware can
 short-circuit requests and exceptions become typed HTTP responses at the route
 boundary.
+
+## Risks And Anti-Patterns
+
+- Do not use HTTP routes as the authorization boundary. Middleware may call a
+  consumer auth service, but product policy lives above `fcl_http`.
+- Do not retry mutating requests implicitly. The caller must decide whether an
+  operation is idempotent and safe to replay.
+- Do not log request bodies, headers or query strings before redaction. They may
+  contain credentials or user data.
 
 ## Typical Mistakes
 

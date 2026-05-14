@@ -79,10 +79,16 @@ auto app = service_application{};
 auto registry = app.describe_config();
 auto cli = fcl::program_options::parse(argc, argv, registry);
 
-app.configure(cli.document);
-co_await app.startup();
-app.request_stop();
-co_await app.shutdown();
+if (!cli.ok()) {
+   report_diagnostics(cli.diagnostics);
+}
+
+boost::asio::awaitable<void> run_service(service_application& app, const fcl::config::document& document) {
+   app.configure(document);
+   co_await app.startup();
+   app.request_stop();
+   co_await app.shutdown();
+}
 ```
 
 The program shell owns CLI/YAML/JSON adapters. `application_shell` sees only an
@@ -101,7 +107,11 @@ builder.name("service")
 
 std::unique_ptr<fcl::app::application_shell> app = std::move(builder).build();
 app->configure(document);
-co_await app->startup();
+boost::asio::awaitable<void> start_then_stop(fcl::app::application_shell& app) {
+   co_await app.startup();
+   app.request_stop();
+   co_await app.shutdown();
+}
 ```
 
 Buildable examples:

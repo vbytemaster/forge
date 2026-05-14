@@ -15,7 +15,7 @@ types.
 
 - Do not use this library inside `fcl_app` core. `fcl_app` consumes config
   documents and descriptors only.
-- Do not expose `boost::program_options::variables_map` in public APIs.
+- Do not expose backend parser result maps in public APIs.
 - Do not use argv for secrets unless a consuming CLI explicitly accepts the
   risk; prefer stdin or files for secret material.
 
@@ -45,7 +45,14 @@ const char* argv[] = {
 };
 
 auto parsed = fcl::program_options::parse(3, argv, registry);
-auto decoded = fcl::config::decode<http_config>(parsed.document, "http");
+if (!parsed.ok()) {
+   report_diagnostics(parsed.diagnostics);
+} else {
+   auto decoded = fcl::config::decode<http_config>(parsed.document, "http");
+   if (!decoded.ok()) {
+      report_diagnostics(decoded.diagnostics.entries);
+   }
+}
 ```
 
 ### Generate Help Text
@@ -61,13 +68,17 @@ auto text = fcl::program_options::help(registry, "FCL options");
 ```cpp
 import fcl.config;
 
-auto effective = fcl::config::merge({
-   fcl::config::defaults_for<http_config>("http"),
-   yaml_document,
-   dotenv_document,
-   process_env_document,
-   parsed.document,
-});
+if (!parsed.ok()) {
+   report_diagnostics(parsed.diagnostics);
+} else {
+   auto effective = fcl::config::merge({
+      fcl::config::defaults_for<http_config>("http"),
+      yaml_document,
+      dotenv_document,
+      process_env_document,
+      parsed.document,
+   });
+}
 ```
 
 ### Flat Root Flags
@@ -93,6 +104,22 @@ about why a value won.
 Conversion and parser failures return diagnostics such as
 `program_options.convert`; callers can print them through their normal
 diagnostic/log pipeline.
+
+```cpp
+for (const auto& diagnostic : parsed.diagnostics) {
+   std::cerr << diagnostic.path << " [" << diagnostic.code << "] "
+             << diagnostic.message << "\n";
+}
+```
+
+## Risks And Anti-Patterns
+
+- Do not treat CLI parsing as validation success. Decode and inspect diagnostics
+  before starting runtime components.
+- Do not pass high-value secrets on argv by default; process lists and shell
+  history can expose them.
+- Do not let plugins own CLI precedence. Plugins publish descriptors; program
+  bootstrap composes file/env/CLI documents.
 
 ## Typical Mistakes
 

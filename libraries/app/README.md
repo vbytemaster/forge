@@ -46,17 +46,27 @@ Target: `fcl_app`.
 
 Dependencies: `fcl_asio`, `fcl_config`, Boost headers.
 
+## Examples
+
+The examples below show the intended production shape: app-owned config stays
+in the shell, plugin-owned config stays in plugins, and lifecycle calls remain
+shell-owned.
+
 ## Production Shape
 
 `application_shell` makes lifecycle methods non-overridable:
 
 ```cpp
-app.describe_config();
-app.configure(document);
-co_await app.initialize();
-co_await app.startup();
-app.request_stop();
-co_await app.shutdown();
+boost::asio::awaitable<void> run_configured_app(
+   fcl::app::application_shell& app,
+   const fcl::config::document& document) {
+   app.describe_config();
+   app.configure(document);
+   co_await app.initialize();
+   co_await app.startup();
+   app.request_stop();
+   co_await app.shutdown();
+}
 ```
 
 Derived applications only implement hooks:
@@ -105,7 +115,7 @@ struct fcl::schema::rules<http_config> {
 
 class http_plugin final : public fcl::app::plugin {
  public:
-   fcl::app::plugin_id id() const override { return {.value = "http"}; }
+   fcl::app::plugin_id id() const override { return fcl::app::plugin_id{"http"}; }
    std::string version() const override { return "1"; }
 
    std::optional<fcl::config::component_descriptor> describe_config() const override {
@@ -151,16 +161,16 @@ depends on a disabled plugin, the shell fails before lifecycle side effects.
 ```cpp
 void on_register_plugins(fcl::app::plugin_registry& registry) override {
    registry.register_plugin(fcl::app::plugin_descriptor{
-      .id = {.value = "store"},
+      .id = fcl::app::plugin_id{"store"},
       .factory = [] { return std::make_unique<store_plugin>(); },
    });
    registry.register_plugin(fcl::app::plugin_descriptor{
-      .id = {.value = "api"},
-      .dependencies = {fcl::app::plugin_id{.value = "store"}},
+      .id = fcl::app::plugin_id{"api"},
+      .dependencies = {fcl::app::plugin_id{"store"}},
       .factory = [] { return std::make_unique<api_plugin>(); },
    });
    registry.register_plugin(fcl::app::plugin_descriptor{
-      .id = {.value = "metrics"},
+      .id = fcl::app::plugin_id{"metrics"},
       .enabled_by_default = false,
       .factory = [] { return std::make_unique<metrics_plugin>(); },
    });
@@ -214,7 +224,7 @@ class service_application final : public fcl::app::application_shell {
 
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
       registry.register_plugin(fcl::app::plugin_descriptor{
-         .id = fcl::app::plugin_id{.value = "http"},
+         .id = fcl::app::plugin_id{"http"},
          .factory = [] {
             return std::make_unique<http_plugin>();
          },
@@ -260,7 +270,7 @@ builder.name("service")
          "worker slots: " + std::to_string(workers));
    })
    .plugin(fcl::app::plugin_descriptor{
-      .id = fcl::app::plugin_id{.value = "http"},
+      .id = fcl::app::plugin_id{"http"},
       .factory = [] {
          return std::make_unique<http_plugin>();
       },
@@ -449,9 +459,11 @@ services.
 
 ```cpp
 auto runtime = fcl::app::application_runtime{context, std::move(plugins), &diagnostics};
-co_await runtime.configure(document);
-co_await runtime.startup();
-co_await runtime.shutdown();
+boost::asio::awaitable<void> run_runtime(fcl::app::application_runtime& runtime) {
+   co_await runtime.configure(document);
+   co_await runtime.startup();
+   co_await runtime.shutdown();
+}
 ```
 
 ## Typical Mistakes
@@ -463,7 +475,7 @@ co_await runtime.shutdown();
   `application_shell` can own the registry.
 - Do not configure plugin options from `build_plugins()`; plugin config belongs
   to `plugin::describe_config()` and `plugin::configure(component_view)`.
-- Do not parse `argv`, `YAML::Node` or backend parser objects inside plugins.
+- Do not parse `argv` or backend parser objects inside plugins.
 - Do not put secrets into events or diagnostics without redaction first.
 - Do not assume `request_stop()` waits for cleanup; it only requests shutdown.
 - Do not stop the scheduler or `io_context` from a stop callback or hook.

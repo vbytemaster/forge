@@ -88,6 +88,15 @@ Rendering helpers redact common credential patterns and fields marked sensitive,
 but callers must still avoid passing private keys or tokens into generic
 strings. UI is a presentation boundary, not a security boundary.
 
+## Risks And Anti-Patterns
+
+- Do not treat hidden or redacted UI text as access control. Authority belongs
+  to the product/service layer.
+- Do not render secret-bearing generic strings and hope endpoint redaction will
+  catch every format. Mark sensitive fields explicitly.
+- Do not let terminal rendering perform network, filesystem or app lifecycle
+  work. Render helpers must stay deterministic and testable.
+
 ## Typical Mistakes
 
 - Do not rely on colors/unicode being available; inspect `terminal_capabilities`.

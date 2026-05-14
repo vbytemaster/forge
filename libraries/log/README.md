@@ -10,7 +10,7 @@ identity, JSONL/text sinks, redaction и диагностический stacktra
 `logger::info/error(...)` и sinks. Логгер не является audit/security boundary:
 секреты нужно помечать как secret до записи.
 
-## Когда Использовать
+## When To Use
 
 - Нужны синхронные console/file/JSONL logs без отдельного logging daemon.
 - Нужно записывать structured context: component, fields, exception chain,
@@ -20,7 +20,7 @@ identity, JSONL/text sinks, redaction и диагностический stacktra
 - Нужно направить `fcl_exception` capture path в logging sink без зависимости
   `fcl_exception -> fcl_log`.
 
-## Когда Не Использовать
+## When Not To Use
 
 - Не используйте `fcl_log` как durable audit trail или source of truth.
 - Не добавляйте сюда async queue/background runtime: это будущий runtime adapter,
@@ -131,6 +131,7 @@ A program wires them together explicitly at the edge.
 #include <fcl/exception/macros.hpp>
 
 import fcl.exception.exception;
+import fcl.app;
 import fcl.log.logger;
 import fcl.log.record;
 
@@ -164,18 +165,20 @@ import fcl.exception.exception;
 import fcl.log.logger;
 import fcl.log.record;
 
-try {
-   co_await app.startup();
-} catch (const std::exception& error) {
-   log.error(
-      "startup failed",
-      {
-         fcl::log_ctx("exception-chain", fcl::error::format_exception_chain(error)),
-         fcl::log_secret("bootstrap-token", token),
-      });
-   app.request_stop();
-   co_await app.shutdown();
-   throw;
+boost::asio::awaitable<void> start_with_logging(fcl::app::application_shell& app) {
+   try {
+      co_await app.startup();
+   } catch (const std::exception& error) {
+      log.error(
+         "startup failed",
+         {
+            fcl::log_ctx("exception-chain", fcl::error::format_exception_chain(error)),
+            fcl::log_secret("bootstrap-token", token),
+         });
+      app.request_stop();
+      co_await app.shutdown();
+      throw;
+   }
 }
 ```
 

@@ -43,58 +43,80 @@ auto authority = endpoint.authority();
 ### Connect With Expected Peer
 
 ```cpp
+#include <boost/asio/awaitable.hpp>
+
 import fcl.quic.connector;
 import fcl.quic.options;
 import fcl.quic.security;
 
-auto connector = fcl::quic::connector{runtime};
-auto options = fcl::quic::client_options{
-   .certificate_pem = client_certificate_pem,
-   .private_key_pem = client_private_key_pem,
-};
-options.security.expected_sha256_fingerprint = expected_server_fingerprint;
+boost::asio::awaitable<void> connect_with_pin(
+   fcl::quic::connector& connector,
+   fcl::quic::endpoint endpoint) {
+   auto options = fcl::quic::client_options{
+      .certificate_pem = client_certificate_pem,
+      .private_key_pem = client_private_key_pem,
+   };
+   options.security.expected_sha256_fingerprint = expected_server_fingerprint;
 
-auto connection = co_await connector.async_connect(endpoint, options);
+   fcl::quic::connection connection = co_await connector.async_connect(endpoint, options);
+   use_connection(std::move(connection));
+}
 ```
 
 For CA-based verification, trust is explicit and host-bound:
 
 ```cpp
-options.security = fcl::quic::security_options{
-   .verify_peer = true,
-   .trusted_ca_pem = trusted_ca_bundle_pem,
-};
-// The certificate must be valid for endpoint.host through DNS/IP SAN matching.
-auto connection = co_await connector.async_connect(endpoint, options);
+boost::asio::awaitable<void> connect_with_ca(
+   fcl::quic::connector& connector,
+   fcl::quic::endpoint endpoint) {
+   auto options = fcl::quic::client_options{};
+   options.security = fcl::quic::security_options{
+      .verify_peer = true,
+      .trusted_ca_pem = trusted_ca_bundle_pem,
+   };
+
+   // The certificate must be valid for endpoint.host through DNS/IP SAN matching.
+   fcl::quic::connection connection = co_await connector.async_connect(endpoint, options);
+   use_connection(std::move(connection));
+}
 ```
 
 ### Accept Connections
 
 ```cpp
+#include <boost/asio/awaitable.hpp>
+
 import fcl.quic.listener;
 
-auto server_options = fcl::quic::server_options{
-   .certificate_pem = server_certificate_pem,
-   .private_key_pem = server_private_key_pem,
-};
+boost::asio::awaitable<void> accept_one(fcl::asio::runtime& runtime) {
+   auto server_options = fcl::quic::server_options{
+      .certificate_pem = server_certificate_pem,
+      .private_key_pem = server_private_key_pem,
+   };
 
-auto listener = fcl::quic::listener{
-   runtime,
-   fcl::quic::parse_endpoint("127.0.0.1:9443"),
-   server_options,
-};
+   auto listener = fcl::quic::listener{
+      runtime,
+      fcl::quic::parse_endpoint("127.0.0.1:9443"),
+      server_options,
+   };
 
-auto inbound = co_await listener.async_accept();
+   fcl::quic::connection inbound = co_await listener.async_accept();
+   handle_inbound(std::move(inbound));
+}
 ```
 
 ### Open A Framed Stream
 
 ```cpp
+#include <boost/asio/awaitable.hpp>
+
 import fcl.quic.framed_stream;
 
-auto stream = co_await connection.async_open_stream();
-auto framed = fcl::quic::framed_stream{std::move(stream), {.max_frame_size = 1 << 20}};
-co_await framed.async_write_frame(payload);
+boost::asio::awaitable<void> write_payload(fcl::quic::connection& connection) {
+   fcl::quic::stream stream = co_await connection.async_open_stream();
+   auto framed = fcl::quic::framed_stream{std::move(stream), {.max_frame_size = 1 << 20}};
+   co_await framed.async_write_frame(payload);
+}
 ```
 
 ### Decode Frames Without A Connection
@@ -132,6 +154,15 @@ certificate to the requested endpoint host; SNI alone is not treated as identity
 verification. Pinned fingerprints and custom verifiers are explicit trust paths;
 they do not implicitly opt into CA hostname checks. Test certificates must not
 become product defaults.
+
+## Risks And Anti-Patterns
+
+- Do not disable peer verification to work around certificate issues. Fix trust
+  material or use an explicit pinned/custom verifier path.
+- Do not confuse SNI with identity verification. CA-based verification must bind
+  the certificate to the requested endpoint host.
+- Do not raise frame/queue limits without backpressure tests. Oversized frames
+  are a memory pressure and denial-of-service vector.
 
 ## Typical Mistakes
 

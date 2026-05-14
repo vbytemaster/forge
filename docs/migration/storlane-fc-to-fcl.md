@@ -161,6 +161,7 @@ needed.
 #include <string>
 
 import fcl.crypto.private_key;
+import fcl.crypto.public_key;
 import fcl.crypto.sha256;
 import fcl.raw.raw;
 
@@ -168,23 +169,42 @@ struct signed_payload {
    std::uint64_t account = 0;
    std::uint64_t sequence = 0;
    std::string action;
+
+   [[nodiscard]] fcl::sha256 sig_digest(const fcl::sha256& chain_id) const;
 };
 
 BOOST_DESCRIBE_STRUCT(signed_payload, (), (account, sequence, action))
 
+inline fcl::sha256 signed_payload::sig_digest(const fcl::sha256& chain_id) const {
+   auto encoder = fcl::sha256::encoder{};
+   fcl::raw::pack(encoder, chain_id);
+   fcl::raw::pack(encoder, *this);
+   return encoder.result();
+}
+
 auto private_key = fcl::crypto::private_key::generate();
-auto digest = fcl::sha256::hash(signed_payload{
+auto expected_public_key = private_key.get_public_key();
+
+auto chain_id = fcl::sha256{}; // Replace with the real chain/domain id.
+auto payload = signed_payload{
    .account = 42,
    .sequence = 7,
    .action = "commit",
-});
+};
+
+auto digest = payload.sig_digest(chain_id);
 auto signature = private_key.sign(digest);
+
+auto recovered_public_key = fcl::crypto::public_key{signature, digest};
+auto verified = recovered_public_key == expected_public_key;
 ```
 
 OpenSSL 3.0+ is the backend baseline. FCL does not shell out to `openssl`. AES-GCM
 is the preferred modern symmetric API; CBC/CFB remain compatibility surfaces.
-For signatures and protocol hashes, use `fcl::raw::pack` through described DTOs;
-do not sign JSON text, formatted strings or manually concatenated fields.
+The old FC `digest_type::encoder + fc::raw::pack` pattern maps directly to
+`fcl::sha256::encoder + fcl::raw::pack`. For signatures and protocol hashes, use
+described DTOs; do not sign JSON text, formatted strings or manually
+concatenated fields.
 
 ## App And Runtime
 

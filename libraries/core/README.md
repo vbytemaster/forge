@@ -4,14 +4,14 @@
 использовать почти везде без риска подтянуть serialization, JSON, crypto,
 logging or network dependencies.
 
-## Когда Использовать
+## When To Use
 
 - Нужно разобрать/сформатировать `std::chrono` timestamps в FC-compatible форме.
 - Нужны безопасные string/UTF-8 helpers, `uint128`, type names or version metadata.
 - Нужно написать библиотеку верхнего уровня и не создать обратную зависимость на
   `variant`, `raw`, `json`, `log` or `crypto`.
 
-## Когда Не Использовать
+## When Not To Use
 
 - Для файловых путей: используйте `std::filesystem::path`.
 - Для binary serialization: это `fcl_raw`, не `core`.
@@ -65,6 +65,15 @@ auto deadline = std::chrono::sys_seconds{std::chrono::seconds{1}};
 auto wire = fcl::chrono::to_fc_time_point_sec_wire(deadline); // uint32 seconds
 auto decoded = fcl::chrono::from_fc_time_point_sec_wire(wire);
 ```
+
+## Risks And Anti-Patterns
+
+- Do not use core helpers to hide product policy. If a rule depends on files,
+  network, credentials or daemon layout, it belongs above `fcl_core`.
+- Do not reintroduce global clocks or mock-time state. Tests should pass
+  explicit `std::chrono` values.
+- Do not add convenience imports from upper libraries. A small dependency in
+  `core` becomes a dependency of everything.
 
 ## Typical Mistakes
 

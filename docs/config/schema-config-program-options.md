@@ -77,18 +77,39 @@ replace vault/secret storage.
 ## Typical Integration Shape
 
 ```cpp
-auto registry = runtime.describe_config();
+auto registry = application.describe_config();
 auto yaml = fcl::yaml::load_document(config_path);
 auto dotenv = fcl::env::load_document(workspace / ".env", registry, {.prefix = "APP"});
 auto env = fcl::env::read_process_document(registry, {.prefix = "APP"});
 auto cli = fcl::program_options::parse(argc, argv, registry);
-auto effective = fcl::config::merge({defaults, yaml.value, dotenv.value, env.value, cli.document});
-co_await runtime.configure(effective);
+if (!yaml.ok()) {
+   report_diagnostics(yaml.diagnostics);
+}
+if (!dotenv.ok()) {
+   report_diagnostics(dotenv.diagnostics);
+}
+if (!env.ok()) {
+   report_diagnostics(env.diagnostics);
+}
+if (!cli.ok()) {
+   report_diagnostics(cli.diagnostics);
+}
+
+if (yaml.ok() && dotenv.ok() && env.ok() && cli.ok()) {
+   auto effective = fcl::config::merge({
+      defaults,
+      yaml.value,
+      dotenv.value,
+      env.value,
+      cli.document,
+   });
+   application.configure(effective);
+}
 ```
 
 ## Rejected Patterns
 
-- Plugin-level `boost::program_options::variables_map`.
+- Plugin-level backend CLI parser maps.
 - Plugin-level `std::getenv()` or implicit `.env` discovery.
 - Parser-specific config structs.
 - Manual JSON/YAML builders for typed config.

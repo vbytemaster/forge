@@ -81,7 +81,8 @@ import fcl.config;
 auto decoded = fcl::config::decode<http_config>(merged, "http");
 if (!decoded.ok()) {
    for (const auto& entry : decoded.diagnostics.entries) {
-      // entry.path, entry.code, entry.message
+      std::cerr << entry.path << " [" << entry.code << "] "
+                << entry.message << "\n";
    }
 }
 ```
@@ -111,14 +112,23 @@ auto registry = application.describe_config();
 auto yaml = fcl::yaml::load_document(config_path);
 auto cli = fcl::program_options::parse(argc, argv, registry);
 
-auto effective = fcl::config::merge({
-   fcl::config::effective_document(registry),
-   yaml.value,
-   cli.document,
-});
+if (!yaml.ok()) {
+   report_diagnostics(yaml.diagnostics);
+}
+if (!cli.ok()) {
+   report_diagnostics(cli.diagnostics);
+}
 
-auto safe_for_logs = fcl::config::redact(effective, registry);
-co_await application.configure(effective);
+if (yaml.ok() && cli.ok()) {
+   auto effective = fcl::config::merge({
+      fcl::config::effective_document(registry),
+      yaml.value,
+      cli.document,
+   });
+
+   auto safe_for_logs = fcl::config::redact(effective, registry);
+   application.configure(effective);
+}
 ```
 
 Never print `effective` before redaction. It may contain tokens, private paths
@@ -155,10 +165,22 @@ plan.step(1, 2, "add default host", [](fcl::config::document& doc) {
 auto migrated = fcl::config::migrate(std::move(document), plan);
 if (!migrated.ok()) {
    // migrated.diagnostics explains missing steps, future versions or apply errors.
+} else {
+   auto decoded = fcl::config::decode<http_config>(migrated.value, "http");
+   if (!decoded.ok()) {
+      report_diagnostics(decoded.diagnostics.entries);
+   }
 }
-
-auto decoded = fcl::config::decode<http_config>(migrated.value, "http");
 ```
+
+## Risks And Anti-Patterns
+
+- Do not use `config::document` as a second product config framework. Product
+  config remains typed structs plus schema rules.
+- Do not merge invalid layers and hope later code recovers. Source adapter and
+  decode diagnostics must stop startup before side effects.
+- Do not emit effective config without redaction. Documents can contain tokens,
+  paths and operator-provided secrets.
 
 ## Typical Mistakes
 

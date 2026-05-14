@@ -180,6 +180,15 @@ it to the callback. Use it only for cleanup paths where continuing is correct.
 For correctness paths, use `FCL_CAPTURE_AND_RETHROW` or
 `FCL_CAPTURE_LOG_AND_RETHROW`.
 
+## Risks And Anti-Patterns
+
+- Do not convert every error into `context_error`. Use standard exception types
+  when no structured context is needed.
+- Do not log-and-continue from correctness paths. Capture helpers must preserve
+  failure semantics, not create silent recovery.
+- Do not expose secret values through messages, `what()` strings or field names.
+  Use `secret(key, value)` for data that may be sensitive.
+
 ## Typical Mistakes
 
 - Do not catch only `fcl::error::context_error` at process boundaries. Also catch

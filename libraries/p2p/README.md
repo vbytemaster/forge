@@ -33,26 +33,34 @@ Dependencies: `fcl_asio`, `fcl_quic`, Boost.Asio.
 ### Start A Node
 
 ```cpp
+#include <boost/asio/awaitable.hpp>
+
 import fcl.p2p.identity;
 import fcl.p2p.node;
 import fcl.quic.endpoint;
 
-auto options = fcl::p2p::node_options{
-   .certificate_pem = certificate_pem,
-   .private_key_pem = private_key_pem,
-};
+boost::asio::awaitable<void> start_node(fcl::asio::runtime& runtime) {
+   auto options = fcl::p2p::node_options{
+      .certificate_pem = certificate_pem,
+      .private_key_pem = private_key_pem,
+   };
 
-auto peer = fcl::p2p::make_peer_id_from_certificate_pem(certificate_pem);
-auto node = fcl::p2p::node{runtime, options};
-co_await node.async_listen(fcl::quic::parse_endpoint("127.0.0.1:9443"));
+   auto peer = fcl::p2p::make_peer_id_from_certificate_pem(certificate_pem);
+   auto node = fcl::p2p::node{runtime, options};
+   co_await node.async_listen(fcl::quic::parse_endpoint("127.0.0.1:9443"));
+   advertise_peer(peer);
+}
 ```
 
 ### Register A Protocol
 
 ```cpp
+#include <cstdint>
+#include <vector>
+
 node.register_protocol_handler(fcl::p2p::protocol_id{.value = "/example/1"}, [](fcl::p2p::incoming_protocol_stream incoming)
    -> boost::asio::awaitable<void> {
-   auto frame = co_await incoming.stream.async_read_frame();
+   std::vector<std::uint8_t> frame = co_await incoming.stream.async_read_frame();
    co_await incoming.stream.async_write_frame(frame);
 });
 ```
@@ -60,14 +68,17 @@ node.register_protocol_handler(fcl::p2p::protocol_id{.value = "/example/1"}, [](
 ### Connect And Open A Protocol Stream
 
 ```cpp
-auto session = co_await node.async_connect(remote_endpoint, {
-   .expected_peer = expected_peer,
-   .timeout = std::chrono::milliseconds{10'000},
-});
+boost::asio::awaitable<void> open_example_stream(fcl::p2p::node& node) {
+   fcl::p2p::session_info session = co_await node.async_connect(remote_endpoint, {
+      .expected_peer = expected_peer,
+      .timeout = std::chrono::milliseconds{10'000},
+   });
 
-auto stream = co_await node.async_open_protocol_stream(
-   session.remote_peer,
-   fcl::p2p::protocol_id{.value = "/example/1"});
+   fcl::quic::framed_stream stream = co_await node.async_open_protocol_stream(
+      session.remote_peer,
+      fcl::p2p::protocol_id{.value = "/example/1"});
+   use_stream(std::move(stream));
+}
 ```
 
 ### Learn Endpoints And Probe Reachability
@@ -80,30 +91,38 @@ node.peers().learn_endpoint(
    fcl::quic::parse_endpoint("127.0.0.1:9444"),
    {.bits = fcl::p2p::capabilities::direct_quic | fcl::p2p::capabilities::peer_exchange});
 
-auto reachability = co_await node.async_probe_reachability(observer_peer);
-if (reachability == fcl::p2p::reachability_state::relay_only) {
-   schedule_relay_setup(remote_peer);
+boost::asio::awaitable<void> update_reachability(fcl::p2p::node& node) {
+   fcl::p2p::reachability_state reachability = co_await node.async_probe_reachability(observer_peer);
+   if (reachability == fcl::p2p::reachability_state::relay_only) {
+      schedule_relay_setup(remote_peer);
+   }
 }
 ```
 
 ### Reserve Relay Explicitly
 
 ```cpp
-auto reservation = co_await node.async_reserve_relay(
-   relay_peer,
-   {.ttl = std::chrono::milliseconds{60'000}, .max_streams = 8});
+boost::asio::awaitable<void> open_relayed_stream(fcl::p2p::node& node) {
+   fcl::p2p::relay_reservation_info reservation = co_await node.async_reserve_relay(
+      relay_peer,
+      {.ttl = std::chrono::milliseconds{60'000}, .max_streams = 8});
 
-auto relayed = co_await node.async_open_protocol_stream(
-   remote_peer,
-   fcl::p2p::protocol_id{.value = "/example/1"},
-   {.allow_relay = true, .relay_peer = reservation.relay_peer});
+   fcl::quic::framed_stream relayed = co_await node.async_open_protocol_stream(
+      remote_peer,
+      fcl::p2p::protocol_id{.value = "/example/1"},
+      {.allow_relay = true, .relay_peer = reservation.relay_peer});
+   use_stream(std::move(relayed));
+}
 ```
 
 ### Stop Cleanly
 
 ```cpp
-co_await node.async_stop();
-// or, from a synchronous signal path:
+boost::asio::awaitable<void> stop_node(fcl::p2p::node& node) {
+   co_await node.async_stop();
+}
+
+// From a synchronous signal path:
 node.stop();
 ```
 
@@ -112,6 +131,15 @@ node.stop();
 Production options require mTLS identity. `allow_insecure_test_mode` exists for
 tests and explicit local experiments only. Peer mismatch, TLS verification
 failure and invalid envelopes are correctness failures.
+
+## Risks And Anti-Patterns
+
+- Do not treat peer identity as product authorization. It proves transport
+  identity, not permission to perform product actions.
+- Do not silently fall back to relay for operations that require a direct-peer
+  policy. Relay use must be explicit and visible to the caller.
+- Do not put durable delivery, exactly-once semantics or storage guarantees in
+  `fcl_p2p`; protocols above P2P own those contracts.
 
 ## Typical Mistakes
 

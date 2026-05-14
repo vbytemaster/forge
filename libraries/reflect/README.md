@@ -68,6 +68,15 @@ For types that replace old `FC_REFLECT(TYPE, (a)(b)(c))`, the new
 `BOOST_DESCRIBE_*` member list must keep the same order. `fcl_raw` uses that
 order for byte-compatible packing.
 
+## Risks And Anti-Patterns
+
+- Do not treat reflection metadata as business validation. It describes shape
+  and order; schema/product layers validate meaning.
+- Do not reorder described members as a cleanup unless every raw/wire consumer
+  gets a compatibility migration.
+- Do not add product-specific reflection macros here. FCL stays neutral and
+  Boost.Describe remains the explicit source of member order.
+
 ## Typical Mistakes
 
 - Do not add `FCL_DESCRIBE_*` wrappers casually. The canonical spelling is

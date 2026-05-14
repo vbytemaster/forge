@@ -31,7 +31,10 @@ Dependencies: `fcl_asio`, Boost.Asio, Boost.Beast, OpenSSL.
 ### Connect A Client
 
 ```cpp
+#include <boost/asio/awaitable.hpp>
+
 import fcl.websocket.client;
+import fcl.websocket.connection;
 
 auto endpoint = fcl::websocket::client_endpoint{
    .host = "127.0.0.1",
@@ -41,7 +44,10 @@ auto endpoint = fcl::websocket::client_endpoint{
 };
 
 auto client = fcl::websocket::client{runtime, endpoint};
-auto connection = co_await client.async_connect("/events");
+boost::asio::awaitable<void> connect_events(fcl::websocket::client& client) {
+   fcl::websocket::connection::ptr connection = co_await client.async_connect("/events");
+   use_connection(std::move(connection));
+}
 ```
 
 ### Build A Target Path
@@ -69,10 +75,13 @@ router.websocket("/events", [](std::shared_ptr<fcl::websocket::connection> conne
 ```cpp
 import fcl.websocket.connection;
 
-co_await connection->send(R"({"type":"hello"})");
-co_await connection->ping("health");
-auto metrics = connection->metrics();
-co_await connection->close();
+boost::asio::awaitable<void> send_healthcheck(fcl::websocket::connection::ptr connection) {
+   co_await connection->send(R"({"type":"hello"})");
+   co_await connection->ping("health");
+   auto metrics = connection->metrics();
+   record_metrics(metrics);
+   co_await connection->close();
+}
 ```
 
 ### Observe Close
@@ -88,6 +97,15 @@ connection->on_close([](fcl::websocket::connection& ws) {
 
 `client_options::verify_peer` defaults to `true`. Test-only insecure modes must
 stay explicit and should not be hidden behind broad "dev" defaults.
+
+## Risks And Anti-Patterns
+
+- Do not treat a connected WebSocket as an authenticated session by itself.
+  Product auth and replay rules live above the connection.
+- Do not send concurrent writes through ad-hoc caller code if the connection
+  does not serialize them. Use the FCL connection API boundary.
+- Do not put bearer tokens in query strings for convenience; they commonly leak
+  through logs, metrics and diagnostics.
 
 ## Typical Mistakes
 

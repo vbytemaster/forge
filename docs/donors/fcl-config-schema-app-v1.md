@@ -22,5 +22,5 @@ This pass introduces `fcl_schema`, `fcl_config`, `fcl_yaml`, `fcl_program_option
 
 - `Boost.Describe` is metadata, not validation. Validation rules live in `fcl_schema`.
 - Merge order is fixed as schema defaults, config file, environment/custom adapters, then CLI.
-- `fcl_app` depends on `fcl_config`, not `fcl_yaml` or `fcl_program_options`.
+- Original app/plugin core depends on `fcl_config`, not parser backend types. Later foreground-daemon orchestration may depend on YAML/env/CLI adapters while still passing only `config::document` and `component_view` into hooks.
 - C++ module enum reflection has a visibility caveat: enum descriptions should be declared in the owning module before generic enum conversion is instantiated. This pass keeps schema enum helpers and documents the rule; broader enum UX can be polished with the Boost.Describe/schema cleanup pass.

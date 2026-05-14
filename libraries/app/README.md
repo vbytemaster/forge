@@ -14,19 +14,22 @@ reimplement plugin order manually.
 
 - A program has plugins with config, dependency order and async lifecycle.
 - A daemon needs one place to collect app config and plugin config.
+- A foreground daemon wants standard YAML, `.env`, process env, CLI and default
+  merge before lifecycle starts.
 - You want deterministic startup, rollback, reverse shutdown and diagnostics.
 - You want typed ports between plugins without coupling them through globals.
 - Plugins must publish config descriptors without knowing whether values came
-  from source adapters such as YAML, JSON, env or CLI.
+  from source adapters such as YAML, JSON, `.env`, process env or CLI.
 
 ## When Not To Use
 
 - Do not use `fcl_app` as a generic dependency injection container.
-- Do not parse `argv`, YAML or JSON inside plugins. Use `fcl_program_options`,
-  `fcl_yaml` or `fcl_json` before `application_shell::configure(...)`.
+- Do not parse `argv`, YAML or JSON inside plugins. Use `run_daemon(...)` for
+  normal foreground daemons, or use `fcl_program_options`, `fcl_yaml` and
+  `fcl_json` before `application_shell::configure(...)` in custom hosts.
 - Do not put security authority into UI/events/diagnostics. They are
   observability surfaces, not permission boundaries.
-- Do not invent `describe_app_config` or `configure_app` hook names. The shell
+- Do not invent hook names that repeat the application context. The shell
   context already says this is application code.
 
 ## Public Modules
@@ -34,6 +37,9 @@ reimplement plugin order manually.
 - `fcl.app.application_shell` — production app shell and hook contexts.
 - `fcl.app.application_builder` — convenience builder that creates an
   `application_shell`.
+- `fcl.app.daemon` — foreground daemon runner that loads YAML, explicit `.env`,
+  process env and CLI, merges defaults and handles help/check/print/configure
+  actions.
 - `fcl.app.runner` — foreground lifecycle runner with signal policy.
 - `fcl.app.application` — lower-level `application_base` and
   `application_runtime`.
@@ -44,7 +50,8 @@ reimplement plugin order manually.
 
 Target: `fcl_app`.
 
-Dependencies: `fcl_asio`, `fcl_config`, Boost headers.
+Dependencies: `fcl_asio`, `fcl_config`, `fcl_yaml`, `fcl_env`,
+`fcl_program_options`, Boost headers.
 
 ## Examples
 
@@ -276,8 +283,7 @@ builder.name("service")
       },
    })
    .run_foreground([](fcl::app::application_shell& app) {
-      app.request_stop();
-      return 0;
+      return app.ports().get<status_port>()->status() == "ready" ? 0 : 2;
    });
 
 std::unique_ptr<fcl::app::application_shell> app = std::move(builder).build();
@@ -343,6 +349,78 @@ options.wait_for_stop = [](fcl::app::application_shell& app) -> boost::asio::awa
    co_await timer.async_wait(boost::asio::use_awaitable);
 };
 ```
+
+## Daemon Runner
+
+`run_daemon(...)` is the recommended entrypoint for ordinary foreground
+daemons. It owns the boring but risky glue that products otherwise rewrite:
+collect app and plugin descriptors, load YAML, load an explicit `.env`, read
+process environment, parse daemon and app/plugin CLI, merge defaults, handle
+`--help`, `--check-config`, `--print-effective-config` and `--configure`, then
+call `run_application(...)`.
+
+```cpp
+int main(int argc, char** argv) {
+   return fcl::app::run_daemon(
+      [](const fcl::app::daemon_context& context) {
+         return std::make_unique<service_application>(service_application_options{
+            .data_dir = context.data_dir,
+            .profile = context.profile,
+            .shell = context.shell,
+         });
+      },
+      argc,
+      argv,
+      fcl::app::daemon_options{
+         .name = "service",
+         .display_name = "Service daemon",
+         .default_data_dir_name = "service",
+         .env_prefix = "SERVICE",
+      });
+}
+```
+
+The factory is intentional. `application_shell` creates its runtime and
+scheduler in the constructor, so early daemon config such as
+`daemon.runtime-threads`, `daemon.scheduler-queue-depth`, `daemon.data-dir` and
+`daemon.profile` must be known before the application object exists.
+
+Built-in daemon YAML:
+
+```yaml
+daemon:
+   profile: dev_local
+   data-dir: /home/user/.fcl/service
+   config: /home/user/.fcl/service/config.yml
+   dotenv: /home/user/.fcl/service/.env
+   runtime-threads: 2
+   scheduler-queue-depth: 4096
+   shutdown-timeout-ms: 10000
+
+service:
+   workers: 4
+
+plugins:
+   http:
+      enabled: true
+```
+
+The merge order is fixed:
+
+```text
+schema defaults < daemon defaults < YAML < .env < process env < daemon CLI < app/plugin CLI
+```
+
+Daemon bootstrap flags are always parsed: `--help`, `--profile`,
+`--data-dir`, `--config`, `--dotenv`, runtime/scheduler flags and action flags.
+Individual source adapters can be disabled with `daemon_options::read_yaml`,
+`read_dotenv`, `read_process_env` and `read_cli`. An empty `env_prefix`
+disables both `.env` and process env sources; `run_daemon(...)` never searches
+parent directories for `.env`.
+
+`--print-effective-config` and `--configure` write redacted documents using the
+same registry. Secret fields from schema descriptors are never printed as real
+values.
 
 ## Signal Bridge
 
@@ -476,6 +554,9 @@ boost::asio::awaitable<void> run_runtime(fcl::app::application_runtime& runtime)
 - Do not configure plugin options from `build_plugins()`; plugin config belongs
   to `plugin::describe_config()` and `plugin::configure(component_view)`.
 - Do not parse `argv` or backend parser objects inside plugins.
+- Do not wrap `run_daemon(...)` with another generic config framework. Product
+  code should define typed config structs and plugin descriptors, not another
+  merge engine.
 - Do not put secrets into events or diagnostics without redaction first.
 - Do not assume `request_stop()` waits for cleanup; it only requests shutdown.
 - Do not stop the scheduler or `io_context` from a stop callback or hook.
@@ -510,4 +591,5 @@ Buildable examples:
 
 - [`examples/app/application_lifecycle.cpp`](../../examples/app/application_lifecycle.cpp)
 - [`examples/app/application_builder.cpp`](../../examples/app/application_builder.cpp)
+- [`examples/app/daemon_runner.cpp`](../../examples/app/daemon_runner.cpp)
 - [`examples/app/exception_logging.cpp`](../../examples/app/exception_logging.cpp)

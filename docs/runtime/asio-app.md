@@ -18,17 +18,22 @@ are bounded, shutdown is deterministic and diagnostics are part of the contract.
 ## Layering
 
 ```text
-program shell
-  -> fcl_program_options / fcl_yaml / fcl_json
+foreground daemon
+  -> fcl_app::run_daemon
+  -> fcl_yaml / fcl_env / fcl_program_options
   -> fcl_config::document
   -> fcl_app::application_shell
   -> plugins configured through component_view
   -> fcl_asio runtime / task_scheduler for async work
 ```
 
-`fcl_app` consumes config documents and component views. It does not parse
-files, environment or command lines. That split keeps application core testable:
-tests can feed a `config::document` directly without building argv/YAML fixtures.
+`run_daemon(...)` is the high-level foreground-daemon entrypoint. It owns
+standard source adapters, merge order, generated config, effective config
+printing and signal policy. The daemon runner can independently disable YAML,
+explicit `.env`, process env and app/plugin CLI sources. `run_application(...)`
+remains the lower-level lifecycle runner for tests, embedded hosts and custom
+product shells that already have a `config::document`.
+
 `application_runtime` remains a lower-level escape hatch, while
 `application_shell` is the preferred production owner of runtime, scheduler,
 ports, events, signals, diagnostics, plugin registry and plugin context.
@@ -61,7 +66,45 @@ All heavy lifecycle methods return `boost::asio::awaitable<void>`. `request_stop
 is intentionally synchronous/noexcept: it signals intent, it does not perform
 cleanup.
 
-## Integration Example
+## Daemon Integration Example
+
+Most service `main(...)` functions should be thin:
+
+```cpp
+int main(int argc, char** argv) {
+   return fcl::app::run_daemon(
+      [](const fcl::app::daemon_context& context) {
+         return std::make_unique<service_application>(service_application_options{
+            .data_dir = context.data_dir,
+            .profile = context.profile,
+            .shell = context.shell,
+         });
+      },
+      argc,
+      argv,
+      fcl::app::daemon_options{
+         .name = "service",
+         .display_name = "Service daemon",
+         .default_data_dir_name = "service",
+         .env_prefix = "SERVICE",
+      });
+}
+```
+
+The app still owns product composition. FCL owns the generic daemon flow:
+
+```text
+collect descriptors -> defaults/YAML/.env/process-env/CLI merge -> configure -> startup
+-> wait for stop -> request_stop -> shutdown
+```
+
+Daemon source precedence is intentionally fixed:
+
+```text
+schema defaults < daemon defaults < YAML < .env < process env < daemon CLI < app/plugin CLI
+```
+
+## Shell Integration Example
 
 ```cpp
 class service_application final : public fcl::app::application_shell {
@@ -75,14 +118,6 @@ class service_application final : public fcl::app::application_shell {
    }
 };
 
-auto app = service_application{};
-auto registry = app.describe_config();
-auto cli = fcl::program_options::parse(argc, argv, registry);
-
-if (!cli.ok()) {
-   report_diagnostics(cli.diagnostics);
-}
-
 boost::asio::awaitable<void> run_service(service_application& app, const fcl::config::document& document) {
    app.configure(document);
    co_await app.startup();
@@ -91,8 +126,9 @@ boost::asio::awaitable<void> run_service(service_application& app, const fcl::co
 }
 ```
 
-The program shell owns CLI/YAML/JSON adapters. `application_shell` sees only an
-already-merged `config::document` and controls plugin lifecycle ordering.
+Custom embedders may still own YAML/JSON/env/CLI adapters themselves and pass an
+already-merged document to `run_application(...)`. Normal foreground daemons
+should not duplicate this plumbing; use `run_daemon(...)`.
 
 For smaller applications and tests, `application_builder` creates an
 `application_shell` without introducing another lifecycle model:
@@ -121,6 +157,9 @@ Buildable examples:
   diagnostics and POSIX signal bridge.
 - [examples/app/application_builder.cpp](../../examples/app/application_builder.cpp)
   shows builder syntax that still returns an `application_shell`.
+- [examples/app/daemon_runner.cpp](../../examples/app/daemon_runner.cpp)
+  shows `run_daemon(...)` with built-in daemon config, app config and plugin
+  config.
 - [examples/app/exception_logging.cpp](../../examples/app/exception_logging.cpp)
   shows exception capture routed into `fcl_log` without making
   `fcl_exception` depend on logging.
@@ -135,8 +174,9 @@ Buildable examples:
 ## Boundaries
 
 - `fcl_asio` imports no app/config/network/TUI code.
-- `fcl_app` can depend on `fcl_config`, but not `fcl_yaml`,
-  `fcl_program_options` or parser backends.
+- `fcl_app` may depend on source adapters at the high daemon-runner layer:
+  `fcl_yaml`, `fcl_env` and `fcl_program_options`. Plugins and app hooks still
+  see only `config::document` / `component_view`.
 - Events and signals are diagnostics/lifecycle surfaces. They are not hidden
   business-flow transport.
 - Ports are typed boundaries; stringly-typed event buses are not a replacement

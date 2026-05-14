@@ -8,10 +8,15 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -104,6 +109,13 @@ struct shell_plugin_config {
 };
 
 BOOST_DESCRIBE_STRUCT(shell_plugin_config, (), (port))
+
+struct daemon_service_config {
+   std::uint16_t workers = 2;
+   std::string token;
+};
+
+BOOST_DESCRIBE_STRUCT(daemon_service_config, (), (workers, token))
 
 class test_plugin final : public fcl::app::plugin {
  public:
@@ -226,7 +238,90 @@ struct fcl::schema::rules<shell_plugin_config> {
    }
 };
 
+template <>
+struct fcl::schema::rules<daemon_service_config> {
+   static fcl::schema::object_schema<daemon_service_config> define() {
+      auto schema = fcl::schema::object<daemon_service_config>();
+      schema.field<&daemon_service_config::workers>("workers").default_value(2).range(1, 32);
+      schema.field<&daemon_service_config::token>("token").default_value(std::string{}).secret();
+      return schema;
+   }
+};
+
 namespace {
+
+struct stream_capture {
+   explicit stream_capture(std::ostream& stream) : stream_{stream}, old_{stream.rdbuf(buffer_.rdbuf())} {}
+
+   ~stream_capture() {
+      stream_.rdbuf(old_);
+   }
+
+   std::string text() const {
+      return buffer_.str();
+   }
+
+ private:
+   std::ostream& stream_;
+   std::ostringstream buffer_;
+   std::streambuf* old_ = nullptr;
+};
+
+std::filesystem::path make_temp_dir(std::string name) {
+   const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+   auto path = std::filesystem::temp_directory_path() / (std::move(name) + "-" + std::to_string(stamp));
+   std::filesystem::create_directories(path);
+   return path;
+}
+
+void write_text(const std::filesystem::path& path, const std::string& text) {
+   std::filesystem::create_directories(path.parent_path());
+   auto output = std::ofstream{path, std::ios::binary | std::ios::trunc};
+   output << text;
+}
+
+std::string read_text(const std::filesystem::path& path) {
+   auto input = std::ifstream{path, std::ios::binary};
+   return std::string{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+}
+
+class env_var_guard {
+ public:
+   env_var_guard(std::string name, std::string value) : name_{std::move(name)} {
+      if (const auto* current = std::getenv(name_.c_str()); current != nullptr) {
+         old_value_ = std::string{current};
+      }
+      set(value);
+   }
+
+   ~env_var_guard() {
+      if (old_value_) {
+         set(*old_value_);
+      } else {
+         unset();
+      }
+   }
+
+ private:
+   void set(const std::string& value) const {
+#if defined(_WIN32)
+      _putenv_s(name_.c_str(), value.c_str());
+#else
+      setenv(name_.c_str(), value.c_str(), 1);
+#endif
+   }
+
+   void unset() const {
+#if defined(_WIN32)
+      _putenv_s(name_.c_str(), "");
+#else
+      unsetenv(name_.c_str());
+#endif
+   }
+
+   std::string name_;
+   std::optional<std::string> old_value_;
+};
 
 class shell_config_plugin final : public fcl::app::plugin {
  public:
@@ -593,6 +688,109 @@ class shell_selection_application final : public fcl::app::application_shell {
  private:
    lifecycle_log* log_ = nullptr;
 };
+
+struct daemon_test_state {
+   lifecycle_log log;
+   std::uint16_t workers = 0;
+   std::string token;
+   std::size_t runtime_threads = 0;
+   std::size_t queue_depth = 0;
+   std::filesystem::path data_dir;
+   std::filesystem::path config_path;
+   std::filesystem::path dotenv_path;
+   std::string profile;
+};
+
+class daemon_test_application final : public fcl::app::application_shell {
+ public:
+   daemon_test_application(fcl::app::daemon_context context, daemon_test_state& state)
+       : fcl::app::application_shell{context.shell}, state_{&state} {
+      state_->runtime_threads = context.shell.runtime.worker_threads;
+      state_->queue_depth = context.shell.scheduler.max_pending_tasks;
+      state_->data_dir = context.data_dir;
+      state_->config_path = context.config_path;
+      state_->dotenv_path = context.dotenv_path;
+      state_->profile = context.profile;
+   }
+
+ protected:
+   void on_describe_config(fcl::config::component_registry& registry) const override {
+      registry.add(fcl::config::describe_component<daemon_service_config>("service"));
+   }
+
+   boost::asio::awaitable<void> on_configure(fcl::app::configure_context& context) override {
+      auto decoded = fcl::config::decode<daemon_service_config>(context.document(), "service");
+      if (!decoded.ok()) {
+         throw std::invalid_argument{decoded.diagnostics.entries.front().message};
+      }
+      state_->workers = decoded.value.workers;
+      state_->token = decoded.value.token;
+      state_->log.entries.push_back("app.configure:" + std::to_string(state_->workers));
+      co_return;
+   }
+
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(fcl::app::plugin_descriptor{
+         .id = fcl::app::plugin_id{.value = "http"},
+         .factory = [this] {
+            return std::make_unique<shell_config_plugin>(state_->log);
+         },
+      });
+   }
+
+   boost::asio::awaitable<void> on_install_ports(fcl::app::application_context& context) override {
+      context.ports().install<sample_port>(std::make_shared<sample_port_impl>(state_->workers));
+      state_->log.entries.push_back("app.install_ports");
+      co_return;
+   }
+
+   int on_run_foreground() override {
+      state_->log.entries.push_back("app.run");
+      request_stop();
+      return 17;
+   }
+
+ private:
+   daemon_test_state* state_ = nullptr;
+};
+
+int run_test_daemon(std::vector<std::string> args, daemon_test_state& state, fcl::app::daemon_options options = {},
+                    bool read_process_env = false) {
+   auto argv = std::vector<char*>{};
+   argv.reserve(args.size());
+   for (auto& arg : args) {
+      argv.push_back(arg.data());
+   }
+   if (options.name.empty()) {
+      options.name = "testd";
+   }
+   if (options.display_name.empty()) {
+      options.display_name = "Test Daemon";
+   }
+   if (options.default_data_dir_name.empty()) {
+      options.default_data_dir_name = "testd";
+   }
+   if (read_process_env) {
+      options.read_process_env = true;
+      if (options.env_prefix.empty()) {
+         options.env_prefix = "FCL_TESTD";
+      }
+   }
+   options.run.handle_sigint = false;
+   options.run.handle_sigterm = false;
+   if (!options.run.wait_for_stop) {
+      options.run.wait_for_stop = [](fcl::app::application_shell&) -> boost::asio::awaitable<void> {
+         co_return;
+      };
+   }
+   return fcl::app::run_daemon(
+      [&state](const fcl::app::daemon_context& context) {
+         return std::make_unique<daemon_test_application>(context, state);
+      },
+      static_cast<int>(argv.size()),
+      argv.data(),
+      std::move(options));
+}
 
 } // namespace
 
@@ -1075,6 +1273,357 @@ BOOST_AUTO_TEST_CASE(run_application_reference_reports_timeout_only_after_shutdo
       "shutdown:slow",
    };
    BOOST_TEST(log.entries == expected, boost::test_tools::per_element());
+}
+
+BOOST_AUTO_TEST_CASE(run_daemon_builds_shell_options_before_factory) {
+   auto state = daemon_test_state{};
+   const auto data_dir = make_temp_dir("fcl-daemon-shell-options");
+
+   const auto exit_code = run_test_daemon(
+      {
+         "testd",
+         "--data-dir",
+         data_dir.string(),
+         "--profile=single_node",
+         "--runtime-threads=3",
+         "--scheduler-queue-depth=123",
+         "--check-config",
+      },
+      state);
+
+   BOOST_TEST(exit_code == 0);
+   BOOST_TEST(state.runtime_threads == 3U);
+   BOOST_TEST(state.queue_depth == 123U);
+   BOOST_TEST(state.data_dir == data_dir);
+   BOOST_TEST(state.config_path == data_dir / "config.yml");
+   BOOST_TEST(state.dotenv_path == data_dir / ".env");
+   BOOST_TEST(state.profile == "single_node");
+   BOOST_REQUIRE_EQUAL(state.log.entries.size(), 2U);
+   BOOST_TEST(state.log.entries[0] == "app.configure:2");
+   BOOST_TEST(state.log.entries[1] == "plugin.configure:9000");
+}
+
+BOOST_AUTO_TEST_CASE(run_daemon_help_prints_daemon_app_and_plugin_options_without_lifecycle) {
+   auto state = daemon_test_state{};
+   auto output = stream_capture{std::cout};
+
+   const auto exit_code = run_test_daemon({"testd", "--help"}, state);
+
+   BOOST_TEST(exit_code == 0);
+   const auto text = output.text();
+   BOOST_TEST(text.find("--profile") != std::string::npos);
+   BOOST_TEST(text.find("--dotenv") != std::string::npos);
+   BOOST_TEST(text.find("--service.workers") != std::string::npos);
+   BOOST_TEST(text.find("--http.port") != std::string::npos);
+   BOOST_TEST(state.log.entries.empty());
+}
+
+BOOST_AUTO_TEST_CASE(run_daemon_merges_yaml_and_cli_before_check_config) {
+   auto state = daemon_test_state{};
+   const auto dir = make_temp_dir("fcl-daemon-merge");
+   const auto config = dir / "config.yml";
+   write_text(
+      config,
+      R"(daemon:
+  runtime-threads: 2
+service:
+  workers: 3
+http:
+  port: 7000
+)");
+
+   const auto exit_code = run_test_daemon(
+      {
+         "testd",
+         "--config",
+         config.string(),
+         "--service.workers=5",
+         "--check-config",
+      },
+      state);
+
+   BOOST_TEST(exit_code == 0);
+   BOOST_TEST(state.runtime_threads == 2U);
+   BOOST_TEST(state.workers == 5U);
+   BOOST_REQUIRE_EQUAL(state.log.entries.size(), 2U);
+   BOOST_TEST(state.log.entries[0] == "app.configure:5");
+   BOOST_TEST(state.log.entries[1] == "plugin.configure:7000");
+}
+
+BOOST_AUTO_TEST_CASE(run_daemon_merges_yaml_dotenv_process_env_and_cli_in_order) {
+   auto service_workers = env_var_guard{"FCL_TESTD_SERVICE_WORKERS", "6"};
+   auto http_port = env_var_guard{"FCL_TESTD_HTTP_PORT", "8001"};
+
+   auto state = daemon_test_state{};
+   const auto dir = make_temp_dir("fcl-daemon-source-merge");
+   const auto config = dir / "config.yml";
+   const auto dotenv = dir / ".env";
+   write_text(
+      config,
+      R"(service:
+  workers: 3
+http:
+  port: 7000
+)");
+   write_text(
+      dotenv,
+      R"(FCL_TESTD_DAEMON_RUNTIME_THREADS=4
+FCL_TESTD_SERVICE_WORKERS=7
+FCL_TESTD_HTTP_PORT=8000
+)");
+
+   const auto exit_code = run_test_daemon(
+      {
+         "testd",
+         "--config",
+         config.string(),
+         "--dotenv",
+         dotenv.string(),
+         "--service.workers=8",
+         "--check-config",
+      },
+      state,
+      {},
+      true);
+
+   BOOST_TEST(exit_code == 0);
+   BOOST_TEST(state.runtime_threads == 4U);
+   BOOST_TEST(state.workers == 8U);
+   BOOST_REQUIRE_EQUAL(state.log.entries.size(), 2U);
+   BOOST_TEST(state.log.entries[0] == "app.configure:8");
+   BOOST_TEST(state.log.entries[1] == "plugin.configure:8001");
+}
+
+BOOST_AUTO_TEST_CASE(run_daemon_source_flags_disable_yaml_dotenv_process_env_and_app_cli) {
+   auto env_workers = env_var_guard{"FCL_TESTD_SERVICE_WORKERS", "9"};
+
+   auto state = daemon_test_state{};
+   const auto dir = make_temp_dir("fcl-daemon-source-flags");
+   const auto config = dir / "missing.yml";
+   const auto dotenv = dir / ".env";
+   write_text(dotenv, "FCL_TESTD_SERVICE_WORKERS=8\n");
+
+   auto options = fcl::app::daemon_options{};
+   options.env_prefix = "FCL_TESTD";
+   options.read_yaml = false;
+   options.read_dotenv = false;
+   options.read_process_env = false;
+   options.read_cli = false;
+
+   const auto exit_code = run_test_daemon(
+      {
+         "testd",
+         "--config",
+         config.string(),
+         "--dotenv",
+         dotenv.string(),
+         "--service.workers=7",
+         "--check-config",
+      },
+      state,
+      options);
+
+   BOOST_TEST(exit_code == 0);
+   BOOST_TEST(state.workers == 2U);
+   BOOST_REQUIRE_EQUAL(state.log.entries.size(), 2U);
+   BOOST_TEST(state.log.entries[0] == "app.configure:2");
+   BOOST_TEST(state.log.entries[1] == "plugin.configure:9000");
+}
+
+BOOST_AUTO_TEST_CASE(run_daemon_empty_env_prefix_disables_dotenv_and_process_env) {
+   auto env_workers = env_var_guard{"FCL_TESTD_SERVICE_WORKERS", "9"};
+
+   auto state = daemon_test_state{};
+   const auto dir = make_temp_dir("fcl-daemon-empty-env-prefix");
+   const auto dotenv = dir / ".env";
+   write_text(dotenv, "FCL_TESTD_SERVICE_WORKERS=8\n");
+
+   auto options = fcl::app::daemon_options{};
+   options.env_prefix = "";
+   options.read_process_env = true;
+
+   const auto exit_code = run_test_daemon(
+      {
+         "testd",
+         "--dotenv",
+         dotenv.string(),
+         "--check-config",
+      },
+      state,
+      options);
+
+   BOOST_TEST(exit_code == 0);
+   BOOST_TEST(state.workers == 2U);
+   BOOST_REQUIRE_EQUAL(state.log.entries.size(), 2U);
+   BOOST_TEST(state.log.entries[0] == "app.configure:2");
+   BOOST_TEST(state.log.entries[1] == "plugin.configure:9000");
+}
+
+BOOST_AUTO_TEST_CASE(run_daemon_help_ignores_missing_explicit_config) {
+   auto state = daemon_test_state{};
+   auto output = stream_capture{std::cout};
+
+   const auto exit_code = run_test_daemon(
+      {
+         "testd",
+         "--config",
+         (make_temp_dir("fcl-daemon-help") / "missing.yml").string(),
+         "--help",
+      },
+      state);
+
+   BOOST_TEST(exit_code == 0);
+   BOOST_TEST(output.text().find("Daemon options") != std::string::npos);
+   BOOST_TEST(state.log.entries.empty());
+}
+
+BOOST_AUTO_TEST_CASE(run_daemon_explicit_missing_config_is_error_for_check_config) {
+   auto state = daemon_test_state{};
+   auto errors = stream_capture{std::cerr};
+
+   const auto exit_code = run_test_daemon(
+      {
+         "testd",
+         "--config",
+         (make_temp_dir("fcl-daemon-missing-config") / "missing.yml").string(),
+         "--check-config",
+      },
+      state);
+
+   BOOST_TEST(exit_code == 1);
+   BOOST_TEST(errors.text().find("daemon.config_missing") != std::string::npos);
+   BOOST_TEST(state.log.entries.empty());
+}
+
+BOOST_AUTO_TEST_CASE(run_daemon_explicit_missing_dotenv_is_error_when_dotenv_source_enabled) {
+   auto state = daemon_test_state{};
+   auto errors = stream_capture{std::cerr};
+
+   auto options = fcl::app::daemon_options{};
+   options.env_prefix = "FCL_TESTD";
+
+   const auto exit_code = run_test_daemon(
+      {
+         "testd",
+         "--dotenv",
+         (make_temp_dir("fcl-daemon-missing-dotenv") / ".env").string(),
+         "--check-config",
+      },
+      state,
+      options);
+
+   BOOST_TEST(exit_code == 1);
+   BOOST_TEST(errors.text().find("daemon.dotenv_missing") != std::string::npos);
+   BOOST_TEST(state.log.entries.empty());
+}
+
+BOOST_AUTO_TEST_CASE(run_daemon_print_effective_config_redacts_secret_fields) {
+   auto state = daemon_test_state{};
+   const auto dir = make_temp_dir("fcl-daemon-print");
+   const auto config = dir / "config.yml";
+   write_text(
+      config,
+      R"(service:
+  token: super-secret
+)");
+   auto output = stream_capture{std::cout};
+
+   const auto exit_code = run_test_daemon(
+      {
+         "testd",
+         "--config",
+         config.string(),
+         "--print-effective-config",
+      },
+      state);
+
+   BOOST_TEST(exit_code == 0);
+   const auto text = output.text();
+   BOOST_TEST(text.find("super-secret") == std::string::npos);
+   BOOST_TEST(text.find("<redacted>") != std::string::npos);
+   BOOST_TEST(state.log.entries.empty());
+}
+
+BOOST_AUTO_TEST_CASE(run_daemon_configure_writes_generated_config_without_product_template) {
+   auto state = daemon_test_state{};
+   const auto dir = make_temp_dir("fcl-daemon-configure");
+   const auto config = dir / "generated.yml";
+
+   const auto exit_code = run_test_daemon(
+      {
+         "testd",
+         "--config",
+         config.string(),
+         "--configure",
+      },
+      state);
+
+   BOOST_TEST(exit_code == 0);
+   const auto text = read_text(config);
+   BOOST_TEST(text.find("daemon:") != std::string::npos);
+   BOOST_TEST(text.find("service:") != std::string::npos);
+   BOOST_TEST(text.find("plugins:") != std::string::npos);
+   BOOST_TEST(text.find(config.string()) != std::string::npos);
+   BOOST_TEST(text.find("configure: true") == std::string::npos);
+   BOOST_TEST(text.find("options:") == std::string::npos);
+   BOOST_TEST(state.log.entries.empty());
+}
+
+BOOST_AUTO_TEST_CASE(run_daemon_configure_refuses_to_overwrite_existing_config) {
+   auto state = daemon_test_state{};
+   const auto dir = make_temp_dir("fcl-daemon-configure-overwrite");
+   const auto config = dir / "generated.yml";
+   write_text(config, "service:\n  workers: 3\n");
+   auto errors = stream_capture{std::cerr};
+
+   const auto exit_code = run_test_daemon(
+      {
+         "testd",
+         "--config",
+         config.string(),
+         "--configure",
+      },
+      state);
+
+   BOOST_TEST(exit_code == 1);
+   BOOST_TEST(errors.text().find("refusing to overwrite") != std::string::npos);
+   BOOST_TEST(read_text(config).find("workers: 3") != std::string::npos);
+   BOOST_TEST(state.log.entries.empty());
+}
+
+BOOST_AUTO_TEST_CASE(run_daemon_respects_plugin_selection_before_lifecycle) {
+   auto state = daemon_test_state{};
+
+   const auto exit_code = run_test_daemon(
+      {
+         "testd",
+         "--plugins.http.enabled=false",
+      },
+      state);
+
+   BOOST_TEST(exit_code == 0);
+   const auto expected = std::vector<std::string>{
+      "app.configure:2",
+      "app.install_ports",
+   };
+   BOOST_TEST(state.log.entries == expected, boost::test_tools::per_element());
+}
+
+BOOST_AUTO_TEST_CASE(run_daemon_returns_nonzero_for_invalid_config) {
+   auto state = daemon_test_state{};
+   auto errors = stream_capture{std::cerr};
+
+   const auto exit_code = run_test_daemon(
+      {
+         "testd",
+         "--service.workers=99",
+         "--check-config",
+      },
+      state);
+
+   BOOST_TEST(exit_code == 1);
+   BOOST_TEST(errors.text().find("allowed maximum") != std::string::npos);
+   BOOST_TEST(state.log.entries.empty());
 }
 
 BOOST_AUTO_TEST_CASE(application_builder_creates_shell_and_applies_config_handlers) {

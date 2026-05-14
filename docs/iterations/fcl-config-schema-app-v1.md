@@ -14,7 +14,7 @@ Build the first production-shaped FCL configuration foundation:
 
 - Parser backend types are visible only inside codec implementation files.
 - `Boost.Program_options` is visible only inside `fcl_program_options`.
-- `fcl_app` imports `fcl_config`, but does not import `fcl_yaml` or `fcl_program_options`.
+- App/plugin core imports `fcl_config`, not source parser backends. Later daemon-runner work may orchestrate YAML/env/CLI adapters at the foreground entrypoint layer.
 - Plugins expose config through `describe_config()` and receive a `config::component_view` in `configure(...)`.
 - Lifecycle methods that may touch resources return `boost::asio::awaitable<void>`.
 - `request_stop()` remains synchronous and `noexcept`.

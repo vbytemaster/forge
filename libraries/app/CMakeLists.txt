@@ -11,6 +11,7 @@ add_library(
    application_shell.cpp
    application_builder.cpp
    runner.cpp
+   daemon.cpp
 )
 fcl_target_modules(fcl_app app)
 
@@ -20,5 +21,8 @@ target_link_libraries(
    fcl_app PUBLIC
       fcl_asio
       fcl_config
+      fcl_env
+      fcl_program_options
+      fcl_yaml
       Boost::headers
 )

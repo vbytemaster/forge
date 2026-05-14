@@ -76,7 +76,10 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - Diagnostics must include clear paths, field names, and expected values.
 - Secret-like fields must support redaction in configs, logs, diagnostics, and error context.
 - `Boost.Program_options` is a backend dependency of `fcl_program_options` only. App/plugin core must not expose `variables_map`, `options_description`, or other CLI parser types.
-- Config merge order is schema defaults, config file, environment/custom adapters, then CLI.
+- Generic config merge order is schema defaults, config file,
+  environment/custom adapters, then CLI. Foreground daemons use the stricter
+  `run_daemon(...)` order: schema defaults, daemon defaults, YAML, `.env`,
+  process env, daemon CLI, then app/plugin CLI.
 - Environment and `.env` loading belongs to `fcl_env`, not to `fcl_app` or plugins.
 - `fcl_env` is a source adapter like `fcl_program_options`: it maps process env
   and explicit `.env` files into `fcl::config::document` using
@@ -141,13 +144,21 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - Foreground daemon lifecycle should use `fcl.app.runner` before inventing
   local signal loops. Service-mode adapters such as systemd, launchd or Windows
   services are a separate future layer, not part of the app shell contract.
+- Normal foreground daemons should use `fcl.app.daemon::run_daemon(...)` for
+  YAML, `.env`, process env, daemon CLI, app/plugin CLI, defaults, help,
+  check-config, print-effective-config, generated config and signal policy.
+  Product `main(...)` functions should be thin factories for an
+  `application_shell`, not generic config frameworks.
+- `run_application(...)` remains the lower-level lifecycle runner for tests,
+  embedded hosts and custom shells that already own a merged
+  `fcl::config::document`.
 - Public lifecycle methods on `application_shell` are not extension points.
   Derived applications implement only hooks named without app tautology:
   `on_describe_config`, `on_configure`, `on_register_plugins`,
   `on_install_ports` and optionally `on_run_foreground`.
-- Do not add hook names like `describe_app_config`, `configure_app`, `app_*`
-  or another parallel application lifecycle vocabulary. The context already
-  identifies the code as application-level.
+- Do not add hook names that repeat the application context or another
+  parallel application lifecycle vocabulary. The context already identifies the
+  code as application-level.
 - `application_builder` is allowed only as convenience syntax that builds an
   `application_shell`. It must not define a second lifecycle model, own
   independent lifecycle state or bypass shell config/plugin ordering.

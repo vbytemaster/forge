@@ -40,61 +40,7 @@ class p2p_node final : public fcl::app::plugin {
       bool allow_insecure_test_mode = false;
    };
 
-   class api {
-    public:
-      struct send_options {
-         fcl::p2p::open_options open{};
-      };
-
-      struct broadcast_options {
-         std::vector<fcl::p2p::peer_id> peers;
-         send_options send{};
-      };
-
-      struct send_result {
-         fcl::p2p::peer_id peer;
-         bool sent = false;
-         std::string error;
-      };
-
-      struct broadcast_result {
-         fcl::p2p::peer_id peer;
-         bool sent = false;
-         std::string error;
-      };
-
-      class impl;
-
-      virtual ~api() = default;
-
-      [[nodiscard]] static fcl::api::descriptor describe();
-
-      [[nodiscard]] virtual fcl::p2p::peer_id local_peer() const = 0;
-      [[nodiscard]] virtual std::optional<fcl::quic::endpoint> local_endpoint() const = 0;
-      [[nodiscard]] virtual fcl::p2p::node_metrics metrics() const = 0;
-      [[nodiscard]] virtual std::vector<fcl::p2p::peer_record> peers() const = 0;
-
-      virtual void publish_api(fcl::api::binding_plan plan, fcl::p2p::protocol_id protocol) = 0;
-      virtual void publish_protocol(fcl::p2p::protocol_id protocol, fcl::p2p::protocol_handler handler) = 0;
-
-      virtual boost::asio::awaitable<fcl::p2p::session_info>
-      connect(fcl::quic::endpoint endpoint, fcl::p2p::connect_options options = {}) = 0;
-
-      virtual boost::asio::awaitable<fcl::quic::framed_stream>
-      open_protocol_stream(fcl::p2p::peer_id peer, fcl::p2p::protocol_id protocol,
-                           fcl::p2p::open_options options = {}) = 0;
-
-      virtual boost::asio::awaitable<void> request_peer_exchange(fcl::p2p::peer_id peer) = 0;
-      virtual boost::asio::awaitable<fcl::p2p::reachability_state> probe_reachability(fcl::p2p::peer_id peer) = 0;
-
-      boost::asio::awaitable<send_result> send(fcl::p2p::peer_id peer, fcl::p2p::message message);
-      virtual boost::asio::awaitable<send_result> send(fcl::p2p::peer_id peer, fcl::p2p::message message,
-                                                       send_options options) = 0;
-
-      boost::asio::awaitable<std::vector<broadcast_result>> broadcast(fcl::p2p::message message);
-      virtual boost::asio::awaitable<std::vector<broadcast_result>>
-      broadcast(fcl::p2p::message message, broadcast_options options) = 0;
-   };
+   class api;
 
    p2p_node();
    ~p2p_node() override;
@@ -114,8 +60,65 @@ class p2p_node final : public fcl::app::plugin {
 
  private:
    struct impl;
-   friend class api::impl;
    std::shared_ptr<impl> impl_;
+};
+
+class p2p_node::api {
+ public:
+   struct send_options {
+      fcl::p2p::open_options open{};
+   };
+
+   struct broadcast_options {
+      std::vector<fcl::p2p::peer_id> peers;
+      send_options send{};
+   };
+
+   struct send_result {
+      fcl::p2p::peer_id peer;
+      bool sent = false;
+      std::string error;
+   };
+
+   struct broadcast_result {
+      fcl::p2p::peer_id peer;
+      bool sent = false;
+      std::string error;
+   };
+
+   virtual ~api() = default;
+
+   [[nodiscard]] static fcl::api::descriptor describe();
+
+   [[nodiscard]] virtual fcl::p2p::peer_id local_peer() const = 0;
+   [[nodiscard]] virtual std::optional<fcl::quic::endpoint> local_endpoint() const = 0;
+   [[nodiscard]] virtual fcl::p2p::node_metrics metrics() const = 0;
+   [[nodiscard]] virtual std::vector<fcl::p2p::peer_record> peers() const = 0;
+
+   virtual void publish_api(fcl::api::binding_plan plan, fcl::p2p::protocol_id protocol) = 0;
+   virtual void publish_protocol(fcl::p2p::protocol_id protocol, fcl::p2p::protocol_handler handler) = 0;
+
+   virtual boost::asio::awaitable<fcl::p2p::session_info>
+   connect(fcl::quic::endpoint endpoint, fcl::p2p::connect_options options = {}) = 0;
+
+   virtual boost::asio::awaitable<fcl::quic::framed_stream>
+   open_protocol_stream(fcl::p2p::peer_id peer, fcl::p2p::protocol_id protocol,
+                        fcl::p2p::open_options options = {}) = 0;
+
+   virtual boost::asio::awaitable<void> request_peer_exchange(fcl::p2p::peer_id peer) = 0;
+   virtual boost::asio::awaitable<fcl::p2p::reachability_state> probe_reachability(fcl::p2p::peer_id peer) = 0;
+
+   boost::asio::awaitable<send_result> send(fcl::p2p::peer_id peer, fcl::p2p::message message);
+   virtual boost::asio::awaitable<send_result> send(fcl::p2p::peer_id peer, fcl::p2p::message message,
+                                                    send_options options) = 0;
+
+   boost::asio::awaitable<std::vector<broadcast_result>> broadcast(fcl::p2p::message message);
+   virtual boost::asio::awaitable<std::vector<broadcast_result>>
+   broadcast(fcl::p2p::message message, broadcast_options options) = 0;
+
+ private:
+   friend class p2p_node;
+   class impl;
 };
 
 [[nodiscard]] fcl::app::plugin_descriptor p2p_node_descriptor();

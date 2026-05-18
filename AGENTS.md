@@ -29,6 +29,49 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - Do not create nested public include directories under `include/fcl/<lib>`.
 - Do not use `import std;` until the supported toolchain and CI explicitly prove it is stable.
 
+## Public API Declaration Shape
+
+- Standalone public concepts should be declared directly in the owning
+  `namespace fcl::<lib>`.
+- Nested public types are allowed only when the type is truly owned by the
+  enclosing class, such as short `config`, `options`, `result`, `token`,
+  enum/value wrappers or other small companion records.
+- If a nested type is a full public contract, interface or API, the owner class
+  body should contain only a forward declaration such as `class api;`, and the
+  contract body should be declared separately as `class owner::api { ... };`
+  immediately below the owner.
+- Do not write a nested type inline inside the owner class when it has virtual
+  methods, many methods, its own pimpl, nested option/result families or is a
+  consumer-facing interface in its own right.
+- Implementation details must stay as private forward declarations such as
+  `struct impl;` or `class api::impl;`, with definitions in the `.cpp`. Do not
+  create top-level public `*_impl` vocabulary for implementation types.
+
+Good:
+
+```cpp
+class p2p_node {
+ public:
+   struct config;
+   class api;
+};
+
+class p2p_node::api {
+   // Public API contract.
+};
+```
+
+Bad:
+
+```cpp
+class p2p_node {
+ public:
+   class api {
+      // Large public contract hidden inside the owner class body.
+   };
+};
+```
+
 ## Library Shape
 
 - Prefer many small targets over one monolithic target.

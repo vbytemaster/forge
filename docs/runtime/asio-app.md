@@ -56,11 +56,12 @@ The lifecycle order is fixed:
 2. schema defaults are merged with the input config document;
 3. app hook receives `configure_context`;
 4. plugins receive `configure(component_view)`;
-5. app hook installs ports;
-6. plugins initialize in dependency order;
-7. plugins start;
-8. `request_stop()` is issued synchronously;
-9. plugins shut down in reverse order.
+5. app hook installs ports/APIs;
+6. plugins provide their declared local APIs;
+7. plugins initialize in dependency order;
+8. plugins start;
+9. `request_stop()` is issued synchronously;
+10. plugins shut down in reverse order.
 
 All heavy lifecycle methods return `boost::asio::awaitable<void>`. `request_stop`
 is intentionally synchronous/noexcept: it signals intent, it does not perform

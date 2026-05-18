@@ -112,11 +112,13 @@ struct binding_plan {
    boost::asio::awaitable<frame> dispatch(frame request, call_runtime& calls) const;
    boost::asio::awaitable<std::vector<frame>> dispatch_many(frame request) const;
    boost::asio::awaitable<std::vector<frame>> dispatch_many(frame request, call_runtime& calls) const;
+   boost::asio::awaitable<std::vector<frame>> dispatch_stream(std::vector<frame> frames) const;
 };
 
 class binding_builder {
  public:
    binding_builder& serve(const registry& apis);
+   binding_builder& serve(const view& apis);
 
    template <typename Interface> binding_builder& export_api(api_ref api) {
       auto descriptor = Interface::describe();

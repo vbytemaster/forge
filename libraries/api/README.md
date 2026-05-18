@@ -97,8 +97,8 @@ auto request = fcl::api::frame{
    .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
    .method = "read",
    .codec = {.value = "fcl.raw"},
-   .payload = fcl::raw::pack(protocol::read_chunk{.ref = ref}),
 };
+fcl::raw::pack(request.payload, protocol::read_chunk{.ref = ref});
 ```
 
 Frame lifecycle is checked by `fcl::api::call_runtime`:
@@ -116,6 +116,19 @@ Descriptor method kinds are explicit:
 ```cpp
 return fcl::api::contract<cache>({.id = {"cache.events"}, .version = {1, 0}})
    .server_stream<&cache::watch, protocol::watch_chunks, models::chunk>("watch")
+   .build();
+```
+
+Client and bidirectional streams use grouped frame dispatch. A client-stream
+call starts with `request`, sends one or more `stream_item` frames with typed
+request DTO payloads and finishes its input with `stream_end`; the server
+returns a single `response` or `error`. A bidirectional stream follows the same
+input shape and returns `stream_item...stream_end` or `error`.
+
+```cpp
+return fcl::api::contract<cache>({.id = {"cache.bulk"}, .version = {1, 0}})
+   .client_stream<&cache::upload, protocol::write_chunk, protocol::write_receipt>("upload")
+   .bidirectional_stream<&cache::sync, protocol::write_chunk, protocol::sync_event>("sync")
    .build();
 ```
 

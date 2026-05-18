@@ -50,6 +50,7 @@ The repository must stay neutral. Public APIs must not contain downstream produc
   - `fcl_websocket`
   - `fcl_quic`
   - `fcl_p2p`
+  - `fcl_plugins`
   - `fcl_tui`
 - Heavy classes that own sockets, event loops, crypto contexts, terminal state, or other external resources should use pimpl.
 - Value types, protocol records, and simple POD-like structs should not use pimpl.
@@ -162,6 +163,9 @@ The repository must stay neutral. Public APIs must not contain downstream produc
   reverse shutdown.
 - Plugins own behavior and lifecycle. Ports/APIs expose typed contracts; they
   must not become fake lifecycle modules.
+- Ready-made infrastructure plugins live in `fcl_plugins`. They may own
+  transport/runtime lifecycle and publish narrow `fcl_api` capabilities for
+  product plugins, but they must not own product business logic.
 - Plugin enable/disable is application-shell-owned config under
   `plugins.<plugin-id>.enabled`. Products must not manually distribute plugin
   selection from their own monolithic config object as the primary path.

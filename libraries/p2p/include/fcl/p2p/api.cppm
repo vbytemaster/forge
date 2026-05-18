@@ -7,6 +7,7 @@ module;
 #include <functional>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -18,6 +19,7 @@ import fcl.p2p.node;
 import fcl.p2p.protocol;
 import fcl.raw.raw;
 import fcl.quic.errors;
+import fcl.quic.framed_stream;
 
 export namespace fcl::p2p {
 
@@ -67,24 +69,37 @@ class api_binding {
       validate_stream(stream);
       auto calls = fcl::api::call_runtime{
           fcl::api::call_runtime_options{.max_inflight = max_inflight_per_peer_}};
+      auto streams = std::unordered_map<std::uint64_t, std::vector<fcl::api::frame>>{};
 
       while (true) {
          try {
             auto payload = co_await stream.stream.async_read_frame();
-            auto request = fcl::raw::unpack<fcl::api::frame>(
-                fcl::api::bytes{reinterpret_cast<const char*>(payload.data()),
-                                reinterpret_cast<const char*>(payload.data() + payload.size())});
+            auto request = fcl::raw::unpack<fcl::api::frame>(payload);
             if (request.codec != codec_) {
                FCL_THROW_EXCEPTION(fcl::api::exceptions::codec_failed, "P2P API frame codec is not accepted",
                                    fcl::exception::ctx("codec", request.codec.value));
             }
-            auto responses = co_await plan_.dispatch_many(std::move(request), calls);
-            for (const auto& response : responses) {
-               auto response_bytes = fcl::raw::pack(response);
-               co_await stream.stream.async_write_frame(
-                   std::span<const std::uint8_t>{reinterpret_cast<const std::uint8_t*>(response_bytes.data()),
-                                                 response_bytes.size()});
+            if (request.kind == fcl::api::frame_kind::request && grouped_stream_method(request)) {
+               if (streams.size() >= max_inflight_per_peer_) {
+                  FCL_THROW_EXCEPTION(fcl::api::exceptions::resource_exhausted, "P2P API max streams exceeded");
+               }
+               if (!streams.emplace(request.id.value, std::vector<fcl::api::frame>{std::move(request)}).second) {
+                  FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error, "duplicate active P2P API stream");
+               }
+               continue;
             }
+            if (auto active = streams.find(request.id.value); active != streams.end()) {
+               active->second.push_back(std::move(request));
+               if (active->second.back().kind == fcl::api::frame_kind::stream_end) {
+                  auto frames = std::move(active->second);
+                  streams.erase(active);
+                  auto responses = co_await plan_.dispatch_stream(std::move(frames));
+                  co_await write_responses(stream.stream, responses);
+               }
+               continue;
+            }
+            auto responses = co_await plan_.dispatch_many(std::move(request), calls);
+            co_await write_responses(stream.stream, responses);
          } catch (const fcl::quic::quic_error& error) {
             if (error.kind() == fcl::quic::error_kind::connection_closed ||
                 error.kind() == fcl::quic::error_kind::stream_closed ||
@@ -114,6 +129,22 @@ class api_binding {
    }
 
  private:
+   [[nodiscard]] bool grouped_stream_method(const fcl::api::frame& request) const noexcept {
+      const auto* descriptor = plan_.local == nullptr ? nullptr : plan_.local->describe(request.api);
+      const auto* method = descriptor == nullptr ? nullptr : fcl::api::find_method(*descriptor, request.method);
+      return method != nullptr && (method->kind == fcl::api::method_kind::client_stream ||
+                                   method->kind == fcl::api::method_kind::bidirectional_stream);
+   }
+
+   static boost::asio::awaitable<void> write_responses(fcl::quic::framed_stream& stream,
+                                                       const std::vector<fcl::api::frame>& responses) {
+      for (const auto& response : responses) {
+         auto response_bytes = fcl::api::bytes{};
+         fcl::raw::pack(response_bytes, response);
+         co_await stream.async_write_frame(std::span<const std::uint8_t>{response_bytes.data(), response_bytes.size()});
+      }
+   }
+
    void validate_stream(const incoming_protocol_stream& stream) const {
       if (stream.protocol != protocol_) {
          FCL_THROW_EXCEPTION(fcl::p2p::exceptions::unsupported_protocol, "P2P API binding received wrong protocol",
@@ -146,6 +177,7 @@ class api_binding {
 
 class api_builder {
  public:
+   api_builder() = default;
    explicit api_builder(node& owner) : owner_{&owner} {}
 
    api_builder& use(fcl::api::binding_plan plan) {
@@ -200,6 +232,65 @@ class api_builder {
 
 [[nodiscard]] inline api_builder api(node& owner) {
    return api_builder{owner};
+}
+
+[[nodiscard]] inline api_builder api() {
+   return api_builder{};
+}
+
+class route_binding {
+ public:
+   route_binding(protocol_id protocol, protocol_handler handler)
+       : protocol_{std::move(protocol)}, handler_{std::move(handler)} {}
+
+   [[nodiscard]] const protocol_id& protocol() const noexcept {
+      return protocol_;
+   }
+
+   [[nodiscard]] const protocol_handler& handler() const noexcept {
+      return handler_;
+   }
+
+ private:
+   protocol_id protocol_;
+   protocol_handler handler_;
+};
+
+class route_builder {
+ public:
+   route_builder& protocol_id(std::string value) {
+      protocol_ = fcl::p2p::protocol_id{.value = std::move(value)};
+      return *this;
+   }
+
+   route_builder& protocol_id(fcl::p2p::protocol_id value) {
+      protocol_ = std::move(value);
+      return *this;
+   }
+
+   route_builder& handler(protocol_handler value) {
+      handler_ = std::move(value);
+      return *this;
+   }
+
+   [[nodiscard]] route_binding build() {
+      if (protocol_.value.empty()) {
+         FCL_THROW_EXCEPTION(fcl::p2p::exceptions::unsupported_protocol, "P2P route protocol id must not be empty");
+      }
+      if (!handler_) {
+         FCL_THROW_EXCEPTION(fcl::p2p::exceptions::unsupported_protocol, "P2P route handler must not be empty",
+                             fcl::exception::ctx("protocol", protocol_.value));
+      }
+      return route_binding{std::move(protocol_), std::move(handler_)};
+   }
+
+ private:
+   fcl::p2p::protocol_id protocol_;
+   protocol_handler handler_;
+};
+
+[[nodiscard]] inline route_builder route() {
+   return {};
 }
 
 } // namespace fcl::p2p

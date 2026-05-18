@@ -43,6 +43,10 @@ struct method_descriptor {
    std::vector<error_descriptor> errors;
    std::function<boost::asio::awaitable<bytes>(std::shared_ptr<void>, bytes)> raw_invoker;
    std::function<boost::asio::awaitable<std::vector<bytes>>(std::shared_ptr<void>, bytes)> raw_stream_invoker;
+   std::function<boost::asio::awaitable<bytes>(std::shared_ptr<void>, std::vector<bytes>)>
+      raw_client_stream_invoker;
+   std::function<boost::asio::awaitable<std::vector<bytes>>(std::shared_ptr<void>, std::vector<bytes>)>
+      raw_bidirectional_stream_invoker;
 };
 
 struct descriptor {
@@ -98,7 +102,9 @@ template <typename Interface> class contract_builder {
              auto packed = std::vector<bytes>{};
              packed.reserve(responses.size());
              for (const auto& response : responses) {
-                packed.push_back(fcl::raw::pack(response));
+                auto item = bytes{};
+                fcl::raw::pack(item, response);
+                packed.push_back(std::move(item));
              }
              co_return packed;
           },
@@ -108,12 +114,66 @@ template <typename Interface> class contract_builder {
 
    template <auto Method, typename Request, typename Response>
    method_builder<Interface> client_stream(std::string name) {
-      return add_method<Method, Request, Response>(std::move(name), method_kind::client_stream);
+      for (const auto& existing : descriptor_.methods) {
+         if (existing.name == name) {
+            throw api_error{"duplicate API method: " + name};
+         }
+      }
+      descriptor_.methods.push_back(method_descriptor{
+          .name = std::move(name),
+          .kind = method_kind::client_stream,
+          .request_type = typeid(Request),
+          .response_type = typeid(Response),
+          .raw_client_stream_invoker =
+              [](std::shared_ptr<void> implementation, std::vector<bytes> payloads) -> boost::asio::awaitable<bytes> {
+             auto typed = std::static_pointer_cast<Interface>(std::move(implementation));
+             auto requests = std::vector<Request>{};
+             requests.reserve(payloads.size());
+             for (auto& payload : payloads) {
+                requests.push_back(fcl::raw::unpack<Request>(payload));
+             }
+             auto response = co_await std::invoke(Method, *typed, std::move(requests));
+             auto packed = bytes{};
+             fcl::raw::pack(packed, response);
+             co_return packed;
+          },
+      });
+      return method_builder<Interface>{*this, descriptor_.methods.back()};
    }
 
    template <auto Method, typename Request, typename Response>
    method_builder<Interface> bidirectional_stream(std::string name) {
-      return add_method<Method, Request, Response>(std::move(name), method_kind::bidirectional_stream);
+      for (const auto& existing : descriptor_.methods) {
+         if (existing.name == name) {
+            throw api_error{"duplicate API method: " + name};
+         }
+      }
+      descriptor_.methods.push_back(method_descriptor{
+          .name = std::move(name),
+          .kind = method_kind::bidirectional_stream,
+          .request_type = typeid(Request),
+          .response_type = typeid(Response),
+          .raw_bidirectional_stream_invoker =
+              [](std::shared_ptr<void> implementation,
+                 std::vector<bytes> payloads) -> boost::asio::awaitable<std::vector<bytes>> {
+             auto typed = std::static_pointer_cast<Interface>(std::move(implementation));
+             auto requests = std::vector<Request>{};
+             requests.reserve(payloads.size());
+             for (auto& payload : payloads) {
+                requests.push_back(fcl::raw::unpack<Request>(payload));
+             }
+             auto responses = co_await std::invoke(Method, *typed, std::move(requests));
+             auto packed = std::vector<bytes>{};
+             packed.reserve(responses.size());
+             for (const auto& response : responses) {
+                auto item = bytes{};
+                fcl::raw::pack(item, response);
+                packed.push_back(std::move(item));
+             }
+             co_return packed;
+          },
+      });
+      return method_builder<Interface>{*this, descriptor_.methods.back()};
    }
 
  private:
@@ -134,7 +194,9 @@ template <typename Interface> class contract_builder {
              auto typed = std::static_pointer_cast<Interface>(std::move(implementation));
              auto request = fcl::raw::unpack<Request>(payload);
              auto response = co_await std::invoke(Method, *typed, std::move(request));
-             co_return fcl::raw::pack(response);
+             auto packed = bytes{};
+             fcl::raw::pack(packed, response);
+             co_return packed;
           },
       });
       return method_builder<Interface>{*this, descriptor_.methods.back()};
@@ -187,6 +249,14 @@ template <typename Interface> class method_builder {
 
    template <auto Method, typename Request, typename Response> method_builder method(std::string name) {
       return owner_->template method<Method, Request, Response>(std::move(name));
+   }
+
+   template <auto Method, typename Request, typename Response> method_builder client_stream(std::string name) {
+      return owner_->template client_stream<Method, Request, Response>(std::move(name));
+   }
+
+   template <auto Method, typename Request, typename Response> method_builder bidirectional_stream(std::string name) {
+      return owner_->template bidirectional_stream<Method, Request, Response>(std::move(name));
    }
 
    [[nodiscard]] descriptor build() {

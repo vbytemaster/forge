@@ -133,6 +133,10 @@ class api_builder {
       return static_cast<status>(static_cast<unsigned>(value));
    }
 
+   [[nodiscard]] static bool uses_request_body(method verb) noexcept {
+      return verb == method::post || verb == method::put || verb == method::patch;
+   }
+
    template <auto Method, typename Request, typename Response>
    [[nodiscard]] mount_step make_step(method verb, std::string path, api_route_options options) {
       using interface_type = typename method_class<decltype(Method)>::type;
@@ -149,11 +153,11 @@ class api_builder {
             }
             auto request = Request{};
             auto payload = fcl::api::bytes{};
-            if (context.request.method() == method::post) {
+            if (uses_request_body(context.request.method())) {
                const auto& body = context.request.body();
                payload.assign(body.begin(), body.end());
             } else {
-               payload = fcl::raw::pack(request);
+               fcl::raw::pack(payload, request);
             }
             const auto api_descriptor = interface_type::describe();
             auto frame = fcl::api::frame{

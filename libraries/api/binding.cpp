@@ -33,6 +33,28 @@ namespace {
    };
 }
 
+[[nodiscard]] frame make_error_response(const frame& request, error_payload payload) {
+   auto response = frame{
+       .kind = frame_kind::error,
+       .id = request.id,
+       .api = request.api,
+       .method = request.method,
+       .meta = request.meta,
+       .codec = request.codec,
+   };
+   fcl::raw::pack(response.payload, payload);
+   return response;
+}
+
+[[nodiscard]] bool exported(const std::vector<descriptor>& exports, const api_ref& requested) noexcept {
+   if (exports.empty()) {
+      return true;
+   }
+   return std::any_of(exports.begin(), exports.end(), [&](const auto& available) {
+      return compatible(available, requested);
+   });
+}
+
 void sort_interceptors(std::vector<interceptor_step>& interceptors) {
    std::sort(interceptors.begin(), interceptors.end(), [](const auto& left, const auto& right) {
       if (left.phase != right.phase) {
@@ -154,6 +176,20 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_many(frame req
    if (local == nullptr) {
       FCL_THROW_EXCEPTION(exceptions::incompatible_version, "API binding plan has no local registry");
    }
+   if (!exported(exports, request.api)) {
+      co_return std::vector<frame>{make_error_response(
+          request, error_payload{
+                       .error = "api_not_exported",
+                       .message = "API is not exported by this binding plan",
+                       .retryable = false,
+                       .status_code = status::permission_denied,
+                       .identity =
+                           {
+                               .category = "fcl.api",
+                               .code = static_cast<std::uint32_t>(exceptions::code::incompatible_version),
+                           },
+                   })};
+   }
 
    calls.observe(request);
 
@@ -181,8 +217,58 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_many(frame req
    co_return responses;
 }
 
+boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::vector<frame> frames) const {
+   if (local == nullptr) {
+      FCL_THROW_EXCEPTION(exceptions::incompatible_version, "API binding plan has no local registry");
+   }
+   if (frames.empty()) {
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "API stream dispatch requires at least one frame");
+   }
+   if (!exported(exports, frames.front().api)) {
+      co_return std::vector<frame>{make_error_response(
+          frames.front(), error_payload{
+                            .error = "api_not_exported",
+                            .message = "API is not exported by this binding plan",
+                            .retryable = false,
+                            .status_code = status::permission_denied,
+                            .identity =
+                                {
+                                    .category = "fcl.api",
+                                    .code = static_cast<std::uint32_t>(exceptions::code::incompatible_version),
+                                },
+                         })};
+   }
+
+   auto context = make_context(frames.front());
+   for (const auto& step : interceptors) {
+      if (step.handler && step.phase <= interceptor_phase::before_call) {
+         co_await step.handler(context);
+      }
+   }
+
+   auto responses = co_await local->dispatch_stream(std::move(frames));
+
+   for (auto& response : responses) {
+      auto response_context = make_context(response);
+      for (const auto& step : interceptors) {
+         if (step.handler &&
+             ((response.kind == frame_kind::error && step.phase == interceptor_phase::error) ||
+              (response.kind != frame_kind::error && step.phase == interceptor_phase::after_call))) {
+            co_await step.handler(response_context);
+         }
+      }
+   }
+
+   co_return responses;
+}
+
 binding_builder& binding_builder::serve(const registry& apis) {
    plan_.local = &apis;
+   return *this;
+}
+
+binding_builder& binding_builder::serve(const view& apis) {
+   plan_.local = &apis.registry_ref();
    return *this;
 }
 

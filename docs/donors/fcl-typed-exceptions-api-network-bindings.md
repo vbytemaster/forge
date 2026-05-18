@@ -43,6 +43,9 @@ that can work both in process and over transports.
 - Treat builder options as contractual behavior. If a binding exposes codec,
   max inflight, deadline, peer policy, frame size or route middleware, it must
   enforce that option and have a test.
+- Keep transport owner plugins boring and narrow: they centralize node/server
+  lifecycle and route mounting, while product plugins contribute handlers or
+  typed API bindings through a safe local API.
 
 ## Rejected Patterns
 
@@ -72,6 +75,9 @@ that can work both in process and over transports.
 - `fcl.p2p.api` owns protocol artifact creation, peer requirement checks, codec,
   per-peer max inflight calls and continuous API sessions. It does not own peer
   identity, relay, hole punching, peer store lifecycle or node bootstrap.
+- `fcl.plugins.p2p_node` owns one P2P node lifecycle for an application and
+  publishes a narrow contribution API. It does not replace `fcl.p2p.api`; it
+  consumes built bindings/routes and mounts them centrally before startup.
 
 ## Tests
 
@@ -79,6 +85,6 @@ The focused gate is:
 
 ```sh
 ctest --test-dir build/fcl-typed-exceptions-debug --output-on-failure \
-  -R "^(test_fcl_exception|test_fcl_api|test_fcl_app|test_fcl_http_websocket|test_fcl_quic_p2p)$" \
+  -R "^(test_fcl_exception|test_fcl_raw|test_fcl_api|test_fcl_app|test_fcl_http_websocket|test_fcl_quic_p2p|test_fcl_plugins)$" \
   --timeout 300
 ```

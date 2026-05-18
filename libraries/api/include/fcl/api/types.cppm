@@ -11,7 +11,7 @@ export module fcl.api.types;
 
 export namespace fcl::api {
 
-using bytes = std::vector<char>;
+using bytes = std::vector<std::uint8_t>;
 
 struct metadata_entry {
    std::string key;

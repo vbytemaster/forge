@@ -70,12 +70,21 @@ template <typename Stream> Stream& operator>>(Stream& stream, chunk& value) {
 
 } // namespace protocol
 
+template <typename T>
+fcl::api::bytes pack_api_payload(const T& value) {
+   auto out = fcl::api::bytes{};
+   fcl::raw::pack(out, value);
+   return out;
+}
+
 class cache_api {
  public:
    virtual ~cache_api() = default;
 
    virtual boost::asio::awaitable<protocol::chunk> read(protocol::read_chunk request) = 0;
    virtual boost::asio::awaitable<std::vector<protocol::chunk>> watch(protocol::read_chunk request) = 0;
+   virtual boost::asio::awaitable<protocol::chunk> upload(std::vector<protocol::read_chunk> requests) = 0;
+   virtual boost::asio::awaitable<std::vector<protocol::chunk>> sync(std::vector<protocol::read_chunk> requests) = 0;
 
    static fcl::api::descriptor describe() {
       return fcl::api::contract<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
@@ -97,6 +106,26 @@ class cache_impl final : public cache_api {
           protocol::chunk{.bytes = request.ref + ":0"},
           protocol::chunk{.bytes = request.ref + ":1"},
       };
+   }
+
+   boost::asio::awaitable<protocol::chunk> upload(std::vector<protocol::read_chunk> requests) override {
+      auto out = std::string{};
+      for (const auto& request : requests) {
+         if (!out.empty()) {
+            out += ",";
+         }
+         out += request.ref;
+      }
+      co_return protocol::chunk{.bytes = std::move(out)};
+   }
+
+   boost::asio::awaitable<std::vector<protocol::chunk>> sync(std::vector<protocol::read_chunk> requests) override {
+      auto out = std::vector<protocol::chunk>{};
+      out.reserve(requests.size());
+      for (const auto& request : requests) {
+         out.push_back(protocol::chunk{.bytes = request.ref + ":ack"});
+      }
+      co_return out;
    }
 };
 
@@ -169,6 +198,20 @@ BOOST_AUTO_TEST_CASE(method_descriptor_records_stream_method_kind) {
    const auto* method = fcl::api::find_method(descriptor, "watch");
    BOOST_REQUIRE(method != nullptr);
    BOOST_CHECK(method->kind == fcl::api::method_kind::server_stream);
+}
+
+BOOST_AUTO_TEST_CASE(method_descriptor_records_client_and_bidirectional_stream_kinds) {
+   auto descriptor = fcl::api::contract<cache_api>({.id = {"cache.streams"}, .version = {.major = 1, .revision = 0}})
+                         .client_stream<&cache_api::upload, protocol::read_chunk, protocol::chunk>("upload")
+                         .bidirectional_stream<&cache_api::sync, protocol::read_chunk, protocol::chunk>("sync")
+                         .build();
+
+   const auto* upload = fcl::api::find_method(descriptor, "upload");
+   const auto* sync = fcl::api::find_method(descriptor, "sync");
+   BOOST_REQUIRE(upload != nullptr);
+   BOOST_REQUIRE(sync != nullptr);
+   BOOST_CHECK(upload->kind == fcl::api::method_kind::client_stream);
+   BOOST_CHECK(sync->kind == fcl::api::method_kind::bidirectional_stream);
 }
 
 BOOST_AUTO_TEST_CASE(call_runtime_rejects_duplicate_unknown_and_post_terminal_frames) {
@@ -257,7 +300,7 @@ BOOST_AUTO_TEST_CASE(binding_plan_runs_interceptors_in_deterministic_order) {
        .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
        .method = "read",
        .codec = {.value = "fcl.raw"},
-       .payload = fcl::raw::pack(protocol::read_chunk{.ref = "abc"}),
+       .payload = pack_api_payload(protocol::read_chunk{.ref = "abc"}),
    };
 
    const auto response = fcl::asio::blocking::run(runtime, plan.dispatch(request));
@@ -281,7 +324,7 @@ BOOST_AUTO_TEST_CASE(binding_plan_dispatches_server_stream_as_item_and_end_frame
        .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
        .method = "watch",
        .codec = {.value = "fcl.raw"},
-       .payload = fcl::raw::pack(protocol::read_chunk{.ref = "abc"}),
+       .payload = pack_api_payload(protocol::read_chunk{.ref = "abc"}),
    };
 
    const auto responses = fcl::asio::blocking::run(runtime, plan.dispatch_many(request));
@@ -292,6 +335,104 @@ BOOST_AUTO_TEST_CASE(binding_plan_dispatches_server_stream_as_item_and_end_frame
    BOOST_CHECK(responses[2].kind == fcl::api::frame_kind::stream_end);
    BOOST_TEST(fcl::raw::unpack<protocol::chunk>(responses[0].payload).bytes == "abc:0");
    BOOST_TEST(fcl::raw::unpack<protocol::chunk>(responses[1].payload).bytes == "abc:1");
+}
+
+BOOST_AUTO_TEST_CASE(binding_plan_dispatches_client_stream_as_item_sequence_and_single_response) {
+   auto runtime = fcl::asio::runtime{};
+   auto registry = fcl::api::registry{};
+   auto descriptor = fcl::api::contract<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
+                         .client_stream<&cache_api::upload, protocol::read_chunk, protocol::chunk>("upload")
+                         .build();
+   registry.install<cache_api>(std::move(descriptor), std::make_shared<cache_impl>());
+
+   auto plan = fcl::api::binding().serve(registry).build();
+   const auto start = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 34},
+       .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
+       .method = "upload",
+       .codec = {.value = "fcl.raw"},
+   };
+   auto first = start;
+   first.kind = fcl::api::frame_kind::stream_item;
+   first.payload = pack_api_payload(protocol::read_chunk{.ref = "a"});
+   auto second = start;
+   second.kind = fcl::api::frame_kind::stream_item;
+   second.payload = pack_api_payload(protocol::read_chunk{.ref = "b"});
+   auto end = start;
+   end.kind = fcl::api::frame_kind::stream_end;
+
+   const auto responses = fcl::asio::blocking::run(runtime, plan.dispatch_stream({start, first, second, end}));
+
+   BOOST_REQUIRE_EQUAL(responses.size(), 1U);
+   BOOST_CHECK(responses[0].kind == fcl::api::frame_kind::response);
+   BOOST_TEST(fcl::raw::unpack<protocol::chunk>(responses[0].payload).bytes == "a,b");
+}
+
+BOOST_AUTO_TEST_CASE(binding_plan_dispatches_bidirectional_stream_as_item_and_end_frames) {
+   auto runtime = fcl::asio::runtime{};
+   auto registry = fcl::api::registry{};
+   auto descriptor = fcl::api::contract<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
+                         .bidirectional_stream<&cache_api::sync, protocol::read_chunk, protocol::chunk>("sync")
+                         .build();
+   registry.install<cache_api>(std::move(descriptor), std::make_shared<cache_impl>());
+
+   auto plan = fcl::api::binding().serve(registry).build();
+   const auto start = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 35},
+       .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
+       .method = "sync",
+       .codec = {.value = "fcl.raw"},
+   };
+   auto first = start;
+   first.kind = fcl::api::frame_kind::stream_item;
+   first.payload = pack_api_payload(protocol::read_chunk{.ref = "a"});
+   auto second = start;
+   second.kind = fcl::api::frame_kind::stream_item;
+   second.payload = pack_api_payload(protocol::read_chunk{.ref = "b"});
+   auto end = start;
+   end.kind = fcl::api::frame_kind::stream_end;
+
+   const auto responses = fcl::asio::blocking::run(runtime, plan.dispatch_stream({start, first, second, end}));
+
+   BOOST_REQUIRE_EQUAL(responses.size(), 3U);
+   BOOST_CHECK(responses[0].kind == fcl::api::frame_kind::stream_item);
+   BOOST_CHECK(responses[1].kind == fcl::api::frame_kind::stream_item);
+   BOOST_CHECK(responses[2].kind == fcl::api::frame_kind::stream_end);
+   BOOST_TEST(fcl::raw::unpack<protocol::chunk>(responses[0].payload).bytes == "a:ack");
+   BOOST_TEST(fcl::raw::unpack<protocol::chunk>(responses[1].payload).bytes == "b:ack");
+}
+
+BOOST_AUTO_TEST_CASE(binding_plan_exports_are_enforced_when_declared) {
+   auto runtime = fcl::asio::runtime{};
+   auto registry = fcl::api::registry{};
+   registry.install<cache_api>(cache_api::describe(), std::make_shared<cache_impl>());
+
+   auto plan = fcl::api::binding()
+                   .serve(fcl::api::view{registry})
+                   .export_api<cache_api>({.id = {"cache"}, .major = 1, .min_revision = 8})
+                   .build();
+
+   const auto exported_request = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 41},
+       .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
+       .method = "read",
+       .codec = {.value = "fcl.raw"},
+       .payload = pack_api_payload(protocol::read_chunk{.ref = "visible"}),
+   };
+   const auto exported_response = fcl::asio::blocking::run(runtime, plan.dispatch(exported_request));
+   BOOST_CHECK(exported_response.kind == fcl::api::frame_kind::response);
+
+   auto hidden_request = exported_request;
+   hidden_request.id.value = 42;
+   hidden_request.api.id.value = "hidden";
+
+   const auto hidden_response = fcl::asio::blocking::run(runtime, plan.dispatch(hidden_request));
+   BOOST_CHECK(hidden_response.kind == fcl::api::frame_kind::error);
+   const auto payload = fcl::raw::unpack<fcl::api::error_payload>(hidden_response.payload);
+   BOOST_TEST(payload.error == "api_not_exported");
 }
 
 BOOST_AUTO_TEST_CASE(descriptor_declared_exception_maps_to_error_payload) {
@@ -360,7 +501,7 @@ BOOST_AUTO_TEST_CASE(registry_dispatch_invokes_typed_method_over_raw_frame) {
        .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
        .method = "read",
        .codec = {.value = "fcl.raw"},
-       .payload = fcl::raw::pack(protocol::read_chunk{.ref = "abc"}),
+       .payload = pack_api_payload(protocol::read_chunk{.ref = "abc"}),
    };
 
    const auto response = fcl::asio::blocking::run(runtime, registry.dispatch(request));
@@ -380,6 +521,14 @@ class throwing_cache_impl final : public cache_api {
    boost::asio::awaitable<std::vector<protocol::chunk>> watch(protocol::read_chunk) override {
       FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exception::ctx("ref", "abc"));
    }
+
+   boost::asio::awaitable<protocol::chunk> upload(std::vector<protocol::read_chunk>) override {
+      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exception::ctx("ref", "abc"));
+   }
+
+   boost::asio::awaitable<std::vector<protocol::chunk>> sync(std::vector<protocol::read_chunk>) override {
+      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exception::ctx("ref", "abc"));
+   }
 };
 
 BOOST_AUTO_TEST_CASE(registry_dispatch_maps_declared_exception_to_error_frame) {
@@ -393,7 +542,7 @@ BOOST_AUTO_TEST_CASE(registry_dispatch_maps_declared_exception_to_error_frame) {
        .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
        .method = "read",
        .codec = {.value = "fcl.raw"},
-       .payload = fcl::raw::pack(protocol::read_chunk{.ref = "abc"}),
+       .payload = pack_api_payload(protocol::read_chunk{.ref = "abc"}),
    };
 
    const auto response = fcl::asio::blocking::run(runtime, registry.dispatch(request));

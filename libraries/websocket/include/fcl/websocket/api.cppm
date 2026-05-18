@@ -7,6 +7,7 @@ module;
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -80,10 +81,12 @@ class api_binding {
       auto plan = plan_;
       auto codec = codec_;
       auto max_frame_size = max_frame_size_;
+      auto max_inflight = backpressure_.max_inflight;
       auto calls = std::make_shared<fcl::api::call_runtime>(
-          fcl::api::call_runtime_options{.max_inflight = backpressure_.max_inflight});
+          fcl::api::call_runtime_options{.max_inflight = max_inflight});
+      auto streams = std::make_shared<std::unordered_map<std::uint64_t, std::vector<fcl::api::frame>>>();
       connection->on_message(
-          [plan = std::move(plan), codec = std::move(codec), calls, max_frame_size](
+          [plan = std::move(plan), codec = std::move(codec), calls, streams, max_frame_size, max_inflight](
               fcl::websocket::connection& connection_value, std::string message) mutable
           -> boost::asio::awaitable<void> {
              if (message.size() > max_frame_size) {
@@ -95,9 +98,41 @@ class api_binding {
                 FCL_THROW_EXCEPTION(fcl::api::exceptions::codec_failed, "websocket API frame codec is not accepted",
                                     fcl::exception::ctx("codec", request.codec.value));
              }
+             const auto* descriptor = plan.local == nullptr ? nullptr : plan.local->describe(request.api);
+             const auto* method = descriptor == nullptr ? nullptr : fcl::api::find_method(*descriptor, request.method);
+             const auto grouped_stream =
+                method != nullptr && (method->kind == fcl::api::method_kind::client_stream ||
+                                      method->kind == fcl::api::method_kind::bidirectional_stream);
+             if (request.kind == fcl::api::frame_kind::request && grouped_stream) {
+                if (streams->size() >= max_inflight) {
+                   FCL_THROW_EXCEPTION(fcl::api::exceptions::resource_exhausted,
+                                       "websocket API max streams exceeded");
+                }
+                if (!streams->emplace(request.id.value, std::vector<fcl::api::frame>{std::move(request)}).second) {
+                   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
+                                       "duplicate active websocket API stream");
+                }
+                co_return;
+             }
+             if (auto active = streams->find(request.id.value); active != streams->end()) {
+                active->second.push_back(std::move(request));
+                if (active->second.back().kind != fcl::api::frame_kind::stream_end) {
+                   co_return;
+                }
+                auto frames = std::move(active->second);
+                streams->erase(active);
+                auto responses = co_await plan.dispatch_stream(std::move(frames));
+                for (const auto& response : responses) {
+                   auto response_bytes = fcl::api::bytes{};
+                   fcl::raw::pack(response_bytes, response);
+                   co_await connection_value.send(std::string{response_bytes.begin(), response_bytes.end()});
+                }
+                co_return;
+             }
              auto responses = co_await plan.dispatch_many(std::move(request), *calls);
              for (const auto& response : responses) {
-                auto response_bytes = fcl::raw::pack(response);
+                auto response_bytes = fcl::api::bytes{};
+                fcl::raw::pack(response_bytes, response);
                 co_await connection_value.send(std::string{response_bytes.begin(), response_bytes.end()});
              }
           });

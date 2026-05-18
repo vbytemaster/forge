@@ -73,12 +73,14 @@ class api_cache {
    virtual ~api_cache() = default;
 
    virtual boost::asio::awaitable<api_chunk> read(api_read_chunk request) = 0;
+   virtual boost::asio::awaitable<api_chunk> write(api_chunk request) = 0;
 
    static fcl::api::descriptor describe() {
       return fcl::api::contract<api_cache>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
           .method<&api_cache::read, api_read_chunk, api_chunk>("read")
           .error<api_errors::chunk_not_found>("chunk_not_found",
                                               {.status_code = fcl::api::status::not_found, .retryable = false})
+          .method<&api_cache::write, api_chunk, api_chunk>("write")
           .build();
    }
 };
@@ -87,6 +89,10 @@ class throwing_api_cache final : public api_cache {
  public:
    boost::asio::awaitable<api_chunk> read(api_read_chunk) override {
       FCL_THROW_EXCEPTION(api_errors::chunk_not_found, "chunk not found");
+   }
+
+   boost::asio::awaitable<api_chunk> write(api_chunk request) override {
+      co_return request;
    }
 };
 
@@ -381,6 +387,34 @@ BOOST_AUTO_TEST_CASE(http_api_binding_maps_custom_exception_to_native_status) {
    BOOST_TEST(response.body().find(R"("error":"chunk_not_found")") != std::string::npos);
    BOOST_TEST(response.body().find(R"("category":"test.http.cache")") != std::string::npos);
    BOOST_TEST(response.body().find(R"("code":1)") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(http_api_binding_passes_put_body_to_typed_api) {
+   auto runtime = fcl::asio::runtime{};
+   auto apis = fcl::api::registry{};
+   apis.install<api_cache>(api_cache::describe(), std::make_shared<throwing_api_cache>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api()
+                      .use(fcl::api::binding().serve(apis).build())
+                      .put<&api_cache::write, api_chunk, api_chunk>("/cache/chunks/:ref")
+                      .build();
+   router.mount(binding);
+
+   auto request = make_request(method::put, "/cache/chunks/abc");
+   const auto body = fcl::raw::pack(api_chunk{.bytes = "from-put-body"});
+   request.body().assign(body.begin(), body.end());
+   request.prepare_payload();
+
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+
+   const auto response = router.handle(context);
+   const auto response_bytes = fcl::api::bytes{response.body().begin(), response.body().end()};
+   const auto unpacked = fcl::raw::unpack<api_chunk>(response_bytes);
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(unpacked.bytes == "from-put-body");
 }
 
 BOOST_AUTO_TEST_CASE(middleware_runs_in_order_and_can_short_circuit) {

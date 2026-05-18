@@ -63,6 +63,7 @@ class registry {
    [[nodiscard]] const descriptor* describe(api_ref requested) const noexcept;
    boost::asio::awaitable<frame> dispatch(frame request) const;
    boost::asio::awaitable<std::vector<frame>> dispatch_many(frame request) const;
+   boost::asio::awaitable<std::vector<frame>> dispatch_stream(std::vector<frame> frames) const;
    [[nodiscard]] std::size_t size() const noexcept;
    void clear() noexcept;
 
@@ -91,6 +92,8 @@ class installer {
    registry* apis_ = nullptr;
 };
 
+using provider = installer;
+
 class view {
  public:
    explicit view(const registry& apis) : apis_(&apis) {}
@@ -101,6 +104,10 @@ class view {
 
    template <typename Interface> [[nodiscard]] handle<Interface> get(api_ref requested) const {
       return apis_->get<Interface>(std::move(requested));
+   }
+
+   [[nodiscard]] const registry& registry_ref() const noexcept {
+      return *apis_;
    }
 
  private:

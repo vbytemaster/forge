@@ -271,6 +271,8 @@ boost::asio::awaitable<void> application_shell::initialize() {
       publish_application_event(impl_->events, event_severity::info, impl_->options.name, "initializing");
       if (!impl_->ports_installed) {
          co_await on_install_ports(impl_->context);
+         auto provider = impl_->context.apis();
+         co_await impl_->plugin_runtime->provide(provider);
          impl_->ports_installed = true;
       }
       co_await impl_->plugin_runtime->initialize();

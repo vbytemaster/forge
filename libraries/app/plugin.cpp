@@ -7,6 +7,7 @@ module;
 module fcl.app.plugin;
 
 import fcl.config.component;
+import fcl.api;
 
 namespace fcl::app {
 
@@ -15,6 +16,10 @@ std::optional<config::component_descriptor> plugin::describe_config() const {
 }
 
 boost::asio::awaitable<void> plugin::configure(config::component_view) {
+   co_return;
+}
+
+boost::asio::awaitable<void> plugin::provide(fcl::api::provider&) {
    co_return;
 }
 

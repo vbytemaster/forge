@@ -483,10 +483,11 @@ auto clock = context.ports().get<clock_port>();
 
 ## APIs
 
-For new plugin-to-plugin contracts, prefer `fcl_api`: the application publishes
-an implementation during install phase, and plugins receive a read-only API view
-during runtime. This keeps lifecycle in `fcl_app` and contract/version/error
-semantics in `fcl_api`.
+For new plugin-to-plugin contracts, prefer `fcl_api`: the application can
+publish implementations during install phase, plugins can publish
+implementations during the `provide(...)` phase, and runtime consumers receive a
+read-only API view. This keeps lifecycle in `fcl_app` and
+contract/version/error semantics in `fcl_api`.
 
 ```cpp
 class cache {
@@ -511,6 +512,21 @@ boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) overr
    co_return;
 }
 ```
+
+Infrastructure plugins should publish narrow APIs instead of leaking their
+transport/runtime internals:
+
+```cpp
+boost::asio::awaitable<void> provide(fcl::api::provider& provider) override {
+   provider.install<node_admin_api>(
+      node_admin_api::describe(),
+      std::make_shared<node_admin_api_impl>(impl_));
+   co_return;
+}
+```
+
+The implementation type can stay in the plugin `.cpp`; consumers only see the
+published API interface.
 
 Do not use APIs as lifecycle modules. A plugin owns behavior/lifecycle; an API is
 the typed contract exposed by that plugin or application.

@@ -8,6 +8,7 @@ module;
 #include <functional>
 #include <memory>
 #include <span>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -45,7 +46,11 @@ class api_binding {
       if (on_session_) {
          co_await on_session_(session);
       }
-      co_await serve(std::move(stream));
+      if (stream_policy_ == api_stream_policy::one_stream_per_call) {
+         co_await serve_once(std::move(stream));
+      } else {
+         co_await serve(std::move(stream));
+      }
       co_return session;
    }
 
@@ -58,22 +63,30 @@ class api_binding {
          FCL_THROW_EXCEPTION(fcl::api::exceptions::incompatible_version, "QUIC API binding has no local registry");
       }
       auto payload = co_await stream.async_read_frame();
-      auto request = fcl::raw::unpack<fcl::api::frame>(
-          fcl::api::bytes{reinterpret_cast<const char*>(payload.data()),
-                          reinterpret_cast<const char*>(payload.data() + payload.size())});
+      auto request = fcl::raw::unpack<fcl::api::frame>(payload);
       if (request.codec != codec_) {
          FCL_THROW_EXCEPTION(fcl::api::exceptions::codec_failed, "QUIC API frame codec is not accepted",
                              fcl::exception::ctx("codec", request.codec.value));
       }
+      if (grouped_stream_method(request)) {
+         auto frames = std::vector<fcl::api::frame>{std::move(request)};
+         while (frames.back().kind != fcl::api::frame_kind::stream_end) {
+            auto next_payload = co_await stream.async_read_frame();
+            auto next = fcl::raw::unpack<fcl::api::frame>(next_payload);
+            if (next.codec != codec_) {
+               FCL_THROW_EXCEPTION(fcl::api::exceptions::codec_failed, "QUIC API frame codec is not accepted",
+                                   fcl::exception::ctx("codec", next.codec.value));
+            }
+            frames.push_back(std::move(next));
+         }
+         auto responses = co_await plan_.dispatch_stream(std::move(frames));
+         co_await write_responses(stream, responses);
+         co_return;
+      }
       auto calls = fcl::api::call_runtime{
           fcl::api::call_runtime_options{.max_inflight = max_concurrent_calls_, .deadline = deadline_}};
       auto responses = co_await plan_.dispatch_many(std::move(request), calls);
-      for (const auto& response : responses) {
-         auto response_bytes = fcl::raw::pack(response);
-         co_await stream.async_write_frame(
-             std::span<const std::uint8_t>{reinterpret_cast<const std::uint8_t*>(response_bytes.data()),
-                                           response_bytes.size()});
-      }
+      co_await write_responses(stream, responses);
    }
 
    boost::asio::awaitable<void> serve(fcl::quic::framed_stream stream) const {
@@ -82,24 +95,37 @@ class api_binding {
       }
       auto calls = fcl::api::call_runtime{
           fcl::api::call_runtime_options{.max_inflight = max_concurrent_calls_, .deadline = deadline_}};
+      auto streams = std::unordered_map<std::uint64_t, std::vector<fcl::api::frame>>{};
 
       while (true) {
          try {
             auto payload = co_await stream.async_read_frame();
-            auto request = fcl::raw::unpack<fcl::api::frame>(
-                fcl::api::bytes{reinterpret_cast<const char*>(payload.data()),
-                                reinterpret_cast<const char*>(payload.data() + payload.size())});
+            auto request = fcl::raw::unpack<fcl::api::frame>(payload);
             if (request.codec != codec_) {
                FCL_THROW_EXCEPTION(fcl::api::exceptions::codec_failed, "QUIC API frame codec is not accepted",
                                    fcl::exception::ctx("codec", request.codec.value));
             }
-            auto responses = co_await plan_.dispatch_many(std::move(request), calls);
-            for (const auto& response : responses) {
-               auto response_bytes = fcl::raw::pack(response);
-               co_await stream.async_write_frame(
-                   std::span<const std::uint8_t>{reinterpret_cast<const std::uint8_t*>(response_bytes.data()),
-                                                 response_bytes.size()});
+            if (request.kind == fcl::api::frame_kind::request && grouped_stream_method(request)) {
+               if (streams.size() >= max_concurrent_calls_) {
+                  FCL_THROW_EXCEPTION(fcl::api::exceptions::resource_exhausted, "QUIC API max streams exceeded");
+               }
+               if (!streams.emplace(request.id.value, std::vector<fcl::api::frame>{std::move(request)}).second) {
+                  FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error, "duplicate active QUIC API stream");
+               }
+               continue;
             }
+            if (auto active = streams.find(request.id.value); active != streams.end()) {
+               active->second.push_back(std::move(request));
+               if (active->second.back().kind == fcl::api::frame_kind::stream_end) {
+                  auto frames = std::move(active->second);
+                  streams.erase(active);
+                  auto responses = co_await plan_.dispatch_stream(std::move(frames));
+                  co_await write_responses(stream, responses);
+               }
+               continue;
+            }
+            auto responses = co_await plan_.dispatch_many(std::move(request), calls);
+            co_await write_responses(stream, responses);
          } catch (const fcl::quic::quic_error& error) {
             if (error.kind() == fcl::quic::error_kind::connection_closed ||
                 error.kind() == fcl::quic::error_kind::stream_closed ||
@@ -129,6 +155,22 @@ class api_binding {
    }
 
  private:
+   [[nodiscard]] bool grouped_stream_method(const fcl::api::frame& request) const noexcept {
+      const auto* descriptor = plan_.local == nullptr ? nullptr : plan_.local->describe(request.api);
+      const auto* method = descriptor == nullptr ? nullptr : fcl::api::find_method(*descriptor, request.method);
+      return method != nullptr && (method->kind == fcl::api::method_kind::client_stream ||
+                                   method->kind == fcl::api::method_kind::bidirectional_stream);
+   }
+
+   static boost::asio::awaitable<void> write_responses(fcl::quic::framed_stream& stream,
+                                                       const std::vector<fcl::api::frame>& responses) {
+      for (const auto& response : responses) {
+         auto response_bytes = fcl::api::bytes{};
+         fcl::raw::pack(response_bytes, response);
+         co_await stream.async_write_frame(std::span<const std::uint8_t>{response_bytes.data(), response_bytes.size()});
+      }
+   }
+
    [[nodiscard]] fcl::api::session make_session() const {
       if (plan_.local == nullptr) {
          FCL_THROW_EXCEPTION(fcl::api::exceptions::incompatible_version, "QUIC API binding has no local registry");

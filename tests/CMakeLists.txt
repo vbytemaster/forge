@@ -155,6 +155,14 @@ add_executable(
 target_link_libraries(test_fcl_quic_p2p fcl Boost::included_unit_test_framework)
 add_test(NAME test_fcl_quic_p2p COMMAND test_fcl_quic_p2p WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+add_executable(
+   test_fcl_plugins
+   unit/main.cpp
+   plugins/plugins_tests.cpp
+)
+target_link_libraries(test_fcl_plugins fcl fcl_plugins Boost::included_unit_test_framework)
+add_test(NAME test_fcl_plugins COMMAND test_fcl_plugins WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
 if(TARGET fcl_tui)
    add_executable(
       test_fcl_tui

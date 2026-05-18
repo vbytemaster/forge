@@ -1,4 +1,5 @@
 #include <boost/test/unit_test.hpp>
+#include <boost/describe.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -40,6 +41,14 @@ import fcl.quic.stream;
 
 namespace fcl::p2p {
 namespace {
+
+struct product_announce {
+   std::string ref;
+
+   bool operator==(const product_announce&) const = default;
+};
+
+BOOST_DESCRIBE_STRUCT(product_announce, (), (ref))
 
 std::string_view test_certificate() {
    return "-----BEGIN CERTIFICATE-----\n"
@@ -329,6 +338,34 @@ BOOST_AUTO_TEST_CASE(p2p_duplicate_protocol_handler_is_rejected) {
    } catch (const p2p_error& error) {
       BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::duplicate_protocol));
    }
+}
+
+BOOST_AUTO_TEST_CASE(p2p_product_message_packs_typed_payload_as_data) {
+   const auto protocol = protocol_id{.value = "/product/chunk-announce/1"};
+   const auto value = product_announce{.ref = "chunk-1"};
+
+   const auto message = fcl::p2p::message{protocol, value};
+
+   BOOST_TEST(message.protocol().value == protocol.value);
+   BOOST_TEST(message.codec().value == "fcl.raw");
+   BOOST_TEST(message.as<product_announce>().ref == value.ref);
+   BOOST_TEST(!message.data().empty());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_api_and_route_builders_are_node_free_artifacts) {
+   auto apis = fcl::api::registry{};
+   auto api_binding = fcl::p2p::api()
+                          .use(fcl::api::binding().serve(apis).build())
+                          .protocol_id("/fcl/api/cache/1")
+                          .build();
+
+   auto route_binding = fcl::p2p::route()
+                            .protocol_id("/product/blob-transfer/1")
+                            .handler([](incoming_protocol_stream) -> boost::asio::awaitable<void> { co_return; })
+                            .build();
+
+   BOOST_TEST(api_binding.protocol().value == "/fcl/api/cache/1");
+   BOOST_TEST(route_binding.protocol().value == "/product/blob-transfer/1");
 }
 
 BOOST_AUTO_TEST_CASE(p2p_connect_timeout_covers_hello_ack_wait) {

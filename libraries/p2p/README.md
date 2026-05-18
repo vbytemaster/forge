@@ -65,6 +65,27 @@ node.register_protocol_handler(fcl::p2p::protocol_id{.value = "/example/1"}, [](
 });
 ```
 
+### Send A Product Message
+
+`fcl::p2p::message` owns protocol id, codec metadata and serialized bytes. For
+raw DTOs, construct it directly from the product value; callers do not need to
+manually allocate a byte buffer.
+
+```cpp
+struct announce_chunk {
+   std::string ref;
+};
+
+BOOST_DESCRIBE_STRUCT(announce_chunk, (), (ref))
+FCL_DECLARE_SERIALIZATION(announce_chunk)
+
+auto message = fcl::p2p::message{
+   fcl::p2p::protocol_id{.value = "/product/chunks/announce/1"},
+   announce_chunk{.ref = "bafk..."}};
+
+co_await p2p->broadcast(std::move(message));
+```
+
 ### Register A Typed API Protocol
 
 `fcl.p2p.api` builds a protocol handler artifact. The node remains a P2P
@@ -82,11 +103,10 @@ auto plan = fcl::api::binding()
    .require_peer_api<client_session>({.id = {"client.session"}, .major = 1})
    .build();
 
-auto binding = fcl::p2p::api(node)
+auto binding = fcl::p2p::api()
    .use(plan)
    .protocol_id("/fcl/api/1")
    .codec({"fcl.raw"})
-   .peer_policy({.require_known_peer = true})
    .discovery_scope({.value = "storage"})
    .max_inflight_per_peer(64)
    .build();
@@ -102,6 +122,12 @@ node.register_protocol_handler(binding.protocol(), binding.handler());
 The binding handles a continuous framed API session over the accepted P2P
 protocol stream. It does not own peer identity, relay, hole punching, peer-store
 lifecycle or node bootstrap; those stay on `fcl::p2p::node`.
+
+Use `fcl::p2p::api(node)` only when the binding must enforce node-backed peer
+policy such as `require_known_peer`. For app/plugin composition, prefer a
+transport-owner plugin such as `fcl::plugins::p2p_node`; product plugins publish
+route/API contributions to that owner instead of registering handlers directly
+on the node.
 
 ### Connect And Open A Protocol Stream
 

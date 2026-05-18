@@ -194,6 +194,7 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/quic/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/p2p/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/app/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/plugins/include"
 )
 
 if(FCL_ENABLE_TUI AND FCL_TUI_NOTCURSES_TARGET)
@@ -307,6 +308,7 @@ add_subdirectory(libraries/websocket)
 add_subdirectory(libraries/quic)
 add_subdirectory(libraries/p2p)
 add_subdirectory(libraries/app)
+add_subdirectory(libraries/plugins)
 if(FCL_ENABLE_TUI AND FCL_TUI_NOTCURSES_TARGET)
    add_subdirectory(libraries/tui)
 endif()
@@ -333,6 +335,7 @@ set(
    fcl_quic
    fcl_p2p
    fcl_app
+   fcl_plugins
 )
 
 if(TARGET fcl_tui)
@@ -391,6 +394,7 @@ install(
              libraries/quic/include/fcl
              libraries/p2p/include/fcl
              libraries/app/include/fcl
+             libraries/plugins/include/fcl
    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
 )
 

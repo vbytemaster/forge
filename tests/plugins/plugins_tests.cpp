@@ -458,7 +458,7 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_rejects_duplicate_protocol_contributions_be
 
    app.configure(test_p2p_config());
    BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.initialize()),
-                     fcl::plugins::exceptions::route_conflict);
+                     fcl::plugins::p2p_node::exceptions::route_conflict);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_node_plugin_requires_external_outbox_when_configured) {
@@ -468,7 +468,7 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_requires_external_outbox_when_configured) {
    auto app = p2p_only_application{};
    app.configure(config);
    BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.initialize()),
-                     fcl::plugins::exceptions::outbox_required);
+                     fcl::plugins::p2p_node::exceptions::outbox_required);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_node_plugin_uses_consumer_provided_outbox_store) {
@@ -673,9 +673,9 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_rejects_relay_only_until_engine_supports_no
                 }));
 
    BOOST_TEST(static_cast<int>(result.state) == static_cast<int>(fcl::plugins::p2p_node::delivery_state::failed));
-   BOOST_TEST(result.error_identity.category == "fcl.plugins");
+   BOOST_TEST(result.error_identity.category == "fcl.plugins.p2p_node");
    BOOST_TEST(result.error_identity.code ==
-              static_cast<std::uint32_t>(fcl::plugins::exceptions::code::relay_policy_denied));
+              static_cast<std::uint32_t>(fcl::plugins::p2p_node::exceptions::code::relay_policy_denied));
 
    fcl::asio::blocking::run(app.runtime(), app.shutdown());
 }
@@ -827,13 +827,13 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_rejects_invalid_typed_config_before_startup
       auto config = test_p2p_config();
       config.set("p2p.path.policy", std::string{"teleport"});
       auto app = p2p_only_application{};
-      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::exceptions::invalid_delivery_policy);
+      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p_node::exceptions::invalid_delivery_policy);
    }
 
    {
       auto config = test_p2p_config();
       config.set("p2p.path.policy", std::string{"relay-only"});
       auto app = p2p_only_application{};
-      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::exceptions::relay_policy_denied);
+      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p_node::exceptions::relay_policy_denied);
    }
 }

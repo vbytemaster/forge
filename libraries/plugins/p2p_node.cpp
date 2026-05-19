@@ -30,7 +30,6 @@ import fcl.config.component;
 import fcl.config.decode;
 import fcl.exception.exception;
 import fcl.p2p;
-import fcl.plugins.exceptions;
 
 namespace fcl::plugins {
 namespace {
@@ -99,7 +98,7 @@ struct parsed_config {
    if (value == "external-required") {
       return outbox_mode::external_required;
    }
-   FCL_THROW_EXCEPTION(exceptions::invalid_delivery_policy, "invalid P2P outbox mode",
+   FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_delivery_policy, "invalid P2P outbox mode",
                        fcl::exception::ctx("mode", value));
 }
 
@@ -113,7 +112,7 @@ struct parsed_config {
    if (value == "durable-retry") {
       return p2p_node::delivery_reliability::durable_retry;
    }
-   FCL_THROW_EXCEPTION(exceptions::invalid_delivery_policy, "invalid P2P delivery reliability",
+   FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_delivery_policy, "invalid P2P delivery reliability",
                        fcl::exception::ctx("reliability", value));
 }
 
@@ -125,10 +124,10 @@ struct parsed_config {
       return p2p_node::path_policy::direct_preferred;
    }
    if (value == "relay-only") {
-      FCL_THROW_EXCEPTION(exceptions::relay_policy_denied,
+      FCL_THROW_EXCEPTION(p2p_node::exceptions::relay_policy_denied,
                           "P2P relay-only delivery is not exposed until fcl.p2p supports no-direct open policy");
    }
-   FCL_THROW_EXCEPTION(exceptions::invalid_delivery_policy, "invalid P2P delivery path policy",
+   FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_delivery_policy, "invalid P2P delivery path policy",
                        fcl::exception::ctx("policy", value));
 }
 
@@ -136,7 +135,7 @@ void validate_relay_trust(const std::string& value) {
    if (value == "known-only" || value == "public-allowed") {
       return;
    }
-   FCL_THROW_EXCEPTION(exceptions::invalid_delivery_policy, "invalid P2P relay trust policy",
+   FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_delivery_policy, "invalid P2P relay trust policy",
                        fcl::exception::ctx("trust", value));
 }
 
@@ -171,7 +170,7 @@ void validate_relay_trust(const std::string& value) {
       .reachability_interval = to_ms(config.maintenance_reachability_interval_ms),
    };
    if (out.defaults.initial_backoff > out.defaults.max_backoff) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_delivery_policy,
+      FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_delivery_policy,
                           "P2P retry initial backoff must not exceed max backoff");
    }
    return out;
@@ -288,7 +287,7 @@ class in_memory_outbox_store final : public p2p_node::outbox_store {
    boost::asio::awaitable<p2p_node::delivery_id> enqueue(p2p_node::outbox_record record) override {
       const auto lock = std::scoped_lock{mutex_};
       if (records_.size() >= limit_) {
-         FCL_THROW_EXCEPTION(exceptions::delivery_queue_full, "P2P delivery outbox is full");
+         FCL_THROW_EXCEPTION(p2p_node::exceptions::delivery_queue_full, "P2P delivery outbox is full");
       }
       if (record.id.value == 0) {
          record.id.value = next_id_++;
@@ -421,21 +420,21 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
 
    [[nodiscard]] fcl::p2p::node& require_node() {
       if (!node) {
-         FCL_THROW_EXCEPTION(exceptions::plugin_not_initialized, "P2P node plugin is not initialized");
+         FCL_THROW_EXCEPTION(p2p_node::exceptions::plugin_not_initialized, "P2P node plugin is not initialized");
       }
       return *node;
    }
 
    void add_route(fcl::p2p::protocol_id protocol, fcl::p2p::protocol_handler handler) {
       if (started) {
-         FCL_THROW_EXCEPTION(exceptions::route_conflict, "P2P routes must be published before p2p_node startup",
+         FCL_THROW_EXCEPTION(p2p_node::exceptions::route_conflict, "P2P routes must be published before p2p_node startup",
                              fcl::exception::ctx("protocol", protocol.value));
       }
       if (protocol.value.empty() || !handler) {
-         FCL_THROW_EXCEPTION(exceptions::route_conflict, "P2P route is invalid");
+         FCL_THROW_EXCEPTION(p2p_node::exceptions::route_conflict, "P2P route is invalid");
       }
       if (contains_protocol(routes, protocol)) {
-         FCL_THROW_EXCEPTION(exceptions::route_conflict, "duplicate P2P route",
+         FCL_THROW_EXCEPTION(p2p_node::exceptions::route_conflict, "duplicate P2P route",
                              fcl::exception::ctx("protocol", protocol.value));
       }
       routes.emplace_back(std::move(protocol), std::move(handler));
@@ -443,12 +442,12 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
 
    [[nodiscard]] fcl::p2p::open_options open_options_for(const send_options& options_value) const {
       if (options_value.path == path_policy::relay_only) {
-         FCL_THROW_EXCEPTION(exceptions::relay_policy_denied,
+         FCL_THROW_EXCEPTION(p2p_node::exceptions::relay_policy_denied,
                              "P2P relay-only delivery is not exposed until fcl.p2p supports no-direct open policy");
       }
       if (options_value.path != path_policy::direct_only && !options_value.allow_public_relay &&
           policy.relay_public_allowed) {
-         FCL_THROW_EXCEPTION(exceptions::relay_policy_denied,
+         FCL_THROW_EXCEPTION(p2p_node::exceptions::relay_policy_denied,
                              "P2P public relay policy must be opted into by the message sender");
       }
       auto out = fcl::p2p::open_options{
@@ -474,7 +473,7 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
       if (options_value.max_attempts == 0 || options_value.deadline.count() <= 0 ||
           options_value.initial_backoff.count() <= 0 || options_value.max_backoff.count() <= 0 ||
           options_value.initial_backoff > options_value.max_backoff) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_delivery_policy, "invalid P2P delivery options");
+         FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_delivery_policy, "invalid P2P delivery options");
       }
       const auto now = std::chrono::steady_clock::now();
       return outbox_record{
@@ -660,19 +659,19 @@ class p2p_node::delivery::impl final {
 
    boost::asio::awaitable<std::optional<delivery_snapshot>> snapshot() const {
       if (!outbox_) {
-         FCL_THROW_EXCEPTION(exceptions::outbox_unavailable, "P2P delivery handle has no outbox");
+         FCL_THROW_EXCEPTION(p2p_node::exceptions::outbox_unavailable, "P2P delivery handle has no outbox");
       }
       co_return co_await outbox_->get(id_);
    }
 
    boost::asio::awaitable<delivery_result> result() const {
       if (!runtime_) {
-         FCL_THROW_EXCEPTION(exceptions::plugin_not_initialized, "P2P delivery handle has no runtime");
+         FCL_THROW_EXCEPTION(p2p_node::exceptions::plugin_not_initialized, "P2P delivery handle has no runtime");
       }
       for (;;) {
          auto current = co_await snapshot();
          if (!current) {
-            FCL_THROW_EXCEPTION(exceptions::outbox_unavailable, "P2P delivery record is not available");
+            FCL_THROW_EXCEPTION(p2p_node::exceptions::outbox_unavailable, "P2P delivery record is not available");
          }
          if (terminal_state(current->state)) {
             co_return result_for(*current);
@@ -687,7 +686,7 @@ class p2p_node::delivery::impl final {
 
    boost::asio::awaitable<void> cancel() {
       if (!outbox_) {
-         FCL_THROW_EXCEPTION(exceptions::outbox_unavailable, "P2P delivery handle has no outbox");
+         FCL_THROW_EXCEPTION(p2p_node::exceptions::outbox_unavailable, "P2P delivery handle has no outbox");
       }
       co_await outbox_->cancel(id_);
    }
@@ -712,21 +711,21 @@ p2p_node::delivery_id p2p_node::delivery::id() const noexcept {
 
 boost::asio::awaitable<std::optional<p2p_node::delivery_snapshot>> p2p_node::delivery::snapshot() const {
    if (!impl_) {
-      FCL_THROW_EXCEPTION(exceptions::plugin_not_initialized, "P2P delivery handle is empty");
+      FCL_THROW_EXCEPTION(p2p_node::exceptions::plugin_not_initialized, "P2P delivery handle is empty");
    }
    co_return co_await impl_->snapshot();
 }
 
 boost::asio::awaitable<p2p_node::delivery_result> p2p_node::delivery::result() const {
    if (!impl_) {
-      FCL_THROW_EXCEPTION(exceptions::plugin_not_initialized, "P2P delivery handle is empty");
+      FCL_THROW_EXCEPTION(p2p_node::exceptions::plugin_not_initialized, "P2P delivery handle is empty");
    }
    co_return co_await impl_->result();
 }
 
 boost::asio::awaitable<void> p2p_node::delivery::cancel() {
    if (!impl_) {
-      FCL_THROW_EXCEPTION(exceptions::plugin_not_initialized, "P2P delivery handle is empty");
+      FCL_THROW_EXCEPTION(p2p_node::exceptions::plugin_not_initialized, "P2P delivery handle is empty");
    }
    co_await impl_->cancel();
 }
@@ -909,7 +908,7 @@ boost::asio::awaitable<void> p2p_node::initialize(fcl::app::plugin_context& cont
        external) {
       impl_->outbox = external.shared();
    } else if (impl_->policy.mode == outbox_mode::external_required) {
-      FCL_THROW_EXCEPTION(exceptions::outbox_required, "P2P node requires external outbox store");
+      FCL_THROW_EXCEPTION(p2p_node::exceptions::outbox_required, "P2P node requires external outbox store");
    } else {
       impl_->outbox = impl_->memory_outbox;
    }

@@ -22,7 +22,6 @@ small typed APIs for product plugins to contribute behavior safely.
 ## Public Modules
 
 - `fcl.plugins.p2p_node` — ready P2P node plugin and safe local API.
-- `fcl.plugins.exceptions` — typed plugin-layer failures.
 - `fcl.plugins` — aggregate import.
 
 Target: `fcl_plugins`.
@@ -37,6 +36,11 @@ plugins can contribute protocol handlers and API bindings before startup.
 
 `fcl::plugins::p2p_node::config` is the public config contract. Config section
 `p2p` owns transport bootstrap and policy:
+
+`p2p_node` exceptions are part of the same module and live under
+`fcl::plugins::p2p_node::exceptions::*`. `fcl_plugins` does not provide a
+single shared plugin-exception family because each infrastructure plugin owns
+its own public failure vocabulary.
 
 ```yaml
 p2p:

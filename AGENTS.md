@@ -209,6 +209,9 @@ class p2p_node {
 - Ready-made infrastructure plugins live in `fcl_plugins`. They may own
   transport/runtime lifecycle and publish narrow `fcl_api` capabilities for
   product plugins, but they must not own product business logic.
+- Plugin-specific exception families live with the owning plugin module, not in
+  a shared catch-all plugin exceptions module. For example,
+  `fcl::plugins::p2p_node::exceptions::*` belongs to `fcl.plugins.p2p_node`.
 - `fcl::plugins::p2p_node` is the production owner for a shared P2P node inside
   an application. It owns bootstrap, route/API contribution mounting, delivery
   retry, relay policy and optional outbox integration; product plugins must not

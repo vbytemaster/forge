@@ -57,6 +57,7 @@ class api_binding {
    }
 
    boost::asio::awaitable<fcl::api::session> accept(incoming_protocol_stream stream) const {
+      validate_stream(stream);
       auto session = make_session();
       if (on_session_) {
          co_await on_session_(session);

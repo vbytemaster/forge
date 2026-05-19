@@ -19,6 +19,7 @@
 import fcl.api;
 import fcl.app;
 import fcl.asio.blocking;
+import fcl.asio.runtime;
 import fcl.config.component;
 import fcl.config.document;
 import fcl.config.value;
@@ -469,6 +470,30 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_requires_external_outbox_when_configured) {
    app.configure(config);
    BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.initialize()),
                      fcl::plugins::p2p_node::exceptions::outbox_required);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_node_api_rejects_delivery_calls_before_initialize) {
+   auto runtime = fcl::asio::runtime{};
+   auto plugin = fcl::plugins::p2p_node{};
+   auto apis = fcl::api::registry{};
+   auto provider = fcl::api::installer{apis};
+   fcl::asio::blocking::run(runtime, plugin.provide(provider));
+
+   auto p2p = apis.get<fcl::plugins::p2p_node::api>(
+      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   auto message = fcl::p2p::message{
+      fcl::p2p::protocol_id{.value = "/product/pre-init/1"},
+      fcl::api::bytes{1},
+   };
+
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(
+                        runtime, p2p->send_async(fcl::p2p::peer_id{.value = "peer-a"}, std::move(message))),
+                     fcl::plugins::p2p_node::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW((void)p2p->delivery(fcl::plugins::p2p_node::delivery_id{.value = 1}),
+                     fcl::plugins::p2p_node::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+                                              p2p->cancel(fcl::plugins::p2p_node::delivery_id{.value = 1})),
+                     fcl::plugins::p2p_node::exceptions::plugin_not_initialized);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_node_plugin_uses_consumer_provided_outbox_store) {

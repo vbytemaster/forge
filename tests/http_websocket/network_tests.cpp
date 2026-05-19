@@ -128,11 +128,11 @@ class routed_api_cache final : public api_cache {
 class escaping_api_cache final : public api_cache {
  public:
    boost::asio::awaitable<api_chunk> read(api_read_chunk) override {
-      FCL_THROW_EXCEPTION(api_errors::chunk_not_found, "chunk \"missing\"\nnot found");
+      FCL_THROW_EXCEPTION(api_errors::chunk_not_found, std::string{"chunk \"missing\"\n"} + '\b' + '\0' + "not found");
    }
 
    boost::asio::awaitable<api_chunk> routed_read(api_routed_read_chunk) override {
-      FCL_THROW_EXCEPTION(api_errors::chunk_not_found, "chunk \"missing\"\nnot found");
+      FCL_THROW_EXCEPTION(api_errors::chunk_not_found, std::string{"chunk \"missing\"\n"} + '\b' + '\0' + "not found");
    }
 
    boost::asio::awaitable<api_chunk> write(api_chunk request) override {
@@ -477,8 +477,10 @@ BOOST_AUTO_TEST_CASE(http_api_binding_escapes_json_error_fields) {
    const auto response = router.handle(context);
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::not_found));
-   BOOST_TEST(response.body().find(R"(chunk \"missing\"\nnot found)") != std::string::npos);
+   BOOST_TEST(response.body().find(R"(chunk \"missing\"\n\u0008\u0000not found)") != std::string::npos);
    BOOST_TEST(response.body().find('\n') == std::string::npos);
+   BOOST_TEST(response.body().find('\b') == std::string::npos);
+   BOOST_TEST(response.body().find('\0') == std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(http_api_binding_passes_put_body_to_typed_api) {

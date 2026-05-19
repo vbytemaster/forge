@@ -156,9 +156,18 @@ class api_builder {
          case '\t':
             output += "\\t";
             break;
-         default:
-            output.push_back(character);
+         default: {
+            const auto byte = static_cast<unsigned char>(character);
+            if (byte < 0x20U) {
+               constexpr auto* hex = "0123456789abcdef";
+               output += "\\u00";
+               output.push_back(hex[(byte >> 4U) & 0x0FU]);
+               output.push_back(hex[byte & 0x0FU]);
+            } else {
+               output.push_back(character);
+            }
             break;
+         }
          }
       }
       return output;

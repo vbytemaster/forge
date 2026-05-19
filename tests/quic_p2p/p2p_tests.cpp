@@ -214,6 +214,11 @@ BOOST_AUTO_TEST_CASE(p2p_api_binding_enforces_known_peer_policy_before_reading_f
                       .use(fcl::api::binding().serve(apis).build())
                       .peer_policy(api_peer_policy{.require_known_peer = true})
                       .build();
+   auto session_called = false;
+   binding.on_session([&](fcl::api::session&) -> boost::asio::awaitable<void> {
+      session_called = true;
+      co_return;
+   });
 
    auto incoming = incoming_protocol_stream{
        .session = session_info{.remote_peer = peer(13)},
@@ -223,6 +228,7 @@ BOOST_AUTO_TEST_CASE(p2p_api_binding_enforces_known_peer_policy_before_reading_f
 
    BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, binding.accept(std::move(incoming))),
                      fcl::p2p::exceptions::peer_not_found);
+   BOOST_TEST(!session_called);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_codec_rejects_wrong_version_and_oversized_envelope) {

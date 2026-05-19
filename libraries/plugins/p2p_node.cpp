@@ -767,6 +767,7 @@ class p2p_node::api::impl final : public p2p_node::api {
 
    boost::asio::awaitable<p2p_node::delivery> send_async(fcl::p2p::peer_id peer, fcl::p2p::message message,
                                                          send_options options) override {
+      require_delivery_runtime();
       auto record = impl_->make_record(std::move(peer), std::move(message), options);
       auto id = co_await impl_->outbox->enqueue(std::move(record));
       impl_->schedule_delivery_drain();
@@ -792,14 +793,23 @@ class p2p_node::api::impl final : public p2p_node::api {
    }
 
    [[nodiscard]] auto delivery(delivery_id id) const -> p2p_node::delivery override {
+      require_delivery_runtime();
       return p2p_node::delivery{std::make_shared<p2p_node::delivery::impl>(id, impl_->outbox, impl_->runtime)};
    }
 
    boost::asio::awaitable<void> cancel(delivery_id id) override {
+      require_delivery_runtime();
       co_await impl_->outbox->cancel(id);
    }
 
  private:
+   void require_delivery_runtime() const {
+      if (!impl_ || impl_->runtime == nullptr || !impl_->outbox) {
+         FCL_THROW_EXCEPTION(p2p_node::exceptions::plugin_not_initialized,
+                             "P2P node delivery API is not initialized");
+      }
+   }
+
    std::shared_ptr<p2p_node::impl> impl_;
 };
 

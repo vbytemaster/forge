@@ -3,11 +3,18 @@ module;
 #include <boost/asio/awaitable.hpp>
 #include <fcl/exception/macros.hpp>
 
+#include <algorithm>
+#include <cerrno>
+#include <charconv>
+#include <cstdlib>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <typeindex>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -21,6 +28,7 @@ import fcl.http.router;
 import fcl.http.route_context;
 import fcl.http.types;
 import fcl.raw.raw;
+import fcl.reflect.reflect;
 
 export namespace fcl::http {
 
@@ -103,6 +111,11 @@ class api_builder {
    }
 
  private:
+   template <typename T> struct is_optional : std::false_type {};
+   template <typename T> struct is_optional<std::optional<T>> : std::true_type {
+      using value_type = T;
+   };
+
    template <typename Interface, typename Request, typename Response>
    [[nodiscard]] static std::string method_name() {
       const auto descriptor = Interface::describe();
@@ -123,10 +136,39 @@ class api_builder {
       return *result;
    }
 
+   [[nodiscard]] static std::string json_escape(std::string_view value) {
+      auto output = std::string{};
+      output.reserve(value.size() + 8U);
+      for (const auto character : value) {
+         switch (character) {
+         case '\\':
+            output += "\\\\";
+            break;
+         case '"':
+            output += "\\\"";
+            break;
+         case '\n':
+            output += "\\n";
+            break;
+         case '\r':
+            output += "\\r";
+            break;
+         case '\t':
+            output += "\\t";
+            break;
+         default:
+            output.push_back(character);
+            break;
+         }
+      }
+      return output;
+   }
+
    [[nodiscard]] static std::string render_error(const fcl::api::error_payload& error) {
-      return std::string{"{\"error\":\""} + error.error + "\",\"message\":\"" + error.message +
+      return std::string{"{\"error\":\""} + json_escape(error.error) + "\",\"message\":\"" +
+             json_escape(error.message) +
              "\",\"retryable\":" + (error.retryable ? "true" : "false") + ",\"identity\":{\"category\":\"" +
-             error.identity.category + "\",\"code\":" + std::to_string(error.identity.code) + "}}";
+             json_escape(error.identity.category) + "\",\"code\":" + std::to_string(error.identity.code) + "}}";
    }
 
    [[nodiscard]] static status http_status(fcl::api::status value) noexcept {
@@ -135,6 +177,97 @@ class api_builder {
 
    [[nodiscard]] static bool uses_request_body(method verb) noexcept {
       return verb == method::post || verb == method::put || verb == method::patch;
+   }
+
+   [[nodiscard]] static std::optional<std::string_view> route_value(const route_context& context,
+                                                                    const api_route_options& options,
+                                                                    std::string_view name) {
+      if (const auto route = context.route_params.find(std::string{name}); route != context.route_params.end()) {
+         return route->second;
+      }
+
+      const auto configured =
+          std::find_if(options.query.begin(), options.query.end(),
+                       [&](const std::string& query_name) { return std::string_view{query_name} == name; });
+      if (configured == options.query.end()) {
+         return std::nullopt;
+      }
+
+      for (const auto& query : context.parsed_target.query_params) {
+         if (query.key == name) {
+            return query.has_value ? std::string_view{query.value} : std::string_view{"true"};
+         }
+      }
+      return std::nullopt;
+   }
+
+   template <typename T> static void assign_from_text(T& target, std::string_view value, std::string_view field) {
+      using clean = std::remove_cvref_t<T>;
+      if constexpr (is_optional<clean>::value) {
+         typename is_optional<clean>::value_type parsed{};
+         assign_from_text(parsed, value, field);
+         target = std::move(parsed);
+      } else if constexpr (std::is_same_v<clean, std::string>) {
+         target = std::string{value};
+      } else if constexpr (std::is_same_v<clean, bool>) {
+         if (value == "true" || value == "1" || value == "yes" || value == "on") {
+            target = true;
+         } else if (value == "false" || value == "0" || value == "no" || value == "off") {
+            target = false;
+         } else {
+            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API query boolean is invalid",
+                                fcl::exception::ctx("field", std::string{field}));
+         }
+      } else if constexpr (std::is_integral_v<clean>) {
+         if constexpr (std::is_signed_v<clean>) {
+            auto parsed = 0LL;
+            const auto* first = value.data();
+            const auto* last = value.data() + value.size();
+            const auto [ptr, ec] = std::from_chars(first, last, parsed);
+            if (ec != std::errc{} || ptr != last || parsed < std::numeric_limits<clean>::min() ||
+                parsed > std::numeric_limits<clean>::max()) {
+               FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API query integer is invalid",
+                                   fcl::exception::ctx("field", std::string{field}));
+            }
+            target = static_cast<clean>(parsed);
+         } else {
+            auto parsed = 0ULL;
+            const auto* first = value.data();
+            const auto* last = value.data() + value.size();
+            const auto [ptr, ec] = std::from_chars(first, last, parsed);
+            if (ec != std::errc{} || ptr != last || parsed > std::numeric_limits<clean>::max()) {
+               FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API query integer is invalid",
+                                   fcl::exception::ctx("field", std::string{field}));
+            }
+            target = static_cast<clean>(parsed);
+         }
+      } else if constexpr (std::is_floating_point_v<clean>) {
+         auto copy = std::string{value};
+         char* end = nullptr;
+         errno = 0;
+         const auto parsed = std::strtold(copy.c_str(), &end);
+         if (errno != 0 || end != copy.c_str() + copy.size()) {
+            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API query number is invalid",
+                                fcl::exception::ctx("field", std::string{field}));
+         }
+         target = static_cast<clean>(parsed);
+      } else {
+         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API route field type is not supported",
+                             fcl::exception::ctx("field", std::string{field}));
+      }
+   }
+
+   template <typename Request>
+   [[nodiscard]] static Request make_request_from_route(const route_context& context, const api_route_options& options) {
+      auto request = Request{};
+      if constexpr (fcl::reflect::is_described_object_v<Request>) {
+         fcl::reflect::for_each_member<Request>([&](const char* name, auto member) {
+            if (auto value = route_value(context, options, name); value.has_value()) {
+               assign_from_text(request.*member, *value, name);
+            }
+         });
+      }
+      return request;
    }
 
    template <auto Method, typename Request, typename Response>
@@ -151,12 +284,12 @@ class api_builder {
             if (context.runtime == nullptr) {
                FCL_THROW_EXCEPTION(fcl::http::exceptions::internal, "HTTP API route has no runtime boundary");
             }
-            auto request = Request{};
             auto payload = fcl::api::bytes{};
             if (uses_request_body(context.request.method())) {
                const auto& body = context.request.body();
                payload.assign(body.begin(), body.end());
             } else {
+               auto request = make_request_from_route<Request>(context, options);
                fcl::raw::pack(payload, request);
             }
             const auto api_descriptor = interface_type::describe();

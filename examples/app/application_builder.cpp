@@ -6,6 +6,7 @@
 #include <string>
 
 import fcl.app;
+import fcl.api;
 import fcl.asio.runtime;
 import fcl.asio.blocking;
 import fcl.config;
@@ -18,6 +19,12 @@ struct service_config {
 };
 
 BOOST_DESCRIBE_STRUCT(service_config, (), (workers))
+
+struct status_result {
+   std::string value;
+};
+
+BOOST_DESCRIBE_STRUCT(status_result, (), (value))
 
 } // namespace
 
@@ -32,18 +39,24 @@ struct fcl::schema::rules<service_config> {
 
 namespace {
 
-class status_port {
+class status_api {
  public:
-   virtual ~status_port() = default;
-   virtual std::string status() const = 0;
+   virtual ~status_api() = default;
+   virtual boost::asio::awaitable<status_result> status(int request) = 0;
+
+   static fcl::api::descriptor describe() {
+      return fcl::api::contract<status_api>({.id = {"status"}, .version = {.major = 1, .revision = 0}})
+         .method<&status_api::status, int, status_result>("status")
+         .build();
+   }
 };
 
-class status_port_impl final : public status_port {
+class status_api_impl final : public status_api {
  public:
-   explicit status_port_impl(std::uint16_t workers) : workers_{workers} {}
+   explicit status_api_impl(std::uint16_t workers) : workers_{workers} {}
 
-   std::string status() const override {
-      return "ready:" + std::to_string(workers_);
+   boost::asio::awaitable<status_result> status(int) override {
+      co_return status_result{.value = "ready:" + std::to_string(workers_)};
    }
 
  private:
@@ -85,8 +98,8 @@ int main() {
       .config<service_config>("service", [&](const service_config& config) {
          workers = config.workers;
       })
-      .install_ports([&](fcl::app::application_context& context) {
-         context.ports().install<status_port>(std::make_shared<status_port_impl>(workers));
+      .provide([&](fcl::app::application_context& context) {
+         context.apis().install<status_api>(status_api::describe(), std::make_shared<status_api_impl>(workers));
       })
       .plugin(fcl::app::plugin_descriptor{
          .id = fcl::app::plugin_id{.value = "ready"},
@@ -95,7 +108,8 @@ int main() {
          },
       })
       .run_foreground([](fcl::app::application_shell& app) {
-         return app.ports().get<status_port>()->status() == "ready:4" ? 0 : 2;
+         auto status = app.apis().get<status_api>({.id = {"status"}, .major = 1});
+         return fcl::asio::blocking::run(app.runtime(), status->status(0)).value == "ready:4" ? 0 : 2;
       });
 
    auto app = std::move(builder).build();

@@ -8,6 +8,8 @@
 #include <string>
 
 import fcl.app;
+import fcl.api;
+import fcl.asio.blocking;
 import fcl.config;
 import fcl.schema;
 
@@ -25,6 +27,12 @@ struct cache_config {
 };
 
 BOOST_DESCRIBE_STRUCT(cache_config, (), (read_ahead_blocks))
+
+struct status_result {
+   std::string value;
+};
+
+BOOST_DESCRIBE_STRUCT(status_result, (), (value))
 
 } // namespace
 
@@ -49,18 +57,24 @@ struct fcl::schema::rules<cache_config> {
 
 namespace {
 
-class status_port {
+class status_api {
  public:
-   virtual ~status_port() = default;
-   virtual std::string status() const = 0;
+   virtual ~status_api() = default;
+   virtual boost::asio::awaitable<status_result> status(int request) = 0;
+
+   static fcl::api::descriptor describe() {
+      return fcl::api::contract<status_api>({.id = {"status"}, .version = {.major = 1, .revision = 0}})
+         .method<&status_api::status, int, status_result>("status")
+         .build();
+   }
 };
 
-class status_port_impl final : public status_port {
+class status_api_impl final : public status_api {
  public:
-   explicit status_port_impl(std::filesystem::path data_dir) : data_dir_{std::move(data_dir)} {}
+   explicit status_api_impl(std::filesystem::path data_dir) : data_dir_{std::move(data_dir)} {}
 
-   std::string status() const override {
-      return "ready:" + data_dir_.filename().string();
+   boost::asio::awaitable<status_result> status(int) override {
+      co_return status_result{.value = "ready:" + data_dir_.filename().string()};
    }
 
  private:
@@ -138,8 +152,8 @@ class daemon_application final : public fcl::app::application_shell {
       });
    }
 
-   boost::asio::awaitable<void> on_install_ports(fcl::app::application_context& context) override {
-      context.ports().install<status_port>(std::make_shared<status_port_impl>(data_dir_));
+   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+      context.apis().install<status_api>(status_api::describe(), std::make_shared<status_api_impl>(data_dir_));
       context.events().publish(
          fcl::app::event_severity::info,
          "service.configure",
@@ -148,7 +162,8 @@ class daemon_application final : public fcl::app::application_shell {
    }
 
    int on_run_foreground() override {
-      return ports().get<status_port>()->status().starts_with("ready:") ? 0 : 2;
+      auto status = apis().get<status_api>({.id = {"status"}, .major = 1});
+      return fcl::asio::blocking::run(runtime(), status->status(0)).value.starts_with("ready:") ? 0 : 2;
    }
 
  private:

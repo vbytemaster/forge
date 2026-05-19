@@ -157,6 +157,10 @@ std::size_t call_runtime::active_calls() const noexcept {
    return active_.size();
 }
 
+bool call_runtime::active(call_id id) const noexcept {
+   return active_.contains(id.value);
+}
+
 boost::asio::awaitable<frame> binding_plan::dispatch(frame request) const {
    auto calls = call_runtime{};
    co_return co_await dispatch(std::move(request), calls);
@@ -218,6 +222,12 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_many(frame req
 }
 
 boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::vector<frame> frames) const {
+   auto calls = call_runtime{};
+   co_return co_await dispatch_stream(std::move(frames), calls);
+}
+
+boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::vector<frame> frames,
+                                                                         call_runtime& calls) const {
    if (local == nullptr) {
       FCL_THROW_EXCEPTION(exceptions::incompatible_version, "API binding plan has no local registry");
    }
@@ -236,7 +246,18 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::ve
                                     .category = "fcl.api",
                                     .code = static_cast<std::uint32_t>(exceptions::code::incompatible_version),
                                 },
-                         })};
+                   })};
+   }
+
+   if (!calls.active(frames.front().id)) {
+      calls.observe(frames.front());
+      for (auto index = std::size_t{1}; index != frames.size(); ++index) {
+         const auto& frame_value = frames[index];
+         if (index + 1U == frames.size() && frame_value.kind == frame_kind::stream_end) {
+            continue;
+         }
+         calls.observe(frame_value);
+      }
    }
 
    auto context = make_context(frames.front());
@@ -257,6 +278,7 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::ve
             co_await step.handler(response_context);
          }
       }
+      calls.observe(response);
    }
 
    co_return responses;

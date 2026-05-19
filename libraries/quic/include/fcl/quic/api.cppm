@@ -62,6 +62,8 @@ class api_binding {
       if (plan_.local == nullptr) {
          FCL_THROW_EXCEPTION(fcl::api::exceptions::incompatible_version, "QUIC API binding has no local registry");
       }
+      auto calls = fcl::api::call_runtime{
+          fcl::api::call_runtime_options{.max_inflight = max_concurrent_calls_, .deadline = deadline_}};
       auto payload = co_await stream.async_read_frame();
       auto request = fcl::raw::unpack<fcl::api::frame>(payload);
       if (request.codec != codec_) {
@@ -69,6 +71,7 @@ class api_binding {
                              fcl::exception::ctx("codec", request.codec.value));
       }
       if (grouped_stream_method(request)) {
+         calls.observe(request);
          auto frames = std::vector<fcl::api::frame>{std::move(request)};
          while (frames.back().kind != fcl::api::frame_kind::stream_end) {
             auto next_payload = co_await stream.async_read_frame();
@@ -77,14 +80,15 @@ class api_binding {
                FCL_THROW_EXCEPTION(fcl::api::exceptions::codec_failed, "QUIC API frame codec is not accepted",
                                    fcl::exception::ctx("codec", next.codec.value));
             }
+            if (next.kind != fcl::api::frame_kind::stream_end) {
+               calls.observe(next);
+            }
             frames.push_back(std::move(next));
          }
-         auto responses = co_await plan_.dispatch_stream(std::move(frames));
+         auto responses = co_await plan_.dispatch_stream(std::move(frames), calls);
          co_await write_responses(stream, responses);
          co_return;
       }
-      auto calls = fcl::api::call_runtime{
-          fcl::api::call_runtime_options{.max_inflight = max_concurrent_calls_, .deadline = deadline_}};
       auto responses = co_await plan_.dispatch_many(std::move(request), calls);
       co_await write_responses(stream, responses);
    }
@@ -106,6 +110,7 @@ class api_binding {
                                    fcl::exception::ctx("codec", request.codec.value));
             }
             if (request.kind == fcl::api::frame_kind::request && grouped_stream_method(request)) {
+               calls.observe(request);
                if (streams.size() >= max_concurrent_calls_) {
                   FCL_THROW_EXCEPTION(fcl::api::exceptions::resource_exhausted, "QUIC API max streams exceeded");
                }
@@ -115,11 +120,14 @@ class api_binding {
                continue;
             }
             if (auto active = streams.find(request.id.value); active != streams.end()) {
+               if (request.kind != fcl::api::frame_kind::stream_end) {
+                  calls.observe(request);
+               }
                active->second.push_back(std::move(request));
                if (active->second.back().kind == fcl::api::frame_kind::stream_end) {
                   auto frames = std::move(active->second);
                   streams.erase(active);
-                  auto responses = co_await plan_.dispatch_stream(std::move(frames));
+                  auto responses = co_await plan_.dispatch_stream(std::move(frames), calls);
                   co_await write_responses(stream, responses);
                }
                continue;

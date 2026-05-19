@@ -198,17 +198,25 @@ class p2p_node {
 
 - `fcl_app` provides an opinionated `application_shell` for production
   programs. Prefer it for new services instead of copying runtime, scheduler,
-  ports, signals, events, diagnostics, plugin context and application runtime
+  API registry, signals, events, diagnostics, plugin context and application runtime
   members into every product application.
 - `application_shell` owns lifecycle order: collect app and plugin config,
   merge defaults with input document, configure app hook, configure plugins,
-  install app ports/APIs, initialize plugins, startup plugins, request stop and
+  provide app APIs, plugins provide APIs, initialize plugins, startup plugins, request stop and
   reverse shutdown.
-- Plugins own behavior and lifecycle. Ports/APIs expose typed contracts; they
+- Plugins own behavior and lifecycle. APIs expose typed contracts; they
   must not become fake lifecycle modules.
 - Ready-made infrastructure plugins live in `fcl_plugins`. They may own
   transport/runtime lifecycle and publish narrow `fcl_api` capabilities for
   product plugins, but they must not own product business logic.
+- `fcl::plugins::p2p_node` is the production owner for a shared P2P node inside
+  an application. It owns bootstrap, route/API contribution mounting, delivery
+  retry, relay policy and optional outbox integration; product plugins must not
+  create parallel P2P nodes or call raw `p2p::node` path/relay primitives when
+  the plugin owns the node.
+- Durable P2P delivery in FCL is pluggable, not storage-bound. `fcl_plugins` may
+  define an outbox interface and an in-memory default, but it must not depend on
+  RocksDB, SQLite or downstream product storage backends.
 - Plugin enable/disable is application-shell-owned config under
   `plugins.<plugin-id>.enabled`. Products must not manually distribute plugin
   selection from their own monolithic config object as the primary path.
@@ -226,20 +234,24 @@ class p2p_node {
 - Public lifecycle methods on `application_shell` are not extension points.
   Derived applications implement only hooks named without app tautology:
   `on_describe_config`, `on_configure`, `on_register_plugins`,
-  `on_install_ports` and optionally `on_run_foreground`.
+  `on_provide` and optionally `on_run_foreground`.
 - Do not add hook names that repeat the application context or another
   parallel application lifecycle vocabulary. The context already identifies the
   code as application-level.
-- `application_builder` is allowed only as convenience syntax that builds an
-  `application_shell`. It must not define a second lifecycle model, own
-  independent lifecycle state or bypass shell config/plugin ordering.
+- `application_builder` is the preferred production composition path for normal
+  product applications. It builds an `application_shell` and must not define a
+  second lifecycle model, own independent lifecycle state or bypass shell
+  config/plugin ordering.
 - Do not add builder sugar such as separate `threads(...)` convenience methods
   without a concrete consumer win. Runtime options already carry worker count
   and thread name together.
-- Use `application_builder` for simple composition and tests. Use a derived
-  `application_shell` when the application has substantial state or complex
-  composition.
-- Ports define contracts.
+- Use a derived `application_shell` only as an advanced escape hatch when the
+  application has substantial state or lifecycle customization that callbacks
+  cannot express cleanly.
+- Plugin-owned descriptor factories live on the owner type as
+  `plugin_type::descriptor()`. Avoid free `*_descriptor()` functions when the
+  owner type already names the concept.
+- APIs define typed contracts.
 - Plugins orchestrate behavior.
 - Adapters connect concrete backends and external systems.
 - Events may support diagnostics, but must not become hidden business-flow coupling.

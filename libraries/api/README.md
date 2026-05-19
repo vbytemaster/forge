@@ -71,7 +71,7 @@ FCL_DECLARE_SERIALIZATION(protocol::read_chunk)
 
 ```cpp
 boost::asio::awaitable<void>
-application::on_install_ports(fcl::app::application_context& context) {
+application::on_provide(fcl::app::application_context& context) {
    context.apis().install<cache>(
       cache::describe(),
       std::make_shared<rocks_cache>());

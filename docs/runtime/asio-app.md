@@ -36,7 +36,7 @@ product shells that already have a `config::document`.
 
 `application_runtime` remains a lower-level escape hatch, while
 `application_shell` is the preferred production owner of runtime, scheduler,
-ports, events, signals, diagnostics, plugin registry and plugin context.
+API registry, events, signals, diagnostics, plugin registry and plugin context.
 
 ## Runtime Ownership
 
@@ -56,7 +56,7 @@ The lifecycle order is fixed:
 2. schema defaults are merged with the input config document;
 3. app hook receives `configure_context`;
 4. plugins receive `configure(component_view)`;
-5. app hook installs ports/APIs;
+5. app hook provides APIs;
 6. plugins provide their declared local APIs;
 7. plugins initialize in dependency order;
 8. plugins start;
@@ -154,7 +154,7 @@ boost::asio::awaitable<void> start_then_stop(fcl::app::application_shell& app) {
 Buildable examples:
 
 - [examples/app/application_lifecycle.cpp](../../examples/app/application_lifecycle.cpp)
-  shows `application_shell`, typed ports, config, lifecycle signals,
+  shows `application_shell`, typed APIs, config, lifecycle signals,
   diagnostics and POSIX signal bridge.
 - [examples/app/application_builder.cpp](../../examples/app/application_builder.cpp)
   shows builder syntax that still returns an `application_shell`.
@@ -180,8 +180,8 @@ Buildable examples:
   see only `config::document` / `component_view`.
 - Events and signals are diagnostics/lifecycle surfaces. They are not hidden
   business-flow transport.
-- Ports are typed boundaries; stringly-typed event buses are not a replacement
-  for ports.
+- APIs are typed boundaries; stringly-typed event buses are not a replacement
+  for APIs.
 
 ## Donor Decisions
 

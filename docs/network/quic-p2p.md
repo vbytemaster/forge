@@ -56,6 +56,12 @@ QUIC does not own peer discovery, relay policy or application protocol naming.
 P2P does not promise exactly-once delivery, durable storage, global discovery or
 product authorization.
 
+For application/plugin composition, `fcl::plugins::p2p_node` is the production
+transport owner above `fcl_p2p`. It centralizes bootstrap, mounted protocol
+routes, peer exchange, reachability probes, relay policy, retry/backoff and an
+optional pluggable outbox store. Product plugins should not create a second node
+or run ad hoc retry loops against raw `fcl::p2p::node`.
+
 ## Integration Example
 
 ```cpp
@@ -93,6 +99,9 @@ message validation, durable semantics and authorization above FCL.
 - Oversized or malformed control envelopes are rejected before handler dispatch.
 - Relay use is explicit and reservation-backed.
 - Non-positive timeouts are rejected early.
+- `async_connect(...)` establishes a direct session to a concrete endpoint.
+  Direct -> hole punch -> relay fallback happens when opening a protocol stream,
+  and the plugin turns that engine behavior into delivery policy.
 
 ## Security Boundary
 
@@ -109,6 +118,8 @@ Accepted:
 - Circuit Relay style explicit reservation.
 - DCUtR-style hole punching as a bounded attempt, not magic connectivity.
 - Syncthing/libtorrent-style path scoring/backoff.
+- Transactional outbox style durable retry as an application/plugin-level
+  pattern, not a storage dependency inside `fcl_p2p`.
 
 Rejected:
 

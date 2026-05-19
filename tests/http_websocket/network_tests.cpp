@@ -6,6 +6,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <coroutine>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -61,11 +62,17 @@ using chunk_not_found = fcl::exception::coded_exception<code, code::chunk_not_fo
 } // namespace api_errors
 
 struct api_read_chunk {};
+struct api_routed_read_chunk {
+   std::string ref;
+   std::uint32_t offset = 0;
+   std::uint32_t limit = 0;
+};
 struct api_chunk {
    std::string bytes;
 };
 
 BOOST_DESCRIBE_STRUCT(api_read_chunk, (), ())
+BOOST_DESCRIBE_STRUCT(api_routed_read_chunk, (), (ref, offset, limit))
 BOOST_DESCRIBE_STRUCT(api_chunk, (), (bytes))
 
 class api_cache {
@@ -73,6 +80,7 @@ class api_cache {
    virtual ~api_cache() = default;
 
    virtual boost::asio::awaitable<api_chunk> read(api_read_chunk request) = 0;
+   virtual boost::asio::awaitable<api_chunk> routed_read(api_routed_read_chunk request) = 0;
    virtual boost::asio::awaitable<api_chunk> write(api_chunk request) = 0;
 
    static fcl::api::descriptor describe() {
@@ -80,6 +88,7 @@ class api_cache {
           .method<&api_cache::read, api_read_chunk, api_chunk>("read")
           .error<api_errors::chunk_not_found>("chunk_not_found",
                                               {.status_code = fcl::api::status::not_found, .retryable = false})
+          .method<&api_cache::routed_read, api_routed_read_chunk, api_chunk>("routed_read")
           .method<&api_cache::write, api_chunk, api_chunk>("write")
           .build();
    }
@@ -89,6 +98,41 @@ class throwing_api_cache final : public api_cache {
  public:
    boost::asio::awaitable<api_chunk> read(api_read_chunk) override {
       FCL_THROW_EXCEPTION(api_errors::chunk_not_found, "chunk not found");
+   }
+
+   boost::asio::awaitable<api_chunk> routed_read(api_routed_read_chunk) override {
+      FCL_THROW_EXCEPTION(api_errors::chunk_not_found, "chunk not found");
+   }
+
+   boost::asio::awaitable<api_chunk> write(api_chunk request) override {
+      co_return request;
+   }
+};
+
+class routed_api_cache final : public api_cache {
+ public:
+   boost::asio::awaitable<api_chunk> read(api_read_chunk) override {
+      co_return api_chunk{};
+   }
+
+   boost::asio::awaitable<api_chunk> routed_read(api_routed_read_chunk request) override {
+      co_return api_chunk{.bytes = request.ref + ":" + std::to_string(request.offset) + ":" +
+                                   std::to_string(request.limit)};
+   }
+
+   boost::asio::awaitable<api_chunk> write(api_chunk request) override {
+      co_return request;
+   }
+};
+
+class escaping_api_cache final : public api_cache {
+ public:
+   boost::asio::awaitable<api_chunk> read(api_read_chunk) override {
+      FCL_THROW_EXCEPTION(api_errors::chunk_not_found, "chunk \"missing\"\nnot found");
+   }
+
+   boost::asio::awaitable<api_chunk> routed_read(api_routed_read_chunk) override {
+      FCL_THROW_EXCEPTION(api_errors::chunk_not_found, "chunk \"missing\"\nnot found");
    }
 
    boost::asio::awaitable<api_chunk> write(api_chunk request) override {
@@ -387,6 +431,54 @@ BOOST_AUTO_TEST_CASE(http_api_binding_maps_custom_exception_to_native_status) {
    BOOST_TEST(response.body().find(R"("error":"chunk_not_found")") != std::string::npos);
    BOOST_TEST(response.body().find(R"("category":"test.http.cache")") != std::string::npos);
    BOOST_TEST(response.body().find(R"("code":1)") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(http_api_binding_populates_get_request_from_route_and_query) {
+   auto runtime = fcl::asio::runtime{};
+   auto apis = fcl::api::registry{};
+   apis.install<api_cache>(api_cache::describe(), std::make_shared<routed_api_cache>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api()
+                      .use(fcl::api::binding().serve(apis).build())
+                      .get<&api_cache::routed_read, api_routed_read_chunk, api_chunk>(
+                          "/cache/chunks/:ref", {.query = {"offset", "limit"}})
+                      .build();
+   router.mount(binding);
+
+   auto request = make_request(method::get, "/cache/chunks/abc?offset=7&limit=4096");
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+
+   const auto response = router.handle(context);
+   const auto response_bytes = fcl::api::bytes{response.body().begin(), response.body().end()};
+   const auto unpacked = fcl::raw::unpack<api_chunk>(response_bytes);
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(unpacked.bytes == "abc:7:4096");
+}
+
+BOOST_AUTO_TEST_CASE(http_api_binding_escapes_json_error_fields) {
+   auto runtime = fcl::asio::runtime{};
+   auto apis = fcl::api::registry{};
+   apis.install<api_cache>(api_cache::describe(), std::make_shared<escaping_api_cache>());
+
+   auto router = fcl::http::router{};
+   auto binding =
+       fcl::http::api().use(fcl::api::binding().serve(apis).build())
+           .get<&api_cache::read, api_read_chunk, api_chunk>("/cache/chunks/:ref")
+           .build();
+   router.mount(binding);
+
+   auto request = make_request(method::get, "/cache/chunks/abc");
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+
+   const auto response = router.handle(context);
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::not_found));
+   BOOST_TEST(response.body().find(R"(chunk \"missing\"\nnot found)") != std::string::npos);
+   BOOST_TEST(response.body().find('\n') == std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(http_api_binding_passes_put_body_to_typed_api) {

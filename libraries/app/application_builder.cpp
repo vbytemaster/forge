@@ -26,7 +26,7 @@ struct builder_state {
    std::vector<plugin_descriptor> plugins;
    std::vector<fcl::config::component_descriptor> config_descriptors;
    std::vector<std::function<boost::asio::awaitable<void>(configure_context&)>> configure_callbacks;
-   std::vector<std::function<boost::asio::awaitable<void>(application_context&)>> install_ports_callbacks;
+   std::vector<std::function<boost::asio::awaitable<void>(application_context&)>> provide_callbacks;
    std::function<int(application_shell&)> foreground;
 };
 
@@ -53,8 +53,8 @@ class built_application final : public application_shell {
       }
    }
 
-   boost::asio::awaitable<void> on_install_ports(application_context& context) override {
-      for (auto& callback : state_.install_ports_callbacks) {
+   boost::asio::awaitable<void> on_provide(application_context& context) override {
+      for (auto& callback : state_.provide_callbacks) {
          co_await callback(context);
       }
    }
@@ -136,8 +136,8 @@ void application_builder::add_configure_callback(configure_callback callback) {
    impl_->state.configure_callbacks.push_back(std::move(callback));
 }
 
-void application_builder::add_install_ports_callback(install_ports_callback callback) {
-   impl_->state.install_ports_callbacks.push_back(std::move(callback));
+void application_builder::add_provide_callback(provide_callback callback) {
+   impl_->state.provide_callbacks.push_back(std::move(callback));
 }
 
 } // namespace fcl::app

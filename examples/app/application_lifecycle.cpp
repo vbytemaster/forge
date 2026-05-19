@@ -12,6 +12,7 @@
 #include <string>
 
 import fcl.app;
+import fcl.api;
 import fcl.asio.blocking;
 import fcl.config;
 import fcl.schema;
@@ -30,6 +31,12 @@ struct operator_config {
 };
 
 BOOST_DESCRIBE_STRUCT(operator_config, (), (bind_port))
+
+struct status_result {
+   std::string value;
+};
+
+BOOST_DESCRIBE_STRUCT(status_result, (), (value))
 
 } // namespace
 
@@ -54,16 +61,22 @@ struct fcl::schema::rules<operator_config> {
 
 namespace {
 
-class status_port {
+class status_api {
  public:
-   virtual ~status_port() = default;
-   virtual std::string status() const = 0;
+   virtual ~status_api() = default;
+   virtual boost::asio::awaitable<status_result> status(int request) = 0;
+
+   static fcl::api::descriptor describe() {
+      return fcl::api::contract<status_api>({.id = {"status"}, .version = {.major = 1, .revision = 0}})
+         .method<&status_api::status, int, status_result>("status")
+         .build();
+   }
 };
 
-class status_port_impl final : public status_port {
+class status_api_impl final : public status_api {
  public:
-   std::string status() const override {
-      return "ready";
+   boost::asio::awaitable<status_result> status(int) override {
+      co_return status_result{.value = "ready"};
    }
 };
 
@@ -86,12 +99,16 @@ class operator_plugin final : public fcl::app::plugin {
       co_return;
    }
 
+   boost::asio::awaitable<void> provide(fcl::api::provider& provider) override {
+      provider.install<status_api>(status_api::describe(), std::make_shared<status_api_impl>());
+      co_return;
+   }
+
    boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
-      context.ports().install<status_port>(std::make_shared<status_port_impl>());
       context.events().publish(
          fcl::app::event_severity::info,
          "operator.initialize",
-         "status port installed on " + std::to_string(bind_port_));
+         "status API available on " + std::to_string(bind_port_));
       co_return;
    }
 
@@ -144,7 +161,7 @@ class service_application final : public fcl::app::application_shell {
       });
    }
 
-   boost::asio::awaitable<void> on_install_ports(fcl::app::application_context& context) override {
+   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
       context.events().publish(
          fcl::app::event_severity::info,
          "service.configure",

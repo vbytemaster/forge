@@ -369,6 +369,37 @@ BOOST_AUTO_TEST_CASE(binding_plan_dispatches_client_stream_as_item_sequence_and_
    BOOST_TEST(fcl::raw::unpack<protocol::chunk>(responses[0].payload).bytes == "a,b");
 }
 
+BOOST_AUTO_TEST_CASE(binding_plan_dispatch_stream_honors_preobserved_runtime_deadline) {
+   auto runtime = fcl::asio::runtime{};
+   auto registry = fcl::api::registry{};
+   auto descriptor = fcl::api::contract<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
+                         .client_stream<&cache_api::upload, protocol::read_chunk, protocol::chunk>("upload")
+                         .build();
+   registry.install<cache_api>(std::move(descriptor), std::make_shared<cache_impl>());
+
+   auto plan = fcl::api::binding().serve(registry).build();
+   const auto start = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 36},
+       .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
+       .method = "upload",
+       .codec = {.value = "fcl.raw"},
+   };
+   auto item = start;
+   item.kind = fcl::api::frame_kind::stream_item;
+   item.payload = pack_api_payload(protocol::read_chunk{.ref = "late"});
+   auto end = start;
+   end.kind = fcl::api::frame_kind::stream_end;
+
+   auto calls =
+       fcl::api::call_runtime{fcl::api::call_runtime_options{.max_inflight = 1, .deadline = std::chrono::milliseconds{1}}};
+   calls.observe(start);
+   std::this_thread::sleep_for(std::chrono::milliseconds{3});
+
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, plan.dispatch_stream({start, item, end}, calls)),
+                     fcl::api::exceptions::deadline_exceeded);
+}
+
 BOOST_AUTO_TEST_CASE(binding_plan_dispatches_bidirectional_stream_as_item_and_end_frames) {
    auto runtime = fcl::asio::runtime{};
    auto registry = fcl::api::registry{};

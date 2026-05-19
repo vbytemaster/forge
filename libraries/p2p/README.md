@@ -9,6 +9,9 @@ probes, hole punching and path scoring.
 - Nodes need to connect by peer identity, not just host/port.
 - Application protocols need named streams such as `/example/1`.
 - Direct QUIC should be tried first, with explicit relay/hole-punch fallback.
+- Application/plugin composition needs a shared P2P transport owner; use
+  `fcl::plugins::p2p_node` for retry, outbox and relay policy above this
+  low-level engine.
 
 ## When Not To Use
 
@@ -131,6 +134,10 @@ on the node.
 
 ### Connect And Open A Protocol Stream
 
+This is the low-level engine path for custom transport owners and tests. Product
+plugins should use `fcl::plugins::p2p_node::api` instead of calling these
+methods directly.
+
 ```cpp
 boost::asio::awaitable<void> open_example_stream(fcl::p2p::node& node) {
    fcl::p2p::session_info session = co_await node.async_connect(remote_endpoint, {
@@ -204,6 +211,9 @@ failure and invalid envelopes are correctness failures.
   policy. Relay use must be explicit and visible to the caller.
 - Do not put durable delivery, exactly-once semantics or storage guarantees in
   `fcl_p2p`; protocols above P2P own those contracts.
+- Do not implement application retry/outbox loops against raw `node` in product
+  plugins. Use `fcl::plugins::p2p_node` so one transport owner centralizes path
+  policy, relay trust and delivery diagnostics.
 - Do not define a new P2P-only API error payload. API protocols use
   `fcl::api::error_payload` in `fcl::api::frame` error responses.
 - Do not let protocol handler exceptions disappear in detached tasks. Expected

@@ -1,7 +1,6 @@
 add_library(
    fcl_app STATIC
    application.cpp
-   ports.cpp
    events.cpp
    diagnostics.cpp
    signals.cpp

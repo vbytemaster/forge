@@ -2,7 +2,6 @@ export module fcl.app;
 
 export import fcl.app.exceptions;
 export import fcl.app.application;
-export import fcl.app.ports;
 export import fcl.app.events;
 export import fcl.app.diagnostics;
 export import fcl.app.signals;

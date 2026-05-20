@@ -201,6 +201,10 @@ if("quic" IN_LIST _FCL_COMPONENTS OR "p2p" IN_LIST _FCL_COMPONENTS)
    _fcl_require_package(Ngtcp2)
 endif()
 
+if("p2p" IN_LIST _FCL_COMPONENTS)
+   _fcl_require_package(RocksDB)
+endif()
+
 if("json" IN_LIST _FCL_COMPONENTS OR "yaml" IN_LIST _FCL_COMPONENTS)
    _fcl_require_package(glaze 7.5 CONFIG)
 endif()

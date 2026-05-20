@@ -1,8 +1,10 @@
 module;
 
 #include <chrono>
+#include <filesystem>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 export module fcl.p2p.peer_store;
@@ -16,6 +18,19 @@ export namespace fcl::p2p {
 
 class peer_store {
  public:
+   class backend;
+
+   enum class backend_kind {
+      memory,
+      rocksdb,
+   };
+
+   struct rocksdb_options {
+      std::filesystem::path path;
+      bool create_if_missing = true;
+      std::string key_prefix = "fcl.p2p.peer_store.v1";
+   };
+
    struct endpoint_record {
       fcl::quic::endpoint endpoint;
       path::kind kind = path::kind::direct;
@@ -23,24 +38,34 @@ class peer_store {
       std::uint64_t successes = 0;
       std::uint64_t failures = 0;
       std::chrono::milliseconds last_latency{0};
-      std::chrono::steady_clock::time_point backoff_until{};
+      std::chrono::system_clock::time_point backoff_until{};
       double score = 0.0;
    };
 
    struct record {
       peer_id peer;
       capability_set capabilities{};
+      std::string protocol_version;
+      std::string agent_version;
+      std::vector<std::uint8_t> public_key;
+      std::vector<protocol_id> protocols;
+      std::vector<std::uint8_t> signed_peer_record;
       std::vector<endpoint_record> endpoints;
       reachability_state reachability = reachability_state::unknown;
       std::optional<fcl::quic::endpoint> observed_endpoint;
-      std::chrono::steady_clock::time_point reachability_expires_at{};
+      std::chrono::system_clock::time_point reachability_expires_at{};
       std::uint64_t successes = 0;
       std::uint64_t failures = 0;
       std::chrono::milliseconds last_latency{0};
       double score = 0.0;
    };
 
+   struct options {
+      std::shared_ptr<backend> backend;
+   };
+
    peer_store();
+   explicit peer_store(options options_value);
    ~peer_store();
 
    peer_store(const peer_store&) = delete;
@@ -48,6 +73,9 @@ class peer_store {
 
    peer_store(peer_store&&) noexcept;
    peer_store& operator=(peer_store&&) noexcept;
+
+   [[nodiscard]] static std::shared_ptr<backend> make_memory_backend();
+   [[nodiscard]] static std::shared_ptr<backend> make_rocksdb_backend(rocksdb_options options);
 
    void upsert(record value);
    void learn_endpoint(peer_id peer, fcl::quic::endpoint endpoint, capability_set capabilities = {});
@@ -58,7 +86,7 @@ class peer_store {
    void mark_endpoint_success(const peer_id& peer, const fcl::quic::endpoint& endpoint, path::kind kind,
                               std::chrono::milliseconds latency);
    void mark_endpoint_failure(const peer_id& peer, const fcl::quic::endpoint& endpoint, path::kind kind,
-                              std::chrono::steady_clock::time_point backoff_until);
+                              std::chrono::system_clock::time_point backoff_until);
 
    [[nodiscard]] std::optional<record> find(const peer_id& peer) const;
    [[nodiscard]] std::vector<record> snapshot() const;
@@ -66,6 +94,24 @@ class peer_store {
  private:
    struct impl;
    std::shared_ptr<impl> impl_;
+};
+
+class peer_store::backend {
+ public:
+   virtual ~backend() = default;
+
+   virtual void upsert(record value) = 0;
+   virtual void learn_endpoint(peer_id peer, fcl::quic::endpoint endpoint, capability_set capabilities) = 0;
+   virtual void mark_reachability(peer_id peer, reachability_state state,
+                                  std::optional<fcl::quic::endpoint> observed) = 0;
+   virtual void mark_success(const peer_id& peer, path::kind kind, std::chrono::milliseconds latency) = 0;
+   virtual void mark_failure(const peer_id& peer) = 0;
+   virtual void mark_endpoint_success(const peer_id& peer, const fcl::quic::endpoint& endpoint, path::kind kind,
+                                      std::chrono::milliseconds latency) = 0;
+   virtual void mark_endpoint_failure(const peer_id& peer, const fcl::quic::endpoint& endpoint, path::kind kind,
+                                      std::chrono::system_clock::time_point backoff_until) = 0;
+   [[nodiscard]] virtual std::optional<record> find(const peer_id& peer) const = 0;
+   [[nodiscard]] virtual std::vector<record> snapshot() const = 0;
 };
 
 } // namespace fcl::p2p

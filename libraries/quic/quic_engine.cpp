@@ -1658,6 +1658,7 @@ engine_connector::async_connect(engine_endpoint remote, engine_client_options op
          try {
             resolver->cancel();
          } catch (...) {
+            // Resolver cancellation is best-effort after the connect deadline fires.
          }
       }
    });

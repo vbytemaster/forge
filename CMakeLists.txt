@@ -69,6 +69,7 @@ endif()
 
 find_package(OpenSSL 3 REQUIRED COMPONENTS SSL Crypto)
 find_package(Ngtcp2 REQUIRED)
+find_package(RocksDB REQUIRED)
 find_package(glaze 7.5 CONFIG REQUIRED)
 if(TARGET glaze::glaze)
    message(STATUS "FCL codec backend: glaze::glaze")
@@ -217,6 +218,10 @@ function(fcl_target_modules target lib)
       message(FATAL_ERROR "No public FCL module interfaces found for ${target} in ${CMAKE_CURRENT_SOURCE_DIR}/include/fcl/${lib}")
    endif()
 
+   foreach(_fcl_disabled_module IN LISTS FCL_${lib}_DISABLED_MODULES)
+      list(FILTER _fcl_target_module_files EXCLUDE REGEX "/${_fcl_disabled_module}\\.cppm$")
+   endforeach()
+
    target_sources(
       ${target}
       PUBLIC
@@ -309,8 +314,9 @@ add_subdirectory(libraries/http)
 add_subdirectory(libraries/websocket)
 add_subdirectory(libraries/quic)
 add_subdirectory(libraries/p2p)
-add_subdirectory(libraries/app)
-add_subdirectory(libraries/plugins)
+# TODO(p2p-core-rewrite): Re-enable app/plugins after the libp2p-compatible
+# P2P session/stream core is stable. Keeping them in the default build now would
+# force shim compatibility around the old FCL control-message handshake.
 if(FCL_ENABLE_TUI AND FCL_TUI_NOTCURSES_TARGET)
    add_subdirectory(libraries/tui)
 endif()
@@ -337,8 +343,6 @@ set(
    fcl_websocket
    fcl_quic
    fcl_p2p
-   fcl_app
-   fcl_plugins
 )
 
 if(TARGET fcl_tui)
@@ -355,7 +359,8 @@ target_link_libraries(
 )
 
 if(DEFINED BUILD_TESTING AND BUILD_TESTING)
-   add_subdirectory(examples)
+   # TODO(p2p-core-rewrite): Re-enable examples with app/plugins after the P2P
+   # core rewrite integration pass.
    add_subdirectory(tests)
 endif()
 

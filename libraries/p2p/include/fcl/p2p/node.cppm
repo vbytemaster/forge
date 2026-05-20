@@ -3,6 +3,7 @@ module;
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -19,8 +20,8 @@ import fcl.p2p.peer_store;
 import fcl.p2p.protocol;
 import fcl.p2p.relay;
 import fcl.p2p.scoring;
+import fcl.p2p.stream;
 import fcl.quic.endpoint;
-import fcl.quic.framed_stream;
 import fcl.quic.options;
 
 export namespace fcl::p2p {
@@ -44,6 +45,10 @@ class node {
       limits limits{};
       fcl::quic::transport_limits transport_limits{};
       std::vector<fcl::quic::endpoint> advertised_endpoints;
+      std::string protocol_version = "/fcl/0.1.0";
+      std::string agent_version = "fcl/0.1.0";
+      std::shared_ptr<peer_store::backend> peer_store_backend;
+      std::optional<std::filesystem::path> peer_store_path;
       bool allow_insecure_test_mode = false;
    };
 
@@ -80,7 +85,7 @@ class node {
    struct incoming_protocol_stream {
       session_info session;
       protocol_id protocol;
-      fcl::quic::framed_stream stream;
+      fcl::p2p::stream stream;
    };
 
    using protocol_handler = std::function<boost::asio::awaitable<void>(incoming_protocol_stream)>;
@@ -144,12 +149,14 @@ class node {
    boost::asio::awaitable<relay_reservation::info> async_reserve_relay(peer_id relay_peer,
                                                                        relay_reservation::options options);
    boost::asio::awaitable<void> async_cancel_relay(peer_id relay_peer);
+   boost::asio::awaitable<std::chrono::milliseconds> async_ping(peer_id peer);
+   boost::asio::awaitable<std::chrono::milliseconds> async_ping(peer_id peer, open_options options);
    boost::asio::awaitable<hole_punch_status>
    async_attempt_hole_punch(peer_id peer, std::optional<peer_id> relay_peer = std::nullopt,
                             std::chrono::milliseconds timeout = std::chrono::milliseconds{10'000});
-   boost::asio::awaitable<fcl::quic::framed_stream> async_open_protocol_stream(peer_id peer, protocol_id protocol);
-   boost::asio::awaitable<fcl::quic::framed_stream> async_open_protocol_stream(peer_id peer, protocol_id protocol,
-                                                                               open_options options);
+   boost::asio::awaitable<fcl::p2p::stream> async_open_protocol_stream(peer_id peer, protocol_id protocol);
+   boost::asio::awaitable<fcl::p2p::stream> async_open_protocol_stream(peer_id peer, protocol_id protocol,
+                                                                       open_options options);
    boost::asio::awaitable<void> async_stop();
    void stop();
 

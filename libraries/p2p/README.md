@@ -30,7 +30,8 @@ probes, hole punching and path scoring.
 
 Target: `fcl_p2p`.
 
-Dependencies: `fcl_api`, `fcl_asio`, `fcl_quic`, `fcl_multiformats`, Boost.Asio.
+Dependencies: `fcl_api`, `fcl_asio`, `fcl_quic`, `fcl_multiformats`,
+Boost.Asio and RocksDB.
 
 Foundation compatibility modules below P2P live in `fcl_multiformats`:
 `fcl.multiformats.varint`, `fcl.multiformats.multicodec`,
@@ -80,6 +81,7 @@ boost::asio::awaitable<void> start_node(fcl::asio::runtime& runtime) {
    auto options = fcl::p2p::node::options{
       .certificate_pem = certificate_pem,
       .private_key_pem = private_key_pem,
+      .peer_store_path = "/var/lib/fcl/p2p/peer-store",
    };
 
    auto peer = fcl::p2p::make_peer_id_from_certificate_pem(certificate_pem);
@@ -102,6 +104,24 @@ auto endpoint = fcl::p2p::parse_endpoint(
    "/ip4/127.0.0.1/udp/4001/quic-v1/p2p/12D3KooW...");
 
 co_await node.async_listen(endpoint.quic_endpoint());
+```
+
+### Peer Store Backends
+
+Production nodes require a persistent peer store. If `node::options` does not
+provide `peer_store_backend`, `peer_store_path` opens the default RocksDB
+backend. The in-memory backend is only for explicit tests and local insecure
+experiments.
+
+```cpp
+auto node = fcl::p2p::node{runtime, {
+   .certificate_pem = certificate_pem,
+   .private_key_pem = private_key_pem,
+   .peer_store_path = "/var/lib/fcl/p2p/peer-store",
+}};
+
+auto test_store = fcl::p2p::peer_store{
+   {.backend = fcl::p2p::peer_store::make_memory_backend()}};
 ```
 
 ### Register A Protocol
@@ -139,48 +159,12 @@ auto message = fcl::p2p::message{
 co_await p2p->broadcast(std::move(message));
 ```
 
-### Register A Typed API Protocol
+### Typed API Protocol Binding
 
-`fcl.p2p.api` builds a protocol handler artifact. The node remains a P2P
-transport owner; API sessions are surfaced by the binding. The binding validates
-the negotiated protocol id, optional peer policy, configured codec and per-peer
-max inflight calls before product handlers run.
-
-```cpp
-import fcl.api;
-import fcl.p2p.api;
-
-auto plan = fcl::api::binding()
-   .serve(app.apis())
-   .export_api<peer_index>({.id = {"peer.index"}, .major = 1, .min_revision = 2})
-   .require_peer_api<client_session>({.id = {"client.session"}, .major = 1})
-   .build();
-
-auto binding = fcl::p2p::api()
-   .use(plan)
-   .protocol_id("/fcl/api/1")
-   .codec({"fcl.raw"})
-   .discovery_scope({.value = "storage"})
-   .max_inflight_per_peer(64)
-   .build();
-
-binding.on_session([](fcl::api::session& session) -> boost::asio::awaitable<void> {
-   auto client = session.view().get<client_session>({.id = {"client.session"}, .major = 1});
-   co_await client->notify(protocol::peer_ready{});
-});
-
-node.register_protocol_handler(binding.protocol(), binding.handler());
-```
-
-The binding handles a continuous framed API session over the accepted P2P
-protocol stream. It does not own peer identity, relay, hole punching, peer-store
-lifecycle or node bootstrap; those stay on `fcl::p2p::node`.
-
-Use `fcl::p2p::api(node)` only when the binding must enforce node-backed peer
-policy such as `require_known_peer`. For app/plugin composition, prefer a
-transport-owner plugin such as `fcl::plugins::p2p_node`; product plugins publish
-route/API contributions to that owner instead of registering handlers directly
-on the node.
+`fcl.p2p.api` is temporarily disabled during the libp2p-compatible stream core
+rewrite. It must return after the new `multistream-select`, Ping, Identify and
+peer-store path is stable, without reintroducing the old FCL-only hello/control
+envelope into direct QUIC sessions.
 
 ### Connect And Open A Protocol Stream
 
@@ -195,7 +179,7 @@ boost::asio::awaitable<void> open_example_stream(fcl::p2p::node& node) {
       .timeout = std::chrono::milliseconds{10'000},
    });
 
-   fcl::quic::framed_stream stream = co_await node.async_open_protocol_stream(
+   fcl::p2p::stream stream = co_await node.async_open_protocol_stream(
       session.remote_peer,
       fcl::p2p::protocol_id{.value = "/example/1"});
    use_stream(std::move(stream));
@@ -228,7 +212,7 @@ boost::asio::awaitable<void> open_relayed_stream(fcl::p2p::node& node) {
       relay_peer,
       {.ttl = std::chrono::milliseconds{60'000}, .max_streams = 8});
 
-   fcl::quic::framed_stream relayed = co_await node.async_open_protocol_stream(
+   fcl::p2p::stream relayed = co_await node.async_open_protocol_stream(
       remote_peer,
       fcl::p2p::protocol_id{.value = "/example/1"},
       {.allow_relay = true, .relay_peer = reservation.relay_peer});
@@ -250,8 +234,9 @@ node.stop();
 ## Security Notes
 
 Production options require mTLS identity. `allow_insecure_test_mode` exists for
-tests and explicit local experiments only. Peer mismatch, TLS verification
-failure and invalid envelopes are correctness failures.
+tests and explicit local experiments only; in that mode the node may use the
+in-memory peer store when no path/backend is provided. Peer mismatch, TLS
+verification failure and invalid envelopes are correctness failures.
 
 ## Risks And Anti-Patterns
 

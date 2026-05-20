@@ -51,6 +51,9 @@ namespace builtins {
 inline const protocol_id control{.value = "/fcl/p2p/control/1"};
 inline const protocol_id relay{.value = "/fcl/p2p/relay/1"};
 inline const protocol_id echo{.value = "/fcl/p2p/echo/1"};
+inline const protocol_id ping{.value = "/ipfs/ping/1.0.0"};
+inline const protocol_id identify{.value = "/ipfs/id/1.0.0"};
+inline const protocol_id identify_push{.value = "/ipfs/id/push/1.0.0"};
 } // namespace builtins
 
 } // namespace fcl::p2p

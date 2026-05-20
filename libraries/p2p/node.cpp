@@ -80,22 +80,22 @@ namespace {
    return error.kind() == fcl::quic::error_kind::stream_closed;
 }
 
-[[nodiscard]] codec_options codec_for(const node_options& options) noexcept {
-   return codec_options{
+[[nodiscard]] control_codec::options codec_for(const node::options& options) noexcept {
+   return control_codec::options{
        .max_message_size = static_cast<std::uint32_t>(options.limits.max_control_message_size),
        .max_endpoint_records = static_cast<std::uint32_t>(options.limits.max_peer_exchange_records),
    };
 }
 
-[[nodiscard]] fcl::quic::frame_codec_options frame_codec_for(const node_options& options) noexcept {
+[[nodiscard]] fcl::quic::frame_codec_options frame_codec_for(const node::options& options) noexcept {
    return fcl::quic::frame_codec_options{
        .max_frame_size = static_cast<std::uint32_t>(options.transport_limits.max_frame_size),
    };
 }
 
-[[nodiscard]] p2p_message make_reject(message_type type, std::uint64_t request_id, std::string reason) {
-   return p2p_message{
-       .type = type,
+[[nodiscard]] control_message make_reject(control_message::type type, std::uint64_t request_id, std::string reason) {
+   return control_message{
+       .kind = type,
        .request_id = request_id,
        .reason = std::move(reason),
    };
@@ -194,9 +194,33 @@ class operation_deadline {
 
 } // namespace
 
+void validate(const node::options& options) {
+   if (!options.allow_insecure_test_mode && (options.certificate_pem.empty() || options.private_key_pem.empty())) {
+      throw_p2p_error(error_kind::invalid_options, "production P2P node requires mTLS certificate and private key");
+   }
+   if (options.certificate_pem.empty() != options.private_key_pem.empty()) {
+      throw_p2p_error(error_kind::invalid_options, "P2P certificate and private key must be provided together");
+   }
+   if (options.explicit_peer_id && !valid_peer_id(*options.explicit_peer_id)) {
+      throw_p2p_error(error_kind::invalid_options, "invalid explicit P2P peer id");
+   }
+   if (options.allow_insecure_test_mode && options.certificate_pem.empty() && !options.explicit_peer_id) {
+      throw_p2p_error(error_kind::invalid_options,
+                      "insecure P2P test node without certificate requires explicit peer id");
+   }
+   if (options.limits.max_sessions == 0 || options.limits.max_protocol_handlers == 0 ||
+       options.limits.max_control_message_size == 0 || options.limits.max_peer_exchange_records == 0 ||
+       options.limits.max_control_queue == 0 || options.limits.relay.max_active_relays == 0 ||
+       options.limits.relay.max_reservations == 0 || options.limits.relay.max_streams_per_reservation == 0 ||
+       options.limits.relay.max_relay_bytes == 0 || options.limits.relay.max_queued_bytes == 0 ||
+       options.limits.relay.max_duration.count() <= 0 || options.limits.relay.reservation_ttl.count() <= 0) {
+      throw_p2p_error(error_kind::invalid_options, "invalid P2P node limits");
+   }
+}
+
 struct node::impl : std::enable_shared_from_this<impl> {
    struct session_state {
-      session_info info;
+      node::session_info info;
       fcl::quic::connection connection;
       std::optional<fcl::quic::endpoint> direct_endpoint;
       bool closed = false;
@@ -215,27 +239,27 @@ struct node::impl : std::enable_shared_from_this<impl> {
       bool canceled = false;
    };
 
-   impl(fcl::asio::runtime& runtime_value, node_options options_value)
+   impl(fcl::asio::runtime& runtime_value, node::options options_value)
        : runtime(runtime_value), options(std::move(options_value)),
          local(options.explicit_peer_id ? *options.explicit_peer_id
                                         : make_peer_id_from_certificate_pem(options.certificate_pem)),
          connector(runtime_value) {}
 
    fcl::asio::runtime& runtime;
-   node_options options;
+   node::options options;
    peer_id local;
    fcl::quic::connector connector;
    std::unique_ptr<fcl::quic::listener> listener;
 
    mutable std::mutex mutex;
    peer_store store;
-   std::map<protocol_id, protocol_handler> handlers;
+   std::map<protocol_id, node::protocol_handler> handlers;
    std::map<peer_id, std::shared_ptr<session_state>> sessions;
    std::map<peer_id, relay_reservation_state> inbound_relay_reservations;
    std::map<peer_id, relay_reservation_state> outbound_relay_reservations;
    std::uint64_t next_reservation_id = 1;
    std::uint64_t next_control_request_id = 1;
-   node_metrics metrics_value;
+   node::metrics_snapshot metrics_value;
    bool stopped = false;
 
    [[nodiscard]] std::optional<fcl::quic::endpoint> local_endpoint_for_control() const {
@@ -254,18 +278,18 @@ struct node::impl : std::enable_shared_from_this<impl> {
       return next_control_request_id++;
    }
 
-   [[nodiscard]] p2p_message hello(message_type type) const {
-      auto endpoints = std::vector<endpoint_record>{};
+   [[nodiscard]] control_message hello(control_message::type type) const {
+      auto endpoints = std::vector<control_message::endpoint_record>{};
       endpoints.reserve(options.advertised_endpoints.size());
       for (const auto& endpoint : options.advertised_endpoints) {
-         endpoints.push_back(endpoint_record{
+         endpoints.push_back(control_message::endpoint_record{
              .peer = local,
              .endpoint = endpoint,
              .capabilities = options.capabilities,
          });
       }
-      return p2p_message{
-          .type = type,
+      return control_message{
+          .kind = type,
           .peer = local,
           .capabilities = options.capabilities,
           .max_frame_size = options.transport_limits.max_frame_size,
@@ -316,7 +340,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
       };
    }
 
-   [[nodiscard]] peer_id verified_peer_id(const fcl::quic::connection& connection, const p2p_message& message,
+   [[nodiscard]] peer_id verified_peer_id(const fcl::quic::connection& connection, const control_message& message,
                                           const std::optional<peer_id>& expected) const {
       if (options.allow_insecure_test_mode) {
          if (!valid_peer_id(message.peer)) {
@@ -344,9 +368,9 @@ struct node::impl : std::enable_shared_from_this<impl> {
       return certificate_peer;
    }
 
-   void learn_from_message(const p2p_message& message) {
+   void learn_from_message(const control_message& message) {
       if (valid_peer_id(message.peer)) {
-         store.upsert(peer_record{
+         store.upsert(peer_store::record{
              .peer = message.peer,
              .capabilities = message.capabilities,
          });
@@ -387,7 +411,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
       return it->second;
    }
 
-   [[nodiscard]] std::optional<protocol_handler> handler_for(const protocol_id& protocol) const {
+   [[nodiscard]] std::optional<node::protocol_handler> handler_for(const protocol_id& protocol) const {
       auto lock = std::scoped_lock{mutex};
       const auto it = handlers.find(protocol);
       if (it == handlers.end()) {
@@ -463,7 +487,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
    }
 
    [[nodiscard]] std::optional<relay_reservation_state> remember_inbound_relay_reservation(const peer_id& owner,
-                                                                                           const p2p_message& request) {
+                                                                                           const control_message& request) {
       auto lock = std::scoped_lock{mutex};
       cleanup_expired_relay_reservations_locked();
       if (inbound_relay_reservations.size() >= options.limits.relay.max_reservations &&
@@ -562,18 +586,18 @@ struct node::impl : std::enable_shared_from_this<impl> {
       return true;
    }
 
-   void record_path_open(path_kind kind) {
+   void record_path_open(path::kind kind) {
       auto lock = std::scoped_lock{mutex};
-      if (kind == path_kind::direct) {
+      if (kind == path::kind::direct) {
          ++metrics_value.path_direct_opens;
       } else {
          ++metrics_value.path_relay_opens;
       }
    }
 
-   void record_path_attempt(path_kind kind) {
+   void record_path_attempt(path::kind kind) {
       auto lock = std::scoped_lock{mutex};
-      if (kind == path_kind::direct) {
+      if (kind == path::kind::direct) {
          ++metrics_value.path_direct_attempts;
       } else {
          ++metrics_value.path_relay_attempts;
@@ -602,7 +626,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
    }
 
    boost::asio::awaitable<std::shared_ptr<session_state>> connect_direct(fcl::quic::endpoint endpoint,
-                                                                         connect_options connect_options_value) {
+                                                                         node::connect_options connect_options_value) {
       validate_operation_timeout(connect_options_value.timeout, "P2P connect timeout");
       auto deadline = std::unique_ptr<operation_deadline>{};
       auto endpoint_copy = endpoint;
@@ -618,9 +642,9 @@ struct node::impl : std::enable_shared_from_this<impl> {
              co_await connection->async_open_stream(),
              frame_codec_for(options),
          };
-         co_await async_write_message(control, hello(message_type::hello), codec_for(options));
-         auto ack = co_await async_read_message(control, codec_for(options));
-         if (ack.type != message_type::hello_ack) {
+         co_await control_codec::async_write(control, hello(control_message::type::hello), codec_for(options));
+         auto ack = co_await control_codec::async_read(control, codec_for(options));
+         if (ack.kind != control_message::type::hello_ack) {
             throw_p2p_error(error_kind::protocol_error, "P2P connect expected hello_ack");
          }
          if (!deadline->finish()) {
@@ -629,10 +653,10 @@ struct node::impl : std::enable_shared_from_this<impl> {
          const auto remote = verified_peer_id(*connection, ack, connect_options_value.expected_peer);
          learn_from_message(ack);
          store.mark_endpoint_success(
-             remote, endpoint_copy, path_kind::direct,
+            remote, endpoint_copy, path::kind::direct,
              std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started));
          auto session = std::make_shared<session_state>(session_state{
-             .info = session_info{.remote_peer = remote, .capabilities = ack.capabilities, .path = path_kind::direct},
+            .info = node::session_info{.remote_peer = remote, .capabilities = ack.capabilities, .path = path::kind::direct},
              .connection = std::move(*connection),
              .direct_endpoint = endpoint_copy,
          });
@@ -653,9 +677,9 @@ struct node::impl : std::enable_shared_from_this<impl> {
    }
 
    boost::asio::awaitable<std::shared_ptr<session_state>>
-   ensure_direct_session(const peer_id& peer, std::chrono::milliseconds timeout = connect_options{}.timeout,
-                         std::size_t max_direct_endpoints = connect_options{}.max_direct_endpoints,
-                         std::chrono::milliseconds direct_attempt_timeout = connect_options{}.direct_attempt_timeout) {
+   ensure_direct_session(const peer_id& peer, std::chrono::milliseconds timeout = node::connect_options{}.timeout,
+                         std::size_t max_direct_endpoints = node::connect_options{}.max_direct_endpoints,
+                         std::chrono::milliseconds direct_attempt_timeout = node::connect_options{}.direct_attempt_timeout) {
       if (auto existing = session_for(peer)) {
          co_return existing;
       }
@@ -668,9 +692,9 @@ struct node::impl : std::enable_shared_from_this<impl> {
       }
       auto endpoints = record->endpoints;
       const auto now = std::chrono::steady_clock::now();
-      auto preferred = std::vector<peer_endpoint_record>{};
+      auto preferred = std::vector<peer_store::endpoint_record>{};
       for (const auto& endpoint : endpoints) {
-         if (endpoint.kind != path_kind::direct || endpoint.relay_peer) {
+         if (endpoint.kind != path::kind::direct || endpoint.relay_peer) {
             continue;
          }
          if (endpoint.backoff_until != std::chrono::steady_clock::time_point{} && endpoint.backoff_until > now) {
@@ -680,7 +704,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
       }
       if (preferred.empty()) {
          for (const auto& endpoint : endpoints) {
-            if (endpoint.kind == path_kind::direct && !endpoint.relay_peer) {
+            if (endpoint.kind == path::kind::direct && !endpoint.relay_peer) {
                preferred.push_back(endpoint);
             }
          }
@@ -696,14 +720,14 @@ struct node::impl : std::enable_shared_from_this<impl> {
          const auto remaining = remaining_timeout(started, timeout, "P2P direct path");
          const auto per_attempt = attempt_timeout(remaining, direct_attempt_timeout, "P2P direct path attempt");
          const auto endpoint = preferred[index].endpoint;
-         record_path_attempt(path_kind::direct);
+         record_path_attempt(path::kind::direct);
          try {
             co_return co_await connect_direct(
-                endpoint, connect_options{.expected_peer = peer, .allow_relay = false, .timeout = per_attempt});
+                endpoint, node::connect_options{.expected_peer = peer, .allow_relay = false, .timeout = per_attempt});
          } catch (const p2p_error& error) {
             last_kind = error.kind();
             last_message = error.what();
-            store.mark_endpoint_failure(peer, endpoint, path_kind::direct,
+            store.mark_endpoint_failure(peer, endpoint, path::kind::direct,
                                         std::chrono::steady_clock::now() + std::chrono::seconds{5});
             record_direct_failure(peer);
          }
@@ -716,8 +740,8 @@ struct node::impl : std::enable_shared_from_this<impl> {
 
    boost::asio::awaitable<fcl::quic::framed_stream>
    open_protocol_direct(const peer_id& peer, const protocol_id& protocol, std::chrono::milliseconds timeout,
-                        std::size_t max_direct_endpoints = open_options{}.max_direct_endpoints,
-                        std::chrono::milliseconds direct_attempt_timeout = open_options{}.direct_attempt_timeout) {
+                        std::size_t max_direct_endpoints = node::open_options{}.max_direct_endpoints,
+                        std::chrono::milliseconds direct_attempt_timeout = node::open_options{}.direct_attempt_timeout) {
       const auto started = std::chrono::steady_clock::now();
       auto last_kind = std::optional<error_kind>{};
       auto last_message = std::string{};
@@ -727,37 +751,37 @@ struct node::impl : std::enable_shared_from_this<impl> {
          auto deadline = operation_deadline{
              runtime.context(), attempt_timeout(remaining, direct_attempt_timeout, "P2P protocol open direct attempt")};
          deadline.arm([session] { session->connection.cancel(); });
-         record_path_attempt(path_kind::direct);
+         record_path_attempt(path::kind::direct);
          try {
             auto framed = fcl::quic::framed_stream{
                 co_await session->connection.async_open_stream(),
                 frame_codec_for(options),
             };
-            co_await async_write_message(framed,
-                                         p2p_message{
-                                             .type = message_type::protocol_open,
+            co_await control_codec::async_write(framed,
+                                         control_message{
+                                             .kind = control_message::type::protocol_open,
                                              .peer = local,
                                              .protocol = protocol,
                                          },
                                          codec_for(options));
-            auto response = co_await async_read_message(framed, codec_for(options));
+            auto response = co_await control_codec::async_read(framed, codec_for(options));
             if (!deadline.finish()) {
                throw_operation_timeout("P2P protocol open");
             }
-            if (response.type != message_type::protocol_accept) {
+            if (response.kind != control_message::type::protocol_accept) {
                increment_protocol_rejected();
-               throw_p2p_error(response.type == message_type::protocol_reject ? error_kind::unsupported_protocol
+               throw_p2p_error(response.kind == control_message::type::protocol_reject ? error_kind::unsupported_protocol
                                                                               : error_kind::protocol_error,
                                response.reason.empty() ? "P2P protocol open rejected" : response.reason);
             }
             increment_protocol_opened();
-            record_path_open(path_kind::direct);
+            record_path_open(path::kind::direct);
             co_return framed;
          } catch (const fcl::quic::quic_error& error) {
             session->closed = true;
             forget_session(peer);
             if (session->direct_endpoint) {
-               store.mark_endpoint_failure(peer, *session->direct_endpoint, path_kind::direct,
+               store.mark_endpoint_failure(peer, *session->direct_endpoint, path::kind::direct,
                                            std::chrono::steady_clock::now() + std::chrono::seconds{5});
             }
             record_direct_failure(peer);
@@ -774,7 +798,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
                session->closed = true;
                forget_session(peer);
                if (session->direct_endpoint) {
-                  store.mark_endpoint_failure(peer, *session->direct_endpoint, path_kind::direct,
+                  store.mark_endpoint_failure(peer, *session->direct_endpoint, path::kind::direct,
                                               std::chrono::steady_clock::now() + std::chrono::seconds{5});
                }
                record_direct_failure(peer);
@@ -789,7 +813,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
             session->closed = true;
             forget_session(peer);
             if (session->direct_endpoint) {
-               store.mark_endpoint_failure(peer, *session->direct_endpoint, path_kind::direct,
+               store.mark_endpoint_failure(peer, *session->direct_endpoint, path::kind::direct,
                                            std::chrono::steady_clock::now() + std::chrono::seconds{5});
             }
             record_direct_failure(peer);
@@ -804,8 +828,8 @@ struct node::impl : std::enable_shared_from_this<impl> {
       throw_p2p_error(error_kind::peer_not_found, "P2P direct path attempts were exhausted");
    }
 
-   boost::asio::awaitable<relay_reservation_info>
-   request_relay_reservation(const peer_id& relay_peer, relay_reservation_options reservation_options,
+   boost::asio::awaitable<relay_reservation::info>
+   request_relay_reservation(const peer_id& relay_peer, relay_reservation::options reservation_options,
                              std::chrono::milliseconds timeout) {
       validate_operation_timeout(timeout, "P2P relay reservation timeout");
       if (reservation_options.ttl.count() <= 0 || reservation_options.max_streams == 0 ||
@@ -822,10 +846,10 @@ struct node::impl : std::enable_shared_from_this<impl> {
              co_await relay_session->connection.async_open_stream(),
              frame_codec_for(options),
          };
-         co_await async_write_message(
+         co_await control_codec::async_write(
              framed,
-             p2p_message{
-                 .type = message_type::relay_reserve,
+             control_message{
+                 .kind = control_message::type::relay_reserve,
                  .request_id = next_request_id(),
                  .peer = local,
                  .ttl_ms = static_cast<std::uint64_t>(reservation_options.ttl.count()),
@@ -834,16 +858,16 @@ struct node::impl : std::enable_shared_from_this<impl> {
                  .max_queued_bytes = static_cast<std::uint64_t>(reservation_options.max_queued_bytes),
              },
              codec_for(options));
-         auto response = co_await async_read_message(framed, codec_for(options));
+         auto response = co_await control_codec::async_read(framed, codec_for(options));
          if (!deadline.finish()) {
             throw_operation_timeout("P2P relay reservation");
          }
-         if (response.type != message_type::relay_reserved) {
-            throw_p2p_error(response.type == message_type::relay_reject ? error_kind::relay_rejected
+         if (response.kind != control_message::type::relay_reserved) {
+            throw_p2p_error(response.kind == control_message::type::relay_reject ? error_kind::relay_rejected
                                                                         : error_kind::protocol_error,
                             response.reason.empty() ? "P2P relay reservation rejected" : response.reason);
          }
-         auto info = relay_reservation_info{
+         auto info = relay_reservation::info{
              .relay_peer = relay_peer,
              .id = response.reservation_id,
              .ttl = std::chrono::milliseconds{static_cast<std::int64_t>(response.ttl_ms)},
@@ -883,7 +907,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
          co_return;
       }
       (void)co_await request_relay_reservation(relay_peer,
-                                               relay_reservation_options{
+                                               relay_reservation::options{
                                                    .ttl = options.limits.relay.reservation_ttl,
                                                    .max_streams = options.limits.relay.max_streams_per_reservation,
                                                    .max_bytes = options.limits.relay.max_relay_bytes,
@@ -897,7 +921,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
                                                                             const peer_id& relay_peer,
                                                                             std::chrono::milliseconds timeout) {
       const auto started = std::chrono::steady_clock::now();
-      record_path_attempt(path_kind::relay);
+      record_path_attempt(path::kind::relay);
       co_await ensure_relay_reservation(relay_peer, timeout);
       auto relay_session = co_await ensure_direct_session(relay_peer, timeout);
       auto deadline =
@@ -908,23 +932,23 @@ struct node::impl : std::enable_shared_from_this<impl> {
              co_await relay_session->connection.async_open_stream(),
              frame_codec_for(options),
          };
-         co_await async_write_message(framed,
-                                      p2p_message{
-                                          .type = message_type::relay_open,
+         co_await control_codec::async_write(framed,
+                                      control_message{
+                                          .kind = control_message::type::relay_open,
                                           .peer = peer,
                                           .protocol = protocol,
                                       },
                                       codec_for(options));
-         auto response = co_await async_read_message(framed, codec_for(options));
+         auto response = co_await control_codec::async_read(framed, codec_for(options));
          if (!deadline.finish()) {
             throw_operation_timeout("P2P relay protocol open");
          }
-         if (response.type != message_type::relay_accept) {
-            throw_p2p_error(response.type == message_type::relay_reject ? error_kind::relay_rejected
+         if (response.kind != control_message::type::relay_accept) {
+            throw_p2p_error(response.kind == control_message::type::relay_reject ? error_kind::relay_rejected
                                                                         : error_kind::protocol_error,
                             response.reason.empty() ? "P2P relay open rejected" : response.reason);
          }
-         record_path_open(path_kind::relay);
+         record_path_open(path::kind::relay);
          co_return framed;
       } catch (const fcl::quic::quic_error& error) {
          record_relay_failure();
@@ -952,14 +976,14 @@ struct node::impl : std::enable_shared_from_this<impl> {
              co_await session->connection.async_open_stream(),
              frame_codec_for(options),
          };
-         co_await async_write_message(framed,
-                                      p2p_message{
-                                          .type = message_type::peer_exchange_request,
+         co_await control_codec::async_write(framed,
+                                      control_message{
+                                          .kind = control_message::type::peer_exchange_request,
                                           .peer = local,
                                       },
                                       codec_for(options));
-         auto response = co_await async_read_message(framed, codec_for(options));
-         if (response.type != message_type::peer_exchange_response) {
+         auto response = co_await control_codec::async_read(framed, codec_for(options));
+         if (response.kind != control_message::type::peer_exchange_response) {
             throw_p2p_error(error_kind::protocol_error, "P2P peer exchange expected response");
          }
          learn_from_message(response);
@@ -1007,16 +1031,16 @@ struct node::impl : std::enable_shared_from_this<impl> {
              co_await connection.async_accept_stream(),
              frame_codec_for(options),
          };
-         auto request = co_await async_read_message(control, codec_for(options));
-         if (request.type != message_type::hello) {
+         auto request = co_await control_codec::async_read(control, codec_for(options));
+         if (request.kind != control_message::type::hello) {
             throw_p2p_error(error_kind::protocol_error, "P2P inbound connection expected hello");
          }
          const auto remote = verified_peer_id(connection, request, std::nullopt);
          learn_from_message(request);
-         co_await async_write_message(control, hello(message_type::hello_ack), codec_for(options));
+         co_await control_codec::async_write(control, hello(control_message::type::hello_ack), codec_for(options));
          auto session = std::make_shared<session_state>(session_state{
              .info =
-                 session_info{.remote_peer = remote, .capabilities = request.capabilities, .path = path_kind::direct},
+                 node::session_info{.remote_peer = remote, .capabilities = request.capabilities, .path = path::kind::direct},
              .connection = std::move(connection),
          });
          remember_session(session);
@@ -1061,47 +1085,47 @@ struct node::impl : std::enable_shared_from_this<impl> {
    boost::asio::awaitable<void> handle_incoming_stream(std::shared_ptr<session_state> session,
                                                        fcl::quic::framed_stream framed) {
       try {
-         auto request = co_await async_read_message(framed, codec_for(options));
-         switch (request.type) {
-         case message_type::protocol_open:
+         auto request = co_await control_codec::async_read(framed, codec_for(options));
+         switch (request.kind) {
+         case control_message::type::protocol_open:
             co_await handle_protocol_open(session, std::move(framed), std::move(request));
             break;
-         case message_type::peer_exchange_request:
+         case control_message::type::peer_exchange_request:
             co_await handle_peer_exchange(std::move(framed), request.request_id);
             break;
-         case message_type::reachability_probe:
+         case control_message::type::reachability_probe:
             co_await handle_reachability_probe(std::move(framed), std::move(request));
             break;
-         case message_type::relay_reserve:
-         case message_type::relay_renew:
+         case control_message::type::relay_reserve:
+         case control_message::type::relay_renew:
             co_await handle_relay_reserve(session, std::move(framed), std::move(request));
             break;
-         case message_type::relay_cancel:
+         case control_message::type::relay_cancel:
             co_await handle_relay_cancel(session, std::move(framed), std::move(request));
             break;
-         case message_type::relay_open:
+         case control_message::type::relay_open:
             co_await handle_relay_open(session, std::move(framed), std::move(request));
             break;
-         case message_type::hole_punch_prepare:
+         case control_message::type::hole_punch_prepare:
             co_await handle_hole_punch_prepare(session, std::move(framed), std::move(request));
             break;
-         case message_type::hole_punch_result:
-            co_await async_write_message(framed,
-                                         p2p_message{.type = message_type::hole_punch_result,
+         case control_message::type::hole_punch_result:
+            co_await control_codec::async_write(framed,
+                                         control_message{.kind = control_message::type::hole_punch_result,
                                                      .request_id = request.request_id,
                                                      .peer = local,
                                                      .hole_punch = request.hole_punch},
                                          codec_for(options));
             break;
-         case message_type::ping:
-            co_await async_write_message(
-                framed, p2p_message{.type = message_type::pong, .request_id = request.request_id, .peer = local},
+         case control_message::type::ping:
+            co_await control_codec::async_write(
+                framed, control_message{.kind = control_message::type::pong, .request_id = request.request_id, .peer = local},
                 codec_for(options));
             break;
          default:
-            co_await async_write_message(
+            co_await control_codec::async_write(
                 framed,
-                make_reject(message_type::protocol_reject, request.request_id, "unsupported P2P control message"),
+                make_reject(control_message::type::protocol_reject, request.request_id, "unsupported P2P control message"),
                 codec_for(options));
             break;
          }
@@ -1110,11 +1134,11 @@ struct node::impl : std::enable_shared_from_this<impl> {
    }
 
    boost::asio::awaitable<void> handle_protocol_open(std::shared_ptr<session_state> session,
-                                                     fcl::quic::framed_stream framed, p2p_message request) {
+                                                     fcl::quic::framed_stream framed, control_message request) {
       if (request.protocol == builtins::control) {
-         co_await async_write_message(framed,
-                                      p2p_message{
-                                          .type = message_type::protocol_accept,
+         co_await control_codec::async_write(framed,
+                                      control_message{
+                                          .kind = control_message::type::protocol_accept,
                                           .request_id = request.request_id,
                                           .peer = local,
                                           .protocol = request.protocol,
@@ -1126,21 +1150,21 @@ struct node::impl : std::enable_shared_from_this<impl> {
       auto handler = handler_for(request.protocol);
       if (!handler) {
          increment_protocol_rejected();
-         co_await async_write_message(
-             framed, make_reject(message_type::protocol_reject, request.request_id, "unsupported P2P protocol"),
+         co_await control_codec::async_write(
+             framed, make_reject(control_message::type::protocol_reject, request.request_id, "unsupported P2P protocol"),
              codec_for(options));
          co_return;
       }
-      co_await async_write_message(framed,
-                                   p2p_message{
-                                       .type = message_type::protocol_accept,
+      co_await control_codec::async_write(framed,
+                                   control_message{
+                                       .kind = control_message::type::protocol_accept,
                                        .request_id = request.request_id,
                                        .peer = local,
                                        .protocol = request.protocol,
                                    },
                                    codec_for(options));
       increment_protocol_accepted();
-      co_await (*handler)(incoming_protocol_stream{
+      co_await (*handler)(node::incoming_protocol_stream{
           .session = session->info,
           .protocol = request.protocol,
           .stream = std::move(framed),
@@ -1148,11 +1172,11 @@ struct node::impl : std::enable_shared_from_this<impl> {
    }
 
    boost::asio::awaitable<void> handle_peer_exchange(fcl::quic::framed_stream framed, std::uint64_t request_id) {
-      auto endpoints = std::vector<endpoint_record>{};
+      auto endpoints = std::vector<control_message::endpoint_record>{};
       const auto snapshot = store.snapshot();
       for (const auto& record : snapshot) {
          for (const auto& endpoint : record.endpoints) {
-            endpoints.push_back(endpoint_record{
+            endpoints.push_back(control_message::endpoint_record{
                 .peer = record.peer,
                 .endpoint = endpoint.endpoint,
                 .capabilities = record.capabilities,
@@ -1166,9 +1190,9 @@ struct node::impl : std::enable_shared_from_this<impl> {
          }
       }
       increment_peer_exchange();
-      co_await async_write_message(framed,
-                                   p2p_message{
-                                       .type = message_type::peer_exchange_response,
+      co_await control_codec::async_write(framed,
+                                   control_message{
+                                       .kind = control_message::type::peer_exchange_response,
                                        .request_id = request_id,
                                        .peer = local,
                                        .endpoints = std::move(endpoints),
@@ -1176,19 +1200,19 @@ struct node::impl : std::enable_shared_from_this<impl> {
                                    codec_for(options));
    }
 
-   [[nodiscard]] std::optional<fcl::quic::endpoint> first_endpoint(const p2p_message& message) const {
+   [[nodiscard]] std::optional<fcl::quic::endpoint> first_endpoint(const control_message& message) const {
       if (message.endpoints.empty()) {
          return std::nullopt;
       }
       return message.endpoints.front().endpoint;
    }
 
-   boost::asio::awaitable<void> handle_reachability_probe(fcl::quic::framed_stream framed, p2p_message request) {
+   boost::asio::awaitable<void> handle_reachability_probe(fcl::quic::framed_stream framed, control_message request) {
       auto state = reachability_state::private_network;
       auto observed = first_endpoint(request);
       if (observed && valid_peer_id(request.peer)) {
          try {
-            auto session = co_await connect_direct(*observed, connect_options{
+            auto session = co_await connect_direct(*observed, node::connect_options{
                                                                   .expected_peer = request.peer,
                                                                   .allow_relay = false,
                                                                   .timeout = std::chrono::milliseconds{1'500},
@@ -1209,17 +1233,17 @@ struct node::impl : std::enable_shared_from_this<impl> {
          }
       }
       increment_reachability_probe(state);
-      auto endpoints = std::vector<endpoint_record>{};
+      auto endpoints = std::vector<control_message::endpoint_record>{};
       if (observed) {
-         endpoints.push_back(endpoint_record{
+         endpoints.push_back(control_message::endpoint_record{
              .peer = request.peer,
              .endpoint = *observed,
              .capabilities = request.capabilities,
          });
       }
-      co_await async_write_message(framed,
-                                   p2p_message{
-                                       .type = message_type::reachability_result,
+      co_await control_codec::async_write(framed,
+                                   control_message{
+                                       .kind = control_message::type::reachability_result,
                                        .request_id = request.request_id,
                                        .peer = local,
                                        .reachability = state,
@@ -1229,27 +1253,27 @@ struct node::impl : std::enable_shared_from_this<impl> {
    }
 
    boost::asio::awaitable<void> handle_relay_reserve(std::shared_ptr<session_state> session,
-                                                     fcl::quic::framed_stream framed, p2p_message request) {
+                                                     fcl::quic::framed_stream framed, control_message request) {
       if (!options.capabilities.has(capabilities::relay) ||
           !options.capabilities.has(capabilities::relay_reservation)) {
-         co_await async_write_message(
+         co_await control_codec::async_write(
              framed,
-             make_reject(message_type::relay_reject, request.request_id, "relay reservation capability is disabled"),
+             make_reject(control_message::type::relay_reject, request.request_id, "relay reservation capability is disabled"),
              codec_for(options));
          co_return;
       }
       auto reservation = remember_inbound_relay_reservation(session->info.remote_peer, request);
       if (!reservation) {
-         co_await async_write_message(
-             framed, make_reject(message_type::relay_reject, request.request_id, "relay reservation limit reached"),
+         co_await control_codec::async_write(
+             framed, make_reject(control_message::type::relay_reject, request.request_id, "relay reservation limit reached"),
              codec_for(options));
          co_return;
       }
       const auto ttl = std::chrono::duration_cast<std::chrono::milliseconds>(reservation->expires_at -
                                                                              std::chrono::steady_clock::now());
-      co_await async_write_message(framed,
-                                   p2p_message{
-                                       .type = message_type::relay_reserved,
+      co_await control_codec::async_write(framed,
+                                   control_message{
+                                       .kind = control_message::type::relay_reserved,
                                        .request_id = request.request_id,
                                        .peer = local,
                                        .reservation_id = reservation->id,
@@ -1262,26 +1286,26 @@ struct node::impl : std::enable_shared_from_this<impl> {
    }
 
    boost::asio::awaitable<void> handle_relay_cancel(std::shared_ptr<session_state> session,
-                                                    fcl::quic::framed_stream framed, p2p_message request) {
+                                                    fcl::quic::framed_stream framed, control_message request) {
       (void)cancel_inbound_relay_reservation(session->info.remote_peer, request.reservation_id);
-      co_await async_write_message(
-          framed, p2p_message{.type = message_type::relay_reserved, .request_id = request.request_id, .peer = local},
+      co_await control_codec::async_write(
+          framed, control_message{.kind = control_message::type::relay_reserved, .request_id = request.request_id, .peer = local},
           codec_for(options));
    }
 
    boost::asio::awaitable<void> handle_hole_punch_prepare(std::shared_ptr<session_state>,
-                                                          fcl::quic::framed_stream framed, p2p_message request) {
-      auto endpoints = std::vector<endpoint_record>{};
+                                                          fcl::quic::framed_stream framed, control_message request) {
+      auto endpoints = std::vector<control_message::endpoint_record>{};
       if (auto endpoint = local_endpoint_for_control()) {
-         endpoints.push_back(endpoint_record{
+         endpoints.push_back(control_message::endpoint_record{
              .peer = local,
              .endpoint = *endpoint,
              .capabilities = options.capabilities,
          });
       }
-      co_await async_write_message(framed,
-                                   p2p_message{
-                                       .type = message_type::hole_punch_sync,
+      co_await control_codec::async_write(framed,
+                                   control_message{
+                                       .kind = control_message::type::hole_punch_sync,
                                        .request_id = request.request_id,
                                        .peer = local,
                                        .hole_punch = hole_punch_status::synced,
@@ -1290,7 +1314,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
                                    codec_for(options));
       if (auto remote = first_endpoint(request); remote && valid_peer_id(request.peer)) {
          try {
-            (void)co_await connect_direct(*remote, connect_options{
+            (void)co_await connect_direct(*remote, node::connect_options{
                                                        .expected_peer = request.peer,
                                                        .allow_relay = false,
                                                        .timeout = std::chrono::milliseconds{1'500},
@@ -1301,17 +1325,17 @@ struct node::impl : std::enable_shared_from_this<impl> {
    }
 
    boost::asio::awaitable<void> handle_relay_open(std::shared_ptr<session_state> session,
-                                                  fcl::quic::framed_stream requester, p2p_message request) {
+                                                  fcl::quic::framed_stream requester, control_message request) {
       if (!options.capabilities.has(capabilities::relay)) {
-         co_await async_write_message(
-             requester, make_reject(message_type::relay_reject, request.request_id, "relay capability is disabled"),
+         co_await control_codec::async_write(
+             requester, make_reject(control_message::type::relay_reject, request.request_id, "relay capability is disabled"),
              codec_for(options));
          co_return;
       }
       if (!begin_relay(session->info.remote_peer)) {
-         co_await async_write_message(
+         co_await control_codec::async_write(
              requester,
-             make_reject(message_type::relay_reject, request.request_id, "relay reservation or relay limit reached"),
+             make_reject(control_message::type::relay_reject, request.request_id, "relay reservation or relay limit reached"),
              codec_for(options));
          co_return;
       }
@@ -1319,23 +1343,23 @@ struct node::impl : std::enable_shared_from_this<impl> {
       auto target = std::optional<fcl::quic::framed_stream>{};
       auto relay_error = std::string{};
       try {
-         target.emplace(co_await open_protocol_direct(request.peer, request.protocol, open_options{}.timeout));
+         target.emplace(co_await open_protocol_direct(request.peer, request.protocol, node::open_options{}.timeout));
       } catch (const std::exception& error) {
          relay_error = error.what();
       }
       if (!target) {
          finish_relay(session->info.remote_peer);
-         co_await async_write_message(requester,
-                                      make_reject(message_type::relay_reject, request.request_id,
+         co_await control_codec::async_write(requester,
+                                      make_reject(control_message::type::relay_reject, request.request_id,
                                                   relay_error.empty() ? "relay target open failed" : relay_error),
                                       codec_for(options));
          co_return;
       }
 
       try {
-         co_await async_write_message(requester,
-                                      p2p_message{
-                                          .type = message_type::relay_accept,
+         co_await control_codec::async_write(requester,
+                                      control_message{
+                                          .kind = control_message::type::relay_accept,
                                           .request_id = request.request_id,
                                           .peer = local,
                                           .protocol = request.protocol,
@@ -1449,27 +1473,27 @@ struct node::impl : std::enable_shared_from_this<impl> {
       try {
          auto control = co_await open_protocol_via_relay(peer, builtins::control, *relay_peer, timeout);
          const auto request_id = next_request_id();
-         co_await async_write_message(control,
-                                      p2p_message{
-                                          .type = message_type::hole_punch_prepare,
+         co_await control_codec::async_write(control,
+                                      control_message{
+                                          .kind = control_message::type::hole_punch_prepare,
                                           .request_id = request_id,
                                           .peer = local,
                                           .hole_punch = hole_punch_status::prepared,
-                                          .endpoints = std::vector<endpoint_record>{endpoint_record{
+                                          .endpoints = std::vector<control_message::endpoint_record>{control_message::endpoint_record{
                                               .peer = local,
                                               .endpoint = *local_endpoint,
                                               .capabilities = options.capabilities,
                                           }},
                                       },
                                       codec_for(options));
-         auto response = co_await async_read_message(control, codec_for(options));
-         if (response.type != message_type::hole_punch_sync || response.endpoints.empty()) {
+         auto response = co_await control_codec::async_read(control, codec_for(options));
+         if (response.kind != control_message::type::hole_punch_sync || response.endpoints.empty()) {
             record_hole_punch_result(hole_punch_status::failed);
             co_return hole_punch_status::failed;
          }
          auto connected = false;
          try {
-            (void)co_await connect_direct(response.endpoints.front().endpoint, connect_options{
+            (void)co_await connect_direct(response.endpoints.front().endpoint, node::connect_options{
                                                                                    .expected_peer = peer,
                                                                                    .allow_relay = false,
                                                                                    .timeout = timeout,
@@ -1478,8 +1502,8 @@ struct node::impl : std::enable_shared_from_this<impl> {
          } catch (...) {
          }
          if (connected) {
-            co_await async_write_message(control,
-                                         p2p_message{.type = message_type::hole_punch_result,
+            co_await control_codec::async_write(control,
+                                         control_message{.kind = control_message::type::hole_punch_result,
                                                      .request_id = request_id,
                                                      .peer = local,
                                                      .hole_punch = hole_punch_status::succeeded},
@@ -1487,8 +1511,8 @@ struct node::impl : std::enable_shared_from_this<impl> {
             record_hole_punch_result(hole_punch_status::succeeded);
             co_return hole_punch_status::succeeded;
          }
-         co_await async_write_message(control,
-                                      p2p_message{.type = message_type::hole_punch_result,
+         co_await control_codec::async_write(control,
+                                      control_message{.kind = control_message::type::hole_punch_result,
                                                   .request_id = request_id,
                                                   .peer = local,
                                                   .hole_punch = hole_punch_status::failed},
@@ -1500,7 +1524,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
    }
 };
 
-node::node(fcl::asio::runtime& runtime, node_options options) {
+node::node(fcl::asio::runtime& runtime, node::options options) {
    validate(options);
    impl_ = std::make_shared<impl>(runtime, std::move(options));
 }
@@ -1521,7 +1545,7 @@ std::optional<fcl::quic::endpoint> node::local_endpoint() const {
    return impl_->listener->local_endpoint();
 }
 
-node_metrics node::metrics() const {
+node::metrics_snapshot node::metrics() const {
    auto lock = std::scoped_lock{impl_->mutex};
    impl_->cleanup_expired_relay_reservations_locked();
    auto out = impl_->metrics_value;
@@ -1539,7 +1563,7 @@ const peer_store& node::peers() const noexcept {
    return impl_->store;
 }
 
-void node::register_protocol_handler(protocol_id protocol, protocol_handler handler) {
+void node::register_protocol_handler(protocol_id protocol, node::protocol_handler handler) {
    if (protocol.value.empty() || !handler) {
       throw_p2p_error(error_kind::invalid_options, "P2P protocol handler requires protocol id and handler");
    }
@@ -1570,7 +1594,12 @@ boost::asio::awaitable<void> node::async_listen(fcl::quic::endpoint endpoint) {
    co_return;
 }
 
-boost::asio::awaitable<session_info> node::async_connect(fcl::quic::endpoint endpoint, connect_options options) {
+boost::asio::awaitable<node::session_info> node::async_connect(fcl::quic::endpoint endpoint) {
+   return async_connect(std::move(endpoint), connect_options{});
+}
+
+boost::asio::awaitable<node::session_info> node::async_connect(fcl::quic::endpoint endpoint,
+                                                               node::connect_options options) {
    validate_operation_timeout(options.timeout, "P2P connect timeout");
    auto self = impl_;
    auto session = co_await self->connect_direct(std::move(endpoint), std::move(options));
@@ -1594,21 +1623,21 @@ boost::asio::awaitable<reachability_state> node::async_probe_reachability(peer_i
        frame_codec_for(self->options),
    };
    const auto request_id = self->next_request_id();
-   co_await async_write_message(framed,
-                                p2p_message{
-                                    .type = message_type::reachability_probe,
+   co_await control_codec::async_write(framed,
+                                control_message{
+                                    .kind = control_message::type::reachability_probe,
                                     .request_id = request_id,
                                     .peer = self->local,
                                     .capabilities = self->options.capabilities,
-                                    .endpoints = std::vector<endpoint_record>{endpoint_record{
+                                    .endpoints = std::vector<control_message::endpoint_record>{control_message::endpoint_record{
                                         .peer = self->local,
                                         .endpoint = *endpoint,
                                         .capabilities = self->options.capabilities,
                                     }},
                                 },
                                 codec_for(self->options));
-   auto response = co_await async_read_message(framed, codec_for(self->options));
-   if (response.type != message_type::reachability_result) {
+   auto response = co_await control_codec::async_read(framed, codec_for(self->options));
+   if (response.kind != control_message::type::reachability_result) {
       throw_p2p_error(error_kind::protocol_error, "P2P reachability probe expected result");
    }
    self->store.mark_reachability(self->local, response.reachability,
@@ -1617,10 +1646,14 @@ boost::asio::awaitable<reachability_state> node::async_probe_reachability(peer_i
    co_return response.reachability;
 }
 
-boost::asio::awaitable<relay_reservation_info> node::async_reserve_relay(peer_id relay_peer,
-                                                                         relay_reservation_options options) {
+boost::asio::awaitable<relay_reservation::info> node::async_reserve_relay(peer_id relay_peer) {
+   return async_reserve_relay(std::move(relay_peer), relay_reservation::options{});
+}
+
+boost::asio::awaitable<relay_reservation::info> node::async_reserve_relay(peer_id relay_peer,
+                                                                          relay_reservation::options options) {
    auto self = impl_;
-   co_return co_await self->request_relay_reservation(relay_peer, options, connect_options{}.timeout);
+   co_return co_await self->request_relay_reservation(relay_peer, options, node::connect_options{}.timeout);
 }
 
 boost::asio::awaitable<void> node::async_cancel_relay(peer_id relay_peer) {
@@ -1642,15 +1675,15 @@ boost::asio::awaitable<void> node::async_cancel_relay(peer_id relay_peer) {
        frame_codec_for(self->options),
    };
    const auto request_id = self->next_request_id();
-   co_await async_write_message(framed,
-                                p2p_message{
-                                    .type = message_type::relay_cancel,
+   co_await control_codec::async_write(framed,
+                                control_message{
+                                    .kind = control_message::type::relay_cancel,
                                     .request_id = request_id,
                                     .peer = self->local,
                                     .reservation_id = reservation->id,
                                 },
                                 codec_for(self->options));
-   (void)co_await async_read_message(framed, codec_for(self->options));
+   (void)co_await control_codec::async_read(framed, codec_for(self->options));
 }
 
 boost::asio::awaitable<hole_punch_status>
@@ -1682,27 +1715,27 @@ node::async_attempt_hole_punch(peer_id peer, std::optional<peer_id> relay_peer, 
    try {
       auto control = co_await self->open_protocol_via_relay(peer, builtins::control, *relay_peer, timeout);
       const auto request_id = self->next_request_id();
-      co_await async_write_message(control,
-                                   p2p_message{
-                                       .type = message_type::hole_punch_prepare,
+      co_await control_codec::async_write(control,
+                                   control_message{
+                                       .kind = control_message::type::hole_punch_prepare,
                                        .request_id = request_id,
                                        .peer = self->local,
                                        .hole_punch = hole_punch_status::prepared,
-                                       .endpoints = std::vector<endpoint_record>{endpoint_record{
+                                       .endpoints = std::vector<control_message::endpoint_record>{control_message::endpoint_record{
                                            .peer = self->local,
                                            .endpoint = *local_endpoint,
                                            .capabilities = self->options.capabilities,
                                        }},
                                    },
                                    codec_for(self->options));
-      auto response = co_await async_read_message(control, codec_for(self->options));
-      if (response.type != message_type::hole_punch_sync || response.endpoints.empty()) {
+      auto response = co_await control_codec::async_read(control, codec_for(self->options));
+      if (response.kind != control_message::type::hole_punch_sync || response.endpoints.empty()) {
          self->record_hole_punch_result(hole_punch_status::failed);
          co_return hole_punch_status::failed;
       }
       auto connected = false;
       try {
-         (void)co_await self->connect_direct(response.endpoints.front().endpoint, connect_options{
+         (void)co_await self->connect_direct(response.endpoints.front().endpoint, node::connect_options{
                                                                                       .expected_peer = peer,
                                                                                       .allow_relay = false,
                                                                                       .timeout = timeout,
@@ -1711,8 +1744,8 @@ node::async_attempt_hole_punch(peer_id peer, std::optional<peer_id> relay_peer, 
       } catch (...) {
       }
       if (connected) {
-         co_await async_write_message(control,
-                                      p2p_message{.type = message_type::hole_punch_result,
+         co_await control_codec::async_write(control,
+                                      control_message{.kind = control_message::type::hole_punch_result,
                                                   .request_id = request_id,
                                                   .peer = self->local,
                                                   .hole_punch = hole_punch_status::succeeded},
@@ -1720,8 +1753,8 @@ node::async_attempt_hole_punch(peer_id peer, std::optional<peer_id> relay_peer, 
          self->record_hole_punch_result(hole_punch_status::succeeded);
          co_return hole_punch_status::succeeded;
       }
-      co_await async_write_message(control,
-                                   p2p_message{.type = message_type::hole_punch_result,
+      co_await control_codec::async_write(control,
+                                   control_message{.kind = control_message::type::hole_punch_result,
                                                .request_id = request_id,
                                                .peer = self->local,
                                                .hole_punch = hole_punch_status::failed},
@@ -1732,8 +1765,12 @@ node::async_attempt_hole_punch(peer_id peer, std::optional<peer_id> relay_peer, 
    co_return hole_punch_status::failed;
 }
 
+boost::asio::awaitable<fcl::quic::framed_stream> node::async_open_protocol_stream(peer_id peer, protocol_id protocol) {
+   return async_open_protocol_stream(std::move(peer), std::move(protocol), open_options{});
+}
+
 boost::asio::awaitable<fcl::quic::framed_stream> node::async_open_protocol_stream(peer_id peer, protocol_id protocol,
-                                                                                  open_options options) {
+                                                                                  node::open_options options) {
    validate_operation_timeout(options.timeout, "P2P protocol open timeout");
    validate_operation_timeout(options.direct_attempt_timeout, "P2P direct attempt timeout");
    validate_operation_timeout(options.relay_attempt_timeout, "P2P relay attempt timeout");
@@ -1765,7 +1802,7 @@ boost::asio::awaitable<fcl::quic::framed_stream> node::async_open_protocol_strea
       relay_candidates.push_back(*options.relay_peer);
    } else if (options.allow_relay || options.allow_hole_punch) {
       const auto snapshot = self->store.snapshot();
-      auto relay_records = std::vector<peer_record>{};
+      auto relay_records = std::vector<peer_store::record>{};
       for (const auto& record : snapshot) {
          if (record.peer == peer) {
             continue;

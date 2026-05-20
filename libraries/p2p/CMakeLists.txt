@@ -2,12 +2,11 @@ add_library(
    fcl_p2p STATIC
    errors.cpp
    identity.cpp
+   endpoint.cpp
    scoring.cpp
    relay.cpp
    codec.cpp
    peer_store.cpp
-   options.cpp
-   session.cpp
    node.cpp
 )
 fcl_target_modules(fcl_p2p p2p)
@@ -19,6 +18,7 @@ target_link_libraries(
       fcl_exception
       fcl_api
       fcl_raw
+      fcl_multiformats
       fcl_asio
       fcl_quic
       Boost::asio

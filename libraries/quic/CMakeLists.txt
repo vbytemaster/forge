@@ -4,6 +4,7 @@ add_library(
    endpoint.cpp
    security.cpp
    options.cpp
+   libp2p.cpp
    framed_stream.cpp
    runtime.cpp
    quic_engine.cpp

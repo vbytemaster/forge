@@ -20,6 +20,7 @@ set(
    api
    log
    crypto
+   multiformats
    asio
    app
    http
@@ -81,6 +82,8 @@ macro(_fcl_add_component component)
          _fcl_add_component(raw)
          _fcl_add_component(reflect)
          _fcl_add_component(variant)
+      elseif("${component}" STREQUAL "multiformats")
+         _fcl_add_component(crypto)
       elseif("${component}" STREQUAL "app")
          _fcl_add_component(api)
          _fcl_add_component(asio)
@@ -101,6 +104,7 @@ macro(_fcl_add_component component)
       elseif("${component}" STREQUAL "p2p")
          _fcl_add_component(api)
          _fcl_add_component(asio)
+         _fcl_add_component(multiformats)
          _fcl_add_component(quic)
       elseif("${component}" STREQUAL "plugins")
          _fcl_add_component(app)

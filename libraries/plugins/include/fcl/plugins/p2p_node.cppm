@@ -213,11 +213,11 @@ class p2p_node::api {
 
    [[nodiscard]] virtual fcl::p2p::peer_id local_peer() const = 0;
    [[nodiscard]] virtual std::optional<fcl::quic::endpoint> local_endpoint() const = 0;
-   [[nodiscard]] virtual fcl::p2p::node_metrics metrics() const = 0;
-   [[nodiscard]] virtual std::vector<fcl::p2p::peer_record> peers() const = 0;
+   [[nodiscard]] virtual fcl::p2p::node::metrics_snapshot metrics() const = 0;
+   [[nodiscard]] virtual std::vector<fcl::p2p::peer_store::record> peers() const = 0;
 
    virtual void publish_api(fcl::api::binding_plan plan, fcl::p2p::protocol_id protocol) = 0;
-   virtual void publish_protocol(fcl::p2p::protocol_id protocol, fcl::p2p::protocol_handler handler) = 0;
+   virtual void publish_protocol(fcl::p2p::protocol_id protocol, fcl::p2p::node::protocol_handler handler) = 0;
 
    boost::asio::awaitable<delivery> send_async(fcl::p2p::peer_id peer, fcl::p2p::message message);
    virtual boost::asio::awaitable<delivery> send_async(fcl::p2p::peer_id peer, fcl::p2p::message message,
@@ -300,12 +300,13 @@ export template <> struct fcl::schema::rules<fcl::plugins::p2p_node::config> {
       auto schema = fcl::schema::object<fcl::plugins::p2p_node::config>();
       schema.field<&fcl::plugins::p2p_node::config::listen>("listen")
          .default_value(std::vector<std::string>{})
-         .description("QUIC listen endpoints, for example quic://0.0.0.0:9443");
+         .description("Listen endpoints, for example /ip4/0.0.0.0/udp/9443/quic-v1 or quic://0.0.0.0:9443");
       schema.field<&fcl::plugins::p2p_node::config::bootstrap>("bootstrap")
          .default_value(std::vector<std::string>{})
-         .description("Bootstrap peer endpoints to connect on startup");
+         .description("Bootstrap peer endpoints, preferably libp2p address text with /quic-v1");
       schema.field<&fcl::plugins::p2p_node::config::advertised_endpoints>("advertised-endpoints")
-         .default_value(std::vector<std::string>{});
+         .default_value(std::vector<std::string>{})
+         .description("Endpoints advertised to peers, preferably libp2p address text with /quic-v1");
       schema.field<&fcl::plugins::p2p_node::config::peer_id>("peer-id").default_value("");
       schema.field<&fcl::plugins::p2p_node::config::certificate_pem>("certificate-pem").default_value("");
       schema.field<&fcl::plugins::p2p_node::config::private_key_pem>("private-key-pem").default_value("").secret();

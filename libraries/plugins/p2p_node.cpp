@@ -56,10 +56,12 @@ struct parsed_config {
 };
 
 [[nodiscard]] fcl::p2p::peer_id default_test_peer() {
-   return fcl::p2p::peer_id{.value = "0000000000000000000000000000000000000000000000000000000000000001"};
+   return fcl::p2p::make_peer_id(
+       {.type = fcl::p2p::public_key::type::ed25519, .data = std::vector<std::uint8_t>(32, 1)});
 }
 
-[[nodiscard]] bool contains_protocol(const std::vector<std::pair<fcl::p2p::protocol_id, fcl::p2p::protocol_handler>>& routes,
+[[nodiscard]] bool contains_protocol(
+   const std::vector<std::pair<fcl::p2p::protocol_id, fcl::p2p::node::protocol_handler>>& routes,
                                      const fcl::p2p::protocol_id& protocol) {
    return std::any_of(routes.begin(), routes.end(), [&](const auto& route) {
       return route.first == protocol;
@@ -70,7 +72,11 @@ struct parsed_config {
    auto out = std::vector<fcl::quic::endpoint>{};
    out.reserve(values.size());
    for (const auto& value : values) {
-      out.push_back(fcl::quic::parse_endpoint(value));
+      if (!value.empty() && value.front() == '/') {
+         out.push_back(fcl::p2p::parse_endpoint(value).quic_endpoint());
+      } else {
+         out.push_back(fcl::quic::parse_endpoint(value));
+      }
    }
    return out;
 }
@@ -396,7 +402,7 @@ class in_memory_outbox_store final : public p2p_node::outbox_store {
 } // namespace
 
 struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
-   fcl::p2p::node_options options{
+   fcl::p2p::node::options options{
       .explicit_peer_id = default_test_peer(),
       .allow_insecure_test_mode = false,
    };
@@ -405,7 +411,7 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
    std::size_t max_inflight_per_peer = 64;
    std::vector<fcl::quic::endpoint> listen;
    std::vector<fcl::quic::endpoint> bootstrap;
-   std::vector<std::pair<fcl::p2p::protocol_id, fcl::p2p::protocol_handler>> routes;
+   std::vector<std::pair<fcl::p2p::protocol_id, fcl::p2p::node::protocol_handler>> routes;
    fcl::p2p::node* raw = nullptr;
    std::unique_ptr<fcl::p2p::node> node;
    fcl::asio::runtime* runtime = nullptr;
@@ -425,7 +431,7 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
       return *node;
    }
 
-   void add_route(fcl::p2p::protocol_id protocol, fcl::p2p::protocol_handler handler) {
+   void add_route(fcl::p2p::protocol_id protocol, fcl::p2p::node::protocol_handler handler) {
       if (started) {
          FCL_THROW_EXCEPTION(p2p_node::exceptions::route_conflict, "P2P routes must be published before p2p_node startup",
                              fcl::exception::ctx("protocol", protocol.value));
@@ -440,7 +446,7 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
       routes.emplace_back(std::move(protocol), std::move(handler));
    }
 
-   [[nodiscard]] fcl::p2p::open_options open_options_for(const send_options& options_value) const {
+   [[nodiscard]] fcl::p2p::node::open_options open_options_for(const send_options& options_value) const {
       if (options_value.path == path_policy::relay_only) {
          FCL_THROW_EXCEPTION(p2p_node::exceptions::relay_policy_denied,
                              "P2P relay-only delivery is not exposed until fcl.p2p supports no-direct open policy");
@@ -450,7 +456,7 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
          FCL_THROW_EXCEPTION(p2p_node::exceptions::relay_policy_denied,
                              "P2P public relay policy must be opted into by the message sender");
       }
-      auto out = fcl::p2p::open_options{
+      auto out = fcl::p2p::node::open_options{
          .allow_relay = policy.relay_client_enabled && options_value.path != path_policy::direct_only,
          .timeout = options_value.deadline,
          .direct_attempt_timeout = std::min(std::chrono::milliseconds{2'000}, options_value.deadline),
@@ -618,7 +624,7 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
             ++relay_checked;
             try {
                (void)co_await node->async_reserve_relay(
-                  peer.peer, fcl::p2p::relay_reservation_options{.ttl = policy.relay_reservation_ttl});
+                  peer.peer, fcl::p2p::relay_reservation::options{.ttl = policy.relay_reservation_ttl});
             } catch (...) {
                fcl::exception::capture_and_log("P2P relay reservation maintenance failed");
             }
@@ -742,11 +748,11 @@ class p2p_node::api::impl final : public p2p_node::api {
       return impl_->require_node().local_endpoint();
    }
 
-   fcl::p2p::node_metrics metrics() const override {
+   fcl::p2p::node::metrics_snapshot metrics() const override {
       return impl_->require_node().metrics();
    }
 
-   std::vector<fcl::p2p::peer_record> peers() const override {
+   std::vector<fcl::p2p::peer_store::record> peers() const override {
       return impl_->require_node().peers().snapshot();
    }
 
@@ -760,7 +766,7 @@ class p2p_node::api::impl final : public p2p_node::api {
       impl_->add_route(binding.protocol(), binding.handler());
    }
 
-   void publish_protocol(fcl::p2p::protocol_id protocol, fcl::p2p::protocol_handler handler) override {
+   void publish_protocol(fcl::p2p::protocol_id protocol, fcl::p2p::node::protocol_handler handler) override {
       auto binding = fcl::p2p::route().protocol_id(std::move(protocol)).handler(std::move(handler)).build();
       impl_->add_route(binding.protocol(), binding.handler());
    }

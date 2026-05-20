@@ -188,6 +188,7 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/api/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/log/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/crypto/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/multiformats/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/asio/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/http/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/websocket/include"
@@ -302,6 +303,7 @@ add_subdirectory(libraries/env)
 add_subdirectory(libraries/api)
 add_subdirectory(libraries/log)
 add_subdirectory(libraries/crypto)
+add_subdirectory(libraries/multiformats)
 add_subdirectory(libraries/asio)
 add_subdirectory(libraries/http)
 add_subdirectory(libraries/websocket)
@@ -329,6 +331,7 @@ set(
    fcl_api
    fcl_log
    fcl_crypto
+   fcl_multiformats
    fcl_asio
    fcl_http
    fcl_websocket
@@ -388,6 +391,7 @@ install(
              libraries/api/include/fcl
              libraries/log/include/fcl
              libraries/crypto/include/fcl
+             libraries/multiformats/include/fcl
              libraries/asio/include/fcl
              libraries/http/include/fcl
              libraries/websocket/include/fcl

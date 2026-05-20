@@ -23,22 +23,22 @@ import fcl.quic.framed_stream;
 
 export namespace fcl::p2p {
 
-struct api_peer_policy {
-   bool require_known_peer = false;
-};
-
-struct api_discovery_scope {
-   std::string value;
-};
-
 class api_binding {
  public:
+   struct peer_policy {
+      bool require_known_peer = false;
+   };
+
+   struct discovery_scope {
+      std::string value;
+   };
+
    using session_handler = std::function<boost::asio::awaitable<void>(fcl::api::session&)>;
 
    api_binding(node* owner, fcl::api::binding_plan plan, protocol_id protocol, fcl::api::codec_id codec,
-               api_peer_policy peer_policy, api_discovery_scope discovery_scope, std::size_t max_inflight_per_peer)
+               peer_policy peer_policy_value, discovery_scope discovery_scope_value, std::size_t max_inflight_per_peer)
        : owner_{owner}, plan_{std::move(plan)}, protocol_{std::move(protocol)}, codec_{std::move(codec)},
-         peer_policy_{std::move(peer_policy)}, discovery_scope_{std::move(discovery_scope)},
+         peer_policy_{std::move(peer_policy_value)}, discovery_scope_{std::move(discovery_scope_value)},
          max_inflight_per_peer_{max_inflight_per_peer} {}
 
    api_binding& on_session(session_handler handler) {
@@ -50,13 +50,13 @@ class api_binding {
       return protocol_;
    }
 
-   [[nodiscard]] protocol_handler handler() const {
-      return [binding = *this](incoming_protocol_stream stream) mutable -> boost::asio::awaitable<void> {
+   [[nodiscard]] node::protocol_handler handler() const {
+      return [binding = *this](node::incoming_protocol_stream stream) mutable -> boost::asio::awaitable<void> {
          co_await binding.accept(std::move(stream));
       };
    }
 
-   boost::asio::awaitable<fcl::api::session> accept(incoming_protocol_stream stream) const {
+   boost::asio::awaitable<fcl::api::session> accept(node::incoming_protocol_stream stream) const {
       validate_stream(stream);
       auto session = make_session();
       if (on_session_) {
@@ -66,7 +66,7 @@ class api_binding {
       co_return session;
    }
 
-   boost::asio::awaitable<void> serve(incoming_protocol_stream stream) const {
+   boost::asio::awaitable<void> serve(node::incoming_protocol_stream stream) const {
       validate_stream(stream);
       auto calls = fcl::api::call_runtime{
           fcl::api::call_runtime_options{.max_inflight = max_inflight_per_peer_}};
@@ -121,11 +121,11 @@ class api_binding {
       return codec_;
    }
 
-   [[nodiscard]] const api_peer_policy& peer_policy() const noexcept {
+   [[nodiscard]] const peer_policy& peer_policy_value() const noexcept {
       return peer_policy_;
    }
 
-   [[nodiscard]] const api_discovery_scope& discovery_scope() const noexcept {
+   [[nodiscard]] const discovery_scope& discovery_scope_value() const noexcept {
       return discovery_scope_;
    }
 
@@ -150,7 +150,7 @@ class api_binding {
       }
    }
 
-   void validate_stream(const incoming_protocol_stream& stream) const {
+   void validate_stream(const node::incoming_protocol_stream& stream) const {
       if (stream.protocol != protocol_) {
          FCL_THROW_EXCEPTION(fcl::p2p::exceptions::unsupported_protocol, "P2P API binding received wrong protocol",
                              fcl::exception::ctx("protocol", stream.protocol.value));
@@ -174,8 +174,8 @@ class api_binding {
    fcl::api::binding_plan plan_;
    protocol_id protocol_;
    fcl::api::codec_id codec_;
-   api_peer_policy peer_policy_{};
-   api_discovery_scope discovery_scope_{};
+   peer_policy peer_policy_{};
+   discovery_scope discovery_scope_{};
    std::size_t max_inflight_per_peer_ = 64;
    session_handler on_session_;
 };
@@ -205,12 +205,12 @@ class api_builder {
       return *this;
    }
 
-   api_builder& peer_policy(api_peer_policy value) {
+   api_builder& peer_policy(api_binding::peer_policy value) {
       peer_policy_ = value;
       return *this;
    }
 
-   api_builder& discovery_scope(api_discovery_scope value) {
+   api_builder& discovery_scope(api_binding::discovery_scope value) {
       discovery_scope_ = std::move(value);
       return *this;
    }
@@ -230,8 +230,8 @@ class api_builder {
    fcl::api::binding_plan plan_;
    fcl::p2p::protocol_id protocol_{.value = "/fcl/api/1"};
    fcl::api::codec_id codec_{.value = "fcl.raw"};
-   api_peer_policy peer_policy_{};
-   api_discovery_scope discovery_scope_{};
+   api_binding::peer_policy peer_policy_{};
+   api_binding::discovery_scope discovery_scope_{};
    std::size_t max_inflight_per_peer_ = 64;
 };
 
@@ -245,20 +245,20 @@ class api_builder {
 
 class route_binding {
  public:
-   route_binding(protocol_id protocol, protocol_handler handler)
+   route_binding(protocol_id protocol, node::protocol_handler handler)
        : protocol_{std::move(protocol)}, handler_{std::move(handler)} {}
 
    [[nodiscard]] const protocol_id& protocol() const noexcept {
       return protocol_;
    }
 
-   [[nodiscard]] const protocol_handler& handler() const noexcept {
+   [[nodiscard]] const node::protocol_handler& handler() const noexcept {
       return handler_;
    }
 
  private:
    protocol_id protocol_;
-   protocol_handler handler_;
+   node::protocol_handler handler_;
 };
 
 class route_builder {
@@ -273,7 +273,7 @@ class route_builder {
       return *this;
    }
 
-   route_builder& handler(protocol_handler value) {
+   route_builder& handler(node::protocol_handler value) {
       handler_ = std::move(value);
       return *this;
    }
@@ -291,7 +291,7 @@ class route_builder {
 
  private:
    fcl::p2p::protocol_id protocol_;
-   protocol_handler handler_;
+   node::protocol_handler handler_;
 };
 
 [[nodiscard]] inline route_builder route() {

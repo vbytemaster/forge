@@ -9,7 +9,9 @@ add_executable(
    variant/test_variant_estimated_size.cpp
    raw/test_raw.cpp
    json/test_json.cpp
+   crypto/test_base32.cpp
    crypto/test_base64.cpp
+   crypto/test_base58.cpp
    crypto/test_blake2.cpp
    crypto/test_bls.cpp
    crypto/test_bls_legacy.cpp
@@ -59,7 +61,9 @@ add_test(NAME test_fcl_raw COMMAND test_fcl_raw WORKING_DIRECTORY ${CMAKE_BINARY
 add_executable(
    test_fcl_crypto
    unit/main.cpp
+   crypto/test_base32.cpp
    crypto/test_base64.cpp
+   crypto/test_base58.cpp
    crypto/test_blake2.cpp
    crypto/test_bls.cpp
    crypto/test_bls_legacy.cpp
@@ -72,6 +76,14 @@ add_executable(
 )
 target_link_libraries(test_fcl_crypto fcl Boost::included_unit_test_framework)
 add_test(NAME test_fcl_crypto COMMAND test_fcl_crypto WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(
+   test_fcl_multiformats
+   unit/main.cpp
+   multiformats/multiformats_tests.cpp
+)
+target_link_libraries(test_fcl_multiformats fcl Boost::included_unit_test_framework)
+add_test(NAME test_fcl_multiformats COMMAND test_fcl_multiformats WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
    test_fcl_asio

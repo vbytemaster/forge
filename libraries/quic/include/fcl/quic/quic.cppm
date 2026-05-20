@@ -7,6 +7,7 @@ export import fcl.quic.errors;
 export import fcl.quic.exceptions;
 export import fcl.quic.framed_stream;
 export import fcl.quic.listener;
+export import fcl.quic.libp2p;
 export import fcl.quic.metrics;
 export import fcl.quic.options;
 export import fcl.quic.runtime;

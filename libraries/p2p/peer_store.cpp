@@ -17,8 +17,8 @@ namespace {
    return left.host == right.host && left.port == right.port;
 }
 
-void refresh_endpoint_score(peer_endpoint_record& endpoint) {
-   endpoint.score = score_path(path_observation{
+void refresh_endpoint_score(peer_store::endpoint_record& endpoint) {
+   endpoint.score = score_path(path::observation{
        .kind = endpoint.kind,
        .latency = endpoint.last_latency,
        .failures = endpoint.failures,
@@ -27,7 +27,7 @@ void refresh_endpoint_score(peer_endpoint_record& endpoint) {
    });
 }
 
-void expire_reachability(peer_record& record, std::chrono::steady_clock::time_point now) {
+void expire_reachability(peer_store::record& record, std::chrono::steady_clock::time_point now) {
    if (record.reachability_expires_at == std::chrono::steady_clock::time_point{} ||
        record.reachability_expires_at > now) {
       return;
@@ -41,7 +41,7 @@ void expire_reachability(peer_record& record, std::chrono::steady_clock::time_po
 
 struct peer_store::impl {
    mutable std::mutex mutex;
-   std::map<peer_id, peer_record> records;
+   std::map<peer_id, peer_store::record> records;
 };
 
 peer_store::peer_store() : impl_(std::make_shared<impl>()) {}
@@ -50,16 +50,16 @@ peer_store::~peer_store() = default;
 peer_store::peer_store(peer_store&&) noexcept = default;
 peer_store& peer_store::operator=(peer_store&&) noexcept = default;
 
-void peer_store::upsert(peer_record record) {
+void peer_store::upsert(record value) {
    auto lock = std::scoped_lock{impl_->mutex};
-   record.score = score_path(path_observation{
-       .kind = record.endpoints.empty() ? path_kind::direct : record.endpoints.front().kind,
-       .latency = record.last_latency,
-       .failures = record.failures,
-       .successes = record.successes,
-       .last_success = record.successes > 0,
+   value.score = score_path(path::observation{
+       .kind = value.endpoints.empty() ? path::kind::direct : value.endpoints.front().kind,
+       .latency = value.last_latency,
+       .failures = value.failures,
+       .successes = value.successes,
+       .last_success = value.successes > 0,
    });
-   impl_->records[record.peer] = std::move(record);
+   impl_->records[value.peer] = std::move(value);
 }
 
 void peer_store::learn_endpoint(peer_id peer, fcl::quic::endpoint endpoint, capability_set capabilities) {
@@ -67,11 +67,11 @@ void peer_store::learn_endpoint(peer_id peer, fcl::quic::endpoint endpoint, capa
    auto& record = impl_->records[peer];
    record.peer = std::move(peer);
    record.capabilities.bits |= capabilities.bits;
-   const auto exists = std::ranges::any_of(record.endpoints, [&](const peer_endpoint_record& current) {
+   const auto exists = std::ranges::any_of(record.endpoints, [&](const endpoint_record& current) {
       return same_endpoint(current.endpoint, endpoint);
    });
    if (!exists) {
-      auto entry = peer_endpoint_record{.endpoint = std::move(endpoint)};
+      auto entry = endpoint_record{.endpoint = std::move(endpoint)};
       refresh_endpoint_score(entry);
       record.endpoints.push_back(std::move(entry));
    }
@@ -87,13 +87,13 @@ void peer_store::mark_reachability(peer_id peer, reachability_state state,
    record.reachability_expires_at = std::chrono::steady_clock::now() + std::chrono::minutes{5};
 }
 
-void peer_store::mark_success(const peer_id& peer, path_kind kind, std::chrono::milliseconds latency) {
+void peer_store::mark_success(const peer_id& peer, path::kind kind, std::chrono::milliseconds latency) {
    auto lock = std::scoped_lock{impl_->mutex};
    auto& record = impl_->records[peer];
    record.peer = peer;
    ++record.successes;
    record.last_latency = latency;
-   record.score = score_path(path_observation{
+   record.score = score_path(path::observation{
        .kind = kind,
        .latency = latency,
        .failures = record.failures,
@@ -107,8 +107,8 @@ void peer_store::mark_failure(const peer_id& peer) {
    auto& record = impl_->records[peer];
    record.peer = peer;
    ++record.failures;
-   record.score = score_path(path_observation{
-       .kind = record.endpoints.empty() ? path_kind::direct : record.endpoints.front().kind,
+   record.score = score_path(path::observation{
+       .kind = record.endpoints.empty() ? path::kind::direct : record.endpoints.front().kind,
        .latency = record.last_latency,
        .failures = record.failures,
        .successes = record.successes,
@@ -116,7 +116,7 @@ void peer_store::mark_failure(const peer_id& peer) {
    });
 }
 
-void peer_store::mark_endpoint_success(const peer_id& peer, const fcl::quic::endpoint& endpoint, path_kind kind,
+void peer_store::mark_endpoint_success(const peer_id& peer, const fcl::quic::endpoint& endpoint, path::kind kind,
                                        std::chrono::milliseconds latency) {
    auto lock = std::scoped_lock{impl_->mutex};
    auto& record = impl_->records[peer];
@@ -124,8 +124,7 @@ void peer_store::mark_endpoint_success(const peer_id& peer, const fcl::quic::end
    auto iterator = std::ranges::find_if(record.endpoints,
                                         [&](const auto& current) { return same_endpoint(current.endpoint, endpoint); });
    if (iterator == record.endpoints.end()) {
-      iterator =
-          record.endpoints.insert(record.endpoints.end(), peer_endpoint_record{.endpoint = endpoint, .kind = kind});
+      iterator = record.endpoints.insert(record.endpoints.end(), endpoint_record{.endpoint = endpoint, .kind = kind});
    }
    iterator->kind = kind;
    iterator->last_latency = latency;
@@ -134,7 +133,7 @@ void peer_store::mark_endpoint_success(const peer_id& peer, const fcl::quic::end
    refresh_endpoint_score(*iterator);
    ++record.successes;
    record.last_latency = latency;
-   record.score = score_path(path_observation{
+   record.score = score_path(path::observation{
        .kind = kind,
        .latency = latency,
        .failures = record.failures,
@@ -143,7 +142,7 @@ void peer_store::mark_endpoint_success(const peer_id& peer, const fcl::quic::end
    });
 }
 
-void peer_store::mark_endpoint_failure(const peer_id& peer, const fcl::quic::endpoint& endpoint, path_kind kind,
+void peer_store::mark_endpoint_failure(const peer_id& peer, const fcl::quic::endpoint& endpoint, path::kind kind,
                                        std::chrono::steady_clock::time_point backoff_until) {
    auto lock = std::scoped_lock{impl_->mutex};
    auto& record = impl_->records[peer];
@@ -151,15 +150,14 @@ void peer_store::mark_endpoint_failure(const peer_id& peer, const fcl::quic::end
    auto iterator = std::ranges::find_if(record.endpoints,
                                         [&](const auto& current) { return same_endpoint(current.endpoint, endpoint); });
    if (iterator == record.endpoints.end()) {
-      iterator =
-          record.endpoints.insert(record.endpoints.end(), peer_endpoint_record{.endpoint = endpoint, .kind = kind});
+      iterator = record.endpoints.insert(record.endpoints.end(), endpoint_record{.endpoint = endpoint, .kind = kind});
    }
    iterator->kind = kind;
    iterator->backoff_until = backoff_until;
    ++iterator->failures;
    refresh_endpoint_score(*iterator);
    ++record.failures;
-   record.score = score_path(path_observation{
+   record.score = score_path(path::observation{
        .kind = kind,
        .latency = record.last_latency,
        .failures = record.failures,
@@ -168,7 +166,7 @@ void peer_store::mark_endpoint_failure(const peer_id& peer, const fcl::quic::end
    });
 }
 
-std::optional<peer_record> peer_store::find(const peer_id& peer) const {
+std::optional<peer_store::record> peer_store::find(const peer_id& peer) const {
    auto lock = std::scoped_lock{impl_->mutex};
    const auto it = impl_->records.find(peer);
    if (it == impl_->records.end()) {
@@ -179,9 +177,9 @@ std::optional<peer_record> peer_store::find(const peer_id& peer) const {
    return out;
 }
 
-std::vector<peer_record> peer_store::snapshot() const {
+std::vector<peer_store::record> peer_store::snapshot() const {
    auto lock = std::scoped_lock{impl_->mutex};
-   auto out = std::vector<peer_record>{};
+   auto out = std::vector<record>{};
    out.reserve(impl_->records.size());
    const auto now = std::chrono::steady_clock::now();
    for (const auto& [_, record] : impl_->records) {

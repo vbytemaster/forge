@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -22,22 +23,23 @@ import fcl.asio.runtime;
 import fcl.api;
 import fcl.p2p.api;
 import fcl.p2p.codec;
+import fcl.p2p.endpoint;
 import fcl.p2p.errors;
 import fcl.p2p.exceptions;
 import fcl.p2p.identity;
 import fcl.p2p.message;
 import fcl.p2p.node;
-import fcl.p2p.options;
 import fcl.p2p.peer_store;
 import fcl.p2p.protocol;
 import fcl.p2p.relay;
-import fcl.p2p.session;
 import fcl.quic.endpoint;
 import fcl.quic.framed_stream;
+import fcl.quic.libp2p;
 import fcl.quic.listener;
 import fcl.quic.options;
 import fcl.quic.security;
 import fcl.quic.stream;
+import fcl.multiformats;
 
 namespace fcl::p2p {
 namespace {
@@ -102,16 +104,38 @@ std::string_view test_private_key() {
 }
 
 peer_id peer(std::uint8_t value) {
-   static constexpr auto digits = "0123456789abcdef";
-   auto out = std::string(64, '0');
-   out.back() = digits[value & 0x0fU];
-   out[out.size() - 2] = digits[(value >> 4U) & 0x0fU];
-   return peer_id{.value = std::move(out)};
+   const auto payload = fcl::multiformats::bytes{value};
+   return peer_id::from_bytes(fcl::multiformats::multihash::identity(payload).encode());
 }
 
-node_options options_for(peer_id id, capability_set capabilities = capability_set{
-                                         .bits = capabilities::direct_quic | capabilities::peer_exchange}) {
-   return node_options{
+std::uint8_t hex_value(char value) {
+   if (value >= '0' && value <= '9') {
+      return static_cast<std::uint8_t>(value - '0');
+   }
+   if (value >= 'a' && value <= 'f') {
+      return static_cast<std::uint8_t>(10 + value - 'a');
+   }
+   if (value >= 'A' && value <= 'F') {
+      return static_cast<std::uint8_t>(10 + value - 'A');
+   }
+   throw std::runtime_error{"bad hex"};
+}
+
+std::vector<std::uint8_t> bytes_from_hex(std::string_view hex) {
+   if ((hex.size() % 2) != 0) {
+      throw std::runtime_error{"odd hex"};
+   }
+   auto out = std::vector<std::uint8_t>{};
+   out.reserve(hex.size() / 2);
+   for (std::size_t i = 0; i < hex.size(); i += 2) {
+      out.push_back(static_cast<std::uint8_t>((hex_value(hex[i]) << 4U) | hex_value(hex[i + 1])));
+   }
+   return out;
+}
+
+node::options options_for(peer_id id, capability_set capabilities = capability_set{
+                                           .bits = capabilities::direct_quic | capabilities::peer_exchange}) {
+   return node::options{
        .certificate_pem = std::string{test_certificate()},
        .private_key_pem = std::string{test_private_key()},
        .explicit_peer_id = std::move(id),
@@ -133,7 +157,7 @@ fcl::quic::server_options raw_quic_server_options() {
 
 void register_echo(node& value) {
    value.register_protocol_handler(builtins::echo,
-                                   [](incoming_protocol_stream incoming) mutable -> boost::asio::awaitable<void> {
+                                   [](node::incoming_protocol_stream incoming) mutable -> boost::asio::awaitable<void> {
                                       auto payload = co_await incoming.stream.async_read_frame();
                                       co_await incoming.stream.async_write_frame(payload);
                                    });
@@ -184,13 +208,13 @@ boost::asio::awaitable<fcl::quic::connection> accept_raw_p2p_session(fcl::quic::
    auto control = fcl::quic::framed_stream{
        co_await connection.async_accept_stream(),
    };
-   auto request = co_await async_read_message(control);
-   if (request.type != message_type::hello) {
+   auto request = co_await control_codec::async_read(control);
+   if (request.kind != control_message::type::hello) {
       throw std::runtime_error{"raw P2P test peer expected hello"};
    }
-   co_await async_write_message(
-       control, p2p_message{
-                    .type = message_type::hello_ack,
+   co_await control_codec::async_write(
+       control, control_message{
+                    .kind = control_message::type::hello_ack,
                     .peer = std::move(local_peer),
                     .capabilities = capability_set{.bits = capabilities::direct_quic | capabilities::peer_exchange},
                 });
@@ -199,11 +223,71 @@ boost::asio::awaitable<fcl::quic::connection> accept_raw_p2p_session(fcl::quic::
 
 } // namespace
 
-BOOST_AUTO_TEST_CASE(p2p_identity_uses_certificate_fingerprint_shape) {
+BOOST_AUTO_TEST_CASE(p2p_identity_uses_libp2p_multihash_shape) {
    const auto id = make_peer_id_from_certificate_pem(test_certificate());
 
    BOOST_TEST(valid_peer_id(id));
-   BOOST_TEST(id.value.size() == 64U);
+   auto decoded = fcl::multiformats::multihash::decode(id.to_bytes());
+   BOOST_TEST(decoded.code == fcl::multiformats::code_value(fcl::multiformats::multicodec_code::sha2_256));
+   BOOST_TEST(decoded.digest.size() == 32U);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_public_key_encoding_matches_libp2p_vectors) {
+   const auto ed25519_public_key =
+       bytes_from_hex("1ed1e8fae2c4a144b8be8fd4b47bf3d3b34b871c3cacf6010f0e42d474fce27e");
+   const auto ed25519_encoded = encode_public_key({.type = public_key::type::ed25519, .data = ed25519_public_key});
+   BOOST_CHECK_EQUAL(
+       fcl::multiformats::multihash::identity(ed25519_encoded).digest_hex(),
+       "080112201ed1e8fae2c4a144b8be8fd4b47bf3d3b34b871c3cacf6010f0e42d474fce27e");
+
+   auto ed25519_peer = make_peer_id({.type = public_key::type::ed25519, .data = ed25519_public_key});
+   auto ed25519_hash = fcl::multiformats::multihash::decode(ed25519_peer.to_bytes());
+   BOOST_TEST(ed25519_hash.code == fcl::multiformats::code_value(fcl::multiformats::multicodec_code::identity));
+
+   const auto ecdsa_public_key = bytes_from_hex(
+       "3059301306072a8648ce3d020106082a8648ce3d03010703420004de3d300fa36ae0e8f5d530899d83abab44ab"
+       "f3161f162a4bc901d8e6ecda020e8b6d5f8da30525e71d6851510c098e5c47c646a597fb4dcec034e9f77c409e62");
+   auto ecdsa_peer = make_peer_id({.type = public_key::type::ecdsa, .data = ecdsa_public_key});
+   auto ecdsa_hash = fcl::multiformats::multihash::decode(ecdsa_peer.to_bytes());
+   BOOST_TEST(ecdsa_hash.code == fcl::multiformats::code_value(fcl::multiformats::multicodec_code::sha2_256));
+}
+
+BOOST_AUTO_TEST_CASE(p2p_peer_id_legacy_and_cid_strings_roundtrip) {
+   auto id = make_peer_id(
+       {.type = public_key::type::secp256k1,
+        .data = bytes_from_hex("037777e994e452c21604f91de093ce415f5432f701dd8cd1a7a6fea0e630bfca99")});
+
+   auto legacy = id.to_string();
+   BOOST_TEST(peer_id::from_string(legacy).to_string() == id.to_string());
+
+   auto cid = id.to_cid_string();
+   BOOST_TEST(cid.front() == 'b');
+   BOOST_TEST(peer_id::from_string(cid).to_string() == id.to_string());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_endpoint_parses_libp2p_quic_address_format) {
+   static_assert(std::is_same_v<decltype(endpoint{}.kind), endpoint::address_kind>);
+
+   const auto id = peer(42);
+   auto parsed = parse_endpoint("/ip4/127.0.0.1/udp/4001/quic-v1/p2p/" + id.to_string());
+
+   BOOST_TEST(static_cast<int>(parsed.kind) == static_cast<int>(endpoint::address_kind::ip4));
+
+   BOOST_TEST(parsed.host == "127.0.0.1");
+   BOOST_TEST(parsed.port == 4001);
+   BOOST_REQUIRE(parsed.peer.has_value());
+   BOOST_TEST(parsed.peer->to_string() == id.to_string());
+   BOOST_TEST(parsed.to_string() == "/ip4/127.0.0.1/udp/4001/quic-v1/p2p/" + id.to_string());
+   BOOST_TEST(parsed.quic_endpoint().authority() == "127.0.0.1:4001");
+}
+
+BOOST_AUTO_TEST_CASE(quic_libp2p_profile_sets_required_alpn) {
+   auto client = fcl::quic::libp2p::client_profile();
+   auto server = fcl::quic::libp2p::server_profile();
+
+   BOOST_TEST(client.alpn == "libp2p");
+   BOOST_TEST(server.alpn == "libp2p");
+   BOOST_TEST(fcl::quic::libp2p::is_profile_alpn(client.alpn));
 }
 
 BOOST_AUTO_TEST_CASE(p2p_api_binding_enforces_known_peer_policy_before_reading_frames) {
@@ -212,7 +296,7 @@ BOOST_AUTO_TEST_CASE(p2p_api_binding_enforces_known_peer_policy_before_reading_f
    auto apis = fcl::api::registry{};
    auto binding = fcl::p2p::api(owner)
                       .use(fcl::api::binding().serve(apis).build())
-                      .peer_policy(api_peer_policy{.require_known_peer = true})
+                      .peer_policy(api_binding::peer_policy{.require_known_peer = true})
                       .build();
    auto session_called = false;
    binding.on_session([&](fcl::api::session&) -> boost::asio::awaitable<void> {
@@ -220,8 +304,8 @@ BOOST_AUTO_TEST_CASE(p2p_api_binding_enforces_known_peer_policy_before_reading_f
       co_return;
    });
 
-   auto incoming = incoming_protocol_stream{
-       .session = session_info{.remote_peer = peer(13)},
+   auto incoming = node::incoming_protocol_stream{
+       .session = node::session_info{.remote_peer = peer(13)},
        .protocol = binding.protocol(),
        .stream = fcl::quic::framed_stream{fcl::quic::stream{}},
    };
@@ -232,20 +316,21 @@ BOOST_AUTO_TEST_CASE(p2p_api_binding_enforces_known_peer_policy_before_reading_f
 }
 
 BOOST_AUTO_TEST_CASE(p2p_codec_rejects_wrong_version_and_oversized_envelope) {
-   auto message = p2p_message{.type = message_type::ping, .peer = peer(1)};
-   auto encoded = encode_message(message);
+   auto message = control_message{.kind = control_message::type::ping, .peer = peer(1)};
+   auto encoded = control_codec::encode(message);
    encoded[5] = 2;
 
    try {
-      (void)decode_message(encoded);
+      (void)control_codec::decode(encoded);
       BOOST_FAIL("expected wrong-version codec rejection");
    } catch (const p2p_error& error) {
       BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::codec_error));
    }
 
    try {
-      (void)encode_message(p2p_message{.type = message_type::ping, .payload = std::vector<std::uint8_t>(64)},
-                           codec_options{.max_message_size = 16});
+      (void)control_codec::encode(
+          control_message{.kind = control_message::type::ping, .payload = std::vector<std::uint8_t>(64)},
+          control_codec::options{.max_message_size = 16});
       BOOST_FAIL("expected oversized codec rejection");
    } catch (const p2p_error& error) {
       BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::codec_error));
@@ -260,7 +345,7 @@ BOOST_AUTO_TEST_CASE(p2p_direct_nodes_negotiate_protocol_and_echo_frames) {
 
    const auto server_endpoint = listen(server, runtime);
    const auto session = fcl::asio::blocking::run(
-       runtime, client.async_connect(server_endpoint, connect_options{.expected_peer = server.local_peer()}));
+       runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
    BOOST_TEST(session.remote_peer.value == server.local_peer().value);
 
    auto stream =
@@ -291,7 +376,7 @@ BOOST_AUTO_TEST_CASE(p2p_path_manager_tries_next_direct_endpoint_after_attempt_t
 
    auto stream = fcl::asio::blocking::run(
        runtime, client.async_open_protocol_stream(server.local_peer(), builtins::echo,
-                                                  open_options{
+                                                  node::open_options{
                                                       .allow_relay = false,
                                                       .timeout = std::chrono::milliseconds{2'000},
                                                       .direct_attempt_timeout = std::chrono::milliseconds{100},
@@ -317,13 +402,14 @@ BOOST_AUTO_TEST_CASE(p2p_successful_connect_deadline_does_not_poison_session) {
 
    const auto server_endpoint = listen(server, runtime);
    (void)fcl::asio::blocking::run(
-       runtime, client.async_connect(server_endpoint, connect_options{.expected_peer = server.local_peer(),
-                                                                      .timeout = std::chrono::milliseconds{500}}));
+       runtime, client.async_connect(server_endpoint, node::connect_options{
+                                                          .expected_peer = server.local_peer(),
+                                                          .timeout = std::chrono::milliseconds{500}}));
    wait_on_runtime(runtime, std::chrono::milliseconds{700}, "post-connect deadline grace");
 
    auto stream = fcl::asio::blocking::run(
        runtime, client.async_open_protocol_stream(server.local_peer(), builtins::echo,
-                                                  open_options{.timeout = std::chrono::milliseconds{1'000}}));
+                                                  node::open_options{.timeout = std::chrono::milliseconds{1'000}}));
    const auto payload = std::vector<std::uint8_t>{'d', 'e', 'a', 'd', 'l', 'i', 'n', 'e'};
    fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
    const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
@@ -367,7 +453,7 @@ BOOST_AUTO_TEST_CASE(p2p_api_and_route_builders_are_node_free_artifacts) {
 
    auto route_binding = fcl::p2p::route()
                             .protocol_id("/product/blob-transfer/1")
-                            .handler([](incoming_protocol_stream) -> boost::asio::awaitable<void> { co_return; })
+                            .handler([](node::incoming_protocol_stream) -> boost::asio::awaitable<void> { co_return; })
                             .build();
 
    BOOST_TEST(api_binding.protocol().value == "/fcl/api/cache/1");
@@ -387,8 +473,8 @@ BOOST_AUTO_TEST_CASE(p2p_connect_timeout_covers_hello_ack_wait) {
           auto control = fcl::quic::framed_stream{
               co_await connection.async_accept_stream(),
           };
-          auto request = co_await async_read_message(control);
-          if (request.type != message_type::hello) {
+          auto request = co_await control_codec::async_read(control);
+          if (request.kind != control_message::type::hello) {
              throw std::runtime_error{"raw P2P test peer expected hello"};
           }
           co_await wait_before_close(connection, std::chrono::milliseconds{500});
@@ -399,7 +485,7 @@ BOOST_AUTO_TEST_CASE(p2p_connect_timeout_covers_hello_ack_wait) {
       (void)fcl::asio::blocking::run(
           runtime,
           client.async_connect(raw.local_endpoint(),
-                               connect_options{.expected_peer = peer(31), .timeout = std::chrono::milliseconds{100}}));
+                               node::connect_options{.expected_peer = peer(31), .timeout = std::chrono::milliseconds{100}}));
       BOOST_FAIL("expected P2P connect timeout");
    } catch (const p2p_error& error) {
       BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::timeout));
@@ -419,7 +505,7 @@ BOOST_AUTO_TEST_CASE(p2p_connect_rejects_non_positive_timeout) {
       (void)fcl::asio::blocking::run(
           runtime,
           client.async_connect(fcl::quic::endpoint{.host = "127.0.0.1", .port = 9},
-                               connect_options{.expected_peer = peer(33), .timeout = std::chrono::milliseconds{0}}));
+                               node::connect_options{.expected_peer = peer(33), .timeout = std::chrono::milliseconds{0}}));
       BOOST_FAIL("expected invalid connect timeout");
    } catch (const p2p_error& error) {
       BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::invalid_options));
@@ -442,8 +528,8 @@ BOOST_AUTO_TEST_CASE(p2p_open_protocol_timeout_covers_missing_accept) {
           auto framed = fcl::quic::framed_stream{
               co_await connection.async_accept_stream(),
           };
-          auto request = co_await async_read_message(framed);
-          if (request.type != message_type::protocol_open) {
+          auto request = co_await control_codec::async_read(framed);
+          if (request.kind != control_message::type::protocol_open) {
              throw std::runtime_error{"raw P2P test peer expected protocol_open"};
           }
           co_await wait_before_close(connection, std::chrono::milliseconds{500});
@@ -451,13 +537,13 @@ BOOST_AUTO_TEST_CASE(p2p_open_protocol_timeout_covers_missing_accept) {
        boost::asio::use_future);
 
    (void)fcl::asio::blocking::run(
-       runtime, client.async_connect(raw.local_endpoint(), connect_options{.expected_peer = server_peer}));
+       runtime, client.async_connect(raw.local_endpoint(), node::connect_options{.expected_peer = server_peer}));
 
    try {
       (void)fcl::asio::blocking::run(
           runtime, client.async_open_protocol_stream(
                        server_peer, builtins::echo,
-                       open_options{.allow_relay = false, .timeout = std::chrono::milliseconds{100}}));
+                       node::open_options{.allow_relay = false, .timeout = std::chrono::milliseconds{100}}));
       BOOST_FAIL("expected protocol open timeout");
    } catch (const p2p_error& error) {
       BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::timeout));
@@ -484,8 +570,8 @@ BOOST_AUTO_TEST_CASE(p2p_relay_open_timeout_covers_missing_accept) {
           auto framed = fcl::quic::framed_stream{
               co_await connection.async_accept_stream(),
           };
-          auto request = co_await async_read_message(framed);
-          if (request.type != message_type::relay_reserve) {
+          auto request = co_await control_codec::async_read(framed);
+          if (request.kind != control_message::type::relay_reserve) {
              throw std::runtime_error{"raw P2P test peer expected relay_reserve"};
           }
           co_await wait_before_close(connection, std::chrono::milliseconds{500});
@@ -496,14 +582,15 @@ BOOST_AUTO_TEST_CASE(p2p_relay_open_timeout_covers_missing_accept) {
        relay_peer, raw.local_endpoint(),
        capability_set{.bits = capabilities::direct_quic | capabilities::relay | capabilities::relay_reservation});
    (void)fcl::asio::blocking::run(
-       runtime, client.async_connect(raw.local_endpoint(), connect_options{.expected_peer = relay_peer}));
+       runtime, client.async_connect(raw.local_endpoint(), node::connect_options{.expected_peer = relay_peer}));
 
    try {
       (void)fcl::asio::blocking::run(
           runtime,
           client.async_open_protocol_stream(
               target_peer, builtins::echo,
-              open_options{.allow_relay = true, .relay_peer = relay_peer, .timeout = std::chrono::milliseconds{100}}));
+              node::open_options{
+                  .allow_relay = true, .relay_peer = relay_peer, .timeout = std::chrono::milliseconds{100}}));
       BOOST_FAIL("expected relay protocol open timeout");
    } catch (const p2p_error& error) {
       BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::timeout));
@@ -521,7 +608,7 @@ BOOST_AUTO_TEST_CASE(p2p_open_protocol_rejects_non_positive_timeout) {
    try {
       (void)fcl::asio::blocking::run(
           runtime, client.async_open_protocol_stream(peer(40), builtins::echo,
-                                                     open_options{.timeout = std::chrono::milliseconds{0}}));
+                                                     node::open_options{.timeout = std::chrono::milliseconds{0}}));
       BOOST_FAIL("expected invalid protocol open timeout");
    } catch (const p2p_error& error) {
       BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::invalid_options));
@@ -542,7 +629,8 @@ BOOST_AUTO_TEST_CASE(p2p_peer_exchange_learns_third_endpoint) {
                                      capability_set{.bits = capabilities::direct_quic});
 
    (void)fcl::asio::blocking::run(
-       runtime, client.async_connect(introducer_endpoint, connect_options{.expected_peer = introducer.local_peer()}));
+       runtime,
+       client.async_connect(introducer_endpoint, node::connect_options{.expected_peer = introducer.local_peer()}));
    fcl::asio::blocking::run(runtime, client.async_request_peer_exchange(introducer.local_peer()));
 
    const auto learned = client.peers().find(third.local_peer());
@@ -571,10 +659,10 @@ BOOST_AUTO_TEST_CASE(p2p_explicit_relay_fallback_transfers_frames) {
    client.peers().learn_endpoint(relay.local_peer(), relay_endpoint, relay_caps);
 
    (void)fcl::asio::blocking::run(
-       runtime, client.async_connect(relay_endpoint, connect_options{.expected_peer = relay.local_peer()}));
+       runtime, client.async_connect(relay_endpoint, node::connect_options{.expected_peer = relay.local_peer()}));
    auto stream = fcl::asio::blocking::run(
        runtime, client.async_open_protocol_stream(target.local_peer(), builtins::echo,
-                                                  open_options{.allow_relay = true, .relay_peer = relay.local_peer()}));
+                                                  node::open_options{.allow_relay = true, .relay_peer = relay.local_peer()}));
 
    const auto payload = std::vector<std::uint8_t>{'r', 'e', 'l', 'a', 'y'};
    fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
@@ -609,7 +697,7 @@ BOOST_AUTO_TEST_CASE(p2p_path_manager_tries_next_relay_candidate_after_failure) 
 
    auto stream = fcl::asio::blocking::run(
        runtime, client.async_open_protocol_stream(target.local_peer(), builtins::echo,
-                                                  open_options{
+                                                  node::open_options{
                                                       .allow_relay = true,
                                                       .timeout = std::chrono::milliseconds{3'000},
                                                       .relay_attempt_timeout = std::chrono::milliseconds{150},
@@ -637,7 +725,7 @@ BOOST_AUTO_TEST_CASE(p2p_reachability_probe_marks_public_loopback_peer) {
    const auto observer_endpoint = listen(observer, runtime);
    (void)listen(client, runtime);
    (void)fcl::asio::blocking::run(
-       runtime, client.async_connect(observer_endpoint, connect_options{.expected_peer = observer.local_peer()}));
+       runtime, client.async_connect(observer_endpoint, node::connect_options{.expected_peer = observer.local_peer()}));
 
    const auto result = fcl::asio::blocking::run(runtime, client.async_probe_reachability(observer.local_peer()));
 
@@ -651,7 +739,7 @@ BOOST_AUTO_TEST_CASE(p2p_reachability_probe_marks_public_loopback_peer) {
 
 BOOST_AUTO_TEST_CASE(p2p_peer_store_expires_stale_reachability_observation) {
    auto store = peer_store{};
-   store.upsert(peer_record{
+   store.upsert(peer_store::record{
        .peer = peer(70),
        .capabilities = capability_set{.bits = capabilities::direct_quic},
        .reachability = reachability_state::publicly_reachable,
@@ -679,10 +767,10 @@ BOOST_AUTO_TEST_CASE(p2p_relay_reservation_is_explicit_and_metered) {
    const auto relay_endpoint = listen(relay, runtime);
    client.peers().learn_endpoint(relay.local_peer(), relay_endpoint, relay_caps);
    (void)fcl::asio::blocking::run(
-       runtime, client.async_connect(relay_endpoint, connect_options{.expected_peer = relay.local_peer()}));
+       runtime, client.async_connect(relay_endpoint, node::connect_options{.expected_peer = relay.local_peer()}));
 
    const auto reservation = fcl::asio::blocking::run(
-       runtime, client.async_reserve_relay(relay.local_peer(), relay_reservation_options{
+       runtime, client.async_reserve_relay(relay.local_peer(), relay_reservation::options{
                                                                    .ttl = std::chrono::milliseconds{5'000},
                                                                    .max_streams = 2,
                                                                    .max_bytes = 1024 * 1024,
@@ -718,7 +806,7 @@ BOOST_AUTO_TEST_CASE(p2p_hole_punch_upgrades_reserved_relay_to_direct_loopback) 
    client.peers().learn_endpoint(relay.local_peer(), relay_endpoint, relay_caps);
 
    (void)fcl::asio::blocking::run(
-       runtime, client.async_connect(relay_endpoint, connect_options{.expected_peer = relay.local_peer()}));
+       runtime, client.async_connect(relay_endpoint, node::connect_options{.expected_peer = relay.local_peer()}));
 
    const auto result =
        fcl::asio::blocking::run(runtime, client.async_attempt_hole_punch(target.local_peer(), relay.local_peer(),
@@ -735,7 +823,7 @@ BOOST_AUTO_TEST_CASE(p2p_hole_punch_upgrades_reserved_relay_to_direct_loopback) 
 
 BOOST_AUTO_TEST_CASE(p2p_production_options_reject_missing_mtls_identity) {
    try {
-      validate(node_options{});
+      validate(node::options{});
       BOOST_FAIL("expected missing mTLS identity rejection");
    } catch (const p2p_error& error) {
       BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::invalid_options));

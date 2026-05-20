@@ -262,7 +262,7 @@ class route_publisher_plugin final : public fcl::app::plugin {
       p2p->publish_api(std::move(plan), fcl::p2p::protocol_id{.value = "/fcl/api/node-test/1"});
       p2p->publish_protocol(
          fcl::p2p::protocol_id{.value = "/product/blob-transfer/1"},
-         [](fcl::p2p::incoming_protocol_stream) -> boost::asio::awaitable<void> {
+         [](fcl::p2p::node::incoming_protocol_stream) -> boost::asio::awaitable<void> {
             co_return;
          });
       log_->entries.push_back("routes.published");
@@ -296,7 +296,7 @@ class duplicate_route_plugin final : public fcl::app::plugin {
    boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
       auto p2p = context.apis().get<fcl::plugins::p2p_node::api>(
          {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
-      auto handler = [](fcl::p2p::incoming_protocol_stream) -> boost::asio::awaitable<void> {
+      auto handler = [](fcl::p2p::node::incoming_protocol_stream) -> boost::asio::awaitable<void> {
          co_return;
       };
       p2p->publish_protocol(fcl::p2p::protocol_id{.value = "/product/duplicate/1"}, handler);

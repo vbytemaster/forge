@@ -69,7 +69,8 @@ or run ad hoc retry loops against raw `fcl::p2p::node`.
 stack. Compatibility means protocol compatibility (`протокольная
 совместимость`): when FCL declares support for a libp2p protocol, an FCL node
 must be able to talk to go-libp2p and rust-libp2p nodes using the same wire
-format, handshake, peer identity, protocol negotiation and message rules.
+formats, handshake, Peer ID, Identify, Ping, QUIC profile and later supported
+protocol rules.
 
 This does not mean copying Go/Rust runtime architecture or leaking libp2p's
 public vocabulary into FCL. FCL public APIs should keep Boost-style network
@@ -78,48 +79,54 @@ terms such as `endpoint`, `resolver`, `listener`, `connector`, `session`,
 wire/text address format; FCL can expose a typed endpoint model that reads and
 writes that format without making `multiaddr` the public API style.
 
-Production network mechanics belong in `fcl_p2p`:
+Production network mechanics belong in `fcl_p2p`, not in plugin-local
+workarounds: identity, keys, endpoint/address encoding, protocol negotiation,
+Identify, Ping, peer/path store, relay, AutoNAT, DHT and pubsub. The
+`fcl::plugins::p2p_node` plugin only maps config into the node, owns application
+lifecycle, mounts route/API contributions and exposes safe application APIs.
+Product plugins must not build their own discovery, relay, DHT or pubsub loops.
 
-- A typed endpoint/address model for direct, observed and relayed paths, with
-  libp2p multiaddress read/write support.
-- Peer ID and key encoding compatible with libp2p. Ed25519, Secp256k1, ECDSA
-  and RSA are all part of the compatibility baseline.
-- Protocol negotiation compatible with libp2p multistream-select.
-- Identify and Identify Push compatible with libp2p peer and capability
-  advertisement: peer id, public key, supported protocols, addresses,
-  agent/version and limits.
-- Ping compatible with libp2p interop test plans.
-- Persistent peer/path store for endpoints, relay candidates, protocol support,
-  signed peer records, scores, backoff and expiry. The store is interface-based;
-  RocksDB is the default production backend.
-- AutoNAT-style reachability service, not just one-off probes.
-- Circuit Relay style relay manager with reservation, TTL, renewal, limits and
-  accounting.
-- AutoRelay-style relay discovery, reservation selection and advertised relayed
-  addresses.
-- DCUtR-style direct connection upgrade through relay and hardened hole-punch
-  orchestration.
-- DHT/rendezvous discovery and pubsub/gossip as later network services.
-- Network limits, backpressure, metrics and deterministic shutdown for all of
-  the above.
+Ed25519, Secp256k1, ECDSA and RSA are all mandatory compatibility key families.
+RSA is required for IPFS/mainline DHT compatibility. Secp256k1 and ECDSA are
+required for blockchain-like networks built on top of FCL and plugins.
 
-Implementation should start from the foundation in this order:
+`fcl.crypto.base58` must be cleaned up before multiformats code depends on it:
+new APIs use `std::span<const std::uint8_t>` and `std::vector<std::uint8_t>`,
+while old `char` / `std::vector<char>` overloads remain compatibility wrappers.
+Multiformats code should use byte-native APIs without scattered casts.
 
-```text
-multiformats + byte-friendly base58
-  -> Peer ID + key encoding
-  -> endpoint/address compatibility
-  -> QUIC libp2p profile
-  -> multistream-select
-  -> Ping
-  -> Identify / Identify Push
-  -> persistent peer/path store
-  -> AutoNAT / reachability
-  -> Circuit Relay / AutoRelay
-  -> DCUtR hardening
-  -> DHT / rendezvous
-  -> pubsub / gossip
-```
+## Implementation Blocks
+
+### Блок 1: foundation compatibility
+
+- multiformats: varint, multicodec, multihash, multibase, base58btc and base32.
+- Peer ID and key encoding according to libp2p specs.
+- FCL public `p2p::endpoint` with read/write support for the libp2p multiaddress
+  format.
+- QUIC libp2p profile: ALPN `libp2p`, `/quic-v1`, connection/session semantics.
+
+### Блок 2: first real interop
+
+- multistream-select.
+- Ping.
+- Identify and Identify Push.
+- Persistent peer/path store through an interface, with RocksDB as the default
+  backend.
+- `p2p_node` receives only config knobs, not its own network algorithms.
+
+### Блок 3: production networking
+
+- relay v2, AutoNAT, AutoRelay and DCUtR hole punching.
+- DHT/rendezvous discovery.
+- GossipSub/pubsub.
+- resource limits, scoring, backpressure and metrics.
+
+### Блок 4: product-level composition
+
+- Develop `p2p_node` and focused friend plugins, not one superplugin.
+- Friend plugins may own diagnostics, discovery policy, relay service config,
+  pubsub gateway and the interop harness.
+- `p2p_node` remains the central owner of node lifecycle.
 
 AutoNAT, AutoRelay, DHT and pubsub algorithms must live in `fcl_p2p`.
 `fcl::plugins::p2p_node` configures and runs the shared node, then exposes the
@@ -129,12 +136,12 @@ the gap above the network layer.
 
 ## Donor Test Adoption
 
-libp2p specs, go-libp2p and rust-libp2p are not just inspiration; they are the
-compatibility contract for protocols FCL claims to support. FCL should not copy
-Go/Rust runtime code, but it must adopt their protocol criteria, golden vectors,
-failure cases and interop scenarios.
+libp2p specs are the contract for wire behavior. go-libp2p and rust-libp2p
+tests are donor criteria, not optional inspiration. FCL should not copy Go/Rust
+runtime code, but it must adopt their golden vectors, scenarios, failure cases
+and acceptance criteria.
 
-For each supported libp2p protocol, keep a traceability matrix:
+For each supported libp2p protocol, create a traceability matrix:
 
 | Protocol | Spec source | Donor tests inspected | FCL unit tests | FCL interop tests | Unsupported gaps |
 | --- | --- | --- | --- | --- | --- |
@@ -144,8 +151,8 @@ For each supported libp2p protocol, keep a traceability matrix:
 
 Test layers:
 
-- `golden`: byte-level vectors for varint, multicodec, multihash, multibase,
-  Peer ID, signed records and Identify messages.
+- `golden`: golden vectors for varint, multicodec, multihash, multibase, Peer
+  ID, signed records and Identify messages.
 - `component`: FCL-to-FCL tests for endpoint parsing, negotiation, Ping,
   Identify and peer/path store behavior.
 - `interop`: FCL client/server against go-libp2p and rust-libp2p in both
@@ -156,13 +163,14 @@ Test layers:
   peers, backpressure and peerstore recovery.
 
 If the libp2p ecosystem already has an acceptance criterion, the FCL test must
-reference that criterion. A test that is only "similar to libp2p" is not enough
-to mark a protocol as supported.
+reference that criterion. A test that is only "similar to libp2p" is not enough.
+A protocol cannot be marked supported until it has spec-derived, donor-derived
+and required interop coverage.
 
 ## Integration Example
 
 ```cpp
-auto options = fcl::p2p::node_options{
+auto options = fcl::p2p::node::options{
    .certificate_pem = certificate_pem,
    .private_key_pem = private_key_pem,
 };
@@ -170,14 +178,14 @@ auto options = fcl::p2p::node_options{
 auto node = fcl::p2p::node{runtime, options};
 node.register_protocol_handler(
    fcl::p2p::protocol_id{.value = "/example/1"},
-   [](fcl::p2p::incoming_protocol_stream incoming) -> boost::asio::awaitable<void> {
+   [](fcl::p2p::node::incoming_protocol_stream incoming) -> boost::asio::awaitable<void> {
       std::vector<std::uint8_t> frame = co_await incoming.stream.async_read_frame();
       co_await incoming.stream.async_write_frame(frame);
    });
 
 boost::asio::awaitable<void> connect_example(fcl::p2p::node& node) {
    co_await node.async_listen(fcl::quic::parse_endpoint("127.0.0.1:9443"));
-   fcl::p2p::session_info session = co_await node.async_connect(remote_endpoint, {.expected_peer = remote_peer});
+   fcl::p2p::node::session_info session = co_await node.async_connect(remote_endpoint, {.expected_peer = remote_peer});
    fcl::quic::framed_stream stream = co_await node.async_open_protocol_stream(
       session.remote_peer,
       fcl::p2p::protocol_id{.value = "/example/1"});

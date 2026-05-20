@@ -87,7 +87,11 @@ class reader {
    [[nodiscard]] std::string string() {
       const auto size = u32();
       require(size);
-      auto out = std::string{reinterpret_cast<const char*>(bytes_.data() + offset_), size};
+      auto out = std::string{};
+      out.reserve(size);
+      for (std::size_t i = 0; i < size; ++i) {
+         out.push_back(static_cast<char>(bytes_[offset_ + i]));
+      }
       offset_ += size;
       return out;
    }
@@ -126,32 +130,32 @@ class reader {
    std::size_t offset_ = 0;
 };
 
-[[nodiscard]] message_type checked_message_type(std::uint16_t value) {
-   switch (static_cast<message_type>(value)) {
-   case message_type::hello:
-   case message_type::hello_ack:
-   case message_type::protocol_open:
-   case message_type::protocol_accept:
-   case message_type::protocol_reject:
-   case message_type::peer_exchange_request:
-   case message_type::peer_exchange_response:
-   case message_type::relay_open:
-   case message_type::relay_accept:
-   case message_type::relay_reject:
-   case message_type::relay_close:
-   case message_type::ping:
-   case message_type::pong:
-   case message_type::goaway:
-   case message_type::reachability_probe:
-   case message_type::reachability_result:
-   case message_type::relay_reserve:
-   case message_type::relay_renew:
-   case message_type::relay_cancel:
-   case message_type::relay_reserved:
-   case message_type::hole_punch_prepare:
-   case message_type::hole_punch_sync:
-   case message_type::hole_punch_result:
-      return static_cast<message_type>(value);
+[[nodiscard]] control_message::type checked_control_kind(std::uint16_t value) {
+   switch (static_cast<control_message::type>(value)) {
+   case control_message::type::hello:
+   case control_message::type::hello_ack:
+   case control_message::type::protocol_open:
+   case control_message::type::protocol_accept:
+   case control_message::type::protocol_reject:
+   case control_message::type::peer_exchange_request:
+   case control_message::type::peer_exchange_response:
+   case control_message::type::relay_open:
+   case control_message::type::relay_accept:
+   case control_message::type::relay_reject:
+   case control_message::type::relay_close:
+   case control_message::type::ping:
+   case control_message::type::pong:
+   case control_message::type::goaway:
+   case control_message::type::reachability_probe:
+   case control_message::type::reachability_result:
+   case control_message::type::relay_reserve:
+   case control_message::type::relay_renew:
+   case control_message::type::relay_cancel:
+   case control_message::type::relay_reserved:
+   case control_message::type::hole_punch_prepare:
+   case control_message::type::hole_punch_sync:
+   case control_message::type::hole_punch_result:
+      return static_cast<control_message::type>(value);
    }
    throw_p2p_error(error_kind::codec_error, "unknown P2P message type");
 }
@@ -182,12 +186,14 @@ class reader {
 
 } // namespace
 
-std::vector<std::uint8_t> encode_message(const p2p_message& message, codec_options options) {
+namespace control_codec {
+
+std::vector<std::uint8_t> encode(const control_message& message, options opts) {
    auto out = std::vector<std::uint8_t>{};
    out.reserve(128 + message.payload.size());
    out.insert(out.end(), std::begin(magic), std::end(magic));
    append_u16(out, wire_version_v1);
-   append_u16(out, static_cast<std::uint16_t>(message.type));
+   append_u16(out, static_cast<std::uint16_t>(message.kind));
    append_u32(out, message.flags);
    append_u64(out, message.request_id);
    append_string(out, message.peer.value);
@@ -202,7 +208,7 @@ std::vector<std::uint8_t> encode_message(const p2p_message& message, codec_optio
    append_u16(out, static_cast<std::uint16_t>(message.reachability));
    append_u16(out, static_cast<std::uint16_t>(message.hole_punch));
    append_string(out, message.reason);
-   if (message.endpoints.size() > options.max_endpoint_records) {
+   if (message.endpoints.size() > opts.max_endpoint_records) {
       throw_p2p_error(error_kind::codec_error, "too many P2P endpoint records");
    }
    append_u32(out, static_cast<std::uint32_t>(message.endpoints.size()));
@@ -213,14 +219,14 @@ std::vector<std::uint8_t> encode_message(const p2p_message& message, codec_optio
       append_u64(out, endpoint.capabilities.bits);
    }
    append_bytes(out, message.payload);
-   if (out.size() > options.max_message_size) {
+   if (out.size() > opts.max_message_size) {
       throw_p2p_error(error_kind::codec_error, "P2P message exceeds max size");
    }
    return out;
 }
 
-p2p_message decode_message(std::span<const std::uint8_t> bytes, codec_options options) {
-   if (bytes.size() > options.max_message_size) {
+control_message decode(std::span<const std::uint8_t> bytes, options opts) {
+   if (bytes.size() > opts.max_message_size) {
       throw_p2p_error(error_kind::codec_error, "P2P message exceeds max size");
    }
    auto in = reader{bytes};
@@ -228,8 +234,8 @@ p2p_message decode_message(std::span<const std::uint8_t> bytes, codec_options op
    if (in.u16() != wire_version_v1) {
       throw_p2p_error(error_kind::codec_error, "unsupported P2P wire version");
    }
-   auto out = p2p_message{};
-   out.type = checked_message_type(in.u16());
+   auto out = control_message{};
+   out.kind = checked_control_kind(in.u16());
    out.flags = in.u32();
    if ((out.flags & mandatory_flag_mask) != 0) {
       throw_p2p_error(error_kind::codec_error, "unknown mandatory P2P message flags");
@@ -248,12 +254,12 @@ p2p_message decode_message(std::span<const std::uint8_t> bytes, codec_options op
    out.hole_punch = checked_hole_punch_status(in.u16());
    out.reason = in.string();
    const auto endpoint_count = in.u32();
-   if (endpoint_count > options.max_endpoint_records) {
+   if (endpoint_count > opts.max_endpoint_records) {
       throw_p2p_error(error_kind::codec_error, "too many P2P endpoint records");
    }
    out.endpoints.reserve(endpoint_count);
    for (auto i = std::uint32_t{0}; i != endpoint_count; ++i) {
-      out.endpoints.push_back(endpoint_record{
+      out.endpoints.push_back(control_message::endpoint_record{
           .peer = peer_id{.value = in.string()},
           .endpoint = fcl::quic::endpoint{.host = in.string(), .port = in.u16()},
           .capabilities = capability_set{.bits = in.u64()},
@@ -264,15 +270,17 @@ p2p_message decode_message(std::span<const std::uint8_t> bytes, codec_options op
    return out;
 }
 
-boost::asio::awaitable<void> async_write_message(fcl::quic::framed_stream& stream, const p2p_message& message,
-                                                 codec_options options) {
-   auto encoded = encode_message(message, options);
+boost::asio::awaitable<void> async_write(fcl::quic::framed_stream& stream, const control_message& message,
+                                         options opts) {
+   auto encoded = encode(message, opts);
    co_await stream.async_write_frame(encoded);
 }
 
-boost::asio::awaitable<p2p_message> async_read_message(fcl::quic::framed_stream& stream, codec_options options) {
+boost::asio::awaitable<control_message> async_read(fcl::quic::framed_stream& stream, options opts) {
    auto encoded = co_await stream.async_read_frame();
-   co_return decode_message(encoded, options);
+   co_return decode(encoded, opts);
 }
+
+} // namespace control_codec
 
 } // namespace fcl::p2p

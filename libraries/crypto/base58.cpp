@@ -16,7 +16,11 @@ module;
 #ifndef BITCOIN_BASE58_H
 #define BITCOIN_BASE58_H
 
+#include <cstdint>
+#include <cstring>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <limits>
 #include <algorithm>
@@ -30,6 +34,7 @@ module fcl.crypto.base58;
 import fcl.core.string;
 import fcl.core.utility;
 import fcl.exception.exception;
+import fcl.crypto.types;
 
 /** Errors thrown by the bignum class */
 class bignum_error : public std::runtime_error {
@@ -602,10 +607,31 @@ inline bool DecodeBase58(const std::string& str, std::vector<unsigned char>& vch
    return DecodeBase58(str.c_str(), vchRet);
 }
 
+namespace fcl::crypto {
+
+std::string base58_encode(std::span<const std::uint8_t> data, const fcl::yield_function_t& yield) {
+   if (data.empty()) {
+      return {};
+   }
+   return EncodeBase58(data.data(), data.data() + data.size(), yield);
+}
+
+bytes base58_decode(std::string_view base58_str) {
+   std::vector<unsigned char> out;
+   const auto input = std::string{base58_str};
+   if (!DecodeBase58(input.c_str(), out)) {
+      FCL_THROW("Unable to decode base58 string ${base58_str}", fcl::error::ctx("base58_str", input));
+   }
+   return bytes{out.begin(), out.end()};
+}
+
+} // namespace fcl::crypto
+
 namespace fcl {
 
 std::string to_base58(const char* d, size_t s, const fcl::yield_function_t& yield) {
-   return EncodeBase58((const unsigned char*)d, (const unsigned char*)d + s, yield);
+   const auto bytes = std::span{reinterpret_cast<const std::uint8_t*>(d), s};
+   return fcl::crypto::base58_encode(bytes, yield);
 }
 
 std::string to_base58(const std::vector<char>& d, const fcl::yield_function_t& yield) {
@@ -614,21 +640,15 @@ std::string to_base58(const std::vector<char>& d, const fcl::yield_function_t& y
    return std::string();
 }
 std::vector<char> from_base58(const std::string& base58_str) {
-   std::vector<unsigned char> out;
-   if (!DecodeBase58(base58_str.c_str(), out)) {
-      FCL_THROW("Unable to decode base58 string ${base58_str}", fcl::error::ctx("base58_str", base58_str));
-   }
-   return std::vector<char>((const char*)out.data(), ((const char*)out.data()) + out.size());
+   auto out = fcl::crypto::base58_decode(base58_str);
+   return std::vector<char>(out.begin(), out.end());
 }
 /**
  *  @return the number of bytes decoded
  */
 size_t from_base58(const std::string& base58_str, char* out_data, size_t out_data_len) {
    // slog( "%s", base58_str.c_str() );
-   std::vector<unsigned char> out;
-   if (!DecodeBase58(base58_str.c_str(), out)) {
-      FCL_THROW("Unable to decode base58 string ${base58_str}", fcl::error::ctx("base58_str", base58_str));
-   }
+   auto out = fcl::crypto::base58_decode(base58_str);
    FCL_ASSERT(out.size() <= out_data_len);
    memcpy(out_data, out.data(), out.size());
    return out.size();

@@ -18,7 +18,8 @@ probes, hole punching and path scoring.
 - Do not put application message semantics or storage semantics here.
 - Do not treat P2P as authorization. Peer identity is transport identity; product
   authority is owned by consumers.
-- Do not assume a global DHT or gossip layer exists in v1.
+- Do not assume a global DHT or gossip layer exists today. Those are future
+  `fcl_p2p` network services, not plugin-level shortcuts.
 
 ## Public Modules
 
@@ -30,6 +31,93 @@ probes, hole punching and path scoring.
 Target: `fcl_p2p`.
 
 Dependencies: `fcl_asio`, `fcl_quic`, Boost.Asio.
+
+## Production Network Roadmap
+
+`fcl_p2p` is the owner for production peer-network mechanics. The direction is
+a clean C++23 libp2p-compatible implementation: FCL public types stay
+FCL/Boost-style, while supported libp2p protocols must be wire-compatible with
+go-libp2p and rust-libp2p.
+
+Compatibility is not a direct libp2p dependency and not a Go/Rust runtime clone.
+It means the same peer identity model, address encoding, protocol negotiation,
+handshake, protocol IDs and message rules for protocols FCL marks as supported.
+
+Future public concepts belong here, not in `fcl_plugins`:
+
+- endpoint/address model: typed direct, observed and relayed paths, with
+  libp2p multiaddress read/write compatibility behind FCL-style APIs.
+- multiformats: varint, multicodec, multihash, multibase, base58btc and base32.
+- Peer ID and key encoding: Ed25519, Secp256k1, ECDSA and RSA are mandatory
+  compatibility families.
+- multistream-select: libp2p-compatible protocol negotiation.
+- `identify`: libp2p-compatible peer id, public key, supported protocols,
+  addresses, capabilities, limits and agent/version advertisement.
+- `ping`: libp2p-compatible liveness protocol and interop target.
+- `persistent_peer_store` / `path_manager`: endpoints, relay candidates,
+  signed peer records, protocol support, reachability, scores, backoff and
+  expiry. The store is interface-based; RocksDB is the default production
+  backend.
+- `reachability_service`: AutoNAT-style dialability checks and state expiry.
+- `relay_manager`: Circuit Relay style reservations, renewal, cancellation,
+  TTL, stream/byte limits and accounting.
+- `auto_relay`: relay discovery, candidate selection and relayed address
+  publication for non-public nodes.
+- `discovery`, `rendezvous` and `dht`: network-level peer discovery services.
+- `pubsub`: GossipSub-style mesh gossip for product/control topics.
+
+Network-level behaviors that must not be pushed into plugins:
+
+- relay-only/no-direct path support;
+- independent maintenance scheduling for peer exchange, reachability, relay
+  reservation renewal and discovery;
+- peer discovery and relay discovery;
+- protocol capability negotiation;
+- network limits, backpressure, metrics and shutdown behavior.
+
+`fcl_p2p` remains free of application plugins, product storage and product
+authorization. Product protocols own idempotency, business acknowledgement and
+permission checks above P2P.
+
+Implementation order:
+
+```text
+multiformats + byte-friendly base58
+  -> Peer ID + key encoding
+  -> endpoint/address compatibility
+  -> QUIC libp2p profile
+  -> multistream-select
+  -> Ping
+  -> Identify / Identify Push
+  -> persistent peer/path store
+  -> AutoNAT / reachability
+  -> Circuit Relay / AutoRelay
+  -> DCUtR hardening
+  -> DHT / rendezvous
+  -> pubsub / gossip
+```
+
+## Donor Test Adoption
+
+Supported libp2p compatibility must be proven against donor criteria, not only
+against FCL-local examples. For every supported protocol, keep a traceability
+matrix that names the libp2p spec source, go-libp2p/rust-libp2p tests inspected,
+FCL unit tests, FCL interop tests and unsupported gaps.
+
+Required test layers:
+
+- `golden`: byte-level vectors for varint, multicodec, multihash, multibase,
+  Peer ID, signed records and Identify messages.
+- `component`: FCL-to-FCL endpoint, negotiation, Ping, Identify and peer/path
+  store tests.
+- `interop`: FCL nodes talking to go-libp2p and rust-libp2p in both directions.
+- `plugin/system`: realistic application scenarios through
+  `fcl::plugins::p2p_node` and focused friend plugins.
+- `performance/stability`: latency, throughput, reconnect, long sessions, many
+  peers, backpressure and peerstore recovery.
+
+If libp2p already defines an acceptance criterion, FCL tests must reference it.
+Free-form "close enough" tests are not sufficient for a supported protocol.
 
 ## Examples
 
@@ -224,6 +312,9 @@ failure and invalid envelopes are correctness failures.
   handlers run.
 - Do not make `fcl.p2p.api` responsible for peer discovery, relay or node
   lifecycle. It is only the API protocol binding artifact.
+- Do not implement AutoNAT, AutoRelay, DHT, rendezvous or pubsub in an
+  infrastructure plugin. Missing network mechanics must be added to `fcl_p2p`
+  or exposed as typed unsupported behavior.
 
 ## Typical Mistakes
 

@@ -34,6 +34,17 @@ Dependencies: `fcl_app`, `fcl_api`, `fcl_p2p`, `fcl_config`, `fcl_asio`.
 lifecycle. It publishes `fcl::plugins::p2p_node::api` through `fcl_api` so other
 plugins can contribute protocol handlers and API bindings before startup.
 
+AutoNAT, AutoRelay, DHT, rendezvous, pubsub/gossip, relay-only path support,
+endpoint/address compatibility, peer discovery and libp2p protocol mechanics
+belong to `fcl_p2p`. `p2p_node` is not a private P2P network stack; it only maps
+config into the shared node, mounts route/API contributions, exposes safe
+send/broadcast/delivery handles and integrates the optional outbox.
+
+The long-term network profile is libp2p-compatible, but the plugin boundary
+does not change: `p2p_node` enables and configures the shared FCL node. It must
+not reimplement Identify, Ping, relay discovery, DHT, pubsub or interop logic in
+plugin-local loops.
+
 `fcl::plugins::p2p_node::config` is the public config contract. Config section
 `p2p` owns transport bootstrap and policy:
 
@@ -187,6 +198,13 @@ product protocol or `fcl_api` request/response contract.
 - Do not treat the outbox as exactly-once delivery. It provides bounded retry
   and optional durable at-least-once attempts; product protocols own
   idempotency and business acknowledgements.
+- Keep AutoNAT, AutoRelay, DHT, rendezvous, pubsub/gossip and relay discovery in
+  `fcl_p2p`. `p2p_node` stays lifecycle/config/composition glue over the shared
+  network node.
+- Do not turn `p2p_node` into a superplugin. Future helpers such as diagnostics,
+  discovery policy, relay service, pubsub gateway or interop harness should be
+  focused friend plugins that compose through the safe APIs exposed by
+  `p2p_node`.
 
 ## Tests
 

@@ -164,6 +164,11 @@ class p2p_node {
 - Do not shell out to an external `openssl` binary for key or certificate generation.
 - Specialized crypto libraries may remain optional targets when they have clear tests and isolated dependencies.
 - K1 compatibility must not be replaced with generic OpenSSL ECDSA behavior.
+- `fcl.crypto.base58` must expose byte-friendly APIs using
+  `std::span<const std::uint8_t>` and `std::vector<std::uint8_t>` for new
+  multiformats/libp2p work. Existing `char` / `std::vector<char>` overloads may
+  remain as compatibility wrappers, but new network code must not scatter
+  casts between `char` and byte containers.
 - `fcl_crypto` stays synchronous and low-level. Do not import `fcl_asio`,
   schedulers, threads or runtime policy into crypto primitives.
 - WebAuthn parsing must stay private to `fcl_crypto` and must not reintroduce a
@@ -217,6 +222,29 @@ class p2p_node {
   retry, relay policy and optional outbox integration; product plugins must not
   create parallel P2P nodes or call raw `p2p::node` path/relay primitives when
   the plugin owns the node.
+- Production P2P network mechanics belong to `fcl_p2p`, not to
+  `fcl_plugins::p2p_node`. FCL's P2P direction is a clean C++23
+  libp2p-compatible implementation: FCL public APIs stay FCL/Boost-style, but
+  declared libp2p protocols must be wire-compatible with go-libp2p and
+  rust-libp2p. Endpoint/address encoding, Peer ID, supported key families
+  (Ed25519, Secp256k1, ECDSA and RSA), protocol negotiation, Identify, Ping,
+  persistent peer/path store, AutoNAT/reachability, Circuit Relay/relay manager,
+  AutoRelay, DCUtR/hole punching, DHT/rendezvous, pubsub/gossip, network limits,
+  backpressure and network metrics must be added at the network layer. The
+  plugin only maps config, owns app lifecycle, mounts route/API contributions,
+  exposes safe local APIs and integrates the optional outbox.
+- Public P2P APIs should use FCL/Boost-style vocabulary such as `endpoint`,
+  `resolver`, `listener`, `connector`, `session`, `stream` and `protocol_id`.
+  libp2p terms such as `multiaddr` describe the compatibility wire/text format;
+  they must not force C-style names into FCL public APIs.
+- libp2p compatibility must be evidence-based. For every libp2p protocol marked
+  supported, tests must include spec-derived cases, donor-derived cases from
+  go-libp2p/rust-libp2p and live interop coverage. A test that is merely
+  "similar to libp2p" is not enough.
+- Keep AutoNAT, AutoRelay, DHT, rendezvous, pubsub/gossip and relay discovery in
+  `fcl_p2p`. If a network-level behavior is missing, expose a typed
+  unsupported/limited behavior or implement it in `fcl_p2p`; do not hide it
+  above the network layer.
 - Durable P2P delivery in FCL is pluggable, not storage-bound. `fcl_plugins` may
   define an outbox interface and an in-memory default, but it must not depend on
   RocksDB, SQLite or downstream product storage backends.

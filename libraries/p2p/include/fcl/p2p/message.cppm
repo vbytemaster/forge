@@ -1,14 +1,19 @@
 module;
 
 #include <cstdint>
+#include <span>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 export module fcl.p2p.message;
 
+import fcl.api.types;
 import fcl.p2p.identity;
 import fcl.p2p.protocol;
 import fcl.quic.endpoint;
+import fcl.raw.raw;
 
 export namespace fcl::p2p {
 
@@ -47,7 +52,7 @@ struct endpoint_record {
    capability_set capabilities{};
 };
 
-struct p2p_message {
+struct control_message {
    message_type type = message_type::ping;
    std::uint64_t request_id = 0;
    std::uint32_t flags = 0;
@@ -65,6 +70,61 @@ struct p2p_message {
    std::string reason;
    std::vector<endpoint_record> endpoints;
    std::vector<std::uint8_t> payload;
+};
+
+using p2p_message = control_message;
+
+struct message_options {
+   fcl::api::codec_id codec{.value = "fcl.raw"};
+   fcl::api::metadata meta;
+};
+
+class message {
+ public:
+   message() = default;
+
+   message(protocol_id protocol, fcl::api::bytes data, message_options options = {})
+       : protocol_{std::move(protocol)}, codec_{std::move(options.codec)}, meta_{std::move(options.meta)},
+         data_{std::move(data)} {}
+
+   template <typename T> message(protocol_id protocol, const T& value, message_options options = {})
+       : protocol_{std::move(protocol)}, codec_{std::move(options.codec)}, meta_{std::move(options.meta)} {
+      require_raw_codec();
+      fcl::raw::pack(data_, value);
+   }
+
+   template <typename T> [[nodiscard]] T as() const {
+      require_raw_codec();
+      return fcl::raw::unpack<T>(std::span<const std::uint8_t>{data_.data(), data_.size()});
+   }
+
+   [[nodiscard]] const protocol_id& protocol() const noexcept {
+      return protocol_;
+   }
+
+   [[nodiscard]] const fcl::api::codec_id& codec() const noexcept {
+      return codec_;
+   }
+
+   [[nodiscard]] const fcl::api::metadata& meta() const noexcept {
+      return meta_;
+   }
+
+   [[nodiscard]] const fcl::api::bytes& data() const noexcept {
+      return data_;
+   }
+
+ private:
+   void require_raw_codec() const {
+      if (codec_.value != "fcl.raw") {
+         throw std::invalid_argument{"typed P2P message construction requires fcl.raw codec"};
+      }
+   }
+
+   protocol_id protocol_;
+   fcl::api::codec_id codec_{.value = "fcl.raw"};
+   fcl::api::metadata meta_;
+   fcl::api::bytes data_;
 };
 
 } // namespace fcl::p2p

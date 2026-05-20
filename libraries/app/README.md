@@ -2,13 +2,13 @@
 
 `fcl_app` is the opinionated application shell for FCL services. It owns the
 runtime objects that every daemon tends to duplicate by hand: `runtime`,
-`task_scheduler`, typed ports, signal bus, event bus, diagnostics, plugin
+`task_scheduler`, API registry, signal bus, event bus, diagnostics, plugin
 registry, plugin context and lifecycle runtime.
 
-The preferred production entrypoint is `fcl::app::application_shell`. Lower
-level pieces such as `application_runtime` remain available for tests and custom
-frameworks, but product programs should not copy the same shell members and
-reimplement plugin order manually.
+The preferred production entrypoint is `fcl::app::application_builder`, which
+returns an `application_shell` without asking the product to subclass the shell.
+Derived `application_shell` classes remain available as an advanced escape hatch
+for applications with substantial state or custom lifecycle hooks.
 
 ## When To Use
 
@@ -17,7 +17,7 @@ reimplement plugin order manually.
 - A foreground daemon wants standard YAML, `.env`, process env, CLI and default
   merge before lifecycle starts.
 - You want deterministic startup, rollback, reverse shutdown and diagnostics.
-- You want typed ports between plugins without coupling them through globals.
+- You want typed APIs between plugins without coupling them through globals.
 - Plugins must publish config descriptors without knowing whether values came
   from source adapters such as YAML, JSON, `.env`, process env or CLI.
 
@@ -44,7 +44,6 @@ reimplement plugin order manually.
 - `fcl.app.application` — lower-level `application_base` and
   `application_runtime`.
 - `fcl.app.plugin`, `fcl.app.plugin_context`, `fcl.app.plugin_registry`.
-- `fcl.app.ports` — typed service port registry.
 - `fcl.app.events`, `fcl.app.diagnostics`, `fcl.app.signals`.
 - `fcl.app` — aggregate import.
 
@@ -81,11 +80,12 @@ Derived applications only implement hooks:
 - `on_describe_config(registry&)`
 - `on_configure(configure_context&)`
 - `on_register_plugins(plugin_registry&)`
-- `on_install_ports(application_context&)`
+- `on_provide(application_context&)`
 - `on_run_foreground()`
 
 This is deliberately strict. The product controls composition, but FCL controls
-the order: collect config, configure app and plugins, install ports, initialize
+the order: collect config, configure app and plugins, provide app APIs, let
+plugins provide APIs, initialize
 plugins, startup plugins, request stop, shutdown in reverse order.
 
 ## App And Plugin Config
@@ -192,7 +192,7 @@ app.configure(document);
 ## Application Shell Example
 
 The derived app declares only product-specific hooks. It does not store
-`plugin_context`, `application_runtime`, diagnostics, events, signals and ports
+`plugin_context`, `application_runtime`, diagnostics, events, signals and API registry
 as repeated boilerplate members.
 
 ```cpp
@@ -238,7 +238,7 @@ class service_application final : public fcl::app::application_shell {
       });
    }
 
-   boost::asio::awaitable<void> on_install_ports(fcl::app::application_context& context) override {
+   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
       context.events().publish(
          fcl::app::event_severity::info,
          "service.configure",
@@ -253,10 +253,11 @@ class service_application final : public fcl::app::application_shell {
 
 ## Application Builder Example
 
-`application_builder` is convenience syntax for simple daemons and tests. It
-does not define a second lifecycle: `build()` returns
+`application_builder` is the normal production path when callbacks are enough.
+It does not define a second lifecycle: `build()` returns
 `std::unique_ptr<fcl::app::application_shell>`, and the generated shell still
-owns config merge, plugin lifecycle, rollback, ports, events and diagnostics.
+owns config merge, plugin lifecycle, rollback, API registry, events and
+diagnostics.
 
 ```cpp
 import fcl.app;
@@ -270,7 +271,7 @@ builder.name("service")
    .config<service_config>("service", [&](const service_config& config) {
       workers = config.workers;
    })
-   .install_ports([&](fcl::app::application_context& context) {
+   .provide([&](fcl::app::application_context& context) {
       context.events().publish(
          fcl::app::event_severity::info,
          "service.configure",
@@ -282,16 +283,16 @@ builder.name("service")
          return std::make_unique<http_plugin>();
       },
    })
-   .run_foreground([](fcl::app::application_shell& app) {
-      return app.ports().get<status_port>()->status() == "ready" ? 0 : 2;
+   .run_foreground([](fcl::app::application_shell&) {
+      return 0;
    });
 
 std::unique_ptr<fcl::app::application_shell> app = std::move(builder).build();
 ```
 
-Use the subclass form when the application has substantial state or non-trivial
-composition. Use the builder form when callbacks are enough and you want to keep
-the program entrypoint compact.
+Use the subclass form only when the application has substantial state or
+non-trivial lifecycle customization that the builder callbacks cannot express
+cleanly.
 
 ## Running The Shell
 
@@ -316,7 +317,7 @@ fcl::asio::blocking::run(app.runtime(), app.shutdown());
 
 `startup()` calls `initialize()` automatically when the shell is still in the
 created state. Tests may call `initialize()` explicitly when they need to assert
-port installation before startup.
+API publication before plugin initialization.
 
 For production foreground daemons prefer `run_application(...)`. It
 standardizes the common flow: configure, startup, wait, request stop, shutdown.
@@ -453,33 +454,55 @@ boost::asio::co_spawn(
    boost::asio::detached);
 ```
 
-## Ports
+## APIs
 
-Ports are typed interfaces shared through `plugin_context` and
-`application_context`. Use ports for explicit runtime contracts. Do not use the
-event bus for request/response business flow.
+Plugin-to-plugin contracts use `fcl_api`: the application can publish
+implementations during the `on_provide(...)` phase, plugins can publish
+implementations during their `provide(...)` phase, and runtime consumers receive
+a read-only API view. This keeps lifecycle in `fcl_app` and contract/version/error
+semantics in `fcl_api`.
 
 ```cpp
-class clock_port {
+class cache {
  public:
-   virtual ~clock_port() = default;
-   virtual std::chrono::system_clock::time_point now() const = 0;
-};
+   virtual ~cache() = default;
+   virtual boost::asio::awaitable<models::chunk> read(protocol::read_chunk request) = 0;
 
-class system_clock_port final : public clock_port {
- public:
-   std::chrono::system_clock::time_point now() const override {
-      return std::chrono::system_clock::now();
+   static fcl::api::descriptor describe() {
+      return fcl::api::contract<cache>({.id = {"cache"}, .version = {1, 8}})
+         .method<&cache::read, protocol::read_chunk, models::chunk>("read")
+         .build();
    }
 };
 
-boost::asio::awaitable<void> on_install_ports(fcl::app::application_context& context) override {
-   context.ports().install<clock_port>(std::make_shared<system_clock_port>());
+boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+   context.apis().install<cache>(cache::describe(), std::make_shared<rocks_cache>());
    co_return;
 }
 
-auto clock = context.ports().get<clock_port>();
+boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+   cache_ = context.apis().get<cache>({.id = {"cache"}, .major = 1, .min_revision = 8});
+   co_return;
+}
 ```
+
+Infrastructure plugins should publish narrow APIs instead of leaking their
+transport/runtime internals:
+
+```cpp
+boost::asio::awaitable<void> provide(fcl::api::provider& provider) override {
+   provider.install<node_admin_api>(
+      node_admin_api::describe(),
+      std::make_shared<node_admin_api_impl>(impl_));
+   co_return;
+}
+```
+
+The implementation type can stay in the plugin `.cpp`; consumers only see the
+published API interface.
+
+Do not use APIs as lifecycle modules. A plugin owns behavior/lifecycle; an API is
+the typed contract exposed by that plugin or application.
 
 ## Events And Diagnostics
 
@@ -524,14 +547,14 @@ entrypoint cleanup path. Both calls are idempotent enough for normal failure
 handling.
 
 The cleanup path is not optional ceremony. It keeps failed startup paths from
-leaving ports, background jobs or plugins in half-started states. Prefer
+leaving APIs, background jobs or plugins in half-started states. Prefer
 `run_application(...)` for normal foreground daemons because it centralizes that
 flow.
 
 ## Lower-Level Escape Hatch
 
 `application_runtime` remains available when a host framework already owns
-runtime, ports, signals and diagnostics. That is an escape hatch, not the normal
+runtime, API registry, signals and diagnostics. That is an escape hatch, not the normal
 daemon pattern. Prefer `application_shell` or `application_builder` for new
 services.
 
@@ -551,6 +574,8 @@ boost::asio::awaitable<void> run_runtime(fcl::app::application_runtime& runtime)
   a shell.
 - Do not manually instantiate plugins in product startup code when
   `application_shell` can own the registry.
+- Do not use APIs as fake plugins. Plugins own lifecycle and behavior; APIs
+  expose typed contracts.
 - Do not configure plugin options from `build_plugins()`; plugin config belongs
   to `plugin::describe_config()` and `plugin::configure(component_view)`.
 - Do not parse `argv` or backend parser objects inside plugins.
@@ -570,8 +595,8 @@ boost::asio::awaitable<void> run_runtime(fcl::app::application_runtime& runtime)
 
 - A plugin that starts background work must own cancellation and shutdown.
   Hidden detached work is a process-lifetime leak.
-- Ports must be installed before plugins initialize and must outlive plugin
-  shutdown. Removing ports early creates use-after-shutdown failures.
+- APIs must be provided before plugins initialize and must outlive plugin
+  shutdown. Removing APIs early creates use-after-shutdown failures.
 - Event subscribers should keep their connection lifetime explicit. Capturing a
   short-lived object in a long-lived signal/event callback is a common crash
   source.
@@ -583,7 +608,7 @@ boost::asio::awaitable<void> run_runtime(fcl::app::application_runtime& runtime)
 
 ## Tests
 
-`test_fcl_app` covers port registry, event bus bounds, plugin dependency order,
+`test_fcl_app` covers API publication, event bus bounds, plugin dependency order,
 config collection, shell-owned default merge, configure-before-initialize,
 startup rollback, reverse shutdown and diagnostics.
 

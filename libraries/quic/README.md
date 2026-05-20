@@ -119,6 +119,44 @@ boost::asio::awaitable<void> write_payload(fcl::quic::connection& connection) {
 }
 ```
 
+### Bind API Frames To QUIC Streams
+
+`fcl.quic.api` is the API-over-QUIC binding. It keeps QUIC transport policy in
+`fcl_quic` and contract/error semantics in `fcl_api`. The binding reads a
+continuous sequence of API frames from the framed stream until the stream closes.
+Codec, max concurrent API calls and deadline are enforced by the API runtime.
+
+```cpp
+import fcl.api;
+import fcl.quic.api;
+
+auto plan = fcl::api::binding()
+   .serve(app.apis())
+   .export_api<cache>({.id = {"cache"}, .major = 1, .min_revision = 8})
+   .build();
+
+auto binding = fcl::quic::api()
+   .use(plan)
+   .codec({"fcl.raw"})
+   .stream_policy(fcl::quic::api_stream_policy::one_stream_per_call)
+   .max_concurrent_calls(256)
+   .deadline(std::chrono::seconds{5})
+   .build();
+
+boost::asio::awaitable<void> serve_api_stream(fcl::quic::connection& connection) {
+   auto stream = co_await connection.async_accept_stream();
+   co_await binding.accept(fcl::quic::framed_stream{std::move(stream)});
+}
+```
+
+`stream_policy(...)` describes how API calls are mapped to QUIC stream usage.
+`one_stream_per_call` is the simple production default. `multiplexed` keeps the
+same frame semantics but allows multiple active call ids on the same framed
+stream, bounded by `max_concurrent_calls(...)`.
+
+`fcl.quic.api` does not own certificates, ALPN, listener/connector setup or
+packet-level limits. Those remain in `fcl_quic` transport options.
+
 ### Decode Frames Without A Connection
 
 ```cpp
@@ -163,6 +201,14 @@ become product defaults.
   the certificate to the requested endpoint host.
 - Do not raise frame/queue limits without backpressure tests. Oversized frames
   are a memory pressure and denial-of-service vector.
+- Do not define product API envelopes in QUIC handlers. Use `fcl.quic.api` and
+  `fcl::api::frame` for typed API calls over QUIC streams.
+- Do not swallow handler exceptions in detached stream tasks; convert expected
+  failures into typed `fcl_exception` values or API error frames.
+- Do not treat `.deadline(...)` or `.max_concurrent_calls(...)` as documentation
+  only; API frames are checked by the call runtime before product code runs.
+- Do not put ALPN, certificate or listener lifecycle options into
+  `fcl.quic.api`; those belong to the transport owner.
 
 ## Typical Mistakes
 

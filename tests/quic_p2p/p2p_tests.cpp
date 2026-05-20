@@ -1,4 +1,5 @@
 #include <boost/test/unit_test.hpp>
+#include <boost/describe.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -18,8 +19,11 @@
 
 import fcl.asio.blocking;
 import fcl.asio.runtime;
+import fcl.api;
+import fcl.p2p.api;
 import fcl.p2p.codec;
 import fcl.p2p.errors;
+import fcl.p2p.exceptions;
 import fcl.p2p.identity;
 import fcl.p2p.message;
 import fcl.p2p.node;
@@ -27,14 +31,24 @@ import fcl.p2p.options;
 import fcl.p2p.peer_store;
 import fcl.p2p.protocol;
 import fcl.p2p.relay;
+import fcl.p2p.session;
 import fcl.quic.endpoint;
 import fcl.quic.framed_stream;
 import fcl.quic.listener;
 import fcl.quic.options;
 import fcl.quic.security;
+import fcl.quic.stream;
 
 namespace fcl::p2p {
 namespace {
+
+struct product_announce {
+   std::string ref;
+
+   bool operator==(const product_announce&) const = default;
+};
+
+BOOST_DESCRIBE_STRUCT(product_announce, (), (ref))
 
 std::string_view test_certificate() {
    return "-----BEGIN CERTIFICATE-----\n"
@@ -192,6 +206,31 @@ BOOST_AUTO_TEST_CASE(p2p_identity_uses_certificate_fingerprint_shape) {
    BOOST_TEST(id.value.size() == 64U);
 }
 
+BOOST_AUTO_TEST_CASE(p2p_api_binding_enforces_known_peer_policy_before_reading_frames) {
+   auto runtime = fcl::asio::runtime{};
+   auto owner = node{runtime, options_for(peer(12))};
+   auto apis = fcl::api::registry{};
+   auto binding = fcl::p2p::api(owner)
+                      .use(fcl::api::binding().serve(apis).build())
+                      .peer_policy(api_peer_policy{.require_known_peer = true})
+                      .build();
+   auto session_called = false;
+   binding.on_session([&](fcl::api::session&) -> boost::asio::awaitable<void> {
+      session_called = true;
+      co_return;
+   });
+
+   auto incoming = incoming_protocol_stream{
+       .session = session_info{.remote_peer = peer(13)},
+       .protocol = binding.protocol(),
+       .stream = fcl::quic::framed_stream{fcl::quic::stream{}},
+   };
+
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, binding.accept(std::move(incoming))),
+                     fcl::p2p::exceptions::peer_not_found);
+   BOOST_TEST(!session_called);
+}
+
 BOOST_AUTO_TEST_CASE(p2p_codec_rejects_wrong_version_and_oversized_envelope) {
    auto message = p2p_message{.type = message_type::ping, .peer = peer(1)};
    auto encoded = encode_message(message);
@@ -305,6 +344,34 @@ BOOST_AUTO_TEST_CASE(p2p_duplicate_protocol_handler_is_rejected) {
    } catch (const p2p_error& error) {
       BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::duplicate_protocol));
    }
+}
+
+BOOST_AUTO_TEST_CASE(p2p_product_message_packs_typed_payload_as_data) {
+   const auto protocol = protocol_id{.value = "/product/chunk-announce/1"};
+   const auto value = product_announce{.ref = "chunk-1"};
+
+   const auto message = fcl::p2p::message{protocol, value};
+
+   BOOST_TEST(message.protocol().value == protocol.value);
+   BOOST_TEST(message.codec().value == "fcl.raw");
+   BOOST_TEST(message.as<product_announce>().ref == value.ref);
+   BOOST_TEST(!message.data().empty());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_api_and_route_builders_are_node_free_artifacts) {
+   auto apis = fcl::api::registry{};
+   auto api_binding = fcl::p2p::api()
+                          .use(fcl::api::binding().serve(apis).build())
+                          .protocol_id("/fcl/api/cache/1")
+                          .build();
+
+   auto route_binding = fcl::p2p::route()
+                            .protocol_id("/product/blob-transfer/1")
+                            .handler([](incoming_protocol_stream) -> boost::asio::awaitable<void> { co_return; })
+                            .build();
+
+   BOOST_TEST(api_binding.protocol().value == "/fcl/api/cache/1");
+   BOOST_TEST(route_binding.protocol().value == "/product/blob-transfer/1");
 }
 
 BOOST_AUTO_TEST_CASE(p2p_connect_timeout_covers_hello_ack_wait) {

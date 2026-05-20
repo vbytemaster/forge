@@ -9,13 +9,17 @@ probes, hole punching and path scoring.
 - Nodes need to connect by peer identity, not just host/port.
 - Application protocols need named streams such as `/example/1`.
 - Direct QUIC should be tried first, with explicit relay/hole-punch fallback.
+- Application/plugin composition needs a shared P2P transport owner; use
+  `fcl::plugins::p2p_node` for retry, outbox and relay policy above this
+  low-level engine.
 
 ## When Not To Use
 
 - Do not put application message semantics or storage semantics here.
 - Do not treat P2P as authorization. Peer identity is transport identity; product
   authority is owned by consumers.
-- Do not assume a global DHT or gossip layer exists in v1.
+- Do not assume a global DHT or gossip layer exists today. Those are future
+  `fcl_p2p` network services, not plugin-level shortcuts.
 
 ## Public Modules
 
@@ -27,6 +31,93 @@ probes, hole punching and path scoring.
 Target: `fcl_p2p`.
 
 Dependencies: `fcl_asio`, `fcl_quic`, Boost.Asio.
+
+## Production Network Roadmap
+
+`fcl_p2p` is the owner for production peer-network mechanics. The direction is
+a clean C++23 libp2p-compatible implementation: FCL public types stay
+FCL/Boost-style, while supported libp2p protocols must be wire-compatible with
+go-libp2p and rust-libp2p.
+
+Compatibility is not a direct libp2p dependency and not a Go/Rust runtime clone.
+It means the same peer identity model, address encoding, protocol negotiation,
+handshake, protocol IDs and message rules for protocols FCL marks as supported.
+
+Future public concepts belong here, not in `fcl_plugins`:
+
+- endpoint/address model: typed direct, observed and relayed paths, with
+  libp2p multiaddress read/write compatibility behind FCL-style APIs.
+- multiformats: varint, multicodec, multihash, multibase, base58btc and base32.
+- Peer ID and key encoding: Ed25519, Secp256k1, ECDSA and RSA are mandatory
+  compatibility families.
+- multistream-select: libp2p-compatible protocol negotiation.
+- `identify`: libp2p-compatible peer id, public key, supported protocols,
+  addresses, capabilities, limits and agent/version advertisement.
+- `ping`: libp2p-compatible liveness protocol and interop target.
+- `persistent_peer_store` / `path_manager`: endpoints, relay candidates,
+  signed peer records, protocol support, reachability, scores, backoff and
+  expiry. The store is interface-based; RocksDB is the default production
+  backend.
+- `reachability_service`: AutoNAT-style dialability checks and state expiry.
+- `relay_manager`: Circuit Relay style reservations, renewal, cancellation,
+  TTL, stream/byte limits and accounting.
+- `auto_relay`: relay discovery, candidate selection and relayed address
+  publication for non-public nodes.
+- `discovery`, `rendezvous` and `dht`: network-level peer discovery services.
+- `pubsub`: GossipSub-style mesh gossip for product/control topics.
+
+Network-level behaviors that must not be pushed into plugins:
+
+- relay-only/no-direct path support;
+- independent maintenance scheduling for peer exchange, reachability, relay
+  reservation renewal and discovery;
+- peer discovery and relay discovery;
+- protocol capability negotiation;
+- network limits, backpressure, metrics and shutdown behavior.
+
+`fcl_p2p` remains free of application plugins, product storage and product
+authorization. Product protocols own idempotency, business acknowledgement and
+permission checks above P2P.
+
+Implementation order:
+
+```text
+multiformats + byte-friendly base58
+  -> Peer ID + key encoding
+  -> endpoint/address compatibility
+  -> QUIC libp2p profile
+  -> multistream-select
+  -> Ping
+  -> Identify / Identify Push
+  -> persistent peer/path store
+  -> AutoNAT / reachability
+  -> Circuit Relay / AutoRelay
+  -> DCUtR hardening
+  -> DHT / rendezvous
+  -> pubsub / gossip
+```
+
+## Donor Test Adoption
+
+Supported libp2p compatibility must be proven against donor criteria, not only
+against FCL-local examples. For every supported protocol, keep a traceability
+matrix that names the libp2p spec source, go-libp2p/rust-libp2p tests inspected,
+FCL unit tests, FCL interop tests and unsupported gaps.
+
+Required test layers:
+
+- `golden`: byte-level vectors for varint, multicodec, multihash, multibase,
+  Peer ID, signed records and Identify messages.
+- `component`: FCL-to-FCL endpoint, negotiation, Ping, Identify and peer/path
+  store tests.
+- `interop`: FCL nodes talking to go-libp2p and rust-libp2p in both directions.
+- `plugin/system`: realistic application scenarios through
+  `fcl::plugins::p2p_node` and focused friend plugins.
+- `performance/stability`: latency, throughput, reconnect, long sessions, many
+  peers, backpressure and peerstore recovery.
+
+If libp2p already defines an acceptance criterion, FCL tests must reference it.
+Free-form "close enough" tests are not sufficient for a supported protocol.
 
 ## Examples
 
@@ -65,7 +156,75 @@ node.register_protocol_handler(fcl::p2p::protocol_id{.value = "/example/1"}, [](
 });
 ```
 
+### Send A Product Message
+
+`fcl::p2p::message` owns protocol id, codec metadata and serialized bytes. For
+raw DTOs, construct it directly from the product value; callers do not need to
+manually allocate a byte buffer.
+
+```cpp
+struct announce_chunk {
+   std::string ref;
+};
+
+BOOST_DESCRIBE_STRUCT(announce_chunk, (), (ref))
+FCL_DECLARE_SERIALIZATION(announce_chunk)
+
+auto message = fcl::p2p::message{
+   fcl::p2p::protocol_id{.value = "/product/chunks/announce/1"},
+   announce_chunk{.ref = "bafk..."}};
+
+co_await p2p->broadcast(std::move(message));
+```
+
+### Register A Typed API Protocol
+
+`fcl.p2p.api` builds a protocol handler artifact. The node remains a P2P
+transport owner; API sessions are surfaced by the binding. The binding validates
+the negotiated protocol id, optional peer policy, configured codec and per-peer
+max inflight calls before product handlers run.
+
+```cpp
+import fcl.api;
+import fcl.p2p.api;
+
+auto plan = fcl::api::binding()
+   .serve(app.apis())
+   .export_api<peer_index>({.id = {"peer.index"}, .major = 1, .min_revision = 2})
+   .require_peer_api<client_session>({.id = {"client.session"}, .major = 1})
+   .build();
+
+auto binding = fcl::p2p::api()
+   .use(plan)
+   .protocol_id("/fcl/api/1")
+   .codec({"fcl.raw"})
+   .discovery_scope({.value = "storage"})
+   .max_inflight_per_peer(64)
+   .build();
+
+binding.on_session([](fcl::api::session& session) -> boost::asio::awaitable<void> {
+   auto client = session.view().get<client_session>({.id = {"client.session"}, .major = 1});
+   co_await client->notify(protocol::peer_ready{});
+});
+
+node.register_protocol_handler(binding.protocol(), binding.handler());
+```
+
+The binding handles a continuous framed API session over the accepted P2P
+protocol stream. It does not own peer identity, relay, hole punching, peer-store
+lifecycle or node bootstrap; those stay on `fcl::p2p::node`.
+
+Use `fcl::p2p::api(node)` only when the binding must enforce node-backed peer
+policy such as `require_known_peer`. For app/plugin composition, prefer a
+transport-owner plugin such as `fcl::plugins::p2p_node`; product plugins publish
+route/API contributions to that owner instead of registering handlers directly
+on the node.
+
 ### Connect And Open A Protocol Stream
+
+This is the low-level engine path for custom transport owners and tests. Product
+plugins should use `fcl::plugins::p2p_node::api` instead of calling these
+methods directly.
 
 ```cpp
 boost::asio::awaitable<void> open_example_stream(fcl::p2p::node& node) {
@@ -140,6 +299,22 @@ failure and invalid envelopes are correctness failures.
   policy. Relay use must be explicit and visible to the caller.
 - Do not put durable delivery, exactly-once semantics or storage guarantees in
   `fcl_p2p`; protocols above P2P own those contracts.
+- Do not implement application retry/outbox loops against raw `node` in product
+  plugins. Use `fcl::plugins::p2p_node` so one transport owner centralizes path
+  policy, relay trust and delivery diagnostics.
+- Do not define a new P2P-only API error payload. API protocols use
+  `fcl::api::error_payload` in `fcl::api::frame` error responses.
+- Do not let protocol handler exceptions disappear in detached tasks. Expected
+  product failures should be typed exceptions and unexpected failures should be
+  counted/diagnosed.
+- Do not treat `.peer_policy(...)` or `.max_inflight_per_peer(...)` as cosmetic.
+  Unknown peers and too many active API calls are rejected before product API
+  handlers run.
+- Do not make `fcl.p2p.api` responsible for peer discovery, relay or node
+  lifecycle. It is only the API protocol binding artifact.
+- Do not implement AutoNAT, AutoRelay, DHT, rendezvous or pubsub in an
+  infrastructure plugin. Missing network mechanics must be added to `fcl_p2p`
+  or exposed as typed unsupported behavior.
 
 ## Typical Mistakes
 

@@ -9,12 +9,12 @@ export module fcl.app.application_shell;
 
 import fcl.asio.runtime;
 import fcl.asio.task_scheduler;
+import fcl.api;
 import fcl.config;
 import fcl.app.application;
 import fcl.app.diagnostics;
 import fcl.app.events;
 import fcl.app.plugin_registry;
-import fcl.app.ports;
 import fcl.app.signals;
 
 export namespace fcl::app {
@@ -27,12 +27,13 @@ struct application_shell_options {
 
 class application_context {
  public:
-   application_context(fcl::asio::runtime& runtime, fcl::asio::task_scheduler& scheduler, port_registry& ports,
-                       signal_bus& signals, event_bus& events, diagnostics_store& diagnostics);
+   application_context(fcl::asio::runtime& runtime, fcl::asio::task_scheduler& scheduler,
+                       fcl::api::registry& apis, signal_bus& signals, event_bus& events,
+                       diagnostics_store& diagnostics);
 
    [[nodiscard]] fcl::asio::runtime& runtime() noexcept;
    [[nodiscard]] fcl::asio::task_scheduler& scheduler() noexcept;
-   [[nodiscard]] port_registry& ports() noexcept;
+   [[nodiscard]] fcl::api::installer apis() noexcept;
    [[nodiscard]] signal_bus& signals() noexcept;
    [[nodiscard]] event_bus& events() noexcept;
    [[nodiscard]] diagnostics_store& diagnostics() noexcept;
@@ -40,7 +41,7 @@ class application_context {
  private:
    fcl::asio::runtime* runtime_ = nullptr;
    fcl::asio::task_scheduler* scheduler_ = nullptr;
-   port_registry* ports_ = nullptr;
+   fcl::api::registry* apis_ = nullptr;
    signal_bus* signals_ = nullptr;
    event_bus* events_ = nullptr;
    diagnostics_store* diagnostics_ = nullptr;
@@ -76,7 +77,7 @@ class application_shell : public application_base {
    [[nodiscard]] application_state state() const noexcept;
    [[nodiscard]] fcl::asio::runtime& runtime() noexcept;
    [[nodiscard]] fcl::asio::task_scheduler& scheduler() noexcept;
-   [[nodiscard]] port_registry& ports() noexcept;
+   [[nodiscard]] fcl::api::registry& apis() noexcept;
    [[nodiscard]] signal_bus& signals() noexcept;
    [[nodiscard]] event_bus& events() noexcept;
    [[nodiscard]] diagnostics_store& diagnostics() noexcept;
@@ -85,7 +86,7 @@ class application_shell : public application_base {
    virtual void on_describe_config(fcl::config::component_registry& registry) const;
    virtual boost::asio::awaitable<void> on_configure(configure_context& context);
    virtual void on_register_plugins(plugin_registry& registry);
-   virtual boost::asio::awaitable<void> on_install_ports(application_context& context);
+   virtual boost::asio::awaitable<void> on_provide(application_context& context);
    virtual int on_run_foreground();
 
  private:

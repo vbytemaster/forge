@@ -1803,7 +1803,7 @@ struct engine_listener::impl {
    std::deque<std::shared_ptr<engine_connection>> accepted;
    std::vector<std::weak_ptr<asio::steady_timer>> accept_waiters;
    std::optional<engine_error_kind> pending_accept_error;
-   std::string pending_accept_error_message;
+   std::string pending_accept_failure_text;
    std::weak_ptr<impl> self;
    bool stopped = false;
    bool receive_started = false;
@@ -1856,7 +1856,7 @@ struct engine_listener::impl {
             const auto timed_out = connection->metrics.timeouts.load(std::memory_order_relaxed) > 0;
             pending_accept_error =
                 timed_out ? engine_error_kind::handshake_timeout : engine_error_kind::connection_closed;
-            pending_accept_error_message = timed_out ? "QUIC server handshake timed out before accept"
+            pending_accept_failure_text = timed_out ? "QUIC server handshake timed out before accept"
                                                      : "QUIC server connection closed before accept";
             wake(accept_waiters);
          }
@@ -1872,7 +1872,7 @@ struct engine_listener::impl {
       if (failed_before_accept) {
          const auto timed_out = connection->metrics.timeouts.load(std::memory_order_relaxed) > 0;
          pending_accept_error = timed_out ? engine_error_kind::handshake_timeout : engine_error_kind::connection_closed;
-         pending_accept_error_message = timed_out ? "QUIC server handshake timed out before accept"
+         pending_accept_failure_text = timed_out ? "QUIC server handshake timed out before accept"
                                                   : "QUIC server connection closed before accept";
          wake(accept_waiters);
       }
@@ -2040,16 +2040,16 @@ boost::asio::awaitable<std::shared_ptr<engine_connection>> engine_listener::asyn
    }
    if (impl_->accepted.empty() && impl_->pending_accept_error) {
       const auto kind = *impl_->pending_accept_error;
-      auto message = std::move(impl_->pending_accept_error_message);
+      auto message = std::move(impl_->pending_accept_failure_text);
       impl_->pending_accept_error.reset();
-      impl_->pending_accept_error_message.clear();
+      impl_->pending_accept_failure_text.clear();
       throw_engine(kind, message.empty() ? "QUIC listener accept failed" : message);
    }
    if (impl_->accepted.empty()) {
       throw_engine(engine_error_kind::connection_closed, "QUIC listener stopped before accept");
    }
    impl_->pending_accept_error.reset();
-   impl_->pending_accept_error_message.clear();
+   impl_->pending_accept_failure_text.clear();
    auto connection = std::move(impl_->accepted.front());
    impl_->accepted.pop_front();
    co_return connection;

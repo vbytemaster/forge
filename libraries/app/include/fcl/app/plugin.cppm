@@ -9,6 +9,7 @@ module;
 export module fcl.app.plugin;
 
 import fcl.config.component;
+import fcl.api;
 import fcl.app.plugin_context;
 
 export namespace fcl::app {
@@ -41,6 +42,7 @@ class plugin {
 
    [[nodiscard]] virtual std::optional<config::component_descriptor> describe_config() const;
    virtual boost::asio::awaitable<void> configure(config::component_view view);
+   virtual boost::asio::awaitable<void> provide(fcl::api::provider& provider);
    virtual boost::asio::awaitable<void> initialize(plugin_context& context) = 0;
    virtual boost::asio::awaitable<void> startup() = 0;
    virtual void request_stop() noexcept;

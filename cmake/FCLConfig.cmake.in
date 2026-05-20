@@ -17,6 +17,7 @@ set(
    config
    program_options
    env
+   api
    log
    crypto
    asio
@@ -25,6 +26,7 @@ set(
    websocket
    quic
    p2p
+   plugins
    tui
 )
 set(_FCL_KNOWN_COMPONENTS ${_FCL_ALL_COMPONENTS} all)
@@ -66,6 +68,9 @@ macro(_fcl_add_component component)
       elseif("${component}" STREQUAL "env")
          _fcl_add_component(config)
          _fcl_add_component(schema)
+      elseif("${component}" STREQUAL "api")
+         _fcl_add_component(exception)
+         _fcl_add_component(raw)
       elseif("${component}" STREQUAL "log")
          _fcl_add_component(core)
          _fcl_add_component(reflect)
@@ -77,21 +82,29 @@ macro(_fcl_add_component component)
          _fcl_add_component(reflect)
          _fcl_add_component(variant)
       elseif("${component}" STREQUAL "app")
+         _fcl_add_component(api)
          _fcl_add_component(asio)
          _fcl_add_component(config)
          _fcl_add_component(env)
          _fcl_add_component(program_options)
          _fcl_add_component(yaml)
       elseif("${component}" STREQUAL "http")
+         _fcl_add_component(api)
          _fcl_add_component(asio)
          _fcl_add_component(websocket)
       elseif("${component}" STREQUAL "websocket")
+         _fcl_add_component(api)
          _fcl_add_component(asio)
       elseif("${component}" STREQUAL "quic")
+         _fcl_add_component(api)
          _fcl_add_component(asio)
       elseif("${component}" STREQUAL "p2p")
+         _fcl_add_component(api)
          _fcl_add_component(asio)
          _fcl_add_component(quic)
+      elseif("${component}" STREQUAL "plugins")
+         _fcl_add_component(app)
+         _fcl_add_component(p2p)
       endif()
    endif()
 endmacro()

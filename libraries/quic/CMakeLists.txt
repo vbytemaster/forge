@@ -18,6 +18,9 @@ target_include_directories(fcl_quic PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
    fcl_quic PUBLIC
+      fcl_exception
+      fcl_api
+      fcl_raw
       fcl_asio
       Boost::asio
       OpenSSL::SSL

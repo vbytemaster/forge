@@ -1,11 +1,12 @@
 # fcl_exception
 
-`fcl_exception` is a std-based context layer for errors: it adds structured,
-redacted diagnostic context to ordinary C++ exceptions without bringing back the
-old FC exception hierarchy.
+`fcl_exception` is the central FCL exception layer: std-compatible typed
+exceptions, numeric category codes, redacted diagnostic context and FC-like
+capture semantics without bringing back the old FC exception hierarchy.
 
 ## When To Use
 
+- Throw typed domain errors that callers can catch by concrete type.
 - Wrap a lower-level exception with phase/resource context.
 - Throw assertion and deadline failures with source location and typed context.
 - Format nested exception chains for diagnostics without depending on `fcl_log`.
@@ -13,15 +14,16 @@ old FC exception hierarchy.
 ## When Not To Use
 
 - Do not model schema/config validation errors here; those live in `fcl_schema`.
-- Do not serialize exceptions through `variant` or JSON.
-- Do not use it as a business error taxonomy. Product/application code owns its
-  own typed errors.
+- Do not serialize diagnostic capture context through `variant` or JSON.
+- Do not put product-specific error enums in FCL core. Product/application code
+  owns its own typed errors and declares categories next to those enums.
 
 ## Public API
 
-Module:
+Modules:
 
 - `fcl.exception.exception`
+- `fcl.exception.exceptions`
 
 Macro-only header:
 
@@ -43,12 +45,46 @@ import fcl.exception.exception;
 
 FCL_THROW(
    "cannot open vault",
-   fcl::error::ctx("path", "fcl.vault"),
-   fcl::error::secret("passphrase", "not logged"));
+   fcl::exception::ctx("path", "fcl.vault"),
+   fcl::exception::secret("passphrase", "not logged"));
 ```
 
 `secret(...)` values render as `<redacted>` in `what()`,
 `format_exception_chain()` and log helpers.
+
+### Throw A Typed Exception
+
+```cpp
+#include <fcl/exception/macros.hpp>
+
+import fcl.exception.exception;
+
+namespace cache_errors {
+enum class code : std::uint8_t {
+   chunk_not_found = 1,
+};
+
+FCL_DECLARE_EXCEPTION_CATEGORY(code, "storlane.cache")
+
+using chunk_not_found =
+   fcl::exception::coded_exception<code, code::chunk_not_found>;
+} // namespace cache_errors
+
+FCL_THROW_EXCEPTION(
+   cache_errors::chunk_not_found,
+   "chunk not found",
+   fcl::exception::ctx("ref", ref));
+```
+
+Callers can catch the concrete type:
+
+```cpp
+try {
+   co_await cache.read(request);
+} catch (const cache_errors::chunk_not_found& error) {
+   handle_missing_chunk(error.code());
+}
+```
 
 ### Assert With Debug Context
 
@@ -61,8 +97,8 @@ void open_slot(std::uint32_t index, std::uint32_t capacity) {
    FCL_ASSERT(
       index < capacity,
       "slot index is out of range",
-      fcl::error::ctx("index", index),
-      fcl::error::ctx("capacity", capacity));
+      fcl::exception::ctx("index", index),
+      fcl::exception::ctx("capacity", capacity));
 }
 ```
 
@@ -178,12 +214,15 @@ try {
 `FCL_CAPTURE_AND_LOG` deliberately swallows the current exception after routing
 it to the callback. Use it only for cleanup paths where continuing is correct.
 For correctness paths, use `FCL_CAPTURE_AND_RETHROW` or
-`FCL_CAPTURE_LOG_AND_RETHROW`.
+`FCL_CAPTURE_LOG_AND_RETHROW`. FCL exceptions keep their dynamic type and receive
+extra context; non-FCL exceptions are wrapped into a sanitized `context_error`.
 
 ## Risks And Anti-Patterns
 
 - Do not convert every error into `context_error`. Use standard exception types
   when no structured context is needed.
+- Do not throw `std::runtime_error` for public FCL/app/network/API boundary
+  failures that need stable handling. Add a typed exception family instead.
 - Do not log-and-continue from correctness paths. Capture helpers must preserve
   failure semantics, not create silent recovery.
 - Do not expose secret values through messages, `what()` strings or field names.

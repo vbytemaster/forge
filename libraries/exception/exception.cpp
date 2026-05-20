@@ -16,8 +16,8 @@ std::mutex& sink_mutex() {
    return mutex;
 }
 
-fcl::error::log_sink& sink_ref() {
-   static fcl::error::log_sink sink;
+fcl::exception::log_sink& sink_ref() {
+   static fcl::exception::log_sink sink;
    return sink;
 }
 
@@ -33,7 +33,7 @@ void append_exception_chain(std::ostream& out, const std::exception& exception, 
       out << "caused by: ";
    }
 
-   if (const auto* context = dynamic_cast<const fcl::error::context_error*>(&exception)) {
+   if (const auto* context = dynamic_cast<const fcl::exception::base*>(&exception)) {
       out << context->what();
    } else {
       out << exception.what();
@@ -55,7 +55,7 @@ void append_exception_chain(std::ostream& out, const std::exception& exception, 
 
 } // namespace
 
-namespace fcl::error {
+namespace fcl::exception {
 
 field ctx(std::string_view key, std::string value) {
    return field{std::string(key), std::move(value), false};
@@ -128,6 +128,16 @@ field secret(std::string_view key, const char* value) {
    return secret(key, value ? std::string(value) : std::string{});
 }
 
+category::category(const char* name) noexcept : _name(name == nullptr ? "" : name) {}
+
+const char* category::name() const noexcept {
+   return _name;
+}
+
+std::string category::message(int value) const {
+   return std::to_string(value);
+}
+
 std::string format_fields(const fields& context) {
    if (context.empty()) {
       return {};
@@ -166,21 +176,48 @@ std::string format_context_message(std::string_view message, const fields& conte
    return out.str();
 }
 
-context_error::context_error(std::string message, fields context, std::source_location location, std::error_code code)
-    : std::runtime_error(format_context_message(message, context, location, code)), _message(std::move(message)),
-      _context(std::move(context)), _location(location), _code(std::move(code)) {}
+base::base(std::string message, fields context, std::source_location location, std::error_code code)
+    : std::runtime_error(std::string{}), _message(std::move(message)), _context(std::move(context)),
+      _location(location), _code(std::move(code)) {
+   refresh_what();
+}
 
-const std::string& context_error::message() const noexcept {
+const char* base::what() const noexcept {
+   return _what.c_str();
+}
+
+const std::string& base::message() const noexcept {
    return _message;
 }
-const fields& context_error::context() const noexcept {
+
+const fields& base::context() const noexcept {
    return _context;
 }
-const std::source_location& context_error::location() const noexcept {
+
+const std::source_location& base::location() const noexcept {
    return _location;
 }
-const std::error_code& context_error::code() const noexcept {
+
+const std::error_code& base::code() const noexcept {
    return _code;
+}
+
+const std::vector<frame>& base::context_frames() const noexcept {
+   return _frames;
+}
+
+void base::append_context(std::string message, fields context, std::source_location location) {
+   _frames.push_back(frame{std::move(message), std::move(context), location});
+   refresh_what();
+}
+
+void base::refresh_what() {
+   std::ostringstream out;
+   out << format_context_message(_message, _context, _location, _code);
+   for (const auto& item : _frames) {
+      out << "\ncontext: " << format_context_message(item.message, item.context, item.location);
+   }
+   _what = out.str();
 }
 
 std::string format_exception_chain(const std::exception& exception) {
@@ -246,7 +283,14 @@ void throw_timeout_error(std::string_view message, fields context, std::source_l
 }
 
 void rethrow_with_context(std::string_view message, fields context, std::source_location location) {
-   std::throw_with_nested(context_error(std::string(message), std::move(context), location));
+   try {
+      throw;
+   } catch (base& error) {
+      error.append_context(std::string(message), std::move(context), location);
+      throw;
+   } catch (...) {
+      std::throw_with_nested(context_error(std::string(message), std::move(context), location));
+   }
 }
 
-} // namespace fcl::error
+} // namespace fcl::exception

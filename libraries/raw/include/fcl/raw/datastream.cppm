@@ -3,6 +3,8 @@ module;
 #include <bit>
 #include <string.h>
 #include <stdint.h>
+#include <algorithm>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -29,6 +31,7 @@ template <typename Storage, typename Enable = void> class datastream;
  */
 template <typename T>
 class datastream<T, std::enable_if_t<std::is_same_v<T, char*> || std::is_same_v<T, const char*> ||
+                                     std::is_same_v<T, unsigned char*> ||
                                      std::is_same_v<T, const unsigned char*>>> {
  public:
    datastream(T start, size_t s) : _start(start), _pos(start), _end(start + s) {};
@@ -177,7 +180,9 @@ class datastream<Streambuf,
 
 template <typename Container>
 class datastream<Container, typename std::enable_if_t<(std::is_same_v<std::vector<char>, Container> ||
-                                                       std::is_same_v<std::deque<char>, Container>)>> {
+                                                       std::is_same_v<std::vector<std::uint8_t>, Container> ||
+                                                       std::is_same_v<std::deque<char>, Container> ||
+                                                       std::is_same_v<std::deque<std::uint8_t>, Container>)>> {
  private:
    Container _container;
    size_t cur;
@@ -191,14 +196,14 @@ class datastream<Container, typename std::enable_if_t<(std::is_same_v<std::vecto
          throw std::out_of_range("read datastream<std::vector<char>> of length " + std::to_string(_container.size()) +
                                  " over by " + std::to_string(over));
       }
-      std::copy_n(_container.begin() + cur, n, s);
+      std::copy_n(_container.begin() + cur, n, reinterpret_cast<std::uint8_t*>(s));
       cur += n;
       return n;
    }
 
    size_t write(const char* s, size_t n) {
       _container.resize(std::max(cur + n, _container.size()));
-      std::copy_n(s, n, _container.begin() + cur);
+      std::copy_n(reinterpret_cast<const std::uint8_t*>(s), n, _container.begin() + cur);
       cur += n;
       return n;
    }

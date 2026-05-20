@@ -22,6 +22,7 @@
 #include <vector>
 
 import fcl.app;
+import fcl.api;
 import fcl.asio.blocking;
 import fcl.asio.runtime;
 import fcl.asio.task_scheduler;
@@ -30,25 +31,63 @@ import fcl.schema;
 
 namespace {
 
-struct sample_port {
-   virtual ~sample_port() = default;
-   virtual int value() const = 0;
+struct lifecycle_log {
+   std::vector<std::string> entries;
 };
 
-class sample_port_impl final : public sample_port {
+class sample_api {
  public:
-   explicit sample_port_impl(int value) : value_{value} {}
+   virtual ~sample_api() = default;
+   virtual boost::asio::awaitable<int> value(int input) = 0;
 
-   int value() const override {
-      return value_;
+   static fcl::api::descriptor describe() {
+      return fcl::api::contract<sample_api>({.id = {"sample"}, .version = {.major = 1, .revision = 0}})
+          .method<&sample_api::value, int, int>("value")
+          .build();
+   }
+};
+
+class sample_api_impl final : public sample_api {
+ public:
+   explicit sample_api_impl(int offset = 1) : offset_{offset} {}
+
+   boost::asio::awaitable<int> value(int input) override {
+      co_return input + offset_;
    }
 
  private:
-   int value_ = 0;
+   int offset_ = 1;
 };
 
-struct lifecycle_log {
-   std::vector<std::string> entries;
+class sample_api_consumer_plugin final : public fcl::app::plugin {
+ public:
+   sample_api_consumer_plugin(lifecycle_log& log) : log_{&log} {}
+
+   fcl::app::plugin_id id() const override {
+      return fcl::app::plugin_id{.value = "api-consumer"};
+   }
+
+   std::string version() const override {
+      return "1";
+   }
+
+   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+      api_ = context.apis().get<sample_api>({.id = {"sample"}, .major = 1});
+      log_->entries.push_back("api.initialize:" + std::to_string(static_cast<bool>(api_)));
+      co_return;
+   }
+
+   boost::asio::awaitable<void> startup() override {
+      co_return;
+   }
+
+   boost::asio::awaitable<void> shutdown() override {
+      co_return;
+   }
+
+ private:
+   lifecycle_log* log_ = nullptr;
+   fcl::api::handle<sample_api> api_;
 };
 
 struct slow_shutdown_state {
@@ -548,9 +587,9 @@ class shell_test_application final : public fcl::app::application_shell {
       });
    }
 
-   boost::asio::awaitable<void> on_install_ports(fcl::app::application_context& context) override {
-      context.ports().install<sample_port>(std::make_shared<sample_port_impl>(workers_));
-      log_->entries.push_back("app.install_ports:" + std::to_string(context.ports().size()));
+   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+      context.apis().install<sample_api>(sample_api::describe(), std::make_shared<sample_api_impl>(workers_));
+      log_->entries.push_back("app.provide");
       co_return;
    }
 
@@ -563,6 +602,30 @@ class shell_test_application final : public fcl::app::application_shell {
  private:
    lifecycle_log* log_ = nullptr;
    std::uint16_t workers_ = 0;
+};
+
+class shell_api_application final : public fcl::app::application_shell {
+ public:
+   explicit shell_api_application(lifecycle_log& log) : log_{&log} {}
+
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(fcl::app::plugin_descriptor{
+         .id = fcl::app::plugin_id{.value = "api-consumer"},
+         .factory = [this] {
+            return std::make_unique<sample_api_consumer_plugin>(*log_);
+         },
+      });
+   }
+
+   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+      context.apis().install<sample_api>(sample_api::describe(), std::make_shared<sample_api_impl>());
+      log_->entries.push_back("app.provide");
+      co_return;
+   }
+
+ private:
+   lifecycle_log* log_ = nullptr;
 };
 
 class shell_order_application final : public fcl::app::application_shell {
@@ -738,9 +801,9 @@ class daemon_test_application final : public fcl::app::application_shell {
       });
    }
 
-   boost::asio::awaitable<void> on_install_ports(fcl::app::application_context& context) override {
-      context.ports().install<sample_port>(std::make_shared<sample_port_impl>(state_->workers));
-      state_->log.entries.push_back("app.install_ports");
+   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+      context.apis().install<sample_api>(sample_api::describe(), std::make_shared<sample_api_impl>(state_->workers));
+      state_->log.entries.push_back("app.provide");
       co_return;
    }
 
@@ -793,20 +856,6 @@ int run_test_daemon(std::vector<std::string> args, daemon_test_state& state, fcl
 }
 
 } // namespace
-
-BOOST_AUTO_TEST_CASE(port_registry_installs_gets_and_rejects_duplicates) {
-   auto ports = fcl::app::port_registry{};
-   BOOST_TEST(ports.size() == 0);
-   BOOST_TEST(!ports.try_get<sample_port>());
-
-   ports.install<sample_port>(std::make_shared<sample_port_impl>(7));
-   BOOST_TEST(ports.get<sample_port>()->value() == 7);
-   BOOST_CHECK_THROW(ports.install<sample_port>(std::make_shared<sample_port_impl>(8)), fcl::app::port_error);
-
-   ports.remove<sample_port>();
-   BOOST_TEST(!ports.try_get<sample_port>());
-   BOOST_CHECK_THROW(static_cast<void>(ports.get<sample_port>()), fcl::app::port_error);
-}
 
 BOOST_AUTO_TEST_CASE(event_bus_bounds_queues_and_keeps_critical_ring) {
    auto bus = fcl::app::event_bus{fcl::app::event_bus_options{
@@ -866,10 +915,9 @@ BOOST_AUTO_TEST_CASE(plugin_registry_orders_dependencies_and_rejects_bad_graphs)
 BOOST_AUTO_TEST_CASE(application_runtime_rolls_back_and_shutdown_is_idempotent) {
    auto runtime = fcl::asio::runtime{};
    auto scheduler = fcl::asio::task_scheduler{runtime};
-   auto ports = fcl::app::port_registry{};
    auto signals = fcl::app::signal_bus{};
    auto events = fcl::app::event_bus{};
-   auto context = fcl::app::plugin_context{scheduler, ports, signals, events};
+   auto context = fcl::app::plugin_context{scheduler, signals, events};
    auto log = lifecycle_log{};
 
    auto registry = fcl::app::plugin_registry{};
@@ -894,10 +942,9 @@ BOOST_AUTO_TEST_CASE(application_runtime_rolls_back_and_shutdown_is_idempotent) 
 BOOST_AUTO_TEST_CASE(application_runtime_rejects_startup_after_shutdown) {
    auto runtime = fcl::asio::runtime{};
    auto scheduler = fcl::asio::task_scheduler{runtime};
-   auto ports = fcl::app::port_registry{};
    auto signals = fcl::app::signal_bus{};
    auto events = fcl::app::event_bus{};
-   auto context = fcl::app::plugin_context{scheduler, ports, signals, events};
+   auto context = fcl::app::plugin_context{scheduler, signals, events};
    auto log = lifecycle_log{};
 
    auto registry = fcl::app::plugin_registry{};
@@ -921,11 +968,10 @@ BOOST_AUTO_TEST_CASE(application_runtime_rejects_startup_after_shutdown) {
 BOOST_AUTO_TEST_CASE(application_runtime_records_diagnostics_and_events) {
    auto runtime = fcl::asio::runtime{};
    auto scheduler = fcl::asio::task_scheduler{runtime};
-   auto ports = fcl::app::port_registry{};
    auto signals = fcl::app::signal_bus{};
    auto events = fcl::app::event_bus{};
    auto diagnostics = fcl::app::diagnostics_store{};
-   auto context = fcl::app::plugin_context{scheduler, ports, signals, events, &diagnostics};
+   auto context = fcl::app::plugin_context{scheduler, signals, events, &diagnostics};
    auto log = lifecycle_log{};
 
    auto registry = fcl::app::plugin_registry{};
@@ -949,11 +995,10 @@ BOOST_AUTO_TEST_CASE(application_runtime_records_diagnostics_and_events) {
 BOOST_AUTO_TEST_CASE(application_runtime_records_failed_plugin_diagnostics) {
    auto runtime = fcl::asio::runtime{};
    auto scheduler = fcl::asio::task_scheduler{runtime};
-   auto ports = fcl::app::port_registry{};
    auto signals = fcl::app::signal_bus{};
    auto events = fcl::app::event_bus{};
    auto diagnostics = fcl::app::diagnostics_store{};
-   auto context = fcl::app::plugin_context{scheduler, ports, signals, events, &diagnostics};
+   auto context = fcl::app::plugin_context{scheduler, signals, events, &diagnostics};
    auto log = lifecycle_log{};
 
    auto registry = fcl::app::plugin_registry{};
@@ -972,10 +1017,9 @@ BOOST_AUTO_TEST_CASE(application_runtime_records_failed_plugin_diagnostics) {
 BOOST_AUTO_TEST_CASE(application_runtime_collects_and_applies_plugin_config_before_initialize) {
    auto runtime = fcl::asio::runtime{};
    auto scheduler = fcl::asio::task_scheduler{runtime};
-   auto ports = fcl::app::port_registry{};
    auto signals = fcl::app::signal_bus{};
    auto events = fcl::app::event_bus{};
-   auto context = fcl::app::plugin_context{scheduler, ports, signals, events};
+   auto context = fcl::app::plugin_context{scheduler, signals, events};
    auto log = lifecycle_log{};
 
    auto plugins = std::vector<std::unique_ptr<fcl::app::plugin>>{};
@@ -1017,7 +1061,8 @@ BOOST_AUTO_TEST_CASE(application_shell_owns_config_plugin_lifecycle_and_context)
    fcl::asio::blocking::run(app.runtime(), app.startup());
 
    BOOST_TEST(app.workers() == 4U);
-   BOOST_TEST(app.ports().get<sample_port>()->value() == 4);
+   auto api = app.apis().get<sample_api>({.id = {"sample"}, .major = 1});
+   BOOST_TEST(fcl::asio::blocking::run(app.runtime(), api->value(0)) == 4);
 
    const auto exit_code = app.run_count();
    BOOST_TEST(exit_code == 7);
@@ -1026,13 +1071,29 @@ BOOST_AUTO_TEST_CASE(application_shell_owns_config_plugin_lifecycle_and_context)
    const auto expected = std::vector<std::string>{
       "app.configure:4",
       "plugin.configure:9000",
-      "app.install_ports:1",
+      "app.provide",
       "plugin.initialize:9000",
       "plugin.startup",
       "app.run",
       "plugin.shutdown",
    };
    BOOST_TEST(log.entries == expected, boost::test_tools::per_element());
+}
+
+BOOST_AUTO_TEST_CASE(application_shell_publishes_api_before_plugin_initialize) {
+   auto log = lifecycle_log{};
+   auto app = shell_api_application{log};
+
+   fcl::asio::blocking::run(app.runtime(), app.initialize());
+
+   const auto expected = std::vector<std::string>{
+      "app.provide",
+      "api.initialize:1",
+   };
+   BOOST_TEST(log.entries == expected, boost::test_tools::per_element());
+   BOOST_TEST(app.apis().describe({.id = {"sample"}, .major = 1}) != nullptr);
+
+   fcl::asio::blocking::run(app.runtime(), app.shutdown());
 }
 
 BOOST_AUTO_TEST_CASE(application_shell_preserves_dependency_order_and_reverse_shutdown) {
@@ -1679,7 +1740,7 @@ BOOST_AUTO_TEST_CASE(run_daemon_respects_plugin_selection_before_lifecycle) {
    BOOST_TEST(exit_code == 0);
    const auto expected = std::vector<std::string>{
       "app.configure:2",
-      "app.install_ports",
+      "app.provide",
    };
    BOOST_TEST(state.log.entries == expected, boost::test_tools::per_element());
 }
@@ -1720,13 +1781,14 @@ BOOST_AUTO_TEST_CASE(application_builder_creates_shell_and_applies_config_handle
          async_config_called = true;
          log.entries.push_back("configure.extra");
       })
-      .install_ports([&](fcl::app::application_context& context) {
-         context.ports().install<sample_port>(std::make_shared<sample_port_impl>(workers));
-         log.entries.push_back("install_ports:" + std::to_string(context.ports().size()));
+      .provide([&](fcl::app::application_context& context) {
+         context.apis().install<sample_api>(sample_api::describe(), std::make_shared<sample_api_impl>(workers));
+         log.entries.push_back("provide");
       })
       .run_foreground([&](fcl::app::application_shell& shell) {
          log.entries.push_back("run");
-         return shell.ports().get<sample_port>()->value();
+         auto api = shell.apis().get<sample_api>({.id = {"sample"}, .major = 1});
+         return fcl::asio::blocking::run(shell.runtime(), api->value(0));
       });
 
    auto app = std::move(builder).build();
@@ -1741,7 +1803,8 @@ BOOST_AUTO_TEST_CASE(application_builder_creates_shell_and_applies_config_handle
 
    BOOST_TEST(async_config_called);
    BOOST_TEST(workers == 6U);
-   BOOST_TEST(app->ports().get<sample_port>()->value() == 6);
+   auto api = app->apis().get<sample_api>({.id = {"sample"}, .major = 1});
+   BOOST_TEST(fcl::asio::blocking::run(app->runtime(), api->value(0)) == 6);
    BOOST_TEST(app->run() == 6);
 
    fcl::asio::blocking::run(app->runtime(), app->shutdown());
@@ -1749,7 +1812,7 @@ BOOST_AUTO_TEST_CASE(application_builder_creates_shell_and_applies_config_handle
    const auto expected = std::vector<std::string>{
       "typed.configure:6",
       "configure.extra",
-      "install_ports:1",
+      "provide",
       "run",
    };
    BOOST_TEST(log.entries == expected, boost::test_tools::per_element());
@@ -1805,15 +1868,15 @@ BOOST_AUTO_TEST_CASE(application_builder_collects_plugin_config_and_preserves_de
 
 BOOST_AUTO_TEST_CASE(application_builder_rejects_invalid_typed_config_before_side_effects) {
    auto configured = false;
-   auto ports_installed = false;
+   auto provided = false;
 
    auto builder = fcl::app::application_builder{};
    builder.config<shell_service_config>("service", [&](const shell_service_config&) {
       configured = true;
    });
-   builder.install_ports([&](fcl::app::application_context& context) {
-      ports_installed = true;
-      context.ports().install<sample_port>(std::make_shared<sample_port_impl>(1));
+   builder.provide([&](fcl::app::application_context& context) {
+      provided = true;
+      context.apis().install<sample_api>(sample_api::describe(), std::make_shared<sample_api_impl>(1));
    });
 
    auto app = std::move(builder).build();
@@ -1822,6 +1885,6 @@ BOOST_AUTO_TEST_CASE(application_builder_rejects_invalid_typed_config_before_sid
 
    BOOST_CHECK_THROW(app->configure(document), std::invalid_argument);
    BOOST_TEST(!configured);
-   BOOST_TEST(!ports_installed);
-   BOOST_TEST(!app->ports().try_get<sample_port>());
+   BOOST_TEST(!provided);
+   BOOST_TEST(app->apis().describe({.id = {"sample"}, .major = 1}) == nullptr);
 }

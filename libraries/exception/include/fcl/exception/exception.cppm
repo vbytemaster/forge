@@ -12,7 +12,7 @@ module;
 
 export module fcl.exception.exception;
 
-export namespace fcl::error {
+export namespace fcl::exception {
 
 struct field {
    std::string key;
@@ -56,21 +56,75 @@ template <typename T> field secret(std::string_view key, const T& value) {
 
 using fields = std::vector<field>;
 
-class context_error : public std::runtime_error {
+class category final : public std::error_category {
  public:
-   context_error(std::string message, fields context = {},
-                 std::source_location location = std::source_location::current(), std::error_code code = {});
+   explicit category(const char* name) noexcept;
 
+   const char* name() const noexcept override;
+   std::string message(int value) const override;
+
+ private:
+   const char* _name = "";
+};
+
+struct frame {
+   std::string message;
+   fields context;
+   std::source_location location;
+};
+
+class base : public std::runtime_error {
+ public:
+   base(std::string message, fields context = {},
+        std::source_location location = std::source_location::current(), std::error_code code = {});
+
+   const char* what() const noexcept override;
    const std::string& message() const noexcept;
    const fields& context() const noexcept;
    const std::source_location& location() const noexcept;
    const std::error_code& code() const noexcept;
+   const std::vector<frame>& context_frames() const noexcept;
+
+   void append_context(std::string message, fields context = {},
+                       std::source_location location = std::source_location::current());
 
  private:
+   void refresh_what();
+
    std::string _message;
    fields _context;
    std::source_location _location;
    std::error_code _code;
+   std::vector<frame> _frames;
+   std::string _what;
+};
+
+class context_error : public base {
+ public:
+   using base::base;
+};
+
+namespace detail {
+template <typename Enum>
+std::error_code enum_error_code(Enum value) {
+   return make_error_code(value);
+}
+} // namespace detail
+
+template <typename Enum>
+std::error_code make_error_code(Enum value) {
+   return detail::enum_error_code(value);
+}
+
+template <typename Enum, Enum Value>
+class coded_exception : public context_error {
+ public:
+   using enum_type = Enum;
+   static constexpr Enum value = Value;
+
+   coded_exception(std::string message, fields context = {},
+                   std::source_location location = std::source_location::current())
+       : context_error(std::move(message), std::move(context), location, detail::enum_error_code(Value)) {}
 };
 
 std::string format_fields(const fields& context);
@@ -150,4 +204,35 @@ template <typename... Args> void capture_and_log(std::string_view message, Args&
    log_current_exception(message, make_fields(std::forward<Args>(args)...));
 }
 
-} // namespace fcl::error
+} // namespace fcl::exception
+
+export namespace fcl {
+namespace error {
+using fcl::exception::base;
+using fcl::exception::capture_and_log;
+using fcl::exception::capture_and_rethrow;
+using fcl::exception::category;
+using fcl::exception::coded_exception;
+using fcl::exception::context_error;
+using fcl::exception::ctx;
+using fcl::exception::field;
+using fcl::exception::fields;
+using fcl::exception::format_context_message;
+using fcl::exception::format_current_exception;
+using fcl::exception::format_exception_chain;
+using fcl::exception::format_fields;
+using fcl::exception::frame;
+using fcl::exception::log_current_exception;
+using fcl::exception::log_sink;
+using fcl::exception::make_error_code;
+using fcl::exception::make_fields;
+using fcl::exception::secret;
+using fcl::exception::set_log_sink;
+using fcl::exception::throw_assertion_error;
+using fcl::exception::throw_assertion_failure;
+using fcl::exception::throw_context_error;
+using fcl::exception::throw_deadline_exceeded;
+using fcl::exception::throw_timeout_error;
+using fcl::exception::throw_with_context;
+} // namespace error
+} // namespace fcl

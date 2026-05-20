@@ -10,6 +10,7 @@ export module fcl.app.application;
 
 import fcl.config.component;
 import fcl.config.document;
+import fcl.api;
 import fcl.app.diagnostics;
 import fcl.app.plugin_context;
 import fcl.app.plugin;
@@ -50,6 +51,7 @@ class application_runtime {
 
    [[nodiscard]] config::component_registry describe_config() const;
    boost::asio::awaitable<void> configure(const config::document& document);
+   boost::asio::awaitable<void> provide(fcl::api::provider& provider);
    boost::asio::awaitable<void> initialize();
    boost::asio::awaitable<void> startup();
    boost::asio::awaitable<void> shutdown();

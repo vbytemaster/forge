@@ -29,6 +29,49 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - Do not create nested public include directories under `include/fcl/<lib>`.
 - Do not use `import std;` until the supported toolchain and CI explicitly prove it is stable.
 
+## Public API Declaration Shape
+
+- Standalone public concepts should be declared directly in the owning
+  `namespace fcl::<lib>`.
+- Nested public types are allowed only when the type is truly owned by the
+  enclosing class, such as short `config`, `options`, `result`, `token`,
+  enum/value wrappers or other small companion records.
+- If a nested type is a full public contract, interface or API, the owner class
+  body should contain only a forward declaration such as `class api;`, and the
+  contract body should be declared separately as `class owner::api { ... };`
+  immediately below the owner.
+- Do not write a nested type inline inside the owner class when it has virtual
+  methods, many methods, its own pimpl, nested option/result families or is a
+  consumer-facing interface in its own right.
+- Implementation details must stay as private forward declarations such as
+  `struct impl;` or `class api::impl;`, with definitions in the `.cpp`. Do not
+  create top-level public `*_impl` vocabulary for implementation types.
+
+Good:
+
+```cpp
+class p2p_node {
+ public:
+   struct config;
+   class api;
+};
+
+class p2p_node::api {
+   // Public API contract.
+};
+```
+
+Bad:
+
+```cpp
+class p2p_node {
+ public:
+   class api {
+      // Large public contract hidden inside the owner class body.
+   };
+};
+```
+
 ## Library Shape
 
 - Prefer many small targets over one monolithic target.
@@ -41,6 +84,7 @@ The repository must stay neutral. Public APIs must not contain downstream produc
   - `fcl_yaml`
   - `fcl_program_options`
   - `fcl_json`
+  - `fcl_api`
   - `fcl_crypto`
   - `fcl_runtime`
   - `fcl_log`
@@ -49,6 +93,7 @@ The repository must stay neutral. Public APIs must not contain downstream produc
   - `fcl_websocket`
   - `fcl_quic`
   - `fcl_p2p`
+  - `fcl_plugins`
   - `fcl_tui`
 - Heavy classes that own sockets, event loops, crypto contexts, terminal state, or other external resources should use pimpl.
 - Value types, protocol records, and simple POD-like structs should not use pimpl.
@@ -90,8 +135,15 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 
 ## Errors And Logging
 
-- FCL errors are `std`-based and support structured context through `fcl::error::context_error`.
-- Use `FCL_THROW`, `FCL_ASSERT`, deadline checks and capture/log helpers with explicit `fcl::error::ctx(...)` or `fcl::error::secret(...)` fields.
+- FCL exceptions are `std`-based and support typed categories through
+  `fcl::exception::coded_exception<Enum, Value>` plus structured redacted
+  context through `fcl::exception::context_error`.
+- Public FCL/app/network/API boundary failures should use typed exceptions
+  under `fcl::{lib}::exceptions::*`, without `_exception` suffix.
+- `FCL_THROW_EXCEPTION(ExceptionType, ...)` is the canonical typed throw macro.
+- Use `FCL_THROW`, `FCL_ASSERT`, deadline checks and capture/log helpers with explicit `fcl::exception::ctx(...)` or `fcl::exception::secret(...)` fields.
+- `fcl::error` is only a temporary compatibility alias; new code and docs should
+  use `fcl::exception`.
 - The old FC exception hierarchy, old declare/throw macros and variant-backed exception serialization are removed and must not reappear.
 - Context capture must preserve source location and redact secret fields.
 - Logging core should stay small: console/file/JSONL-style sinks and structured fields.
@@ -112,6 +164,11 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - Do not shell out to an external `openssl` binary for key or certificate generation.
 - Specialized crypto libraries may remain optional targets when they have clear tests and isolated dependencies.
 - K1 compatibility must not be replaced with generic OpenSSL ECDSA behavior.
+- `fcl.crypto.base58` must expose byte-friendly APIs using
+  `std::span<const std::uint8_t>` and `std::vector<std::uint8_t>` for new
+  multiformats/libp2p work. Existing `char` / `std::vector<char>` overloads may
+  remain as compatibility wrappers, but new network code must not scatter
+  casts between `char` and byte containers.
 - `fcl_crypto` stays synchronous and low-level. Do not import `fcl_asio`,
   schedulers, threads or runtime policy into crypto primitives.
 - WebAuthn parsing must stay private to `fcl_crypto` and must not reintroduce a
@@ -124,6 +181,20 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - Boost.Asio and Boost.Beast are valid dependencies for future runtime and network targets.
 - Legacy networking code from the old codebase must not define the new network API.
 - The network family is a set of independent root libraries: `fcl_http`, `fcl_websocket`, `fcl_quic`, and `fcl_p2p`.
+- `fcl_api` is the neutral typed contract layer used by app/network bindings; it
+  must not import `fcl_app`, `fcl_http`, `fcl_websocket`, `fcl_quic` or
+  `fcl_p2p`.
+- HTTP API bindings must preserve native HTTP route/path/status semantics; do
+  not force all APIs into a frame-only `POST /rpc` model.
+- WebSocket, QUIC and P2P API bindings use `fcl::api::frame` and the shared
+  `fcl::api::error_payload`; protocol-specific duplicate error DTOs are
+  forbidden.
+- API binding builders must not expose decorative options. Every public option
+  such as codec, frame size, max inflight, deadline, peer policy or middleware
+  must affect runtime behavior and be covered by tests.
+- HTTP-specific middleware belongs to `fcl.http.api`/router composition.
+  Protocol-neutral trace/authz/metrics/limits logic belongs to
+  `fcl::api::interceptor(...)`.
 - Do not create `libraries/network`, legacy net-prefixed target, module, or namespace forms.
 - Runtime workers must have explicit cancellation, bounded queues where needed, and deterministic shutdown.
 - Do not introduce `std::async`, ad hoc polling loops, or unmanaged background threads as core runtime behavior.
@@ -132,12 +203,51 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 
 - `fcl_app` provides an opinionated `application_shell` for production
   programs. Prefer it for new services instead of copying runtime, scheduler,
-  ports, signals, events, diagnostics, plugin context and application runtime
+  API registry, signals, events, diagnostics, plugin context and application runtime
   members into every product application.
 - `application_shell` owns lifecycle order: collect app and plugin config,
   merge defaults with input document, configure app hook, configure plugins,
-  install app ports, initialize plugins, startup plugins, request stop and
+  provide app APIs, plugins provide APIs, initialize plugins, startup plugins, request stop and
   reverse shutdown.
+- Plugins own behavior and lifecycle. APIs expose typed contracts; they
+  must not become fake lifecycle modules.
+- Ready-made infrastructure plugins live in `fcl_plugins`. They may own
+  transport/runtime lifecycle and publish narrow `fcl_api` capabilities for
+  product plugins, but they must not own product business logic.
+- Plugin-specific exception families live with the owning plugin module, not in
+  a shared catch-all plugin exceptions module. For example,
+  `fcl::plugins::p2p_node::exceptions::*` belongs to `fcl.plugins.p2p_node`.
+- `fcl::plugins::p2p_node` is the production owner for a shared P2P node inside
+  an application. It owns bootstrap, route/API contribution mounting, delivery
+  retry, relay policy and optional outbox integration; product plugins must not
+  create parallel P2P nodes or call raw `p2p::node` path/relay primitives when
+  the plugin owns the node.
+- Production P2P network mechanics belong to `fcl_p2p`, not to
+  `fcl_plugins::p2p_node`. FCL's P2P direction is a clean C++23
+  libp2p-compatible implementation: FCL public APIs stay FCL/Boost-style, but
+  declared libp2p protocols must be wire-compatible with go-libp2p and
+  rust-libp2p. Endpoint/address encoding, Peer ID, supported key families
+  (Ed25519, Secp256k1, ECDSA and RSA), protocol negotiation, Identify, Ping,
+  persistent peer/path store, AutoNAT/reachability, Circuit Relay/relay manager,
+  AutoRelay, DCUtR/hole punching, DHT/rendezvous, pubsub/gossip, network limits,
+  backpressure and network metrics must be added at the network layer. The
+  plugin only maps config, owns app lifecycle, mounts route/API contributions,
+  exposes safe local APIs and integrates the optional outbox.
+- Public P2P APIs should use FCL/Boost-style vocabulary such as `endpoint`,
+  `resolver`, `listener`, `connector`, `session`, `stream` and `protocol_id`.
+  libp2p terms such as `multiaddr` describe the compatibility wire/text format;
+  they must not force C-style names into FCL public APIs.
+- libp2p compatibility must be evidence-based. For every libp2p protocol marked
+  supported, tests must include spec-derived cases, donor-derived cases from
+  go-libp2p/rust-libp2p and live interop coverage. A test that is merely
+  "similar to libp2p" is not enough.
+- Keep AutoNAT, AutoRelay, DHT, rendezvous, pubsub/gossip and relay discovery in
+  `fcl_p2p`. If a network-level behavior is missing, expose a typed
+  unsupported/limited behavior or implement it in `fcl_p2p`; do not hide it
+  above the network layer.
+- Durable P2P delivery in FCL is pluggable, not storage-bound. `fcl_plugins` may
+  define an outbox interface and an in-memory default, but it must not depend on
+  RocksDB, SQLite or downstream product storage backends.
 - Plugin enable/disable is application-shell-owned config under
   `plugins.<plugin-id>.enabled`. Products must not manually distribute plugin
   selection from their own monolithic config object as the primary path.
@@ -155,20 +265,24 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - Public lifecycle methods on `application_shell` are not extension points.
   Derived applications implement only hooks named without app tautology:
   `on_describe_config`, `on_configure`, `on_register_plugins`,
-  `on_install_ports` and optionally `on_run_foreground`.
+  `on_provide` and optionally `on_run_foreground`.
 - Do not add hook names that repeat the application context or another
   parallel application lifecycle vocabulary. The context already identifies the
   code as application-level.
-- `application_builder` is allowed only as convenience syntax that builds an
-  `application_shell`. It must not define a second lifecycle model, own
-  independent lifecycle state or bypass shell config/plugin ordering.
+- `application_builder` is the preferred production composition path for normal
+  product applications. It builds an `application_shell` and must not define a
+  second lifecycle model, own independent lifecycle state or bypass shell
+  config/plugin ordering.
 - Do not add builder sugar such as separate `threads(...)` convenience methods
   without a concrete consumer win. Runtime options already carry worker count
   and thread name together.
-- Use `application_builder` for simple composition and tests. Use a derived
-  `application_shell` when the application has substantial state or complex
-  composition.
-- Ports define contracts.
+- Use a derived `application_shell` only as an advanced escape hatch when the
+  application has substantial state or lifecycle customization that callbacks
+  cannot express cleanly.
+- Plugin-owned descriptor factories live on the owner type as
+  `plugin_type::descriptor()`. Avoid free `*_descriptor()` functions when the
+  owner type already names the concept.
+- APIs define typed contracts.
 - Plugins orchestrate behavior.
 - Adapters connect concrete backends and external systems.
 - Events may support diagnostics, but must not become hidden business-flow coupling.

@@ -22,7 +22,6 @@ import fcl.app.events;
 import fcl.app.plugin;
 import fcl.app.plugin_context;
 import fcl.app.plugin_registry;
-import fcl.app.ports;
 import fcl.app.signals;
 
 namespace fcl::app {
@@ -101,10 +100,10 @@ void publish_application_event(event_bus& events, event_severity severity, std::
 } // namespace
 
 application_context::application_context(fcl::asio::runtime& runtime, fcl::asio::task_scheduler& scheduler,
-                                         port_registry& ports, signal_bus& signals, event_bus& events,
-                                         diagnostics_store& diagnostics)
-    : runtime_{&runtime}, scheduler_{&scheduler}, ports_{&ports}, signals_{&signals}, events_{&events},
-      diagnostics_{&diagnostics} {}
+                                         fcl::api::registry& apis, signal_bus& signals,
+                                         event_bus& events, diagnostics_store& diagnostics)
+    : runtime_{&runtime}, scheduler_{&scheduler}, apis_{&apis}, signals_{&signals},
+      events_{&events}, diagnostics_{&diagnostics} {}
 
 fcl::asio::runtime& application_context::runtime() noexcept {
    return *runtime_;
@@ -114,8 +113,8 @@ fcl::asio::task_scheduler& application_context::scheduler() noexcept {
    return *scheduler_;
 }
 
-port_registry& application_context::ports() noexcept {
-   return *ports_;
+fcl::api::installer application_context::apis() noexcept {
+   return fcl::api::installer{*apis_};
 }
 
 signal_bus& application_context::signals() noexcept {
@@ -143,7 +142,7 @@ fcl::config::component_view configure_context::view(std::string section) const {
 struct application_shell::impl {
    explicit impl(application_shell_options input)
        : options{std::move(input)}, runtime{options.runtime}, scheduler{runtime, options.scheduler},
-         context{runtime, scheduler, ports, signals, events, diagnostics} {}
+         context{runtime, scheduler, apis, signals, events, diagnostics} {}
 
    void require_created(const char* operation) const {
       if (state != application_state::created) {
@@ -154,7 +153,7 @@ struct application_shell::impl {
    application_shell_options options;
    fcl::asio::runtime runtime;
    fcl::asio::task_scheduler scheduler;
-   port_registry ports;
+   fcl::api::registry apis;
    signal_bus signals;
    event_bus events;
    diagnostics_store diagnostics;
@@ -165,7 +164,7 @@ struct application_shell::impl {
    fcl::config::document effective_config;
    bool plugins_registered = false;
    bool configured = false;
-   bool ports_installed = false;
+   bool apis_provided = false;
    application_state state = application_state::created;
 };
 
@@ -181,7 +180,7 @@ boost::asio::awaitable<void> application_shell::on_configure(configure_context&)
 
 void application_shell::on_register_plugins(plugin_registry&) {}
 
-boost::asio::awaitable<void> application_shell::on_install_ports(application_context&) {
+boost::asio::awaitable<void> application_shell::on_provide(application_context&) {
    co_return;
 }
 
@@ -202,7 +201,7 @@ void application_shell::instantiate_plugins(const fcl::config::document& documen
    impl_->plugin_runtime.reset();
    impl_->plugin_context_value.reset();
    impl_->plugin_context_value =
-       std::make_unique<plugin_context>(impl_->scheduler, impl_->ports, impl_->signals, impl_->events, &impl_->diagnostics);
+       std::make_unique<plugin_context>(impl_->scheduler, impl_->apis, impl_->signals, impl_->events, &impl_->diagnostics);
    impl_->plugin_runtime = std::make_unique<application_runtime>(
       *impl_->plugin_context_value,
       impl_->registry.instantiate_enabled(plugin_selection_from_document(impl_->registry, document)),
@@ -218,7 +217,7 @@ fcl::config::component_registry application_shell::collect_config() {
    }
 
    auto plugin_context_value =
-       plugin_context{impl_->scheduler, impl_->ports, impl_->signals, impl_->events, &impl_->diagnostics};
+       plugin_context{impl_->scheduler, impl_->apis, impl_->signals, impl_->events, &impl_->diagnostics};
    auto plugin_runtime = application_runtime{
       plugin_context_value,
       impl_->registry.instantiate_enabled(enabled_config_for_all_plugins(impl_->registry)),
@@ -263,9 +262,11 @@ boost::asio::awaitable<void> application_shell::initialize() {
       impl_->diagnostics.set_application_state(lifecycle_state::initializing, "initialize");
       impl_->signals.application_initializing(application_signal{.name = impl_->options.name});
       publish_application_event(impl_->events, event_severity::info, impl_->options.name, "initializing");
-      if (!impl_->ports_installed) {
-         co_await on_install_ports(impl_->context);
-         impl_->ports_installed = true;
+      if (!impl_->apis_provided) {
+         co_await on_provide(impl_->context);
+         auto provider = impl_->context.apis();
+         co_await impl_->plugin_runtime->provide(provider);
+         impl_->apis_provided = true;
       }
       co_await impl_->plugin_runtime->initialize();
       impl_->state = application_state::initialized;
@@ -359,8 +360,8 @@ fcl::asio::task_scheduler& application_shell::scheduler() noexcept {
    return impl_->scheduler;
 }
 
-port_registry& application_shell::ports() noexcept {
-   return impl_->ports;
+fcl::api::registry& application_shell::apis() noexcept {
+   return impl_->apis;
 }
 
 signal_bus& application_shell::signals() noexcept {

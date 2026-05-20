@@ -130,6 +130,15 @@ target_link_libraries(test_fcl_env fcl Boost::included_unit_test_framework)
 add_test(NAME test_fcl_env COMMAND test_fcl_env WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
+   test_fcl_api
+   unit/main.cpp
+   api/api_tests.cpp
+   api/api_module_smoke_tests.cpp
+)
+target_link_libraries(test_fcl_api fcl Boost::included_unit_test_framework)
+add_test(NAME test_fcl_api COMMAND test_fcl_api WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(
    test_fcl_http_websocket
    unit/main.cpp
    http_websocket/network_tests.cpp
@@ -145,6 +154,14 @@ add_executable(
 )
 target_link_libraries(test_fcl_quic_p2p fcl Boost::included_unit_test_framework)
 add_test(NAME test_fcl_quic_p2p COMMAND test_fcl_quic_p2p WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(
+   test_fcl_plugins
+   unit/main.cpp
+   plugins/plugins_tests.cpp
+)
+target_link_libraries(test_fcl_plugins fcl fcl_plugins Boost::included_unit_test_framework)
+add_test(NAME test_fcl_plugins COMMAND test_fcl_plugins WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 if(TARGET fcl_tui)
    add_executable(
@@ -215,6 +232,22 @@ add_custom_target(
    DEPENDS test_fcl_package_install
 )
 add_custom_target(
+   test_fcl_package_api_lightweight
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_api_lightweight
+      ${CMAKE_BINARY_DIR}/fcl-package-api-lightweight
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options
+         ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+         -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
+         -DCMAKE_DISABLE_FIND_PACKAGE_Ngtcp2=ON
+         -DCMAKE_DISABLE_FIND_PACKAGE_glaze=ON
+         -DCMAKE_DISABLE_FIND_PACKAGE_Notcurses=ON
+      --test-command fcl_package_api_lightweight
+   DEPENDS test_fcl_package_install
+)
+add_custom_target(
    test_fcl_package_all_missing_dependency
    COMMAND ${CMAKE_COMMAND}
       -DFCL_PACKAGE_TEST_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_all_missing_dependency
@@ -275,6 +308,22 @@ add_test(
       --test-command fcl_package_env_lightweight
 )
 set_tests_properties(test_fcl_package_env_lightweight PROPERTIES DEPENDS test_fcl_package_install)
+add_test(
+   NAME test_fcl_package_api_lightweight
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_api_lightweight
+      ${CMAKE_BINARY_DIR}/fcl-package-api-lightweight
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options
+         ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+         -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
+         -DCMAKE_DISABLE_FIND_PACKAGE_Ngtcp2=ON
+         -DCMAKE_DISABLE_FIND_PACKAGE_glaze=ON
+         -DCMAKE_DISABLE_FIND_PACKAGE_Notcurses=ON
+      --test-command fcl_package_api_lightweight
+)
+set_tests_properties(test_fcl_package_api_lightweight PROPERTIES DEPENDS test_fcl_package_install)
 add_test(
    NAME test_fcl_package_all_missing_dependency
    COMMAND ${CMAKE_COMMAND}

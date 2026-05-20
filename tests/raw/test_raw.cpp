@@ -2,9 +2,12 @@
 #include <boost/test/unit_test.hpp>
 #include <fcl/raw/serialization.hpp>
 #include <chrono>
+#include <cstdint>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
+#include <vector>
 
 import fcl.exception.exception;
 import fcl.crypto.hex;
@@ -119,6 +122,20 @@ BOOST_AUTO_TEST_CASE(serialization_macros_instantiate_raw_variant_and_digest_pac
    fcl::raw::pack(digest_stream, value);
    BOOST_CHECK_EQUAL(digest_stream.result().str(),
                      fcl::sha256::hash(buffer, static_cast<uint32_t>(write_stream.tellp())).str());
+}
+
+BOOST_AUTO_TEST_CASE(raw_can_pack_into_uint8_byte_containers_without_changing_legacy_char_pack) {
+   const macro_serialized_record value{0x1234, "node"};
+
+   const auto legacy = fcl::raw::pack(value);
+   auto bytes = std::vector<std::uint8_t>{};
+   fcl::raw::pack(bytes, value);
+
+   BOOST_CHECK_EQUAL(fcl::to_hex(std::vector<char>{bytes.begin(), bytes.end()}), fcl::to_hex(legacy));
+   BOOST_CHECK(fcl::raw::unpack<macro_serialized_record>(bytes) == value);
+
+   const auto view = std::span<const std::uint8_t>{bytes.data(), bytes.size()};
+   BOOST_CHECK(fcl::raw::unpack<macro_serialized_record>(view) == value);
 }
 
 BOOST_AUTO_TEST_CASE(std_chrono_preserves_old_fc_raw_layout) {

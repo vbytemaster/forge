@@ -52,6 +52,14 @@ class component_view {
  public:
    component_view(const document& source, std::string section) : source_{&source}, section_{std::move(section)} {}
 
+   [[nodiscard]] const document& source() const noexcept {
+      return *source_;
+   }
+
+   [[nodiscard]] std::string_view section() const noexcept {
+      return section_;
+   }
+
    [[nodiscard]] const value* try_get(std::string_view field) const;
 
    template <typename T> [[nodiscard]] T get_or(std::string_view field, T fallback) const {

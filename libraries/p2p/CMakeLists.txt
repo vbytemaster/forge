@@ -16,6 +16,9 @@ target_include_directories(fcl_p2p PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
    fcl_p2p PUBLIC
+      fcl_exception
+      fcl_api
+      fcl_raw
       fcl_asio
       fcl_quic
       Boost::asio

@@ -185,6 +185,7 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/yaml/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/program_options/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/env/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/api/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/log/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/crypto/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/asio/include"
@@ -193,6 +194,7 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/quic/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/p2p/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/app/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/plugins/include"
 )
 
 if(FCL_ENABLE_TUI AND FCL_TUI_NOTCURSES_TARGET)
@@ -297,6 +299,7 @@ add_subdirectory(libraries/json)
 add_subdirectory(libraries/yaml)
 add_subdirectory(libraries/program_options)
 add_subdirectory(libraries/env)
+add_subdirectory(libraries/api)
 add_subdirectory(libraries/log)
 add_subdirectory(libraries/crypto)
 add_subdirectory(libraries/asio)
@@ -305,6 +308,7 @@ add_subdirectory(libraries/websocket)
 add_subdirectory(libraries/quic)
 add_subdirectory(libraries/p2p)
 add_subdirectory(libraries/app)
+add_subdirectory(libraries/plugins)
 if(FCL_ENABLE_TUI AND FCL_TUI_NOTCURSES_TARGET)
    add_subdirectory(libraries/tui)
 endif()
@@ -322,6 +326,7 @@ set(
    fcl_yaml
    fcl_program_options
    fcl_env
+   fcl_api
    fcl_log
    fcl_crypto
    fcl_asio
@@ -330,6 +335,7 @@ set(
    fcl_quic
    fcl_p2p
    fcl_app
+   fcl_plugins
 )
 
 if(TARGET fcl_tui)
@@ -379,6 +385,7 @@ install(
              libraries/yaml/include/fcl
              libraries/program_options/include/fcl
              libraries/env/include/fcl
+             libraries/api/include/fcl
              libraries/log/include/fcl
              libraries/crypto/include/fcl
              libraries/asio/include/fcl
@@ -387,6 +394,7 @@ install(
              libraries/quic/include/fcl
              libraries/p2p/include/fcl
              libraries/app/include/fcl
+             libraries/plugins/include/fcl
    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
 )
 

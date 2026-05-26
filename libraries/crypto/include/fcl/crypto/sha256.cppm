@@ -118,6 +118,10 @@ void from_variant(const variant& v, sha256& bi);
 
 uint64_t hash64(const char* buf, size_t len);
 
+inline size_t hash_value(const fcl::crypto::sha256& s) {
+   return s._hash[3];
+}
+
 } // namespace fcl::crypto
 
 export namespace std {
@@ -141,9 +145,3 @@ template <> struct hash<fcl::crypto::sha256> {
    }
 };
 } // namespace boost
-
-export namespace fcl::crypto {
-inline size_t hash_value(const fcl::crypto::sha256& s) {
-   return boost::hash<fcl::crypto::sha256>()(s);
-}
-} // namespace fcl::crypto

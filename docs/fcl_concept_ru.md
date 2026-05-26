@@ -494,7 +494,7 @@ fcl::ctx("token", value, fcl::sensitive)
 
 ```cpp
 import fcl.crypto.sha256;
-import fcl.crypto.private_key;
+import fcl.crypto.asymmetric;
 ```
 
 Crypto namespace lives under `fcl::crypto`; старый FC source namespace больше не является целью после structural split.

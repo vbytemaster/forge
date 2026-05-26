@@ -1,5 +1,6 @@
 module;
 #include <fcl/exception/macros.hpp>
+#include "openssl_backend.hpp"
 #include <openssl/core_names.h>
 #include <openssl/bn.h>
 #include <openssl/ec.h>
@@ -19,8 +20,7 @@ module;
 
 module fcl.crypto.p256;
 
-import fcl.crypto.openssl;
-import fcl.crypto.rand;
+import fcl.crypto.random;
 import fcl.crypto.sha256;
 import fcl.crypto.sha512;
 import fcl.exception.exception;
@@ -39,6 +39,12 @@ class private_key_impl {
 } // namespace detail
 
 namespace {
+using fcl::crypto::detail::bn_ctx;
+using fcl::crypto::detail::ec_group;
+using fcl::crypto::detail::ec_point;
+using fcl::crypto::detail::ecdsa_sig;
+using fcl::crypto::detail::ssl_bignum;
+
 constexpr const char* r1_group_name = "prime256v1";
 
 const public_key_data empty_public_key{};
@@ -335,7 +341,8 @@ public_key_data recover_public_key_data(const compact_signature& c, const fcl::c
    return *recovered;
 }
 
-compact_signature signature_from_ecdsa(const public_key_data& pub_data, fcl::crypto::ecdsa_sig& sig, const fcl::crypto::sha256& d) {
+compact_signature signature_from_ecdsa(const public_key_data& pub_data, fcl::crypto::detail::ecdsa_sig& sig,
+                                       const fcl::crypto::sha256& d) {
    const BIGNUM *sig_r = nullptr, *sig_s = nullptr;
    ECDSA_SIG_get0(sig, &sig_r, &sig_s);
    BIGNUM* r = BN_dup(sig_r);
@@ -450,7 +457,8 @@ fcl::crypto::sha256 private_key::get_secret() const {
 private_key private_key::generate() {
    private_key self;
    do {
-      rand_bytes(self.my->_key.data(), self.my->_key.data_size());
+      fcl::crypto::fill_random(std::span<std::uint8_t>{
+         reinterpret_cast<std::uint8_t*>(self.my->_key.data()), self.my->_key.data_size()});
    } while (!valid_secret(self.my->_key));
    return self;
 }

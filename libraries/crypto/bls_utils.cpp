@@ -3,15 +3,13 @@ module;
 #include <cstdint>
 #include <span>
 
-module fcl.crypto.bls_utils;
+module fcl.crypto.bls;
 
-import fcl.crypto.bls_public_key;
-import fcl.crypto.bls_signature;
 
-namespace fcl::crypto::blslib {
+namespace fcl::crypto::bls {
 
-bool verify(const bls_public_key& pubkey, std::span<const uint8_t> message, const bls_signature& signature) {
+bool verify(const public_key& pubkey, std::span<const uint8_t> message, const signature& signature) {
    return bls12_381::verify(pubkey.jacobian_montgomery_le(), message, signature.jacobian_montgomery_le());
 };
 
-} // namespace fcl::crypto::blslib
+} // namespace fcl::crypto::bls

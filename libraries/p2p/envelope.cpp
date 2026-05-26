@@ -14,9 +14,8 @@ module fcl.p2p.envelope;
 
 import fcl.crypto.der;
 import fcl.crypto.ed25519;
-import fcl.crypto.public_key;
+import fcl.crypto.asymmetric;
 import fcl.crypto.rsa;
-import fcl.crypto.signature;
 import fcl.multiformats;
 import fcl.p2p.exceptions;
 
@@ -34,7 +33,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
    return out;
 }
 
-[[nodiscard]] fcl::crypto::public_key crypto_public_key(const public_key& key) {
+[[nodiscard]] fcl::crypto::asymmetric::public_key crypto_public_key(const public_key& key) {
    if (key.data.empty()) {
       exceptions::raise(exceptions::code::invalid_identity, "signed envelope public key is empty");
    }
@@ -45,13 +44,13 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
       }
       auto data = fcl::crypto::ed25519::public_key_data{};
       std::copy(key.data.begin(), key.data.end(), data.begin());
-      return fcl::crypto::public_key{
-          fcl::crypto::public_key::storage_type{fcl::crypto::ed25519::public_key_shim{data}}};
+      return fcl::crypto::asymmetric::public_key{
+          fcl::crypto::asymmetric::public_key::storage_type{fcl::crypto::ed25519::public_key_shim{data}}};
    }
 
    if (key.type == decltype(key.type)::rsa) {
-      return fcl::crypto::public_key{
-          fcl::crypto::public_key::storage_type{fcl::crypto::rsa::public_key_shim{key.data}}};
+      return fcl::crypto::asymmetric::public_key{
+          fcl::crypto::asymmetric::public_key::storage_type{fcl::crypto::rsa::public_key_shim{key.data}}};
    }
 
    try {
@@ -61,7 +60,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
    }
 }
 
-[[nodiscard]] std::vector<std::uint8_t> sign(const fcl::crypto::private_key& key,
+[[nodiscard]] std::vector<std::uint8_t> sign(const fcl::crypto::asymmetric::private_key& key,
                                              std::span<const std::uint8_t> message) {
    try {
       const auto signature = key.sign(message);
@@ -186,7 +185,7 @@ signed_envelope signed_envelope::decode(std::span<const std::uint8_t> bytes) {
    return out;
 }
 
-signed_envelope signed_envelope::seal(const public_key& key, const fcl::crypto::private_key& private_key,
+signed_envelope signed_envelope::seal(const public_key& key, const fcl::crypto::asymmetric::private_key& private_key,
                                       std::string_view domain,
                                       std::span<const std::uint8_t> payload_type,
                                       std::span<const std::uint8_t> payload) {

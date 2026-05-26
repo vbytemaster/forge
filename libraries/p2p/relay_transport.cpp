@@ -32,7 +32,7 @@ import fcl.crypto.der;
 import fcl.crypto.ed25519;
 import fcl.crypto.hmac;
 import fcl.crypto.pem;
-import fcl.crypto.public_key;
+import fcl.crypto.asymmetric;
 import fcl.p2p.endpoint;
 import fcl.p2p.envelope;
 import fcl.p2p.hole_punch;
@@ -44,7 +44,6 @@ import fcl.p2p.reachability;
 import fcl.p2p.resource_manager;
 import fcl.p2p.scoring;
 import fcl.p2p.stream;
-import fcl.crypto.private_key;
 import fcl.crypto.random;
 import fcl.crypto.rsa;
 import fcl.crypto.sha256;
@@ -114,7 +113,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
    return out;
 }
 
-[[nodiscard]] fcl::crypto::private_key private_key_from_pem(std::string_view pem) {
+[[nodiscard]] fcl::crypto::asymmetric::private_key private_key_from_pem(std::string_view pem) {
    try {
       return fcl::crypto::pem::read_private_key(pem);
    } catch (const fcl::exception::base& error) {
@@ -122,7 +121,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
    }
 }
 
-[[nodiscard]] public_key public_key_from_crypto(const fcl::crypto::public_key& key) {
+[[nodiscard]] public_key public_key_from_crypto(const fcl::crypto::asymmetric::public_key& key) {
    return key.visit([](const auto& value) -> public_key {
       using value_type = std::decay_t<decltype(value)>;
       if constexpr (std::is_same_v<value_type, fcl::crypto::ed25519::public_key_shim>) {
@@ -130,26 +129,26 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
       } else if constexpr (std::is_same_v<value_type, fcl::crypto::rsa::public_key_shim>) {
          return public_key{.type = public_key::type::rsa, .data = value.serialize()};
       } else {
-         const auto spki = fcl::crypto::der::write_public_key(fcl::crypto::public_key{
-             fcl::crypto::public_key::storage_type{value}});
+         const auto spki = fcl::crypto::der::write_public_key(fcl::crypto::asymmetric::public_key{
+             fcl::crypto::asymmetric::public_key::storage_type{value}});
          return public_key{.type = public_key::type::ecdsa, .data = spki};
       }
    });
 }
 
-[[nodiscard]] fcl::crypto::public_key crypto_public_key(const public_key& key) {
+[[nodiscard]] fcl::crypto::asymmetric::public_key crypto_public_key(const public_key& key) {
    if (key.type == public_key::type::ed25519) {
       if (key.data.size() != fcl::crypto::ed25519::public_key_data{}.size()) {
          exceptions::raise(exceptions::code::invalid_identity, "invalid Ed25519 public key size");
       }
       auto data = fcl::crypto::ed25519::public_key_data{};
       std::copy(key.data.begin(), key.data.end(), data.begin());
-      return fcl::crypto::public_key{
-          fcl::crypto::public_key::storage_type{fcl::crypto::ed25519::public_key_shim{data}}};
+      return fcl::crypto::asymmetric::public_key{
+          fcl::crypto::asymmetric::public_key::storage_type{fcl::crypto::ed25519::public_key_shim{data}}};
    }
    if (key.type == public_key::type::rsa) {
-      return fcl::crypto::public_key{
-          fcl::crypto::public_key::storage_type{fcl::crypto::rsa::public_key_shim{key.data}}};
+      return fcl::crypto::asymmetric::public_key{
+          fcl::crypto::asymmetric::public_key::storage_type{fcl::crypto::rsa::public_key_shim{key.data}}};
    }
    try {
       return fcl::crypto::der::read_public_key(key.data);
@@ -158,11 +157,11 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
    }
 }
 
-[[nodiscard]] public_key public_key_from_private(const fcl::crypto::private_key& key) {
+[[nodiscard]] public_key public_key_from_private(const fcl::crypto::asymmetric::private_key& key) {
    return public_key_from_crypto(key.get_public_key());
 }
 
-[[nodiscard]] std::vector<std::uint8_t> sign_identity(const fcl::crypto::private_key& key,
+[[nodiscard]] std::vector<std::uint8_t> sign_identity(const fcl::crypto::asymmetric::private_key& key,
                                                       std::span<const std::uint8_t> message) {
    try {
       const auto signature = key.sign(message);

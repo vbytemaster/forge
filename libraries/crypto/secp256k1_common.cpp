@@ -1,4 +1,5 @@
 module;
+#include "openssl_backend.hpp"
 #include <array>
 #include <cstring>
 #include <exception>
@@ -17,7 +18,6 @@ module;
 module fcl.crypto.secp256k1;
 
 import fcl.crypto.hmac;
-import fcl.crypto.openssl;
 import fcl.crypto.ripemd160;
 import fcl.crypto.sha256;
 import fcl.crypto.sha512;
@@ -29,6 +29,9 @@ import fcl.raw.raw;
 #define BTC_EXT_PRIV_MAGIC (0x0488ADE4)
 
 namespace fcl::crypto::secp256k1 {
+using fcl::crypto::detail::bn_ctx;
+using fcl::crypto::detail::ec_group;
+using fcl::crypto::detail::ssl_bignum;
 
 namespace detail {
 void require(bool value, const char* message) {

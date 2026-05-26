@@ -1,11 +1,12 @@
 module;
 #include <fcl/exception/macros.hpp>
+#include "openssl_backend.hpp"
 #include <array>
 #include <exception>
 #include <memory>
-#include <openssl/rand.h>
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>
+#include <span>
 #include <utility>
 #if _WIN32
 #include <malloc.h>
@@ -18,8 +19,7 @@ module;
 module fcl.crypto.secp256k1;
 
 import fcl.crypto.hmac;
-import fcl.crypto.openssl;
-import fcl.crypto.rand;
+import fcl.crypto.random;
 import fcl.crypto.sha256;
 import fcl.crypto.sha512;
 import fcl.exception.exception;
@@ -28,11 +28,13 @@ import fcl.exception.exception;
 
 namespace fcl::crypto::secp256k1 {
 namespace detail {
+using fcl::crypto::detail::ec_group;
+
 struct context_creator {
    context_creator() {
       ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
       char seed[32];
-      rand_bytes(seed, sizeof(seed));
+      fcl::crypto::fill_random(std::span<std::uint8_t>{reinterpret_cast<std::uint8_t*>(seed), sizeof(seed)});
       FCL_ASSERT(secp256k1_context_randomize(ctx, (const unsigned char*)seed));
    }
    secp256k1_context* ctx = nullptr;
@@ -82,7 +84,8 @@ fcl::crypto::sha512 private_key::get_shared_secret(const public_key& other) cons
 private_key private_key::generate() {
    private_key ret;
    do {
-      rand_bytes(ret.my->_key.data(), ret.my->_key.data_size());
+      fcl::crypto::fill_random(std::span<std::uint8_t>{
+         reinterpret_cast<std::uint8_t*>(ret.my->_key.data()), ret.my->_key.data_size()});
    } while (!secp256k1_ec_seckey_verify(detail::_get_context(), (const uint8_t*)ret.my->_key.data()));
    return ret;
 }

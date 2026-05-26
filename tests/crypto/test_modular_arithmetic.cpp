@@ -1019,7 +1019,7 @@ BOOST_AUTO_TEST_CASE(modexp_benchmarking) try {
    std::mt19937 r(0x11223344);
 
    auto generate_random_bytes = [](std::mt19937& rand_eng, unsigned int num_bytes) {
-      std::vector<char> result(num_bytes);
+      bytes result(num_bytes);
 
       uint_fast32_t v = 0;
       for (int byte_pos = 0, end = result.size(); byte_pos < end; ++byte_pos) {

@@ -31,6 +31,10 @@ std::string to_hex(const char* d, uint32_t s) {
    return r;
 }
 
+std::string to_hex(const std::uint8_t* d, uint32_t s) {
+   return to_hex(reinterpret_cast<const char*>(d), s);
+}
+
 size_t from_hex(const std::string& hex_str, char* out_data, size_t out_data_len) {
    std::string::const_iterator i = hex_str.begin();
    uint8_t* out_pos = (uint8_t*)out_data;
@@ -46,7 +50,18 @@ size_t from_hex(const std::string& hex_str, char* out_data, size_t out_data_len)
    }
    return out_pos - (uint8_t*)out_data;
 }
+
+size_t from_hex(const std::string& hex_str, std::uint8_t* out_data, size_t out_data_len) {
+   return from_hex(hex_str, reinterpret_cast<char*>(out_data), out_data_len);
+}
+
 std::string to_hex(const std::vector<char>& data) {
+   if (data.size())
+      return to_hex(data.data(), data.size());
+   return "";
+}
+
+std::string to_hex(const bytes& data) {
    if (data.size())
       return to_hex(data.data(), data.size());
    return "";

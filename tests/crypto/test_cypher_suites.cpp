@@ -4,10 +4,7 @@
 #include <string>
 #include <vector>
 
-import fcl.crypto.public_key;
-import fcl.crypto.private_key;
-import fcl.crypto.signature;
-import fcl.crypto.encoding;
+import fcl.crypto.asymmetric;
 import fcl.crypto.secp256k1;
 import fcl.crypto.p256;
 import fcl.crypto.ed25519;
@@ -19,6 +16,7 @@ import fcl.core.utility;
 import fcl.exception.exception;
 
 using namespace fcl::crypto;
+using namespace fcl::crypto::asymmetric;
 using namespace fcl;
 
 BOOST_AUTO_TEST_SUITE(cypher_suites)
@@ -60,7 +58,7 @@ BOOST_AUTO_TEST_CASE(test_secp256k1_recovery) try {
 }
 FCL_LOG_AND_RETHROW();
 
-BOOST_AUTO_TEST_CASE(test_r1_recovery) try {
+BOOST_AUTO_TEST_CASE(test_p256_recovery) try {
    const auto payload = std::vector<std::uint8_t>{'T', 'e', 's', 't'};
    auto digest = sha256::hash(std::span<const std::uint8_t>{payload});
    auto key = private_key::generate<p256::private_key_shim>();
@@ -86,7 +84,7 @@ BOOST_AUTO_TEST_CASE(test_k1_recyle) try {
 }
 FCL_LOG_AND_RETHROW();
 
-BOOST_AUTO_TEST_CASE(test_r1_recyle) try {
+BOOST_AUTO_TEST_CASE(test_p256_recycle) try {
    auto key = private_key::generate<p256::private_key_shim>();
    auto pub = key.get_public_key();
    auto pub_str = pub.to_string({});

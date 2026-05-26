@@ -71,8 +71,7 @@ string concatenation, JSON or hand-written field loops.
 #include <cstdint>
 #include <string>
 
-import fcl.crypto.private_key;
-import fcl.crypto.public_key;
+import fcl.crypto.asymmetric;
 import fcl.crypto.sha256;
 import fcl.raw.raw;
 
@@ -81,15 +80,15 @@ struct signed_command {
    std::uint64_t sequence = 0;
    std::string command;
 
-   [[nodiscard]] fcl::crypto::sha256 digest() const;
+   [[nodiscard]] fcl::crypto::bytes signing_bytes() const;
 };
 
 BOOST_DESCRIBE_STRUCT(signed_command, (), (account, sequence, command))
 
-inline fcl::crypto::sha256 signed_command::digest() const {
-   auto encoder = fcl::crypto::sha256::encoder{};
-   fcl::raw::pack(encoder, *this);
-   return encoder.result();
+inline fcl::crypto::bytes signed_command::signing_bytes() const {
+   auto bytes = fcl::crypto::bytes{};
+   fcl::raw::pack(bytes, *this);
+   return bytes;
 }
 
 auto command = signed_command{
@@ -98,14 +97,13 @@ auto command = signed_command{
    .command = "rotate-key",
 };
 
-auto private_key = fcl::crypto::private_key::generate();
+auto private_key = fcl::crypto::asymmetric::private_key::generate();
 auto expected_public_key = private_key.get_public_key();
 
-auto digest = command.digest();
-auto signature = private_key.sign(digest);
+auto message = command.signing_bytes();
+auto signature = private_key.sign(message);
 
-auto recovered_public_key = fcl::crypto::public_key{signature, digest};
-auto verified = recovered_public_key == expected_public_key;
+auto verified = expected_public_key.verify(message, signature);
 ```
 
 Store golden raw bytes for protocol DTOs in tests. That catches accidental

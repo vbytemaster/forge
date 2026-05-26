@@ -6,10 +6,9 @@ module;
 export module fcl.crypto.blake2;
 
 import fcl.core.utility;
+export import fcl.crypto.types;
 
 export namespace fcl::crypto {
-
-using bytes = std::vector<char>;
 
 enum class blake2b_error : std::int32_t { input_len_error };
 

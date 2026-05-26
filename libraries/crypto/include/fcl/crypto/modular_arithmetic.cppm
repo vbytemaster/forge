@@ -1,13 +1,12 @@
 module;
 #include <cstdint>
-#include <vector>
 #include <variant>
 
 export module fcl.crypto.modular_arithmetic;
 
-export namespace fcl::crypto {
-using bytes = std::vector<char>;
+import fcl.crypto.types;
 
+export namespace fcl::crypto {
 enum class modular_arithmetic_error : int32_t {
    modulus_len_zero,
 };

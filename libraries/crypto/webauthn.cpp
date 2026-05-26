@@ -15,7 +15,6 @@ module fcl.crypto.webauthn;
 
 import fcl.crypto.base64;
 import fcl.crypto.p256;
-import fcl.crypto.openssl;
 import fcl.crypto.sha256;
 import fcl.exception.exception;
 
@@ -353,7 +352,7 @@ client_data_fields parse_client_data_json(std::string_view input) {
 
 } // namespace detail
 
-public_key::public_key(const signature& c, const fcl::crypto::sha256& digest, bool) {
+credential_public_key::credential_public_key(const assertion& c, const fcl::crypto::sha256& digest, bool) {
    const auto client_data = detail::parse_client_data_json(c.client_json);
 
    FCL_ASSERT(client_data.type == "webauthn.get", "webauthn signature type not an assertion");
@@ -392,7 +391,7 @@ public_key::public_key(const signature& c, const fcl::crypto::sha256& digest, bo
    public_key_data = p256::recover_public_key_data(c.compact_signature, signed_digest, false);
 }
 
-void public_key::post_init() {
+void credential_public_key::post_init() {
    FCL_ASSERT(rpid.length(), "webauthn pubkey must have non empty rpid");
 }
 

@@ -8,10 +8,14 @@ module;
 
 module fcl.crypto.pem;
 
+import fcl.crypto.asymmetric;
 import fcl.crypto.der;
 import fcl.crypto.exceptions;
 
 namespace fcl::crypto::pem {
+using asymmetric::private_key;
+using asymmetric::public_key;
+
 namespace {
 
 struct bio_deleter {

@@ -384,7 +384,7 @@ std::vector<std::uint8_t> relay::codec::reservation_voucher_payload_type() {
 }
 
 signed_envelope relay::codec::seal_reservation_voucher(const relay::voucher& value, const public_key& key,
-                                                       const fcl::crypto::private_key& private_key) {
+                                                       const fcl::crypto::asymmetric::private_key& private_key) {
    const auto payload = make_reservation_voucher_payload(value);
    return signed_envelope::seal(key, private_key, "libp2p-relay-rsvp", reservation_voucher_payload_type(), payload);
 }

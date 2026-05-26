@@ -15,22 +15,15 @@ import fcl.crypto.base64;
 import fcl.exception.exception;
 
 namespace fcl::crypto {
-bigint::bigint(const char* bige, uint32_t l) {
-   n = BN_bin2bn((const unsigned char*)bige, l, NULL);
+bigint::bigint(const std::uint8_t* bige, uint32_t l) {
+   n = BN_bin2bn(bige, l, NULL);
    FCL_ASSERT(n != nullptr);
 }
-bigint::bigint(const std::vector<char>& bige) {
-   n = BN_bin2bn((const unsigned char*)bige.data(), bige.size(), NULL);
+bigint::bigint(std::span<const std::uint8_t> bige) {
+   n = BN_bin2bn(bige.data(), static_cast<int>(bige.size()), NULL);
    FCL_ASSERT(n != nullptr);
-}
-bigint::bigint(BIGNUM* in) {
-   n = BN_dup(in);
 }
 bigint::bigint() : n(BN_new()) {}
-
-BIGNUM* bigint::dup() const {
-   return BN_dup(n);
-}
 
 bigint::bigint(uint64_t value) {
    uint64_t big_endian_value = std::byteswap(value);
@@ -197,16 +190,16 @@ bigint::operator std::string() const {
    return BN_bn2dec(n);
 }
 
-bigint::operator std::vector<char>() const {
-   std::vector<char> to(BN_num_bytes(n));
-   BN_bn2bin(n, (unsigned char*)to.data());
+bytes bigint::to_bytes() const {
+   auto to = bytes(BN_num_bytes(n));
+   BN_bn2bin(n, to.data());
    return to;
 }
 
 /** encodes the big int as base64 string, or a number */
 void to_variant(const bigint& bi, variant& v) {
-   std::vector<char> ve = bi;
-   v = fcl::variant(base64_encode((const unsigned char*)ve.data(), ve.size()));
+   auto ve = bi.to_bytes();
+   v = fcl::variant(base64_encode(reinterpret_cast<const unsigned char*>(ve.data()), ve.size(), false));
 }
 
 /** decodes the big int as base64 string, or a number */
@@ -215,8 +208,9 @@ void from_variant(const variant& v, bigint& bi) {
       bi = bigint(static_cast<unsigned long>(v.as_uint64()));
    else {
       std::string b64 = v.as_string();
-      std::vector<char> bin = base64_decode(b64);
-      bi = bigint(bin.data(), bin.size());
+      auto decoded = base64_decode(b64);
+      auto bin = bytes(decoded.begin(), decoded.end());
+      bi = bigint(bin);
    }
 }
 

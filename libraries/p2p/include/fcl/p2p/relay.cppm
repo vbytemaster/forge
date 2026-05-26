@@ -10,7 +10,7 @@ module;
 
 export module fcl.p2p.relay;
 
-import fcl.crypto.private_key;
+import fcl.crypto.asymmetric;
 import fcl.p2p.identity;
 import fcl.p2p.endpoint;
 import fcl.p2p.envelope;
@@ -131,7 +131,7 @@ struct relay {
 
       [[nodiscard]] static std::vector<std::uint8_t> reservation_voucher_payload_type();
       [[nodiscard]] static signed_envelope seal_reservation_voucher(const voucher& value, const public_key& key,
-                                                                    const fcl::crypto::private_key& private_key);
+                                                                    const fcl::crypto::asymmetric::private_key& private_key);
       [[nodiscard]] static voucher open_reservation_voucher(const signed_envelope& envelope, const peer_id& relay_peer,
                                                             std::uint64_t now_unix_seconds);
    };

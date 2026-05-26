@@ -8,7 +8,7 @@ module;
 
 export module fcl.p2p.envelope;
 
-import fcl.crypto.private_key;
+import fcl.crypto.asymmetric;
 import fcl.p2p.identity;
 
 export namespace fcl::p2p {
@@ -25,7 +25,7 @@ struct signed_envelope {
    void verify(std::string_view domain, std::optional<peer_id> expected_signer = std::nullopt) const;
 
    [[nodiscard]] static signed_envelope decode(std::span<const std::uint8_t> bytes);
-   [[nodiscard]] static signed_envelope seal(const public_key& key, const fcl::crypto::private_key& private_key,
+   [[nodiscard]] static signed_envelope seal(const public_key& key, const fcl::crypto::asymmetric::private_key& private_key,
                                              std::string_view domain,
                                              std::span<const std::uint8_t> payload_type,
                                              std::span<const std::uint8_t> payload);

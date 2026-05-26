@@ -2,12 +2,13 @@ module;
 #include <boost/describe.hpp>
 #include <cstdint>
 #include <span>
+#include <utility>
 #include <vector>
 
 export module fcl.crypto.rsa;
 
-import fcl.crypto.common;
 import fcl.crypto.types;
+import fcl.raw.raw;
 
 export namespace fcl::crypto::rsa {
 
@@ -50,33 +51,90 @@ class private_key {
 
 struct signature_shim;
 
-struct public_key_shim : public fcl::crypto::shim<public_key_data> {
+struct public_key_shim {
+   using data_type = public_key_data;
    using signature_type = signature_shim;
-   using fcl::crypto::shim<public_key_data>::shim;
+
+   public_key_shim() = default;
+   explicit public_key_shim(const data_type& data) : _data(data) {}
+   explicit public_key_shim(data_type&& data) : _data(std::move(data)) {}
+
+   [[nodiscard]] const data_type& serialize() const {
+      return _data;
+   }
+
+   template <typename Stream> friend Stream& operator<<(Stream& s, const public_key_shim& value) {
+      fcl::raw::pack(s, value._data);
+      return s;
+   }
+
+   template <typename Stream> friend Stream& operator>>(Stream& s, public_key_shim& value) {
+      fcl::raw::unpack(s, value._data);
+      return s;
+   }
 
    [[nodiscard]] bool valid() const noexcept;
    [[nodiscard]] bool verify(std::span<const std::uint8_t> message, const signature_data& signature) const;
+
+   data_type _data{};
 };
 
-struct signature_shim : public fcl::crypto::shim<signature_data> {
+struct signature_shim {
+   using data_type = signature_data;
    using public_key_type = public_key_shim;
-   using fcl::crypto::shim<signature_data>::shim;
+
+   signature_shim() = default;
+   explicit signature_shim(const data_type& data) : _data(data) {}
+   explicit signature_shim(data_type&& data) : _data(std::move(data)) {}
+
+   [[nodiscard]] const data_type& serialize() const {
+      return _data;
+   }
+
+   template <typename Stream> friend Stream& operator<<(Stream& s, const signature_shim& value) {
+      fcl::raw::pack(s, value._data);
+      return s;
+   }
+
+   template <typename Stream> friend Stream& operator>>(Stream& s, signature_shim& value) {
+      fcl::raw::unpack(s, value._data);
+      return s;
+   }
+
+   data_type _data{};
 };
 
-struct private_key_shim : public fcl::crypto::shim<private_key_secret> {
+struct private_key_shim {
+   using data_type = private_key_secret;
    using signature_type = signature_shim;
    using public_key_type = public_key_shim;
-   using fcl::crypto::shim<private_key_secret>::shim;
+
+   private_key_shim() = default;
+   explicit private_key_shim(const data_type& data) : _data(data) {}
+   explicit private_key_shim(data_type&& data) : _data(std::move(data)) {}
+
+   [[nodiscard]] const data_type& serialize() const {
+      return _data;
+   }
+
+   template <typename Stream> friend Stream& operator<<(Stream& s, const private_key_shim& value) {
+      fcl::raw::pack(s, value._data);
+      return s;
+   }
+
+   template <typename Stream> friend Stream& operator>>(Stream& s, private_key_shim& value) {
+      fcl::raw::unpack(s, value._data);
+      return s;
+   }
 
    [[nodiscard]] signature_type sign(std::span<const std::uint8_t> message) const;
    [[nodiscard]] public_key_type get_public_key() const;
    [[nodiscard]] static private_key_shim generate();
+
+   data_type _data{};
 };
 
-} // namespace fcl::crypto::rsa
-
-export namespace fcl::crypto::rsa {
-BOOST_DESCRIBE_STRUCT(public_key_shim, (fcl::crypto::shim<public_key_data>), ())
-BOOST_DESCRIBE_STRUCT(signature_shim, (fcl::crypto::shim<signature_data>), ())
-BOOST_DESCRIBE_STRUCT(private_key_shim, (fcl::crypto::shim<private_key_secret>), ())
+BOOST_DESCRIBE_STRUCT(public_key_shim, (), (_data))
+BOOST_DESCRIBE_STRUCT(signature_shim, (), (_data))
+BOOST_DESCRIBE_STRUCT(private_key_shim, (), (_data))
 } // namespace fcl::crypto::rsa

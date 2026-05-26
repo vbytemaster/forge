@@ -3,14 +3,13 @@ module;
 #include <boost/describe.hpp>
 #include <memory>
 #include <span>
+#include <utility>
 
 export module fcl.crypto.p256;
 
 import fcl.crypto.bigint;
-import fcl.crypto.common;
 import fcl.crypto.sha256;
 import fcl.crypto.sha512;
-import fcl.crypto.openssl;
 import fcl.raw.raw;
 
 export namespace fcl::crypto::p256 {
@@ -132,28 +131,86 @@ class private_key {
  */
 struct signature_shim;
 
-struct public_key_shim : public fcl::crypto::shim<public_key_data> {
+struct public_key_shim {
+   using data_type = public_key_data;
    using signature_type = signature_shim;
-   using fcl::crypto::shim<public_key_data>::shim;
+
+   public_key_shim() = default;
+   explicit public_key_shim(const data_type& data) : _data(data) {}
+   explicit public_key_shim(data_type&& data) : _data(std::move(data)) {}
+
+   [[nodiscard]] const data_type& serialize() const {
+      return _data;
+   }
+
+   template <typename Stream> friend Stream& operator<<(Stream& s, const public_key_shim& value) {
+      fcl::raw::pack(s, value._data);
+      return s;
+   }
+
+   template <typename Stream> friend Stream& operator>>(Stream& s, public_key_shim& value) {
+      fcl::raw::unpack(s, value._data);
+      return s;
+   }
 
    bool valid() const {
       return public_key(_data).valid();
    }
+
+   data_type _data{};
 };
 
-struct signature_shim : public fcl::crypto::shim<compact_signature> {
+struct signature_shim {
+   using data_type = compact_signature;
    using public_key_type = public_key_shim;
-   using fcl::crypto::shim<compact_signature>::shim;
+
+   signature_shim() = default;
+   explicit signature_shim(const data_type& data) : _data(data) {}
+   explicit signature_shim(data_type&& data) : _data(std::move(data)) {}
+
+   [[nodiscard]] const data_type& serialize() const {
+      return _data;
+   }
+
+   template <typename Stream> friend Stream& operator<<(Stream& s, const signature_shim& value) {
+      fcl::raw::pack(s, value._data);
+      return s;
+   }
+
+   template <typename Stream> friend Stream& operator>>(Stream& s, signature_shim& value) {
+      fcl::raw::unpack(s, value._data);
+      return s;
+   }
 
    public_key_type recover(const sha256& digest, bool check_canonical) const {
       return public_key_type(public_key(_data, digest, check_canonical).serialize());
    }
+
+   data_type _data{};
 };
 
-struct private_key_shim : public fcl::crypto::shim<private_key_secret> {
-   using fcl::crypto::shim<private_key_secret>::shim;
+struct private_key_shim {
+   using data_type = private_key_secret;
    using signature_type = signature_shim;
    using public_key_type = public_key_shim;
+
+   private_key_shim() = default;
+   explicit private_key_shim(const data_type& data) : _data(data) {}
+   explicit private_key_shim(data_type&& data) : _data(std::move(data)) {}
+
+   [[nodiscard]] const data_type& serialize() const {
+      return _data;
+   }
+
+   template <typename Stream> friend Stream& operator<<(Stream& s, const private_key_shim& value) {
+      fcl::raw::pack(s, value._data);
+      return s;
+   }
+
+   template <typename Stream> friend Stream& operator>>(Stream& s, private_key_shim& value) {
+      fcl::raw::unpack(s, value._data);
+      return s;
+   }
 
    signature_type sign(const sha256& digest, bool require_canonical = true) const {
       return signature_type(private_key::regenerate(_data).sign_compact(digest));
@@ -174,6 +231,8 @@ struct private_key_shim : public fcl::crypto::shim<private_key_secret> {
    static private_key_shim generate() {
       return private_key_shim(private_key::generate().get_secret());
    }
+
+   data_type _data{};
 };
 
 inline bool verify_digest(const public_key_shim& key, const sha256& digest, const signature_shim& signature,
@@ -186,12 +245,7 @@ inline bool verify_message(const public_key_shim& key, std::span<const std::uint
    return verify_digest(key, sha256::hash(message), signature, true);
 }
 
-compact_signature signature_from_ecdsa(const public_key_data& pub, fcl::crypto::ecdsa_sig& sig, const fcl::crypto::sha256& d);
-
-} // namespace fcl::crypto::p256
-
-export namespace fcl::crypto::p256 {
-BOOST_DESCRIBE_STRUCT(public_key_shim, (fcl::crypto::shim<public_key_data>), ())
-BOOST_DESCRIBE_STRUCT(signature_shim, (fcl::crypto::shim<compact_signature>), ())
-BOOST_DESCRIBE_STRUCT(private_key_shim, (fcl::crypto::shim<private_key_secret>), ())
+BOOST_DESCRIBE_STRUCT(public_key_shim, (), (_data))
+BOOST_DESCRIBE_STRUCT(signature_shim, (), (_data))
+BOOST_DESCRIBE_STRUCT(private_key_shim, (), (_data))
 } // namespace fcl::crypto::p256

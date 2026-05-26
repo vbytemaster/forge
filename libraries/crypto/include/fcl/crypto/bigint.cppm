@@ -1,24 +1,24 @@
 module;
 #include <stdint.h>
-#include <string>
-#include <vector>
 #include <openssl/types.h>
+#include <span>
+#include <string>
 
 export module fcl.crypto.bigint;
 
 import fcl.core.string;
+import fcl.crypto.types;
 import fcl.variant;
 
 export namespace fcl::crypto {
 class bigint {
  public:
-   bigint(const std::vector<char>& bige);
-   bigint(const char* bige, uint32_t l);
+   bigint(std::span<const std::uint8_t> bige);
+   bigint(const std::uint8_t* bige, uint32_t l);
    bigint(uint64_t value);
    bigint();
    bigint(const bigint& c);
    bigint(bigint&& c);
-   explicit bigint(BIGNUM* n);
    ~bigint();
 
    bigint& operator=(const bigint& a);
@@ -60,16 +60,10 @@ class bigint {
    operator std::string() const;
 
    // returns bignum as bigendian bytes
-   operator std::vector<char>() const;
-
-   BIGNUM* dup() const;
-
-   BIGNUM* get() const {
-      return n;
-   }
+   [[nodiscard]] bytes to_bytes() const;
 
  private:
-   BIGNUM* n;
+   ::bignum_st* n;
 };
 
 /** encodes the big int as base64 string, or a number */

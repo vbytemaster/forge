@@ -16,6 +16,7 @@ module;
 
 module fcl.crypto.der;
 
+import fcl.crypto.asymmetric;
 import fcl.crypto.ed25519;
 import fcl.crypto.exceptions;
 import fcl.crypto.p256;
@@ -24,6 +25,9 @@ import fcl.crypto.secp256k1;
 import fcl.crypto.sha256;
 
 namespace fcl::crypto::der {
+using asymmetric::private_key;
+using asymmetric::public_key;
+
 namespace {
 
 struct pkey_deleter {

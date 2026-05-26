@@ -13,6 +13,7 @@ module;
 
 module fcl.crypto.x509;
 
+import fcl.crypto.asymmetric;
 import fcl.crypto.der;
 import fcl.crypto.exceptions;
 import fcl.crypto.sha256;
@@ -123,7 +124,7 @@ bytes certificate::public_key_der() const {
    return out;
 }
 
-fcl::crypto::public_key certificate::key() const {
+asymmetric::public_key certificate::key() const {
    return der::read_public_key(public_key_der());
 }
 

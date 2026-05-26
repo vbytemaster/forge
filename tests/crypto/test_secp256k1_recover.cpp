@@ -13,17 +13,17 @@ import fcl.core.utility;
 
 using namespace fcl;
 using namespace fcl::crypto;
-using bytes = fcl::crypto::secp256k1::recover_bytes;
+using recover_bytes = fcl::crypto::secp256k1::recover_bytes;
 
 #include "test_utils.hpp"
 
 namespace std {
 std::ostream& operator<<(std::ostream& st,
-                         const std::variant<fcl::crypto::secp256k1::recover_error, bytes>& err) {
+                         const std::variant<fcl::crypto::secp256k1::recover_error, recover_bytes>& err) {
    if (std::holds_alternative<fcl::crypto::secp256k1::recover_error>(err))
       st << static_cast<int32_t>(std::get<fcl::crypto::secp256k1::recover_error>(err));
    else
-      st << fcl::crypto::to_hex(std::get<bytes>(err));
+      st << fcl::crypto::to_hex(std::get<recover_bytes>(err));
    return st;
 }
 } // namespace std
@@ -32,7 +32,7 @@ BOOST_AUTO_TEST_SUITE(secp256k1_recover)
 BOOST_AUTO_TEST_CASE(recover) try {
 
    using test_recover =
-      std::tuple<std::string, std::string, std::variant<fcl::crypto::secp256k1::recover_error, bytes>>;
+      std::tuple<std::string, std::string, std::variant<fcl::crypto::secp256k1::recover_error, recover_bytes>>;
    const std::vector<test_recover> tests{
        // test
        {"1b323dd47a1dd5592c296ee2ee12e0af38974087a475e99098a440284f19c1f7642fa0baa10a8a3ab800dfdbe987dee68a09b6fa3db45a"

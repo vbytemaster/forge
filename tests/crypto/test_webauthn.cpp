@@ -13,9 +13,6 @@ import fcl.raw.raw;
 import fcl.crypto.base64;
 import fcl.crypto.p256;
 import fcl.crypto.webauthn;
-import fcl.crypto.public_key;
-import fcl.crypto.private_key;
-import fcl.crypto.signature;
 import fcl.crypto.sha256;
 import fcl.core.utility;
 
@@ -23,7 +20,7 @@ using namespace fcl::crypto;
 using namespace fcl;
 using namespace std::literals;
 
-static fcl::crypto::webauthn::signature make_webauthn_sig(const fcl::crypto::p256::private_key& priv_key,
+static fcl::crypto::webauthn::assertion make_webauthn_sig(const fcl::crypto::p256::private_key& priv_key,
                                                           std::vector<uint8_t>& auth_data, const std::string& json) {
 
    // webauthn signature is sha256(auth_data || client_data_hash)
@@ -41,20 +38,20 @@ static fcl::crypto::webauthn::signature make_webauthn_sig(const fcl::crypto::p25
    fcl::raw::pack(ds, json);
    ds.seekp(0);
 
-   fcl::crypto::webauthn::signature ret;
+   fcl::crypto::webauthn::assertion ret;
    fcl::raw::unpack(ds, ret);
 
    return ret;
 }
 
 struct high_s_webauthn_signature {
-   fcl::crypto::webauthn::signature webauthn_signature;
+   fcl::crypto::webauthn::assertion webauthn_signature;
    fcl::crypto::p256::compact_signature compact_signature;
 };
 
 static high_s_webauthn_signature make_high_s_webauthn_sig(const fcl::crypto::p256::private_key& priv_key,
                                                           std::vector<uint8_t>& auth_data, const std::string& json) {
-   fcl::crypto::webauthn::signature sig = make_webauthn_sig(priv_key, auth_data, json);
+   fcl::crypto::webauthn::assertion sig = make_webauthn_sig(priv_key, auth_data, json);
    char buff[8192];
    datastream<char*> ds(buff, sizeof(buff));
    fcl::raw::pack(ds, sig);
@@ -118,7 +115,7 @@ BOOST_AUTO_TEST_SUITE(webauthn_suite)
 
 // Good signature
 BOOST_AUTO_TEST_CASE(good) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -132,7 +129,7 @@ BOOST_AUTO_TEST_CASE(good) try {
 FCL_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(good_unknown_field_reasonable_depth) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = nested_unknown_client_data_json(8);
 
@@ -158,7 +155,7 @@ FCL_LOG_AND_RETHROW();
 
 // WebAuthn authenticators may emit valid ECDSA signatures without low-S normalization.
 BOOST_AUTO_TEST_CASE(good_high_s) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -178,7 +175,7 @@ FCL_LOG_AND_RETHROW();
 
 // A valid signature but shouldn't match public key due to presence difference
 BOOST_AUTO_TEST_CASE(mismatch_presence) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_PRESENT,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_PRESENT,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -193,7 +190,7 @@ FCL_LOG_AND_RETHROW();
 
 // A valid signature but shouldn't match public key due to origin difference
 BOOST_AUTO_TEST_CASE(mismatch_origin) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_PRESENT,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_PRESENT,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://mallory.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -208,7 +205,7 @@ FCL_LOG_AND_RETHROW();
 
 // A valid signature but shouldn't recover because http was in use instead of https
 BOOST_AUTO_TEST_CASE(non_https) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"http://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -226,7 +223,7 @@ FCL_LOG_AND_RETHROW();
 
 // A valid signature but shouldn't recover because there is no origin scheme
 BOOST_AUTO_TEST_CASE(lacking_scheme) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -244,7 +241,7 @@ FCL_LOG_AND_RETHROW();
 
 // A valid signature but shouldn't recover because empty origin
 BOOST_AUTO_TEST_CASE(empty_origin) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"\",\"type\":\"webauthn.get\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -262,7 +259,7 @@ FCL_LOG_AND_RETHROW();
 
 // Good signature with a port
 BOOST_AUTO_TEST_CASE(good_port) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid:123456\",\"type\":\"webauthn.get\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -276,7 +273,7 @@ FCL_LOG_AND_RETHROW();
 
 // Good signature with an empty port
 BOOST_AUTO_TEST_CASE(empty_port) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid:\",\"type\":\"webauthn.get\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -290,7 +287,7 @@ FCL_LOG_AND_RETHROW();
 
 // valid signature but with misc junk in challenge
 BOOST_AUTO_TEST_CASE(challenge_junk) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json =
        "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" + "blahBLAH"s + "\"}";
@@ -307,7 +304,7 @@ FCL_LOG_AND_RETHROW();
 
 // valid signature but with non base64 in challenge
 BOOST_AUTO_TEST_CASE(challenge_non_base64) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json =
        "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" + "hello@world$"s + "\"}";
@@ -324,7 +321,7 @@ FCL_LOG_AND_RETHROW();
 
 // valid signature but replace url-safe base64 characters with the non-url safe characters
 BOOST_AUTO_TEST_CASE(challenge_wrong_base64_chars) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string b64 = fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size());
 
@@ -350,7 +347,7 @@ FCL_LOG_AND_RETHROW();
 
 // valid signature but append an invalid base64url character '.'
 BOOST_AUTO_TEST_CASE(challenge_base64_dot_padding) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string b64 = fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size());
 
@@ -371,7 +368,7 @@ FCL_LOG_AND_RETHROW();
 
 // valid signature but append valid paddings == to verify they are ignored
 BOOST_AUTO_TEST_CASE(challenge_no_padding) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string b64 = fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size());
 
@@ -389,7 +386,7 @@ FCL_LOG_AND_RETHROW();
 
 // valid signature but tack extra bytes in the challenge
 BOOST_AUTO_TEST_CASE(challenge_extra_bytes) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string b64 = fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size());
 
@@ -410,7 +407,7 @@ FCL_LOG_AND_RETHROW();
 
 // valid signature but with some other digest in the challenge that is not the one we are recovering from
 BOOST_AUTO_TEST_CASE(challenge_wrong) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    fcl::crypto::sha256 other_digest = fcl::crypto::sha256::hash("yo"s);
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
@@ -429,7 +426,7 @@ FCL_LOG_AND_RETHROW();
 // valid signature but wrong webauthn type
 BOOST_AUTO_TEST_CASE(wrong_type) try {
 
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.meh\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -447,7 +444,7 @@ FCL_LOG_AND_RETHROW();
 
 // signature if good but the auth_data rpid hash is not what is expected for origin
 BOOST_AUTO_TEST_CASE(auth_data_rpid_hash_bad) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -467,7 +464,7 @@ FCL_LOG_AND_RETHROW();
 
 // signature if good but auth_data too short to store what needs to be stored
 BOOST_AUTO_TEST_CASE(auth_data_too_short) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -484,7 +481,7 @@ FCL_LOG_AND_RETHROW();
 
 // Good signature but missing origin completely
 BOOST_AUTO_TEST_CASE(missing_origin) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"type\":\"webauthn.get\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -502,7 +499,7 @@ FCL_LOG_AND_RETHROW();
 
 // Good signature but missing type completely
 BOOST_AUTO_TEST_CASE(missing_type) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -520,7 +517,7 @@ FCL_LOG_AND_RETHROW();
 
 // Good signature but missing challenge completely
 BOOST_AUTO_TEST_CASE(missing_challenge) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\"}";
 
@@ -536,7 +533,7 @@ FCL_LOG_AND_RETHROW();
 
 // Good signature with some extra stuff sprinkled in the json
 BOOST_AUTO_TEST_CASE(good_extrajunk) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"cool\":\"beans\",\"obj\":{\"array\":[4, 5, 6]},"
                       "\"type\":\"webauthn.get\",\"answer\": 42 ,\"challenge\":\"" +
@@ -552,7 +549,7 @@ FCL_LOG_AND_RETHROW();
 // Good signature with escaped slashes and nested ignored fields. This keeps the
 // private WebAuthn parser honest without adding a JSON backend dependency.
 BOOST_AUTO_TEST_CASE(good_escaped_origin_and_nested_unknown_fields) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"ignored\":[{\"nested\":true}],\"origin\":\"https:\\/\\/fctesting.invalid\","
                       "\"type\":\"webauthn.get\",\"challenge\":\"" +
@@ -567,7 +564,7 @@ FCL_LOG_AND_RETHROW();
 
 // Good signature but it's not a JSON object!
 BOOST_AUTO_TEST_CASE(not_json_object) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "hey man"s;
 
@@ -583,7 +580,7 @@ FCL_LOG_AND_RETHROW();
 
 // damage the r/s portion of the signature
 BOOST_AUTO_TEST_CASE(damage_sig) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -591,7 +588,7 @@ BOOST_AUTO_TEST_CASE(damage_sig) try {
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
-   webauthn::signature sig = make_webauthn_sig(test_priv(), auth_data, json);
+   webauthn::assertion sig = make_webauthn_sig(test_priv(), auth_data, json);
    char buff[8192];
    datastream<char*> ds(buff, sizeof(buff));
    fcl::raw::pack(ds, sig);
@@ -601,7 +598,7 @@ BOOST_AUTO_TEST_CASE(damage_sig) try {
 
    bool failed_recovery = false;
    bool failed_compare = false;
-   webauthn::public_key recovered_pub;
+   webauthn::credential_public_key recovered_pub;
 
    try {
       recovered_pub = sig.recover(challenge_digest(), true);
@@ -619,7 +616,7 @@ FCL_LOG_AND_RETHROW();
 
 // damage the recovery index portion of the sig
 BOOST_AUTO_TEST_CASE(damage_sig_idx) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -627,7 +624,7 @@ BOOST_AUTO_TEST_CASE(damage_sig_idx) try {
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
-   webauthn::signature sig = make_webauthn_sig(test_priv(), auth_data, json);
+   webauthn::assertion sig = make_webauthn_sig(test_priv(), auth_data, json);
    char buff[8192];
    datastream<char*> ds(buff, sizeof(buff));
    fcl::raw::pack(ds, sig);
@@ -637,7 +634,7 @@ BOOST_AUTO_TEST_CASE(damage_sig_idx) try {
 
    bool failed_recovery = false;
    bool failed_compare = false;
-   webauthn::public_key recovered_pub;
+   webauthn::credential_public_key recovered_pub;
 
    try {
       recovered_pub = sig.recover(challenge_digest(), true);
@@ -657,7 +654,7 @@ FCL_LOG_AND_RETHROW();
 BOOST_AUTO_TEST_CASE(different_priv_key) try {
    p256::private_key other_priv = fcl::crypto::p256::private_key::generate();
 
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
                       fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
@@ -671,7 +668,7 @@ FCL_LOG_AND_RETHROW();
 
 // Good signature but has empty json
 BOOST_AUTO_TEST_CASE(empty_json) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json;
 
@@ -689,7 +686,7 @@ FCL_LOG_AND_RETHROW();
 BOOST_AUTO_TEST_CASE(empty_rpid) try {
    char data[67] = {};
    datastream<char*> ds(data, sizeof(data));
-   webauthn::public_key pubkey;
+   webauthn::credential_public_key pubkey;
 
    BOOST_CHECK_EXCEPTION(
        fcl::raw::unpack(ds, pubkey), fcl::exception::context_error, [](const fcl::exception::context_error& e) {
@@ -701,7 +698,7 @@ FCL_LOG_AND_RETHROW();
 
 // good sig but remove the trailing =, should still be accepted
 BOOST_AUTO_TEST_CASE(good_no_trailing_equal) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
 
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
@@ -719,7 +716,7 @@ FCL_LOG_AND_RETHROW();
 // a non-base64 char. This means it was possible for the following JSON & challenge to validate completely correctly.
 // Now it should not pass.
 BOOST_AUTO_TEST_CASE(base64_wonky) try {
-   webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
+   webauthn::credential_public_key wa_pub(test_pub().serialize(), webauthn::credential_public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
 
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +

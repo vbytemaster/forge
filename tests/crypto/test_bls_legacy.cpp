@@ -7,10 +7,7 @@
 
 import fcl.exception.exception;
 
-import fcl.crypto.bls_private_key;
-import fcl.crypto.bls_public_key;
-import fcl.crypto.bls_signature;
-import fcl.crypto.bls_utils;
+import fcl.crypto.bls;
 
 import fcl.raw.raw;
 import fcl.crypto.sha256;
@@ -19,7 +16,7 @@ import fcl.variant;
 
 using std::cout;
 
-using namespace fcl::crypto::blslib;
+using namespace fcl::crypto::bls;
 
 BOOST_AUTO_TEST_SUITE(bls_test)
 
@@ -44,10 +41,10 @@ fcl::crypto::sha256 message_3 = fcl::crypto::sha256("1097cf48a15ba1c618237d3d79f
 // test a single key signature + verification
 BOOST_AUTO_TEST_CASE(bls_sig_verif) try {
 
-   bls_private_key sk = bls_private_key(seed_1);
-   bls_public_key pk = sk.get_public_key();
+   private_key sk = private_key(seed_1);
+   public_key pk = sk.get_public_key();
 
-   bls_signature signature = sk.sign(message_1);
+   signature signature = sk.sign(message_1);
 
    // Verify the signature
    bool ok = verify(pk, message_1, signature);
@@ -59,12 +56,12 @@ FCL_LOG_AND_RETHROW();
 // test a single key signature + verification of digest_type
 BOOST_AUTO_TEST_CASE(bls_sig_verif_digest) try {
 
-   bls_private_key sk = bls_private_key(seed_1);
-   bls_public_key pk = sk.get_public_key();
+   private_key sk = private_key(seed_1);
+   public_key pk = sk.get_public_key();
 
    std::vector<unsigned char> v = std::vector<unsigned char>(message_3.data(), message_3.data() + 32);
 
-   bls_signature signature = sk.sign(v);
+   signature signature = sk.sign(v);
 
    // Verify the signature
    bool ok = verify(pk, v, signature);
@@ -76,8 +73,8 @@ FCL_LOG_AND_RETHROW();
 // test a single key signature + verification of finality tuple
 BOOST_AUTO_TEST_CASE(bls_sig_verif_finality_types) try {
 
-   bls_private_key sk = bls_private_key(seed_1);
-   bls_public_key pk = sk.get_public_key();
+   private_key sk = private_key(seed_1);
+   public_key pk = sk.get_public_key();
 
    std::string cmt = "cm_prepare";
    uint32_t view_number = 264;
@@ -90,10 +87,10 @@ BOOST_AUTO_TEST_CASE(bls_sig_verif_finality_types) try {
 
    std::vector<unsigned char> v = std::vector<unsigned char>(h2.data(), h2.data() + 32);
 
-   bls_signature signature = sk.sign(v);
+   signature signature = sk.sign(v);
 
    bls12_381::g1 agg_pk = pk.jacobian_montgomery_le();
-   bls_aggregate_signature agg_signature{signature};
+   aggregate_signature agg_signature{signature};
 
    for (int i = 1; i < 21; i++) {
       agg_pk = bls12_381::aggregate_public_keys(std::array{agg_pk, pk.jacobian_montgomery_le()});
@@ -110,19 +107,19 @@ FCL_LOG_AND_RETHROW();
 // test public keys + signatures aggregation + verification
 BOOST_AUTO_TEST_CASE(bls_agg_sig_verif) try {
 
-   bls_private_key sk1 = bls_private_key(seed_1);
-   bls_public_key pk1 = sk1.get_public_key();
+   private_key sk1 = private_key(seed_1);
+   public_key pk1 = sk1.get_public_key();
 
-   bls_signature sig1 = sk1.sign(message_1);
+   signature sig1 = sk1.sign(message_1);
 
-   bls_private_key sk2 = bls_private_key(seed_2);
-   bls_public_key pk2 = sk2.get_public_key();
+   private_key sk2 = private_key(seed_2);
+   public_key pk2 = sk2.get_public_key();
 
-   bls_signature sig2 = sk2.sign(message_1);
+   signature sig2 = sk2.sign(message_1);
 
    bls12_381::g1 agg_key =
        bls12_381::aggregate_public_keys(std::array{pk1.jacobian_montgomery_le(), pk2.jacobian_montgomery_le()});
-   bls_aggregate_signature agg_sig;
+   aggregate_signature agg_sig;
    agg_sig.aggregate(sig1);
    agg_sig.aggregate(sig2);
 
@@ -136,17 +133,17 @@ FCL_LOG_AND_RETHROW();
 // test signature aggregation + aggregate tree verification
 BOOST_AUTO_TEST_CASE(bls_agg_tree_verif) try {
 
-   bls_private_key sk1 = bls_private_key(seed_1);
-   bls_public_key pk1 = sk1.get_public_key();
+   private_key sk1 = private_key(seed_1);
+   public_key pk1 = sk1.get_public_key();
 
-   bls_signature sig1 = sk1.sign(message_1);
+   signature sig1 = sk1.sign(message_1);
 
-   bls_private_key sk2 = bls_private_key(seed_2);
-   bls_public_key pk2 = sk2.get_public_key();
+   private_key sk2 = private_key(seed_2);
+   public_key pk2 = sk2.get_public_key();
 
-   bls_signature sig2 = sk2.sign(message_2);
+   signature sig2 = sk2.sign(message_2);
 
-   bls_aggregate_signature agg_sig;
+   aggregate_signature agg_sig;
    agg_sig.aggregate(sig1);
    agg_sig.aggregate(sig2);
 
@@ -163,10 +160,10 @@ FCL_LOG_AND_RETHROW();
 // test random key generation, signature + verification
 BOOST_AUTO_TEST_CASE(bls_key_gen) try {
 
-   bls_private_key sk = bls_private_key::generate();
-   bls_public_key pk = sk.get_public_key();
+   private_key sk = private_key::generate();
+   public_key pk = sk.get_public_key();
 
-   bls_signature signature = sk.sign(message_1);
+   signature signature = sk.sign(message_1);
 
    // Verify the signature
    bool ok = verify(pk, message_1, signature);
@@ -178,15 +175,15 @@ FCL_LOG_AND_RETHROW();
 // test wrong key and wrong signature
 BOOST_AUTO_TEST_CASE(bls_bad_sig_verif) try {
 
-   bls_private_key sk1 = bls_private_key(seed_1);
-   bls_public_key pk1 = sk1.get_public_key();
+   private_key sk1 = private_key(seed_1);
+   public_key pk1 = sk1.get_public_key();
 
-   bls_signature sig1 = sk1.sign(message_1);
+   signature sig1 = sk1.sign(message_1);
 
-   bls_private_key sk2 = bls_private_key(seed_2);
-   bls_public_key pk2 = sk2.get_public_key();
+   private_key sk2 = private_key(seed_2);
+   public_key pk2 = sk2.get_public_key();
 
-   bls_signature sig2 = sk2.sign(message_1);
+   signature sig2 = sk2.sign(message_1);
 
    // Verify the signature
    bool ok1 = verify(pk1, message_1, sig2); // verify wrong key / signature
@@ -198,20 +195,20 @@ BOOST_AUTO_TEST_CASE(bls_bad_sig_verif) try {
 FCL_LOG_AND_RETHROW();
 
 // test bls private key base58 encoding / decoding / serialization / deserialization
-BOOST_AUTO_TEST_CASE(bls_private_key_serialization) try {
+BOOST_AUTO_TEST_CASE(private_key_serialization) try {
 
-   bls_private_key sk = bls_private_key(seed_1);
+   private_key sk = private_key(seed_1);
 
-   bls_public_key pk = sk.get_public_key();
+   public_key pk = sk.get_public_key();
 
    std::string priv_base58_str = sk.to_string();
 
-   bls_private_key sk2 = bls_private_key(priv_base58_str);
+   private_key sk2 = private_key(priv_base58_str);
 
-   bls_signature signature = sk2.sign(message_1);
+   signature sig = sk2.sign(message_1);
 
    // Verify the signature
-   bool ok = verify(pk, message_1, signature);
+   bool ok = verify(pk, message_1, sig);
 
    BOOST_CHECK_EQUAL(ok, true);
 }
@@ -220,18 +217,18 @@ FCL_LOG_AND_RETHROW();
 // test bls public key and bls signature base58 encoding / decoding / serialization / deserialization
 BOOST_AUTO_TEST_CASE(bls_pub_key_sig_serialization) try {
 
-   bls_private_key sk = bls_private_key(seed_1);
-   bls_public_key pk = sk.get_public_key();
+   private_key sk = private_key(seed_1);
+   public_key pk = sk.get_public_key();
 
-   bls_signature signature = sk.sign(message_1);
+   signature sig = sk.sign(message_1);
 
    std::string pk_string = pk.to_string();
-   std::string signature_string = signature.to_string();
+   std::string signature_string = sig.to_string();
 
-   bls_public_key pk2 = bls_public_key(pk_string);
-   bls_signature signature2 = bls_signature(signature_string);
+   public_key pk2 = public_key(pk_string);
+   signature sig2 = signature(signature_string);
 
-   bool ok = verify(pk2, message_1, signature2);
+   bool ok = verify(pk2, message_1, sig2);
 
    BOOST_CHECK_EQUAL(ok, true);
 }
@@ -239,31 +236,31 @@ FCL_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(bls_binary_keys_encoding_check) try {
 
-   bls_private_key sk = bls_private_key(seed_1);
+   private_key sk = private_key(seed_1);
 
-   bool ok1 = bls_private_key(sk.to_string()) == sk;
+   bool ok1 = private_key(sk.to_string()) == sk;
 
    std::string priv_str = sk.to_string();
 
-   bool ok2 = bls_private_key(priv_str).to_string() == priv_str;
+   bool ok2 = private_key(priv_str).to_string() == priv_str;
 
-   bls_public_key pk = sk.get_public_key();
+   public_key pk = sk.get_public_key();
 
-   bool ok3 = bls_public_key(pk.to_string()).equal(pk);
+   bool ok3 = public_key(pk.to_string()).equal(pk);
 
    std::string pub_str = pk.to_string();
 
-   bool ok4 = bls_public_key(pub_str).to_string() == pub_str;
+   bool ok4 = public_key(pub_str).to_string() == pub_str;
 
-   bls_signature sig = sk.sign(message_1);
+   signature sig = sk.sign(message_1);
 
-   bool ok5 = bls_signature(sig.to_string()).equal(sig);
+   bool ok5 = signature(sig.to_string()).equal(sig);
 
    std::string sig_str = sig.to_string();
 
-   bool ok6 = bls_signature(sig_str).to_string() == sig_str;
+   bool ok6 = signature(sig_str).to_string() == sig_str;
 
-   bool ok7 = verify(pk, message_1, bls_signature(sig.to_string()));
+   bool ok7 = verify(pk, message_1, signature(sig.to_string()));
    bool ok8 = verify(pk, message_1, sig);
 
    BOOST_CHECK_EQUAL(ok1, true); // succeeds
@@ -279,13 +276,13 @@ FCL_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(bls_regenerate_check) try {
 
-   bls_private_key sk1 = bls_private_key(seed_1);
-   bls_private_key sk2 = bls_private_key(seed_1);
+   private_key sk1 = private_key(seed_1);
+   private_key sk2 = private_key(seed_1);
 
    BOOST_CHECK_EQUAL(sk1.to_string(), sk2.to_string());
 
-   bls_public_key pk1 = sk1.get_public_key();
-   bls_public_key pk2 = sk2.get_public_key();
+   public_key pk1 = sk1.get_public_key();
+   public_key pk2 = sk2.get_public_key();
 
    BOOST_CHECK_EQUAL(pk1.to_string(), pk2.to_string());
 }
@@ -294,121 +291,121 @@ FCL_LOG_AND_RETHROW();
 BOOST_AUTO_TEST_CASE(bls_prefix_encoding_check) try {
 
    // test no_throw for correctly encoded keys
-   BOOST_CHECK_NO_THROW(bls_private_key("PVT_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"));
-   BOOST_CHECK_NO_THROW(bls_public_key("PUB_BLS_82P3oM1u0IEv64u9i4vSzvg1-"
+   BOOST_CHECK_NO_THROW(private_key("PVT_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"));
+   BOOST_CHECK_NO_THROW(public_key("PUB_BLS_82P3oM1u0IEv64u9i4vSzvg1-"
                                        "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RK"
                                        "lE8PoQ6XhDm4PyZlIupQg_gOuiMhcg"));
    BOOST_CHECK_NO_THROW(
-       bls_signature("SIG_BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
+       signature("SIG_BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"));
 
    // test no pivot delimiter
-   BOOST_CHECK_THROW(bls_private_key("PVTBLSvh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
+   BOOST_CHECK_THROW(private_key("PVTBLSvh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
                      fcl::exception::context_error);
-   BOOST_CHECK_THROW(bls_public_key("PUBBLS82P3oM1u0IEv64u9i4vSzvg1-"
+   BOOST_CHECK_THROW(public_key("PUBBLS82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
                      fcl::exception::context_error);
    BOOST_CHECK_THROW(
-       bls_signature("SIGBLSRrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
+       signature("SIGBLSRrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
        fcl::exception::context_error);
 
    // test first prefix validation
-   BOOST_CHECK_THROW(bls_private_key("XYZ_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
+   BOOST_CHECK_THROW(private_key("XYZ_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
                      fcl::exception::context_error);
-   BOOST_CHECK_THROW(bls_public_key("XYZ_BLS_82P3oM1u0IEv64u9i4vSzvg1-"
+   BOOST_CHECK_THROW(public_key("XYZ_BLS_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
                      fcl::exception::context_error);
    BOOST_CHECK_THROW(
-       bls_signature("XYZ_BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
+       signature("XYZ_BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
        fcl::exception::context_error);
 
    // test second prefix validation
-   BOOST_CHECK_THROW(bls_private_key("PVT_XYZ_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
+   BOOST_CHECK_THROW(private_key("PVT_XYZ_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
                      fcl::exception::context_error);
-   BOOST_CHECK_THROW(bls_public_key("PUB_XYZ_82P3oM1u0IEv64u9i4vSzvg1-"
+   BOOST_CHECK_THROW(public_key("PUB_XYZ_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
                      fcl::exception::context_error);
    BOOST_CHECK_THROW(
-       bls_signature("SIG_XYZ_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
+       signature("SIG_XYZ_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
        fcl::exception::context_error);
 
    // test missing prefix
-   BOOST_CHECK_THROW(bls_private_key("vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"), fcl::exception::context_error);
-   BOOST_CHECK_THROW(bls_public_key("82P3oM1u0IEv64u9i4vSzvg1-"
+   BOOST_CHECK_THROW(private_key("vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"), fcl::exception::context_error);
+   BOOST_CHECK_THROW(public_key("82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
                      fcl::exception::context_error);
    BOOST_CHECK_THROW(
-       bls_signature("RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
+       signature("RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
        fcl::exception::context_error);
 
    // test incomplete prefix
-   BOOST_CHECK_THROW(bls_private_key("PVT_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
+   BOOST_CHECK_THROW(private_key("PVT_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
                      fcl::exception::context_error);
-   BOOST_CHECK_THROW(bls_public_key("PUB_82P3oM1u0IEv64u9i4vSzvg1-"
+   BOOST_CHECK_THROW(public_key("PUB_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
                      fcl::exception::context_error);
    BOOST_CHECK_THROW(
-       bls_signature("SIG_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
+       signature("SIG_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
        fcl::exception::context_error);
-   BOOST_CHECK_THROW(bls_private_key("BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
+   BOOST_CHECK_THROW(private_key("BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
                      fcl::exception::context_error);
-   BOOST_CHECK_THROW(bls_public_key("BLS_82P3oM1u0IEv64u9i4vSzvg1-"
+   BOOST_CHECK_THROW(public_key("BLS_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
                      fcl::exception::context_error);
    BOOST_CHECK_THROW(
-       bls_signature("BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
+       signature("BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
        fcl::exception::context_error);
 
    // test invalid data / invalid checksum
-   BOOST_CHECK_THROW(bls_private_key("PVT_BLS_wh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
+   BOOST_CHECK_THROW(private_key("PVT_BLS_wh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
                      fcl::exception::context_error);
-   BOOST_CHECK_THROW(bls_public_key("PUB_BLS_92P3oM1u0IEv64u9i4vSzvg1-"
+   BOOST_CHECK_THROW(public_key("PUB_BLS_92P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
                      fcl::exception::context_error);
    BOOST_CHECK_THROW(
-       bls_signature("SIG_BLS_SrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
+       signature("SIG_BLS_SrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
        fcl::exception::context_error);
-   BOOST_CHECK_THROW(bls_private_key("PVT_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5zc"),
+   BOOST_CHECK_THROW(private_key("PVT_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5zc"),
                      fcl::exception::context_error);
-   BOOST_CHECK_THROW(bls_public_key("PUB_BLS_82P3oM1u0IEv64u9i4vSzvg1-"
+   BOOST_CHECK_THROW(public_key("PUB_BLS_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhdg"),
                      fcl::exception::context_error);
    BOOST_CHECK_THROW(
-       bls_signature("SIG_BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
+       signature("SIG_BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJug"),
        fcl::exception::context_error);
-   BOOST_CHECK_THROW(bls_private_key("PVT_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yd"),
+   BOOST_CHECK_THROW(private_key("PVT_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yd"),
                      fcl::exception::context_error);
-   BOOST_CHECK_THROW(bls_public_key("PUB_BLS_82P3oM1u0IEv64u9i4vSzvg1-"
+   BOOST_CHECK_THROW(public_key("PUB_BLS_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhTg"),
                      fcl::exception::context_error);
    BOOST_CHECK_THROW(
-       bls_signature("SIG_BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
+       signature("SIG_BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJUg"),
        fcl::exception::context_error);
@@ -416,11 +413,11 @@ BOOST_AUTO_TEST_CASE(bls_prefix_encoding_check) try {
 FCL_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(bls_variant) try {
-   bls_private_key prk("PVT_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc");
-   bls_public_key pk(
+   private_key prk("PVT_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc");
+   public_key pk(
        "PUB_BLS_82P3oM1u0IEv64u9i4vSzvg1-"
        "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8PoQ6XhDm4PyZlIupQg_gOuiMhcg");
-   bls_signature sig("SIG_BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
+   signature sig("SIG_BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg");
 

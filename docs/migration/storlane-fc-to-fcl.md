@@ -160,8 +160,7 @@ needed.
 #include <cstdint>
 #include <string>
 
-import fcl.crypto.private_key;
-import fcl.crypto.public_key;
+import fcl.crypto.asymmetric;
 import fcl.crypto.sha256;
 import fcl.raw.raw;
 
@@ -170,39 +169,38 @@ struct signed_payload {
    std::uint64_t sequence = 0;
    std::string action;
 
-   [[nodiscard]] fcl::sha256 sig_digest(const fcl::sha256& chain_id) const;
+   [[nodiscard]] fcl::crypto::bytes signing_bytes(const fcl::crypto::sha256& chain_id) const;
 };
 
 BOOST_DESCRIBE_STRUCT(signed_payload, (), (account, sequence, action))
 
-inline fcl::sha256 signed_payload::sig_digest(const fcl::sha256& chain_id) const {
-   auto encoder = fcl::sha256::encoder{};
-   fcl::raw::pack(encoder, chain_id);
-   fcl::raw::pack(encoder, *this);
-   return encoder.result();
+inline fcl::crypto::bytes signed_payload::signing_bytes(const fcl::crypto::sha256& chain_id) const {
+   auto bytes = fcl::crypto::bytes{};
+   fcl::raw::pack(bytes, chain_id);
+   fcl::raw::pack(bytes, *this);
+   return bytes;
 }
 
-auto private_key = fcl::crypto::private_key::generate();
+auto private_key = fcl::crypto::asymmetric::private_key::generate();
 auto expected_public_key = private_key.get_public_key();
 
-auto chain_id = fcl::sha256{}; // Replace with the real chain/domain id.
+auto chain_id = fcl::crypto::sha256{}; // Replace with the real chain/domain id.
 auto payload = signed_payload{
    .account = 42,
    .sequence = 7,
    .action = "commit",
 };
 
-auto digest = payload.sig_digest(chain_id);
-auto signature = private_key.sign(digest);
+auto message = payload.signing_bytes(chain_id);
+auto signature = private_key.sign(message);
 
-auto recovered_public_key = fcl::crypto::public_key{signature, digest};
-auto verified = recovered_public_key == expected_public_key;
+auto verified = expected_public_key.verify(message, signature);
 ```
 
 OpenSSL 3.0+ is the backend baseline. FCL does not shell out to `openssl`. AES-GCM
 is the preferred modern symmetric API; CBC/CFB remain compatibility surfaces.
 The old FC `digest_type::encoder + fc::raw::pack` pattern maps directly to
-`fcl::sha256::encoder + fcl::raw::pack`. For signatures and protocol hashes, use
+`fcl::crypto::sha256::encoder + fcl::raw::pack`. For signatures and protocol hashes, use
 described DTOs; do not sign JSON text, formatted strings or manually
 concatenated fields.
 

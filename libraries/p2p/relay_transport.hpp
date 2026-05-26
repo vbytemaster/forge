@@ -3,7 +3,7 @@
 namespace fcl::p2p {
 
 void trace_relay(std::string_view message);
-[[nodiscard]] fcl::crypto::private_key private_key_from_pem(std::string_view pem);
+[[nodiscard]] fcl::crypto::asymmetric::private_key private_key_from_pem(std::string_view pem);
 
 class relay_secure_io;
 

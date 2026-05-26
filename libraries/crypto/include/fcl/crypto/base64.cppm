@@ -47,44 +47,7 @@ import fcl.exception.exception;
  * Templated for std::string, std::string_view, std::vector<char> and other char containers.
  */
 
-export namespace fcl::crypto {
-
-// Interface:
-// Defaults allow for use:
-//   std::string s = "foobar";
-//   std::string encoded = base64_encode(s);
-//   std::string_view sv = "foobar";
-//   std::string encoded = base64_encode(sv);
-//   std::vector<char> vc = {'f', 'o', 'o'};
-//   std::string encoded = base64_encode(vc);
-//
-// Also allows for user provided char containers and specified return types:
-//   std::string s = "foobar";
-//   std::vector<char> encoded = base64_encode<std::vector<char>>(s);
-
-template <typename RetString = std::string, typename String = std::string>
-RetString base64_encode(const String& s, bool url = false);
-
-template <typename RetString = std::string, typename String = std::string> RetString base64_encode_pem(const String& s);
-
-template <typename RetString = std::string, typename String = std::string>
-RetString base64_encode_mime(const String& s);
-
-template <typename RetString = std::string, typename String = std::string>
-RetString base64_decode(const String& s, bool remove_linebreaks = false, bool url = false);
-
-template <typename RetString = std::string>
-RetString base64_encode(const unsigned char* s, size_t len, bool url = false);
-
-// Convenient methods for existing Spring uses
-
-std::string base64_encode(char const* s, unsigned int len);
-std::vector<char> base64_decode(const std::string& s);
-std::string base64url_encode(const char* s, size_t len);
-std::string base64url_encode(const std::string& s);
-std::vector<char> base64url_decode(const std::string& s);
-
-namespace detail {
+namespace fcl::crypto::detail {
 //
 // Depending on the url parameter in base64_chars, one of
 // two sets of base64 characters needs to be chosen.
@@ -158,9 +121,12 @@ template <typename RetString, typename String> inline RetString insert_linebreak
    }
 }
 
+template <typename RetString> inline RetString encode_bytes(const unsigned char* bytes_to_encode, size_t in_len, bool url);
+template <typename RetString, typename String> inline RetString encode(String s, bool url);
+
 template <typename RetString, typename String, unsigned int line_length>
 inline RetString encode_with_line_breaks(String s) {
-   return insert_linebreaks<RetString, String>(base64_encode(s, false), line_length);
+   return insert_linebreaks<RetString, String>(encode<RetString, String>(s, false), line_length);
 }
 
 template <typename RetString, typename String> inline RetString encode_pem(String s) {
@@ -172,13 +138,11 @@ template <typename RetString, typename String> inline RetString encode_mime(Stri
 }
 
 template <typename RetString, typename String> inline RetString encode(String s, bool url) {
-   return base64_encode<RetString>(reinterpret_cast<const unsigned char*>(s.data()), s.size(), url);
+   return encode_bytes<RetString>(reinterpret_cast<const unsigned char*>(s.data()), s.size(), url);
 }
 
-} // namespace detail
-
 template <typename RetString>
-inline RetString base64_encode(const unsigned char* bytes_to_encode, size_t in_len, bool url) {
+inline RetString encode_bytes(const unsigned char* bytes_to_encode, size_t in_len, bool url) {
    size_t len_encoded = (in_len + 2) / 3 * 4;
 
    const unsigned char trailing_char = '=';
@@ -229,8 +193,6 @@ inline RetString base64_encode(const unsigned char* bytes_to_encode, size_t in_l
    return ret;
 }
 
-namespace detail {
-
 template <typename RetString, typename String>
 inline RetString decode(const String& encoded_string, bool remove_linebreaks, bool url) {
    static_assert(!std::is_same_v<RetString, std::string_view>);
@@ -248,7 +210,7 @@ inline RetString decode(const String& encoded_string, bool remove_linebreaks, bo
 
       copy.erase(std::remove(copy.begin(), copy.end(), '\n'), copy.end());
 
-      return base64_decode<RetString, String>(copy, false, url);
+      return decode<RetString, String>(copy, false, url);
    }
 
    size_t length_of_string = encoded_string.size();
@@ -311,22 +273,45 @@ inline RetString decode(const String& encoded_string, bool remove_linebreaks, bo
    return ret;
 }
 
-} // namespace detail
+} // namespace fcl::crypto::detail
 
-template <typename RetString, typename String>
-inline RetString base64_decode(const String& s, bool remove_linebreaks, bool url) {
+export namespace fcl::crypto {
+
+// Interface:
+// Defaults allow for use:
+//   std::string s = "foobar";
+//   std::string encoded = base64_encode(s);
+//   std::string_view sv = "foobar";
+//   std::string encoded = base64_encode(sv);
+//   std::vector<char> vc = {'f', 'o', 'o'};
+//   std::string encoded = base64_encode(vc);
+//
+// Also allows for user provided char containers and specified return types:
+//   std::string s = "foobar";
+//   std::vector<char> encoded = base64_encode<std::vector<char>>(s);
+
+template <typename RetString = std::string>
+inline RetString base64_encode(const unsigned char* bytes_to_encode, size_t in_len, bool url = false) {
+   return detail::encode_bytes<RetString>(bytes_to_encode, in_len, url);
+}
+
+template <typename RetString = std::string, typename String = std::string>
+inline RetString base64_decode(const String& s, bool remove_linebreaks = false, bool url = false) {
    return detail::decode<RetString, String>(s, remove_linebreaks, url);
 }
 
-template <typename RetString, typename String> inline RetString base64_encode(const String& s, bool url) {
+template <typename RetString = std::string, typename String = std::string>
+inline RetString base64_encode(const String& s, bool url = false) {
    return detail::encode<RetString, String>(s, url);
 }
 
-template <typename RetString, typename String> inline RetString base64_encode_pem(const String& s) {
+template <typename RetString = std::string, typename String = std::string>
+inline RetString base64_encode_pem(const String& s) {
    return detail::encode_pem<RetString, String>(s);
 }
 
-template <typename RetString, typename String> inline RetString base64_encode_mime(const String& s) {
+template <typename RetString = std::string, typename String = std::string>
+inline RetString base64_encode_mime(const String& s) {
    return detail::encode_mime<RetString, String>(s);
 }
 

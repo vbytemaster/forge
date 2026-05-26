@@ -40,8 +40,8 @@ std::variant<recover_error, recover_bytes> recover(const recover_bytes& signatur
    }
 
    size_t kOutLen{65};
-   recover_bytes out(kOutLen, '\0');
-   secp256k1_ec_pubkey_serialize(context, (unsigned char*)&out[0], &kOutLen, &pub_key, SECP256K1_EC_UNCOMPRESSED);
+   recover_bytes out(kOutLen, 0);
+   secp256k1_ec_pubkey_serialize(context, out.data(), &kOutLen, &pub_key, SECP256K1_EC_UNCOMPRESSED);
    return out;
 }
 } // namespace fcl::crypto::secp256k1

@@ -17,6 +17,7 @@ enum class code : std::uint16_t {
    api_version_mismatch = 5,
    startup_failed = 6,
    shutdown_failed = 7,
+   initialize_failed = 8,
 };
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.app")
@@ -28,5 +29,6 @@ using api_missing = fcl::exception::coded_exception<code, code::api_missing>;
 using api_version_mismatch = fcl::exception::coded_exception<code, code::api_version_mismatch>;
 using startup_failed = fcl::exception::coded_exception<code, code::startup_failed>;
 using shutdown_failed = fcl::exception::coded_exception<code, code::shutdown_failed>;
+using initialize_failed = fcl::exception::coded_exception<code, code::initialize_failed>;
 
 } // namespace fcl::app::exceptions

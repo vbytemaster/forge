@@ -539,7 +539,7 @@ try {
    fcl::asio::blocking::run(app.runtime(), app.startup());
 } FCL_CAPTURE_AND_RETHROW(
    "application startup failed",
-   fcl::error::ctx("component", "service"))
+   fcl::exception::ctx("component", "service"))
 ```
 
 The app should still call `request_stop()` and `shutdown()` from the outer

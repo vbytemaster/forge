@@ -11,7 +11,7 @@ import fcl.core.string;
 import fcl.crypto.packhash;
 import fcl.variant;
 
-export namespace fcl {
+export namespace fcl::crypto {
 
 class sha1 : public add_packhash_to_hash<sha1> {
  public:
@@ -74,11 +74,11 @@ class sha1 : public add_packhash_to_hash<sha1> {
 void to_variant(const sha1& bi, variant& v);
 void from_variant(const variant& v, sha1& bi);
 
-} // namespace fcl
+} // namespace fcl::crypto
 
 export namespace std {
-template <> struct hash<fcl::sha1> {
-   size_t operator()(const fcl::sha1& s) const {
+template <> struct hash<fcl::crypto::sha1> {
+   size_t operator()(const fcl::crypto::sha1& s) const {
       return *((size_t*)&s);
    }
 };

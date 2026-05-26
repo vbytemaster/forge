@@ -10,6 +10,7 @@ target_include_directories(fcl_asio PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 target_link_libraries(
    fcl_asio PUBLIC
       Boost::asio
+      fcl_exception
    PRIVATE
       Threads::Threads
 )

@@ -10,18 +10,20 @@ module;
 
 module fcl.crypto.kdf;
 
+import fcl.crypto.exceptions;
+
 namespace fcl::crypto {
 namespace {
 
 void require_output_size(std::size_t size) {
    if (size == 0 || size > 255U * 32U) {
-      throw error{error_kind::invalid_options, "invalid KDF output size"};
+      exceptions::raise(exceptions::code::invalid_options, "invalid KDF output size");
    }
 }
 
 int checked_int_size(std::size_t size, const char* label) {
    if (size > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-      throw error{error_kind::invalid_options, std::string(label) + " is too large"};
+      exceptions::raise(exceptions::code::invalid_options, std::string(label) + " is too large");
    }
    return static_cast<int>(size);
 }
@@ -31,7 +33,7 @@ int checked_int_size(std::size_t size, const char* label) {
    auto out_size = 0U;
    if (HMAC(EVP_sha256(), key.data(), checked_int_size(key.size(), "HMAC key"), input.data(), input.size(), out.data(),
             &out_size) == nullptr) {
-      throw error{error_kind::backend_error, "OpenSSL HMAC-SHA256 failed"};
+      exceptions::raise(exceptions::code::backend_error, "OpenSSL HMAC-SHA256 failed");
    }
    out.resize(out_size);
    return out;
@@ -42,7 +44,7 @@ int checked_int_size(std::size_t size, const char* label) {
 bytes derive_hkdf_sha256(const hkdf_sha256_request& request) {
    require_output_size(request.output_size);
    if (request.secret.empty()) {
-      throw error{error_kind::invalid_key, "HKDF requires secret input"};
+      exceptions::raise(exceptions::code::invalid_key, "HKDF requires secret input");
    }
 
    auto salt = request.salt;
@@ -71,17 +73,17 @@ bytes derive_hkdf_sha256(const hkdf_sha256_request& request) {
 
 bytes derive_scrypt(const scrypt_request& request) {
    if (request.password.empty() || request.salt.empty()) {
-      throw error{error_kind::invalid_options, "scrypt requires password and salt"};
+      exceptions::raise(exceptions::code::invalid_options, "scrypt requires password and salt");
    }
    require_output_size(request.output_size);
    if (request.n == 0 || request.r == 0 || request.p == 0 || request.max_memory_bytes == 0) {
-      throw error{error_kind::invalid_options, "invalid scrypt parameters"};
+      exceptions::raise(exceptions::code::invalid_options, "invalid scrypt parameters");
    }
 
    auto out = bytes(request.output_size);
    if (EVP_PBE_scrypt(request.password.data(), request.password.size(), request.salt.data(), request.salt.size(),
                       request.n, request.r, request.p, request.max_memory_bytes, out.data(), out.size()) != 1) {
-      throw error{error_kind::backend_error, "OpenSSL scrypt failed"};
+      exceptions::raise(exceptions::code::backend_error, "OpenSSL scrypt failed");
    }
    return out;
 }

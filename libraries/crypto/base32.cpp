@@ -8,6 +8,8 @@ module;
 
 module fcl.crypto.base32;
 
+import fcl.crypto.exceptions;
+
 namespace fcl::crypto {
 namespace {
 
@@ -71,7 +73,7 @@ bytes base32_decode(std::string_view value) {
    for (auto ch : payload) {
       const auto decoded = decode_value(ch);
       if (decoded < 0) {
-         throw error{error_kind::invalid_options, "base32 input contains an invalid character"};
+         exceptions::raise(exceptions::code::invalid_options, "base32 input contains an invalid character");
       }
 
       buffer = (buffer << 5U) | static_cast<std::uint32_t>(decoded);
@@ -83,7 +85,7 @@ bytes base32_decode(std::string_view value) {
    }
 
    if (bits > 0 && ((buffer << (8 - bits)) & 0xffU) != 0) {
-      throw error{error_kind::invalid_options, "base32 input has non-zero trailing bits"};
+      exceptions::raise(exceptions::code::invalid_options, "base32 input has non-zero trailing bits");
    }
 
    return output;

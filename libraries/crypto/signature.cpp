@@ -3,7 +3,6 @@ module;
 #include <exception>
 #include <ostream>
 #include <string>
-#include <tuple>
 #include <type_traits>
 #include <variant>
 
@@ -11,7 +10,6 @@ module fcl.crypto.signature;
 
 import fcl.core.utility;
 import fcl.crypto.common;
-import fcl.crypto.elliptic_webauthn;
 import fcl.exception.exception;
 import fcl.variant.static_variant;
 import fcl.variant;
@@ -19,16 +17,27 @@ import fcl.variant;
 namespace fcl::crypto {
 struct hash_visitor : public fcl::visitor<size_t> {
    template <typename SigType> size_t operator()(const SigType& sig) const {
-      static_assert(std::tuple_size_v<std::remove_reference_t<decltype(sig._data)>> == 65,
-                    "sig size is expected to be 65");
-      // signatures are two bignums: r & s. Just add up least significant digits of the two
-      return *(size_t*)&sig._data.data()[32 - sizeof(size_t)] + *(size_t*)&sig._data.data()[64 - sizeof(size_t)];
-   }
-
-   size_t operator()(const webauthn::signature& sig) const {
-      return sig.get_hash();
+      auto seed = std::size_t{0};
+      const auto& data = sig.serialize();
+      for (auto byte : data) {
+         seed ^= static_cast<std::size_t>(byte) + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
+      }
+      return seed;
    }
 };
+
+signature::algorithm signature::type() const noexcept {
+   switch (_storage.index()) {
+   case 0:
+      return algorithm::secp256k1;
+   case 1:
+      return algorithm::p256;
+   case 2:
+      return algorithm::ed25519;
+   default:
+      return algorithm::rsa;
+   }
+}
 
 static signature::storage_type sig_parse_base58(const std::string& base58str) {
    try {
@@ -36,17 +45,17 @@ static signature::storage_type sig_parse_base58(const std::string& base58str) {
 
       const auto pivot = base58str.find('_');
       FCL_ASSERT(pivot != std::string::npos, "No delimiter in string, cannot determine type: ${str}",
-                 fcl::error::ctx("str", base58str));
+                 fcl::exception::ctx("str", base58str));
 
       const auto prefix_str = base58str.substr(0, pivot);
-      FCL_ASSERT(prefix == prefix_str, "Signature Key has invalid prefix", fcl::error::ctx("str", base58str),
-                 fcl::error::ctx("prefix_str", prefix_str));
+      FCL_ASSERT(prefix == prefix_str, "Signature Key has invalid prefix", fcl::exception::ctx("str", base58str),
+                 fcl::exception::ctx("prefix_str", prefix_str));
 
       auto data_str = base58str.substr(pivot + 1);
-      FCL_ASSERT(!data_str.empty(), "Signature has no data: ${str}", fcl::error::ctx("str", base58str));
+      FCL_ASSERT(!data_str.empty(), "Signature has no data: ${str}", fcl::exception::ctx("str", base58str));
       return base58_str_parser<signature::storage_type, config::signature_prefix>::apply(data_str);
    }
-   FCL_CAPTURE_AND_RETHROW("error parsing signature", fcl::error::ctx("str", base58str))
+   FCL_CAPTURE_AND_RETHROW("error parsing signature", fcl::exception::ctx("str", base58str))
 }
 
 signature::signature(const std::string& base58str) : _storage(sig_parse_base58(base58str)) {}
@@ -61,9 +70,7 @@ template <class... Ts> struct overloaded : Ts... {
 template <class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 
 size_t signature::variable_size() const {
-   return std::visit(overloaded{[&](const auto& k1r1) { return static_cast<size_t>(0); },
-                                [&](const webauthn::signature& wa) { return static_cast<size_t>(wa.variable_size()); }},
-                     _storage);
+   return std::visit([](const auto& sig) { return sig.serialize().size(); }, _storage);
 }
 
 std::string signature::to_string(const fcl::yield_function_t& yield) const {
@@ -94,7 +101,7 @@ size_t hash_value(const signature& b) {
 }
 } // namespace fcl::crypto
 
-namespace fcl {
+namespace fcl::crypto {
 void to_variant(const fcl::crypto::signature& var, fcl::variant& vo, const fcl::yield_function_t& yield) {
    vo = var.to_string(yield);
 }
@@ -102,4 +109,4 @@ void to_variant(const fcl::crypto::signature& var, fcl::variant& vo, const fcl::
 void from_variant(const fcl::variant& var, fcl::crypto::signature& vo) {
    vo = fcl::crypto::signature(var.as_string());
 }
-} // namespace fcl
+} // namespace fcl::crypto

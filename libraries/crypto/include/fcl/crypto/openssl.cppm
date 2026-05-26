@@ -14,7 +14,7 @@ export module fcl.crypto.openssl;
  * @file openssl.hpp
  * Provides common utility calls for wrapping openssl c api.
  */
-export namespace fcl {
+export namespace fcl::crypto {
 template <typename ssl_type> struct ssl_wrapper {
    ssl_wrapper(ssl_type* obj) : obj(obj) {}
 
@@ -57,4 +57,4 @@ struct ssl_bignum : public ssl_wrapper<BIGNUM> {
    }
 };
 
-} // namespace fcl
+} // namespace fcl::crypto

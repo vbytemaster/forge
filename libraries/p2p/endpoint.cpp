@@ -9,7 +9,7 @@ module;
 module fcl.p2p.endpoint;
 
 import fcl.multiformats;
-import fcl.p2p.errors;
+import fcl.p2p.exceptions;
 
 namespace fcl::p2p {
 namespace {
@@ -28,7 +28,7 @@ namespace {
       case dns6:
          return fcl::multiformats::multicodec_code::dns6;
    }
-   throw_p2p_error(error_kind::invalid_options, "unsupported P2P endpoint address kind");
+   exceptions::raise(exceptions::code::invalid_options, "unsupported P2P endpoint address kind");
 }
 
 [[nodiscard]] endpoint::address_kind endpoint_kind(fcl::multiformats::multicodec_code code) {
@@ -44,7 +44,7 @@ namespace {
       case fcl::multiformats::multicodec_code::dns6:
          return endpoint::address_kind::dns6;
       default:
-         throw_p2p_error(error_kind::invalid_options, "P2P endpoint must start with an address component");
+         exceptions::raise(exceptions::code::invalid_options, "P2P endpoint must start with an address component");
    }
 }
 
@@ -58,6 +58,13 @@ std::string endpoint::to_string() const {
    if (peer.has_value()) {
       address.push({.code = fcl::multiformats::multicodec_code::p2p, .value = peer->to_string()});
    }
+   if (relayed.has_value()) {
+      if (!peer.has_value()) {
+         exceptions::raise(exceptions::code::invalid_options, "P2P relayed endpoint requires relay peer");
+      }
+      address.push({.code = fcl::multiformats::multicodec_code::p2p_circuit, .value = {}});
+      address.push({.code = fcl::multiformats::multicodec_code::p2p, .value = relayed->target.to_string()});
+   }
    return address.to_string();
 }
 
@@ -69,28 +76,35 @@ endpoint parse_endpoint(std::string_view value) {
    const auto address = fcl::multiformats::address::parse(value);
    const auto& components = address.components();
    if (components.size() < 3) {
-      throw_p2p_error(error_kind::invalid_options, "P2P endpoint must include address/udp/quic-v1 components");
+      exceptions::raise(exceptions::code::invalid_options, "P2P endpoint must include address/udp/quic-v1 components");
    }
 
    auto result = endpoint{.kind = endpoint_kind(components[0].code), .host = components[0].value};
    if (components[1].code != fcl::multiformats::multicodec_code::udp) {
-      throw_p2p_error(error_kind::invalid_options, "P2P libp2p QUIC endpoint must use udp before quic-v1");
+      exceptions::raise(exceptions::code::invalid_options, "P2P libp2p QUIC endpoint must use udp before quic-v1");
    }
    try {
       result.port = static_cast<std::uint16_t>(std::stoul(components[1].value));
    } catch (...) {
-      throw_p2p_error(error_kind::invalid_options, "P2P endpoint UDP port is invalid");
+      exceptions::raise(exceptions::code::invalid_options, "P2P endpoint UDP port is invalid");
    }
    if (components[2].code != fcl::multiformats::multicodec_code::quic_v1) {
-      throw_p2p_error(error_kind::invalid_options, "P2P endpoint is missing quic-v1 component");
+      exceptions::raise(exceptions::code::invalid_options, "P2P endpoint is missing quic-v1 component");
    }
-   if (components.size() == 4) {
+   if (components.size() == 4 || components.size() == 6) {
       if (components[3].code != fcl::multiformats::multicodec_code::p2p) {
-         throw_p2p_error(error_kind::invalid_options, "unexpected component after quic-v1");
+         exceptions::raise(exceptions::code::invalid_options, "unexpected component after quic-v1");
       }
       result.peer = peer_id::from_string(components[3].value);
+      if (components.size() == 6) {
+         if (components[4].code != fcl::multiformats::multicodec_code::p2p_circuit ||
+             components[5].code != fcl::multiformats::multicodec_code::p2p) {
+            exceptions::raise(exceptions::code::invalid_options, "P2P relayed endpoint must use p2p-circuit/p2p suffix");
+         }
+         result.relayed = endpoint::circuit{.target = peer_id::from_string(components[5].value)};
+      }
    } else if (components.size() > 4) {
-      throw_p2p_error(error_kind::invalid_options, "P2P endpoint contains unsupported extra components");
+      exceptions::raise(exceptions::code::invalid_options, "P2P endpoint contains unsupported extra components");
    }
    return result;
 }

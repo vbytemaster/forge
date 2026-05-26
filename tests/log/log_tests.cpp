@@ -95,7 +95,7 @@ BOOST_AUTO_TEST_CASE(exception_chain_can_be_routed_to_logger) {
    auto sink = std::make_shared<capture_sink>();
    logger.add_sink(sink);
 
-   fcl::error::set_log_sink([&](std::string_view message) {
+   fcl::exception::set_log_sink([&](std::string_view message) {
       logger.error("exception captured", {fcl::log_ctx("chain", message), fcl::log_secret("token", "hidden")});
    });
 
@@ -103,7 +103,7 @@ BOOST_AUTO_TEST_CASE(exception_chain_can_be_routed_to_logger) {
       try {
          throw std::runtime_error{"inner"};
       }
-      FCL_CAPTURE_AND_LOG("outer", fcl::error::ctx("phase", "startup"), fcl::error::secret("password", "secret"))
+      FCL_CAPTURE_AND_LOG("outer", fcl::exception::ctx("phase", "startup"), fcl::exception::secret("password", "secret"))
    } catch (...) {
       BOOST_FAIL("FCL_CAPTURE_AND_LOG must not rethrow");
    }
@@ -116,7 +116,7 @@ BOOST_AUTO_TEST_CASE(exception_chain_can_be_routed_to_logger) {
    BOOST_TEST(record.fields.front().value.find("secret") == std::string::npos);
    BOOST_TEST(record.fields.back().value == "<redacted>");
 
-   fcl::error::set_log_sink({});
+   fcl::exception::set_log_sink({});
 }
 
 BOOST_AUTO_TEST_SUITE_END()

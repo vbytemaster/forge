@@ -28,7 +28,7 @@ diagnostic context.
 - `fcl.api.types` — API ids, versions, refs, codec ids, call ids, method kinds,
   frame kinds, `frame` and `error_payload`.
 - `fcl.api.descriptor` — contract and method descriptors.
-- `fcl.api.errors` — error payload projection and remote typed-error restore.
+- `fcl.api.error_projection` — error payload projection and remote typed-error restore.
 - `fcl.api.handle` — typed local/remote handle wrapper.
 - `fcl.api.registry` — registry, installer, view and local frame dispatch.
 - `fcl.api.binding` — connection, session, binding plan, call runtime and
@@ -182,7 +182,7 @@ const auto payload = fcl::raw::unpack<fcl::api::error_payload>(frame.payload);
 const auto* method = fcl::api::find_method(cache::describe(), frame.method);
 
 try {
-   fcl::api::throw_remote_error(payload, method);
+   fcl::api::raise_remote_error(payload, method);
 } catch (const cache_errors::chunk_not_found& error) {
    // Handle the same typed exception shape as local plugin calls.
 }

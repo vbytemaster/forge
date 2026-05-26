@@ -25,7 +25,7 @@ import fcl.config.document;
 import fcl.config.value;
 import fcl.p2p;
 import fcl.plugins;
-import fcl.quic.errors;
+import fcl.quic.exceptions;
 import fcl.schema;
 
 namespace {
@@ -838,7 +838,7 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_rejects_invalid_typed_config_before_startup
       auto config = test_p2p_config();
       config.set("p2p.listen", fcl::config::value::array_type{fcl::config::value{"127.0.0.1:0"}});
       auto app = p2p_only_application{};
-      BOOST_CHECK_THROW(app.configure(config), fcl::quic::quic_error);
+      BOOST_CHECK_THROW(app.configure(config), fcl::exception::base);
    }
 
    {

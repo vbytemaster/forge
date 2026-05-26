@@ -37,23 +37,17 @@ inline constexpr std::uint64_t hole_punching = 1ULL << 5;
 inline constexpr std::uint64_t relay_reservation = 1ULL << 6;
 } // namespace capabilities
 
-enum class reachability_state : std::uint16_t {
-   unknown = 0,
-   publicly_reachable = 1,
-   private_network = 2,
-   blocked = 3,
-   relay_only = 4
-};
-
-enum class hole_punch_status : std::uint16_t { not_attempted = 0, prepared = 1, synced = 2, succeeded = 3, failed = 4 };
-
 namespace builtins {
-inline const protocol_id control{.value = "/fcl/p2p/control/1"};
-inline const protocol_id relay{.value = "/fcl/p2p/relay/1"};
 inline const protocol_id echo{.value = "/fcl/p2p/echo/1"};
 inline const protocol_id ping{.value = "/ipfs/ping/1.0.0"};
 inline const protocol_id identify{.value = "/ipfs/id/1.0.0"};
 inline const protocol_id identify_push{.value = "/ipfs/id/push/1.0.0"};
+inline const protocol_id autonat_v1{.value = "/libp2p/autonat/1.0.0"};
+inline const protocol_id autonat_v2_dial_request{.value = "/libp2p/autonat/2/dial-request"};
+inline const protocol_id autonat_v2_dial_back{.value = "/libp2p/autonat/2/dial-back"};
+inline const protocol_id relay_hop{.value = "/libp2p/circuit/relay/0.2.0/hop"};
+inline const protocol_id relay_stop{.value = "/libp2p/circuit/relay/0.2.0/stop"};
+inline const protocol_id dcutr{.value = "/libp2p/dcutr"};
 } // namespace builtins
 
 } // namespace fcl::p2p

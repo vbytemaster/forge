@@ -1,8 +1,6 @@
 module;
 
-#include <string>
 #include <string_view>
-#include <utility>
 
 module fcl.api.descriptor;
 
@@ -21,7 +19,5 @@ const method_descriptor* find_method(const descriptor& api, std::string_view nam
    }
    return nullptr;
 }
-
-api_error::api_error(std::string message) : std::runtime_error(std::move(message)) {}
 
 } // namespace fcl::api

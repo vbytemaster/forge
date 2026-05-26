@@ -24,9 +24,9 @@ probes, hole punching and path scoring.
 ## Public Modules
 
 - `fcl.p2p.identity`, `fcl.p2p.endpoint`, `fcl.p2p.node`.
-- `fcl.p2p.protocol`, `fcl.p2p.message`, `fcl.p2p.codec`.
+- `fcl.p2p.protocol`, `fcl.p2p.message`, `fcl.p2p.negotiation`.
 - `fcl.p2p.peer_store`, `fcl.p2p.relay`, `fcl.p2p.scoring`.
-- `fcl.p2p.errors`, `fcl.p2p` aggregate.
+- `fcl.p2p.exceptions`, `fcl.p2p` aggregate.
 
 Target: `fcl_p2p`.
 
@@ -161,10 +161,10 @@ co_await p2p->broadcast(std::move(message));
 
 ### Typed API Protocol Binding
 
-`fcl.p2p.api` is temporarily disabled during the libp2p-compatible stream core
-rewrite. It must return after the new `multistream-select`, Ping, Identify and
-peer-store path is stable, without reintroducing the old FCL-only hello/control
-envelope into direct QUIC sessions.
+`fcl.p2p.api` builds P2P API bindings on top of negotiated protocol streams.
+The binding path uses `multistream-select` and the same direct, hole-punch and
+relay path manager as ordinary P2P protocol streams; it must not reintroduce an
+FCL-only hello envelope into direct QUIC sessions.
 
 ### Connect And Open A Protocol Stream
 
@@ -197,8 +197,8 @@ node.peers().learn_endpoint(
    {.bits = fcl::p2p::capabilities::direct_quic | fcl::p2p::capabilities::peer_exchange});
 
 boost::asio::awaitable<void> update_reachability(fcl::p2p::node& node) {
-   fcl::p2p::reachability_state reachability = co_await node.async_probe_reachability(observer_peer);
-   if (reachability == fcl::p2p::reachability_state::relay_only) {
+   fcl::p2p::reachability::state reachability = co_await node.async_probe_reachability(observer_peer);
+   if (reachability == fcl::p2p::reachability::state::relay_only) {
       schedule_relay_setup(remote_peer);
    }
 }
@@ -208,7 +208,7 @@ boost::asio::awaitable<void> update_reachability(fcl::p2p::node& node) {
 
 ```cpp
 boost::asio::awaitable<void> open_relayed_stream(fcl::p2p::node& node) {
-   fcl::p2p::relay_reservation::info reservation = co_await node.async_reserve_relay(
+   fcl::p2p::relay::reservation::info reservation = co_await node.async_reserve_relay(
       relay_peer,
       {.ttl = std::chrono::milliseconds{60'000}, .max_streams = 8});
 

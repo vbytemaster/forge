@@ -7,6 +7,8 @@ module;
 
 module fcl.multiformats.multibase;
 
+import fcl.multiformats.exceptions;
+
 import fcl.crypto.base32;
 import fcl.crypto.base58;
 
@@ -22,12 +24,12 @@ std::string multibase_encode(multibase_code code, std::span<const std::uint8_t> 
          return std::string{"B"} +
                 fcl::crypto::base32_encode(data, {.alphabet_case = fcl::crypto::base32_case::upper});
    }
-   throw format_error{"unsupported multibase code"};
+   throw exceptions::invalid_format{"unsupported multibase code"};
 }
 
 decoded_multibase multibase_decode(std::string_view value) {
    if (value.empty()) {
-      throw format_error{"multibase value is missing prefix"};
+      throw exceptions::invalid_format{"multibase value is missing prefix"};
    }
 
    const auto payload = value.substr(1);
@@ -39,7 +41,7 @@ decoded_multibase multibase_decode(std::string_view value) {
       case 'B':
          return {.code = multibase_code::base32_upper, .bytes = fcl::crypto::base32_decode(payload)};
       default:
-         throw format_error{"unsupported multibase prefix"};
+         throw exceptions::invalid_format{"unsupported multibase prefix"};
    }
 }
 

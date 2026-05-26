@@ -47,7 +47,7 @@ static std::array<uint64_t, 4> priv_parse_base64url(const std::string& base64url
    auto res = std::mismatch(config::bls_private_key_prefix.begin(), config::bls_private_key_prefix.end(),
                             base64urlstr.begin());
    FCL_ASSERT(res.first == config::bls_private_key_prefix.end(), "BLS Private Key has invalid format : ${str}",
-              fcl::error::ctx("str", base64urlstr));
+              fcl::exception::ctx("str", base64urlstr));
 
    auto data_str = base64urlstr.substr(config::bls_private_key_prefix.size());
 
@@ -70,13 +70,13 @@ bool operator==(const bls_private_key& pk1, const bls_private_key& pk2) {
 
 } // namespace fcl::crypto::blslib
 
-namespace fcl {
-void to_variant(const crypto::blslib::bls_private_key& var, variant& vo) {
+namespace fcl::crypto::blslib {
+void to_variant(const bls_private_key& var, variant& vo) {
    vo = var.to_string();
 }
 
-void from_variant(const variant& var, crypto::blslib::bls_private_key& vo) {
-   vo = crypto::blslib::bls_private_key(var.as_string());
+void from_variant(const variant& var, bls_private_key& vo) {
+   vo = bls_private_key(var.as_string());
 }
 
-} // namespace fcl
+} // namespace fcl::crypto::blslib

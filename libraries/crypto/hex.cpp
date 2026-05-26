@@ -9,7 +9,7 @@ module fcl.crypto.hex;
 
 import fcl.exception.exception;
 
-namespace fcl {
+namespace fcl::crypto {
 
 uint8_t from_hex(char c) {
    if (c >= '0' && c <= '9')
@@ -18,7 +18,7 @@ uint8_t from_hex(char c) {
       return c - 'a' + 10;
    if (c >= 'A' && c <= 'F')
       return c - 'A' + 10;
-   FCL_THROW("Invalid hex character '${c}'", fcl::error::ctx("c", std::string(&c, 1)));
+   FCL_THROW("Invalid hex character '${c}'", fcl::exception::ctx("c", std::string(&c, 1)));
    return 0;
 }
 
@@ -52,4 +52,4 @@ std::string to_hex(const std::vector<char>& data) {
    return "";
 }
 
-} // namespace fcl
+} // namespace fcl::crypto

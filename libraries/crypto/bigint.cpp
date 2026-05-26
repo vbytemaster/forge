@@ -14,7 +14,7 @@ import fcl.crypto.base64;
 
 import fcl.exception.exception;
 
-namespace fcl {
+namespace fcl::crypto {
 bigint::bigint(const char* bige, uint32_t l) {
    n = BN_bin2bn((const unsigned char*)bige, l, NULL);
    FCL_ASSERT(n != nullptr);
@@ -220,4 +220,4 @@ void from_variant(const variant& v, bigint& bi) {
    }
 }
 
-} // namespace fcl
+} // namespace fcl::crypto

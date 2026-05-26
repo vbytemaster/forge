@@ -3,7 +3,6 @@ module;
 #include <coroutine>
 #include <exception>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -27,6 +26,7 @@ module fcl.websocket.client;
 import fcl.asio.blocking;
 import fcl.asio.runtime;
 import fcl.websocket.connection;
+import fcl.websocket.exceptions;
 
 namespace fcl::websocket {
 namespace {
@@ -55,7 +55,7 @@ class client_impl {
       if (endpoint.secure()) {
          auto stream = beast::ssl_stream<beast::tcp_stream>{strand, ssl_context};
          if (!SSL_set_tlsext_host_name(stream.native_handle(), endpoint.host.c_str())) {
-            throw std::runtime_error{"failed to configure TLS host name"};
+            throw exceptions::internal{"failed to configure TLS host name"};
          }
          if (options.verify_peer) {
             stream.set_verify_mode(asio::ssl::verify_peer);

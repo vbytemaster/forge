@@ -17,6 +17,7 @@ module;
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -192,24 +193,26 @@ void validate_relay_trust(const std::string& value) {
          };
       }
    }
-   if (const auto* p2p_error = dynamic_cast<const fcl::p2p::p2p_error*>(&error)) {
+   if (const auto* fcl_error = dynamic_cast<const fcl::exception::base*>(&error);
+       fcl_error != nullptr && fcl_error->code().category().name() == std::string_view{"fcl.p2p"}) {
       return fcl::api::error_identity{
          .category = "fcl.p2p",
-         .code = static_cast<std::uint32_t>(p2p_error->kind()) + 1,
+         .code = static_cast<std::uint32_t>(fcl_error->code().value()),
       };
    }
    return fcl::api::error_identity{};
 }
 
 [[nodiscard]] bool is_retryable(const std::exception& error) {
-   if (const auto* p2p_error = dynamic_cast<const fcl::p2p::p2p_error*>(&error)) {
-      switch (p2p_error->kind()) {
-      case fcl::p2p::error_kind::peer_not_found:
-      case fcl::p2p::error_kind::relay_not_available:
-      case fcl::p2p::error_kind::relay_rejected:
-      case fcl::p2p::error_kind::backpressure_rejected:
-      case fcl::p2p::error_kind::timeout:
-      case fcl::p2p::error_kind::closed:
+   if (const auto* fcl_error = dynamic_cast<const fcl::exception::base*>(&error);
+       fcl_error != nullptr && fcl_error->code().category().name() == std::string_view{"fcl.p2p"}) {
+      switch (static_cast<fcl::p2p::exceptions::code>(fcl_error->code().value())) {
+      case fcl::p2p::exceptions::code::peer_not_found:
+      case fcl::p2p::exceptions::code::relay_not_available:
+      case fcl::p2p::exceptions::code::relay_rejected:
+      case fcl::p2p::exceptions::code::backpressure_rejected:
+      case fcl::p2p::exceptions::code::timeout:
+      case fcl::p2p::exceptions::code::closed:
          return true;
       default:
          return false;
@@ -624,7 +627,7 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
             ++relay_checked;
             try {
                (void)co_await node->async_reserve_relay(
-                  peer.peer, fcl::p2p::relay_reservation::options{.ttl = policy.relay_reservation_ttl});
+                  peer.peer, fcl::p2p::relay::reservation::options{.ttl = policy.relay_reservation_ttl});
             } catch (...) {
                fcl::exception::capture_and_log("P2P relay reservation maintenance failed");
             }

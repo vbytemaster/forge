@@ -4,7 +4,6 @@ module;
 
 #include <functional>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <typeindex>
@@ -14,6 +13,7 @@ module;
 
 export module fcl.api.descriptor;
 
+export import fcl.api.exceptions;
 export import fcl.api.types;
 export import fcl.exception.exception;
 export import fcl.raw.raw;
@@ -56,11 +56,6 @@ struct descriptor {
    std::vector<method_descriptor> methods;
 };
 
-class api_error : public std::runtime_error {
- public:
-   explicit api_error(std::string message);
-};
-
 [[nodiscard]] bool compatible(const descriptor& available, const api_ref& requested) noexcept;
 [[nodiscard]] const method_descriptor* find_method(const descriptor& api, std::string_view name) noexcept;
 
@@ -86,7 +81,7 @@ template <typename Interface> class contract_builder {
    method_builder<Interface> server_stream(std::string name) {
       for (const auto& existing : descriptor_.methods) {
          if (existing.name == name) {
-            throw api_error{"duplicate API method: " + name};
+            throw exceptions::protocol_error{"duplicate API method: " + name};
          }
       }
       descriptor_.methods.push_back(method_descriptor{
@@ -116,7 +111,7 @@ template <typename Interface> class contract_builder {
    method_builder<Interface> client_stream(std::string name) {
       for (const auto& existing : descriptor_.methods) {
          if (existing.name == name) {
-            throw api_error{"duplicate API method: " + name};
+            throw exceptions::protocol_error{"duplicate API method: " + name};
          }
       }
       descriptor_.methods.push_back(method_descriptor{
@@ -145,7 +140,7 @@ template <typename Interface> class contract_builder {
    method_builder<Interface> bidirectional_stream(std::string name) {
       for (const auto& existing : descriptor_.methods) {
          if (existing.name == name) {
-            throw api_error{"duplicate API method: " + name};
+            throw exceptions::protocol_error{"duplicate API method: " + name};
          }
       }
       descriptor_.methods.push_back(method_descriptor{
@@ -181,7 +176,7 @@ template <typename Interface> class contract_builder {
    method_builder<Interface> add_method(std::string name, method_kind kind) {
       for (const auto& existing : descriptor_.methods) {
          if (existing.name == name) {
-            throw api_error{"duplicate API method: " + name};
+            throw exceptions::protocol_error{"duplicate API method: " + name};
          }
       }
       descriptor_.methods.push_back(method_descriptor{
@@ -205,10 +200,10 @@ template <typename Interface> class contract_builder {
  public:
    [[nodiscard]] descriptor build() {
       if (descriptor_.id.value.empty()) {
-         throw api_error{"API id must not be empty"};
+         throw exceptions::protocol_error{"API id must not be empty"};
       }
       if (descriptor_.version.major == 0) {
-         throw api_error{"API major version must not be zero"};
+         throw exceptions::protocol_error{"API major version must not be zero"};
       }
       return std::move(descriptor_);
    }

@@ -20,13 +20,20 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_future.hpp>
+#include <openssl/bio.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/rsa.h>
+#include <openssl/x509.h>
 
 import fcl.asio.blocking;
 import fcl.asio.runtime;
-import fcl.p2p.codec;
+import fcl.crypto.pem;
 import fcl.p2p.endpoint;
-import fcl.p2p.errors;
+import fcl.p2p.envelope;
 import fcl.p2p.exceptions;
+import fcl.p2p.exceptions;
+import fcl.p2p.hole_punch;
 import fcl.p2p.identify;
 import fcl.p2p.identity;
 import fcl.p2p.message;
@@ -34,7 +41,9 @@ import fcl.p2p.negotiation;
 import fcl.p2p.node;
 import fcl.p2p.peer_store;
 import fcl.p2p.protocol;
+import fcl.p2p.reachability;
 import fcl.p2p.relay;
+import fcl.p2p.resource_manager;
 import fcl.p2p.scoring;
 import fcl.p2p.stream;
 import fcl.quic.endpoint;
@@ -51,6 +60,133 @@ struct product_announce {
 };
 
 BOOST_DESCRIBE_STRUCT(product_announce, (), (ref))
+
+struct bio_deleter {
+   void operator()(BIO* value) const noexcept {
+      BIO_free(value);
+   }
+};
+
+struct evp_pkey_deleter {
+   void operator()(EVP_PKEY* value) const noexcept {
+      EVP_PKEY_free(value);
+   }
+};
+
+struct evp_pkey_ctx_deleter {
+   void operator()(EVP_PKEY_CTX* value) const noexcept {
+      EVP_PKEY_CTX_free(value);
+   }
+};
+
+struct x509_deleter {
+   void operator()(X509* value) const noexcept {
+      X509_free(value);
+   }
+};
+
+struct test_identity {
+   public_key key;
+   std::string private_key_pem;
+   peer_id peer;
+};
+
+struct test_certificate_identity {
+   std::string certificate_pem;
+   std::string private_key_pem;
+   peer_id peer;
+};
+
+std::string bio_to_string(BIO* value) {
+   BUF_MEM* buffer = nullptr;
+   BIO_get_mem_ptr(value, &buffer);
+   if (buffer == nullptr || buffer->data == nullptr) {
+      throw std::runtime_error{"failed to read BIO buffer"};
+   }
+   return {buffer->data, buffer->length};
+}
+
+test_identity make_test_identity() {
+   auto key = std::unique_ptr<EVP_PKEY, evp_pkey_deleter>{EVP_PKEY_Q_keygen(nullptr, nullptr, "ED25519")};
+   if (!key) {
+      throw std::runtime_error{"failed to generate Ed25519 identity"};
+   }
+
+   auto public_size = std::size_t{};
+   if (EVP_PKEY_get_raw_public_key(key.get(), nullptr, &public_size) != 1 || public_size == 0) {
+      throw std::runtime_error{"failed to size Ed25519 public key"};
+   }
+   auto public_bytes = std::vector<std::uint8_t>(public_size);
+   if (EVP_PKEY_get_raw_public_key(key.get(), public_bytes.data(), &public_size) != 1) {
+      throw std::runtime_error{"failed to read Ed25519 public key"};
+   }
+   public_bytes.resize(public_size);
+
+   auto private_key_bio = std::unique_ptr<BIO, bio_deleter>{BIO_new(BIO_s_mem())};
+   if (!private_key_bio ||
+       PEM_write_bio_PrivateKey(private_key_bio.get(), key.get(), nullptr, nullptr, 0, nullptr, nullptr) != 1) {
+      throw std::runtime_error{"failed to write Ed25519 private key PEM"};
+   }
+
+   auto out = test_identity{
+       .key = public_key{.type = public_key::type::ed25519, .data = std::move(public_bytes)},
+       .private_key_pem = bio_to_string(private_key_bio.get()),
+   };
+   out.peer = make_peer_id(out.key);
+   return out;
+}
+
+test_certificate_identity make_test_certificate_identity(std::string_view common_name) {
+   auto key_context = std::unique_ptr<EVP_PKEY_CTX, evp_pkey_ctx_deleter>{
+       EVP_PKEY_CTX_new_from_name(nullptr, "RSA", nullptr)};
+   if (!key_context || EVP_PKEY_keygen_init(key_context.get()) != 1 ||
+       EVP_PKEY_CTX_set_rsa_keygen_bits(key_context.get(), 2048) != 1) {
+      throw std::runtime_error{"failed to initialize test RSA key generation"};
+   }
+
+   EVP_PKEY* raw_key = nullptr;
+   if (EVP_PKEY_keygen(key_context.get(), &raw_key) != 1 || raw_key == nullptr) {
+      throw std::runtime_error{"failed to generate test RSA key"};
+   }
+   auto key = std::unique_ptr<EVP_PKEY, evp_pkey_deleter>{raw_key};
+
+   auto certificate = std::unique_ptr<X509, x509_deleter>{X509_new()};
+   if (!certificate) {
+      throw std::runtime_error{"failed to allocate test certificate"};
+   }
+   if (X509_set_version(certificate.get(), 2) != 1 ||
+       ASN1_INTEGER_set(X509_get_serialNumber(certificate.get()),
+                        static_cast<long>(std::chrono::steady_clock::now().time_since_epoch().count() & 0x7fffffff)) != 1 ||
+       X509_gmtime_adj(X509_getm_notBefore(certificate.get()), -60) == nullptr ||
+       X509_gmtime_adj(X509_getm_notAfter(certificate.get()), 24 * 60 * 60) == nullptr ||
+       X509_set_pubkey(certificate.get(), key.get()) != 1) {
+      throw std::runtime_error{"failed to configure test certificate"};
+   }
+   auto* name = X509_get_subject_name(certificate.get());
+   if (name == nullptr ||
+       X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                                  reinterpret_cast<const unsigned char*>(common_name.data()),
+                                  static_cast<int>(common_name.size()), -1, 0) != 1 ||
+       X509_set_issuer_name(certificate.get(), name) != 1 ||
+       X509_sign(certificate.get(), key.get(), EVP_sha256()) <= 0) {
+      throw std::runtime_error{"failed to sign test certificate"};
+   }
+
+   auto certificate_bio = std::unique_ptr<BIO, bio_deleter>{BIO_new(BIO_s_mem())};
+   auto private_key_bio = std::unique_ptr<BIO, bio_deleter>{BIO_new(BIO_s_mem())};
+   if (!certificate_bio || !private_key_bio ||
+       PEM_write_bio_X509(certificate_bio.get(), certificate.get()) != 1 ||
+       PEM_write_bio_PrivateKey(private_key_bio.get(), key.get(), nullptr, nullptr, 0, nullptr, nullptr) != 1) {
+      throw std::runtime_error{"failed to write test certificate PEM"};
+   }
+
+   auto out = test_certificate_identity{
+       .certificate_pem = bio_to_string(certificate_bio.get()),
+       .private_key_pem = bio_to_string(private_key_bio.get()),
+   };
+   out.peer = make_peer_id_from_certificate_pem(out.certificate_pem);
+   return out;
+}
 
 std::string_view test_certificate() {
    return "-----BEGIN CERTIFICATE-----\n"
@@ -144,6 +280,17 @@ node::options options_for(peer_id id, capability_set capabilities = capability_s
    };
 }
 
+node::options options_for(const test_certificate_identity& identity,
+                          capability_set capabilities = capability_set{
+                              .bits = capabilities::direct_quic | capabilities::peer_exchange}) {
+   return node::options{
+       .certificate_pem = identity.certificate_pem,
+       .private_key_pem = identity.private_key_pem,
+       .capabilities = capabilities,
+       .allow_insecure_test_mode = true,
+   };
+}
+
 std::filesystem::path temp_store_path(std::string_view name) {
    auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
    auto path = std::filesystem::temp_directory_path() /
@@ -177,6 +324,14 @@ void register_echo(node& value) {
                                    });
 }
 
+void register_echo(node& value, protocol_id protocol) {
+   value.register_protocol_handler(std::move(protocol),
+                                   [](node::incoming_protocol_stream incoming) mutable -> boost::asio::awaitable<void> {
+                                      auto payload = co_await incoming.stream.async_read_frame();
+                                      co_await incoming.stream.async_write_frame(payload);
+                                   });
+}
+
 fcl::quic::endpoint listen(node& value, fcl::asio::runtime& runtime) {
    fcl::asio::blocking::run(runtime, value.async_listen(fcl::quic::endpoint{.host = "127.0.0.1", .port = 0}));
    auto endpoint = value.local_endpoint();
@@ -204,6 +359,43 @@ void wait_on_runtime(fcl::asio::runtime& runtime, std::chrono::milliseconds dela
    wait_for_server(future, delay + std::chrono::milliseconds{1'000}, label);
 }
 
+std::vector<std::uint8_t> wrap_length_delimited(std::span<const std::uint8_t> payload) {
+   auto out = fcl::multiformats::varint_encode(payload.size());
+   out.insert(out.end(), payload.begin(), payload.end());
+   return out;
+}
+
+std::vector<std::uint8_t> unwrap_length_delimited(std::span<const std::uint8_t> bytes, std::size_t max_payload_size) {
+   const auto decoded = fcl::multiformats::varint_decode(bytes);
+   BOOST_REQUIRE(decoded.value <= max_payload_size);
+   const auto total = decoded.size + static_cast<std::size_t>(decoded.value);
+   BOOST_REQUIRE_EQUAL(total, bytes.size());
+   return {bytes.begin() + static_cast<std::ptrdiff_t>(decoded.size), bytes.end()};
+}
+
+boost::asio::awaitable<std::vector<std::uint8_t>>
+read_length_delimited(stream& value, std::size_t max_payload_size = 4 * 1024 * 1024) {
+   auto buffer = std::vector<std::uint8_t>{};
+   while (true) {
+      try {
+         const auto decoded = fcl::multiformats::varint_decode(buffer);
+         BOOST_REQUIRE(decoded.value <= max_payload_size);
+         const auto total = decoded.size + static_cast<std::size_t>(decoded.value);
+         if (buffer.size() >= total) {
+            auto frame = std::vector<std::uint8_t>{buffer.begin(),
+                                                   buffer.begin() + static_cast<std::ptrdiff_t>(total)};
+            co_return unwrap_length_delimited(frame, max_payload_size);
+         }
+      } catch (const fcl::multiformats::exceptions::invalid_format& error) {
+         if (std::string_view{error.what()}.find("unterminated") == std::string_view::npos) {
+            throw;
+         }
+      }
+      auto chunk = co_await value.async_read();
+      buffer.insert(buffer.end(), chunk.begin(), chunk.end());
+   }
+}
+
 class counting_peer_store_backend final : public peer_store::backend {
  public:
    void upsert(peer_store::record value) override {
@@ -219,7 +411,7 @@ class counting_peer_store_backend final : public peer_store::backend {
       record.endpoints.push_back(peer_store::endpoint_record{.endpoint = std::move(endpoint)});
    }
 
-   void mark_reachability(peer_id value, reachability_state state,
+   void mark_reachability(peer_id value, reachability::state state,
                           std::optional<fcl::quic::endpoint> observed) override {
       auto& record = records[value];
       record.peer = std::move(value);
@@ -345,28 +537,6 @@ BOOST_AUTO_TEST_CASE(quic_libp2p_profile_sets_required_alpn) {
    BOOST_TEST(fcl::quic::libp2p::is_profile_alpn(client.alpn));
 }
 
-BOOST_AUTO_TEST_CASE(p2p_codec_rejects_wrong_version_and_oversized_envelope) {
-   auto message = control_message{.kind = control_message::type::ping, .peer = peer(1)};
-   auto encoded = control_codec::encode(message);
-   encoded[5] = 2;
-
-   try {
-      (void)control_codec::decode(encoded);
-      BOOST_FAIL("expected wrong-version codec rejection");
-   } catch (const p2p_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::codec_error));
-   }
-
-   try {
-      (void)control_codec::encode(
-          control_message{.kind = control_message::type::ping, .payload = std::vector<std::uint8_t>(64)},
-          control_codec::options{.max_message_size = 16});
-      BOOST_FAIL("expected oversized codec rejection");
-   } catch (const p2p_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::codec_error));
-   }
-}
-
 BOOST_AUTO_TEST_CASE(p2p_multistream_select_encodes_libp2p_messages) {
    using namespace protocol_negotiation;
 
@@ -391,9 +561,546 @@ BOOST_AUTO_TEST_CASE(p2p_multistream_select_encodes_libp2p_messages) {
    BOOST_TEST(list.protocols.front().value == ping.value);
 
    BOOST_CHECK_THROW((void)decode_frame(std::vector<std::uint8_t>{0x81, 0x81, 0x01}),
-                     fcl::p2p::p2p_error);
+                     fcl::exception::base);
    BOOST_CHECK_THROW((void)decode_message(std::vector<std::uint8_t>{'b', 'a', 'd', '\n'}),
-                     fcl::p2p::p2p_error);
+                     fcl::exception::base);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_libp2p_reachability_relay_protocol_ids_are_exact) {
+   BOOST_TEST(builtins::autonat_v1.value == "/libp2p/autonat/1.0.0");
+   BOOST_TEST(builtins::autonat_v2_dial_request.value == "/libp2p/autonat/2/dial-request");
+   BOOST_TEST(builtins::autonat_v2_dial_back.value == "/libp2p/autonat/2/dial-back");
+   BOOST_TEST(builtins::relay_hop.value == "/libp2p/circuit/relay/0.2.0/hop");
+   BOOST_TEST(builtins::relay_stop.value == "/libp2p/circuit/relay/0.2.0/stop");
+   BOOST_TEST(builtins::dcutr.value == "/libp2p/dcutr");
+}
+
+BOOST_AUTO_TEST_CASE(p2p_reachability_relay_public_types_are_owner_scoped) {
+   static_assert(std::is_same_v<decltype(reachability::result{}.value), reachability::state>);
+   static_assert(std::is_same_v<decltype(hole_punch::result{}.value), hole_punch::status>);
+   static_assert(std::is_same_v<decltype(relay::reservation::info{}.relay_peer), peer_id>);
+   static_assert(std::is_same_v<decltype(path::policy{}.allow_relay), bool>);
+   static_assert(std::is_same_v<decltype(path::result{}.kind), path::kind>);
+   static_assert(std::is_same_v<decltype(resource_manager::snapshot{}.active_streams), std::size_t>);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_signed_envelope_seals_and_verifies_domain_payload_and_signer) {
+   const auto identity = make_test_identity();
+   const auto payload_type = fcl::multiformats::varint_encode(0x0302);
+   const auto payload = std::vector<std::uint8_t>{1, 2, 3, 4, 5};
+
+   const auto envelope = signed_envelope::seal(identity.key, fcl::crypto::pem::read_private_key(identity.private_key_pem),
+                                               "libp2p-relay-rsvp", payload_type, payload);
+   const auto encoded = envelope.encode();
+   const auto decoded = signed_envelope::decode(encoded);
+
+   BOOST_TEST(decoded.payload_type == payload_type, boost::test_tools::per_element());
+   BOOST_TEST(decoded.payload == payload, boost::test_tools::per_element());
+   BOOST_TEST(decoded.signer().to_string() == identity.peer.to_string());
+   BOOST_CHECK_NO_THROW(decoded.verify("libp2p-relay-rsvp", identity.peer));
+   BOOST_CHECK_THROW(decoded.verify("wrong-domain", identity.peer), fcl::exception::base);
+
+   auto tampered = decoded;
+   tampered.payload.back() ^= 0x01U;
+   BOOST_CHECK_THROW(tampered.verify("libp2p-relay-rsvp", identity.peer), fcl::exception::base);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_relay_voucher_uses_signed_envelope_and_rejects_stale_or_wrong_signer) {
+   const auto relay_identity = make_test_identity();
+   const auto other_identity = make_test_identity();
+   const auto reservation = relay::voucher{
+       .relay_peer = relay_identity.peer,
+       .peer = peer(44),
+       .expires_at = 4'102'444'800ULL,
+   };
+
+   const auto envelope = relay::codec::seal_reservation_voucher(
+       reservation, relay_identity.key, fcl::crypto::pem::read_private_key(relay_identity.private_key_pem));
+   const auto decoded = relay::codec::open_reservation_voucher(envelope, relay_identity.peer, 4'102'444'799ULL);
+
+   BOOST_TEST(decoded.relay_peer.to_string() == reservation.relay_peer.to_string());
+   BOOST_TEST(decoded.peer.to_string() == reservation.peer.to_string());
+   BOOST_TEST(decoded.expires_at == reservation.expires_at);
+
+   BOOST_CHECK_THROW((void)relay::codec::open_reservation_voucher(envelope, relay_identity.peer, reservation.expires_at),
+                     fcl::exception::base);
+   BOOST_CHECK_THROW((void)relay::codec::open_reservation_voucher(envelope, other_identity.peer, 4'102'444'799ULL),
+                     fcl::exception::base);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_resource_manager_enforces_relay_stream_and_byte_limits) {
+   auto manager = resource_manager{resource_manager::limits{
+       .max_streams = 2,
+       .max_relay_streams = 1,
+       .max_relay_bytes = 8,
+   }};
+   BOOST_TEST(manager.try_acquire_relay_stream());
+   BOOST_TEST(!manager.try_acquire_relay_stream());
+   BOOST_TEST(manager.add_relay_bytes(4));
+   BOOST_TEST(!manager.add_relay_bytes(5));
+   auto snapshot = manager.current();
+   BOOST_TEST(snapshot.active_streams == 1U);
+   BOOST_TEST(snapshot.active_relay_streams == 1U);
+   BOOST_TEST(snapshot.relay_bytes == 4U);
+   BOOST_TEST(snapshot.denied == 2U);
+   manager.release_relay_stream();
+   snapshot = manager.current();
+   BOOST_TEST(snapshot.active_streams == 0U);
+   BOOST_TEST(snapshot.active_relay_streams == 0U);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_resource_manager_enforces_peer_protocol_dial_and_reservation_scopes) {
+   auto manager = resource_manager{resource_manager::limits{
+       .max_streams = 4,
+       .max_streams_per_peer = 1,
+       .max_streams_per_protocol = 1,
+       .max_relay_reservations = 1,
+       .max_dial_attempts_per_peer = 1,
+       .max_malformed_messages_per_peer = 1,
+   }};
+   const auto scope = resource_manager::scope{.peer = peer(93), .protocol = builtins::relay_hop};
+   const auto other = resource_manager::scope{.peer = peer(94), .protocol = builtins::relay_hop};
+
+   BOOST_TEST(manager.try_acquire_stream(scope));
+   BOOST_TEST(!manager.try_acquire_stream(scope));
+   manager.release_stream(scope);
+   BOOST_TEST(manager.try_acquire_stream(scope));
+   manager.release_stream(scope);
+
+   BOOST_TEST(manager.try_acquire_stream(other));
+   BOOST_TEST(!manager.try_acquire_stream(scope));
+   manager.release_stream(other);
+
+   BOOST_TEST(manager.try_acquire_relay_reservation(scope));
+   BOOST_TEST(!manager.try_acquire_relay_reservation(resource_manager::scope{.peer = peer(95), .protocol = builtins::relay_hop}));
+   manager.release_relay_reservation(scope);
+
+   BOOST_TEST(manager.try_acquire_dial(scope));
+   BOOST_TEST(!manager.try_acquire_dial(scope));
+   BOOST_TEST(manager.record_malformed(scope));
+   BOOST_TEST(!manager.record_malformed(scope));
+
+   const auto snapshot = manager.current();
+   BOOST_TEST(snapshot.denied >= 4U);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_libp2p_relay_hop_codec_matches_spec_shape) {
+   auto reserve = relay::hop_message{.kind = relay::hop_message::message_kind::reserve};
+   BOOST_TEST(relay::codec::encode_hop(reserve) == std::vector<std::uint8_t>({0x02, 0x08, 0x00}),
+              boost::test_tools::per_element());
+
+   auto status = relay::hop_message{
+       .kind = relay::hop_message::message_kind::status,
+       .status = relay::status::ok,
+   };
+   BOOST_TEST(relay::codec::encode_hop(status) == std::vector<std::uint8_t>({0x04, 0x08, 0x02, 0x28, 0x64}),
+              boost::test_tools::per_element());
+   auto decoded = relay::codec::decode_hop(relay::codec::encode_hop(status));
+   BOOST_TEST(static_cast<int>(decoded.kind) == static_cast<int>(relay::hop_message::message_kind::status));
+   BOOST_TEST(static_cast<int>(decoded.status) == static_cast<int>(relay::status::ok));
+}
+
+BOOST_AUTO_TEST_CASE(p2p_libp2p_relay_wire_roundtrips_statuses_limits_and_voucher) {
+   const auto identity = make_test_identity();
+   const auto relay_peer = identity.peer;
+   const auto target_peer = peer(97);
+   const auto relay_endpoint = parse_endpoint("/ip4/127.0.0.1/udp/4103/quic-v1/p2p/" + relay_peer.to_string());
+   const auto voucher = relay::codec::seal_reservation_voucher(relay::voucher{
+       .relay_peer = relay_peer,
+       .peer = target_peer,
+       .expires_at = 1'777'000'000,
+   }, identity.key, fcl::crypto::pem::read_private_key(identity.private_key_pem));
+
+   auto decoded_voucher = relay::codec::open_reservation_voucher(voucher, relay_peer, 1'776'999'999);
+   BOOST_TEST(decoded_voucher.relay_peer.to_string() == relay_peer.to_string());
+   BOOST_TEST(decoded_voucher.peer.to_string() == target_peer.to_string());
+   BOOST_TEST(decoded_voucher.expires_at == 1'777'000'000ULL);
+
+   for (auto status : {relay::status::ok,
+                       relay::status::reservation_refused,
+                       relay::status::resource_limit_exceeded,
+                       relay::status::permission_denied,
+                       relay::status::connection_failed,
+                       relay::status::no_reservation,
+                       relay::status::malformed_message,
+                       relay::status::unexpected_message}) {
+      auto decoded = relay::codec::decode_hop(relay::codec::encode_hop(relay::hop_message{
+          .kind = relay::hop_message::message_kind::status,
+          .reservation_value = relay::reservation{
+              .expires_at = 1'777'000'000,
+              .relay_endpoints = std::vector<endpoint>{relay_endpoint},
+              .voucher = voucher,
+          },
+          .limit_value = relay::limit{.duration = std::chrono::seconds{60}, .data = 4096},
+          .status = status,
+      }));
+      BOOST_TEST(static_cast<int>(decoded.kind) == static_cast<int>(relay::hop_message::message_kind::status));
+      BOOST_TEST(static_cast<int>(decoded.status) == static_cast<int>(status));
+      BOOST_REQUIRE(decoded.limit_value.has_value());
+      BOOST_TEST(decoded.limit_value->duration == std::chrono::seconds{60});
+      BOOST_TEST(decoded.limit_value->data == 4096U);
+      if (status == relay::status::ok) {
+         BOOST_REQUIRE(decoded.reservation_value.has_value());
+         BOOST_REQUIRE(decoded.reservation_value->voucher.has_value());
+         BOOST_TEST(decoded.reservation_value->voucher->encode() == voucher.encode(), boost::test_tools::per_element());
+      }
+   }
+
+   BOOST_CHECK_THROW((void)relay::codec::decode_hop(std::vector<std::uint8_t>{0x02, 0x28, 0x64}),
+                     fcl::exception::base);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_libp2p_dcutr_codec_matches_spec_shape) {
+   auto connect = hole_punch::message{.kind = hole_punch::message::message_kind::connect};
+   BOOST_TEST(hole_punch::codec::encode(connect) == std::vector<std::uint8_t>({0x02, 0x08, 0x64}),
+              boost::test_tools::per_element());
+
+   auto decoded = hole_punch::codec::decode(hole_punch::codec::encode(hole_punch::message{
+       .kind = hole_punch::message::message_kind::sync,
+   }));
+   BOOST_TEST(static_cast<int>(decoded.kind) == static_cast<int>(hole_punch::message::message_kind::sync));
+}
+
+BOOST_AUTO_TEST_CASE(p2p_dcutr_attempt_tracks_rtt_retry_and_inflight_state) {
+   auto attempt = hole_punch::attempt{};
+   attempt.peer = peer(98);
+   attempt.relay_peer = peer(99);
+   attempt.rtt = std::chrono::milliseconds{80};
+   attempt.max_attempts = 2;
+   BOOST_TEST(attempt.sync_delay() == std::chrono::milliseconds{40});
+   BOOST_TEST(attempt.try_begin());
+   BOOST_TEST(!attempt.try_begin());
+   attempt.finish(hole_punch::status::failed);
+   BOOST_TEST(attempt.can_retry());
+   BOOST_TEST(attempt.try_begin());
+   attempt.finish(hole_punch::status::succeeded);
+   BOOST_TEST(!attempt.can_retry());
+   BOOST_TEST(static_cast<int>(attempt.result().value) == static_cast<int>(hole_punch::status::succeeded));
+}
+
+BOOST_AUTO_TEST_CASE(p2p_libp2p_autonat_v1_codec_matches_spec_shape) {
+   const auto id = peer(91);
+   const auto endpoint = parse_endpoint("/ip4/127.0.0.1/udp/4101/quic-v1/p2p/" + id.to_string());
+   auto dial = reachability::message{
+       .kind = reachability::message::message_kind::dial,
+       .peer = reachability::peer_info{
+           .peer = id,
+           .endpoints = std::vector<fcl::p2p::endpoint>{endpoint},
+       },
+   };
+
+   auto decoded = reachability::codec::decode_v1(reachability::codec::encode_v1(dial));
+   BOOST_TEST(static_cast<int>(decoded.kind) == static_cast<int>(reachability::message::message_kind::dial));
+   BOOST_REQUIRE(decoded.peer.has_value());
+   BOOST_TEST(decoded.peer->peer.to_string() == id.to_string());
+   BOOST_REQUIRE_EQUAL(decoded.peer->endpoints.size(), 1U);
+   BOOST_TEST(decoded.peer->endpoints.front().to_string() == endpoint.to_string());
+
+   auto response = reachability::codec::decode_v1(reachability::codec::encode_v1(reachability::message{
+       .kind = reachability::message::message_kind::dial_response,
+       .response = reachability::dial_response{
+           .status = reachability::dial_status::ok,
+           .endpoint = endpoint,
+       },
+   }));
+   BOOST_REQUIRE(response.response.has_value());
+   BOOST_TEST(static_cast<int>(response.response->status) == static_cast<int>(reachability::dial_status::ok));
+   BOOST_REQUIRE(response.response->endpoint.has_value());
+   BOOST_TEST(response.response->endpoint->to_string() == endpoint.to_string());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_libp2p_autonat_v2_codec_covers_nonce_data_and_statuses) {
+   const auto id = peer(92);
+   const auto remote_endpoint = parse_endpoint("/ip4/127.0.0.1/udp/4102/quic-v1/p2p/" + id.to_string());
+   auto request = reachability::v2::message{
+       .type = reachability::v2::message::kind::dial_request,
+       .dial_request = reachability::v2::dial_request{
+           .endpoints = std::vector<fcl::p2p::endpoint>{remote_endpoint},
+           .nonce = 0x0102'0304'0506'0708ULL,
+       },
+   };
+
+   auto decoded = reachability::codec::decode_v2(reachability::codec::encode_v2(request));
+   BOOST_TEST(static_cast<int>(decoded.type) == static_cast<int>(reachability::v2::message::kind::dial_request));
+   BOOST_REQUIRE(decoded.dial_request.has_value());
+   BOOST_TEST(decoded.dial_request->nonce == 0x0102'0304'0506'0708ULL);
+   BOOST_REQUIRE_EQUAL(decoded.dial_request->endpoints.size(), 1U);
+   BOOST_TEST(decoded.dial_request->endpoints.front().to_string() == remote_endpoint.to_string());
+
+   auto data_request = reachability::codec::decode_v2(reachability::codec::encode_v2(reachability::v2::message{
+       .type = reachability::v2::message::kind::dial_data_request,
+       .dial_data_request = reachability::v2::dial_data_request{.index = 1, .bytes = 30 * 1024},
+   }));
+   BOOST_REQUIRE(data_request.dial_data_request.has_value());
+   BOOST_TEST(data_request.dial_data_request->index == 1U);
+   BOOST_TEST(data_request.dial_data_request->bytes == 30U * 1024U);
+
+   auto data_response = reachability::codec::decode_v2(reachability::codec::encode_v2(reachability::v2::message{
+       .type = reachability::v2::message::kind::dial_data_response,
+       .dial_data_response = reachability::v2::dial_data_response{.data = std::vector<std::uint8_t>(4096, 0x5a)},
+   }));
+   BOOST_REQUIRE(data_response.dial_data_response.has_value());
+   BOOST_TEST(data_response.dial_data_response->data.size() == 4096U);
+
+   auto response = reachability::codec::decode_v2(reachability::codec::encode_v2(reachability::v2::message{
+       .type = reachability::v2::message::kind::dial_response,
+       .dial_response = reachability::v2::dial_response{
+           .status = reachability::v2::response_status::ok,
+           .index = 1,
+           .dial_status = reachability::v2::dial_status::dial_back_error,
+       },
+   }));
+   BOOST_REQUIRE(response.dial_response.has_value());
+   BOOST_TEST(static_cast<int>(response.dial_response->status) ==
+              static_cast<int>(reachability::v2::response_status::ok));
+   BOOST_TEST(response.dial_response->index == 1U);
+   BOOST_TEST(static_cast<int>(response.dial_response->dial_status) ==
+              static_cast<int>(reachability::v2::dial_status::dial_back_error));
+
+   auto dial_back = reachability::codec::decode_v2_dial_back(
+       reachability::codec::encode_v2_dial_back(reachability::v2::dial_back{.nonce = request.dial_request->nonce}));
+   BOOST_TEST(dial_back.nonce == request.dial_request->nonce);
+
+   auto dial_back_response = reachability::codec::decode_v2_dial_back_response(
+       reachability::codec::encode_v2_dial_back_response(
+           reachability::v2::dial_back_response{.status = reachability::v2::dial_back_status::ok}));
+   BOOST_TEST(static_cast<int>(dial_back_response.status) == static_cast<int>(reachability::v2::dial_back_status::ok));
+}
+
+BOOST_AUTO_TEST_CASE(p2p_libp2p_autonat_v2_rejects_oversized_data_response_and_unknown_status) {
+   BOOST_CHECK_THROW((void)reachability::codec::encode_v2(reachability::v2::message{
+                         .type = reachability::v2::message::kind::dial_data_response,
+                         .dial_data_response =
+                             reachability::v2::dial_data_response{.data = std::vector<std::uint8_t>(4097, 0x42)},
+                     }),
+                     fcl::exception::base);
+
+   // Message { dialResponse: DialResponse { status: 999 } }
+   BOOST_CHECK_THROW((void)reachability::codec::decode_v2(std::vector<std::uint8_t>{0x06, 0x12, 0x04, 0x08, 0xe7, 0x07}),
+                     fcl::exception::base);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_autonat_v2_probe_public_and_persists_observation) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto observer = node{runtime, options_for(peer(100), capability_set{
+                                                     .bits = capabilities::direct_quic | capabilities::autonat})};
+   auto subject = node{runtime, options_for(peer(101), capability_set{
+                                                    .bits = capabilities::direct_quic | capabilities::autonat})};
+
+   const auto observer_endpoint = listen(observer, runtime);
+   (void)listen(subject, runtime);
+   subject.peers().learn_endpoint(observer.local_peer(), observer_endpoint,
+                                  capability_set{.bits = capabilities::direct_quic | capabilities::autonat});
+
+   const auto state = fcl::asio::blocking::run(runtime, subject.async_probe_reachability(observer.local_peer()));
+   BOOST_TEST(static_cast<int>(state) == static_cast<int>(reachability::state::publicly_reachable));
+
+   const auto stored = subject.peers().find(subject.local_peer());
+   BOOST_REQUIRE(stored.has_value());
+   BOOST_TEST(static_cast<int>(stored->reachability) == static_cast<int>(reachability::state::publicly_reachable));
+   BOOST_REQUIRE(stored->observed_endpoint.has_value());
+
+   fcl::asio::blocking::run(runtime, subject.async_stop());
+   fcl::asio::blocking::run(runtime, observer.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_relay_reservation_persists_candidate) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto relay_node = node{runtime, options_for(peer(102), capability_set{
+                                                       .bits = capabilities::direct_quic | capabilities::relay |
+                                                               capabilities::relay_reservation})};
+   auto client = node{runtime, options_for(peer(103), capability_set{
+                                                   .bits = capabilities::direct_quic | capabilities::relay_reservation})};
+
+   const auto relay_endpoint = listen(relay_node, runtime);
+   client.peers().learn_endpoint(relay_node.local_peer(), relay_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                                         capabilities::relay_reservation});
+
+   const auto info = fcl::asio::blocking::run(runtime, client.async_reserve_relay(relay_node.local_peer()));
+   BOOST_TEST(info.relay_peer.to_string() == relay_node.local_peer().to_string());
+   BOOST_TEST(!info.voucher.has_value());
+
+   const auto stored = client.peers().find(relay_node.local_peer());
+   BOOST_REQUIRE(stored.has_value());
+   BOOST_REQUIRE_EQUAL(stored->relay_reservations.size(), 1U);
+   BOOST_TEST(stored->relay_reservations.front().relay.to_string() == relay_node.local_peer().to_string());
+   BOOST_TEST(stored->relay_reservations.front().voucher.empty());
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, relay_node.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_relay_policy_options_are_behavioral) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto relay_options = options_for(peer(110), capability_set{
+                                                   .bits = capabilities::direct_quic | capabilities::relay |
+                                                           capabilities::relay_reservation});
+   relay_options.relay_policy.service_enabled = false;
+   auto relay_node = node{runtime, std::move(relay_options)};
+   auto client = node{runtime, options_for(peer(111), capability_set{
+                                                   .bits = capabilities::direct_quic | capabilities::relay_reservation})};
+
+   const auto relay_endpoint = listen(relay_node, runtime);
+   client.peers().learn_endpoint(relay_node.local_peer(), relay_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                                         capabilities::relay_reservation});
+
+   try {
+      (void)fcl::asio::blocking::run(runtime, client.async_reserve_relay(relay_node.local_peer()));
+      BOOST_FAIL("expected relay service policy rejection");
+   } catch (const fcl::exception::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::relay_rejected));
+   }
+
+   auto disabled_client_options = options_for(peer(112), capability_set{.bits = capabilities::direct_quic});
+   disabled_client_options.relay_policy.client_enabled = false;
+   auto disabled_client = node{runtime, std::move(disabled_client_options)};
+   try {
+      (void)fcl::asio::blocking::run(runtime, disabled_client.async_reserve_relay(relay_node.local_peer()));
+      BOOST_FAIL("expected relay client policy rejection");
+   } catch (const fcl::exception::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::relay_not_available));
+   }
+
+   fcl::asio::blocking::run(runtime, disabled_client.async_stop());
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, relay_node.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_relay_connect_requires_target_reservation) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   const auto relay_identity = make_test_certificate_identity("relay-reservation-owner-relay");
+   const auto source_identity = make_test_certificate_identity("relay-reservation-owner-source");
+   const auto target_identity = make_test_certificate_identity("relay-reservation-owner-target");
+   auto relay_node = node{runtime, options_for(relay_identity, capability_set{
+                                                       .bits = capabilities::direct_quic | capabilities::relay |
+                                                       capabilities::relay_reservation})};
+   auto source = node{runtime, options_for(source_identity, capability_set{.bits = capabilities::direct_quic})};
+   auto target = node{runtime, options_for(target_identity, capability_set{.bits = capabilities::direct_quic})};
+   register_echo(target);
+
+   const auto relay_endpoint = listen(relay_node, runtime);
+   const auto target_endpoint = listen(target, runtime);
+   source.peers().learn_endpoint(relay_node.local_peer(), relay_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                                         capabilities::relay_reservation});
+   relay_node.peers().learn_endpoint(target.local_peer(), target_endpoint,
+                                     capability_set{.bits = capabilities::direct_quic});
+   (void)fcl::asio::blocking::run(runtime, source.async_reserve_relay(relay_node.local_peer()));
+
+   try {
+      (void)fcl::asio::blocking::run(
+          runtime, source.async_open_protocol_stream(
+                       target.local_peer(), builtins::echo,
+                       node::open_options{
+                           .allow_relay = true,
+                           .relay_peer = relay_node.local_peer(),
+                           .direct_attempt_timeout = std::chrono::milliseconds{100},
+                           .relay_attempt_timeout = std::chrono::milliseconds{2'000},
+                           .allow_hole_punch = false,
+                       }));
+      BOOST_FAIL("expected relay CONNECT rejection without target reservation");
+   } catch (const fcl::exception::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::relay_rejected));
+   }
+
+   fcl::asio::blocking::run(runtime, target.async_stop());
+   fcl::asio::blocking::run(runtime, source.async_stop());
+   fcl::asio::blocking::run(runtime, relay_node.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_relay_stop_connect_passes_frames_after_target_reservation) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   const auto relay_identity = make_test_certificate_identity("relay-stop-connect-relay");
+   const auto source_identity = make_test_certificate_identity("relay-stop-connect-source");
+   const auto target_identity = make_test_certificate_identity("relay-stop-connect-target");
+   auto relay_node = node{runtime, options_for(relay_identity, capability_set{
+                                                       .bits = capabilities::direct_quic | capabilities::relay |
+                                                       capabilities::relay_reservation})};
+   auto source = node{runtime, options_for(source_identity, capability_set{.bits = capabilities::direct_quic})};
+   auto target = node{runtime, options_for(target_identity, capability_set{
+                                                   .bits = capabilities::direct_quic | capabilities::relay_reservation})};
+   register_echo(target);
+
+   const auto relay_endpoint = listen(relay_node, runtime);
+   (void)listen(target, runtime);
+   source.peers().learn_endpoint(relay_node.local_peer(), relay_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                                         capabilities::relay_reservation});
+   target.peers().learn_endpoint(relay_node.local_peer(), relay_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                                         capabilities::relay_reservation});
+   (void)fcl::asio::blocking::run(runtime, target.async_reserve_relay(relay_node.local_peer()));
+
+   auto stream = fcl::asio::blocking::run(
+       runtime, source.async_open_protocol_stream(
+                    target.local_peer(), builtins::echo,
+                    node::open_options{
+                        .allow_relay = true,
+                        .relay_peer = relay_node.local_peer(),
+                        .direct_attempt_timeout = std::chrono::milliseconds{100},
+                        .relay_attempt_timeout = std::chrono::milliseconds{2'000},
+                        .allow_hole_punch = false,
+                    }));
+   const auto payload = std::vector<std::uint8_t>{'r', 'e', 'l', 'a', 'y'};
+   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+
+   BOOST_TEST(reply == payload, boost::test_tools::per_element());
+   BOOST_TEST(relay_node.metrics().relays_opened >= 1U);
+   BOOST_TEST(source.metrics().path_relay_opens >= 1U);
+
+   fcl::asio::blocking::run(runtime, target.async_stop());
+   fcl::asio::blocking::run(runtime, source.async_stop());
+   fcl::asio::blocking::run(runtime, relay_node.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_relay_transport_opens_arbitrary_registered_protocol) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   const auto protocol = protocol_id{.value = "/product/relay-arbitrary/1"};
+   const auto relay_identity = make_test_certificate_identity("relay-arbitrary-protocol-relay");
+   const auto source_identity = make_test_certificate_identity("relay-arbitrary-protocol-source");
+   const auto target_identity = make_test_certificate_identity("relay-arbitrary-protocol-target");
+   auto relay_node = node{runtime, options_for(relay_identity, capability_set{
+                                                       .bits = capabilities::direct_quic | capabilities::relay |
+                                                               capabilities::relay_reservation})};
+   auto source = node{runtime, options_for(source_identity, capability_set{.bits = capabilities::direct_quic})};
+   auto target = node{runtime, options_for(target_identity, capability_set{
+                                                   .bits = capabilities::direct_quic | capabilities::relay_reservation})};
+   register_echo(target, protocol);
+
+   const auto relay_endpoint = listen(relay_node, runtime);
+   (void)listen(target, runtime);
+   source.peers().learn_endpoint(relay_node.local_peer(), relay_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                                         capabilities::relay_reservation});
+   target.peers().learn_endpoint(relay_node.local_peer(), relay_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                                         capabilities::relay_reservation});
+   (void)fcl::asio::blocking::run(runtime, target.async_reserve_relay(relay_node.local_peer()));
+
+   auto stream = fcl::asio::blocking::run(
+       runtime, source.async_open_protocol_stream(
+                    target.local_peer(), protocol,
+                    node::open_options{
+                        .allow_relay = true,
+                        .relay_peer = relay_node.local_peer(),
+                        .direct_attempt_timeout = std::chrono::milliseconds{100},
+                        .relay_attempt_timeout = std::chrono::milliseconds{2'000},
+                        .allow_hole_punch = false,
+                    }));
+   const auto payload = std::vector<std::uint8_t>{'p', 'r', 'o', 'd', 'u', 'c', 't'};
+   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+
+   BOOST_TEST(reply == payload, boost::test_tools::per_element());
+   BOOST_TEST(relay_node.metrics().relays_opened >= 1U);
+   BOOST_TEST(source.metrics().path_relay_opens >= 1U);
+
+   fcl::asio::blocking::run(runtime, target.async_stop());
+   fcl::asio::blocking::run(runtime, source.async_stop());
+   fcl::asio::blocking::run(runtime, relay_node.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_identify_document_roundtrips_libp2p_fields) {
@@ -496,7 +1203,7 @@ BOOST_AUTO_TEST_CASE(p2p_identify_protocol_advertises_supported_protocols) {
 
    auto stream =
        fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::identify));
-   const auto payload = fcl::asio::blocking::run(runtime, stream.async_read());
+   const auto payload = fcl::asio::blocking::run(runtime, read_length_delimited(stream));
    const auto doc = identify::decode(payload);
 
    BOOST_TEST(doc.agent_version == "fcl/0.1.0");
@@ -527,7 +1234,7 @@ BOOST_AUTO_TEST_CASE(p2p_identify_push_updates_peer_store) {
                                                                 client.local_peer().to_string())},
        .protocols = std::vector<protocol_id>{builtins::ping},
    };
-   fcl::asio::blocking::run(runtime, stream.async_write(identify::encode(pushed)));
+   fcl::asio::blocking::run(runtime, stream.async_write(wrap_length_delimited(identify::encode(pushed))));
    fcl::asio::blocking::run(runtime, stream.async_close());
    wait_on_runtime(runtime, std::chrono::milliseconds{100}, "identify push propagation");
 
@@ -567,7 +1274,7 @@ BOOST_AUTO_TEST_CASE(p2p_identify_push_persists_rocksdb_peer_record) {
           .protocols = std::vector<protocol_id>{builtins::ping, builtins::identify},
           .signed_peer_record = std::vector<std::uint8_t>{6, 5, 4},
       };
-      fcl::asio::blocking::run(runtime, stream.async_write(identify::encode(pushed)));
+      fcl::asio::blocking::run(runtime, stream.async_write(wrap_length_delimited(identify::encode(pushed))));
       fcl::asio::blocking::run(runtime, stream.async_close());
       wait_on_runtime(runtime, std::chrono::milliseconds{100}, "identify push persistence");
 
@@ -604,8 +1311,8 @@ BOOST_AUTO_TEST_CASE(p2p_unsupported_protocol_rejection_keeps_session_usable) {
       (void)fcl::asio::blocking::run(
           runtime, client.async_open_protocol_stream(server.local_peer(), protocol_id{.value = "/product/missing/1"}));
       BOOST_FAIL("expected unsupported protocol rejection");
-   } catch (const p2p_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::unsupported_protocol));
+   } catch (const fcl::exception::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::unsupported_protocol));
    }
 
    auto stream =
@@ -683,8 +1390,8 @@ BOOST_AUTO_TEST_CASE(p2p_duplicate_protocol_handler_is_rejected) {
    try {
       register_echo(value);
       BOOST_FAIL("expected duplicate protocol handler rejection");
-   } catch (const p2p_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::duplicate_protocol));
+   } catch (const fcl::exception::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::duplicate_protocol));
    }
 }
 
@@ -710,8 +1417,8 @@ BOOST_AUTO_TEST_CASE(p2p_connect_rejects_non_positive_timeout) {
           client.async_connect(fcl::quic::endpoint{.host = "127.0.0.1", .port = 9},
                                node::connect_options{.expected_peer = peer(33), .timeout = std::chrono::milliseconds{0}}));
       BOOST_FAIL("expected invalid connect timeout");
-   } catch (const p2p_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::invalid_options));
+   } catch (const fcl::exception::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_options));
    }
 
    fcl::asio::blocking::run(runtime, client.async_stop());
@@ -726,8 +1433,8 @@ BOOST_AUTO_TEST_CASE(p2p_open_protocol_rejects_non_positive_timeout) {
           runtime, client.async_open_protocol_stream(peer(40), builtins::echo,
                                                      node::open_options{.timeout = std::chrono::milliseconds{0}}));
       BOOST_FAIL("expected invalid protocol open timeout");
-   } catch (const p2p_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::invalid_options));
+   } catch (const fcl::exception::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_options));
    }
 
    fcl::asio::blocking::run(runtime, client.async_stop());
@@ -738,19 +1445,19 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_expires_stale_reachability_observation) {
    store.upsert(peer_store::record{
        .peer = peer(70),
        .capabilities = capability_set{.bits = capabilities::direct_quic},
-       .reachability = reachability_state::publicly_reachable,
+       .reachability = reachability::state::publicly_reachable,
        .observed_endpoint = fcl::quic::endpoint{.host = "127.0.0.1", .port = 12345},
        .reachability_expires_at = std::chrono::system_clock::now() - std::chrono::seconds{1},
    });
 
    const auto record = store.find(peer(70));
    BOOST_REQUIRE(record.has_value());
-   BOOST_TEST(static_cast<int>(record->reachability) == static_cast<int>(reachability_state::unknown));
+   BOOST_TEST(static_cast<int>(record->reachability) == static_cast<int>(reachability::state::unknown));
    BOOST_TEST(!record->observed_endpoint.has_value());
 
    const auto snapshot = store.snapshot();
    BOOST_REQUIRE_EQUAL(snapshot.size(), 1U);
-   BOOST_TEST(static_cast<int>(snapshot.front().reachability) == static_cast<int>(reachability_state::unknown));
+   BOOST_TEST(static_cast<int>(snapshot.front().reachability) == static_cast<int>(reachability::state::unknown));
 }
 
 BOOST_AUTO_TEST_CASE(p2p_peer_store_uses_injected_backend) {
@@ -779,8 +1486,11 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_uses_injected_backend) {
 BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_survives_reopen) {
    auto temp = temp_store_dir{"rocksdb-reopen"};
    const auto id = peer(82);
+   const auto relay_id = peer(83);
    const auto endpoint = fcl::quic::endpoint{.host = "127.0.0.1", .port = 4101};
    const auto observed = fcl::quic::endpoint{.host = "127.0.0.1", .port = 4102};
+   const auto relay_endpoint = fcl::quic::endpoint{.host = "127.0.0.1", .port = 4103};
+   const auto reservation_expires_at = std::chrono::system_clock::now() + std::chrono::minutes{15};
 
    {
       auto store = peer_store{peer_store::options{
@@ -802,7 +1512,17 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_survives_reopen) {
               .last_latency = std::chrono::milliseconds{17},
               .backoff_until = std::chrono::system_clock::now() + std::chrono::seconds{30},
           }},
-          .reachability = reachability_state::publicly_reachable,
+          .relay_reservations = std::vector<peer_store::relay_record>{peer_store::relay_record{
+              .relay = relay_id,
+              .reservation_id = 99,
+              .expires_at = reservation_expires_at,
+              .endpoints = std::vector<fcl::quic::endpoint>{relay_endpoint},
+              .voucher = std::vector<std::uint8_t>{8, 9, 10},
+              .successes = 3,
+              .failures = 1,
+              .last_latency = std::chrono::milliseconds{23},
+          }},
+          .reachability = reachability::state::publicly_reachable,
           .observed_endpoint = observed,
       });
       store.mark_endpoint_failure(id, endpoint, path::kind::direct,
@@ -823,18 +1543,28 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_survives_reopen) {
    BOOST_TEST(found->observed_endpoint->port == observed.port);
    BOOST_REQUIRE_EQUAL(found->protocols.size(), 2U);
    BOOST_REQUIRE_EQUAL(found->endpoints.size(), 1U);
+   BOOST_REQUIRE_EQUAL(found->relay_reservations.size(), 1U);
    BOOST_TEST(found->endpoints.front().endpoint.port == endpoint.port);
    BOOST_TEST(found->endpoints.front().successes >= 1U);
    BOOST_TEST(found->endpoints.front().failures >= 1U);
    BOOST_TEST(found->endpoints.front().last_latency == std::chrono::milliseconds{11});
+   BOOST_TEST(found->relay_reservations.front().relay.to_string() == relay_id.to_string());
+   BOOST_TEST(found->relay_reservations.front().reservation_id == 99U);
+   BOOST_REQUIRE_EQUAL(found->relay_reservations.front().endpoints.size(), 1U);
+   BOOST_TEST(found->relay_reservations.front().endpoints.front().port == relay_endpoint.port);
+   BOOST_TEST(found->relay_reservations.front().voucher == std::vector<std::uint8_t>({8, 9, 10}),
+              boost::test_tools::per_element());
+   BOOST_TEST(found->relay_reservations.front().successes == 3U);
+   BOOST_TEST(found->relay_reservations.front().failures == 1U);
+   BOOST_TEST(found->relay_reservations.front().last_latency == std::chrono::milliseconds{23});
 }
 
 BOOST_AUTO_TEST_CASE(p2p_production_options_reject_missing_mtls_identity) {
    try {
       validate(node::options{});
       BOOST_FAIL("expected missing mTLS identity rejection");
-   } catch (const p2p_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::invalid_options));
+   } catch (const fcl::exception::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_options));
    }
 }
 
@@ -845,8 +1575,8 @@ BOOST_AUTO_TEST_CASE(p2p_production_options_require_peer_store_path) {
           .private_key_pem = std::string{test_private_key()},
       });
       BOOST_FAIL("expected missing persistent peer store rejection");
-   } catch (const p2p_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::invalid_options));
+   } catch (const fcl::exception::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_options));
    }
 }
 

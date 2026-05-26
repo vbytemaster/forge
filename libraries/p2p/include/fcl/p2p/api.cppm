@@ -17,9 +17,9 @@ import fcl.api;
 import fcl.p2p.exceptions;
 import fcl.p2p.node;
 import fcl.p2p.protocol;
+import fcl.p2p.stream;
 import fcl.raw.raw;
-import fcl.quic.errors;
-import fcl.quic.framed_stream;
+import fcl.quic.exceptions;
 
 export namespace fcl::p2p {
 
@@ -105,11 +105,11 @@ class api_binding {
             }
             auto responses = co_await plan_.dispatch_many(std::move(request), calls);
             co_await write_responses(stream.stream, responses);
-         } catch (const fcl::quic::quic_error& error) {
-            if (error.kind() == fcl::quic::error_kind::connection_closed ||
-                error.kind() == fcl::quic::error_kind::stream_closed ||
-                error.kind() == fcl::quic::error_kind::stream_reset ||
-                error.kind() == fcl::quic::error_kind::canceled) {
+         } catch (const fcl::exception::base& error) {
+            if (fcl::quic::exceptions::is(error, fcl::quic::exceptions::code::connection_closed) ||
+                fcl::quic::exceptions::is(error, fcl::quic::exceptions::code::stream_closed) ||
+                fcl::quic::exceptions::is(error, fcl::quic::exceptions::code::stream_reset) ||
+                fcl::quic::exceptions::is(error, fcl::quic::exceptions::code::canceled)) {
                co_return;
             }
             throw;
@@ -141,7 +141,7 @@ class api_binding {
                                    method->kind == fcl::api::method_kind::bidirectional_stream);
    }
 
-   static boost::asio::awaitable<void> write_responses(fcl::quic::framed_stream& stream,
+   static boost::asio::awaitable<void> write_responses(fcl::p2p::stream& stream,
                                                        const std::vector<fcl::api::frame>& responses) {
       for (const auto& response : responses) {
          auto response_bytes = fcl::api::bytes{};

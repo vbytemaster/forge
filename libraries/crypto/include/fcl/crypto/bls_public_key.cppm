@@ -102,9 +102,7 @@ class bls_public_key {
    bls12_381::g1 _jacobian_montgomery_le; // cached g1
 };
 
-} // namespace fcl::crypto::blslib
+void to_variant(const bls_public_key& var, variant& vo);
+void from_variant(const variant& var, bls_public_key& vo);
 
-export namespace fcl {
-void to_variant(const crypto::blslib::bls_public_key& var, variant& vo);
-void from_variant(const variant& var, crypto::blslib::bls_public_key& vo);
-} // namespace fcl
+} // namespace fcl::crypto::blslib

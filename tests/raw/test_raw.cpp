@@ -60,14 +60,14 @@ BOOST_AUTO_TEST_SUITE(raw_test_suite)
 
 BOOST_AUTO_TEST_CASE(raw_string_golden_bytes) {
    const auto packed = fcl::raw::pack(std::string("abc"));
-   BOOST_CHECK_EQUAL(fcl::to_hex(packed), "03616263");
+   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(packed), "03616263");
 }
 
 BOOST_AUTO_TEST_CASE(boost_describe_struct_preserves_fc_reflect_member_order) {
    const A value{2, 2.25f, std::string("abc")};
    const auto packed = fcl::raw::pack(value);
 
-   BOOST_CHECK_EQUAL(fcl::to_hex(packed), "02000000000010400103616263");
+   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(packed), "02000000000010400103616263");
 
    const auto unpacked = fcl::raw::unpack<A>(packed);
    BOOST_CHECK(value == unpacked);
@@ -76,7 +76,7 @@ BOOST_AUTO_TEST_CASE(boost_describe_struct_preserves_fc_reflect_member_order) {
 BOOST_AUTO_TEST_CASE(boost_describe_enum_uses_old_reflected_enum_int64_layout) {
    const auto packed = fcl::raw::pack(described_mode::write);
 
-   BOOST_CHECK_EQUAL(fcl::to_hex(packed), "0900000000000000");
+   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(packed), "0900000000000000");
 
    const auto unpacked = fcl::raw::unpack<described_mode>(packed);
    BOOST_CHECK(unpacked == described_mode::write);
@@ -89,7 +89,7 @@ BOOST_AUTO_TEST_CASE(boost_describe_derived_types_pack_base_first_then_local_mem
 
    const auto packed = fcl::raw::pack(value);
 
-   BOOST_CHECK_EQUAL(fcl::to_hex(packed), "341256");
+   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(packed), "341256");
 
    const auto unpacked = fcl::raw::unpack<described_child>(packed);
    BOOST_CHECK(value == unpacked);
@@ -111,17 +111,17 @@ BOOST_AUTO_TEST_CASE(serialization_macros_instantiate_raw_variant_and_digest_pac
    char buffer[32]{};
    fcl::datastream<char*> write_stream(buffer, sizeof(buffer));
    fcl::raw::pack(write_stream, value);
-   BOOST_CHECK_EQUAL(fcl::to_hex(std::vector<char>(buffer, buffer + write_stream.tellp())), "3412046e6f6465");
+   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(std::vector<char>(buffer, buffer + write_stream.tellp())), "3412046e6f6465");
 
    fcl::datastream<const char*> read_stream(buffer, write_stream.tellp());
    auto unpacked = macro_serialized_record{};
    fcl::raw::unpack(read_stream, unpacked);
    BOOST_CHECK(value == unpacked);
 
-   fcl::sha256::encoder digest_stream;
+   fcl::crypto::sha256::encoder digest_stream;
    fcl::raw::pack(digest_stream, value);
    BOOST_CHECK_EQUAL(digest_stream.result().str(),
-                     fcl::sha256::hash(buffer, static_cast<uint32_t>(write_stream.tellp())).str());
+                     fcl::crypto::sha256::hash(buffer, static_cast<uint32_t>(write_stream.tellp())).str());
 }
 
 BOOST_AUTO_TEST_CASE(raw_can_pack_into_uint8_byte_containers_without_changing_legacy_char_pack) {
@@ -131,7 +131,7 @@ BOOST_AUTO_TEST_CASE(raw_can_pack_into_uint8_byte_containers_without_changing_le
    auto bytes = std::vector<std::uint8_t>{};
    fcl::raw::pack(bytes, value);
 
-   BOOST_CHECK_EQUAL(fcl::to_hex(std::vector<char>{bytes.begin(), bytes.end()}), fcl::to_hex(legacy));
+   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(std::vector<char>{bytes.begin(), bytes.end()}), fcl::crypto::to_hex(legacy));
    BOOST_CHECK(fcl::raw::unpack<macro_serialized_record>(bytes) == value);
 
    const auto view = std::span<const std::uint8_t>{bytes.data(), bytes.size()};
@@ -141,10 +141,10 @@ BOOST_AUTO_TEST_CASE(raw_can_pack_into_uint8_byte_containers_without_changing_le
 BOOST_AUTO_TEST_CASE(std_chrono_preserves_old_fc_raw_layout) {
    using sys_time_us = std::chrono::sys_time<std::chrono::microseconds>;
 
-   BOOST_CHECK_EQUAL(fcl::to_hex(fcl::raw::pack(sys_time_us{})), "0000000000000000");
-   BOOST_CHECK_EQUAL(fcl::to_hex(fcl::raw::pack(sys_time_us{std::chrono::seconds{1}})), "40420f0000000000");
-   BOOST_CHECK_EQUAL(fcl::to_hex(fcl::raw::pack(std::chrono::sys_seconds{std::chrono::seconds{1}})), "01000000");
-   BOOST_CHECK_EQUAL(fcl::to_hex(fcl::raw::pack(std::chrono::microseconds{-1})), "ffffffffffffffff");
+   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(fcl::raw::pack(sys_time_us{})), "0000000000000000");
+   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(fcl::raw::pack(sys_time_us{std::chrono::seconds{1}})), "40420f0000000000");
+   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(fcl::raw::pack(std::chrono::sys_seconds{std::chrono::seconds{1}})), "01000000");
+   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(fcl::raw::pack(std::chrono::microseconds{-1})), "ffffffffffffffff");
 
    BOOST_CHECK(fcl::raw::unpack<sys_time_us>(fcl::raw::pack(sys_time_us{std::chrono::seconds{1}})) ==
                sys_time_us{std::chrono::seconds{1}});

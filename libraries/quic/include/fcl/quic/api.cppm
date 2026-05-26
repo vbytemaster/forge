@@ -16,7 +16,6 @@ export module fcl.quic.api;
 
 import fcl.api;
 import fcl.raw.raw;
-import fcl.quic.errors;
 import fcl.quic.exceptions;
 import fcl.quic.framed_stream;
 
@@ -134,11 +133,11 @@ class api_binding {
             }
             auto responses = co_await plan_.dispatch_many(std::move(request), calls);
             co_await write_responses(stream, responses);
-         } catch (const fcl::quic::quic_error& error) {
-            if (error.kind() == fcl::quic::error_kind::connection_closed ||
-                error.kind() == fcl::quic::error_kind::stream_closed ||
-                error.kind() == fcl::quic::error_kind::stream_reset ||
-                error.kind() == fcl::quic::error_kind::canceled) {
+         } catch (const fcl::exception::base& error) {
+            if (fcl::quic::exceptions::is(error, fcl::quic::exceptions::code::connection_closed) ||
+                fcl::quic::exceptions::is(error, fcl::quic::exceptions::code::stream_closed) ||
+                fcl::quic::exceptions::is(error, fcl::quic::exceptions::code::stream_reset) ||
+                fcl::quic::exceptions::is(error, fcl::quic::exceptions::code::canceled)) {
                co_return;
             }
             throw;

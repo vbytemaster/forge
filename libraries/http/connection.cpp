@@ -6,7 +6,6 @@ module;
 #include <exception>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <mutex>
 #include <utility>
 
@@ -31,6 +30,7 @@ module fcl.http.connection;
 
 import fcl.asio.blocking;
 import fcl.asio.runtime;
+import fcl.http.exceptions;
 
 namespace fcl::http {
 namespace {
@@ -148,7 +148,7 @@ struct connection::impl {
 
       auto stream = beast::ssl_stream<beast::tcp_stream>{strand, ssl_context};
       if (!SSL_set_tlsext_host_name(stream.native_handle(), endpoint.host.c_str())) {
-         throw std::runtime_error{"failed to configure TLS host name"};
+         throw exceptions::internal{"failed to configure TLS host name"};
       }
       stream.set_verify_callback(asio::ssl::host_name_verification(endpoint.host));
 

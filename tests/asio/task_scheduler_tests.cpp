@@ -134,7 +134,7 @@ BOOST_AUTO_TEST_CASE(task_scheduler_cancels_pending_and_rejects_saturated_queue)
                                           std::chrono::seconds{1});
    BOOST_CHECK(canceled.cancel());
    BOOST_CHECK(canceled.cancel_requested());
-   BOOST_CHECK_THROW(wait_task(runtime, canceled), std::runtime_error);
+   BOOST_CHECK_THROW(wait_task(runtime, canceled), fcl::asio::exceptions::canceled);
 
    auto bounded_runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
    auto bounded =
@@ -144,7 +144,7 @@ BOOST_AUTO_TEST_CASE(task_scheduler_cancels_pending_and_rejects_saturated_queue)
    auto rejected = bounded.submit_after(scheduled_task{.priority = priority{1}, .name = "rejected", .work = [] {}},
                                         std::chrono::seconds{1});
 
-   BOOST_CHECK_THROW(wait_task(bounded_runtime, rejected), std::runtime_error);
+   BOOST_CHECK_THROW(wait_task(bounded_runtime, rejected), fcl::asio::exceptions::rejected);
    BOOST_CHECK_EQUAL(bounded.metrics().rejected, 1U);
    static_cast<void>(queued.cancel());
    bounded.stop();
@@ -158,7 +158,7 @@ BOOST_AUTO_TEST_CASE(task_scheduler_shutdown_cancels_pending_work) {
 
    scheduler.stop();
 
-   BOOST_CHECK_THROW(wait_task(runtime, delayed), std::runtime_error);
+   BOOST_CHECK_THROW(wait_task(runtime, delayed), fcl::asio::exceptions::canceled);
    BOOST_CHECK(scheduler.metrics().stopped);
    BOOST_CHECK_EQUAL(scheduler.metrics().pending, 0U);
 }

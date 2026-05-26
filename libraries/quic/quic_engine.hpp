@@ -10,7 +10,6 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,14 +36,17 @@ enum class engine_error_kind {
    internal_error
 };
 
-class engine_error final : public std::runtime_error {
+class engine_failure final {
  public:
-   engine_error(engine_error_kind kind, std::string message);
+   engine_failure(engine_error_kind kind, std::string message);
 
    [[nodiscard]] engine_error_kind kind() const noexcept;
+   [[nodiscard]] const char* what() const noexcept;
+   [[nodiscard]] const std::string& message() const noexcept;
 
  private:
    engine_error_kind kind_;
+   std::string message_;
 };
 
 struct engine_endpoint {

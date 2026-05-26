@@ -38,11 +38,11 @@ static std::array<uint8_t, 192> sig_parse_base64url(const std::string& base64url
       auto res =
           std::mismatch(config::bls_signature_prefix.begin(), config::bls_signature_prefix.end(), base64urlstr.begin());
       FCL_ASSERT(res.first == config::bls_signature_prefix.end(), "BLS Signature has invalid format : ${str}",
-                 fcl::error::ctx("str", base64urlstr));
+                 fcl::exception::ctx("str", base64urlstr));
       auto data_str = base64urlstr.substr(config::bls_signature_prefix.size());
       return fcl::crypto::blslib::deserialize_base64url<std::array<uint8_t, 192>>(data_str);
    }
-   FCL_CAPTURE_AND_RETHROW("error parsing bls_signature", fcl::error::ctx("str", base64urlstr))
+   FCL_CAPTURE_AND_RETHROW("error parsing bls_signature", fcl::exception::ctx("str", base64urlstr))
 }
 
 bls_signature::bls_signature(const std::string& base64urlstr)
@@ -66,19 +66,19 @@ std::string bls_aggregate_signature::to_string() const {
 
 } // namespace fcl::crypto::blslib
 
-namespace fcl {
+namespace fcl::crypto::blslib {
 
-void to_variant(const crypto::blslib::bls_signature& var, variant& vo) {
+void to_variant(const bls_signature& var, variant& vo) {
    vo = var.to_string();
 }
-void from_variant(const variant& var, crypto::blslib::bls_signature& vo) {
-   vo = crypto::blslib::bls_signature(var.as_string());
+void from_variant(const variant& var, bls_signature& vo) {
+   vo = bls_signature(var.as_string());
 }
 
-void to_variant(const crypto::blslib::bls_aggregate_signature& var, variant& vo) {
+void to_variant(const bls_aggregate_signature& var, variant& vo) {
    vo = var.to_string();
 }
-void from_variant(const variant& var, crypto::blslib::bls_aggregate_signature& vo) {
-   vo = crypto::blslib::bls_aggregate_signature(var.as_string());
+void from_variant(const variant& var, bls_aggregate_signature& vo) {
+   vo = bls_aggregate_signature(var.as_string());
 }
-} // namespace fcl
+} // namespace fcl::crypto::blslib

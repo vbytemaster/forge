@@ -1,14 +1,14 @@
 # fcl_crypto
 
 `fcl_crypto` contains retained cryptographic primitives and wrappers: hashes,
-base encodings, AES/HMAC, AES-256-GCM, KDF helpers, K1/R1/WebAuthn keys and
-signatures, BLS/BN/GMP helpers, random bytes and OpenSSL 3.0+ integration.
+base encodings, AES/HMAC, AES-256-GCM, KDF helpers, secp256k1/P-256/WebAuthn keys
+and signatures, BLS/BN/GMP helpers, random bytes and OpenSSL 3.0+ integration.
 
 ## When To Use
 
 - You need in-process key generation/sign/verify/hash primitives.
-- You need retained K1/R1/WebAuthn/BLS compatibility behavior from FC/EOS-like
-  ecosystems.
+- You need retained secp256k1/P-256/WebAuthn/BLS compatibility behavior from
+  FC/EOS-like ecosystems.
 - You need crypto wrappers that can participate in `fcl_raw` and `fcl_variant`
   compatibility tests.
 
@@ -28,8 +28,8 @@ Hashes and encodings:
 
 Keys and signatures:
 
-- `fcl.crypto.private_key`, `public_key`, `signature`, `elliptic`,
-  `elliptic_r1`, `elliptic_webauthn`, `k1_recover`.
+- `fcl.crypto.private_key`, `public_key`, `signature`, `secp256k1`,
+  `p256`, `webauthn`.
 
 Other primitives:
 
@@ -63,13 +63,13 @@ struct transfer_digest_payload {
    std::uint64_t sequence = 0;
    std::string memo;
 
-   [[nodiscard]] fcl::sha256 digest() const;
+   [[nodiscard]] fcl::crypto::sha256 digest() const;
 };
 
 BOOST_DESCRIBE_STRUCT(transfer_digest_payload, (), (account, sequence, memo))
 
-inline fcl::sha256 transfer_digest_payload::digest() const {
-   auto encoder = fcl::sha256::encoder{};
+inline fcl::crypto::sha256 transfer_digest_payload::digest() const {
+   auto encoder = fcl::crypto::sha256::encoder{};
    fcl::raw::pack(encoder, *this);
    return encoder.result();
 }
@@ -95,10 +95,10 @@ as the product protocol pattern when the payload is a C++ DTO.
 ```cpp
 import fcl.crypto.sha256;
 
-auto digest = fcl::sha256::hash("payload");
+auto digest = fcl::crypto::sha256::hash("payload");
 auto hex = digest.str();
 
-auto encoder = fcl::sha256::encoder{};
+auto encoder = fcl::crypto::sha256::encoder{};
 encoder.write("pay", 3);
 encoder.write("load", 4);
 auto streaming_digest = encoder.result();
@@ -112,10 +112,10 @@ import fcl.crypto.sha1;
 import fcl.crypto.sha256;
 import fcl.crypto.sha512;
 
-auto sha1 = fcl::sha1::hash("abc").str();
-auto sha256 = fcl::sha256::hash("abc").str();
-auto sha512 = fcl::sha512::hash("abc").str();
-auto ripemd = fcl::ripemd160::hash("abc").str();
+auto sha1 = fcl::crypto::sha1::hash("abc").str();
+auto sha256 = fcl::crypto::sha256::hash("abc").str();
+auto sha512 = fcl::crypto::sha512::hash("abc").str();
+auto ripemd = fcl::crypto::ripemd160::hash("abc").str();
 ```
 
 ### Encode And Decode Bytes
@@ -158,7 +158,7 @@ auto key = fcl::crypto::generate_aes256_key();
 Random bytes are secret until proven otherwise. Do not log generated material;
 if you need to show an identifier, derive and render a public fingerprint.
 
-### Generate And Use A K1 Key
+### Generate And Use A Secp256k1 Key
 
 ```cpp
 #include <boost/describe.hpp>
@@ -177,20 +177,20 @@ struct signed_action {
    std::uint64_t nonce = 0;
    std::string operation;
 
-   [[nodiscard]] fcl::sha256 digest() const;
-   [[nodiscard]] fcl::sha256 sig_digest(const fcl::sha256& chain_id) const;
+   [[nodiscard]] fcl::crypto::sha256 digest() const;
+   [[nodiscard]] fcl::crypto::sha256 sig_digest(const fcl::crypto::sha256& chain_id) const;
 };
 
 BOOST_DESCRIBE_STRUCT(signed_action, (), (actor, nonce, operation))
 
-inline fcl::sha256 signed_action::digest() const {
-   auto encoder = fcl::sha256::encoder{};
+inline fcl::crypto::sha256 signed_action::digest() const {
+   auto encoder = fcl::crypto::sha256::encoder{};
    fcl::raw::pack(encoder, *this);
    return encoder.result();
 }
 
-inline fcl::sha256 signed_action::sig_digest(const fcl::sha256& chain_id) const {
-   auto encoder = fcl::sha256::encoder{};
+inline fcl::crypto::sha256 signed_action::sig_digest(const fcl::crypto::sha256& chain_id) const {
+   auto encoder = fcl::crypto::sha256::encoder{};
    fcl::raw::pack(encoder, chain_id);
    fcl::raw::pack(encoder, *this);
    return encoder.result();
@@ -199,7 +199,7 @@ inline fcl::sha256 signed_action::sig_digest(const fcl::sha256& chain_id) const 
 auto private_key = fcl::crypto::private_key::generate();
 auto public_key = private_key.get_public_key();
 
-auto chain_id = fcl::sha256{}; // Replace with the real chain/domain id.
+auto chain_id = fcl::crypto::sha256{}; // Replace with the real chain/domain id.
 auto action = signed_action{
    .actor = 42,
    .nonce = 9,
@@ -212,22 +212,22 @@ auto recovered_public_key = fcl::crypto::public_key{signature, digest};
 auto verified = recovered_public_key == public_key;
 ```
 
-### Generate An R1 Key Explicitly
+### Generate A P-256 Key Explicitly
 
-This snippet reuses the `signed_action` DTO from the K1 example above. Keep the
-same packed payload shape when comparing K1/R1 behavior.
+This snippet reuses the `signed_action` DTO from the secp256k1 example above.
+Keep the same packed payload shape when comparing secp256k1/P-256 behavior.
 
 ```cpp
-import fcl.crypto.elliptic_r1;
+import fcl.crypto.p256;
 import fcl.crypto.private_key;
 import fcl.crypto.public_key;
 import fcl.crypto.sha256;
 import fcl.raw.raw;
 
-auto private_key = fcl::crypto::private_key::generate_r1();
+auto private_key = fcl::crypto::private_key::generate_p256();
 auto public_key = private_key.get_public_key();
 
-auto chain_id = fcl::sha256{}; // Replace with the real chain/domain id.
+auto chain_id = fcl::crypto::sha256{}; // Replace with the real chain/domain id.
 auto action = signed_action{
    .actor = 42,
    .nonce = 10,
@@ -240,8 +240,8 @@ auto recovered_public_key = fcl::crypto::public_key{signature, digest};
 auto verified = recovered_public_key == public_key;
 ```
 
-K1 and R1 have different compatibility expectations. Keep tests for both when
-changing shared signature code.
+Secp256k1 and P-256 have different compatibility expectations. Keep tests for
+both when changing shared signature code.
 
 Signature anti-patterns:
 
@@ -279,7 +279,7 @@ import fcl.crypto.hmac;
 auto key = std::string{"local-test-key"};
 auto payload = std::string{"payload"};
 
-auto hmac = fcl::hmac_sha256{};
+auto hmac = fcl::crypto::hmac_sha256{};
 auto digest = hmac.digest(
    key.data(),
    static_cast<std::uint32_t>(key.size()),
@@ -460,13 +460,13 @@ struct signed_payload {
    std::uint64_t nonce = 0;
    std::string body;
 
-   [[nodiscard]] fcl::sha256 digest() const;
+   [[nodiscard]] fcl::crypto::sha256 digest() const;
 };
 
 BOOST_DESCRIBE_STRUCT(signed_payload, (), (nonce, body))
 
-inline fcl::sha256 signed_payload::digest() const {
-   auto encoder = fcl::sha256::encoder{};
+inline fcl::crypto::sha256 signed_payload::digest() const {
+   auto encoder = fcl::crypto::sha256::encoder{};
    fcl::raw::pack(encoder, *this);
    return encoder.result();
 }
@@ -519,13 +519,13 @@ struct bls_vote_payload {
    std::uint64_t round = 0;
    std::string decision;
 
-   [[nodiscard]] fcl::sha256 digest() const;
+   [[nodiscard]] fcl::crypto::sha256 digest() const;
 };
 
 BOOST_DESCRIBE_STRUCT(bls_vote_payload, (), (round, decision))
 
-inline fcl::sha256 bls_vote_payload::digest() const {
-   auto encoder = fcl::sha256::encoder{};
+inline fcl::crypto::sha256 bls_vote_payload::digest() const {
+   auto encoder = fcl::crypto::sha256::encoder{};
    fcl::raw::pack(encoder, *this);
    return encoder.result();
 }
@@ -572,7 +572,7 @@ auto digest = fcl::blake2b(rounds, h, message, t0_offset, t1_offset, final_block
 #include <cstdint>
 #include <string>
 
-import fcl.crypto.elliptic_webauthn;
+import fcl.crypto.webauthn;
 import fcl.crypto.sha256;
 import fcl.raw.raw;
 
@@ -580,13 +580,13 @@ struct webauthn_challenge_payload {
    std::uint64_t session = 0;
    std::string origin;
 
-   [[nodiscard]] fcl::sha256 digest() const;
+   [[nodiscard]] fcl::crypto::sha256 digest() const;
 };
 
 BOOST_DESCRIBE_STRUCT(webauthn_challenge_payload, (), (session, origin))
 
-inline fcl::sha256 webauthn_challenge_payload::digest() const {
-   auto encoder = fcl::sha256::encoder{};
+inline fcl::crypto::sha256 webauthn_challenge_payload::digest() const {
+   auto encoder = fcl::crypto::sha256::encoder{};
    fcl::raw::pack(encoder, *this);
    return encoder.result();
 }
@@ -599,8 +599,8 @@ auto recovered = webauthn_signature.recover(digest, true);
 ```
 
 WebAuthn client data parsing is private to `fcl_crypto`; no JSON backend type is
-part of the public API. Keep high-S WebAuthn recovery and canonical R1 recovery
-tests together when touching this code.
+part of the public API. Keep high-S WebAuthn recovery and canonical P-256
+recovery tests together when touching this code.
 
 ## Security Notes
 
@@ -642,6 +642,6 @@ tests together when touching this code.
 ## Tests
 
 `test_fcl_crypto` covers hash vectors, base64/base58/hex, random bytes,
-HKDF/scrypt, AES-256-GCM roundtrip/authentication failure, K1/R1 signing and
-recovery, WebAuthn canonical checks, BLS serialization/verification, modular
-arithmetic and BLAKE2 vectors.
+HKDF/scrypt, AES-256-GCM roundtrip/authentication failure, secp256k1/P-256
+signing and recovery, WebAuthn canonical checks, BLS serialization/verification,
+modular arithmetic and BLAKE2 vectors.

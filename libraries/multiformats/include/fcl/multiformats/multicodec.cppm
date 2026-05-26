@@ -24,8 +24,10 @@ enum class multicodec_code : std::uint64_t {
    dns4 = 0x36,
    dns6 = 0x37,
    udp = 0x0111,
+   p2p_circuit = 0x0122,
    p2p = 0x01a5,
-   quic_v1 = 0x01cc,
+   quic = 0x01cc,
+   quic_v1 = 0x01cd,
 };
 
 [[nodiscard]] constexpr std::uint64_t code_value(multicodec_code code) noexcept {

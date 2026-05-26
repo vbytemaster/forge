@@ -17,7 +17,7 @@ import fcl.exception.exception;
 import fcl.variant;
 
 #include "_digest_common.hpp"
-namespace fcl {
+namespace fcl::crypto {
 
 template <class... Ts> struct overloaded : Ts... {
    using Ts::operator()...;
@@ -192,13 +192,13 @@ sha3::sha3(const char* data, size_t size) {
    memcpy(_hash, data, size);
 }
 sha3::sha3(const std::string& hex_str) {
-   auto bytes_written = fcl::from_hex(hex_str, (char*)_hash, sizeof(_hash));
+   auto bytes_written = fcl::crypto::from_hex(hex_str, (char*)_hash, sizeof(_hash));
    if (bytes_written < sizeof(_hash))
       memset((char*)_hash + bytes_written, 0, (sizeof(_hash) - bytes_written));
 }
 
 std::string sha3::str() const {
-   return fcl::to_hex((char*)_hash, sizeof(_hash));
+   return fcl::crypto::to_hex((char*)_hash, sizeof(_hash));
 }
 sha3::operator std::string() const {
    return str();
@@ -280,4 +280,4 @@ void from_variant(const variant& v, sha3& bi) {
    else
       memset(bi.data(), char(0), sizeof(bi));
 }
-} // namespace fcl
+} // namespace fcl::crypto

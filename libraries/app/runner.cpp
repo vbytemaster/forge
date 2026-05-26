@@ -15,16 +15,16 @@ module;
 #include <exception>
 #include <memory>
 #include <mutex>
-#include <stdexcept>
 #include <thread>
 #include <utility>
 
 module fcl.app.runner;
 
 import fcl.asio.blocking;
-import fcl.config.document;
+import fcl.app.exceptions;
 import fcl.app.application;
 import fcl.app.application_shell;
+import fcl.config.document;
 
 namespace fcl::app {
 namespace {
@@ -41,7 +41,7 @@ boost::asio::awaitable<void> wait_for_os_signal(application_shell& app, const ru
    auto error = boost::system::error_code{};
    co_await signals.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
    if (error) {
-      throw std::runtime_error{"application signal wait failed: " + error.message()};
+      throw exceptions::startup_failed{"application signal wait failed: " + error.message()};
    }
 }
 
@@ -158,7 +158,7 @@ void shutdown_with_timeout(application_shell& app, std::chrono::milliseconds tim
       return;
    }
    if (!run_shutdown_until_timeout(app, timeout, allow_async_shutdown_tail, std::move(owner))) {
-      throw std::runtime_error{"application shutdown timed out"};
+      throw exceptions::shutdown_failed{"application shutdown timed out"};
    }
 }
 

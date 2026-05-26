@@ -25,12 +25,12 @@ std::string endpoint::authority() const {
 
 endpoint parse_endpoint(std::string_view value) {
    if (!starts_with(value, scheme)) {
-      throw_quic_error(error_kind::invalid_endpoint, "QUIC endpoint must use quic:// scheme");
+      exceptions::raise(exceptions::code::invalid_endpoint, "QUIC endpoint must use quic:// scheme");
    }
 
    value.remove_prefix(scheme.size());
    if (value.empty()) {
-      throw_quic_error(error_kind::invalid_endpoint, "QUIC endpoint host is empty");
+      exceptions::raise(exceptions::code::invalid_endpoint, "QUIC endpoint host is empty");
    }
 
    auto host_value = std::string_view{};
@@ -39,21 +39,21 @@ endpoint parse_endpoint(std::string_view value) {
    if (value.front() == '[') {
       const auto end = value.find(']');
       if (end == std::string_view::npos || end + 2 > value.size() || value[end + 1] != ':') {
-         throw_quic_error(error_kind::invalid_endpoint, "invalid bracketed QUIC endpoint");
+         exceptions::raise(exceptions::code::invalid_endpoint, "invalid bracketed QUIC endpoint");
       }
       host_value = value.substr(1, end - 1);
       port_value = value.substr(end + 2);
    } else {
       const auto separator = value.rfind(':');
       if (separator == std::string_view::npos) {
-         throw_quic_error(error_kind::invalid_endpoint, "QUIC endpoint port is missing");
+         exceptions::raise(exceptions::code::invalid_endpoint, "QUIC endpoint port is missing");
       }
       host_value = value.substr(0, separator);
       port_value = value.substr(separator + 1);
    }
 
    if (host_value.empty() || port_value.empty()) {
-      throw_quic_error(error_kind::invalid_endpoint, "QUIC endpoint host or port is empty");
+      exceptions::raise(exceptions::code::invalid_endpoint, "QUIC endpoint host or port is empty");
    }
 
    auto parsed_port = unsigned{};
@@ -61,7 +61,7 @@ endpoint parse_endpoint(std::string_view value) {
    const auto* last = port_value.data() + port_value.size();
    const auto result = std::from_chars(first, last, parsed_port);
    if (result.ec != std::errc{} || result.ptr != last || parsed_port > std::numeric_limits<std::uint16_t>::max()) {
-      throw_quic_error(error_kind::invalid_endpoint, "QUIC endpoint port is invalid");
+      exceptions::raise(exceptions::code::invalid_endpoint, "QUIC endpoint port is invalid");
    }
 
    return endpoint{.host = std::string{host_value}, .port = static_cast<std::uint16_t>(parsed_port)};

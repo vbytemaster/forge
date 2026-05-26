@@ -50,7 +50,7 @@ import fcl.core.uint128;
 // of a+b is easily derived from the hashes of a and b.  This property
 // doesn't hold for any hash functions in this file.
 
-export namespace fcl {
+export namespace fcl::crypto {
 
 // Hash function for a byte array.
 uint64_t city_hash64(const char* buf, size_t len);
@@ -77,4 +77,4 @@ uint64_t city_hash_crc_64(const char* buf, size_t len);
 uint128 city_hash_crc_128(const char* s, size_t len);
 std::array<uint64_t, 4> city_hash_crc_256(const char* s, size_t len);
 
-} // namespace fcl
+} // namespace fcl::crypto

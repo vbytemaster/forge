@@ -2,6 +2,7 @@ module;
 #include <fcl/exception/macros.hpp>
 #include <string>
 #include <variant>
+#include <vector>
 export module fcl.crypto.common;
 
 import fcl.crypto.ripemd160;
@@ -57,7 +58,7 @@ struct base58_str_parser_impl<Result, Prefixes, Position, KeyType, Rem...> {
       constexpr auto prefix = Prefixes[Position];
 
       if (prefix == prefix_str) {
-         auto bin = fcl::from_base58(data_str);
+         auto bin = fcl::crypto::from_base58(data_str);
          fcl::datastream<const char*> unpacker(bin.data(), bin.size());
          wrapper wrapped;
          fcl::raw::unpack(unpacker, wrapped);
@@ -74,8 +75,8 @@ struct base58_str_parser_impl<Result, Prefixes, Position, KeyType, Rem...> {
 template <typename Result, const char* const* Prefixes, int Position>
 struct base58_str_parser_impl<Result, Prefixes, Position> {
    static Result apply(const std::string& prefix_str, const std::string& data_str) {
-      FCL_ASSERT(false, "No matching suite type", fcl::error::ctx("prefix", prefix_str),
-                 fcl::error::ctx("data", data_str));
+      FCL_ASSERT(false, "No matching suite type", fcl::exception::ctx("prefix", prefix_str),
+                 fcl::exception::ctx("data", data_str));
    }
 };
 
@@ -91,11 +92,11 @@ template <const char* const* Prefixes, typename... Ts> struct base58_str_parser<
    static std::variant<Ts...> apply(const std::string& base58str) {
       const auto pivot = base58str.find('_');
       FCL_ASSERT(pivot != std::string::npos, "No delimiter in data, cannot determine suite type: ${str}",
-                 fcl::error::ctx("str", base58str));
+                 fcl::exception::ctx("str", base58str));
 
       const auto prefix_str = base58str.substr(0, pivot);
       auto data_str = base58str.substr(pivot + 1);
-      FCL_ASSERT(!data_str.empty(), "Data only has suite type prefix: ${str}", fcl::error::ctx("str", base58str));
+      FCL_ASSERT(!data_str.empty(), "Data only has suite type prefix: ${str}", fcl::exception::ctx("str", base58str));
 
       return base58_str_parser_impl<std::variant<Ts...>, Prefixes, 0, Ts...>::apply(prefix_str, data_str);
    }

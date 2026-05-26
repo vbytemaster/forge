@@ -5,7 +5,6 @@ module;
 #include <stdint.h>
 #include <algorithm>
 #include <cstdint>
-#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <boost/multiprecision/cpp_int.hpp>
@@ -13,11 +12,12 @@ module;
 export module fcl.raw.datastream;
 
 import fcl.core.utility;
+import fcl.raw.exceptions;
 
 export namespace fcl {
 
 namespace detail {
-NO_RETURN void throw_datastream_range_error(const char* file, size_t len, int64_t over);
+NO_RETURN void raise_datastream_range(const char* file, size_t len, int64_t over);
 }
 
 template <typename Storage, typename Enable = void> class datastream;
@@ -45,7 +45,7 @@ class datastream<T, std::enable_if_t<std::is_same_v<T, char*> || std::is_same_v<
          _pos += s;
          return true;
       }
-      detail::throw_datastream_range_error("read", _end - _start, int64_t(-((_end - _pos) - 1)));
+      detail::raise_datastream_range("read", _end - _start, int64_t(-((_end - _pos) - 1)));
    }
 
    inline bool write(const char* d, size_t s) {
@@ -54,7 +54,7 @@ class datastream<T, std::enable_if_t<std::is_same_v<T, char*> || std::is_same_v<
          _pos += s;
          return true;
       }
-      detail::throw_datastream_range_error("write", _end - _start, int64_t(-((_end - _pos) - 1)));
+      detail::raise_datastream_range("write", _end - _start, int64_t(-((_end - _pos) - 1)));
    }
 
    inline bool put(char c) {
@@ -63,7 +63,7 @@ class datastream<T, std::enable_if_t<std::is_same_v<T, char*> || std::is_same_v<
          ++_pos;
          return true;
       }
-      detail::throw_datastream_range_error("put", _end - _start, int64_t(-((_end - _pos) - 1)));
+      detail::raise_datastream_range("put", _end - _start, int64_t(-((_end - _pos) - 1)));
    }
 
    inline bool get(unsigned char& c) {
@@ -75,7 +75,7 @@ class datastream<T, std::enable_if_t<std::is_same_v<T, char*> || std::is_same_v<
          ++_pos;
          return true;
       }
-      detail::throw_datastream_range_error("get", _end - _start, int64_t(-((_end - _pos) - 1)));
+      detail::raise_datastream_range("get", _end - _start, int64_t(-((_end - _pos) - 1)));
    }
 
    T pos() const {

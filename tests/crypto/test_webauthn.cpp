@@ -11,8 +11,8 @@ import fcl.exception.exception;
 import fcl.raw.datastream;
 import fcl.raw.raw;
 import fcl.crypto.base64;
-import fcl.crypto.elliptic_r1;
-import fcl.crypto.elliptic_webauthn;
+import fcl.crypto.p256;
+import fcl.crypto.webauthn;
 import fcl.crypto.public_key;
 import fcl.crypto.private_key;
 import fcl.crypto.signature;
@@ -23,16 +23,16 @@ using namespace fcl::crypto;
 using namespace fcl;
 using namespace std::literals;
 
-static fcl::crypto::webauthn::signature make_webauthn_sig(const fcl::crypto::r1::private_key& priv_key,
+static fcl::crypto::webauthn::signature make_webauthn_sig(const fcl::crypto::p256::private_key& priv_key,
                                                           std::vector<uint8_t>& auth_data, const std::string& json) {
 
    // webauthn signature is sha256(auth_data || client_data_hash)
-   fcl::sha256 client_data_hash = fcl::sha256::hash(json);
-   fcl::sha256::encoder e;
+   fcl::crypto::sha256 client_data_hash = fcl::crypto::sha256::hash(json);
+   fcl::crypto::sha256::encoder e;
    e.write((char*)auth_data.data(), auth_data.size());
    e.write(client_data_hash.data(), client_data_hash.data_size());
 
-   r1::compact_signature sig = priv_key.sign_compact(e.result());
+   p256::compact_signature sig = priv_key.sign_compact(e.result());
 
    char buff[8192];
    datastream<char*> ds(buff, sizeof(buff));
@@ -49,10 +49,10 @@ static fcl::crypto::webauthn::signature make_webauthn_sig(const fcl::crypto::r1:
 
 struct high_s_webauthn_signature {
    fcl::crypto::webauthn::signature webauthn_signature;
-   fcl::crypto::r1::compact_signature compact_signature;
+   fcl::crypto::p256::compact_signature compact_signature;
 };
 
-static high_s_webauthn_signature make_high_s_webauthn_sig(const fcl::crypto::r1::private_key& priv_key,
+static high_s_webauthn_signature make_high_s_webauthn_sig(const fcl::crypto::p256::private_key& priv_key,
                                                           std::vector<uint8_t>& auth_data, const std::string& json) {
    fcl::crypto::webauthn::signature sig = make_webauthn_sig(priv_key, auth_data, json);
    char buff[8192];
@@ -83,23 +83,23 @@ static high_s_webauthn_signature make_high_s_webauthn_sig(const fcl::crypto::r1:
 
 // Used by many tests. Keep these lazy so the test binary does not perform
 // crypto work before Boost.Test and module runtime initialization.
-static const r1::private_key& test_priv() {
-   static const r1::private_key value = fcl::crypto::r1::private_key::generate();
+static const p256::private_key& test_priv() {
+   static const p256::private_key value = fcl::crypto::p256::private_key::generate();
    return value;
 }
 
-static const r1::public_key& test_pub() {
-   static const r1::public_key value = test_priv().get_public_key();
+static const p256::public_key& test_pub() {
+   static const p256::public_key value = test_priv().get_public_key();
    return value;
 }
 
-static const fcl::sha256& challenge_digest() {
-   static const fcl::sha256 value = fcl::sha256::hash("monkeys"s);
+static const fcl::crypto::sha256& challenge_digest() {
+   static const fcl::crypto::sha256 value = fcl::crypto::sha256::hash("monkeys"s);
    return value;
 }
 
-static const fcl::sha256& test_origin_hash() {
-   static const fcl::sha256 value = fcl::sha256::hash("fctesting.invalid"s);
+static const fcl::crypto::sha256& test_origin_hash() {
+   static const fcl::crypto::sha256 value = fcl::crypto::sha256::hash("fctesting.invalid"s);
    return value;
 }
 
@@ -110,7 +110,7 @@ static std::string nested_unknown_client_data_json(std::size_t depth) {
    }
 
    return "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-          fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) +
+          fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) +
           "\",\"ignored\":" + nested + "}";
 }
 
@@ -121,7 +121,7 @@ BOOST_AUTO_TEST_CASE(good) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
 
@@ -150,7 +150,7 @@ BOOST_AUTO_TEST_CASE(rejects_excessive_unknown_field_nesting) try {
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("JSON nesting depth") != std::string::npos;
                          });
 }
@@ -161,16 +161,16 @@ BOOST_AUTO_TEST_CASE(good_high_s) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    auto high_s_sig = make_high_s_webauthn_sig(test_priv(), auth_data, json);
    BOOST_CHECK_EQUAL(wa_pub, high_s_sig.webauthn_signature.recover(challenge_digest(), true));
-   BOOST_CHECK_EXCEPTION(r1::public_key(high_s_sig.compact_signature, fcl::sha256::hash("not webauthn"s), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
-                            return std::string(e.what()).find("invalid high s-value encountered in r1 signature") !=
+   BOOST_CHECK_EXCEPTION(p256::public_key(high_s_sig.compact_signature, fcl::crypto::sha256::hash("not webauthn"s), true),
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
+                            return std::string(e.what()).find("invalid high s-value encountered in P-256 signature") !=
                                    std::string::npos;
                          });
 }
@@ -181,7 +181,7 @@ BOOST_AUTO_TEST_CASE(mismatch_presence) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_PRESENT,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
@@ -196,10 +196,10 @@ BOOST_AUTO_TEST_CASE(mismatch_origin) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_PRESENT,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://mallory.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
-   fcl::sha256 mallory_origin_hash = fcl::sha256::hash("mallory.invalid"s);
+   fcl::crypto::sha256 mallory_origin_hash = fcl::crypto::sha256::hash("mallory.invalid"s);
    memcpy(auth_data.data(), mallory_origin_hash.data(), sizeof(mallory_origin_hash));
 
    BOOST_CHECK_NE(wa_pub, make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true));
@@ -211,13 +211,13 @@ BOOST_AUTO_TEST_CASE(non_https) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"http://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("webauthn origin must begin with https://") !=
                                    std::string::npos;
                          });
@@ -229,13 +229,13 @@ BOOST_AUTO_TEST_CASE(lacking_scheme) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("webauthn origin must begin with https://") !=
                                    std::string::npos;
                          });
@@ -247,13 +247,13 @@ BOOST_AUTO_TEST_CASE(empty_origin) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("webauthn origin must begin with https://") !=
                                    std::string::npos;
                          });
@@ -265,7 +265,7 @@ BOOST_AUTO_TEST_CASE(good_port) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid:123456\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
@@ -279,7 +279,7 @@ BOOST_AUTO_TEST_CASE(empty_port) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid:\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
@@ -299,7 +299,7 @@ BOOST_AUTO_TEST_CASE(challenge_junk) try {
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("sha256: size mismatch") != std::string::npos;
                          });
 }
@@ -316,7 +316,7 @@ BOOST_AUTO_TEST_CASE(challenge_non_base64) try {
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("encountered non-base64 character") != std::string::npos;
                          });
 }
@@ -326,7 +326,7 @@ FCL_LOG_AND_RETHROW();
 BOOST_AUTO_TEST_CASE(challenge_wrong_base64_chars) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
-   std::string b64 = fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size());
+   std::string b64 = fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size());
 
    BOOST_REQUIRE(b64[1] == '_');
    BOOST_REQUIRE(b64[18] == '_');
@@ -342,7 +342,7 @@ BOOST_AUTO_TEST_CASE(challenge_wrong_base64_chars) try {
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("encountered non-base64 character") != std::string::npos;
                          });
 }
@@ -352,7 +352,7 @@ FCL_LOG_AND_RETHROW();
 BOOST_AUTO_TEST_CASE(challenge_base64_dot_padding) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
-   std::string b64 = fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size());
+   std::string b64 = fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size());
 
    b64.append(".");
 
@@ -363,7 +363,7 @@ BOOST_AUTO_TEST_CASE(challenge_base64_dot_padding) try {
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("encountered non-base64 character") != std::string::npos;
                          });
 }
@@ -373,7 +373,7 @@ FCL_LOG_AND_RETHROW();
 BOOST_AUTO_TEST_CASE(challenge_no_padding) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
-   std::string b64 = fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size());
+   std::string b64 = fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size());
 
    b64.append("==");
 
@@ -391,7 +391,7 @@ FCL_LOG_AND_RETHROW();
 BOOST_AUTO_TEST_CASE(challenge_extra_bytes) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
-   std::string b64 = fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size());
+   std::string b64 = fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size());
 
    b64.append("abcd");
 
@@ -402,7 +402,7 @@ BOOST_AUTO_TEST_CASE(challenge_extra_bytes) try {
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("size mismatch") != std::string::npos;
                          });
 }
@@ -412,15 +412,15 @@ FCL_LOG_AND_RETHROW();
 BOOST_AUTO_TEST_CASE(challenge_wrong) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
-   fcl::sha256 other_digest = fcl::sha256::hash("yo"s);
+   fcl::crypto::sha256 other_digest = fcl::crypto::sha256::hash("yo"s);
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(other_digest.data(), other_digest.data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(other_digest.data(), other_digest.data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("Wrong webauthn challenge") != std::string::npos;
                          });
 }
@@ -432,13 +432,13 @@ BOOST_AUTO_TEST_CASE(wrong_type) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.meh\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("webauthn signature type not an assertion") !=
                                    std::string::npos;
                          });
@@ -450,15 +450,15 @@ BOOST_AUTO_TEST_CASE(auth_data_rpid_hash_bad) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
-   fcl::sha256 origin_hash_corrupt = fcl::sha256::hash("fctesting.invalid"s);
+   fcl::crypto::sha256 origin_hash_corrupt = fcl::crypto::sha256::hash("fctesting.invalid"s);
    memcpy(auth_data.data(), origin_hash_corrupt.data(), sizeof(origin_hash_corrupt));
    auth_data[4]++;
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("webauthn rpid hash doesn't match origin") !=
                                    std::string::npos;
                          });
@@ -470,12 +470,12 @@ BOOST_AUTO_TEST_CASE(auth_data_too_short) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(1);
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("auth_data not as large as required") !=
                                    std::string::npos;
                          });
@@ -487,13 +487,13 @@ BOOST_AUTO_TEST_CASE(missing_origin) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("webauthn origin must begin with https://") !=
                                    std::string::npos;
                          });
@@ -505,13 +505,13 @@ BOOST_AUTO_TEST_CASE(missing_type) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("webauthn signature type not an assertion") !=
                                    std::string::npos;
                          });
@@ -528,7 +528,7 @@ BOOST_AUTO_TEST_CASE(missing_challenge) try {
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("sha256: size mismatch") != std::string::npos;
                          });
 }
@@ -540,7 +540,7 @@ BOOST_AUTO_TEST_CASE(good_extrajunk) try {
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"cool\":\"beans\",\"obj\":{\"array\":[4, 5, 6]},"
                       "\"type\":\"webauthn.get\",\"answer\": 42 ,\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
@@ -556,7 +556,7 @@ BOOST_AUTO_TEST_CASE(good_escaped_origin_and_nested_unknown_fields) try {
                                "fctesting.invalid");
    std::string json = "{\"ignored\":[{\"nested\":true}],\"origin\":\"https:\\/\\/fctesting.invalid\","
                       "\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
@@ -575,7 +575,7 @@ BOOST_AUTO_TEST_CASE(not_json_object) try {
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("Failed to parse client data JSON") != std::string::npos;
                          });
 }
@@ -586,7 +586,7 @@ BOOST_AUTO_TEST_CASE(damage_sig) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
@@ -606,7 +606,7 @@ BOOST_AUTO_TEST_CASE(damage_sig) try {
    try {
       recovered_pub = sig.recover(challenge_digest(), true);
       failed_compare = !(wa_pub == recovered_pub);
-   } catch (fcl::error::context_error& e) {
+   } catch (fcl::exception::context_error& e) {
       failed_recovery =
           std::string(e.what()).find("unable to reconstruct public key from signature") != std::string::npos;
    }
@@ -622,7 +622,7 @@ BOOST_AUTO_TEST_CASE(damage_sig_idx) try {
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
@@ -642,7 +642,7 @@ BOOST_AUTO_TEST_CASE(damage_sig_idx) try {
    try {
       recovered_pub = sig.recover(challenge_digest(), true);
       failed_compare = !(wa_pub == recovered_pub);
-   } catch (fcl::error::context_error& e) {
+   } catch (fcl::exception::context_error& e) {
       failed_recovery =
           std::string(e.what()).find("unable to reconstruct public key from signature") != std::string::npos;
    }
@@ -655,12 +655,12 @@ FCL_LOG_AND_RETHROW();
 
 // Good signature but with a different private key than was expecting
 BOOST_AUTO_TEST_CASE(different_priv_key) try {
-   r1::private_key other_priv = fcl::crypto::r1::private_key::generate();
+   p256::private_key other_priv = fcl::crypto::p256::private_key::generate();
 
    webauthn::public_key wa_pub(test_pub().serialize(), webauthn::public_key::user_presence_t::USER_PRESENCE_NONE,
                                "fctesting.invalid");
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
@@ -679,7 +679,7 @@ BOOST_AUTO_TEST_CASE(empty_json) try {
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("Failed to parse client data JSON") != std::string::npos;
                          });
 }
@@ -692,8 +692,8 @@ BOOST_AUTO_TEST_CASE(empty_rpid) try {
    webauthn::public_key pubkey;
 
    BOOST_CHECK_EXCEPTION(
-       fcl::raw::unpack(ds, pubkey), fcl::error::context_error, [](const fcl::error::context_error& e) {
-          return fcl::error::format_exception_chain(e).find("webauthn pubkey must have non empty rpid") !=
+       fcl::raw::unpack(ds, pubkey), fcl::exception::context_error, [](const fcl::exception::context_error& e) {
+          return fcl::exception::format_exception_chain(e).find("webauthn pubkey must have non empty rpid") !=
                  std::string::npos;
        });
 }
@@ -705,7 +705,7 @@ BOOST_AUTO_TEST_CASE(good_no_trailing_equal) try {
                                "fctesting.invalid");
 
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "\"}";
    boost::erase_all(json, "=");
 
    std::vector<uint8_t> auth_data(37);
@@ -723,14 +723,14 @@ BOOST_AUTO_TEST_CASE(base64_wonky) try {
                                "fctesting.invalid");
 
    std::string json = "{\"origin\":\"https://fctesting.invalid\",\"type\":\"webauthn.get\",\"challenge\":\"" +
-                      fcl::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "!@#$\"}";
+                      fcl::crypto::base64url_encode(challenge_digest().data(), challenge_digest().data_size()) + "!@#$\"}";
    boost::erase_all(json, "=");
 
    std::vector<uint8_t> auth_data(37);
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::error::context_error, [](const fcl::error::context_error& e) {
+                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
                             return std::string(e.what()).find("encountered non-base64 character") != std::string::npos;
                          });
 }

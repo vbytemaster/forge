@@ -15,6 +15,8 @@ module;
 
 module fcl.multiformats.address;
 
+import fcl.multiformats.exceptions;
+
 import fcl.crypto.base58;
 import fcl.multiformats.varint;
 
@@ -23,7 +25,7 @@ namespace {
 
 [[nodiscard]] std::vector<std::string_view> split_path(std::string_view value) {
    if (value.empty() || value.front() != '/') {
-      throw format_error{"address must start with '/'"};
+      throw exceptions::invalid_format{"address must start with '/'"};
    }
 
    auto parts = std::vector<std::string_view>{};
@@ -32,7 +34,7 @@ namespace {
       const auto end = value.find('/', begin);
       auto part = value.substr(begin, end == std::string_view::npos ? end : end - begin);
       if (part.empty()) {
-         throw format_error{"address contains an empty component"};
+         throw exceptions::invalid_format{"address contains an empty component"};
       }
       parts.push_back(part);
       if (end == std::string_view::npos) {
@@ -48,7 +50,7 @@ namespace {
    auto result = std::from_chars(value.data(), value.data() + value.size(), port);
    if (result.ec != std::errc{} || result.ptr != value.data() + value.size() ||
        port > std::numeric_limits<std::uint16_t>::max()) {
-      throw format_error{"address port is invalid"};
+      throw exceptions::invalid_format{"address port is invalid"};
    }
    return static_cast<std::uint16_t>(port);
 }
@@ -57,7 +59,7 @@ namespace {
    auto out = bytes(size);
    const auto text = std::string{value};
    if (inet_pton(family, text.c_str(), out.data()) != 1) {
-      throw format_error{"address IP literal is invalid"};
+      throw exceptions::invalid_format{"address IP literal is invalid"};
    }
    return out;
 }
@@ -65,7 +67,7 @@ namespace {
 [[nodiscard]] std::string format_ip(std::span<const std::uint8_t> data, int family) {
    auto buffer = std::array<char, INET6_ADDRSTRLEN>{};
    if (inet_ntop(family, data.data(), buffer.data(), static_cast<socklen_t>(buffer.size())) == nullptr) {
-      throw format_error{"address IP bytes are invalid"};
+      throw exceptions::invalid_format{"address IP bytes are invalid"};
    }
    return buffer.data();
 }
@@ -84,7 +86,7 @@ void append_prefixed(bytes& out, std::span<const std::uint8_t> payload) {
    const auto length = varint_decode(data.subspan(offset));
    offset += length.size;
    if (length.value > data.size() - offset) {
-      throw format_error{"address variable component length exceeds available bytes"};
+      throw exceptions::invalid_format{"address variable component length exceeds available bytes"};
    }
    auto out = std::string{};
    out.reserve(static_cast<std::size_t>(length.value));
@@ -97,7 +99,7 @@ void append_prefixed(bytes& out, std::span<const std::uint8_t> payload) {
 
 [[nodiscard]] std::uint16_t read_big_endian_port(std::span<const std::uint8_t> data, std::size_t& offset) {
    if (data.size() - offset < 2) {
-      throw format_error{"address port is truncated"};
+      throw exceptions::invalid_format{"address port is truncated"};
    }
    const auto port = static_cast<std::uint16_t>((data[offset] << 8U) | data[offset + 1]);
    offset += 2;
@@ -127,15 +129,17 @@ address address::parse(std::string_view value) {
          case multicodec_code::udp:
          case multicodec_code::p2p:
             if (++i >= parts.size()) {
-               throw format_error{"address protocol is missing a value"};
+               throw exceptions::invalid_format{"address protocol is missing a value"};
             }
             result.push({.code = code, .value = std::string{parts[i]}});
             break;
+         case multicodec_code::p2p_circuit:
+         case multicodec_code::quic:
          case multicodec_code::quic_v1:
             result.push({.code = code, .value = {}});
             break;
          default:
-            throw format_error{"unsupported address protocol"};
+            throw exceptions::invalid_format{"unsupported address protocol"};
       }
    }
 
@@ -153,7 +157,7 @@ address address::from_bytes(std::span<const std::uint8_t> data) {
       switch (code) {
          case multicodec_code::ip4: {
             if (data.size() - offset < 4) {
-               throw format_error{"address ip4 component is truncated"};
+               throw exceptions::invalid_format{"address ip4 component is truncated"};
             }
             result.push({.code = code, .value = format_ip(data.subspan(offset, 4), AF_INET)});
             offset += 4;
@@ -161,7 +165,7 @@ address address::from_bytes(std::span<const std::uint8_t> data) {
          }
          case multicodec_code::ip6: {
             if (data.size() - offset < 16) {
-               throw format_error{"address ip6 component is truncated"};
+               throw exceptions::invalid_format{"address ip6 component is truncated"};
             }
             result.push({.code = code, .value = format_ip(data.subspan(offset, 16), AF_INET6)});
             offset += 16;
@@ -180,7 +184,7 @@ address address::from_bytes(std::span<const std::uint8_t> data) {
             const auto length = varint_decode(data.subspan(offset));
             offset += length.size;
             if (length.value > data.size() - offset) {
-               throw format_error{"address p2p component length exceeds available bytes"};
+               throw exceptions::invalid_format{"address p2p component length exceeds available bytes"};
             }
             auto peer_bytes = bytes{data.begin() + static_cast<std::ptrdiff_t>(offset),
                                     data.begin() + static_cast<std::ptrdiff_t>(offset + length.value)};
@@ -188,11 +192,13 @@ address address::from_bytes(std::span<const std::uint8_t> data) {
             offset += static_cast<std::size_t>(length.value);
             break;
          }
+         case multicodec_code::p2p_circuit:
+         case multicodec_code::quic:
          case multicodec_code::quic_v1:
             result.push({.code = code, .value = {}});
             break;
          default:
-            throw format_error{"unsupported address protocol"};
+            throw exceptions::invalid_format{"unsupported address protocol"};
       }
    }
 
@@ -243,10 +249,12 @@ bytes address::to_bytes() const {
             append_prefixed(out, payload);
             break;
          }
+         case multicodec_code::p2p_circuit:
+         case multicodec_code::quic:
          case multicodec_code::quic_v1:
             break;
          default:
-            throw format_error{"unsupported address protocol"};
+            throw exceptions::invalid_format{"unsupported address protocol"};
       }
    }
    return out;

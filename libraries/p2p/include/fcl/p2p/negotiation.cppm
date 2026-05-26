@@ -55,7 +55,11 @@ namespace protocol_negotiation {
 
    boost::asio::awaitable<fcl::p2p::stream> async_select(fcl::quic::stream stream, protocol_id protocol,
                                                          options opts = {});
+   boost::asio::awaitable<fcl::p2p::stream> async_select(fcl::p2p::stream stream, protocol_id protocol,
+                                                         options opts = {});
    boost::asio::awaitable<negotiated_stream> async_accept(fcl::quic::stream stream,
+                                                          std::vector<protocol_id> protocols, options opts = {});
+   boost::asio::awaitable<negotiated_stream> async_accept(fcl::p2p::stream stream,
                                                           std::vector<protocol_id> protocols, options opts = {});
 } // namespace protocol_negotiation
 

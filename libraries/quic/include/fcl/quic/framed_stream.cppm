@@ -9,7 +9,7 @@ module;
 
 export module fcl.quic.framed_stream;
 
-import fcl.quic.errors;
+import fcl.quic.exceptions;
 import fcl.quic.stream;
 
 export namespace fcl::quic {

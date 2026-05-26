@@ -153,13 +153,9 @@ class bls_aggregate_signature {
    bls12_381::g2 _jacobian_montgomery_le;
 };
 
+void to_variant(const bls_signature& var, variant& vo);
+void from_variant(const variant& var, bls_signature& vo);
+void to_variant(const bls_aggregate_signature& var, variant& vo);
+void from_variant(const variant& var, bls_aggregate_signature& vo);
+
 } // namespace fcl::crypto::blslib
-
-export namespace fcl {
-
-void to_variant(const crypto::blslib::bls_signature& var, variant& vo);
-void from_variant(const variant& var, crypto::blslib::bls_signature& vo);
-void to_variant(const crypto::blslib::bls_aggregate_signature& var, variant& vo);
-void from_variant(const variant& var, crypto::blslib::bls_aggregate_signature& vo);
-
-} // namespace fcl

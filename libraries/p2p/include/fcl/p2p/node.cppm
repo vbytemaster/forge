@@ -15,10 +15,13 @@ module;
 export module fcl.p2p.node;
 
 import fcl.asio.runtime;
+import fcl.p2p.hole_punch;
 import fcl.p2p.identity;
 import fcl.p2p.peer_store;
 import fcl.p2p.protocol;
+import fcl.p2p.reachability;
 import fcl.p2p.relay;
+import fcl.p2p.resource_manager;
 import fcl.p2p.scoring;
 import fcl.p2p.stream;
 import fcl.quic.endpoint;
@@ -31,10 +34,11 @@ class node {
    struct limits {
       std::size_t max_sessions = 1024;
       std::size_t max_protocol_handlers = 1024;
-      std::size_t max_control_message_size = 4 * 1024 * 1024;
+      std::size_t max_peer_exchange_message_size = 4 * 1024 * 1024;
       std::size_t max_peer_exchange_records = 1024;
-      std::size_t max_control_queue = 4096;
+      std::size_t max_peer_exchange_queue = 4096;
       relay::limits relay{};
+      resource_manager::limits resources{};
    };
 
    struct options {
@@ -43,8 +47,11 @@ class node {
       std::optional<peer_id> explicit_peer_id;
       capability_set capabilities{.bits = capabilities::direct_quic | capabilities::peer_exchange};
       limits limits{};
+      relay::policy relay_policy{.service_enabled = true, .client_enabled = true, .public_relay_allowed = false};
+      path::policy path_policy{};
       fcl::quic::transport_limits transport_limits{};
       std::vector<fcl::quic::endpoint> advertised_endpoints;
+      std::vector<std::uint8_t> public_key;
       std::string protocol_version = "/fcl/0.1.0";
       std::string agent_version = "fcl/0.1.0";
       std::shared_ptr<peer_store::backend> peer_store_backend;
@@ -99,7 +106,7 @@ class node {
       std::uint64_t protocol_streams_accepted = 0;
       std::uint64_t protocol_rejections = 0;
       std::uint64_t peer_exchange_messages = 0;
-      std::uint64_t reachability_probes = 0;
+      std::uint64_t reachability_checks = 0;
       std::uint64_t reachability_public = 0;
       std::uint64_t reachability_private = 0;
       std::uint64_t relays_opened = 0;
@@ -144,14 +151,14 @@ class node {
    boost::asio::awaitable<session_info> async_connect(fcl::quic::endpoint endpoint);
    boost::asio::awaitable<session_info> async_connect(fcl::quic::endpoint endpoint, connect_options options);
    boost::asio::awaitable<void> async_request_peer_exchange(peer_id peer);
-   boost::asio::awaitable<reachability_state> async_probe_reachability(peer_id observer);
-   boost::asio::awaitable<relay_reservation::info> async_reserve_relay(peer_id relay_peer);
-   boost::asio::awaitable<relay_reservation::info> async_reserve_relay(peer_id relay_peer,
-                                                                       relay_reservation::options options);
+   boost::asio::awaitable<reachability::state> async_probe_reachability(peer_id observer);
+   boost::asio::awaitable<relay::reservation::info> async_reserve_relay(peer_id relay_peer);
+   boost::asio::awaitable<relay::reservation::info> async_reserve_relay(peer_id relay_peer,
+                                                                        relay::reservation::options options);
    boost::asio::awaitable<void> async_cancel_relay(peer_id relay_peer);
    boost::asio::awaitable<std::chrono::milliseconds> async_ping(peer_id peer);
    boost::asio::awaitable<std::chrono::milliseconds> async_ping(peer_id peer, open_options options);
-   boost::asio::awaitable<hole_punch_status>
+   boost::asio::awaitable<hole_punch::status>
    async_attempt_hole_punch(peer_id peer, std::optional<peer_id> relay_peer = std::nullopt,
                             std::chrono::milliseconds timeout = std::chrono::milliseconds{10'000});
    boost::asio::awaitable<fcl::p2p::stream> async_open_protocol_stream(peer_id peer, protocol_id protocol);

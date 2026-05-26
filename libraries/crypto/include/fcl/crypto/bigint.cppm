@@ -9,7 +9,7 @@ export module fcl.crypto.bigint;
 import fcl.core.string;
 import fcl.variant;
 
-export namespace fcl {
+export namespace fcl::crypto {
 class bigint {
  public:
    bigint(const std::vector<char>& bige);
@@ -76,4 +76,4 @@ class bigint {
 void to_variant(const bigint& bi, variant& v);
 /** decodes the big int as base64 string, or a number */
 void from_variant(const variant& v, bigint& bi);
-} // namespace fcl
+} // namespace fcl::crypto

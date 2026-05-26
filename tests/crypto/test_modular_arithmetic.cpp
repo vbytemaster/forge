@@ -15,14 +15,15 @@ import fcl.crypto.modular_arithmetic;
 import fcl.core.utility;
 
 using namespace fcl;
+using namespace fcl::crypto;
 #include "test_utils.hpp"
 
 namespace std {
-std::ostream& operator<<(std::ostream& st, const std::variant<fcl::modular_arithmetic_error, bytes>& err) {
-   if (std::holds_alternative<fcl::modular_arithmetic_error>(err))
-      st << static_cast<int32_t>(std::get<fcl::modular_arithmetic_error>(err));
+std::ostream& operator<<(std::ostream& st, const std::variant<fcl::crypto::modular_arithmetic_error, bytes>& err) {
+   if (std::holds_alternative<fcl::crypto::modular_arithmetic_error>(err))
+      st << static_cast<int32_t>(std::get<fcl::crypto::modular_arithmetic_error>(err));
    else
-      st << fcl::to_hex(std::get<bytes>(err));
+      st << fcl::crypto::to_hex(std::get<bytes>(err));
    return st;
 }
 } // namespace std
@@ -31,7 +32,7 @@ BOOST_AUTO_TEST_SUITE(modular_arithmetic)
 
 BOOST_AUTO_TEST_CASE(modexp) try {
 
-   using modexp_test = std::tuple<std::vector<std::string>, std::variant<fcl::modular_arithmetic_error, bytes>>;
+   using modexp_test = std::tuple<std::vector<std::string>, std::variant<fcl::crypto::modular_arithmetic_error, bytes>>;
 
    const std::vector<modexp_test> tests{
        // test1
@@ -108,7 +109,7 @@ BOOST_AUTO_TEST_CASE(modexp) try {
       auto exponent = to_bytes(parts[1]);
       auto modulus = to_bytes(parts[2]);
 
-      auto res = fcl::modexp(base, exponent, modulus);
+      auto res = fcl::crypto::modexp(base, exponent, modulus);
       BOOST_CHECK_EQUAL(res, expected_result);
    }
 }
@@ -1008,7 +1009,7 @@ BOOST_AUTO_TEST_CASE(modexp_vectors) try {
       // the host function's result is always length of modulus; pad expected result with enough 0x00s to match up
       expected_result.insert(expected_result.begin(), modulus.size() - expected_result.size(), 0x00);
 
-      BOOST_CHECK_EQUAL(std::get<bytes>(fcl::modexp(base, exponent, modulus)), expected_result);
+      BOOST_CHECK_EQUAL(std::get<bytes>(fcl::crypto::modexp(base, exponent, modulus)), expected_result);
    }
 }
 FCL_LOG_AND_RETHROW();
@@ -1085,7 +1086,7 @@ BOOST_AUTO_TEST_CASE(modexp_benchmarking) try {
 
             auto start_time = std::chrono::steady_clock::now();
 
-            auto res = fcl::modexp(base, exponent, modulus);
+            auto res = fcl::crypto::modexp(base, exponent, modulus);
 
             auto end_time = std::chrono::steady_clock::now();
 

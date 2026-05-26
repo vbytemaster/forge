@@ -84,7 +84,7 @@ workarounds: identity, keys, endpoint/address encoding, protocol negotiation,
 Identify, Ping, peer/path store, relay, AutoNAT, DHT and pubsub. The
 `fcl::plugins::p2p_node` plugin only maps config into the node, owns application
 lifecycle, mounts route/API contributions and exposes safe application APIs.
-Product plugins must not build their own discovery, relay, DHT or pubsub loops.
+Product extensions must not build parallel network-discovery, relay or gossip loops.
 
 Ed25519, Secp256k1, ECDSA and RSA are all mandatory compatibility key families.
 RSA is required for IPFS/mainline DHT compatibility. Secp256k1 and ECDSA are

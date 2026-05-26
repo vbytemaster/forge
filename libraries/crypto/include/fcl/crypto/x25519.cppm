@@ -1,0 +1,43 @@
+module;
+#include <array>
+#include <cstdint>
+
+export module fcl.crypto.x25519;
+
+export namespace fcl::crypto::x25519 {
+
+using public_key_data = std::array<std::uint8_t, 32>;
+using private_key_secret = std::array<std::uint8_t, 32>;
+using shared_secret = std::array<std::uint8_t, 32>;
+
+class public_key {
+ public:
+   public_key() = default;
+   explicit public_key(const public_key_data& value);
+
+   [[nodiscard]] const public_key_data& serialize() const noexcept;
+   friend bool operator==(const public_key&, const public_key&) = default;
+
+ private:
+   public_key_data data_{};
+};
+
+class private_key {
+ public:
+   private_key() = default;
+   explicit private_key(const private_key_secret& value);
+
+   [[nodiscard]] static private_key generate();
+   [[nodiscard]] static private_key regenerate(const private_key_secret& value);
+
+   [[nodiscard]] const private_key_secret& get_secret() const noexcept;
+   [[nodiscard]] public_key get_public_key() const;
+   [[nodiscard]] shared_secret get_shared_secret(const public_key& remote) const;
+
+   friend bool operator==(const private_key&, const private_key&) = default;
+
+ private:
+   private_key_secret data_{};
+};
+
+} // namespace fcl::crypto::x25519

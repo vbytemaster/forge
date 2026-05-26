@@ -13,6 +13,7 @@ target_include_directories(fcl_log PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 target_link_libraries(
    fcl_log PUBLIC
       fcl_core
+      fcl_exception
       fcl_reflect
       fcl_variant
       Boost::headers

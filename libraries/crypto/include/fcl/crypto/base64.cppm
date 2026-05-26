@@ -47,7 +47,7 @@ import fcl.exception.exception;
  * Templated for std::string, std::string_view, std::vector<char> and other char containers.
  */
 
-export namespace fcl {
+export namespace fcl::crypto {
 
 // Interface:
 // Defaults allow for use:
@@ -132,7 +132,7 @@ inline unsigned int pos_of_char(const unsigned char chr, bool url) {
    // 2020-10-23: Throw std::exception rather than const char*
    //(Pablo Martin-Gomez, https://github.com/Bouska)
    //
-   // Original version throw std::runtime_error("Input is not valid base64-encoded data.");
+   // Original version throw fcl::exception::context_error{"Input is not valid base64-encoded data.")};
    // Throw FC assert and the same error text to match existing Spring usages.
    FCL_ASSERT(false, "encountered non-base64 character");
 }
@@ -350,4 +350,4 @@ inline std::string base64url_encode(const std::string& s) {
 inline std::vector<char> base64url_decode(const std::string& s) {
    return detail::decode<std::vector<char>>(s, false, true);
 }
-} // namespace fcl
+} // namespace fcl::crypto

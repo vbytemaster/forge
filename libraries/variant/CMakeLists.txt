@@ -11,6 +11,7 @@ target_include_directories(fcl_variant PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 target_link_libraries(
    fcl_variant PUBLIC
       fcl_core
+      fcl_exception
       fcl_reflect
       Boost::headers
       Boost::multi_index

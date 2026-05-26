@@ -5,7 +5,7 @@ module;
 
 export module fcl.crypto.modular_arithmetic;
 
-export namespace fcl {
+export namespace fcl::crypto {
 using bytes = std::vector<char>;
 
 enum class modular_arithmetic_error : int32_t {
@@ -13,4 +13,4 @@ enum class modular_arithmetic_error : int32_t {
 };
 
 std::variant<modular_arithmetic_error, bytes> modexp(const bytes& _base, const bytes& _exponent, const bytes& _modulus);
-} // namespace fcl
+} // namespace fcl::crypto

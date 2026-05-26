@@ -475,10 +475,8 @@ BOOST_AUTO_TEST_CASE(descriptor_declared_exception_maps_to_error_payload) {
       FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found",
                           fcl::exception::ctx("ref", "bafk..."));
    } catch (const fcl::exception::base& error) {
-      const auto* declared = fcl::api::find_error(*method, error);
-      const auto payload = fcl::api::make_error_payload(error, declared);
+      const auto payload = fcl::api::project_error(*method, error);
 
-      BOOST_REQUIRE(declared != nullptr);
       BOOST_TEST(payload.error == "chunk_not_found");
       BOOST_TEST(payload.message == "chunk not found");
       BOOST_TEST(payload.identity.category == "test.cache");
@@ -490,15 +488,15 @@ BOOST_AUTO_TEST_CASE(descriptor_declared_exception_maps_to_error_payload) {
 }
 
 BOOST_AUTO_TEST_CASE(contract_rejects_empty_api_id) {
-   BOOST_CHECK_THROW(build_empty_id_descriptor(), fcl::api::api_error);
+   BOOST_CHECK_THROW(build_empty_id_descriptor(), fcl::api::exceptions::protocol_error);
 }
 
 BOOST_AUTO_TEST_CASE(contract_rejects_zero_major_version) {
-   BOOST_CHECK_THROW(build_zero_major_descriptor(), fcl::api::api_error);
+   BOOST_CHECK_THROW(build_zero_major_descriptor(), fcl::api::exceptions::protocol_error);
 }
 
 BOOST_AUTO_TEST_CASE(contract_rejects_duplicate_method_name) {
-   BOOST_CHECK_THROW(build_duplicate_method_descriptor(), fcl::api::api_error);
+   BOOST_CHECK_THROW(build_duplicate_method_descriptor(), fcl::api::exceptions::protocol_error);
 }
 
 BOOST_AUTO_TEST_CASE(local_registry_view_returns_typed_handle) {
@@ -599,7 +597,7 @@ BOOST_AUTO_TEST_CASE(remote_declared_exception_restores_typed_exception) {
        .identity = {.category = "test.cache", .code = 1},
    };
 
-   BOOST_CHECK_THROW(fcl::api::throw_remote_error(payload, method), cache_errors::chunk_not_found);
+   BOOST_CHECK_THROW(fcl::api::raise_remote_error(payload, method), cache_errors::chunk_not_found);
 }
 
 BOOST_AUTO_TEST_CASE(remote_unknown_exception_preserves_identity_in_generic_error) {
@@ -612,7 +610,7 @@ BOOST_AUTO_TEST_CASE(remote_unknown_exception_preserves_identity_in_generic_erro
    };
 
    try {
-      fcl::api::throw_remote_error(payload);
+      fcl::api::raise_remote_error(payload);
    } catch (const fcl::api::exceptions::remote_internal& error) {
       BOOST_TEST(error.code().category().name() == std::string{"fcl.api"});
       BOOST_TEST(error.message() == "remote failed");

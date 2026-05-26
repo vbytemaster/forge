@@ -24,7 +24,7 @@ Accepted:
 - source location, chrono timestamp, component/logger name and thread metadata;
 - explicit secret fields rendered as `<redacted>`;
 - automatic stacktrace snapshot for error logs when a backend is available;
-- exception-chain routing through `fcl::error::set_log_sink`.
+- exception-chain routing through `fcl::exception::set_log_sink`.
 
 Rejected:
 

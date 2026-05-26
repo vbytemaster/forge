@@ -4,9 +4,12 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <string_view>
 
 module fcl.multiformats.multicodec;
+
+import fcl.multiformats.exceptions;
 
 import fcl.multiformats.varint;
 
@@ -26,6 +29,8 @@ constexpr auto protocols = std::array{
     protocol_entry{.name = "dns6", .code = multicodec_code::dns6},
     protocol_entry{.name = "tcp", .code = multicodec_code::tcp},
     protocol_entry{.name = "udp", .code = multicodec_code::udp},
+    protocol_entry{.name = "p2p-circuit", .code = multicodec_code::p2p_circuit},
+    protocol_entry{.name = "quic", .code = multicodec_code::quic},
     protocol_entry{.name = "quic-v1", .code = multicodec_code::quic_v1},
     protocol_entry{.name = "p2p", .code = multicodec_code::p2p},
 };
@@ -62,12 +67,16 @@ multicodec_code multicodec_decode(std::span<const std::uint8_t> data, std::size_
          return multicodec_code::dns6;
       case code_value(multicodec_code::udp):
          return multicodec_code::udp;
+      case code_value(multicodec_code::p2p_circuit):
+         return multicodec_code::p2p_circuit;
       case code_value(multicodec_code::p2p):
          return multicodec_code::p2p;
+      case code_value(multicodec_code::quic):
+         return multicodec_code::quic;
       case code_value(multicodec_code::quic_v1):
          return multicodec_code::quic_v1;
       default:
-         throw format_error{"unsupported multicodec code"};
+         throw exceptions::invalid_format{"unsupported multicodec code: " + std::to_string(decoded.value)};
    }
 }
 
@@ -77,7 +86,7 @@ std::string_view protocol_name(multicodec_code code) {
          return entry.name;
       }
    }
-   throw format_error{"multicodec code is not an address protocol"};
+   throw exceptions::invalid_format{"multicodec code is not an address protocol"};
 }
 
 multicodec_code protocol_code(std::string_view name) {
@@ -87,7 +96,7 @@ multicodec_code protocol_code(std::string_view name) {
          return entry.code;
       }
    }
-   throw format_error{"unsupported address protocol"};
+   throw exceptions::invalid_format{"unsupported address protocol"};
 }
 
 } // namespace fcl::multiformats

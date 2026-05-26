@@ -5,6 +5,8 @@ module;
 
 module fcl.multiformats.multihash;
 
+import fcl.multiformats.exceptions;
+
 import fcl.crypto.sha256;
 import fcl.crypto.sha512;
 import fcl.multiformats.varint;
@@ -54,16 +56,16 @@ std::string multihash::digest_hex() const {
 multihash multihash::decode(std::span<const std::uint8_t> data) {
    auto code = varint_decode(data);
    if (code.size >= data.size()) {
-      throw format_error{"multihash is missing digest length"};
+      throw exceptions::invalid_format{"multihash is missing digest length"};
    }
 
    auto length = varint_decode(data.subspan(code.size));
    const auto offset = code.size + length.size;
    if (length.value > data.size() - offset) {
-      throw format_error{"multihash digest length exceeds available bytes"};
+      throw exceptions::invalid_format{"multihash digest length exceeds available bytes"};
    }
    if (length.value != data.size() - offset) {
-      throw format_error{"multihash has trailing bytes"};
+      throw exceptions::invalid_format{"multihash has trailing bytes"};
    }
 
    return {.code = code.value,
@@ -76,13 +78,13 @@ multihash multihash::identity(std::span<const std::uint8_t> data) {
 
 multihash multihash::sha2_256(std::span<const std::uint8_t> data) {
    const auto input = bytes_to_string(data);
-   const auto digest = fcl::sha256::hash(input.data(), static_cast<std::uint32_t>(input.size()));
+   const auto digest = fcl::crypto::sha256::hash(input.data(), static_cast<std::uint32_t>(input.size()));
    return {.code = code_value(multicodec_code::sha2_256), .digest = bytes_from_chars(digest.data(), digest.data_size())};
 }
 
 multihash multihash::sha2_512(std::span<const std::uint8_t> data) {
    const auto input = bytes_to_string(data);
-   const auto digest = fcl::sha512::hash(input.data(), static_cast<std::uint32_t>(input.size()));
+   const auto digest = fcl::crypto::sha512::hash(input.data(), static_cast<std::uint32_t>(input.size()));
    return {.code = code_value(multicodec_code::sha2_512), .digest = bytes_from_chars(digest.data(), digest.data_size())};
 }
 

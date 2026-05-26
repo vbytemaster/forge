@@ -15,7 +15,7 @@ template <typename Container> Container deserialize_base64url(const std::string&
    using wrapper = checksummed_data<Container>;
    wrapper wrapped;
 
-   auto bin = fcl::base64url_decode(data_str);
+   auto bin = fcl::crypto::base64url_decode(data_str);
    fcl::datastream<const char*> unpacker(bin.data(), bin.size());
    fcl::raw::unpack(unpacker, wrapped);
    FCL_ASSERT(!unpacker.remaining(), "decoded base64url length too long");
@@ -32,7 +32,7 @@ template <typename Container> std::string serialize_base64url(const Container& d
    wrapped.data = data;
    wrapped.check = wrapper::calculate_checksum(wrapped.data, nullptr);
    auto packed = raw::pack(wrapped);
-   auto data_str = fcl::base64url_encode(packed.data(), packed.size());
+   auto data_str = fcl::crypto::base64url_encode(packed.data(), packed.size());
 
    return data_str;
 }

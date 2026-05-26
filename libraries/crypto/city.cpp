@@ -110,7 +110,7 @@ module fcl.crypto.city;
 
 import fcl.core.uint128;
 
-namespace fcl {
+namespace fcl::crypto {
 
 using namespace std;
 

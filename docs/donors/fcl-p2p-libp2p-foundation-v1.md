@@ -33,7 +33,7 @@ This pass implements the first compatibility foundation for `fcl_p2p`:
 - No direct dependency on Go/Rust libp2p runtime code.
 - No duplicate base58/base32 implementation inside `fcl_multiformats`; encoders are owned by `fcl_crypto`.
 - No `fcl_api::frame` requirement at the QUIC stream layer. API frames remain a higher-level mounted protocol.
-- No plugin-layer Identify, DHT, relay discovery or pubsub shortcuts in this block.
+- No application-layer shortcuts for Identify, discovery, relay selection or gossip in this block.
 
 ## Tests Added
 

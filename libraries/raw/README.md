@@ -81,13 +81,13 @@ struct signed_command {
    std::uint64_t sequence = 0;
    std::string command;
 
-   [[nodiscard]] fcl::sha256 digest() const;
+   [[nodiscard]] fcl::crypto::sha256 digest() const;
 };
 
 BOOST_DESCRIBE_STRUCT(signed_command, (), (account, sequence, command))
 
-inline fcl::sha256 signed_command::digest() const {
-   auto encoder = fcl::sha256::encoder{};
+inline fcl::crypto::sha256 signed_command::digest() const {
+   auto encoder = fcl::crypto::sha256::encoder{};
    fcl::raw::pack(encoder, *this);
    return encoder.result();
 }

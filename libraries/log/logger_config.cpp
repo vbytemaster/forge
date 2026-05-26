@@ -3,7 +3,6 @@ module;
 #include <filesystem>
 #include <iostream>
 #include <mutex>
-#include <stdexcept>
 #include <unordered_map>
 #include <string>
 
@@ -11,6 +10,7 @@ module fcl.log.logger_config;
 
 import fcl.log.appender;
 import fcl.log.console_appender;
+import fcl.log.exceptions;
 import fcl.variant.described;
 
 namespace fcl {
@@ -58,7 +58,7 @@ void log_config::initialize_appenders() {
 
 void configure_logging(const std::filesystem::path& lc) {
    static_cast<void>(lc);
-   throw std::runtime_error("file-based logging config parsing is not part of fcl_log");
+   throw log::exceptions::invalid_config{"file-based logging config parsing is not part of fcl_log"};
 }
 bool configure_logging(const logging_config& cfg) {
    return log_config::configure_logging(cfg);

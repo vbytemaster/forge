@@ -2,6 +2,7 @@ module;
 #include <fcl/exception/macros.hpp>
 #include <cstring>
 #include <exception>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -32,35 +33,31 @@ public_key private_key::get_public_key() const {
    return public_key(std::visit(public_key_visitor(), _storage));
 }
 
-struct sign_visitor : visitor<signature::storage_type> {
-   sign_visitor(const sha256& digest, bool require_canonical)
-       : _digest(digest), _require_canonical(require_canonical) {}
-
-   template <typename KeyType> signature::storage_type operator()(const KeyType& key) const {
-      return signature::storage_type(key.sign(_digest, _require_canonical));
+private_key::algorithm private_key::type() const noexcept {
+   switch (_storage.index()) {
+   case 0:
+      return algorithm::secp256k1;
+   case 1:
+      return algorithm::p256;
+   case 2:
+      return algorithm::ed25519;
+   default:
+      return algorithm::rsa;
    }
-
-   const sha256& _digest;
-   bool _require_canonical;
-};
-
-signature private_key::sign(const sha256& digest, bool require_canonical) const {
-   return signature(std::visit(sign_visitor(digest, require_canonical), _storage));
 }
 
-struct generate_shared_secret_visitor : visitor<sha512> {
-   generate_shared_secret_visitor(const public_key::storage_type& pub_storage) : _pub_storage(pub_storage) {}
+struct sign_visitor : visitor<signature::storage_type> {
+   explicit sign_visitor(std::span<const std::uint8_t> message) : _message(message) {}
 
-   template <typename KeyType> sha512 operator()(const KeyType& key) const {
-      using PublicKeyType = typename KeyType::public_key_type;
-      return key.generate_shared_secret(std::template get<PublicKeyType>(_pub_storage));
+   template <typename KeyType> signature::storage_type operator()(const KeyType& key) const {
+      return signature::storage_type(key.sign(_message));
    }
 
-   const public_key::storage_type& _pub_storage;
+   std::span<const std::uint8_t> _message;
 };
 
-sha512 private_key::generate_shared_secret(const public_key& pub) const {
-   return std::visit(generate_shared_secret_visitor(pub._storage), _storage);
+signature private_key::sign(std::span<const std::uint8_t> message) const {
+   return signature(std::visit(sign_visitor(message), _storage));
 }
 
 template <typename Data> string to_wif(const Data& secret, const fcl::yield_function_t& yield) {
@@ -79,8 +76,8 @@ template <typename Data> Data from_wif(const string& wif_key) {
    auto wif_bytes = from_base58(wif_key);
    FCL_ASSERT(wif_bytes.size() >= 5);
    auto key_bytes = vector<char>(wif_bytes.begin() + 1, wif_bytes.end() - 4);
-   fcl::sha256 check = fcl::sha256::hash(wif_bytes.data(), wif_bytes.size() - 4);
-   fcl::sha256 check2 = fcl::sha256::hash(check);
+   fcl::crypto::sha256 check = fcl::crypto::sha256::hash(wif_bytes.data(), wif_bytes.size() - 4);
+   fcl::crypto::sha256 check2 = fcl::crypto::sha256::hash(check);
 
    FCL_ASSERT(memcmp((char*)&check, wif_bytes.data() + wif_bytes.size() - 4, 4) == 0 ||
               memcmp((char*)&check2, wif_bytes.data() + wif_bytes.size() - 4, 4) == 0);
@@ -91,32 +88,21 @@ template <typename Data> Data from_wif(const string& wif_key) {
 static private_key::storage_type priv_parse_base58(const string& base58str) {
    const auto pivot = base58str.find('_');
 
-   if (pivot == std::string::npos) {
-      // wif import
-      using default_type = std::variant_alternative_t<0, private_key::storage_type>;
-      return private_key::storage_type(from_wif<default_type>(base58str));
-   } else {
-      constexpr auto prefix = config::private_key_base_prefix;
-      const auto prefix_str = base58str.substr(0, pivot);
-      FCL_ASSERT(prefix == prefix_str, "Private Key has invalid prefix", fcl::error::ctx("str", base58str),
-                 fcl::error::ctx("prefix_str", prefix_str));
+   constexpr auto prefix = config::private_key_base_prefix;
+   FCL_ASSERT(pivot != std::string::npos, "No delimiter in string, cannot determine private key type",
+              fcl::exception::ctx("str", base58str));
+   const auto prefix_str = base58str.substr(0, pivot);
+   FCL_ASSERT(prefix == prefix_str, "Private Key has invalid prefix", fcl::exception::ctx("str", base58str),
+              fcl::exception::ctx("prefix_str", prefix_str));
 
-      auto data_str = base58str.substr(pivot + 1);
-      FCL_ASSERT(!data_str.empty(), "Private Key has no data: ${str}", fcl::error::ctx("str", base58str));
-      return base58_str_parser<private_key::storage_type, config::private_key_prefix>::apply(data_str);
-   }
+   auto data_str = base58str.substr(pivot + 1);
+   FCL_ASSERT(!data_str.empty(), "Private Key has no data: ${str}", fcl::exception::ctx("str", base58str));
+   return base58_str_parser<private_key::storage_type, config::private_key_prefix>::apply(data_str);
 }
 
 private_key::private_key(const std::string& base58str) : _storage(priv_parse_base58(base58str)) {}
 
 std::string private_key::to_string(const fcl::yield_function_t& yield) const {
-   auto which = _storage.index();
-
-   if (which == 0) {
-      using default_type = std::variant_alternative_t<0, private_key::storage_type>;
-      return to_wif(std::template get<default_type>(_storage), yield);
-   }
-
    auto data_str = std::visit(base58str_visitor<storage_type, config::private_key_prefix>(yield), _storage);
    return std::string(config::private_key_base_prefix) + "_" + data_str;
 }
@@ -130,7 +116,7 @@ bool operator<(const private_key& p1, const private_key& p2) {
 }
 } // namespace fcl::crypto
 
-namespace fcl {
+namespace fcl::crypto {
 void to_variant(const fcl::crypto::private_key& var, variant& vo, const fcl::yield_function_t& yield) {
    vo = var.to_string(yield);
 }
@@ -139,4 +125,4 @@ void from_variant(const variant& var, fcl::crypto::private_key& vo) {
    vo = fcl::crypto::private_key(var.as_string());
 }
 
-} // namespace fcl
+} // namespace fcl::crypto

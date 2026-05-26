@@ -9,7 +9,7 @@ module;
 
 export module fcl.p2p.identity;
 
-import fcl.p2p.errors;
+import fcl.p2p.exceptions;
 import fcl.quic.security;
 import fcl.multiformats;
 
@@ -42,6 +42,7 @@ struct peer_id {
 };
 
 [[nodiscard]] fcl::multiformats::bytes encode_public_key(const public_key& key);
+[[nodiscard]] public_key decode_public_key(std::span<const std::uint8_t> bytes);
 [[nodiscard]] peer_id make_peer_id(const public_key& key);
 [[nodiscard]] peer_id make_peer_id_from_certificate_pem(std::string_view certificate_pem);
 [[nodiscard]] peer_id make_peer_id_from_certificate(const fcl::quic::peer_certificate& certificate);

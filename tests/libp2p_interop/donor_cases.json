@@ -1,0 +1,115 @@
+{
+  "allowed_statuses": [
+    "ported",
+    "not_applicable",
+    "unsupported"
+  ],
+  "cases": [
+    {
+      "id": "autonatv2.dial_request_response_nonce",
+      "protocol": "AutoNAT v2",
+      "source": "donors/libp2p-specs/autonat/autonat-v2.md",
+      "donor": "go-libp2p/p2p/protocol/autonatv2/autonat_test.go TestClientRequest/TestClientDataRequest",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_libp2p_autonat_v2_codec_covers_nonce_data_and_statuses",
+        "p2p_autonat_v2_probe_public_and_persists_observation"
+      ]
+    },
+    {
+      "id": "autonatv2.malformed_and_oversized",
+      "protocol": "AutoNAT v2",
+      "source": "donors/libp2p-specs/autonat/autonat-v2.md",
+      "donor": "go-libp2p/p2p/protocol/autonatv2/autonat_test.go TestClientServerError",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_libp2p_autonat_v2_rejects_oversized_data_response_and_unknown_status"
+      ]
+    },
+    {
+      "id": "relayv2.reserve_connect_status",
+      "protocol": "Circuit Relay v2",
+      "source": "donors/libp2p-specs/relay/circuit-v2.md",
+      "donor": "go-libp2p/p2p/host/relaysvc/relay_test.go and rust-libp2p builder relay phase",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_libp2p_relay_wire_roundtrips_statuses_limits_and_voucher",
+        "p2p_relay_reservation_persists_candidate",
+        "p2p_relay_connect_requires_target_reservation",
+        "p2p_relay_stop_connect_passes_frames_after_target_reservation",
+        "p2p_relay_transport_opens_arbitrary_registered_protocol"
+      ]
+    },
+    {
+      "id": "relayv2.signed_envelope",
+      "protocol": "Circuit Relay v2",
+      "source": "donors/libp2p-specs/RFC/0002-signed-envelopes.md",
+      "donor": "go-libp2p circuit relay voucher validation",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_signed_envelope_seals_and_verifies_domain_payload_and_signer",
+        "p2p_relay_voucher_uses_signed_envelope_and_rejects_stale_or_wrong_signer",
+        "p2p_libp2p_relay_wire_roundtrips_statuses_limits_and_voucher"
+      ]
+    },
+    {
+      "id": "dcutr.connect_sync_attempt",
+      "protocol": "DCUtR",
+      "source": "donors/libp2p-specs/relay/DCUtR.md",
+      "donor": "go-libp2p/p2p/protocol/holepunch/holepunch_test.go",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_libp2p_dcutr_codec_matches_spec_shape",
+        "p2p_dcutr_attempt_tracks_rtt_retry_and_inflight_state",
+        "test_fcl_libp2p_interop fcl_source_go_relay_go_destination_dcutr",
+        "test_fcl_libp2p_interop fcl_source_rust_relay_rust_destination_dcutr",
+        "test_fcl_libp2p_interop go_source_fcl_relay_fcl_destination_dcutr",
+        "test_fcl_libp2p_interop rust_source_fcl_relay_fcl_destination_dcutr"
+      ]
+    },
+    {
+      "id": "resource.peer_protocol_dial_scopes",
+      "protocol": "Resource Manager",
+      "source": "go-libp2p resource-manager wrapping tests",
+      "donor": "go-libp2p circuit dial with wrapped resource manager",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_resource_manager_enforces_peer_protocol_dial_and_reservation_scopes",
+        "p2p_relay_policy_options_are_behavioral"
+      ]
+    },
+    {
+      "id": "interop.live_ping_identify_autonat_relay",
+      "protocol": "Interop",
+      "source": "go-libp2p and rust-libp2p live fixtures",
+      "donor": "live fixtures launched by tests/libp2p_interop/runner.py",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "test_fcl_libp2p_interop"
+      ]
+    },
+    {
+      "id": "interop.live_dcutr_relay_topology",
+      "protocol": "DCUtR",
+      "source": "donors/libp2p-specs/relay/DCUtR.md",
+      "donor": "go-libp2p/rust-libp2p relayed connection hole-punching tests",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "test_fcl_libp2p_interop",
+        "fcl_interop_fixture topology dcutr_relay_topology",
+        "mixed FCL source -> go-libp2p relay -> go-libp2p destination DCUtR topology",
+        "mixed FCL source -> rust-libp2p relay -> rust-libp2p destination DCUtR topology",
+        "mixed go-libp2p source -> FCL relay -> FCL destination DCUtR topology",
+        "mixed rust-libp2p source -> FCL relay -> FCL destination DCUtR topology"
+      ]
+    }
+  ]
+}

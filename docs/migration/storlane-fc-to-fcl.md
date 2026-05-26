@@ -127,12 +127,12 @@ try {
    load_config();
 } FCL_CAPTURE_AND_RETHROW(
    "config load failed",
-   fcl::error::ctx("source", "service.yaml"),
-   fcl::error::secret("passphrase", passphrase))
+   fcl::exception::ctx("source", "service.yaml"),
+   fcl::exception::secret("passphrase", passphrase))
 ```
 
 Catch `std::exception` at process boundaries. Use
-`fcl::error::context_error` only when you specifically need structured fields.
+`fcl::exception::context_error` only when you specifically need structured fields.
 
 ## Logging
 
@@ -148,7 +148,7 @@ log.info("started", {fcl::log_ctx("component", "api")});
 log.error("failed", {fcl::log_secret("token", token)});
 ```
 
-Use `fcl::error::set_log_sink(...)` to route exception capture into the logger.
+Use `fcl::exception::set_log_sink(...)` to route exception capture into the logger.
 `fcl_log` remains sync-only; async logging should be a downstream adapter if
 needed.
 

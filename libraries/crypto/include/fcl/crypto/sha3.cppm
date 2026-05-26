@@ -9,7 +9,7 @@ import fcl.crypto.packhash;
 import fcl.raw.raw;
 import fcl.variant;
 
-export namespace fcl {
+export namespace fcl::crypto {
 
 class sha3 {
  public:
@@ -111,11 +111,11 @@ class sha3 {
 void to_variant(const sha3& bi, variant& v);
 void from_variant(const variant& v, sha3& bi);
 
-} // namespace fcl
+} // namespace fcl::crypto
 
 export namespace std {
-template <> struct hash<fcl::sha3> {
-   size_t operator()(const fcl::sha3& s) const {
+template <> struct hash<fcl::crypto::sha3> {
+   size_t operator()(const fcl::crypto::sha3& s) const {
       return *((size_t*)&s);
    }
 };
@@ -123,8 +123,8 @@ template <> struct hash<fcl::sha3> {
 } // namespace std
 
 export namespace boost {
-template <> struct hash<fcl::sha3> {
-   size_t operator()(const fcl::sha3& s) const {
+template <> struct hash<fcl::crypto::sha3> {
+   size_t operator()(const fcl::crypto::sha3& s) const {
       return s._hash[3]; //*((size_t*)&s);
    }
 };

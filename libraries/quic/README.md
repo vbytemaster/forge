@@ -21,7 +21,7 @@ framed streams without defining application protocols.
 - `fcl.quic.endpoint`, `fcl.quic.options`, `fcl.quic.security`.
 - `fcl.quic.listener`, `fcl.quic.connector`, `fcl.quic.connection`.
 - `fcl.quic.stream`, `fcl.quic.framed_stream`.
-- `fcl.quic.runtime`, `fcl.quic.metrics`, `fcl.quic.errors`.
+- `fcl.quic.runtime`, `fcl.quic.metrics`, `fcl.quic.exceptions`.
 - `fcl.quic` — aggregate import.
 
 Target: `fcl_quic`.

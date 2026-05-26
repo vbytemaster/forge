@@ -1,6 +1,5 @@
 add_library(
    fcl_quic STATIC
-   errors.cpp
    endpoint.cpp
    security.cpp
    options.cpp
@@ -22,6 +21,7 @@ target_link_libraries(
       fcl_exception
       fcl_api
       fcl_raw
+      fcl_crypto
       fcl_asio
       Boost::asio
       OpenSSL::SSL

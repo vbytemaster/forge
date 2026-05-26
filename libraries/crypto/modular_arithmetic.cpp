@@ -6,7 +6,7 @@ module;
 
 module fcl.crypto.modular_arithmetic;
 
-namespace fcl {
+namespace fcl::crypto {
 
 std::variant<modular_arithmetic_error, bytes> modexp(const bytes& _base, const bytes& _exponent,
                                                      const bytes& _modulus) {
@@ -48,4 +48,4 @@ std::variant<modular_arithmetic_error, bytes> modexp(const bytes& _base, const b
    return output;
 }
 
-} // namespace fcl
+} // namespace fcl::crypto

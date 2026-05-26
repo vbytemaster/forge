@@ -38,9 +38,9 @@ using chunk_not_found = fcl::exception::coded_exception<code, code::chunk_not_fo
 BOOST_AUTO_TEST_SUITE(exception_test_suite)
 
 BOOST_AUTO_TEST_CASE(context_fields_are_formatted_and_redacted) {
-   const fcl::error::context_error error{
+   const fcl::exception::context_error error{
        "open vault",
-       {fcl::error::ctx("path", "/tmp/fcl.vault"), fcl::error::secret("passphrase", "correct horse battery staple")},
+       {fcl::exception::ctx("path", "/tmp/fcl.vault"), fcl::exception::secret("passphrase", "correct horse battery staple")},
        std::source_location::current()};
 
    const std::string text = error.what();
@@ -51,8 +51,8 @@ BOOST_AUTO_TEST_CASE(context_fields_are_formatted_and_redacted) {
 }
 
 BOOST_AUTO_TEST_CASE(context_error_keeps_optional_error_code) {
-   const fcl::error::context_error error{"deadline exceeded",
-                                         {fcl::error::ctx("phase", "startup")},
+   const fcl::exception::context_error error{"deadline exceeded",
+                                         {fcl::exception::ctx("phase", "startup")},
                                          std::source_location::current(),
                                          std::make_error_code(std::errc::timed_out)};
 
@@ -93,9 +93,9 @@ BOOST_AUTO_TEST_CASE(capture_and_rethrow_preserves_nested_exception) {
       try {
          throw std::runtime_error("inner failure");
       }
-      FCL_CAPTURE_AND_RETHROW("outer context", fcl::error::ctx("phase", "initialize"))
-   } catch (const fcl::error::context_error& error) {
-      const auto chain = fcl::error::format_exception_chain(error);
+      FCL_CAPTURE_AND_RETHROW("outer context", fcl::exception::ctx("phase", "initialize"))
+   } catch (const fcl::exception::context_error& error) {
+      const auto chain = fcl::exception::format_exception_chain(error);
       BOOST_CHECK(chain.find("outer context") != std::string::npos);
       BOOST_CHECK(chain.find("phase=initialize") != std::string::npos);
       BOOST_CHECK(chain.find("inner failure") != std::string::npos);
@@ -126,8 +126,8 @@ BOOST_AUTO_TEST_CASE(capture_and_rethrow_preserves_fcl_exception_dynamic_type) {
 }
 
 BOOST_AUTO_TEST_CASE(assert_macro_throws_std_compatible_context_error) {
-   BOOST_CHECK_EXCEPTION(FCL_ASSERT(false, "broken invariant", fcl::error::ctx("value", 42)), fcl::error::context_error,
-                         [](const fcl::error::context_error& error) {
+   BOOST_CHECK_EXCEPTION(FCL_ASSERT(false, "broken invariant", fcl::exception::ctx("value", 42)), fcl::exception::context_error,
+                         [](const fcl::exception::context_error& error) {
                             const std::string text = error.what();
                             return error.code() == std::make_error_code(std::errc::invalid_argument) &&
                                    text.find("broken invariant") != std::string::npos &&
@@ -138,8 +138,8 @@ BOOST_AUTO_TEST_CASE(assert_macro_throws_std_compatible_context_error) {
 
 BOOST_AUTO_TEST_CASE(deadline_macro_throws_timeout_context_error) {
    BOOST_CHECK_EXCEPTION(FCL_CHECK_DEADLINE(std::chrono::system_clock::now() - std::chrono::milliseconds(1),
-                                            fcl::error::ctx("phase", "render")),
-                         fcl::error::context_error, [](const fcl::error::context_error& error) {
+                                            fcl::exception::ctx("phase", "render")),
+                         fcl::exception::context_error, [](const fcl::exception::context_error& error) {
                             return error.code() == std::make_error_code(std::errc::timed_out) &&
                                    std::string(error.what()).find("phase=render") != std::string::npos;
                          });

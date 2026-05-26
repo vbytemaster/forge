@@ -18,13 +18,13 @@ module;
 
 module fcl.p2p.peer_store;
 
-import fcl.p2p.errors;
+import fcl.p2p.exceptions;
 
 namespace fcl::p2p {
 namespace {
 
 constexpr auto peer_store_magic = std::string_view{"FCLP2PPS"};
-constexpr auto peer_store_version = std::uint8_t{1};
+constexpr auto peer_store_version = std::uint8_t{2};
 
 [[nodiscard]] bool same_endpoint(const fcl::quic::endpoint& left, const fcl::quic::endpoint& right) {
    return left.host == right.host && left.port == right.port;
@@ -55,7 +55,7 @@ void expire_reachability(peer_store::record& record, std::chrono::system_clock::
        record.reachability_expires_at > now) {
       return;
    }
-   record.reachability = reachability_state::unknown;
+   record.reachability = reachability::state::unknown;
    record.observed_endpoint.reset();
    record.reachability_expires_at = {};
 }
@@ -159,7 +159,7 @@ class binary_reader {
 
    void expect_raw(std::string_view expected) {
       if (data_.substr(position_, expected.size()) != expected) {
-         throw_p2p_error(error_kind::codec_error, "invalid RocksDB peer store record header");
+         exceptions::raise(exceptions::code::codec_error, "invalid RocksDB peer store record header");
       }
       position_ += expected.size();
    }
@@ -172,7 +172,7 @@ class binary_reader {
    [[nodiscard]] bool boolean() {
       const auto value = u8();
       if (value > 1U) {
-         throw_p2p_error(error_kind::codec_error, "invalid RocksDB peer store boolean");
+         exceptions::raise(exceptions::code::codec_error, "invalid RocksDB peer store boolean");
       }
       return value != 0U;
    }
@@ -228,7 +228,7 @@ class binary_reader {
       const auto host = text();
       const auto port_value = u64();
       if (port_value > std::numeric_limits<std::uint16_t>::max()) {
-         throw_p2p_error(error_kind::codec_error, "invalid RocksDB peer store endpoint port");
+         exceptions::raise(exceptions::code::codec_error, "invalid RocksDB peer store endpoint port");
       }
       return fcl::quic::endpoint{.host = host, .port = static_cast<std::uint16_t>(port_value)};
    }
@@ -253,21 +253,21 @@ class binary_reader {
 
    void finish() const {
       if (position_ != data_.size()) {
-         throw_p2p_error(error_kind::codec_error, "trailing bytes in RocksDB peer store record");
+         exceptions::raise(exceptions::code::codec_error, "trailing bytes in RocksDB peer store record");
       }
    }
 
  private:
    [[nodiscard]] std::size_t checked_size(std::uint64_t value) const {
       if (value > static_cast<std::uint64_t>(data_.size() - position_)) {
-         throw_p2p_error(error_kind::codec_error, "truncated RocksDB peer store record");
+         exceptions::raise(exceptions::code::codec_error, "truncated RocksDB peer store record");
       }
       return static_cast<std::size_t>(value);
    }
 
    void require(std::size_t size) const {
       if (size > data_.size() - position_) {
-         throw_p2p_error(error_kind::codec_error, "truncated RocksDB peer store record");
+         exceptions::raise(exceptions::code::codec_error, "truncated RocksDB peer store record");
       }
    }
 
@@ -300,6 +300,21 @@ class binary_reader {
       writer.time(endpoint.backoff_until);
       writer.f64(endpoint.score);
    }
+   writer.u64(value.relay_reservations.size());
+   for (const auto& reservation : value.relay_reservations) {
+      writer.peer(reservation.relay);
+      writer.u64(reservation.reservation_id);
+      writer.time(reservation.expires_at);
+      writer.u64(reservation.endpoints.size());
+      for (const auto& endpoint : reservation.endpoints) {
+         writer.endpoint(endpoint);
+      }
+      writer.bytes(reservation.voucher);
+      writer.u64(reservation.successes);
+      writer.u64(reservation.failures);
+      writer.i64(reservation.last_latency.count());
+      writer.f64(reservation.score);
+   }
    writer.u64(static_cast<std::uint64_t>(value.reachability));
    writer.optional_endpoint(value.observed_endpoint);
    writer.time(value.reachability_expires_at);
@@ -315,7 +330,7 @@ class binary_reader {
    reader.expect_raw(peer_store_magic);
    const auto version = reader.u8();
    if (version != peer_store_version) {
-      throw_p2p_error(error_kind::codec_error, "unsupported RocksDB peer store record version");
+      exceptions::raise(exceptions::code::codec_error, "unsupported RocksDB peer store record version");
    }
 
    auto value = peer_store::record{};
@@ -346,7 +361,25 @@ class binary_reader {
       value.endpoints.push_back(std::move(endpoint));
    }
 
-   value.reachability = static_cast<reachability_state>(reader.u64());
+   const auto reservation_count = reader.u64();
+   for (auto i = std::uint64_t{}; i < reservation_count; ++i) {
+      auto reservation = peer_store::relay_record{};
+      reservation.relay = reader.peer();
+      reservation.reservation_id = reader.u64();
+      reservation.expires_at = reader.time();
+      const auto relay_endpoint_count = reader.u64();
+      for (auto j = std::uint64_t{}; j < relay_endpoint_count; ++j) {
+         reservation.endpoints.push_back(reader.endpoint());
+      }
+      reservation.voucher = reader.bytes();
+      reservation.successes = reader.u64();
+      reservation.failures = reader.u64();
+      reservation.last_latency = std::chrono::milliseconds{reader.i64()};
+      reservation.score = reader.f64();
+      value.relay_reservations.push_back(std::move(reservation));
+   }
+
+   value.reachability = static_cast<reachability::state>(reader.u64());
    value.observed_endpoint = reader.optional_endpoint();
    value.reachability_expires_at = reader.time();
    value.successes = reader.u64();
@@ -394,7 +427,7 @@ class memory_peer_store_backend final : public peer_store::backend {
       normalize_for_storage(record);
    }
 
-   void mark_reachability(peer_id peer, reachability_state state,
+   void mark_reachability(peer_id peer, reachability::state state,
                           std::optional<fcl::quic::endpoint> observed) override {
       auto lock = std::scoped_lock{mutex_};
       auto& record = records_[peer];
@@ -483,10 +516,10 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
  public:
    explicit rocksdb_peer_store_backend(peer_store::rocksdb_options options) : options_(std::move(options)) {
       if (options_.path.empty()) {
-         throw_p2p_error(error_kind::invalid_options, "RocksDB peer store path is required");
+         exceptions::raise(exceptions::code::invalid_options, "RocksDB peer store path is required");
       }
       if (options_.key_prefix.empty()) {
-         throw_p2p_error(error_kind::invalid_options, "RocksDB peer store key prefix is required");
+         exceptions::raise(exceptions::code::invalid_options, "RocksDB peer store key prefix is required");
       }
 
       auto rocksdb_options = rocksdb::Options{};
@@ -494,7 +527,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       auto db = std::unique_ptr<rocksdb::DB>{};
       const auto status = rocksdb::DB::Open(rocksdb_options, options_.path.string(), &db);
       if (!status.ok()) {
-         throw_p2p_error(error_kind::internal_error, "failed to open RocksDB peer store: " + status.ToString());
+         exceptions::raise(exceptions::code::internal, "failed to open RocksDB peer store: " + status.ToString());
       }
       db_ = std::move(db);
    }
@@ -518,7 +551,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       });
    }
 
-   void mark_reachability(peer_id peer, reachability_state state,
+   void mark_reachability(peer_id peer, reachability::state state,
                           std::optional<fcl::quic::endpoint> observed) override {
       mutate(std::move(peer), [&](peer_store::record& record) {
          record.reachability = state;
@@ -587,7 +620,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       }
       const auto status = iterator->status();
       if (!status.ok()) {
-         throw_p2p_error(error_kind::internal_error, "failed to scan RocksDB peer store: " + status.ToString());
+         exceptions::raise(exceptions::code::internal, "failed to scan RocksDB peer store: " + status.ToString());
       }
       return out;
    }
@@ -608,7 +641,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
          return std::nullopt;
       }
       if (!status.ok()) {
-         throw_p2p_error(error_kind::internal_error, "failed to read RocksDB peer store: " + status.ToString());
+         exceptions::raise(exceptions::code::internal, "failed to read RocksDB peer store: " + status.ToString());
       }
       auto record = decode_record(value);
       if (expire_copy) {
@@ -625,7 +658,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
    void put_locked(const peer_store::record& value) {
       const auto status = db_->Put(rocksdb::WriteOptions{}, key_for(value.peer), encode_record(value));
       if (!status.ok()) {
-         throw_p2p_error(error_kind::internal_error, "failed to write RocksDB peer store: " + status.ToString());
+         exceptions::raise(exceptions::code::internal, "failed to write RocksDB peer store: " + status.ToString());
       }
    }
 
@@ -676,7 +709,7 @@ void peer_store::learn_endpoint(peer_id peer, fcl::quic::endpoint endpoint, capa
    impl_->backend->learn_endpoint(std::move(peer), std::move(endpoint), capabilities);
 }
 
-void peer_store::mark_reachability(peer_id peer, reachability_state state,
+void peer_store::mark_reachability(peer_id peer, reachability::state state,
                                    std::optional<fcl::quic::endpoint> observed) {
    impl_->backend->mark_reachability(std::move(peer), state, std::move(observed));
 }

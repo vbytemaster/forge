@@ -1,5 +1,6 @@
 module;
 #include <cstdint>
+#include <span>
 
 export module fcl.crypto.hmac;
 
@@ -14,7 +15,7 @@ import fcl.crypto.sha512;
  * Created on 1. Juli 2015, 21:48
  */
 
-export namespace fcl {
+export namespace fcl::crypto {
 
 template <typename H> class hmac {
  public:
@@ -30,6 +31,11 @@ template <typename H> class hmac {
       add_key(c, c_len, 0x5c);
       encoder.write(intermediate.data(), intermediate.data_size());
       return encoder.result();
+   }
+
+   H digest(std::span<const std::uint8_t> key, std::span<const std::uint8_t> data) {
+      return digest(reinterpret_cast<const char*>(key.data()), static_cast<std::uint32_t>(key.size()),
+                    reinterpret_cast<const char*>(data.data()), static_cast<std::uint32_t>(data.size()));
    }
 
  private:
@@ -49,7 +55,7 @@ template <typename H> class hmac {
    typename H::encoder encoder;
 };
 
-typedef hmac<fcl::sha224> hmac_sha224;
-typedef hmac<fcl::sha256> hmac_sha256;
-typedef hmac<fcl::sha512> hmac_sha512;
-} // namespace fcl
+typedef hmac<fcl::crypto::sha224> hmac_sha224;
+typedef hmac<fcl::crypto::sha256> hmac_sha256;
+typedef hmac<fcl::crypto::sha512> hmac_sha512;
+} // namespace fcl::crypto

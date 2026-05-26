@@ -19,6 +19,15 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(FCL_ENABLE_MODULES "Build FCL public module interfaces when supported" ON)
 option(FCL_ENABLE_VENDOR_TESTS "Build donor dependency tests and benchmarks" OFF)
 option(FCL_ENABLE_TUI "Build FCL Notcurses-backed terminal UI library when notcurses-core is available" ON)
+option(FCL_ENABLE_LIBP2P_INTEROP "Run live go-libp2p/rust-libp2p interoperability tests" OFF)
+
+set(FCL_LIBP2P_DONORS_ROOT "" CACHE PATH "Path to workspace donors directory containing go-libp2p, rust-libp2p and libp2p-specs")
+if(NOT FCL_LIBP2P_DONORS_ROOT)
+   set(_fcl_default_donors_root "/Users/vladimirtarnakin/.openclaw/workspace/Projects/Storlane/donors")
+   if(EXISTS "${_fcl_default_donors_root}")
+      set(FCL_LIBP2P_DONORS_ROOT "${_fcl_default_donors_root}" CACHE PATH "Path to workspace donors directory containing go-libp2p, rust-libp2p and libp2p-specs" FORCE)
+   endif()
+endif()
 
 if(FCL_ENABLE_MODULES AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
    message(FATAL_ERROR "FCL_ENABLE_MODULES=ON requires module-capable Homebrew LLVM clang++; AppleClang is not a supported FCL module toolchain")
@@ -45,6 +54,7 @@ add_compile_definitions(BOOST_UNORDERED_DISABLE_NEON)
 set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 find_package(
    Boost 1.90 REQUIRED CONFIG
@@ -314,9 +324,8 @@ add_subdirectory(libraries/http)
 add_subdirectory(libraries/websocket)
 add_subdirectory(libraries/quic)
 add_subdirectory(libraries/p2p)
-# TODO(p2p-core-rewrite): Re-enable app/plugins after the libp2p-compatible
-# P2P session/stream core is stable. Keeping them in the default build now would
-# force shim compatibility around the old FCL control-message handshake.
+add_subdirectory(libraries/app)
+add_subdirectory(libraries/plugins)
 if(FCL_ENABLE_TUI AND FCL_TUI_NOTCURSES_TARGET)
    add_subdirectory(libraries/tui)
 endif()
@@ -343,6 +352,8 @@ set(
    fcl_websocket
    fcl_quic
    fcl_p2p
+   fcl_app
+   fcl_plugins
 )
 
 if(TARGET fcl_tui)
@@ -359,8 +370,6 @@ target_link_libraries(
 )
 
 if(DEFINED BUILD_TESTING AND BUILD_TESTING)
-   # TODO(p2p-core-rewrite): Re-enable examples with app/plugins after the P2P
-   # core rewrite integration pass.
    add_subdirectory(tests)
 endif()
 

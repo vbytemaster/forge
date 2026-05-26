@@ -20,10 +20,15 @@ struct endpoint {
       dns6,
    };
 
+   struct circuit {
+      peer_id target;
+   };
+
    address_kind kind = address_kind::ip4;
    std::string host;
    std::uint16_t port = 0;
    std::optional<peer_id> peer;
+   std::optional<circuit> relayed;
 
    [[nodiscard]] std::string to_string() const;
    [[nodiscard]] fcl::quic::endpoint quic_endpoint() const;

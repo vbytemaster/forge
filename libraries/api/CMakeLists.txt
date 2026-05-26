@@ -2,7 +2,7 @@ add_library(
    fcl_api STATIC
    binding.cpp
    descriptor.cpp
-   errors.cpp
+   error_projection.cpp
    registry.cpp
 )
 fcl_target_modules(fcl_api api)

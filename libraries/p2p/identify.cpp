@@ -2,6 +2,7 @@ module;
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -11,7 +12,7 @@ module;
 module fcl.p2p.identify;
 
 import fcl.multiformats;
-import fcl.p2p.errors;
+import fcl.p2p.exceptions;
 
 namespace fcl::p2p::identify {
 namespace {
@@ -49,6 +50,16 @@ void append_string(std::vector<std::uint8_t>& out, std::uint32_t field, std::str
    return fcl::multiformats::address::parse(value.to_string()).to_bytes();
 }
 
+[[nodiscard]] std::optional<endpoint> supported_endpoint(std::span<const std::uint8_t> value) {
+   try {
+      return parse_endpoint(fcl::multiformats::address::from_bytes(value).to_string());
+   } catch (const fcl::multiformats::exceptions::invalid_format&) {
+      return std::nullopt;
+   } catch (const fcl::exception::base&) {
+      return std::nullopt;
+   }
+}
+
 class reader {
  public:
    explicit reader(std::span<const std::uint8_t> bytes) : bytes_(bytes) {}
@@ -61,7 +72,7 @@ class reader {
       const auto decoded = read_varint();
       const auto type = static_cast<wire_type>(decoded & 0x07U);
       if (type != wire_type::varint && type != wire_type::length_delimited) {
-         throw_p2p_error(error_kind::codec_error, "unsupported Identify protobuf wire type");
+         exceptions::raise(exceptions::code::codec_error, "unsupported Identify protobuf wire type");
       }
       return {static_cast<std::uint32_t>(decoded >> 3U), type};
    }
@@ -71,15 +82,15 @@ class reader {
          const auto decoded = fcl::multiformats::varint_decode(bytes_.subspan(offset_));
          offset_ += decoded.size;
          return decoded.value;
-      } catch (const fcl::multiformats::format_error& error) {
-         throw_p2p_error(error_kind::codec_error, error.what());
+      } catch (const fcl::multiformats::exceptions::invalid_format& error) {
+         exceptions::raise(exceptions::code::codec_error, error.what());
       }
    }
 
    [[nodiscard]] std::vector<std::uint8_t> bytes() {
       const auto size = read_varint();
       if (size > bytes_.size() - offset_) {
-         throw_p2p_error(error_kind::codec_error, "truncated Identify protobuf bytes field");
+         exceptions::raise(exceptions::code::codec_error, "truncated Identify protobuf bytes field");
       }
       auto out = std::vector<std::uint8_t>{bytes_.begin() + static_cast<std::ptrdiff_t>(offset_),
                                            bytes_.begin() + static_cast<std::ptrdiff_t>(offset_ + size)};
@@ -148,14 +159,17 @@ document decode(std::span<const std::uint8_t> bytes) {
       case 1:
          out.public_key = in.bytes();
          break;
-      case 2:
-         out.listen_endpoints.push_back(parse_endpoint(fcl::multiformats::address::from_bytes(in.bytes()).to_string()));
+      case 2: {
+         if (auto endpoint = supported_endpoint(in.bytes())) {
+            out.listen_endpoints.push_back(std::move(*endpoint));
+         }
          break;
+      }
       case 3:
          out.protocols.push_back(protocol_id{.value = in.string()});
          break;
       case 4:
-         out.observed_endpoint = parse_endpoint(fcl::multiformats::address::from_bytes(in.bytes()).to_string());
+         out.observed_endpoint = supported_endpoint(in.bytes());
          break;
       case 5:
          out.protocol_version = in.string();

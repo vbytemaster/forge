@@ -17,7 +17,7 @@ add_executable(
    crypto/test_bls_legacy.cpp
    crypto/test_cypher_suites.cpp
    crypto/test_hash_functions.cpp
-   crypto/test_k1_recover.cpp
+   crypto/test_secp256k1_recover.cpp
    crypto/test_modular_arithmetic.cpp
    crypto/test_symmetric.cpp
    crypto/test_webauthn.cpp
@@ -69,7 +69,7 @@ add_executable(
    crypto/test_bls_legacy.cpp
    crypto/test_cypher_suites.cpp
    crypto/test_hash_functions.cpp
-   crypto/test_k1_recover.cpp
+   crypto/test_secp256k1_recover.cpp
    crypto/test_modular_arithmetic.cpp
    crypto/test_symmetric.cpp
    crypto/test_webauthn.cpp
@@ -93,8 +93,13 @@ add_executable(
 target_link_libraries(test_fcl_asio fcl Boost::included_unit_test_framework)
 add_test(NAME test_fcl_asio COMMAND test_fcl_asio WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
-# TODO(p2p-core-rewrite): App/plugin tests are temporarily disabled while the
-# P2P core handshake is replaced with libp2p-compatible stream negotiation.
+add_executable(
+   test_fcl_app
+   unit/main.cpp
+   app/app_tests.cpp
+)
+target_link_libraries(test_fcl_app fcl Boost::included_unit_test_framework)
+add_test(NAME test_fcl_app COMMAND test_fcl_app WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
    test_fcl_schema
@@ -162,8 +167,54 @@ add_executable(
 target_link_libraries(test_fcl_quic_p2p fcl Boost::included_unit_test_framework)
 add_test(NAME test_fcl_quic_p2p COMMAND test_fcl_quic_p2p WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
-# TODO(p2p-core-rewrite): Re-enable after p2p_node is rebuilt on the new P2P
-# session/stream core.
+add_executable(
+   fcl_interop_fixture
+   libp2p_interop/fcl_interop_fixture.cpp
+)
+target_link_libraries(fcl_interop_fixture fcl)
+
+set(_fcl_libp2p_interop_enabled 0)
+if(FCL_ENABLE_LIBP2P_INTEROP)
+   set(_fcl_libp2p_interop_enabled 1)
+endif()
+
+add_custom_target(
+   test_fcl_libp2p_interop
+   COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop/runner.py
+      --enabled ${_fcl_libp2p_interop_enabled}
+      --fcl-fixture $<TARGET_FILE:fcl_interop_fixture>
+      --source-dir ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop
+      --build-dir ${CMAKE_CURRENT_BINARY_DIR}/libp2p_interop
+      --donors-root ${FCL_LIBP2P_DONORS_ROOT}
+   DEPENDS fcl_interop_fixture
+)
+add_test(
+   NAME test_fcl_libp2p_interop
+   COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop/runner.py
+      --enabled ${_fcl_libp2p_interop_enabled}
+      --fcl-fixture $<TARGET_FILE:fcl_interop_fixture>
+      --source-dir ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop
+      --build-dir ${CMAKE_CURRENT_BINARY_DIR}/libp2p_interop
+      --donors-root ${FCL_LIBP2P_DONORS_ROOT}
+)
+set_tests_properties(test_fcl_libp2p_interop PROPERTIES SKIP_REGULAR_EXPRESSION "^SKIP:")
+
+add_test(
+   NAME test_fcl_libp2p_donor_matrix
+   COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop/check_donor_matrix.py
+      ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop/donor_cases.json
+)
+
+add_executable(
+   test_fcl_plugins
+   unit/main.cpp
+   plugins/plugins_tests.cpp
+)
+target_link_libraries(test_fcl_plugins fcl Boost::included_unit_test_framework)
+add_test(NAME test_fcl_plugins COMMAND test_fcl_plugins WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 if(TARGET fcl_tui)
    add_executable(

@@ -79,7 +79,7 @@ boost::asio::awaitable<frame> registry::dispatch(frame request) const {
       co_return response;
    } catch (const fcl::exception::base& error) {
       response.kind = frame_kind::error;
-      fcl::raw::pack(response.payload, make_error_payload(error, find_error(*method, error)));
+      fcl::raw::pack(response.payload, project_error(*method, error));
       co_return response;
    } catch (const std::exception&) {
       response.kind = frame_kind::error;
@@ -168,7 +168,7 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_many(frame request
       responses.push_back(make_response_base(request, frame_kind::stream_end));
       co_return responses;
    } catch (const fcl::exception::base& error) {
-      co_return std::vector<frame>{make_error_response(request, make_error_payload(error, find_error(*method, error)))};
+      co_return std::vector<frame>{make_error_response(request, project_error(*method, error))};
    } catch (const std::exception&) {
       co_return std::vector<frame>{make_error_response(request, make_internal_error_payload())};
    } catch (...) {
@@ -178,7 +178,7 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_many(frame request
 
 boost::asio::awaitable<std::vector<frame>> registry::dispatch_stream(std::vector<frame> frames) const {
    if (frames.empty()) {
-      throw api_error{"API stream dispatch requires at least one frame"};
+      throw exceptions::protocol_error{"API stream dispatch requires at least one frame"};
    }
 
    const auto request = frames.front();
@@ -288,7 +288,7 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_stream(std::vector
       responses.push_back(make_response_base(request, frame_kind::stream_end));
       co_return responses;
    } catch (const fcl::exception::base& error) {
-      co_return std::vector<frame>{make_error_response(request, make_error_payload(error, find_error(*method, error)))};
+      co_return std::vector<frame>{make_error_response(request, project_error(*method, error))};
    } catch (const std::exception&) {
       co_return std::vector<frame>{make_error_response(request, make_internal_error_payload())};
    } catch (...) {

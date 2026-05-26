@@ -46,10 +46,7 @@ class bls_private_key {
    friend bool operator==(const bls_private_key& pk1, const bls_private_key& pk2);
 }; // bls_private_key
 
+void to_variant(const bls_private_key& var, variant& vo);
+void from_variant(const variant& var, bls_private_key& vo);
+
 } // namespace fcl::crypto::blslib
-
-export namespace fcl {
-void to_variant(const crypto::blslib::bls_private_key& var, variant& vo);
-
-void from_variant(const variant& var, crypto::blslib::bls_private_key& vo);
-} // namespace fcl

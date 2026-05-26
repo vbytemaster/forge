@@ -176,7 +176,7 @@ class test_plugin final : public fcl::app::plugin {
    boost::asio::awaitable<void> startup() override {
       log_->entries.push_back("startup:" + id_);
       if (fail_startup_) {
-         throw std::runtime_error{"startup failed"};
+         throw fcl::app::exceptions::startup_failed{"startup failed"};
       }
       co_return;
    }
@@ -222,7 +222,7 @@ class configurable_plugin final : public fcl::app::plugin {
 
    boost::asio::awaitable<void> initialize(fcl::app::plugin_context&) override {
       if (bind_port_ == 0) {
-         throw std::runtime_error{"not configured"};
+         throw fcl::app::exceptions::config_failed{"not configured"};
       }
       log_->entries.push_back("initialize:configurable");
       co_return;
@@ -495,7 +495,7 @@ class failing_initialize_plugin final : public fcl::app::plugin {
 
    boost::asio::awaitable<void> initialize(fcl::app::plugin_context&) override {
       log_->entries.push_back("initialize:init-fail");
-      throw std::runtime_error{"initialize failed"};
+      throw fcl::app::exceptions::initialize_failed{"initialize failed"};
    }
 
    boost::asio::awaitable<void> startup() override {
@@ -925,7 +925,7 @@ BOOST_AUTO_TEST_CASE(application_runtime_rolls_back_and_shutdown_is_idempotent) 
    registry.register_plugin(descriptor("b", log, {}, true, true));
 
    auto app = fcl::app::application_runtime{context, registry.instantiate_enabled({})};
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, app.startup()), std::runtime_error);
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, app.startup()), fcl::app::exceptions::startup_failed);
    BOOST_CHECK(app.state() == fcl::app::application_state::stopped);
    BOOST_REQUIRE_EQUAL(log.entries.size(), 6);
    BOOST_TEST(log.entries[0] == "initialize:a");
@@ -1005,7 +1005,7 @@ BOOST_AUTO_TEST_CASE(application_runtime_records_failed_plugin_diagnostics) {
    registry.register_plugin(descriptor("a", log, {}, true, true));
 
    auto app = fcl::app::application_runtime{context, registry.instantiate_enabled({}), &diagnostics};
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, app.startup()), std::runtime_error);
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, app.startup()), fcl::app::exceptions::startup_failed);
 
    const auto snapshot = diagnostics.snapshot(events);
    BOOST_TEST(static_cast<int>(snapshot.state) == static_cast<int>(fcl::app::lifecycle_state::failed));
@@ -1119,7 +1119,7 @@ BOOST_AUTO_TEST_CASE(application_shell_rolls_back_started_plugins_on_startup_fai
    auto log = lifecycle_log{};
    auto app = shell_failure_application{log};
 
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.startup()), std::runtime_error);
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.startup()), fcl::app::exceptions::startup_failed);
    BOOST_TEST(static_cast<int>(app.state()) == static_cast<int>(fcl::app::application_state::stopped));
 
    const auto expected = std::vector<std::string>{
@@ -1156,7 +1156,7 @@ BOOST_AUTO_TEST_CASE(application_shell_initialize_failure_transitions_to_stopped
    auto log = lifecycle_log{};
    auto app = shell_initialize_failure_application{log};
 
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.initialize()), std::runtime_error);
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.initialize()), fcl::app::exceptions::initialize_failed);
    BOOST_TEST(static_cast<int>(app.state()) == static_cast<int>(fcl::app::application_state::stopped));
    BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.startup()), std::logic_error);
 
@@ -1288,7 +1288,8 @@ BOOST_AUTO_TEST_CASE(run_application_unique_ptr_reports_shutdown_timeout_after_c
    options.handle_sigterm = false;
    options.shutdown_timeout = std::chrono::milliseconds{1};
 
-   BOOST_CHECK_THROW(fcl::app::run_application(std::move(app), fcl::config::document{}, options), std::runtime_error);
+   BOOST_CHECK_THROW(fcl::app::run_application(std::move(app), fcl::config::document{}, options),
+                     fcl::app::exceptions::shutdown_failed);
    BOOST_TEST(!state->shutdown_finished());
    BOOST_TEST(!state->shell_destroyed());
    BOOST_TEST(state->wait_for_shutdown(std::chrono::seconds{1}));
@@ -1315,7 +1316,7 @@ BOOST_AUTO_TEST_CASE(run_application_reference_reports_timeout_only_after_shutdo
    auto threw_timeout = false;
    try {
       static_cast<void>(fcl::app::run_application(app, fcl::config::document{}, options));
-   } catch (const std::runtime_error&) {
+   } catch (const fcl::app::exceptions::shutdown_failed&) {
       threw_timeout = true;
    }
 

@@ -15,7 +15,7 @@ module;
 export module fcl.api.registry;
 
 export import fcl.api.descriptor;
-export import fcl.api.errors;
+export import fcl.api.error_projection;
 export import fcl.api.handle;
 
 export namespace fcl::api {
@@ -32,14 +32,14 @@ class registry {
       static_assert(std::is_class_v<Interface>, "API interface must be a class type");
       static_assert(std::has_virtual_destructor_v<Interface>, "API interface must have a virtual destructor");
       if (!implementation) {
-         throw api_error{"cannot install null API implementation"};
+         throw exceptions::protocol_error{"cannot install null API implementation"};
       }
       if (!descriptor.interface_type.hash_code() || descriptor.interface_type != typeid(Interface)) {
          descriptor.interface_type = typeid(Interface);
       }
       const auto key = key_for(descriptor.id.value, descriptor.version.major);
       if (entries_.contains(key)) {
-         throw api_error{"duplicate API implementation"};
+         throw exceptions::protocol_error{"duplicate API implementation"};
       }
       entries_.emplace(key, entry{std::move(descriptor), std::move(implementation), typeid(Interface)});
    }
@@ -55,7 +55,7 @@ class registry {
    template <typename Interface> [[nodiscard]] handle<Interface> get(api_ref requested) const {
       auto result = try_get<Interface>(std::move(requested));
       if (!result) {
-         throw api_error{"required API is not available"};
+         throw exceptions::protocol_error{"required API is not available"};
       }
       return result;
    }

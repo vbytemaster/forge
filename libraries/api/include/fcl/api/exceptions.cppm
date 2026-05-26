@@ -1,5 +1,6 @@
 module;
 
+#include <boost/describe.hpp>
 #include <cstdint>
 #include <fcl/exception/macros.hpp>
 
@@ -30,5 +31,8 @@ using cancelled = fcl::exception::coded_exception<code, code::cancelled>;
 using remote_internal = fcl::exception::coded_exception<code, code::remote_internal>;
 using protocol_error = fcl::exception::coded_exception<code, code::protocol_error>;
 using resource_exhausted = fcl::exception::coded_exception<code, code::resource_exhausted>;
+
+BOOST_DESCRIBE_ENUM(code, method_not_found, incompatible_version, codec_failed, deadline_exceeded, cancelled,
+                    remote_internal, protocol_error, resource_exhausted)
 
 } // namespace fcl::api::exceptions

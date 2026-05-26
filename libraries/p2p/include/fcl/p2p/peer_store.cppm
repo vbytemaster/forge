@@ -11,6 +11,7 @@ export module fcl.p2p.peer_store;
 
 import fcl.p2p.identity;
 import fcl.p2p.protocol;
+import fcl.p2p.reachability;
 import fcl.p2p.scoring;
 import fcl.quic.endpoint;
 
@@ -42,6 +43,18 @@ class peer_store {
       double score = 0.0;
    };
 
+   struct relay_record {
+      peer_id relay;
+      std::uint64_t reservation_id = 0;
+      std::chrono::system_clock::time_point expires_at{};
+      std::vector<fcl::quic::endpoint> endpoints;
+      std::vector<std::uint8_t> voucher;
+      std::uint64_t successes = 0;
+      std::uint64_t failures = 0;
+      std::chrono::milliseconds last_latency{0};
+      double score = 0.0;
+   };
+
    struct record {
       peer_id peer;
       capability_set capabilities{};
@@ -51,7 +64,8 @@ class peer_store {
       std::vector<protocol_id> protocols;
       std::vector<std::uint8_t> signed_peer_record;
       std::vector<endpoint_record> endpoints;
-      reachability_state reachability = reachability_state::unknown;
+      std::vector<relay_record> relay_reservations;
+      reachability::state reachability = reachability::state::unknown;
       std::optional<fcl::quic::endpoint> observed_endpoint;
       std::chrono::system_clock::time_point reachability_expires_at{};
       std::uint64_t successes = 0;
@@ -79,7 +93,7 @@ class peer_store {
 
    void upsert(record value);
    void learn_endpoint(peer_id peer, fcl::quic::endpoint endpoint, capability_set capabilities = {});
-   void mark_reachability(peer_id peer, reachability_state state,
+   void mark_reachability(peer_id peer, reachability::state state,
                           std::optional<fcl::quic::endpoint> observed = std::nullopt);
    void mark_success(const peer_id& peer, path::kind kind, std::chrono::milliseconds latency);
    void mark_failure(const peer_id& peer);
@@ -102,7 +116,7 @@ class peer_store::backend {
 
    virtual void upsert(record value) = 0;
    virtual void learn_endpoint(peer_id peer, fcl::quic::endpoint endpoint, capability_set capabilities) = 0;
-   virtual void mark_reachability(peer_id peer, reachability_state state,
+   virtual void mark_reachability(peer_id peer, reachability::state state,
                                   std::optional<fcl::quic::endpoint> observed) = 0;
    virtual void mark_success(const peer_id& peer, path::kind kind, std::chrono::milliseconds latency) = 0;
    virtual void mark_failure(const peer_id& peer) = 0;

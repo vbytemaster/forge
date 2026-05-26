@@ -135,7 +135,7 @@ import fcl.app;
 import fcl.log.logger;
 import fcl.log.record;
 
-fcl::error::set_log_sink([&](std::string_view chain) {
+fcl::exception::set_log_sink([&](std::string_view chain) {
    log.error(
       "operation failed",
       {
@@ -148,8 +148,8 @@ try {
    run_operation();
 } FCL_CAPTURE_AND_LOG(
    "operation failed",
-   fcl::error::ctx("phase", "startup"),
-   fcl::error::secret("request-token", token))
+   fcl::exception::ctx("phase", "startup"),
+   fcl::exception::secret("request-token", token))
 ```
 
 Use `FCL_CAPTURE_AND_LOG` only for explicit cleanup/best-effort paths. If the
@@ -172,7 +172,7 @@ boost::asio::awaitable<void> start_with_logging(fcl::app::application_shell& app
       log.error(
          "startup failed",
          {
-            fcl::log_ctx("exception-chain", fcl::error::format_exception_chain(error)),
+            fcl::log_ctx("exception-chain", fcl::exception::format_exception_chain(error)),
             fcl::log_secret("bootstrap-token", token),
          });
       app.request_stop();

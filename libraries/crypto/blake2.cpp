@@ -11,7 +11,7 @@ module fcl.crypto.blake2;
 
 import fcl.core.utility;
 
-namespace fcl {
+namespace fcl::crypto {
 namespace {
 
 constexpr std::array<std::uint64_t, 8> blake2b_iv = {
@@ -150,4 +150,4 @@ std::variant<blake2b_error, bytes> blake2b(std::uint32_t rounds, const bytes& h,
    return std::variant<blake2b_error, bytes>{std::in_place_index<1>, std::move(out)};
 }
 
-} // namespace fcl
+} // namespace fcl::crypto

@@ -6,7 +6,7 @@ export module fcl.crypto.hex;
 
 import fcl.core.utility;
 
-export namespace fcl {
+export namespace fcl::crypto {
 uint8_t from_hex(char c);
 std::string to_hex(const char* d, uint32_t s);
 std::string to_hex(const std::vector<char>& data);
@@ -26,4 +26,4 @@ template <typename I> std::string itoh(I n, size_t hlen = sizeof(I) << 1) {
       r[i] = digits[(n >> j) & 0x0f];
    return r;
 }
-} // namespace fcl
+} // namespace fcl::crypto

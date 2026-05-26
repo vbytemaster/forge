@@ -18,8 +18,6 @@
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
-#include <openssl/rand.h>
-#include <openssl/sha.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509_vfy.h>
@@ -42,6 +40,9 @@
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
+
+import fcl.crypto.random;
+import fcl.crypto.sha256;
 
 namespace fcl::quic::detail {
 namespace {
@@ -77,7 +78,54 @@ using stateless_reset_secret = std::array<std::uint8_t, stateless_reset_secret_s
 }
 
 [[noreturn]] void throw_engine(engine_error_kind kind, std::string message) {
-   throw engine_error{kind, std::move(message)};
+   throw engine_failure{kind, std::move(message)};
+}
+
+[[nodiscard]] std::string ngtcp2_read_error_message(ngtcp2_conn* conn, int rv) {
+   auto out = std::string{"ngtcp2_conn_read_pkt failed: "};
+   out += ngtcp2_strerror(rv);
+   if (conn == nullptr) {
+      return out;
+   }
+   out += "; client_version=0x";
+   {
+      auto stream = std::ostringstream{};
+      stream << std::hex << ngtcp2_conn_get_client_chosen_version(conn);
+      out += stream.str();
+   }
+   out += "; negotiated_version=0x";
+   {
+      auto stream = std::ostringstream{};
+      stream << std::hex << ngtcp2_conn_get_negotiated_version(conn);
+      out += stream.str();
+   }
+   if (const auto tls_error = ngtcp2_conn_get_tls_error(conn); tls_error != 0) {
+      out += "; tls_error=";
+      out += std::to_string(tls_error);
+      out += " ";
+      out += ERR_error_string(static_cast<unsigned long>(tls_error), nullptr);
+   }
+   if (const auto alert = ngtcp2_conn_get_tls_alert(conn); alert != 0) {
+      out += "; tls_alert=";
+      out += SSL_alert_desc_string_long(alert);
+   }
+   const auto* close_error = ngtcp2_conn_get_ccerr(conn);
+   if (close_error != nullptr && (close_error->type != NGTCP2_CCERR_TYPE_IDLE_CLOSE || close_error->error_code != 0 ||
+                                  close_error->reasonlen != 0)) {
+      out += "; close_type=";
+      out += std::to_string(static_cast<int>(close_error->type));
+      out += "; close_code=";
+      out += std::to_string(close_error->error_code);
+      if (close_error->frame_type != 0) {
+         out += "; close_frame=";
+         out += std::to_string(close_error->frame_type);
+      }
+      if (close_error->reason != nullptr && close_error->reasonlen != 0) {
+         out += "; close_reason=";
+         out.append(reinterpret_cast<const char*>(close_error->reason), close_error->reasonlen);
+      }
+   }
+   return out;
 }
 
 [[nodiscard]] std::chrono::milliseconds remaining_timeout_budget(std::chrono::steady_clock::time_point started,
@@ -100,7 +148,12 @@ int accept_any_certificate_cb(int, X509_STORE_CTX*) {
 }
 
 [[nodiscard]] bool fill_random(std::span<std::uint8_t> bytes) {
-   return RAND_bytes(bytes.data(), static_cast<int>(bytes.size())) == 1;
+   try {
+      fcl::crypto::fill_random(bytes);
+      return true;
+   } catch (...) {
+      return false;
+   }
 }
 
 [[nodiscard]] stateless_reset_secret random_stateless_reset_secret() {
@@ -117,6 +170,7 @@ void rand_cb(std::uint8_t* dest, std::size_t destlen, const ngtcp2_rand_ctx*) {
 
 int get_new_connection_id_cb(ngtcp2_conn*, ngtcp2_cid* cid, ngtcp2_stateless_reset_token* token, std::size_t cidlen,
                              void* user_data);
+int remove_connection_id_cb(ngtcp2_conn*, const ngtcp2_cid* cid, void* user_data);
 
 [[nodiscard]] std::string cid_key(const ngtcp2_cid& cid) {
    return std::string{reinterpret_cast<const char*>(cid.data), reinterpret_cast<const char*>(cid.data) + cid.datalen};
@@ -347,11 +401,19 @@ void wake(std::vector<std::weak_ptr<asio::steady_timer>>& waiters) {
 
 } // namespace
 
-engine_error::engine_error(engine_error_kind kind, std::string message)
-    : std::runtime_error(std::move(message)), kind_(kind) {}
+engine_failure::engine_failure(engine_error_kind kind, std::string message)
+    : kind_(kind), message_(std::move(message)) {}
 
-engine_error_kind engine_error::kind() const noexcept {
+engine_error_kind engine_failure::kind() const noexcept {
    return kind_;
+}
+
+const char* engine_failure::what() const noexcept {
+   return message_.c_str();
+}
+
+const std::string& engine_failure::message() const noexcept {
+   return message_;
 }
 
 std::string normalize_engine_sha256_fingerprint(std::string_view value) {
@@ -373,8 +435,7 @@ std::string normalize_engine_sha256_fingerprint(std::string_view value) {
 }
 
 std::string engine_sha256_fingerprint(std::span<const std::uint8_t> data) {
-   auto digest = std::array<unsigned char, SHA256_DIGEST_LENGTH>{};
-   SHA256(data.data(), data.size(), digest.data());
+   const auto digest = fcl::crypto::sha256::hash(data).to_uint8_span();
 
    auto out = std::ostringstream{};
    out << std::hex << std::setfill('0');
@@ -512,6 +573,8 @@ struct engine_connection::impl {
    std::vector<std::weak_ptr<asio::steady_timer>> accept_stream_waiters;
    std::function<void()> handshake_completed_hook;
    std::function<void(std::shared_ptr<impl>)> closed_hook;
+   std::function<void(const ngtcp2_cid&)> local_connection_id_issued_hook;
+   std::function<void(const ngtcp2_cid&)> local_connection_id_retired_hook;
 
    asio::steady_timer expiry_timer;
    std::deque<std::vector<std::uint8_t>> outbound_datagrams;
@@ -782,7 +845,7 @@ struct engine_connection::impl {
           [shared]() -> asio::awaitable<void> {
              try {
                 co_await shared->process_queued_packets();
-             } catch (const engine_error&) {
+             } catch (const engine_failure&) {
                 shared->fail_all();
              }
           },
@@ -799,7 +862,7 @@ struct engine_connection::impl {
           [shared]() -> asio::awaitable<void> {
              try {
                 co_await shared->handle_expiry_event();
-             } catch (const engine_error&) {
+             } catch (const engine_failure&) {
                 shared->fail_all();
              }
           },
@@ -836,7 +899,7 @@ struct engine_connection::impl {
              [shared]() -> asio::awaitable<void> {
                 try {
                    co_await shared->handle_expiry_event();
-                } catch (const engine_error&) {
+                } catch (const engine_failure&) {
                    shared->fail_all();
                 }
              },
@@ -1039,10 +1102,16 @@ struct engine_connection::impl {
          auto pi = ngtcp2_pkt_info{};
          const auto rv =
              ngtcp2_conn_read_pkt(conn, &path.path, &pi, queued.bytes.data(), queued.bytes.size(), timestamp());
+         if (rv == NGTCP2_ERR_DRAINING || rv == NGTCP2_ERR_CLOSING) {
+            fail_all();
+            co_return;
+         }
          if (rv != 0) {
             fail_all();
-            throw_engine(engine_error_kind::internal_error,
-                         std::string{"ngtcp2_conn_read_pkt failed: "} + ngtcp2_strerror(rv));
+            auto message = ngtcp2_read_error_message(conn, rv);
+            message += "; packet_size=";
+            message += std::to_string(queued.bytes.size());
+            throw_engine(engine_error_kind::internal_error, std::move(message));
          }
          metrics.packets_received.fetch_add(1, std::memory_order_relaxed);
          metrics.bytes_received.fetch_add(queued.bytes.size(), std::memory_order_relaxed);
@@ -1101,6 +1170,28 @@ int get_new_connection_id_cb(ngtcp2_conn*, ngtcp2_cid* cid, ngtcp2_stateless_res
                                                     connection->reset_secret.size(), cid) != 0) {
       return NGTCP2_ERR_CALLBACK_FAILURE;
    }
+   if (connection->local_connection_id_issued_hook) {
+      try {
+         connection->local_connection_id_issued_hook(*cid);
+      } catch (...) {
+         return NGTCP2_ERR_CALLBACK_FAILURE;
+      }
+   }
+   return 0;
+}
+
+int remove_connection_id_cb(ngtcp2_conn*, const ngtcp2_cid* cid, void* user_data) {
+   auto* connection = static_cast<engine_connection::impl*>(user_data);
+   if (connection == nullptr || cid == nullptr) {
+      return 0;
+   }
+   if (connection->local_connection_id_retired_hook) {
+      try {
+         connection->local_connection_id_retired_hook(*cid);
+      } catch (...) {
+         return NGTCP2_ERR_CALLBACK_FAILURE;
+      }
+   }
    return 0;
 }
 
@@ -1116,7 +1207,7 @@ int handshake_completed_cb(ngtcp2_conn*, void* user_data) {
          connection->verify_peer(connection->peer_security);
       }
       connection->complete_handshake();
-   } catch (const engine_error&) {
+   } catch (const engine_failure&) {
       connection->fail_all();
       return NGTCP2_ERR_CALLBACK_FAILURE;
    }
@@ -1230,6 +1321,7 @@ int stream_reset_cb(ngtcp2_conn* conn, std::int64_t stream_id, std::uint64_t, st
        .stream_close = stream_close_cb,
        .recv_retry = ngtcp2_crypto_recv_retry_cb,
        .rand = rand_cb,
+       .remove_connection_id = remove_connection_id_cb,
        .update_key = ngtcp2_crypto_update_key_cb,
        .stream_reset = stream_reset_cb,
        .handshake_confirmed = handshake_completed_cb,
@@ -1254,8 +1346,10 @@ int stream_reset_cb(ngtcp2_conn* conn, std::int64_t stream_id, std::uint64_t, st
        .stream_open = stream_open_cb,
        .stream_close = stream_close_cb,
        .rand = rand_cb,
+       .remove_connection_id = remove_connection_id_cb,
        .update_key = ngtcp2_crypto_update_key_cb,
        .stream_reset = stream_reset_cb,
+       .handshake_confirmed = handshake_completed_cb,
        .delete_crypto_aead_ctx = ngtcp2_crypto_delete_crypto_aead_ctx_cb,
        .delete_crypto_cipher_ctx = ngtcp2_crypto_delete_crypto_cipher_ctx_cb,
        .version_negotiation = ngtcp2_crypto_version_negotiation_cb,
@@ -1446,7 +1540,7 @@ boost::asio::awaitable<void> engine_stream::async_write(std::span<const std::uin
        [connection]() -> asio::awaitable<void> {
           try {
              co_await connection->drain_send();
-          } catch (const engine_error&) {
+          } catch (const engine_failure&) {
              connection->fail_all();
           }
        },
@@ -1745,7 +1839,7 @@ engine_connector::async_connect(engine_endpoint remote, engine_client_options op
           [connection_impl]() -> asio::awaitable<void> {
              try {
                 co_await connection_impl->drain_send();
-             } catch (const engine_error&) {
+             } catch (const engine_failure&) {
                 connection_impl->fail_all();
              }
           },
@@ -1765,11 +1859,11 @@ engine_connector::async_connect(engine_endpoint remote, engine_client_options op
          throw_engine(engine_error_kind::connect_timeout, "QUIC client connect timed out");
       }
       connect_timer->cancel();
-   } catch (const engine_error& error) {
+   } catch (const engine_failure& error) {
       if (connect_deadline->timed_out() ||
           (error.kind() == engine_error_kind::handshake_timeout && handshake_limited_by_connect_deadline)) {
          connect_error =
-             std::make_exception_ptr(engine_error{engine_error_kind::connect_timeout, "QUIC client connect timed out"});
+             std::make_exception_ptr(engine_failure{engine_error_kind::connect_timeout, "QUIC client connect timed out"});
       } else {
          connect_error = std::current_exception();
       }
@@ -1799,6 +1893,7 @@ struct engine_listener::impl {
    engine_endpoint bind_endpoint;
    engine_server_options options;
    stateless_reset_secret reset_secret = random_stateless_reset_secret();
+   std::mutex cid_mutex;
    std::unordered_map<std::string, std::shared_ptr<engine_connection::impl>> connections_by_cid;
    std::unordered_map<engine_connection::impl*, std::vector<std::string>> cids_by_connection;
    std::deque<std::shared_ptr<engine_connection>> accepted;
@@ -1833,7 +1928,7 @@ struct engine_listener::impl {
                 packet.resize(nread);
                 try {
                    co_await self->handle_packet(std::move(packet), std::move(from));
-                } catch (const engine_error&) {
+                } catch (const engine_failure&) {
                    // Malformed/adversarial packets must not permanently stop the listener.
                 }
              }
@@ -1841,9 +1936,42 @@ struct engine_listener::impl {
           asio::detached);
    }
 
+   [[nodiscard]] std::shared_ptr<engine_connection::impl> find_connection_by_cid(const std::string& key) {
+      auto lock = std::scoped_lock{cid_mutex};
+      if (auto it = connections_by_cid.find(key); it != connections_by_cid.end()) {
+         return it->second;
+      }
+      return {};
+   }
+
+   [[nodiscard]] std::size_t connection_count() {
+      auto lock = std::scoped_lock{cid_mutex};
+      return cids_by_connection.size();
+   }
+
    void register_connection_cid(const std::shared_ptr<engine_connection::impl>& connection, std::string key) {
+      auto lock = std::scoped_lock{cid_mutex};
       connections_by_cid[key] = connection;
-      cids_by_connection[connection.get()].push_back(std::move(key));
+      auto& keys = cids_by_connection[connection.get()];
+      if (std::ranges::find(keys, key) == keys.end()) {
+         keys.push_back(std::move(key));
+      }
+   }
+
+   void unregister_connection_cid(engine_connection::impl* connection, std::string key) {
+      auto lock = std::scoped_lock{cid_mutex};
+      auto cid = connections_by_cid.find(key);
+      if (cid != connections_by_cid.end() && cid->second.get() == connection) {
+         connections_by_cid.erase(cid);
+      }
+      auto it = cids_by_connection.find(connection);
+      if (it == cids_by_connection.end()) {
+         return;
+      }
+      std::erase(it->second, key);
+      if (it->second.empty()) {
+         cids_by_connection.erase(it);
+      }
    }
 
    void cleanup_connection(const std::shared_ptr<engine_connection::impl>& connection) {
@@ -1851,26 +1979,22 @@ struct engine_listener::impl {
           accept_waiters, [](const std::weak_ptr<asio::steady_timer>& waiter) { return !waiter.expired(); });
       const auto failed_before_accept =
           has_accept_waiter && !connection->handshake_done && !connection->listener_accept_notified && !stopped;
-      auto it = cids_by_connection.find(connection.get());
-      if (it == cids_by_connection.end()) {
-         if (failed_before_accept) {
-            const auto timed_out = connection->metrics.timeouts.load(std::memory_order_relaxed) > 0;
-            pending_accept_error =
-                timed_out ? engine_error_kind::handshake_timeout : engine_error_kind::connection_closed;
-            pending_accept_failure_text = timed_out ? "QUIC server handshake timed out before accept"
-                                                     : "QUIC server connection closed before accept";
-            wake(accept_waiters);
-         }
-         return;
-      }
-      for (const auto& key : it->second) {
-         auto cid = connections_by_cid.find(key);
-         if (cid != connections_by_cid.end() && cid->second.get() == connection.get()) {
-            connections_by_cid.erase(cid);
+      auto had_connection_ids = false;
+      {
+         auto lock = std::scoped_lock{cid_mutex};
+         auto it = cids_by_connection.find(connection.get());
+         if (it != cids_by_connection.end()) {
+            had_connection_ids = true;
+            for (const auto& key : it->second) {
+               auto cid = connections_by_cid.find(key);
+               if (cid != connections_by_cid.end() && cid->second.get() == connection.get()) {
+                  connections_by_cid.erase(cid);
+               }
+            }
+            cids_by_connection.erase(it);
          }
       }
-      cids_by_connection.erase(it);
-      if (failed_before_accept) {
+      if (failed_before_accept && had_connection_ids) {
          const auto timed_out = connection->metrics.timeouts.load(std::memory_order_relaxed) > 0;
          pending_accept_error = timed_out ? engine_error_kind::handshake_timeout : engine_error_kind::connection_closed;
          pending_accept_failure_text = timed_out ? "QUIC server handshake timed out before accept"
@@ -1887,9 +2011,8 @@ struct engine_listener::impl {
       }
       auto key = cid_key(vcid.dcid, vcid.dcidlen);
       auto connection = std::shared_ptr<engine_connection::impl>{};
-      if (auto it = connections_by_cid.find(key); it != connections_by_cid.end()) {
-         connection = it->second;
-      } else {
+      connection = find_connection_by_cid(key);
+      if (!connection) {
          auto hd = ngtcp2_pkt_hd{};
          if (ngtcp2_pkt_decode_hd_long(&hd, packet.data(), packet.size()) < 0) {
             co_return;
@@ -1902,14 +2025,14 @@ struct engine_listener::impl {
       }
       try {
          co_await connection->handle_packet(std::move(packet), std::move(from));
-      } catch (const engine_error&) {
+      } catch (const engine_failure&) {
          asio::post(connection->strand, [connection] { connection->fail_all(); });
       }
    }
 
    [[nodiscard]] std::shared_ptr<engine_connection::impl> create_server_connection(const ngtcp2_pkt_hd& hd,
                                                                                    const udp::endpoint& from) {
-      if (cids_by_connection.size() >= options.limits.max_connections) {
+      if (connection_count() >= options.limits.max_connections) {
          throw_engine(engine_error_kind::backpressure_rejected, "QUIC listener max connections exceeded");
       }
       auto connection = std::make_shared<engine_connection::impl>(context, socket, from, options.limits);
@@ -1927,6 +2050,26 @@ struct engine_listener::impl {
          asio::post(listener->strand, [listener, closed_connection = std::move(closed_connection)] {
             listener->cleanup_connection(closed_connection);
          });
+      };
+      connection->local_connection_id_issued_hook = [listener_weak,
+                                                     connection_weak = std::weak_ptr<engine_connection::impl>{
+                                                         connection}](const ngtcp2_cid& cid) {
+         auto listener = listener_weak.lock();
+         auto connection = connection_weak.lock();
+         if (!listener || !connection) {
+            return;
+         }
+         listener->register_connection_cid(connection, cid_key(cid));
+      };
+      connection->local_connection_id_retired_hook = [listener_weak,
+                                                      connection_weak = std::weak_ptr<engine_connection::impl>{
+                                                          connection}](const ngtcp2_cid& cid) {
+         auto listener = listener_weak.lock();
+         auto connection = connection_weak.lock();
+         if (!listener || !connection) {
+            return;
+         }
+         listener->unregister_connection_cid(connection.get(), cid_key(cid));
       };
       auto connection_weak = std::weak_ptr<engine_connection::impl>{connection};
       connection->handshake_completed_hook = [listener_weak, connection_weak] {

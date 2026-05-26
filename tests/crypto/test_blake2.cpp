@@ -12,15 +12,16 @@ import fcl.crypto.blake2;
 import fcl.core.utility;
 
 using namespace fcl;
+using namespace fcl::crypto;
 
 #include "test_utils.hpp"
 
 namespace std {
-std::ostream& operator<<(std::ostream& st, const std::variant<fcl::blake2b_error, bytes>& err) {
-   if (std::holds_alternative<fcl::blake2b_error>(err))
-      st << static_cast<int32_t>(std::get<fcl::blake2b_error>(err));
+std::ostream& operator<<(std::ostream& st, const std::variant<fcl::crypto::blake2b_error, bytes>& err) {
+   if (std::holds_alternative<fcl::crypto::blake2b_error>(err))
+      st << static_cast<int32_t>(std::get<fcl::crypto::blake2b_error>(err));
    else
-      st << fcl::to_hex(std::get<bytes>(err));
+      st << fcl::crypto::to_hex(std::get<bytes>(err));
    return st;
 }
 } // namespace std
@@ -28,7 +29,7 @@ std::ostream& operator<<(std::ostream& st, const std::variant<fcl::blake2b_error
 BOOST_AUTO_TEST_SUITE(blake2)
 BOOST_AUTO_TEST_CASE(compress) try {
 
-   using compress_test = std::tuple<std::vector<std::string>, std::variant<fcl::blake2b_error, bytes>>;
+   using compress_test = std::tuple<std::vector<std::string>, std::variant<fcl::crypto::blake2b_error, bytes>>;
 
    const std::vector<compress_test> tests{
        // test1

@@ -137,8 +137,6 @@ finish before the referenced object goes away.
 instead of assuming the queue can grow forever.
 
 ```cpp
-#include <stdexcept>
-
 boost::asio::awaitable<void> run_small_job(fcl::asio::runtime& runtime) {
    auto scheduler = fcl::asio::task_scheduler{
       runtime,
@@ -153,7 +151,7 @@ boost::asio::awaitable<void> run_small_job(fcl::asio::runtime& runtime) {
 
    try {
       co_await accepted.wait();
-   } catch (const std::runtime_error& error) {
+   } catch (const fcl::asio::exceptions::rejected& error) {
       report_busy(error.what()); // for example: scheduler queue is full
    }
 }

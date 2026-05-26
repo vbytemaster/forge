@@ -7,6 +7,8 @@ module;
 
 module fcl.multiformats.varint;
 
+import fcl.multiformats.exceptions;
+
 namespace fcl::multiformats {
 
 bytes varint_encode(std::uint64_t value) {
@@ -28,21 +30,21 @@ decoded_varint varint_decode(std::span<const std::uint8_t> data) {
    for (std::size_t index = 0; index < data.size(); ++index) {
       const auto byte = data[index];
       if (shift >= 64 && (byte & 0x7fU) != 0) {
-         throw format_error{"multiformats varint overflows uint64"};
+         throw exceptions::invalid_format{"multiformats varint overflows uint64"};
       }
 
       value |= static_cast<std::uint64_t>(byte & 0x7fU) << shift;
       if ((byte & 0x80U) == 0) {
          const auto encoded = varint_encode(value);
          if (encoded.size() != index + 1) {
-            throw format_error{"multiformats varint is not minimally encoded"};
+            throw exceptions::invalid_format{"multiformats varint is not minimally encoded"};
          }
          return {.value = value, .size = index + 1};
       }
       shift += 7;
    }
 
-   throw format_error{"unterminated multiformats varint"};
+   throw exceptions::invalid_format{"unterminated multiformats varint"};
 }
 
 } // namespace fcl::multiformats

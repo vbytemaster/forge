@@ -35,7 +35,7 @@ BOOST_AUTO_TEST_CASE(varint_uses_minimal_unsigned_leb128_encoding) try {
    BOOST_CHECK_EQUAL(decoded.size, 2);
 
    const std::vector<std::uint8_t> non_minimal{0x80, 0x00};
-   BOOST_CHECK_THROW((void)varint_decode(non_minimal), fcl::multiformats::format_error);
+   BOOST_CHECK_THROW((void)varint_decode(non_minimal), fcl::multiformats::exceptions::invalid_format);
 }
 FCL_LOG_AND_RETHROW();
 
@@ -48,7 +48,9 @@ BOOST_AUTO_TEST_CASE(multicodec_constants_match_libp2p_foundation_codes) try {
    BOOST_CHECK_EQUAL(fcl::multiformats::code_value(libp2p_key), 0x72);
    BOOST_CHECK_EQUAL(fcl::multiformats::code_value(ip4), 0x04);
    BOOST_CHECK_EQUAL(fcl::multiformats::code_value(udp), 0x0111);
-   BOOST_CHECK_EQUAL(fcl::multiformats::code_value(quic_v1), 0x01cc);
+   BOOST_CHECK_EQUAL(fcl::multiformats::code_value(quic), 0x01cc);
+   BOOST_CHECK_EQUAL(fcl::multiformats::code_value(quic_v1), 0x01cd);
+   BOOST_CHECK_EQUAL(fcl::multiformats::code_value(p2p_circuit), 0x0122);
    BOOST_CHECK_EQUAL(fcl::multiformats::code_value(p2p), 0x01a5);
 }
 FCL_LOG_AND_RETHROW();

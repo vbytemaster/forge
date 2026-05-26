@@ -13,6 +13,14 @@ add_library(
    negotiation.cpp
    peer_store.cpp
    node.cpp
+   node_impl.cpp
+   node_impl.hpp
+   operation_deadline.cpp
+   operation_deadline.hpp
+   peer_exchange_codec.cpp
+   peer_exchange_codec.hpp
+   relay_transport.cpp
+   relay_transport.hpp
 )
 fcl_target_modules(fcl_p2p p2p)
 

@@ -93,10 +93,17 @@ class p2p_node {
   - `fcl_websocket`
   - `fcl_quic`
   - `fcl_p2p`
-  - `fcl_plugins`
-  - `fcl_tui`
+- `fcl_plugins`
+- `fcl_tui`
 - Heavy classes that own sockets, event loops, crypto contexts, terminal state, or other external resources should use pimpl.
 - Value types, protocol records, and simple POD-like structs should not use pimpl.
+- `_impl` in a file name is allowed only for a large pimpl owner implementation,
+  for example `node.cpp` for `node` and `node_impl.cpp` for `node::impl`.
+- Small pimpl implementations should stay in the owner `.cpp`; do not create a
+  separate `_impl.cpp` unless it materially improves readability.
+- Ordinary private `struct`/`class` helpers should use a semantic or type-based
+  file name such as `operation_deadline.cpp`, `relay_transport.cpp` or
+  `node_state.cpp`, not `_impl`.
 
 ## Reflection And Serialization
 

@@ -339,10 +339,6 @@ boost::asio::awaitable<void> node::async_provide(dht::key key) {
              .provider_peers = std::vector<dht::peer>{provider},
          },
                                                         self->options.limits.dht));
-         auto buffer = std::vector<std::uint8_t>{};
-         (void)dht::codec::decode(
-             co_await async_read_length_delimited(stream, buffer, self->options.limits.dht.max_message_size),
-             self->options.limits.dht);
          co_await stream.async_close();
       } catch (const fcl::exception::base&) {
          self->store.mark_failure(candidate.id);

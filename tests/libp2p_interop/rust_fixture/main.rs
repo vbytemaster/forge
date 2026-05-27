@@ -9,8 +9,9 @@ use std::{
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use libp2p::{
     autonat, dcutr, identify, identity,
+    kad,
     multiaddr::Protocol,
-    noise, ping, relay,
+    noise, ping, relay, rendezvous,
     swarm::{NetworkBehaviour, SwarmEvent},
     yamux, Multiaddr, PeerId, StreamProtocol, SwarmBuilder,
 };
@@ -36,6 +37,9 @@ struct Behaviour {
     autonat: autonat::v2::server::Behaviour,
     relay: relay::Behaviour,
     relay_client: relay::client::Behaviour,
+    kad: kad::Behaviour<kad::store::MemoryStore>,
+    rendezvous_server: rendezvous::server::Behaviour,
+    rendezvous_client: rendezvous::client::Behaviour,
     ping: ping::Behaviour,
     identify: identify::Behaviour,
     dcutr: dcutr::Behaviour,
@@ -82,10 +86,20 @@ async fn new_swarm() -> Result<libp2p::Swarm<Behaviour>, Box<dyn Error>> {
         .with_relay_client(noise::Config::new, yamux::Config::default)?
         .with_behaviour(|key, relay_client| {
             let peer = key.public().to_peer_id();
+            let mut kad_config = kad::Config::new(StreamProtocol::new("/ipfs/kad/1.0.0"));
+            kad_config.set_query_timeout(Duration::from_secs(10));
+            let mut kad_behaviour =
+                kad::Behaviour::with_config(peer, kad::store::MemoryStore::new(peer), kad_config);
+            kad_behaviour.set_mode(Some(kad::Mode::Server));
             Behaviour {
                 autonat: autonat::v2::server::Behaviour::new(OsRng),
                 relay: relay::Behaviour::new(peer, Default::default()),
                 relay_client,
+                kad: kad_behaviour,
+                rendezvous_server: rendezvous::server::Behaviour::new(
+                    rendezvous::server::Config::default(),
+                ),
+                rendezvous_client: rendezvous::client::Behaviour::new(key.clone()),
                 ping: ping::Behaviour::new(ping::Config::new()),
                 identify: identify::Behaviour::new(identify::Config::new(
                     "/fcl-interop/0.1.0".into(),
@@ -104,6 +118,21 @@ async fn new_swarm() -> Result<libp2p::Swarm<Behaviour>, Box<dyn Error>> {
             .with(Protocol::QuicV1),
     )?;
     Ok(swarm)
+}
+
+fn dht_provider_key() -> kad::RecordKey {
+    kad::RecordKey::new(&[
+        0x12, 0x20, 0x2e, 0xaa, 0xd0, 0x06, 0x69, 0x42, 0x0a, 0xc7, 0x3a, 0x56, 0xd9, 0x80,
+        0xb7, 0x9d, 0xeb, 0x2d, 0x2e, 0x3f, 0xb6, 0x86, 0x6d, 0x1c, 0xac, 0x9e, 0x37, 0x3f,
+        0x5e, 0x5d, 0x4a, 0x62, 0xad, 0xf9,
+    ])
+}
+
+fn transport_addr(mut address: Multiaddr) -> Multiaddr {
+    if matches!(address.iter().last(), Some(Protocol::P2p(_))) {
+        let _ = address.pop();
+    }
+    address
 }
 
 async fn read_frame<S>(stream: &mut S) -> Result<Vec<u8>, Box<dyn Error>>
@@ -238,6 +267,128 @@ async fn expect_unknown_stream_rejection(
     }
 }
 
+async fn wait_dht_find_peer(
+    swarm: &mut libp2p::Swarm<Behaviour>,
+    remote_peer: PeerId,
+) -> Result<usize, Box<dyn Error>> {
+    let id = swarm.behaviour_mut().kad.get_closest_peers(remote_peer);
+    let deadline = tokio::time::sleep(Duration::from_secs(20));
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            _ = &mut deadline => return Err("timed out waiting for Kademlia closest peers".into()),
+            event = swarm.select_next_some() => {
+                match event {
+                    SwarmEvent::Behaviour(BehaviourEvent::Kad(kad::Event::OutboundQueryProgressed {
+                        id: event_id,
+                        result: kad::QueryResult::GetClosestPeers(Ok(ok)),
+                        ..
+                    })) if event_id == id => {
+                        if ok.peers.iter().any(|peer| peer.peer_id == remote_peer) || !ok.peers.is_empty() {
+                            return Ok(ok.peers.len());
+                        }
+                        return Err("Kademlia closest peers result was empty".into());
+                    }
+                    SwarmEvent::Behaviour(BehaviourEvent::Kad(kad::Event::OutboundQueryProgressed {
+                        id: event_id,
+                        result: kad::QueryResult::GetClosestPeers(Err(error)),
+                        ..
+                    })) if event_id == id => {
+                        return Err(format!("Kademlia closest peers failed: {error:?}").into());
+                    }
+                    SwarmEvent::NewListenAddr { address, .. } => swarm.add_external_address(address),
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+async fn wait_dht_provide_find_provider(
+    swarm: &mut libp2p::Swarm<Behaviour>,
+    local_peer: PeerId,
+) -> Result<usize, Box<dyn Error>> {
+    let key = dht_provider_key();
+    let provide_id = swarm.behaviour_mut().kad.start_providing(key.clone())?;
+    let deadline = tokio::time::sleep(Duration::from_secs(30));
+    tokio::pin!(deadline);
+    let mut providing = false;
+    loop {
+        tokio::select! {
+            _ = &mut deadline => return Err("timed out waiting for Kademlia provider proof".into()),
+            event = swarm.select_next_some() => {
+                match event {
+                    SwarmEvent::Behaviour(BehaviourEvent::Kad(kad::Event::OutboundQueryProgressed {
+                        id,
+                        result: kad::QueryResult::StartProviding(result),
+                        ..
+                    })) if id == provide_id => {
+                        result?;
+                        providing = true;
+                        let _ = swarm.behaviour_mut().kad.get_providers(key.clone());
+                    }
+                    SwarmEvent::Behaviour(BehaviourEvent::Kad(kad::Event::OutboundQueryProgressed {
+                        result: kad::QueryResult::GetProviders(Ok(kad::GetProvidersOk::FoundProviders { providers, .. })),
+                        ..
+                    })) if providing => {
+                        if providers.contains(&local_peer) {
+                            return Ok(providers.len());
+                        }
+                    }
+                    SwarmEvent::Behaviour(BehaviourEvent::Kad(kad::Event::OutboundQueryProgressed {
+                        result: kad::QueryResult::GetProviders(Err(error)),
+                        ..
+                    })) if providing => return Err(format!("Kademlia providers failed: {error:?}").into()),
+                    SwarmEvent::NewListenAddr { address, .. } => swarm.add_external_address(address),
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+async fn wait_rendezvous_register_discover(
+    swarm: &mut libp2p::Swarm<Behaviour>,
+    remote_peer: PeerId,
+) -> Result<usize, Box<dyn Error>> {
+    let namespace = rendezvous::Namespace::new("fcl.discovery".to_string())?;
+    swarm
+        .behaviour_mut()
+        .rendezvous_client
+        .register(namespace.clone(), remote_peer, None)?;
+    let deadline = tokio::time::sleep(Duration::from_secs(30));
+    tokio::pin!(deadline);
+    let mut registered = false;
+    loop {
+        tokio::select! {
+            _ = &mut deadline => return Err("timed out waiting for rendezvous register/discover".into()),
+            event = swarm.select_next_some() => {
+                match event {
+                    SwarmEvent::Behaviour(BehaviourEvent::RendezvousClient(
+                        rendezvous::client::Event::Registered { .. },
+                    )) => {
+                        registered = true;
+                        swarm.behaviour_mut().rendezvous_client.discover(
+                            Some(namespace.clone()),
+                            None,
+                            Some(10),
+                            remote_peer,
+                        );
+                    }
+                    SwarmEvent::Behaviour(BehaviourEvent::RendezvousClient(
+                        rendezvous::client::Event::Discovered { registrations, .. },
+                    )) if registered => return Ok(registrations.len()),
+                    SwarmEvent::Behaviour(BehaviourEvent::RendezvousClient(
+                        rendezvous::client::Event::RegisterFailed { error, .. },
+                    )) => return Err(format!("rendezvous register failed: {error:?}").into()),
+                    SwarmEvent::NewListenAddr { address, .. } => swarm.add_external_address(address),
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
 async fn listen(opts: Options) -> Result<(), Box<dyn Error>> {
     let mut swarm = new_swarm().await?;
     spawn_incoming_stream_echo(&mut swarm, "/fcl/interop/relay-echo/1")?;
@@ -274,7 +425,7 @@ async fn dial(opts: Options) -> Result<(), Box<dyn Error>> {
     let mut swarm = new_swarm().await?;
     let remote_peer: PeerId = opts.peer_id.parse()?;
     let remote: Multiaddr = opts.addr.parse()?;
-    swarm.dial(remote)?;
+    swarm.dial(remote.clone())?;
     let started = Instant::now();
     let mut connected = false;
     let mut ping_ok = false;
@@ -284,9 +435,16 @@ async fn dial(opts: Options) -> Result<(), Box<dyn Error>> {
             SwarmEvent::ConnectionEstablished { peer_id, .. } if peer_id == remote_peer => {
                 eprintln!("rust-dial connected: {peer_id}");
                 connected = true;
+                swarm
+                    .behaviour_mut()
+                    .kad
+                    .add_address(&remote_peer, transport_addr(remote.clone()));
                 if opts.scenario != "ping" && opts.scenario != "identify" {
                     break;
                 }
+            }
+            SwarmEvent::NewListenAddr { address, .. } => {
+                swarm.add_external_address(address);
             }
             SwarmEvent::Behaviour(BehaviourEvent::Ping(ping::Event { peer, result, .. }))
                 if peer == remote_peer =>
@@ -328,6 +486,49 @@ async fn dial(opts: Options) -> Result<(), Box<dyn Error>> {
         }
         "dcutr" => {
             open_required_stream(&mut swarm, remote_peer, "/libp2p/dcutr").await?;
+        }
+        "dht_find_peer" => {
+            let count = wait_dht_find_peer(&mut swarm, remote_peer).await?;
+            write_json(
+                &opts.result_file,
+                json!({
+                    "implementation": "rust",
+                    "role": "dialer",
+                    "scenario": opts.scenario,
+                    "status": "ok",
+                    "closest_peers": count
+                }),
+            )?;
+            return Ok(());
+        }
+        "dht_provide_find_provider" => {
+            let local_peer = *swarm.local_peer_id();
+            let count = wait_dht_provide_find_provider(&mut swarm, local_peer).await?;
+            write_json(
+                &opts.result_file,
+                json!({
+                    "implementation": "rust",
+                    "role": "dialer",
+                    "scenario": opts.scenario,
+                    "status": "ok",
+                    "provider_count": count
+                }),
+            )?;
+            return Ok(());
+        }
+        "rendezvous_register_discover" => {
+            let registrations = wait_rendezvous_register_discover(&mut swarm, remote_peer).await?;
+            write_json(
+                &opts.result_file,
+                json!({
+                    "implementation": "rust",
+                    "role": "dialer",
+                    "scenario": opts.scenario,
+                    "status": "ok",
+                    "registration_count": registrations
+                }),
+            )?;
+            return Ok(());
         }
         "unknown_protocol" => {
             let error =

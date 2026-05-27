@@ -152,19 +152,65 @@
       "id": "interop.live_dht_peer_provider_lookup",
       "protocol": "Kademlia DHT",
       "source": "donors/libp2p-specs/kad-dht/README.md",
-      "donor": "go-libp2p-kad-dht and rust-libp2p Kademlia live fixtures",
-      "status": "unsupported",
-      "supported": false,
-      "fcl_tests": []
+      "donor": "go-libp2p-kad-dht FindPeer/Provide/FindProviders and rust-libp2p kad::Behaviour live fixtures",
+      "donor_file": [
+        "donors/go-libp2p-kad-dht/routing.go",
+        "donors/go-libp2p-kad-dht/pb/protocol_messenger.go",
+        "donors/rust-libp2p/protocols/kad/src/behaviour.rs"
+      ],
+      "donor_case": [
+        "FindPeer",
+        "Provide",
+        "FindProviders",
+        "get_closest_peers",
+        "start_providing",
+        "get_providers"
+      ],
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "test_fcl_libp2p_interop dht_find_peer FCL <-> Go/Rust",
+        "test_fcl_libp2p_interop dht_provide_find_provider FCL <-> Go/Rust"
+      ],
+      "fcl_live_scenario": [
+        "fcl->go dht_find_peer",
+        "go->fcl dht_find_peer",
+        "fcl->rust dht_find_peer",
+        "rust->fcl dht_find_peer",
+        "fcl->go dht_provide_find_provider",
+        "go->fcl dht_provide_find_provider",
+        "fcl->rust dht_provide_find_provider",
+        "rust->fcl dht_provide_find_provider"
+      ],
+      "known_gap": ""
     },
     {
       "id": "interop.live_rendezvous_register_discover",
       "protocol": "Rendezvous",
       "source": "donors/libp2p-specs/rendezvous/README.md",
-      "donor": "go/rust libp2p rendezvous live fixtures",
-      "status": "unsupported",
-      "supported": false,
-      "fcl_tests": []
+      "donor": "rust-libp2p rendezvous::server/client live fixtures; Go has no official rendezvous behaviour donor in this workspace",
+      "donor_file": [
+        "donors/rust-libp2p/protocols/rendezvous/src/client.rs",
+        "donors/rust-libp2p/protocols/rendezvous/src/codec.rs",
+        "donors/rust-libp2p/protocols/rendezvous/tests/rendezvous.rs"
+      ],
+      "donor_case": [
+        "Registered",
+        "Discovered",
+        "signed PeerRecord",
+        "TTL",
+        "cookie continuation"
+      ],
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "test_fcl_libp2p_interop rendezvous_register_discover FCL <-> Rust"
+      ],
+      "fcl_live_scenario": [
+        "fcl->rust rendezvous_register_discover",
+        "rust->fcl rendezvous_register_discover"
+      ],
+      "known_gap": "Go rendezvous remains a wire-level future scenario because no official go-libp2p rendezvous behaviour donor is present"
     }
   ]
 }

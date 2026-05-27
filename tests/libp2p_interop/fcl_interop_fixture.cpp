@@ -25,10 +25,14 @@
 
 import fcl.asio.blocking;
 import fcl.asio.runtime;
+import fcl.crypto.pem;
+import fcl.p2p.dht;
 import fcl.multiformats.exceptions;
+import fcl.multiformats.multihash;
 import fcl.multiformats.types;
 import fcl.multiformats.varint;
 import fcl.p2p.endpoint;
+import fcl.p2p.envelope;
 import fcl.p2p.exceptions;
 import fcl.p2p.hole_punch;
 import fcl.p2p.identify;
@@ -36,6 +40,7 @@ import fcl.p2p.identity;
 import fcl.p2p.node;
 import fcl.p2p.protocol;
 import fcl.p2p.reachability;
+import fcl.p2p.rendezvous;
 import fcl.p2p.relay;
 import fcl.p2p.stream;
 import fcl.quic.endpoint;
@@ -45,6 +50,7 @@ namespace {
 using namespace std::chrono_literals;
 
 constexpr auto echo_protocol = std::string_view{"/fcl/interop/relay-echo/1"};
+constexpr auto rendezvous_namespace = std::string_view{"fcl.discovery"};
 
 struct bio_deleter {
    void operator()(BIO* value) const noexcept {
@@ -318,7 +324,7 @@ const libp2p_identity& local_identity() {
 }
 
 fcl::p2p::node::options node_options(const std::filesystem::path& store_path, const libp2p_identity& identity) {
-   return fcl::p2p::node::options{
+   auto out = fcl::p2p::node::options{
        .certificate_pem = identity.certificate_pem,
        .private_key_pem = identity.private_key_pem,
        .explicit_peer_id = identity.peer,
@@ -327,11 +333,16 @@ fcl::p2p::node::options node_options(const std::filesystem::path& store_path, co
                                                         fcl::p2p::capabilities::autonat |
                                                         fcl::p2p::capabilities::relay |
                                                         fcl::p2p::capabilities::hole_punching |
-                                                        fcl::p2p::capabilities::relay_reservation},
+                                                        fcl::p2p::capabilities::relay_reservation |
+                                                        fcl::p2p::capabilities::dht |
+                                                        fcl::p2p::capabilities::rendezvous},
        .public_key = identity.public_key,
        .peer_store_path = store_path,
        .allow_insecure_test_mode = true,
    };
+   out.limits.dht.operating_mode = fcl::p2p::dht::mode::server;
+   out.limits.rendezvous.operating_role = fcl::p2p::rendezvous::role::client_and_server;
+   return out;
 }
 
 fcl::p2p::node::options node_options(const std::filesystem::path& store_path) {
@@ -349,6 +360,26 @@ fcl::p2p::endpoint p2p_endpoint_for(const fcl::quic::endpoint& value, const fcl:
        .port = value.port,
        .peer = peer,
    };
+}
+
+fcl::p2p::dht::key provider_key() {
+   constexpr auto source = std::string_view{"fcl-libp2p-dht-provider"};
+   auto digest = fcl::multiformats::multihash::sha2_256(
+       std::span<const std::uint8_t>{reinterpret_cast<const std::uint8_t*>(source.data()), source.size()});
+   return fcl::p2p::dht::key{.bytes = digest.encode()};
+}
+
+std::vector<std::uint8_t> signed_rendezvous_record(const libp2p_identity& identity, const fcl::p2p::endpoint& endpoint) {
+   const auto key = fcl::p2p::decode_public_key(identity.public_key);
+   return fcl::p2p::rendezvous::codec::seal_peer_record(
+              fcl::p2p::rendezvous::peer_record{
+                  .peer = identity.peer,
+                  .endpoints = std::vector<fcl::p2p::endpoint>{endpoint},
+                  .sequence = static_cast<std::uint64_t>(
+                      std::chrono::system_clock::now().time_since_epoch().count()),
+              },
+              key, fcl::crypto::pem::read_private_key(identity.private_key_pem))
+       .encode();
 }
 
 std::vector<std::uint8_t> wrap_length_delimited(std::span<const std::uint8_t> payload);
@@ -508,6 +539,55 @@ std::string run_scenario(fcl::asio::runtime& runtime, fcl::p2p::node& value, std
       const auto reservation = fcl::asio::blocking::run(runtime, value.async_reserve_relay(peer));
       return "\"voucher_bytes\":" + std::to_string(reservation.voucher ? reservation.voucher->encode().size() : 0U);
    }
+   if (scenario == "dht_find_peer") {
+      const auto result = fcl::asio::blocking::run(runtime, value.async_find_peer(peer));
+      return "\"closest_peers\":" + std::to_string(result.closest_peers.size()) +
+             ",\"complete\":" + std::string{result.complete ? "true" : "false"};
+   }
+   if (scenario == "dht_provide_find_provider") {
+      const auto key = provider_key();
+      fcl::asio::blocking::run(runtime, value.async_provide(key));
+      auto stream = fcl::asio::blocking::run(runtime, value.async_open_protocol_stream(
+                                                         peer, fcl::p2p::builtins::kad_dht,
+                                                         fcl::p2p::node::open_options{.allow_relay = false}));
+      fcl::asio::blocking::run(runtime, stream.async_write(fcl::p2p::dht::codec::encode(
+                                          fcl::p2p::dht::message{
+                                              .type = fcl::p2p::dht::message_type::get_providers,
+                                              .key_value = key,
+                                          },
+                                          fcl::p2p::dht::options{})));
+      const auto response = fcl::p2p::dht::codec::decode(
+          wrap_length_delimited(fcl::asio::blocking::run(runtime, read_length_delimited(stream, 1024 * 1024))));
+      return "\"provider_count\":" + std::to_string(response.provider_peers.size());
+   }
+   if (scenario == "rendezvous_register_discover") {
+      const auto local = value.local_endpoint();
+      if (!local) {
+         throw std::runtime_error{"FCL rendezvous scenario requires local endpoint"};
+      }
+      const auto endpoint = p2p_endpoint_for(*local, value.local_peer());
+      const auto record = signed_rendezvous_record(local_identity(), endpoint);
+      const auto registration = fcl::asio::blocking::run(runtime, value.async_rendezvous_register(
+                                                                      peer,
+                                                                      fcl::p2p::rendezvous::register_request{
+                                                                          .namespace_name =
+                                                                              std::string{rendezvous_namespace},
+                                                                          .signed_peer_record = record,
+                                                                          .ttl = std::chrono::seconds{7'200},
+                                                                      }));
+      if (registration.status_value != fcl::p2p::rendezvous::status::ok) {
+         throw std::runtime_error{"rendezvous register failed"};
+      }
+      const auto discovered = fcl::asio::blocking::run(runtime, value.async_rendezvous_discover(
+                                                                    peer,
+                                                                    fcl::p2p::rendezvous::discover_request{
+                                                                        .namespace_name =
+                                                                            std::string{rendezvous_namespace},
+                                                                        .limit = 10,
+                                                                    }));
+      return "\"registration_count\":" + std::to_string(discovered.registrations.size()) +
+             ",\"cookie_bytes\":" + std::to_string(discovered.cookie.size());
+   }
    if (scenario == "dcutr") {
       const auto status = fcl::asio::blocking::run(runtime, value.async_attempt_hole_punch(peer));
       return "\"hole_punch_status\":" + std::to_string(static_cast<int>(status));
@@ -542,7 +622,9 @@ int dial_mode(const std::map<std::string, std::string>& args) {
                                                                  fcl::p2p::capabilities::autonat |
                                                                  fcl::p2p::capabilities::relay |
                                                                  fcl::p2p::capabilities::hole_punching |
-                                                                 fcl::p2p::capabilities::relay_reservation});
+                                                                 fcl::p2p::capabilities::relay_reservation |
+                                                                 fcl::p2p::capabilities::dht |
+                                                                 fcl::p2p::capabilities::rendezvous});
 
    const auto details = run_scenario(runtime, value, required(args, "scenario"), peer);
    fcl::asio::blocking::run(runtime, value.async_stop());

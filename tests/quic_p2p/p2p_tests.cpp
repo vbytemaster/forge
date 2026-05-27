@@ -139,6 +139,21 @@ test_identity make_test_identity() {
    return out;
 }
 
+std::vector<std::uint8_t> make_signed_rendezvous_peer_record(const test_identity& identity,
+                                                             std::vector<endpoint> endpoints = {},
+                                                             std::uint64_t sequence = 1) {
+   if (endpoints.empty()) {
+      endpoints.push_back(parse_endpoint("/ip4/127.0.0.1/udp/4401/quic-v1/p2p/" + identity.peer.to_string()));
+   }
+   return rendezvous::codec::seal_peer_record(rendezvous::peer_record{
+                                                  .peer = identity.peer,
+                                                  .endpoints = std::move(endpoints),
+                                                  .sequence = sequence,
+                                              },
+                                              identity.key, fcl::crypto::pem::read_private_key(identity.private_key_pem))
+       .encode();
+}
+
 test_certificate_identity make_test_certificate_identity(std::string_view common_name) {
    auto key_context = std::unique_ptr<EVP_PKEY_CTX, evp_pkey_ctx_deleter>{
        EVP_PKEY_CTX_new_from_name(nullptr, "RSA", nullptr)};
@@ -729,7 +744,8 @@ BOOST_AUTO_TEST_CASE(p2p_dht_routing_table_uses_sha256_xor_distance_and_bounds_r
 
 BOOST_AUTO_TEST_CASE(p2p_rendezvous_codec_roundtrips_register_discover_cookie_and_status) {
    const auto opts = rendezvous::options{};
-   const auto record = std::vector<std::uint8_t>{1, 2, 3, 4, 5};
+   const auto identity = make_test_identity();
+   const auto record = make_signed_rendezvous_peer_record(identity, {}, 42);
    const auto encoded_register = rendezvous::codec::encode(rendezvous::message{
        .type = rendezvous::message_type::register_peer,
        .register_value = rendezvous::register_request{
@@ -745,8 +761,15 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_codec_roundtrips_register_discover_cookie_an
    BOOST_TEST(decoded_register.register_value->signed_peer_record == record, boost::test_tools::per_element());
    BOOST_TEST(decoded_register.register_value->ttl == std::chrono::seconds{7'200});
 
-   const auto cookie = rendezvous::codec::make_cookie(42);
+   const auto decoded_peer_record =
+       rendezvous::codec::open_peer_record(signed_envelope::decode(record), identity.peer);
+   BOOST_TEST(decoded_peer_record.peer.to_string() == identity.peer.to_string());
+   BOOST_REQUIRE_EQUAL(decoded_peer_record.endpoints.size(), 1U);
+   BOOST_TEST(decoded_peer_record.sequence == 42U);
+
+   const auto cookie = rendezvous::codec::make_cookie(42, "fcl.discovery");
    BOOST_TEST(rendezvous::codec::read_cookie(cookie) == 42U);
+   BOOST_TEST(rendezvous::codec::read_cookie_namespace(cookie) == "fcl.discovery");
    const auto encoded_discover = rendezvous::codec::encode(rendezvous::message{
        .type = rendezvous::message_type::discover_response,
        .discover_response_value = rendezvous::discover_response{
@@ -764,6 +787,8 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_codec_roundtrips_register_discover_cookie_an
    BOOST_REQUIRE(decoded_discover.discover_response_value.has_value());
    BOOST_REQUIRE_EQUAL(decoded_discover.discover_response_value->registrations.size(), 1U);
    BOOST_TEST(decoded_discover.discover_response_value->registrations.front().namespace_name == "fcl.discovery");
+   BOOST_TEST(decoded_discover.discover_response_value->registrations.front().peer.to_string() ==
+              identity.peer.to_string());
    BOOST_TEST(decoded_discover.discover_response_value->registrations.front().signed_peer_record == record,
               boost::test_tools::per_element());
    BOOST_TEST(rendezvous::codec::read_cookie(decoded_discover.discover_response_value->cookie) == 42U);
@@ -1464,8 +1489,10 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_node_registers_and_discovers_over_negotiated
    auto server_options =
        options_for(peer(122), capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
    server_options.limits.rendezvous.operating_role = rendezvous::role::server;
+   server_options.limits.rendezvous.require_signed_peer_record = false;
    auto client_options =
        options_for(peer(123), capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
+   client_options.limits.rendezvous.require_signed_peer_record = false;
    auto server = node{runtime, std::move(server_options)};
    auto client = node{runtime, std::move(client_options)};
    const auto server_endpoint = listen(server, runtime);
@@ -1477,7 +1504,6 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_node_registers_and_discovers_over_negotiated
                     server.local_peer(),
                     rendezvous::register_request{
                         .namespace_name = "fcl.discovery",
-                        .signed_peer_record = std::vector<std::uint8_t>{1, 2, 3},
                         .ttl = std::chrono::seconds{7'200},
                     }));
    BOOST_TEST(static_cast<int>(response.status_value) == static_cast<int>(rendezvous::status::ok));
@@ -1492,8 +1518,8 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_node_registers_and_discovers_over_negotiated
    BOOST_TEST(static_cast<int>(discovered.status_value) == static_cast<int>(rendezvous::status::ok));
    BOOST_REQUIRE_EQUAL(discovered.registrations.size(), 1U);
    BOOST_TEST(discovered.registrations.front().namespace_name == "fcl.discovery");
-   BOOST_TEST(discovered.registrations.front().signed_peer_record == std::vector<std::uint8_t>({1, 2, 3}),
-              boost::test_tools::per_element());
+   BOOST_TEST(discovered.registrations.front().peer.to_string().empty());
+   BOOST_TEST(discovered.registrations.front().signed_peer_record.empty());
    BOOST_TEST(rendezvous::codec::read_cookie(discovered.cookie) >= 1U);
    BOOST_TEST(server.metrics().rendezvous_registrations >= 1U);
    BOOST_TEST(server.metrics().rendezvous_discovers >= 1U);

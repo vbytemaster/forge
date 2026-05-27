@@ -1801,7 +1801,9 @@ boost::asio::awaitable<void> node::impl::handle_dht(std::shared_ptr<node::impl::
              .expires_at = std::chrono::system_clock::now() + options.limits.dht.provider_record_ttl,
          });
       }
-      response.provider_peers = request.provider_peers;
+      increment_dht_response();
+      co_await stream.async_close();
+      co_return;
    } else if (request.type == dht::message_type::put_value && request.record_value) {
       response.record_value = request.record_value;
    } else if (request.type == dht::message_type::get_value) {
@@ -1833,26 +1835,45 @@ boost::asio::awaitable<void> node::impl::handle_rendezvous(std::shared_ptr<node:
          response.status_text = "rendezvous registration TTL outside allowed range";
       } else {
          auto endpoints = std::vector<endpoint>{};
-         if (const auto record = store.find(session->info.remote_peer)) {
-            for (const auto& endpoint : record->endpoints) {
-               endpoints.push_back(fcl::p2p::endpoint{
-                   .kind = fcl::p2p::endpoint::address_kind::ip4,
-                   .host = endpoint.endpoint.host,
-                   .port = endpoint.endpoint.port,
-                   .peer = session->info.remote_peer,
-               });
+         auto registered_peer = session->info.remote_peer;
+         if (!request.register_value->signed_peer_record.empty()) {
+            try {
+               const auto record = rendezvous::codec::open_peer_record(
+                   signed_envelope::decode(request.register_value->signed_peer_record), session->info.remote_peer);
+               registered_peer = record.peer;
+               endpoints = record.endpoints;
+            } catch (const fcl::exception::base&) {
+               response.status_value = rendezvous::status::invalid_signed_peer_record;
+               response.status_text = "rendezvous signed peer record is invalid";
+            }
+         } else if (options.limits.rendezvous.require_signed_peer_record) {
+            response.status_value = rendezvous::status::invalid_signed_peer_record;
+            response.status_text = "rendezvous registration requires signed peer record";
+         }
+         if (response.status_value == rendezvous::status::ok && endpoints.empty()) {
+            if (const auto record = store.find(registered_peer)) {
+               for (const auto& endpoint : record->endpoints) {
+                  endpoints.push_back(fcl::p2p::endpoint{
+                      .kind = fcl::p2p::endpoint::address_kind::ip4,
+                      .host = endpoint.endpoint.host,
+                      .port = endpoint.endpoint.port,
+                      .peer = registered_peer,
+                  });
+               }
             }
          }
-         store.upsert_rendezvous(rendezvous::registration{
-             .namespace_name = request.register_value->namespace_name,
-             .peer = session->info.remote_peer,
-             .endpoints = std::move(endpoints),
-             .signed_peer_record = request.register_value->signed_peer_record,
-             .ttl = ttl,
-             .expires_at = std::chrono::system_clock::now() + ttl,
-         });
-         response.ttl = ttl;
-         increment_rendezvous_registration();
+         if (response.status_value == rendezvous::status::ok) {
+            store.upsert_rendezvous(rendezvous::registration{
+                .namespace_name = request.register_value->namespace_name,
+                .peer = registered_peer,
+                .endpoints = std::move(endpoints),
+                .signed_peer_record = request.register_value->signed_peer_record,
+                .ttl = ttl,
+                .expires_at = std::chrono::system_clock::now() + ttl,
+            });
+            response.ttl = ttl;
+            increment_rendezvous_registration();
+         }
       }
       co_await stream.async_write(rendezvous::codec::encode(rendezvous::message{
           .type = rendezvous::message_type::register_response,
@@ -1885,7 +1906,7 @@ boost::asio::awaitable<void> node::impl::handle_rendezvous(std::shared_ptr<node:
           .discover_response_value =
               rendezvous::discover_response{
                   .registrations = std::move(registrations),
-                  .cookie = rendezvous::codec::make_cookie(sequence),
+                  .cookie = rendezvous::codec::make_cookie(sequence, request.discover_value->namespace_name),
                   .status_value = rendezvous::status::ok,
               },
       },

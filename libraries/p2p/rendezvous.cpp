@@ -3,14 +3,17 @@ module;
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 module fcl.p2p.rendezvous;
 
 import fcl.multiformats.exceptions;
+import fcl.multiformats.address;
 import fcl.multiformats.varint;
 import fcl.p2p.exceptions;
 
@@ -18,6 +21,13 @@ import fcl.p2p.exceptions;
 
 namespace fcl::p2p {
 namespace {
+
+constexpr auto legacy_peer_record_domain = std::string_view{"libp2p-routing-state"};
+constexpr auto legacy_peer_record_payload_type = std::string_view{"/libp2p/routing-state-record"};
+
+[[nodiscard]] std::vector<std::uint8_t> bytes_from_text(std::string_view value) {
+   return {value.begin(), value.end()};
+}
 
 void validate_options(const rendezvous::options& opts) {
    if (opts.default_ttl.count() <= 0 || opts.min_ttl.count() <= 0 || opts.max_ttl.count() <= 0 ||
@@ -302,11 +312,18 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
          }
          {
             const auto request = decode_register(in.bytes(), opts);
-            out.registrations.push_back(rendezvous::registration{
+            auto registration = rendezvous::registration{
                 .namespace_name = request.namespace_name,
                 .signed_peer_record = request.signed_peer_record,
                 .ttl = request.ttl,
-            });
+            };
+            if (!request.signed_peer_record.empty()) {
+               const auto record = rendezvous::codec::open_peer_record(signed_envelope::decode(request.signed_peer_record));
+               registration.peer = record.peer;
+               registration.endpoints = record.endpoints;
+               registration.sequence = record.sequence;
+            }
+            out.registrations.push_back(std::move(registration));
             if (out.registrations.size() > opts.max_discover_limit) {
                exceptions::raise(exceptions::code::codec_error, "rendezvous response has too many registrations");
             }
@@ -358,6 +375,45 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
       detail::append_bytes(out, 6, encode_discover_response(*value.discover_response_value, opts));
    }
    return out;
+}
+
+[[nodiscard]] std::vector<std::uint8_t> encode_peer_record_address(const endpoint& value) {
+   const auto address = fcl::multiformats::address::parse(value.to_string());
+   return address.to_bytes();
+}
+
+[[nodiscard]] std::optional<endpoint> decode_peer_record_address(std::span<const std::uint8_t> bytes,
+                                                                 const peer_id& peer) {
+   try {
+      auto out = parse_endpoint(fcl::multiformats::address::from_bytes(bytes).to_string());
+      if (!out.peer) {
+         out.peer = peer;
+      }
+      return out;
+   } catch (const fcl::exception::base&) {
+      return std::nullopt;
+   }
+}
+
+[[nodiscard]] std::vector<std::uint8_t> encode_address_info(const endpoint& value) {
+   auto out = std::vector<std::uint8_t>{};
+   detail::append_bytes(out, 1, encode_peer_record_address(value));
+   return out;
+}
+
+[[nodiscard]] std::optional<endpoint> decode_address_info(std::span<const std::uint8_t> bytes, const peer_id& peer) {
+   auto in = detail::reader{bytes};
+   while (!in.done()) {
+      const auto [field, type] = in.key();
+      if (field == 1) {
+         if (type != detail::wire_type::length_delimited) {
+            exceptions::raise(exceptions::code::codec_error, "rendezvous peer record address must be bytes");
+         }
+         return decode_peer_record_address(in.bytes(), peer);
+      }
+      in.skip(type);
+   }
+   return std::nullopt;
 }
 
 } // namespace
@@ -435,11 +491,16 @@ rendezvous::message rendezvous::codec::decode(std::span<const std::uint8_t> byte
 }
 
 std::vector<std::uint8_t> rendezvous::codec::make_cookie(std::uint64_t sequence) {
+   return make_cookie(sequence, {});
+}
+
+std::vector<std::uint8_t> rendezvous::codec::make_cookie(std::uint64_t sequence, std::string_view namespace_name) {
    auto out = std::vector<std::uint8_t>{};
-   out.reserve(8);
+   out.reserve(8 + namespace_name.size());
    for (auto shift = 56; shift >= 0; shift -= 8) {
       out.push_back(static_cast<std::uint8_t>((sequence >> shift) & 0xffU));
    }
+   out.insert(out.end(), namespace_name.begin(), namespace_name.end());
    return out;
 }
 
@@ -447,12 +508,103 @@ std::uint64_t rendezvous::codec::read_cookie(std::span<const std::uint8_t> cooki
    if (cookie.empty()) {
       return 0;
    }
-   if (cookie.size() != 8) {
+   if (cookie.size() < 8) {
       exceptions::raise(exceptions::code::codec_error, "invalid rendezvous cookie");
    }
    auto out = std::uint64_t{};
-   for (auto byte : cookie) {
-      out = (out << 8U) | byte;
+   for (auto i = std::size_t{}; i < 8; ++i) {
+      out = (out << 8U) | cookie[i];
+   }
+   return out;
+}
+
+std::string rendezvous::codec::read_cookie_namespace(std::span<const std::uint8_t> cookie) {
+   if (cookie.empty()) {
+      return {};
+   }
+   if (cookie.size() < 8) {
+      exceptions::raise(exceptions::code::codec_error, "invalid rendezvous cookie");
+   }
+   return {cookie.begin() + 8, cookie.end()};
+}
+
+std::vector<std::uint8_t> rendezvous::codec::encode_peer_record(const rendezvous::peer_record& value) {
+   if (!valid_peer_id(value.peer)) {
+      exceptions::raise(exceptions::code::invalid_identity, "rendezvous peer record has invalid peer id");
+   }
+   auto out = std::vector<std::uint8_t>{};
+   detail::append_bytes(out, 1, value.peer.to_bytes());
+   detail::append_uint64(out, 2, value.sequence);
+   for (const auto& address : value.endpoints) {
+      detail::append_bytes(out, 3, encode_address_info(address));
+   }
+   return out;
+}
+
+rendezvous::peer_record rendezvous::codec::decode_peer_record(std::span<const std::uint8_t> bytes) {
+   auto out = rendezvous::peer_record{};
+   auto saw_peer = false;
+   auto address_infos = std::vector<std::vector<std::uint8_t>>{};
+   auto in = detail::reader{bytes};
+   while (!in.done()) {
+      const auto [field, type] = in.key();
+      switch (field) {
+      case 1:
+         if (type != detail::wire_type::length_delimited) {
+            exceptions::raise(exceptions::code::codec_error, "rendezvous peer record id must be bytes");
+         }
+         out.peer = peer_id::from_bytes(in.bytes());
+         saw_peer = true;
+         break;
+      case 2:
+         if (type != detail::wire_type::varint) {
+            exceptions::raise(exceptions::code::codec_error, "rendezvous peer record sequence must be varint");
+         }
+         out.sequence = in.read_varint();
+         break;
+      case 3:
+         if (type != detail::wire_type::length_delimited) {
+            exceptions::raise(exceptions::code::codec_error, "rendezvous peer record address info must be bytes");
+         }
+         address_infos.push_back(in.bytes());
+         break;
+      default:
+         in.skip(type);
+         break;
+      }
+   }
+   if (!saw_peer) {
+      exceptions::raise(exceptions::code::codec_error, "rendezvous peer record missing peer id");
+   }
+   for (const auto& value : address_infos) {
+      const auto address = decode_address_info(value, out.peer);
+      if (address) {
+         out.endpoints.push_back(*address);
+      }
+   }
+   return out;
+}
+
+std::vector<std::uint8_t> rendezvous::codec::peer_record_payload_type() {
+   return bytes_from_text(legacy_peer_record_payload_type);
+}
+
+signed_envelope rendezvous::codec::seal_peer_record(const rendezvous::peer_record& value, const public_key& key,
+                                                    const fcl::crypto::asymmetric::private_key& private_key) {
+   const auto payload = encode_peer_record(value);
+   const auto payload_type = peer_record_payload_type();
+   return signed_envelope::seal(key, private_key, legacy_peer_record_domain, payload_type, payload);
+}
+
+rendezvous::peer_record rendezvous::codec::open_peer_record(const signed_envelope& envelope,
+                                                           std::optional<peer_id> expected_signer) {
+   envelope.verify(legacy_peer_record_domain, expected_signer);
+   if (envelope.payload_type != peer_record_payload_type()) {
+      exceptions::raise(exceptions::code::codec_error, "rendezvous peer record has unsupported payload type");
+   }
+   auto out = decode_peer_record(envelope.payload);
+   if (expected_signer && out.peer != *expected_signer) {
+      exceptions::raise(exceptions::code::invalid_identity, "rendezvous peer record peer id mismatch");
    }
    return out;
 }

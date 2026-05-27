@@ -11,10 +11,13 @@ import (
 	"strings"
 	"time"
 
+	cid "github.com/ipfs/go-cid"
 	libp2p "github.com/libp2p/go-libp2p"
+	kad "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	relayv2 "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
@@ -23,6 +26,7 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
 	ma "github.com/multiformats/go-multiaddr"
+	mh "github.com/multiformats/go-multihash"
 )
 
 const echoProtocol = protocol.ID("/fcl/interop/relay-echo/1")
@@ -127,9 +131,13 @@ func installEchoHandler(h host.Host) {
 type fixtureHost struct {
 	host.Host
 	holePunch *holepunch.Service
+	kad       *kad.IpfsDHT
 }
 
 func (h *fixtureHost) Close() error {
+	if h.kad != nil {
+		_ = h.kad.Close()
+	}
 	if h.holePunch != nil {
 		_ = h.holePunch.Close()
 	}
@@ -153,6 +161,11 @@ func newHost() (*fixtureHost, error) {
 		h.Close()
 		return nil, err
 	}
+	dht, err := kad.New(context.Background(), h, kad.Mode(kad.ModeServer), kad.DisableAutoRefresh())
+	if err != nil {
+		h.Close()
+		return nil, err
+	}
 	type idServiceHost interface {
 		IDService() identify.IDService
 	}
@@ -166,7 +179,20 @@ func newHost() (*fixtureHost, error) {
 		h.Close()
 		return nil, err
 	}
-	return &fixtureHost{Host: h, holePunch: holePunchService}, nil
+	return &fixtureHost{Host: h, holePunch: holePunchService, kad: dht}, nil
+}
+
+func providerCID() (cid.Cid, error) {
+	hash, err := mh.Sum([]byte("fcl-libp2p-dht-provider"), mh.SHA2_256, -1)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return cid.NewCidV1(cid.Raw, hash), nil
+}
+
+func addDHTPeer(h *fixtureHost, info *peer.AddrInfo) {
+	h.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
+	_, _ = h.kad.RoutingTable().TryAddPeer(info.ID, true, false)
 }
 
 func listen(opts options) error {
@@ -324,6 +350,7 @@ func dial(opts options) error {
 	if err := h.Connect(ctx, *info); err != nil {
 		return fmt.Errorf("connect failed: %w", err)
 	}
+	addDHTPeer(h, info)
 
 	result := map[string]any{
 		"implementation": "go",
@@ -374,6 +401,38 @@ func dial(opts options) error {
 			return err
 		}
 		result["opened"] = true
+	case "dht_find_peer":
+		found, err := h.kad.FindPeer(ctx, info.ID)
+		if err != nil {
+			return fmt.Errorf("dht FindPeer failed: %w", err)
+		}
+		if found.ID != info.ID {
+			return fmt.Errorf("dht FindPeer returned %s, expected %s", found.ID, info.ID)
+		}
+		result["found_peer"] = found.ID.String()
+		result["addr_count"] = len(found.Addrs)
+	case "dht_provide_find_provider":
+		key, err := providerCID()
+		if err != nil {
+			return err
+		}
+		if err := h.kad.Provide(ctx, key, true); err != nil {
+			return fmt.Errorf("dht Provide failed: %w", err)
+		}
+		providers := h.kad.FindProvidersAsync(ctx, key, 10)
+		count := 0
+		foundLocal := false
+		for provider := range providers {
+			count++
+			if provider.ID == h.ID() {
+				foundLocal = true
+				break
+			}
+		}
+		if !foundLocal {
+			return fmt.Errorf("dht FindProviders did not return local provider")
+		}
+		result["provider_count"] = count
 	case "unknown_protocol":
 		expected, err := expectUnsupportedProtocol(ctx, h, info.ID, protocol.ID("/fcl/interop/unknown/1"))
 		if err != nil {

@@ -11,7 +11,9 @@ module;
 export module fcl.p2p.rendezvous;
 
 import fcl.p2p.endpoint;
+import fcl.p2p.envelope;
 import fcl.p2p.identity;
+import fcl.crypto.asymmetric;
 
 export namespace fcl::p2p {
 
@@ -50,7 +52,7 @@ struct rendezvous {
       std::size_t max_registrations_per_peer = 1000;
       std::size_t max_discover_limit = 1000;
       std::size_t max_message_size = 1024 * 1024;
-      bool require_signed_peer_record = false;
+      bool require_signed_peer_record = true;
    };
 
    struct registration {
@@ -60,6 +62,12 @@ struct rendezvous {
       std::vector<std::uint8_t> signed_peer_record;
       std::chrono::seconds ttl{0};
       std::chrono::system_clock::time_point expires_at{};
+      std::uint64_t sequence = 0;
+   };
+
+   struct peer_record {
+      peer_id peer;
+      std::vector<endpoint> endpoints;
       std::uint64_t sequence = 0;
    };
 
@@ -108,7 +116,18 @@ struct rendezvous {
       [[nodiscard]] static message decode(std::span<const std::uint8_t> bytes);
       [[nodiscard]] static message decode(std::span<const std::uint8_t> bytes, const options& opts);
       [[nodiscard]] static std::vector<std::uint8_t> make_cookie(std::uint64_t sequence);
+      [[nodiscard]] static std::vector<std::uint8_t> make_cookie(std::uint64_t sequence,
+                                                                  std::string_view namespace_name);
       [[nodiscard]] static std::uint64_t read_cookie(std::span<const std::uint8_t> cookie);
+      [[nodiscard]] static std::string read_cookie_namespace(std::span<const std::uint8_t> cookie);
+
+      [[nodiscard]] static std::vector<std::uint8_t> encode_peer_record(const peer_record& value);
+      [[nodiscard]] static peer_record decode_peer_record(std::span<const std::uint8_t> bytes);
+      [[nodiscard]] static std::vector<std::uint8_t> peer_record_payload_type();
+      [[nodiscard]] static signed_envelope seal_peer_record(const peer_record& value, const public_key& key,
+                                                            const fcl::crypto::asymmetric::private_key& private_key);
+      [[nodiscard]] static peer_record open_peer_record(const signed_envelope& envelope,
+                                                        std::optional<peer_id> expected_signer = std::nullopt);
    };
 };
 

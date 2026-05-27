@@ -12,6 +12,8 @@ from typing import Optional
 
 
 SCENARIOS = ("ping", "identify", "autonatv2", "relay_reserve", "unknown_protocol")
+DHT_SCENARIOS = ("dht_find_peer", "dht_provide_find_provider")
+RENDEZVOUS_SCENARIOS = ("rendezvous_register_discover",)
 TOPOLOGY_SCENARIOS = ("relay_echo_topology", "dcutr_relay_topology")
 NATIVE_TOPOLOGIES = (
     ("fcl", "go", "go"),
@@ -99,7 +101,7 @@ def start_listener(binary: Path, implementation: str, work: Path) -> Listener:
         "--store-dir",
         str(store_dir),
         "--features",
-        "ping,identify,autonatv2,relay,dcutr",
+        "ping,identify,autonatv2,relay,dcutr,dht,rendezvous",
     ]
     log = log_file.open("w")
     process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
@@ -216,8 +218,12 @@ def prepare_go_fixture(source_dir: Path, build_dir: Path, donors_root: Path) -> 
     (work / "go.mod").write_text(
         "module fcl-libp2p-go-fixture\n\n"
         "go 1.24\n\n"
-        "require github.com/libp2p/go-libp2p v0.0.0\n\n"
+        "require (\n"
+        "\tgithub.com/libp2p/go-libp2p v0.0.0\n"
+        "\tgithub.com/libp2p/go-libp2p-kad-dht v0.0.0\n"
+        ")\n\n"
         f"replace github.com/libp2p/go-libp2p => {donors_root / 'go-libp2p'}\n"
+        f"replace github.com/libp2p/go-libp2p-kad-dht => {donors_root / 'go-libp2p-kad-dht'}\n"
     )
     binary = work / "go_fixture"
     if binary.exists():
@@ -238,7 +244,7 @@ def prepare_rust_fixture(source_dir: Path, build_dir: Path, donors_root: Path) -
         "version = \"0.1.0\"\n"
         "edition = \"2024\"\n\n"
         "[dependencies]\n"
-        f"libp2p = {{ path = \"{donors_root / 'rust-libp2p' / 'libp2p'}\", features = [\"tokio\", \"tcp\", \"dns\", \"noise\", \"yamux\", \"quic\", \"ping\", \"identify\", \"autonat\", \"relay\", \"dcutr\", \"macros\"] }}\n"
+        f"libp2p = {{ path = \"{donors_root / 'rust-libp2p' / 'libp2p'}\", features = [\"tokio\", \"tcp\", \"dns\", \"noise\", \"yamux\", \"quic\", \"ping\", \"identify\", \"autonat\", \"relay\", \"dcutr\", \"kad\", \"rendezvous\", \"macros\"] }}\n"
         f"libp2p-stream = {{ path = \"{donors_root / 'rust-libp2p' / 'protocols' / 'stream'}\" }}\n"
         "futures = \"0.3\"\n"
         "rand = \"0.8.5\"\n"
@@ -362,6 +368,7 @@ def main() -> int:
     require_tool("go")
     require_tool("cargo")
     require_donor(donors_root, "go-libp2p")
+    require_donor(donors_root, "go-libp2p-kad-dht")
     require_donor(donors_root, "rust-libp2p")
     require_donor(donors_root, "libp2p-specs")
 
@@ -390,6 +397,17 @@ def main() -> int:
                     artifacts.append(run_pair(binaries[dialer], dialer, binaries[listener], listener, scenario, root))
                 except Exception as error:
                     failures.append(f"{dialer}->{listener} {scenario}: {error}")
+            for scenario in DHT_SCENARIOS:
+                try:
+                    artifacts.append(run_pair(binaries[dialer], dialer, binaries[listener], listener, scenario, root))
+                except Exception as error:
+                    failures.append(f"{dialer}->{listener} {scenario}: {error}")
+    for listener, dialer in (("rust", "fcl"), ("fcl", "rust")):
+        for scenario in RENDEZVOUS_SCENARIOS:
+            try:
+                artifacts.append(run_pair(binaries[dialer], dialer, binaries[listener], listener, scenario, root))
+            except Exception as error:
+                failures.append(f"{dialer}->{listener} {scenario}: {error}")
     for scenario in TOPOLOGY_SCENARIOS:
         try:
             artifacts.append(run_topology(binaries["fcl"], "fcl", scenario, root))

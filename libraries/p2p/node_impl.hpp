@@ -152,6 +152,14 @@ struct node::impl : std::enable_shared_from_this<impl> {
 
    void record_relay_failure();
 
+   void increment_dht_query();
+
+   void increment_dht_response();
+
+   void increment_rendezvous_registration();
+
+   void increment_rendezvous_discover();
+
    boost::asio::awaitable<std::shared_ptr<session_state>> connect_direct(fcl::quic::endpoint endpoint,
                                                                          node::connect_options connect_options_value);
 
@@ -210,6 +218,10 @@ struct node::impl : std::enable_shared_from_this<impl> {
    boost::asio::awaitable<void> handle_relay_hop(std::shared_ptr<session_state> session, fcl::p2p::stream stream);
 
    boost::asio::awaitable<void> handle_dcutr(std::shared_ptr<session_state> session, fcl::p2p::stream stream);
+
+   boost::asio::awaitable<void> handle_dht(std::shared_ptr<session_state> session, fcl::p2p::stream stream);
+
+   boost::asio::awaitable<void> handle_rendezvous(std::shared_ptr<session_state> session, fcl::p2p::stream stream);
 
    boost::asio::awaitable<bool> wait_for_direct_session(const peer_id& peer, std::chrono::milliseconds timeout);
 

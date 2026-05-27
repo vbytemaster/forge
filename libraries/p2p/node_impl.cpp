@@ -33,6 +33,8 @@ import fcl.crypto.ed25519;
 import fcl.crypto.hmac;
 import fcl.crypto.pem;
 import fcl.crypto.asymmetric;
+import fcl.p2p.dht;
+import fcl.p2p.discovery;
 import fcl.p2p.endpoint;
 import fcl.p2p.envelope;
 import fcl.p2p.hole_punch;
@@ -41,6 +43,7 @@ import fcl.p2p.exceptions;
 import fcl.p2p.message;
 import fcl.p2p.negotiation;
 import fcl.p2p.reachability;
+import fcl.p2p.rendezvous;
 import fcl.p2p.resource_manager;
 import fcl.p2p.scoring;
 import fcl.p2p.stream;
@@ -255,7 +258,21 @@ void validate(const node::options& options) {
        options.limits.resources.max_streams_per_protocol == 0 || options.limits.resources.max_relay_reservations == 0 ||
        options.limits.resources.max_relay_streams == 0 || options.limits.resources.max_relay_bytes == 0 ||
        options.limits.resources.max_queued_bytes == 0 || options.limits.resources.max_dial_attempts_per_peer == 0 ||
-       options.limits.resources.max_malformed_messages_per_peer == 0) {
+       options.limits.resources.max_malformed_messages_per_peer == 0 ||
+       options.limits.discovery.query_timeout.count() <= 0 || options.limits.discovery.refresh_interval.count() <= 0 ||
+       options.limits.discovery.max_parallel_queries == 0 || options.limits.discovery.max_results == 0 ||
+       options.limits.dht.replication == 0 || options.limits.dht.alpha == 0 ||
+       options.limits.dht.max_message_size == 0 || options.limits.dht.max_record_size == 0 ||
+       options.limits.dht.max_closer_peers == 0 || options.limits.dht.max_provider_peers == 0 ||
+       options.limits.dht.query_timeout.count() <= 0 || options.limits.dht.refresh_interval.count() <= 0 ||
+       options.limits.dht.provider_record_ttl.count() <= 0 ||
+       options.limits.rendezvous.default_ttl.count() <= 0 || options.limits.rendezvous.min_ttl.count() <= 0 ||
+       options.limits.rendezvous.max_ttl.count() <= 0 ||
+       options.limits.rendezvous.min_ttl > options.limits.rendezvous.max_ttl ||
+       options.limits.rendezvous.max_namespace_size == 0 ||
+       options.limits.rendezvous.max_registrations_per_peer == 0 ||
+       options.limits.rendezvous.max_discover_limit == 0 ||
+       options.limits.rendezvous.max_message_size == 0) {
       exceptions::raise(exceptions::code::invalid_options, "invalid P2P node limits");
    }
    if (!options.path_policy.allow_direct && !options.path_policy.allow_hole_punch && !options.path_policy.allow_relay) {
@@ -478,6 +495,14 @@ void node::impl::forget_session(const peer_id& peer) {
                                        builtins::dcutr};
    if (options.capabilities.has(capabilities::relay) || options.capabilities.has(capabilities::relay_reservation)) {
       out.push_back(builtins::relay_hop);
+   }
+   if (options.capabilities.has(capabilities::dht) && options.limits.dht.operating_mode == dht::mode::server) {
+      out.push_back(builtins::kad_dht);
+   }
+   if (options.capabilities.has(capabilities::rendezvous) &&
+       (options.limits.rendezvous.operating_role == rendezvous::role::server ||
+        options.limits.rendezvous.operating_role == rendezvous::role::client_and_server)) {
+      out.push_back(builtins::rendezvous);
    }
    out.reserve(out.size() + handlers.size());
    for (const auto& [protocol, _] : handlers) {
@@ -777,6 +802,26 @@ void node::impl::record_direct_failure(const peer_id& peer) {
 void node::impl::record_relay_failure() {
    auto lock = std::scoped_lock{mutex};
    ++metrics_value.relay_failures;
+}
+
+void node::impl::increment_dht_query() {
+   auto lock = std::scoped_lock{mutex};
+   ++metrics_value.dht_queries;
+}
+
+void node::impl::increment_dht_response() {
+   auto lock = std::scoped_lock{mutex};
+   ++metrics_value.dht_responses;
+}
+
+void node::impl::increment_rendezvous_registration() {
+   auto lock = std::scoped_lock{mutex};
+   ++metrics_value.rendezvous_registrations;
+}
+
+void node::impl::increment_rendezvous_discover() {
+   auto lock = std::scoped_lock{mutex};
+   ++metrics_value.rendezvous_discovers;
 }
 
 boost::asio::awaitable<std::shared_ptr<node::impl::session_state>> node::impl::connect_direct(fcl::quic::endpoint endpoint,
@@ -1234,6 +1279,14 @@ boost::asio::awaitable<void> node::impl::handle_incoming_stream(std::shared_ptr<
          co_await handle_dcutr(session, std::move(negotiated.stream));
          co_return;
       }
+      if (negotiated.protocol == builtins::kad_dht) {
+         co_await handle_dht(session, std::move(negotiated.stream));
+         co_return;
+      }
+      if (negotiated.protocol == builtins::rendezvous) {
+         co_await handle_rendezvous(session, std::move(negotiated.stream));
+         co_return;
+      }
       auto handler = handler_for(negotiated.protocol);
       if (!handler) {
          increment_protocol_rejected();
@@ -1447,6 +1500,14 @@ boost::asio::awaitable<void> node::impl::handle_relayed_yamux_stream(std::shared
    }
    if (negotiated.protocol == builtins::dcutr) {
       co_await handle_dcutr(session, std::move(negotiated.stream));
+      co_return;
+   }
+   if (negotiated.protocol == builtins::kad_dht) {
+      co_await handle_dht(session, std::move(negotiated.stream));
+      co_return;
+   }
+   if (negotiated.protocol == builtins::rendezvous) {
+      co_await handle_rendezvous(session, std::move(negotiated.stream));
       co_return;
    }
    auto handler = handler_for(negotiated.protocol);
@@ -1695,6 +1756,154 @@ boost::asio::awaitable<void> node::impl::handle_dcutr(std::shared_ptr<node::impl
       co_return;
    }
    record_hole_punch_result(hole_punch::status::failed);
+}
+
+boost::asio::awaitable<void> node::impl::handle_dht(std::shared_ptr<node::impl::session_state> session,
+                                                    fcl::p2p::stream stream) {
+   if (!options.capabilities.has(capabilities::dht) || options.limits.dht.operating_mode != dht::mode::server) {
+      exceptions::raise(exceptions::code::unsupported_protocol, "DHT server mode is disabled");
+   }
+   auto buffer = std::vector<std::uint8_t>{};
+   auto request = dht::codec::decode(co_await async_read_length_delimited(stream, buffer, options.limits.dht.max_message_size),
+                                     options.limits.dht);
+   increment_dht_query();
+   for (const auto& peer : request.closer_peers) {
+      store.upsert_routing_peer(peer, discovery::source::dht,
+                                std::chrono::system_clock::now() + options.limits.dht.refresh_interval);
+   }
+   for (const auto& peer : request.provider_peers) {
+      store.upsert_routing_peer(peer, discovery::source::dht,
+                                std::chrono::system_clock::now() + options.limits.dht.refresh_interval);
+   }
+
+   auto response = dht::message{
+       .type = request.type,
+       .key_value = request.key_value,
+   };
+   if (request.type == dht::message_type::find_node) {
+      response.closer_peers = store.closest_routing_peers(request.key_value, options.limits.dht.replication);
+   } else if (request.type == dht::message_type::get_providers) {
+      const auto providers = store.find_providers(request.key_value);
+      response.provider_peers.reserve(providers.size());
+      for (const auto& provider : providers) {
+         response.provider_peers.push_back(provider.provider);
+      }
+      response.closer_peers = store.closest_routing_peers(request.key_value, options.limits.dht.replication);
+   } else if (request.type == dht::message_type::add_provider) {
+      for (const auto& provider : request.provider_peers) {
+         if (provider.id != session->info.remote_peer) {
+            continue;
+         }
+         store.upsert_provider(peer_store::provider_record{
+             .key = request.key_value,
+             .provider = provider,
+             .discovered_by = discovery::source::dht,
+             .expires_at = std::chrono::system_clock::now() + options.limits.dht.provider_record_ttl,
+         });
+      }
+      response.provider_peers = request.provider_peers;
+   } else if (request.type == dht::message_type::put_value && request.record_value) {
+      response.record_value = request.record_value;
+   } else if (request.type == dht::message_type::get_value) {
+      response.closer_peers = store.closest_routing_peers(request.key_value, options.limits.dht.replication);
+   }
+   increment_dht_response();
+   co_await stream.async_write(dht::codec::encode(response, options.limits.dht));
+   co_await stream.async_close();
+}
+
+boost::asio::awaitable<void> node::impl::handle_rendezvous(std::shared_ptr<node::impl::session_state> session,
+                                                           fcl::p2p::stream stream) {
+   if (!options.capabilities.has(capabilities::rendezvous) ||
+       (options.limits.rendezvous.operating_role != rendezvous::role::server &&
+        options.limits.rendezvous.operating_role != rendezvous::role::client_and_server)) {
+      exceptions::raise(exceptions::code::unsupported_protocol, "rendezvous server mode is disabled");
+   }
+   auto buffer = std::vector<std::uint8_t>{};
+   auto request = rendezvous::codec::decode(
+       co_await async_read_length_delimited(stream, buffer, options.limits.rendezvous.max_message_size),
+       options.limits.rendezvous);
+
+   if (request.type == rendezvous::message_type::register_peer && request.register_value) {
+      auto response = rendezvous::register_response{.status_value = rendezvous::status::ok};
+      auto ttl = request.register_value->ttl.count() == 0 ? options.limits.rendezvous.default_ttl
+                                                          : request.register_value->ttl;
+      if (ttl < options.limits.rendezvous.min_ttl || ttl > options.limits.rendezvous.max_ttl) {
+         response.status_value = rendezvous::status::invalid_ttl;
+         response.status_text = "rendezvous registration TTL outside allowed range";
+      } else {
+         auto endpoints = std::vector<endpoint>{};
+         if (const auto record = store.find(session->info.remote_peer)) {
+            for (const auto& endpoint : record->endpoints) {
+               endpoints.push_back(fcl::p2p::endpoint{
+                   .kind = fcl::p2p::endpoint::address_kind::ip4,
+                   .host = endpoint.endpoint.host,
+                   .port = endpoint.endpoint.port,
+                   .peer = session->info.remote_peer,
+               });
+            }
+         }
+         store.upsert_rendezvous(rendezvous::registration{
+             .namespace_name = request.register_value->namespace_name,
+             .peer = session->info.remote_peer,
+             .endpoints = std::move(endpoints),
+             .signed_peer_record = request.register_value->signed_peer_record,
+             .ttl = ttl,
+             .expires_at = std::chrono::system_clock::now() + ttl,
+         });
+         response.ttl = ttl;
+         increment_rendezvous_registration();
+      }
+      co_await stream.async_write(rendezvous::codec::encode(rendezvous::message{
+          .type = rendezvous::message_type::register_response,
+          .register_response_value = std::move(response),
+      },
+                                                            options.limits.rendezvous));
+      co_await stream.async_close();
+      co_return;
+   }
+
+   if (request.type == rendezvous::message_type::unregister_peer && request.unregister_value) {
+      store.remove_rendezvous(session->info.remote_peer, request.unregister_value->namespace_name);
+      co_await stream.async_close();
+      co_return;
+   }
+
+   if (request.type == rendezvous::message_type::discover && request.discover_value) {
+      const auto after = rendezvous::codec::read_cookie(request.discover_value->cookie);
+      const auto limit = request.discover_value->limit == 0
+                             ? options.limits.rendezvous.max_discover_limit
+                             : std::min(request.discover_value->limit, options.limits.rendezvous.max_discover_limit);
+      auto registrations = store.discover_rendezvous(request.discover_value->namespace_name, after, limit);
+      auto sequence = after;
+      for (const auto& registration : registrations) {
+         sequence = std::max(sequence, registration.sequence);
+      }
+      increment_rendezvous_discover();
+      co_await stream.async_write(rendezvous::codec::encode(rendezvous::message{
+          .type = rendezvous::message_type::discover_response,
+          .discover_response_value =
+              rendezvous::discover_response{
+                  .registrations = std::move(registrations),
+                  .cookie = rendezvous::codec::make_cookie(sequence),
+                  .status_value = rendezvous::status::ok,
+              },
+      },
+                                                            options.limits.rendezvous));
+      co_await stream.async_close();
+      co_return;
+   }
+
+   co_await stream.async_write(rendezvous::codec::encode(rendezvous::message{
+       .type = rendezvous::message_type::discover_response,
+       .discover_response_value =
+           rendezvous::discover_response{
+               .status_value = rendezvous::status::internal_error,
+               .status_text = "unexpected rendezvous message",
+           },
+   },
+                                                         options.limits.rendezvous));
+   co_await stream.async_close();
 }
 
 boost::asio::awaitable<bool> node::impl::wait_for_direct_session(const peer_id& peer, std::chrono::milliseconds timeout) {

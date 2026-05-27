@@ -25,6 +25,7 @@
 
 import fcl.asio.blocking;
 import fcl.asio.runtime;
+import fcl.multiformats.exceptions;
 import fcl.multiformats.types;
 import fcl.multiformats.varint;
 import fcl.p2p.endpoint;

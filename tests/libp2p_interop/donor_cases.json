@@ -110,6 +110,61 @@
         "mixed go-libp2p source -> FCL relay -> FCL destination DCUtR topology",
         "mixed rust-libp2p source -> FCL relay -> FCL destination DCUtR topology"
       ]
+    },
+    {
+      "id": "dht.routing_table_xor_distance",
+      "protocol": "Kademlia DHT",
+      "source": "donors/libp2p-specs/kad-dht/README.md",
+      "donor": "rust-libp2p/protocols/kad tests and Kademlia routing table behavior",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_dht_routing_table_uses_sha256_xor_distance_and_bounds_results"
+      ]
+    },
+    {
+      "id": "dht.message_codec_and_provider_records",
+      "protocol": "Kademlia DHT",
+      "source": "donors/libp2p-specs/kad-dht/README.md",
+      "donor": "rust-libp2p/protocols/kad/src/generated/dht.proto and provider lookup tests",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_dht_codec_roundtrips_libp2p_message_shape_and_rejects_malformed",
+        "p2p_dht_node_finds_peer_and_provider_over_negotiated_stream",
+        "p2p_peer_store_rocksdb_persists_discovery_dht_and_rendezvous_state"
+      ]
+    },
+    {
+      "id": "rendezvous.register_discover_ttl_cookie",
+      "protocol": "Rendezvous",
+      "source": "donors/libp2p-specs/rendezvous/README.md",
+      "donor": "rust-libp2p/protocols/rendezvous/src/generated/rpc.proto and rendezvous behaviour tests",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_rendezvous_codec_roundtrips_register_discover_cookie_and_status",
+        "p2p_rendezvous_node_registers_and_discovers_over_negotiated_stream",
+        "p2p_peer_store_rocksdb_persists_discovery_dht_and_rendezvous_state"
+      ]
+    },
+    {
+      "id": "interop.live_dht_peer_provider_lookup",
+      "protocol": "Kademlia DHT",
+      "source": "donors/libp2p-specs/kad-dht/README.md",
+      "donor": "go-libp2p-kad-dht and rust-libp2p Kademlia live fixtures",
+      "status": "unsupported",
+      "supported": false,
+      "fcl_tests": []
+    },
+    {
+      "id": "interop.live_rendezvous_register_discover",
+      "protocol": "Rendezvous",
+      "source": "donors/libp2p-specs/rendezvous/README.md",
+      "donor": "go/rust libp2p rendezvous live fixtures",
+      "status": "unsupported",
+      "supported": false,
+      "fcl_tests": []
     }
   ]
 }

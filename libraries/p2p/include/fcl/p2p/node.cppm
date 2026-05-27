@@ -15,11 +15,14 @@ module;
 export module fcl.p2p.node;
 
 import fcl.asio.runtime;
+import fcl.p2p.dht;
+import fcl.p2p.discovery;
 import fcl.p2p.hole_punch;
 import fcl.p2p.identity;
 import fcl.p2p.peer_store;
 import fcl.p2p.protocol;
 import fcl.p2p.reachability;
+import fcl.p2p.rendezvous;
 import fcl.p2p.relay;
 import fcl.p2p.resource_manager;
 import fcl.p2p.scoring;
@@ -39,6 +42,9 @@ class node {
       std::size_t max_peer_exchange_queue = 4096;
       relay::limits relay{};
       resource_manager::limits resources{};
+      discovery::policy discovery{};
+      dht::options dht{};
+      rendezvous::options rendezvous{};
    };
 
    struct options {
@@ -124,6 +130,10 @@ class node {
       std::uint64_t path_relay_attempts = 0;
       std::uint64_t direct_failures = 0;
       std::uint64_t relay_failures = 0;
+      std::uint64_t dht_queries = 0;
+      std::uint64_t dht_responses = 0;
+      std::uint64_t rendezvous_registrations = 0;
+      std::uint64_t rendezvous_discovers = 0;
       std::uint64_t backpressure_rejections = 0;
       std::size_t active_sessions = 0;
       std::size_t active_relays = 0;
@@ -156,6 +166,13 @@ class node {
    boost::asio::awaitable<relay::reservation::info> async_reserve_relay(peer_id relay_peer,
                                                                         relay::reservation::options options);
    boost::asio::awaitable<void> async_cancel_relay(peer_id relay_peer);
+   boost::asio::awaitable<dht::query_result> async_find_peer(peer_id peer);
+   boost::asio::awaitable<void> async_provide(dht::key key);
+   boost::asio::awaitable<std::vector<dht::peer>> async_find_providers(dht::key key);
+   boost::asio::awaitable<rendezvous::register_response>
+   async_rendezvous_register(peer_id rendezvous_peer, rendezvous::register_request request);
+   boost::asio::awaitable<rendezvous::discover_response>
+   async_rendezvous_discover(peer_id rendezvous_peer, rendezvous::discover_request request);
    boost::asio::awaitable<std::chrono::milliseconds> async_ping(peer_id peer);
    boost::asio::awaitable<std::chrono::milliseconds> async_ping(peer_id peer, open_options options);
    boost::asio::awaitable<hole_punch::status>

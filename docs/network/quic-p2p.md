@@ -229,7 +229,9 @@ Accepted:
 - Circuit Relay style explicit reservation.
 - AutoNAT/AutoRelay as network services, not product/plugin loops.
 - DCUtR-style hole punching as a bounded attempt, not magic connectivity.
-- Kademlia DHT and rendezvous as future discovery donors.
+- Kademlia DHT and rendezvous as discovery donors; current component proof is
+  tracked in `docs/donors/fcl-p2p-dht-rendezvous-v1.md`, while full support
+  still requires live Go/Rust interop artifacts.
 - GossipSub as a future pubsub/gossip donor.
 - Syncthing/libtorrent-style path scoring/backoff.
 - Transactional outbox style durable retry as an application/plugin-level

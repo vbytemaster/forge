@@ -35,6 +35,7 @@ inline constexpr std::uint64_t dht = 1ULL << 3;
 inline constexpr std::uint64_t autonat = 1ULL << 4;
 inline constexpr std::uint64_t hole_punching = 1ULL << 5;
 inline constexpr std::uint64_t relay_reservation = 1ULL << 6;
+inline constexpr std::uint64_t rendezvous = 1ULL << 7;
 } // namespace capabilities
 
 namespace builtins {
@@ -48,6 +49,8 @@ inline const protocol_id autonat_v2_dial_back{.value = "/libp2p/autonat/2/dial-b
 inline const protocol_id relay_hop{.value = "/libp2p/circuit/relay/0.2.0/hop"};
 inline const protocol_id relay_stop{.value = "/libp2p/circuit/relay/0.2.0/stop"};
 inline const protocol_id dcutr{.value = "/libp2p/dcutr"};
+inline const protocol_id kad_dht{.value = "/ipfs/kad/1.0.0"};
+inline const protocol_id rendezvous{.value = "/rendezvous/1.0.0"};
 } // namespace builtins
 
 } // namespace fcl::p2p

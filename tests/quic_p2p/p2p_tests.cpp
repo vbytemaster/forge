@@ -1,6 +1,7 @@
 #include <boost/test/unit_test.hpp>
 #include <boost/describe.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -29,9 +30,10 @@
 import fcl.asio.blocking;
 import fcl.asio.runtime;
 import fcl.crypto.pem;
+import fcl.p2p.dht;
+import fcl.p2p.discovery;
 import fcl.p2p.endpoint;
 import fcl.p2p.envelope;
-import fcl.p2p.exceptions;
 import fcl.p2p.exceptions;
 import fcl.p2p.hole_punch;
 import fcl.p2p.identify;
@@ -42,6 +44,7 @@ import fcl.p2p.node;
 import fcl.p2p.peer_store;
 import fcl.p2p.protocol;
 import fcl.p2p.reachability;
+import fcl.p2p.rendezvous;
 import fcl.p2p.relay;
 import fcl.p2p.resource_manager;
 import fcl.p2p.scoring;
@@ -446,6 +449,32 @@ class counting_peer_store_backend final : public peer_store::backend {
       record.endpoints.push_back(peer_store::endpoint_record{.endpoint = endpoint, .kind = kind, .backoff_until = backoff_until});
    }
 
+   void upsert_routing_peer(dht::peer value, discovery::source source,
+                            std::chrono::system_clock::time_point expires_at) override {
+      auto& record = records[value.id];
+      record.peer = value.id;
+      record.discovered_by = source;
+      record.discovery_expires_at = expires_at;
+      for (const auto& endpoint : value.endpoints) {
+         record.endpoints.push_back(peer_store::endpoint_record{.endpoint = endpoint.quic_endpoint()});
+      }
+   }
+
+   void upsert_provider(peer_store::provider_record value) override {
+      providers[value.key.bytes].push_back(std::move(value));
+   }
+
+   void upsert_rendezvous(rendezvous::registration value) override {
+      value.sequence = ++rendezvous_sequence;
+      rendezvous_records.push_back(std::move(value));
+   }
+
+   void remove_rendezvous(peer_id value, std::string namespace_name) override {
+      std::erase_if(rendezvous_records, [&](const auto& record) {
+         return record.peer == value && record.namespace_name == namespace_name;
+      });
+   }
+
    [[nodiscard]] std::optional<peer_store::record> find(const peer_id& value) const override {
       const auto it = records.find(value);
       if (it == records.end()) {
@@ -463,9 +492,57 @@ class counting_peer_store_backend final : public peer_store::backend {
       return out;
    }
 
+   [[nodiscard]] std::vector<dht::peer> closest_routing_peers(const dht::key&, std::size_t limit) const override {
+      auto out = std::vector<dht::peer>{};
+      for (const auto& [peer, record] : records) {
+         auto endpoints = std::vector<endpoint>{};
+         for (const auto& item : record.endpoints) {
+            endpoints.push_back(endpoint{
+                .host = item.endpoint.host,
+                .port = item.endpoint.port,
+                .peer = peer,
+            });
+         }
+         out.push_back(dht::peer{.id = peer, .endpoints = std::move(endpoints)});
+         if (out.size() >= limit) {
+            break;
+         }
+      }
+      return out;
+   }
+
+   [[nodiscard]] std::vector<peer_store::provider_record> find_providers(const dht::key& key) const override {
+      const auto it = providers.find(key.bytes);
+      if (it == providers.end()) {
+         return {};
+      }
+      return it->second;
+   }
+
+   [[nodiscard]] std::vector<rendezvous::registration>
+   discover_rendezvous(std::string_view namespace_name, std::uint64_t after_sequence, std::size_t limit) const override {
+      auto out = std::vector<rendezvous::registration>{};
+      for (const auto& record : rendezvous_records) {
+         if (!namespace_name.empty() && record.namespace_name != namespace_name) {
+            continue;
+         }
+         if (record.sequence <= after_sequence) {
+            continue;
+         }
+         out.push_back(record);
+         if (out.size() >= limit) {
+            break;
+         }
+      }
+      return out;
+   }
+
    std::uint32_t upsert_count = 0;
    std::uint32_t learn_endpoint_count = 0;
    std::map<peer_id, peer_store::record> records;
+   std::map<std::vector<std::uint8_t>, std::vector<peer_store::provider_record>> providers;
+   std::vector<rendezvous::registration> rendezvous_records;
+   std::uint64_t rendezvous_sequence = 0;
 };
 
 } // namespace
@@ -573,6 +650,8 @@ BOOST_AUTO_TEST_CASE(p2p_libp2p_reachability_relay_protocol_ids_are_exact) {
    BOOST_TEST(builtins::relay_hop.value == "/libp2p/circuit/relay/0.2.0/hop");
    BOOST_TEST(builtins::relay_stop.value == "/libp2p/circuit/relay/0.2.0/stop");
    BOOST_TEST(builtins::dcutr.value == "/libp2p/dcutr");
+   BOOST_TEST(builtins::kad_dht.value == "/ipfs/kad/1.0.0");
+   BOOST_TEST(builtins::rendezvous.value == "/rendezvous/1.0.0");
 }
 
 BOOST_AUTO_TEST_CASE(p2p_reachability_relay_public_types_are_owner_scoped) {
@@ -582,6 +661,120 @@ BOOST_AUTO_TEST_CASE(p2p_reachability_relay_public_types_are_owner_scoped) {
    static_assert(std::is_same_v<decltype(path::policy{}.allow_relay), bool>);
    static_assert(std::is_same_v<decltype(path::result{}.kind), path::kind>);
    static_assert(std::is_same_v<decltype(resource_manager::snapshot{}.active_streams), std::size_t>);
+   static_assert(std::is_same_v<decltype(dht::options{}.replication), std::size_t>);
+   static_assert(std::is_same_v<decltype(dht::query_result{}.target), dht::key>);
+   static_assert(std::is_same_v<decltype(rendezvous::registration{}.peer), peer_id>);
+   static_assert(std::is_same_v<decltype(discovery::policy{}.enabled), bool>);
+   static_assert(std::is_same_v<decltype(discovery::result{}.discovered_by), discovery::source>);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_dht_codec_roundtrips_libp2p_message_shape_and_rejects_malformed) {
+   const auto provider = peer(90);
+   const auto target = peer(91);
+   const auto provider_endpoint = parse_endpoint("/ip4/127.0.0.1/udp/4900/quic-v1/p2p/" + provider.to_string());
+   const auto target_endpoint = parse_endpoint("/ip4/127.0.0.1/udp/4901/quic-v1/p2p/" + target.to_string());
+   const auto key = make_dht_key(std::vector<std::uint8_t>{'f', 'c', 'l', '-', 'd', 'h', 't'});
+
+   const auto encoded = dht::codec::encode(dht::message{
+       .type = dht::message_type::get_providers,
+       .key_value = key,
+       .closer_peers = std::vector<dht::peer>{dht::peer{
+           .id = target,
+           .endpoints = std::vector<endpoint>{target_endpoint},
+           .connection = dht::connection_type::can_connect,
+       }},
+       .provider_peers = std::vector<dht::peer>{dht::peer{
+           .id = provider,
+           .endpoints = std::vector<endpoint>{provider_endpoint},
+           .connection = dht::connection_type::connected,
+       }},
+   });
+   const auto decoded = dht::codec::decode(encoded);
+
+   BOOST_TEST(static_cast<int>(decoded.type) == static_cast<int>(dht::message_type::get_providers));
+   BOOST_TEST(decoded.key_value.bytes == key.bytes, boost::test_tools::per_element());
+   BOOST_REQUIRE_EQUAL(decoded.closer_peers.size(), 1U);
+   BOOST_REQUIRE_EQUAL(decoded.provider_peers.size(), 1U);
+   BOOST_TEST(decoded.closer_peers.front().id.to_string() == target.to_string());
+   BOOST_TEST(decoded.closer_peers.front().endpoints.front().to_string() == target_endpoint.to_string());
+   BOOST_TEST(static_cast<int>(decoded.closer_peers.front().connection) ==
+              static_cast<int>(dht::connection_type::can_connect));
+   BOOST_TEST(decoded.provider_peers.front().id.to_string() == provider.to_string());
+   BOOST_TEST(decoded.provider_peers.front().endpoints.front().to_string() == provider_endpoint.to_string());
+   BOOST_TEST(static_cast<int>(decoded.provider_peers.front().connection) ==
+              static_cast<int>(dht::connection_type::connected));
+
+   BOOST_CHECK_THROW((void)dht::codec::decode(std::vector<std::uint8_t>{0x02, 0x08, 0x63}),
+                     fcl::exception::base);
+   BOOST_CHECK_THROW((void)dht::codec::decode(std::vector<std::uint8_t>{0x01, 0x10}), fcl::exception::base);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_dht_routing_table_uses_sha256_xor_distance_and_bounds_results) {
+   const auto local = peer(92);
+   const auto first = peer(93);
+   const auto second = peer(94);
+   auto table = dht::routing_table{local, dht::options{.replication = 1}};
+   table.upsert(dht::peer{.id = first});
+   table.upsert(dht::peer{.id = second});
+   table.upsert(dht::peer{.id = local});
+
+   const auto zero = distance_between(first.to_bytes(), first.to_bytes());
+   BOOST_TEST(std::ranges::all_of(zero.bytes, [](auto value) { return value == 0; }));
+
+   const auto closest = table.closest(second.to_bytes(), 20);
+   BOOST_REQUIRE_EQUAL(closest.size(), 1U);
+   BOOST_TEST(closest.front().id.to_string() == second.to_string());
+   BOOST_REQUIRE_EQUAL(table.snapshot().size(), 2U);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_rendezvous_codec_roundtrips_register_discover_cookie_and_status) {
+   const auto opts = rendezvous::options{};
+   const auto record = std::vector<std::uint8_t>{1, 2, 3, 4, 5};
+   const auto encoded_register = rendezvous::codec::encode(rendezvous::message{
+       .type = rendezvous::message_type::register_peer,
+       .register_value = rendezvous::register_request{
+           .namespace_name = "fcl.discovery",
+           .signed_peer_record = record,
+           .ttl = std::chrono::seconds{7'200},
+       },
+   });
+   const auto decoded_register = rendezvous::codec::decode(encoded_register, opts);
+   BOOST_TEST(static_cast<int>(decoded_register.type) == static_cast<int>(rendezvous::message_type::register_peer));
+   BOOST_REQUIRE(decoded_register.register_value.has_value());
+   BOOST_TEST(decoded_register.register_value->namespace_name == "fcl.discovery");
+   BOOST_TEST(decoded_register.register_value->signed_peer_record == record, boost::test_tools::per_element());
+   BOOST_TEST(decoded_register.register_value->ttl == std::chrono::seconds{7'200});
+
+   const auto cookie = rendezvous::codec::make_cookie(42);
+   BOOST_TEST(rendezvous::codec::read_cookie(cookie) == 42U);
+   const auto encoded_discover = rendezvous::codec::encode(rendezvous::message{
+       .type = rendezvous::message_type::discover_response,
+       .discover_response_value = rendezvous::discover_response{
+           .registrations = std::vector<rendezvous::registration>{rendezvous::registration{
+               .namespace_name = "fcl.discovery",
+               .signed_peer_record = record,
+               .ttl = std::chrono::seconds{7'200},
+           }},
+           .cookie = cookie,
+           .status_value = rendezvous::status::ok,
+       },
+   });
+   const auto decoded_discover = rendezvous::codec::decode(encoded_discover, opts);
+   BOOST_TEST(static_cast<int>(decoded_discover.type) == static_cast<int>(rendezvous::message_type::discover_response));
+   BOOST_REQUIRE(decoded_discover.discover_response_value.has_value());
+   BOOST_REQUIRE_EQUAL(decoded_discover.discover_response_value->registrations.size(), 1U);
+   BOOST_TEST(decoded_discover.discover_response_value->registrations.front().namespace_name == "fcl.discovery");
+   BOOST_TEST(decoded_discover.discover_response_value->registrations.front().signed_peer_record == record,
+              boost::test_tools::per_element());
+   BOOST_TEST(rendezvous::codec::read_cookie(decoded_discover.discover_response_value->cookie) == 42U);
+
+   BOOST_CHECK_THROW((void)rendezvous::codec::read_cookie(std::vector<std::uint8_t>{1, 2, 3}),
+                     fcl::exception::base);
+   BOOST_CHECK_THROW((void)rendezvous::codec::encode(rendezvous::message{
+                         .type = rendezvous::message_type::discover,
+                         .discover_value = rendezvous::discover_request{.namespace_name = std::string(300, 'x')},
+                     }),
+                     fcl::exception::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_signed_envelope_seals_and_verifies_domain_payload_and_signer) {
@@ -1216,6 +1409,99 @@ BOOST_AUTO_TEST_CASE(p2p_identify_protocol_advertises_supported_protocols) {
    fcl::asio::blocking::run(runtime, server.async_stop());
 }
 
+BOOST_AUTO_TEST_CASE(p2p_dht_node_finds_peer_and_provider_over_negotiated_stream) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server_options = options_for(peer(118), capability_set{.bits = capabilities::direct_quic | capabilities::dht});
+   server_options.limits.dht.operating_mode = dht::mode::server;
+   auto client_options = options_for(peer(119), capability_set{.bits = capabilities::direct_quic | capabilities::dht});
+   auto server = node{runtime, std::move(server_options)};
+   auto client = node{runtime, std::move(client_options)};
+   const auto server_endpoint = listen(server, runtime);
+   client.peers().learn_endpoint(server.local_peer(), server_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::dht});
+
+   const auto target = peer(120);
+   const auto provider = peer(121);
+   const auto target_endpoint = parse_endpoint("/ip4/127.0.0.1/udp/4120/quic-v1/p2p/" + target.to_string());
+   const auto provider_endpoint = parse_endpoint("/ip4/127.0.0.1/udp/4121/quic-v1/p2p/" + provider.to_string());
+   const auto key = make_dht_key(std::vector<std::uint8_t>{'f', 'c', 'l', '-', 'd', 'h', 't', '-', 'n', 'o', 'd', 'e'});
+   server.peers().upsert_routing_peer(dht::peer{
+                                          .id = target,
+                                          .endpoints = std::vector<endpoint>{target_endpoint},
+                                          .connection = dht::connection_type::can_connect,
+                                       },
+                                      discovery::source::explicit_config,
+                                      std::chrono::system_clock::now() + std::chrono::hours{1});
+   server.peers().upsert_provider(peer_store::provider_record{
+       .key = key,
+       .provider = dht::peer{
+           .id = provider,
+           .endpoints = std::vector<endpoint>{provider_endpoint},
+           .connection = dht::connection_type::connected,
+       },
+       .expires_at = std::chrono::system_clock::now() + std::chrono::hours{1},
+   });
+
+   const auto found_peer = fcl::asio::blocking::run(runtime, client.async_find_peer(target));
+   BOOST_TEST(std::ranges::any_of(found_peer.closest_peers, [&](const dht::peer& value) {
+      return value.id == target && !value.endpoints.empty() && value.endpoints.front().to_string() == target_endpoint.to_string();
+   }));
+
+   const auto providers = fcl::asio::blocking::run(runtime, client.async_find_providers(key));
+   BOOST_TEST(std::ranges::any_of(providers, [&](const dht::peer& value) {
+      return value.id == provider && !value.endpoints.empty() &&
+             value.endpoints.front().to_string() == provider_endpoint.to_string();
+   }));
+   BOOST_TEST(server.metrics().dht_queries >= 2U);
+   BOOST_TEST(server.metrics().dht_responses >= 2U);
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_rendezvous_node_registers_and_discovers_over_negotiated_stream) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server_options =
+       options_for(peer(122), capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
+   server_options.limits.rendezvous.operating_role = rendezvous::role::server;
+   auto client_options =
+       options_for(peer(123), capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
+   auto server = node{runtime, std::move(server_options)};
+   auto client = node{runtime, std::move(client_options)};
+   const auto server_endpoint = listen(server, runtime);
+   client.peers().learn_endpoint(server.local_peer(), server_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
+
+   const auto response = fcl::asio::blocking::run(
+       runtime, client.async_rendezvous_register(
+                    server.local_peer(),
+                    rendezvous::register_request{
+                        .namespace_name = "fcl.discovery",
+                        .signed_peer_record = std::vector<std::uint8_t>{1, 2, 3},
+                        .ttl = std::chrono::seconds{7'200},
+                    }));
+   BOOST_TEST(static_cast<int>(response.status_value) == static_cast<int>(rendezvous::status::ok));
+   BOOST_TEST(response.ttl == std::chrono::seconds{7'200});
+
+   const auto discovered = fcl::asio::blocking::run(
+       runtime, client.async_rendezvous_discover(server.local_peer(),
+                                                 rendezvous::discover_request{
+                                                     .namespace_name = "fcl.discovery",
+                                                     .limit = 10,
+                                                 }));
+   BOOST_TEST(static_cast<int>(discovered.status_value) == static_cast<int>(rendezvous::status::ok));
+   BOOST_REQUIRE_EQUAL(discovered.registrations.size(), 1U);
+   BOOST_TEST(discovered.registrations.front().namespace_name == "fcl.discovery");
+   BOOST_TEST(discovered.registrations.front().signed_peer_record == std::vector<std::uint8_t>({1, 2, 3}),
+              boost::test_tools::per_element());
+   BOOST_TEST(rendezvous::codec::read_cookie(discovered.cookie) >= 1U);
+   BOOST_TEST(server.metrics().rendezvous_registrations >= 1U);
+   BOOST_TEST(server.metrics().rendezvous_discovers >= 1U);
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
 BOOST_AUTO_TEST_CASE(p2p_identify_push_updates_peer_store) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
    auto server = node{runtime, options_for(peer(77))};
@@ -1557,6 +1843,75 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_survives_reopen) {
    BOOST_TEST(found->relay_reservations.front().successes == 3U);
    BOOST_TEST(found->relay_reservations.front().failures == 1U);
    BOOST_TEST(found->relay_reservations.front().last_latency == std::chrono::milliseconds{23});
+}
+
+BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_persists_discovery_dht_and_rendezvous_state) {
+   auto temp = temp_store_dir{"rocksdb-discovery"};
+   const auto routing_peer = peer(85);
+   const auto provider_peer = peer(86);
+   const auto rendezvous_peer = peer(87);
+   const auto key = make_dht_key(std::vector<std::uint8_t>{'f', 'c', 'l', '-', 'p', 'r', 'o', 'v', 'i', 'd', 'e'});
+   const auto routing_endpoint = parse_endpoint("/ip4/127.0.0.1/udp/4185/quic-v1/p2p/" + routing_peer.to_string());
+   const auto provider_endpoint = parse_endpoint("/ip4/127.0.0.1/udp/4186/quic-v1/p2p/" + provider_peer.to_string());
+   const auto rendezvous_endpoint = parse_endpoint("/ip4/127.0.0.1/udp/4187/quic-v1/p2p/" + rendezvous_peer.to_string());
+   const auto expires_at = std::chrono::system_clock::now() + std::chrono::hours{1};
+
+   {
+      auto store = peer_store{peer_store::options{
+          .backend = peer_store::make_rocksdb_backend(peer_store::rocksdb_options{.path = temp.path()}),
+      }};
+      store.upsert_routing_peer(dht::peer{
+                                    .id = routing_peer,
+                                    .endpoints = std::vector<endpoint>{routing_endpoint},
+                                    .connection = dht::connection_type::can_connect,
+                                 },
+                                discovery::source::dht, expires_at);
+      store.upsert_provider(peer_store::provider_record{
+          .key = key,
+          .provider = dht::peer{
+              .id = provider_peer,
+              .endpoints = std::vector<endpoint>{provider_endpoint},
+              .connection = dht::connection_type::connected,
+          },
+          .discovered_by = discovery::source::dht,
+          .expires_at = expires_at,
+          .successes = 2,
+      });
+      store.upsert_rendezvous(rendezvous::registration{
+          .namespace_name = "fcl.discovery",
+          .peer = rendezvous_peer,
+          .endpoints = std::vector<endpoint>{rendezvous_endpoint},
+          .signed_peer_record = std::vector<std::uint8_t>{9, 8, 7},
+          .ttl = std::chrono::seconds{7'200},
+          .expires_at = expires_at,
+      });
+   }
+
+   auto reopened = peer_store{peer_store::options{
+       .backend = peer_store::make_rocksdb_backend(peer_store::rocksdb_options{.path = temp.path()}),
+   }};
+   const auto routing = reopened.closest_routing_peers(key, 10);
+   BOOST_REQUIRE_EQUAL(routing.size(), 1U);
+   BOOST_TEST(routing.front().id.to_string() == routing_peer.to_string());
+   BOOST_REQUIRE_EQUAL(routing.front().endpoints.size(), 1U);
+   BOOST_TEST(routing.front().endpoints.front().to_string() == routing_endpoint.to_string());
+
+   const auto providers = reopened.find_providers(key);
+   BOOST_REQUIRE_EQUAL(providers.size(), 1U);
+   BOOST_TEST(providers.front().provider.id.to_string() == provider_peer.to_string());
+   BOOST_REQUIRE_EQUAL(providers.front().provider.endpoints.size(), 1U);
+   BOOST_TEST(providers.front().provider.endpoints.front().to_string() == provider_endpoint.to_string());
+   BOOST_TEST(providers.front().successes == 2U);
+
+   const auto registrations = reopened.discover_rendezvous("fcl.discovery", 0, 10);
+   BOOST_REQUIRE_EQUAL(registrations.size(), 1U);
+   BOOST_TEST(registrations.front().peer.to_string() == rendezvous_peer.to_string());
+   BOOST_TEST(registrations.front().namespace_name == "fcl.discovery");
+   BOOST_TEST(registrations.front().signed_peer_record == std::vector<std::uint8_t>({9, 8, 7}),
+              boost::test_tools::per_element());
+   BOOST_REQUIRE_EQUAL(registrations.front().endpoints.size(), 1U);
+   BOOST_TEST(registrations.front().endpoints.front().to_string() == rendezvous_endpoint.to_string());
+   BOOST_TEST(reopened.discover_rendezvous("fcl.discovery", registrations.front().sequence, 10).empty());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_production_options_reject_missing_mtls_identity) {

@@ -4,6 +4,8 @@ add_library(
    endpoint.cpp
    envelope.cpp
    identify.cpp
+   dht.cpp
+   rendezvous.cpp
    scoring.cpp
    reachability.cpp
    relay.cpp

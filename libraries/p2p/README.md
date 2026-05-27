@@ -2,7 +2,7 @@
 
 `fcl_p2p` is the peer-to-peer layer above QUIC: peer identities, sessions,
 protocol stream negotiation, peer exchange, relay reservations, reachability
-probes, hole punching and path scoring.
+probes, hole punching, path scoring and discovery protocol machinery.
 
 ## When To Use
 
@@ -18,14 +18,17 @@ probes, hole punching and path scoring.
 - Do not put application message semantics or storage semantics here.
 - Do not treat P2P as authorization. Peer identity is transport identity; product
   authority is owned by consumers.
-- Do not assume a global DHT or gossip layer exists today. Those are future
-  `fcl_p2p` network services, not plugin-level shortcuts.
+- Do not assume global discovery is product-complete today. DHT/rendezvous
+  discovery belongs in `fcl_p2p`; global relay discovery and pubsub are not
+  plugin-level shortcuts.
 
 ## Public Modules
 
 - `fcl.p2p.identity`, `fcl.p2p.endpoint`, `fcl.p2p.node`.
 - `fcl.p2p.protocol`, `fcl.p2p.message`, `fcl.p2p.negotiation`.
-- `fcl.p2p.peer_store`, `fcl.p2p.relay`, `fcl.p2p.scoring`.
+- `fcl.p2p.peer_store`, `fcl.p2p.discovery`, `fcl.p2p.dht`,
+  `fcl.p2p.rendezvous`.
+- `fcl.p2p.relay`, `fcl.p2p.scoring`.
 - `fcl.p2p.exceptions`, `fcl.p2p` aggregate.
 
 Target: `fcl_p2p`.
@@ -259,7 +262,7 @@ verification failure and invalid envelopes are correctness failures.
   handlers run.
 - Do not make `fcl.p2p.api` responsible for peer discovery, relay or node
   lifecycle. It is only the API protocol binding artifact.
-- Do not implement AutoNAT, AutoRelay, DHT, rendezvous or pubsub in an
+- Do not implement AutoNAT, AutoRelay, DHT, rendezvous or pubsub loops in an
   infrastructure plugin. Missing network mechanics must be added to `fcl_p2p`
   or exposed as typed unsupported behavior.
 
@@ -273,4 +276,5 @@ verification failure and invalid envelopes are correctness failures.
 
 `test_fcl_quic_p2p` covers identity shape, codec rejection, direct protocol echo,
 path manager fallback, connect/open timeouts, peer exchange, relay, reachability,
-hole punching and production option validation.
+hole punching, DHT/rendezvous component behavior and production option
+validation.

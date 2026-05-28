@@ -19,6 +19,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	relayv2 "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	"github.com/libp2p/go-libp2p/p2p/protocol/holepunch"
@@ -30,6 +31,8 @@ import (
 )
 
 const echoProtocol = protocol.ID("/fcl/interop/relay-echo/1")
+const pubsubTopic = "fcl.pubsub.interop"
+const pubsubPayload = "fcl-gossipsub-live"
 
 type options struct {
 	command     string
@@ -132,6 +135,7 @@ type fixtureHost struct {
 	host.Host
 	holePunch *holepunch.Service
 	kad       *kad.IpfsDHT
+	pubsub    *pubsub.PubSub
 }
 
 func (h *fixtureHost) Close() error {
@@ -166,6 +170,18 @@ func newHost() (*fixtureHost, error) {
 		h.Close()
 		return nil, err
 	}
+	pubsubRouter, err := pubsub.NewGossipSub(
+		context.Background(),
+		h,
+		pubsub.WithGossipSubProtocols(
+			[]protocol.ID{pubsub.GossipSubID_v11, pubsub.GossipSubID_v10},
+			pubsub.GossipSubDefaultFeatures,
+		),
+	)
+	if err != nil {
+		h.Close()
+		return nil, err
+	}
 	type idServiceHost interface {
 		IDService() identify.IDService
 	}
@@ -179,7 +195,7 @@ func newHost() (*fixtureHost, error) {
 		h.Close()
 		return nil, err
 	}
-	return &fixtureHost{Host: h, holePunch: holePunchService, kad: dht}, nil
+	return &fixtureHost{Host: h, holePunch: holePunchService, kad: dht, pubsub: pubsubRouter}, nil
 }
 
 func providerCID() (cid.Cid, error) {
@@ -195,12 +211,72 @@ func addDHTPeer(h *fixtureHost, info *peer.AddrInfo) {
 	_, _ = h.kad.RoutingTable().TryAddPeer(info.ID, true, false)
 }
 
+func waitPubSubPeer(ctx context.Context, ps *pubsub.PubSub, topic string, peerID peer.ID) bool {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		for _, current := range ps.ListPeers(topic) {
+			if current == peerID {
+				return true
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
+func installPubSubListener(h *fixtureHost, resultFile string) error {
+	if resultFile == "" {
+		return fmt.Errorf("missing result file for gossipsub listener")
+	}
+	sub, err := h.pubsub.Subscribe(pubsubTopic, pubsub.WithBufferSize(8))
+	if err != nil {
+		return err
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		msg, err := sub.Next(ctx)
+		if err != nil {
+			_ = writeJSON(resultFile, map[string]any{
+				"implementation": "go",
+				"scenario":       "gossipsub_publish",
+				"status":         "error",
+				"error":          err.Error(),
+			})
+			return
+		}
+		status := "ok"
+		if string(msg.Data) != pubsubPayload {
+			status = "mismatch"
+		}
+		_ = writeJSON(resultFile, map[string]any{
+			"implementation":     "go",
+			"scenario":           "gossipsub_publish",
+			"status":             status,
+			"topic":              pubsubTopic,
+			"payload":            string(msg.Data),
+			"propagation_source": msg.ReceivedFrom.String(),
+			"source":             msg.GetFrom().String(),
+		})
+	}()
+	return nil
+}
+
 func listen(opts options) error {
 	h, err := newHost()
 	if err != nil {
 		return err
 	}
 	defer h.Close()
+	if opts.scenario == "gossipsub_publish" {
+		if err := installPubSubListener(h, opts.resultFile); err != nil {
+			return err
+		}
+	}
 
 	out := make([]string, 0, len(h.Addrs()))
 	for _, addr := range h.Addrs() {
@@ -433,6 +509,20 @@ func dial(opts options) error {
 			return fmt.Errorf("dht FindProviders did not return local provider")
 		}
 		result["provider_count"] = count
+	case "gossipsub_publish":
+		if _, err := h.pubsub.Subscribe(pubsubTopic, pubsub.WithBufferSize(8)); err != nil {
+			return err
+		}
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer waitCancel()
+		meshPeer := waitPubSubPeer(waitCtx, h.pubsub, pubsubTopic, info.ID)
+		if err := h.pubsub.Publish(pubsubTopic, []byte(pubsubPayload)); err != nil {
+			return fmt.Errorf("gossipsub publish failed: %w", err)
+		}
+		time.Sleep(500 * time.Millisecond)
+		result["topic"] = pubsubTopic
+		result["payload_bytes"] = len(pubsubPayload)
+		result["mesh_peer"] = meshPeer
 	case "unknown_protocol":
 		expected, err := expectUnsupportedProtocol(ctx, h, info.ID, protocol.ID("/fcl/interop/unknown/1"))
 		if err != nil {

@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <future>
 #include <map>
+#include <memory>
 #include <ranges>
 #include <stdexcept>
 #include <string>
@@ -29,6 +30,7 @@
 
 import fcl.asio.blocking;
 import fcl.asio.runtime;
+import fcl.crypto.der;
 import fcl.crypto.pem;
 import fcl.p2p.dht;
 import fcl.p2p.discovery;
@@ -43,6 +45,7 @@ import fcl.p2p.negotiation;
 import fcl.p2p.node;
 import fcl.p2p.peer_store;
 import fcl.p2p.protocol;
+import fcl.p2p.pubsub;
 import fcl.p2p.reachability;
 import fcl.p2p.rendezvous;
 import fcl.p2p.relay;
@@ -307,6 +310,21 @@ node::options options_for(const test_certificate_identity& identity,
        .capabilities = capabilities,
        .allow_insecure_test_mode = true,
    };
+}
+
+public_key test_rsa_public_key() {
+   return public_key{
+       .type = public_key::type::rsa,
+       .data = fcl::crypto::der::write_public_key(fcl::crypto::pem::read_private_key(test_private_key()).get_public_key()),
+   };
+}
+
+node::options pubsub_options_for(capability_set capabilities = capability_set{.bits = capabilities::direct_quic |
+                                                                                      capabilities::pubsub}) {
+   const auto key = test_rsa_public_key();
+   auto out = options_for(make_peer_id(key), capabilities);
+   out.public_key = encode_public_key(key);
+   return out;
 }
 
 std::filesystem::path temp_store_path(std::string_view name) {
@@ -667,6 +685,8 @@ BOOST_AUTO_TEST_CASE(p2p_libp2p_reachability_relay_protocol_ids_are_exact) {
    BOOST_TEST(builtins::dcutr.value == "/libp2p/dcutr");
    BOOST_TEST(builtins::kad_dht.value == "/ipfs/kad/1.0.0");
    BOOST_TEST(builtins::rendezvous.value == "/rendezvous/1.0.0");
+   BOOST_TEST(builtins::meshsub_v11.value == "/meshsub/1.1.0");
+   BOOST_TEST(builtins::meshsub_v10.value == "/meshsub/1.0.0");
 }
 
 BOOST_AUTO_TEST_CASE(p2p_reachability_relay_public_types_are_owner_scoped) {
@@ -800,6 +820,77 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_codec_roundtrips_register_discover_cookie_an
                          .discover_value = rendezvous::discover_request{.namespace_name = std::string(300, 'x')},
                      }),
                      fcl::exception::base);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_gossipsub_codec_roundtrips_v11_rpc_and_rejects_malformed) {
+   const auto identity = make_test_identity();
+   auto message = pubsub::message{
+       .from = identity.peer,
+       .data = std::vector<std::uint8_t>{'h', 'e', 'l', 'l', 'o'},
+       .seqno = std::vector<std::uint8_t>{0, 0, 0, 0, 0, 0, 0, 7},
+       .subject = pubsub::topic{.value = "fcl.topic"},
+       .key = encode_public_key(identity.key),
+   };
+   pubsub::codec::sign_message(message, fcl::crypto::pem::read_private_key(identity.private_key_pem));
+   BOOST_TEST(pubsub::codec::verify_message(message));
+
+   const auto id = pubsub::codec::message_id(message);
+   BOOST_TEST(!id.empty());
+
+   const auto encoded = pubsub::codec::encode(pubsub::rpc{
+       .subscriptions = std::vector<pubsub::subscription>{
+           pubsub::subscription{.subscribe = true, .subject = pubsub::topic{.value = "fcl.topic"}},
+           pubsub::subscription{.subscribe = false, .subject = pubsub::topic{.value = "fcl.old"}},
+       },
+       .messages = std::vector<pubsub::message>{message},
+       .control_value = pubsub::control{
+           .have = std::vector<pubsub::control::ihave>{
+               pubsub::control::ihave{.subject = pubsub::topic{.value = "fcl.topic"}, .message_ids = std::vector<std::vector<std::uint8_t>>{id}}},
+           .want = std::vector<pubsub::control::iwant>{pubsub::control::iwant{.message_ids = std::vector<std::vector<std::uint8_t>>{id}}},
+           .grafts = std::vector<pubsub::control::graft>{pubsub::control::graft{.subject = pubsub::topic{.value = "fcl.topic"}}},
+           .prunes = std::vector<pubsub::control::prune>{pubsub::control::prune{
+               .subject = pubsub::topic{.value = "fcl.topic"},
+               .peers = std::vector<pubsub::peer_info>{pubsub::peer_info{.peer = identity.peer}},
+               .backoff = std::chrono::seconds{60},
+           }},
+       },
+   });
+
+   const auto decoded = pubsub::codec::decode(encoded, pubsub::options{});
+   BOOST_REQUIRE_EQUAL(decoded.subscriptions.size(), 2U);
+   BOOST_TEST(decoded.subscriptions.front().subscribe);
+   BOOST_TEST(decoded.subscriptions.front().subject.value == "fcl.topic");
+   BOOST_REQUIRE_EQUAL(decoded.messages.size(), 1U);
+   BOOST_TEST(decoded.messages.front().data == message.data, boost::test_tools::per_element());
+   BOOST_TEST(pubsub::codec::verify_message(decoded.messages.front()));
+   BOOST_REQUIRE(decoded.control_value.has_value());
+   BOOST_REQUIRE_EQUAL(decoded.control_value->have.size(), 1U);
+   BOOST_REQUIRE_EQUAL(decoded.control_value->want.size(), 1U);
+   BOOST_REQUIRE_EQUAL(decoded.control_value->grafts.size(), 1U);
+   BOOST_REQUIRE_EQUAL(decoded.control_value->prunes.size(), 1U);
+   BOOST_TEST(decoded.control_value->prunes.front().backoff == std::chrono::seconds{60});
+
+   BOOST_CHECK_THROW((void)pubsub::codec::decode(std::vector<std::uint8_t>{0xff, 0xff, 0xff, 0xff}, pubsub::options{}),
+                     fcl::exception::base);
+   auto strict = pubsub::options{};
+   strict.limits.max_rpc_size = 4;
+   BOOST_CHECK_THROW((void)pubsub::codec::decode(encoded, strict), fcl::exception::base);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_gossipsub_signing_rejects_tampered_payload) {
+   const auto identity = make_test_identity();
+   auto message = pubsub::message{
+       .from = identity.peer,
+       .data = std::vector<std::uint8_t>{'s', 'i', 'g', 'n', 'e', 'd'},
+       .seqno = std::vector<std::uint8_t>{0, 0, 0, 0, 0, 0, 0, 1},
+       .subject = pubsub::topic{.value = "fcl.signed"},
+       .key = encode_public_key(identity.key),
+   };
+   pubsub::codec::sign_message(message, fcl::crypto::pem::read_private_key(identity.private_key_pem));
+   BOOST_TEST(pubsub::codec::verify_message(message));
+
+   message.data.push_back('!');
+   BOOST_TEST(!pubsub::codec::verify_message(message));
 }
 
 BOOST_AUTO_TEST_CASE(p2p_signed_envelope_seals_and_verifies_domain_payload_and_signer) {
@@ -1526,6 +1617,105 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_node_registers_and_discovers_over_negotiated
 
    fcl::asio::blocking::run(runtime, client.async_stop());
    fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_gossipsub_nodes_deliver_signed_publish_over_negotiated_stream) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto publisher_options = pubsub_options_for();
+   auto subscriber_options = pubsub_options_for();
+   subscriber_options.explicit_peer_id = peer(150);
+   auto publisher = node{runtime, std::move(publisher_options)};
+   auto subscriber = node{runtime, std::move(subscriber_options)};
+   const auto subscriber_endpoint = listen(subscriber, runtime);
+   publisher.peers().learn_endpoint(subscriber.local_peer(), subscriber_endpoint,
+                                    capability_set{.bits = capabilities::direct_quic | capabilities::pubsub});
+
+   auto received = std::make_shared<std::promise<std::vector<std::uint8_t>>>();
+   auto future = received->get_future();
+   fcl::asio::blocking::run(
+       runtime, subscriber.async_subscribe(
+                    pubsub::topic{.value = "fcl.pubsub"},
+                    [received](pubsub::event event) mutable -> boost::asio::awaitable<pubsub::validation_result> {
+                       received->set_value(event.value.data);
+                       co_return pubsub::validation_result::accept;
+                    }));
+
+   const auto published = fcl::asio::blocking::run(
+       runtime, publisher.async_publish(pubsub::topic{.value = "fcl.pubsub"},
+                                        std::vector<std::uint8_t>{'p', 'u', 'b', 's', 'u', 'b'}));
+   BOOST_TEST(!published.signature.empty());
+
+   if (future.wait_for(std::chrono::milliseconds{5'000}) != std::future_status::ready) {
+      const auto metrics = subscriber.metrics();
+      BOOST_FAIL("pubsub delivery did not finish; received=" << metrics.pubsub_messages_received
+                                                             << " delivered=" << metrics.pubsub_messages_delivered
+                                                             << " invalid=" << metrics.pubsub_invalid_messages
+                                                             << " duplicates=" << metrics.pubsub_duplicates
+                                                             << " rejected=" << metrics.protocol_rejections);
+   }
+   BOOST_TEST(future.get() == std::vector<std::uint8_t>({'p', 'u', 'b', 's', 'u', 'b'}),
+              boost::test_tools::per_element());
+   BOOST_TEST(publisher.pubsub_snapshot().messages_published >= 1U);
+   BOOST_TEST(subscriber.pubsub_snapshot().messages_delivered >= 1U);
+
+   fcl::asio::blocking::run(runtime, publisher.async_stop());
+   fcl::asio::blocking::run(runtime, subscriber.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_gossipsub_forwards_between_subscribed_peers) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 6}};
+   auto publisher_options = pubsub_options_for();
+   auto hub_options = pubsub_options_for();
+   auto subscriber_options = pubsub_options_for();
+   hub_options.explicit_peer_id = peer(151);
+   subscriber_options.explicit_peer_id = peer(152);
+
+   auto publisher = node{runtime, std::move(publisher_options)};
+   auto hub = node{runtime, std::move(hub_options)};
+   auto subscriber = node{runtime, std::move(subscriber_options)};
+   const auto hub_endpoint = listen(hub, runtime);
+   const auto subscriber_endpoint = listen(subscriber, runtime);
+
+   publisher.peers().learn_endpoint(hub.local_peer(), hub_endpoint,
+                                    capability_set{.bits = capabilities::direct_quic | capabilities::pubsub});
+   subscriber.peers().learn_endpoint(hub.local_peer(), hub_endpoint,
+                                     capability_set{.bits = capabilities::direct_quic | capabilities::pubsub});
+   hub.peers().learn_endpoint(subscriber.local_peer(), subscriber_endpoint,
+                              capability_set{.bits = capabilities::direct_quic | capabilities::pubsub});
+
+   auto received = std::make_shared<std::promise<std::vector<std::uint8_t>>>();
+   auto future = received->get_future();
+   fcl::asio::blocking::run(
+       runtime, subscriber.async_subscribe(
+                    pubsub::topic{.value = "fcl.mesh"},
+                    [received](pubsub::event event) mutable -> boost::asio::awaitable<pubsub::validation_result> {
+                       received->set_value(event.value.data);
+                       co_return pubsub::validation_result::accept;
+                    }));
+
+   fcl::asio::blocking::run(runtime, publisher.async_publish(pubsub::topic{.value = "fcl.mesh"},
+                                                             std::vector<std::uint8_t>{'m', 'e', 's', 'h'}));
+
+   if (future.wait_for(std::chrono::milliseconds{5'000}) != std::future_status::ready) {
+      const auto hub_metrics = hub.metrics();
+      const auto subscriber_metrics = subscriber.metrics();
+      BOOST_FAIL("pubsub forwarding did not finish; hub_received=" << hub_metrics.pubsub_messages_received
+                                                                    << " hub_delivered="
+                                                                    << hub_metrics.pubsub_messages_delivered
+                                                                    << " subscriber_received="
+                                                                    << subscriber_metrics.pubsub_messages_received
+                                                                    << " subscriber_delivered="
+                                                                    << subscriber_metrics.pubsub_messages_delivered
+                                                                    << " subscriber_invalid="
+                                                                    << subscriber_metrics.pubsub_invalid_messages);
+   }
+   BOOST_TEST(future.get() == std::vector<std::uint8_t>({'m', 'e', 's', 'h'}), boost::test_tools::per_element());
+   BOOST_TEST(hub.pubsub_snapshot().mesh_edges >= 1U);
+   BOOST_TEST(subscriber.pubsub_snapshot().messages_delivered >= 1U);
+
+   fcl::asio::blocking::run(runtime, publisher.async_stop());
+   fcl::asio::blocking::run(runtime, hub.async_stop());
+   fcl::asio::blocking::run(runtime, subscriber.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_identify_push_updates_peer_store) {

@@ -6,6 +6,7 @@ add_library(
    identify.cpp
    dht.cpp
    rendezvous.cpp
+   pubsub.cpp
    scoring.cpp
    reachability.cpp
    relay.cpp

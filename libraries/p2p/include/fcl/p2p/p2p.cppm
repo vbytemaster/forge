@@ -8,6 +8,7 @@ export import fcl.p2p.identify;
 export import fcl.p2p.discovery;
 export import fcl.p2p.dht;
 export import fcl.p2p.rendezvous;
+export import fcl.p2p.pubsub;
 export import fcl.p2p.reachability;
 export import fcl.p2p.hole_punch;
 export import fcl.p2p.protocol;

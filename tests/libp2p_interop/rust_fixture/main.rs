@@ -8,7 +8,7 @@ use std::{
 
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use libp2p::{
-    autonat, dcutr, identify, identity,
+    autonat, dcutr, gossipsub, identify, identity,
     kad,
     multiaddr::Protocol,
     noise, ping, relay, rendezvous,
@@ -18,6 +18,9 @@ use libp2p::{
 use libp2p_stream as raw_stream;
 use rand::rngs::OsRng;
 use serde_json::json;
+
+const PUBSUB_TOPIC: &str = "fcl.pubsub.interop";
+const PUBSUB_PAYLOAD: &[u8] = b"fcl-gossipsub-live";
 
 #[derive(Debug, Default)]
 struct Options {
@@ -40,6 +43,7 @@ struct Behaviour {
     kad: kad::Behaviour<kad::store::MemoryStore>,
     rendezvous_server: rendezvous::server::Behaviour,
     rendezvous_client: rendezvous::client::Behaviour,
+    gossipsub: gossipsub::Behaviour,
     ping: ping::Behaviour,
     identify: identify::Behaviour,
     dcutr: dcutr::Behaviour,
@@ -100,6 +104,15 @@ async fn new_swarm() -> Result<libp2p::Swarm<Behaviour>, Box<dyn Error>> {
                     rendezvous::server::Config::default(),
                 ),
                 rendezvous_client: rendezvous::client::Behaviour::new(key.clone()),
+                gossipsub: gossipsub::Behaviour::new(
+                    gossipsub::MessageAuthenticity::Signed(key.clone()),
+                    gossipsub::ConfigBuilder::default()
+                        .protocol_id_prefix("/meshsub")
+                        .validation_mode(gossipsub::ValidationMode::Strict)
+                        .build()
+                        .expect("valid gossipsub config"),
+                )
+                .expect("valid gossipsub behaviour"),
                 ping: ping::Behaviour::new(ping::Config::new()),
                 identify: identify::Behaviour::new(identify::Config::new(
                     "/fcl-interop/0.1.0".into(),
@@ -389,9 +402,41 @@ async fn wait_rendezvous_register_discover(
     }
 }
 
+async fn wait_gossipsub_peer_and_publish(
+    swarm: &mut libp2p::Swarm<Behaviour>,
+    remote_peer: PeerId,
+) -> Result<(), Box<dyn Error>> {
+    let topic = gossipsub::IdentTopic::new(PUBSUB_TOPIC);
+    swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
+    let deadline = tokio::time::sleep(Duration::from_secs(10));
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            _ = &mut deadline => return Err("timed out waiting for gossipsub subscription exchange".into()),
+            event = swarm.select_next_some() => {
+                match event {
+                    SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(
+                        gossipsub::Event::Subscribed { peer_id, topic: subscribed_topic },
+                    )) if peer_id == remote_peer && subscribed_topic == topic.hash() => {
+                        swarm.behaviour_mut().gossipsub.publish(topic.clone(), PUBSUB_PAYLOAD)?;
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        return Ok(());
+                    }
+                    SwarmEvent::NewListenAddr { address, .. } => swarm.add_external_address(address),
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
 async fn listen(opts: Options) -> Result<(), Box<dyn Error>> {
     let mut swarm = new_swarm().await?;
     spawn_incoming_stream_echo(&mut swarm, "/fcl/interop/relay-echo/1")?;
+    if opts.scenario == "gossipsub_publish" {
+        let topic = gossipsub::IdentTopic::new(PUBSUB_TOPIC);
+        swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
+    }
     let peer = *swarm.local_peer_id();
     let mut ready = false;
     loop {
@@ -403,18 +448,42 @@ async fn listen(opts: Options) -> Result<(), Box<dyn Error>> {
             }
             event = swarm.select_next_some() => {
                 eprintln!("rust-listen event: {event:?}");
-                if let SwarmEvent::NewListenAddr { address, .. } = event {
-                    swarm.add_external_address(address.clone());
-                    if !ready {
-                        write_json(&opts.ready_file, json!({
-                            "implementation": "rust",
-                            "role": "listener",
-                            "peer_id": peer.to_string(),
-                            "listen_addrs": [format!("{address}/p2p/{peer}")],
-                            "status": "ready"
-                        }))?;
-                        ready = true;
+                match event {
+                    SwarmEvent::NewListenAddr { address, .. } => {
+                        swarm.add_external_address(address.clone());
+                        if !ready {
+                            write_json(&opts.ready_file, json!({
+                                "implementation": "rust",
+                                "role": "listener",
+                                "peer_id": peer.to_string(),
+                                "listen_addrs": [format!("{address}/p2p/{peer}")],
+                                "status": "ready"
+                            }))?;
+                            ready = true;
+                        }
                     }
+                    SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(
+                        gossipsub::Event::Message {
+                            propagation_source,
+                            message,
+                            ..
+                        },
+                    )) if opts.scenario == "gossipsub_publish" => {
+                            let status = if message.data == PUBSUB_PAYLOAD { "ok" } else { "mismatch" };
+                            write_json(
+                                &opts.result_file,
+                                json!({
+                                    "implementation": "rust",
+                                    "scenario": "gossipsub_publish",
+                                    "status": status,
+                                    "topic": message.topic.to_string(),
+                                    "payload": String::from_utf8_lossy(&message.data).to_string(),
+                                    "propagation_source": propagation_source.to_string(),
+                                    "source": message.source.map(|peer| peer.to_string()).unwrap_or_default()
+                                }),
+                            )?;
+                    }
+                    _ => {}
                 }
             }
         }
@@ -425,6 +494,10 @@ async fn dial(opts: Options) -> Result<(), Box<dyn Error>> {
     let mut swarm = new_swarm().await?;
     let remote_peer: PeerId = opts.peer_id.parse()?;
     let remote: Multiaddr = opts.addr.parse()?;
+    if opts.scenario == "gossipsub_publish" {
+        let topic = gossipsub::IdentTopic::new(PUBSUB_TOPIC);
+        swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
+    }
     swarm.dial(remote.clone())?;
     let started = Instant::now();
     let mut connected = false;
@@ -526,6 +599,22 @@ async fn dial(opts: Options) -> Result<(), Box<dyn Error>> {
                     "scenario": opts.scenario,
                     "status": "ok",
                     "registration_count": registrations
+                }),
+            )?;
+            return Ok(());
+        }
+        "gossipsub_publish" => {
+            wait_gossipsub_peer_and_publish(&mut swarm, remote_peer).await?;
+            write_json(
+                &opts.result_file,
+                json!({
+                    "implementation": "rust",
+                    "role": "dialer",
+                    "scenario": opts.scenario,
+                    "status": "ok",
+                    "topic": PUBSUB_TOPIC,
+                    "payload_bytes": PUBSUB_PAYLOAD.len(),
+                    "mesh_peer": true
                 }),
             )?;
             return Ok(());

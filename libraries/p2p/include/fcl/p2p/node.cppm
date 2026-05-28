@@ -21,6 +21,7 @@ import fcl.p2p.hole_punch;
 import fcl.p2p.identity;
 import fcl.p2p.peer_store;
 import fcl.p2p.protocol;
+import fcl.p2p.pubsub;
 import fcl.p2p.reachability;
 import fcl.p2p.rendezvous;
 import fcl.p2p.relay;
@@ -45,6 +46,7 @@ class node {
       discovery::policy discovery{};
       dht::options dht{};
       rendezvous::options rendezvous{};
+      pubsub::options pubsub{};
    };
 
    struct options {
@@ -134,6 +136,12 @@ class node {
       std::uint64_t dht_responses = 0;
       std::uint64_t rendezvous_registrations = 0;
       std::uint64_t rendezvous_discovers = 0;
+      std::uint64_t pubsub_messages_published = 0;
+      std::uint64_t pubsub_messages_received = 0;
+      std::uint64_t pubsub_messages_delivered = 0;
+      std::uint64_t pubsub_duplicates = 0;
+      std::uint64_t pubsub_invalid_messages = 0;
+      std::uint64_t pubsub_control_messages = 0;
       std::uint64_t backpressure_rejections = 0;
       std::size_t active_sessions = 0;
       std::size_t active_relays = 0;
@@ -173,6 +181,12 @@ class node {
    async_rendezvous_register(peer_id rendezvous_peer, rendezvous::register_request request);
    boost::asio::awaitable<rendezvous::discover_response>
    async_rendezvous_discover(peer_id rendezvous_peer, rendezvous::discover_request request);
+   boost::asio::awaitable<pubsub::subscription> async_subscribe(pubsub::topic subject, pubsub::handler handler);
+   boost::asio::awaitable<void> async_unsubscribe(pubsub::topic subject);
+   boost::asio::awaitable<pubsub::message> async_publish(pubsub::topic subject, std::vector<std::uint8_t> data);
+   boost::asio::awaitable<pubsub::message> async_publish(pubsub::topic subject, std::vector<std::uint8_t> data,
+                                                         pubsub::publish_options options);
+   [[nodiscard]] pubsub::snapshot pubsub_snapshot() const;
    boost::asio::awaitable<std::chrono::milliseconds> async_ping(peer_id peer);
    boost::asio::awaitable<std::chrono::milliseconds> async_ping(peer_id peer, open_options options);
    boost::asio::awaitable<hole_punch::status>

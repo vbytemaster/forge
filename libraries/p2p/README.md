@@ -2,7 +2,8 @@
 
 `fcl_p2p` is the peer-to-peer layer above QUIC: peer identities, sessions,
 protocol stream negotiation, peer exchange, relay reservations, reachability
-probes, hole punching, path scoring and discovery protocol machinery.
+probes, hole punching, path scoring, discovery protocol machinery and
+GossipSub/pubsub.
 
 ## When To Use
 
@@ -18,9 +19,9 @@ probes, hole punching, path scoring and discovery protocol machinery.
 - Do not put application message semantics or storage semantics here.
 - Do not treat P2P as authorization. Peer identity is transport identity; product
   authority is owned by consumers.
-- Do not assume global discovery is product-complete today. DHT/rendezvous
-  discovery belongs in `fcl_p2p`; global relay discovery and pubsub are not
-  plugin-level shortcuts.
+- Do not assume global discovery is product-complete today. DHT/rendezvous and
+  GossipSub belong in `fcl_p2p`; product pubsub gateways and global relay
+  discovery are not plugin-level shortcuts.
 
 ## Public Modules
 
@@ -28,6 +29,7 @@ probes, hole punching, path scoring and discovery protocol machinery.
 - `fcl.p2p.protocol`, `fcl.p2p.message`, `fcl.p2p.negotiation`.
 - `fcl.p2p.peer_store`, `fcl.p2p.discovery`, `fcl.p2p.dht`,
   `fcl.p2p.rendezvous`.
+- `fcl.p2p.pubsub`.
 - `fcl.p2p.relay`, `fcl.p2p.scoring`.
 - `fcl.p2p.exceptions`, `fcl.p2p` aggregate.
 
@@ -263,8 +265,8 @@ verification failure and invalid envelopes are correctness failures.
 - Do not make `fcl.p2p.api` responsible for peer discovery, relay or node
   lifecycle. It is only the API protocol binding artifact.
 - Do not implement AutoNAT, AutoRelay, DHT, rendezvous or pubsub loops in an
-  infrastructure plugin. Missing network mechanics must be added to `fcl_p2p`
-  or exposed as typed unsupported behavior.
+  infrastructure plugin. Network mechanics belong in `fcl_p2p`; plugins only
+  configure and consume them.
 
 ## Typical Mistakes
 

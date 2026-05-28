@@ -39,6 +39,7 @@ import fcl.p2p.identify;
 import fcl.p2p.identity;
 import fcl.p2p.node;
 import fcl.p2p.protocol;
+import fcl.p2p.pubsub;
 import fcl.p2p.reachability;
 import fcl.p2p.rendezvous;
 import fcl.p2p.relay;
@@ -51,6 +52,8 @@ using namespace std::chrono_literals;
 
 constexpr auto echo_protocol = std::string_view{"/fcl/interop/relay-echo/1"};
 constexpr auto rendezvous_namespace = std::string_view{"fcl.discovery"};
+constexpr auto pubsub_topic = std::string_view{"fcl.pubsub.interop"};
+constexpr auto pubsub_payload = std::string_view{"fcl-gossipsub-live"};
 
 struct bio_deleter {
    void operator()(BIO* value) const noexcept {
@@ -335,7 +338,8 @@ fcl::p2p::node::options node_options(const std::filesystem::path& store_path, co
                                                         fcl::p2p::capabilities::hole_punching |
                                                         fcl::p2p::capabilities::relay_reservation |
                                                         fcl::p2p::capabilities::dht |
-                                                        fcl::p2p::capabilities::rendezvous},
+                                                        fcl::p2p::capabilities::rendezvous |
+                                                        fcl::p2p::capabilities::pubsub},
        .public_key = identity.public_key,
        .peer_store_path = store_path,
        .allow_insecure_test_mode = true,
@@ -395,6 +399,24 @@ void register_echo(fcl::p2p::node& value) {
                                    });
 }
 
+void register_pubsub_listener(fcl::asio::runtime& runtime, fcl::p2p::node& value, std::filesystem::path result_file) {
+   fcl::asio::blocking::run(
+       runtime, value.async_subscribe(
+                    fcl::p2p::pubsub::topic{.value = std::string{pubsub_topic}},
+                    [result_file = std::move(result_file)](
+                        fcl::p2p::pubsub::event event) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+                       const auto payload = std::string{event.value.data.begin(), event.value.data.end()};
+                       write_file(result_file,
+                                  "{\"implementation\":\"fcl\",\"scenario\":\"gossipsub_publish\",\"status\":\"" +
+                                      std::string{payload == pubsub_payload ? "ok" : "mismatch"} +
+                                      "\",\"topic\":\"" + json_escape(event.value.subject.value) + "\",\"payload\":\"" +
+                                      json_escape(payload) + "\",\"source\":\"" +
+                                      json_escape(event.value.from ? event.value.from->to_string() : std::string{}) +
+                                      "\"}\n");
+                       co_return fcl::p2p::pubsub::validation_result::accept;
+                    }));
+}
+
 std::vector<std::uint8_t> unwrap_length_delimited(std::span<const std::uint8_t> bytes, std::size_t max_payload_size) {
    auto decoded = fcl::multiformats::decoded_varint{};
    try {
@@ -447,6 +469,9 @@ int listen_mode(const std::map<std::string, std::string>& args) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
    auto value = fcl::p2p::node{runtime, node_options(required(args, "store-dir"))};
    register_echo(value);
+   if (const auto scenario = args.find("scenario"); scenario != args.end() && scenario->second == "gossipsub_publish") {
+      register_pubsub_listener(runtime, value, required(args, "result-file"));
+   }
    fcl::asio::blocking::run(runtime, value.async_listen(fcl::quic::endpoint{.host = "127.0.0.1", .port = 0}));
    const auto local = value.local_endpoint();
    if (!local) {
@@ -588,6 +613,18 @@ std::string run_scenario(fcl::asio::runtime& runtime, fcl::p2p::node& value, std
       return "\"registration_count\":" + std::to_string(discovered.registrations.size()) +
              ",\"cookie_bytes\":" + std::to_string(discovered.cookie.size());
    }
+   if (scenario == "gossipsub_publish") {
+      const auto message = fcl::asio::blocking::run(runtime, value.async_publish(
+                                                                fcl::p2p::pubsub::topic{
+                                                                    .value = std::string{pubsub_topic},
+                                                                },
+                                                                std::vector<std::uint8_t>{
+                                                                    pubsub_payload.begin(), pubsub_payload.end()}));
+      std::this_thread::sleep_for(500ms);
+      return "\"topic\":\"" + json_escape(message.subject.value) + "\",\"payload_bytes\":" +
+             std::to_string(message.data.size()) + ",\"signed\":" +
+             std::string{message.signature.empty() ? "false" : "true"};
+   }
    if (scenario == "dcutr") {
       const auto status = fcl::asio::blocking::run(runtime, value.async_attempt_hole_punch(peer));
       return "\"hole_punch_status\":" + std::to_string(static_cast<int>(status));
@@ -624,7 +661,8 @@ int dial_mode(const std::map<std::string, std::string>& args) {
                                                                  fcl::p2p::capabilities::hole_punching |
                                                                  fcl::p2p::capabilities::relay_reservation |
                                                                  fcl::p2p::capabilities::dht |
-                                                                 fcl::p2p::capabilities::rendezvous});
+                                                                 fcl::p2p::capabilities::rendezvous |
+                                                                 fcl::p2p::capabilities::pubsub});
 
    const auto details = run_scenario(runtime, value, required(args, "scenario"), peer);
    fcl::asio::blocking::run(runtime, value.async_stop());

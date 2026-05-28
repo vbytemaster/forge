@@ -10,6 +10,7 @@ namespace fcl::p2p {
 [[noreturn]] void rethrow_quic_as_p2p(const fcl::exception::base& error);
 [[nodiscard]] bool is_orderly_stream_close(const fcl::exception::base& error) noexcept;
 [[nodiscard]] std::uint64_t random_nonce();
+[[nodiscard]] std::string bytes_key(std::span<const std::uint8_t> bytes);
 boost::asio::awaitable<std::vector<std::uint8_t>>
 async_read_length_delimited(fcl::p2p::stream& stream, std::vector<std::uint8_t>& buffer, std::size_t max_payload_size);
 [[nodiscard]] std::vector<std::uint8_t> wrap_length_delimited(std::span<const std::uint8_t> payload);
@@ -48,6 +49,17 @@ struct node::impl : std::enable_shared_from_this<impl> {
       bool canceled = false;
    };
 
+   struct pubsub_state {
+      std::map<std::string, pubsub::handler> handlers;
+      std::map<peer_id, std::set<std::string>> peer_topics;
+      std::map<std::string, std::set<peer_id>> mesh;
+      std::map<std::string, pubsub::message> cache;
+      std::deque<std::string> history;
+      std::map<peer_id, pubsub::score> scores;
+      std::map<peer_id, std::shared_ptr<fcl::p2p::stream>> outbound_streams;
+      std::uint64_t next_seqno = 1;
+   };
+
    impl(fcl::asio::runtime& runtime_value, node::options options_value);
    fcl::asio::runtime& runtime;
    node::options options;
@@ -64,6 +76,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
    std::map<peer_id, std::uint64_t> pending_autonat_v2_nonces;
    std::uint64_t next_reservation_id = 1;
    resource_manager resources{options.limits.resources};
+   pubsub_state pubsub_value;
    node::metrics_snapshot metrics_value;
    std::size_t active_ping_streams = 0;
    bool stopped = false;
@@ -160,6 +173,31 @@ struct node::impl : std::enable_shared_from_this<impl> {
 
    void increment_rendezvous_discover();
 
+   void increment_pubsub_published();
+
+   void increment_pubsub_received();
+
+   void increment_pubsub_delivered();
+
+   void increment_pubsub_duplicate();
+
+   void increment_pubsub_invalid(const peer_id& peer);
+
+   void increment_pubsub_control();
+
+   [[nodiscard]] std::vector<std::uint8_t> next_pubsub_seqno();
+
+   [[nodiscard]] pubsub::snapshot pubsub_snapshot() const;
+
+   [[nodiscard]] std::vector<pubsub::subscription> local_pubsub_subscriptions() const;
+
+   [[nodiscard]] std::vector<peer_id> pubsub_candidate_peers(const std::string& topic_value,
+                                                             std::optional<peer_id> except = std::nullopt) const;
+
+   boost::asio::awaitable<void> send_pubsub_rpc(const peer_id& peer, const pubsub::rpc& value);
+
+   boost::asio::awaitable<void> announce_pubsub_subscriptions(const peer_id& peer);
+
    boost::asio::awaitable<std::shared_ptr<session_state>> connect_direct(fcl::quic::endpoint endpoint,
                                                                          node::connect_options connect_options_value);
 
@@ -222,6 +260,8 @@ struct node::impl : std::enable_shared_from_this<impl> {
    boost::asio::awaitable<void> handle_dht(std::shared_ptr<session_state> session, fcl::p2p::stream stream);
 
    boost::asio::awaitable<void> handle_rendezvous(std::shared_ptr<session_state> session, fcl::p2p::stream stream);
+
+   boost::asio::awaitable<void> handle_pubsub(std::shared_ptr<session_state> session, fcl::p2p::stream stream);
 
    boost::asio::awaitable<bool> wait_for_direct_session(const peer_id& peer, std::chrono::milliseconds timeout);
 

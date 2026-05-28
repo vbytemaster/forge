@@ -6,12 +6,15 @@ module;
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <functional>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -42,6 +45,7 @@ import fcl.p2p.identify;
 import fcl.p2p.exceptions;
 import fcl.p2p.message;
 import fcl.p2p.negotiation;
+import fcl.p2p.pubsub;
 import fcl.p2p.reachability;
 import fcl.p2p.rendezvous;
 import fcl.p2p.resource_manager;
@@ -435,6 +439,116 @@ node::async_rendezvous_discover(peer_id rendezvous_peer, rendezvous::discover_re
    }
    co_await stream.async_close();
    co_return *response.discover_response_value;
+}
+
+boost::asio::awaitable<pubsub::subscription> node::async_subscribe(pubsub::topic subject, pubsub::handler handler) {
+   if (subject.value.empty() || !handler) {
+      exceptions::raise(exceptions::code::invalid_options, "GossipSub subscription requires topic and handler");
+   }
+   auto self = impl_;
+   auto subscription = pubsub::subscription{.subscribe = true, .subject = std::move(subject)};
+   {
+      auto lock = std::scoped_lock{self->mutex};
+      if (self->pubsub_value.handlers.size() >= self->options.limits.pubsub.limits.max_topics &&
+          !self->pubsub_value.handlers.contains(subscription.subject.value)) {
+         exceptions::raise(exceptions::code::backpressure_rejected, "GossipSub topic limit reached");
+      }
+      self->pubsub_value.handlers[subscription.subject.value] = std::move(handler);
+   }
+   auto peers = self->pubsub_candidate_peers(subscription.subject.value);
+   for (const auto& peer : peers) {
+      try {
+         co_await self->send_pubsub_rpc(peer, pubsub::rpc{.subscriptions = std::vector<pubsub::subscription>{subscription}});
+      } catch (const fcl::exception::base&) {
+         self->store.mark_failure(peer);
+      }
+   }
+   co_return subscription;
+}
+
+boost::asio::awaitable<void> node::async_unsubscribe(pubsub::topic subject) {
+   if (subject.value.empty()) {
+      exceptions::raise(exceptions::code::invalid_options, "GossipSub unsubscribe requires topic");
+   }
+   auto self = impl_;
+   auto subscription = pubsub::subscription{.subscribe = false, .subject = std::move(subject)};
+   {
+      auto lock = std::scoped_lock{self->mutex};
+      self->pubsub_value.handlers.erase(subscription.subject.value);
+      self->pubsub_value.mesh.erase(subscription.subject.value);
+   }
+   auto peers = self->pubsub_candidate_peers(subscription.subject.value);
+   for (const auto& peer : peers) {
+      try {
+         co_await self->send_pubsub_rpc(peer, pubsub::rpc{.subscriptions = std::vector<pubsub::subscription>{subscription}});
+      } catch (const fcl::exception::base&) {
+         self->store.mark_failure(peer);
+      }
+   }
+   co_return;
+}
+
+boost::asio::awaitable<pubsub::message> node::async_publish(pubsub::topic subject, std::vector<std::uint8_t> data) {
+   co_return co_await async_publish(std::move(subject), std::move(data), pubsub::publish_options{});
+}
+
+boost::asio::awaitable<pubsub::message> node::async_publish(pubsub::topic subject, std::vector<std::uint8_t> data,
+                                                            pubsub::publish_options publish_options) {
+   if (subject.value.empty()) {
+      exceptions::raise(exceptions::code::invalid_options, "GossipSub publish requires topic");
+   }
+   auto self = impl_;
+   if (data.size() > self->options.limits.pubsub.limits.max_data_size) {
+      exceptions::raise(exceptions::code::backpressure_rejected, "GossipSub publish exceeds max data size");
+   }
+   auto value = pubsub::message{
+       .data = std::move(data),
+       .seqno = self->next_pubsub_seqno(),
+       .subject = std::move(subject),
+   };
+   if (publish_options.sign) {
+      const auto key = fcl::crypto::pem::read_private_key(self->options.private_key_pem);
+      pubsub::codec::sign_message(value, key);
+      if (!value.from || *value.from != self->local) {
+         exceptions::raise(exceptions::code::invalid_identity, "GossipSub signing key does not match local Peer ID");
+      }
+   } else if (self->options.limits.pubsub.signatures == pubsub::signature_policy::strict_sign) {
+      exceptions::raise(exceptions::code::invalid_options, "GossipSub strict-sign node cannot publish unsigned messages");
+   }
+
+   const auto id = pubsub::codec::message_id(value);
+   {
+      auto lock = std::scoped_lock{self->mutex};
+      const auto key = bytes_key(id);
+      self->pubsub_value.cache[key] = value;
+      self->pubsub_value.history.push_back(key);
+      while (self->pubsub_value.history.size() >
+             self->options.limits.pubsub.limits.history_length * self->options.limits.pubsub.limits.max_messages) {
+         self->pubsub_value.cache.erase(self->pubsub_value.history.front());
+         self->pubsub_value.history.pop_front();
+      }
+   }
+   self->increment_pubsub_published();
+
+   auto attempted = std::size_t{};
+   auto sent = std::size_t{};
+   for (const auto& peer : self->pubsub_candidate_peers(value.subject.value)) {
+      ++attempted;
+      try {
+         co_await self->send_pubsub_rpc(peer, pubsub::rpc{.messages = std::vector<pubsub::message>{value}});
+         ++sent;
+      } catch (const fcl::exception::base&) {
+         self->store.mark_failure(peer);
+      }
+   }
+   if (attempted > 0 && sent == 0) {
+      exceptions::raise(exceptions::code::protocol_error, "GossipSub publish could not reach any candidate peer");
+   }
+   co_return value;
+}
+
+pubsub::snapshot node::pubsub_snapshot() const {
+   return impl_->pubsub_snapshot();
 }
 
 boost::asio::awaitable<std::chrono::milliseconds> node::async_ping(peer_id peer) {

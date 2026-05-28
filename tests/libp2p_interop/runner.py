@@ -14,6 +14,7 @@ from typing import Optional
 SCENARIOS = ("ping", "identify", "autonatv2", "relay_reserve", "unknown_protocol")
 DHT_SCENARIOS = ("dht_find_peer", "dht_provide_find_provider")
 RENDEZVOUS_SCENARIOS = ("rendezvous_register_discover",)
+PUBSUB_SCENARIOS = ("gossipsub_publish",)
 TOPOLOGY_SCENARIOS = ("relay_echo_topology", "dcutr_relay_topology")
 NATIVE_TOPOLOGIES = (
     ("fcl", "go", "go"),
@@ -86,7 +87,8 @@ class Listener:
             self.log_handle.close()
 
 
-def start_listener(binary: Path, implementation: str, work: Path) -> Listener:
+def start_listener(binary: Path, implementation: str, work: Path, scenario: Optional[str] = None,
+                   result_file: Optional[Path] = None) -> Listener:
     ready_file = work / f"{implementation}-ready.json"
     stop_file = work / f"{implementation}.stop"
     log_file = work / f"{implementation}.log"
@@ -101,8 +103,12 @@ def start_listener(binary: Path, implementation: str, work: Path) -> Listener:
         "--store-dir",
         str(store_dir),
         "--features",
-        "ping,identify,autonatv2,relay,dcutr,dht,rendezvous",
+        "ping,identify,autonatv2,relay,dcutr,dht,rendezvous,pubsub",
     ]
+    if scenario is not None:
+        command.extend(["--scenario", scenario])
+    if result_file is not None:
+        command.extend(["--result-file", str(result_file)])
     log = log_file.open("w")
     process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
     try:
@@ -221,9 +227,11 @@ def prepare_go_fixture(source_dir: Path, build_dir: Path, donors_root: Path) -> 
         "require (\n"
         "\tgithub.com/libp2p/go-libp2p v0.0.0\n"
         "\tgithub.com/libp2p/go-libp2p-kad-dht v0.0.0\n"
+        "\tgithub.com/libp2p/go-libp2p-pubsub v0.0.0\n"
         ")\n\n"
         f"replace github.com/libp2p/go-libp2p => {donors_root / 'go-libp2p'}\n"
         f"replace github.com/libp2p/go-libp2p-kad-dht => {donors_root / 'go-libp2p-kad-dht'}\n"
+        f"replace github.com/libp2p/go-libp2p-pubsub => {donors_root / 'go-libp2p-pubsub'}\n"
     )
     binary = work / "go_fixture"
     if binary.exists():
@@ -244,7 +252,7 @@ def prepare_rust_fixture(source_dir: Path, build_dir: Path, donors_root: Path) -
         "version = \"0.1.0\"\n"
         "edition = \"2024\"\n\n"
         "[dependencies]\n"
-        f"libp2p = {{ path = \"{donors_root / 'rust-libp2p' / 'libp2p'}\", features = [\"tokio\", \"tcp\", \"dns\", \"noise\", \"yamux\", \"quic\", \"ping\", \"identify\", \"autonat\", \"relay\", \"dcutr\", \"kad\", \"rendezvous\", \"macros\"] }}\n"
+        f"libp2p = {{ path = \"{donors_root / 'rust-libp2p' / 'libp2p'}\", features = [\"tokio\", \"tcp\", \"dns\", \"noise\", \"yamux\", \"quic\", \"ping\", \"identify\", \"autonat\", \"relay\", \"dcutr\", \"kad\", \"rendezvous\", \"gossipsub\", \"macros\"] }}\n"
         f"libp2p-stream = {{ path = \"{donors_root / 'rust-libp2p' / 'protocols' / 'stream'}\" }}\n"
         "futures = \"0.3\"\n"
         "rand = \"0.8.5\"\n"
@@ -258,11 +266,15 @@ def prepare_rust_fixture(source_dir: Path, build_dir: Path, donors_root: Path) -
 def run_pair(dialer_binary: Path, dialer: str, listener_binary: Path, listener: str, scenario: str, root: Path) -> dict:
     work = root / f"{dialer}-to-{listener}-{scenario}"
     work.mkdir(parents=True, exist_ok=True)
-    server = start_listener(listener_binary, listener, work)
+    listener_result = work / f"{listener}-listen-{scenario}.json" if scenario in PUBSUB_SCENARIOS else None
+    server = start_listener(listener_binary, listener, work, scenario, listener_result)
     try:
         addr = server.ready["listen_addrs"][0]
         peer_id = server.ready["peer_id"]
         result = run_dial(dialer_binary, dialer, scenario, peer_id, addr, work)
+        delivered = wait_json(listener_result, 20) if listener_result is not None else None
+        if delivered is not None and delivered.get("status") != "ok":
+            raise RuntimeError(f"{listener} listener reported {delivered}")
         return {
             "dialer": dialer,
             "listener": listener,
@@ -270,6 +282,7 @@ def run_pair(dialer_binary: Path, dialer: str, listener_binary: Path, listener: 
             "addr": addr,
             "peer_id": peer_id,
             "result": result,
+            "listener_result": delivered,
         }
     finally:
         server.close()
@@ -369,6 +382,7 @@ def main() -> int:
     require_tool("cargo")
     require_donor(donors_root, "go-libp2p")
     require_donor(donors_root, "go-libp2p-kad-dht")
+    require_donor(donors_root, "go-libp2p-pubsub")
     require_donor(donors_root, "rust-libp2p")
     require_donor(donors_root, "libp2p-specs")
 
@@ -398,6 +412,13 @@ def main() -> int:
                 except Exception as error:
                     failures.append(f"{dialer}->{listener} {scenario}: {error}")
             for scenario in DHT_SCENARIOS:
+                try:
+                    artifacts.append(run_pair(binaries[dialer], dialer, binaries[listener], listener, scenario, root))
+                except Exception as error:
+                    failures.append(f"{dialer}->{listener} {scenario}: {error}")
+            for scenario in PUBSUB_SCENARIOS:
+                if "fcl" not in (dialer, listener):
+                    continue
                 try:
                     artifacts.append(run_pair(binaries[dialer], dialer, binaries[listener], listener, scenario, root))
                 except Exception as error:

@@ -211,6 +211,110 @@
         "rust->fcl rendezvous_register_discover"
       ],
       "known_gap": "Go rendezvous remains a wire-level future scenario because no official go-libp2p rendezvous behaviour donor is present"
+    },
+    {
+      "id": "gossipsub.protocol_ids_v11_v10",
+      "protocol": "GossipSub",
+      "source": "donors/libp2p-specs/pubsub/gossipsub/gossipsub-v1.1.md",
+      "donor": "go-libp2p-pubsub/gossipsub.go protocol constants and rust-libp2p/protocols/gossipsub/src/config.rs Version",
+      "donor_file": [
+        "donors/go-libp2p-pubsub/gossipsub.go",
+        "donors/rust-libp2p/protocols/gossipsub/src/config.rs",
+        "donors/rust-libp2p/protocols/gossipsub/src/protocol.rs"
+      ],
+      "donor_case": [
+        "GossipSubID_v11",
+        "GossipSubID_v10",
+        "ConfigBuilder::protocol_id_prefix"
+      ],
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_libp2p_reachability_relay_protocol_ids_are_exact",
+        "test_fcl_libp2p_interop gossipsub_publish FCL <-> Go/Rust"
+      ],
+      "fcl_live_scenario": [
+        "fcl->go gossipsub_publish",
+        "go->fcl gossipsub_publish",
+        "fcl->rust gossipsub_publish",
+        "rust->fcl gossipsub_publish"
+      ],
+      "known_gap": ""
+    },
+    {
+      "id": "gossipsub.rpc_codec_control_and_limits",
+      "protocol": "GossipSub",
+      "source": "donors/libp2p-specs/pubsub/gossipsub/gossipsub-v1.1.md",
+      "donor": "go-libp2p-pubsub/pb/rpc.proto and rust-libp2p/protocols/gossipsub/src/rpc_proto.rs",
+      "donor_file": [
+        "donors/go-libp2p-pubsub/pb/rpc.proto",
+        "donors/rust-libp2p/protocols/gossipsub/src/generated/gossipsub/pb.rs",
+        "donors/rust-libp2p/protocols/gossipsub/src/types.rs"
+      ],
+      "donor_case": [
+        "RPC subscriptions/publish/control",
+        "IHAVE/IWANT/GRAFT/PRUNE",
+        "oversized/malformed rejection"
+      ],
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_gossipsub_codec_roundtrips_v11_rpc_and_rejects_malformed"
+      ],
+      "known_gap": ""
+    },
+    {
+      "id": "gossipsub.message_signing_and_id",
+      "protocol": "GossipSub",
+      "source": "donors/libp2p-specs/pubsub/gossipsub/gossipsub-v1.1.md",
+      "donor": "go-libp2p-pubsub/sign.go and rust-libp2p/protocols/gossipsub/src/protocol.rs",
+      "donor_file": [
+        "donors/go-libp2p-pubsub/sign.go",
+        "donors/rust-libp2p/protocols/gossipsub/src/protocol.rs",
+        "donors/rust-libp2p/protocols/gossipsub/src/config.rs"
+      ],
+      "donor_case": [
+        "libp2p-pubsub signing prefix",
+        "signature excludes signature/key fields",
+        "message id source plus seqno"
+      ],
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_gossipsub_codec_roundtrips_v11_rpc_and_rejects_malformed",
+        "p2p_gossipsub_signing_rejects_tampered_payload"
+      ],
+      "known_gap": ""
+    },
+    {
+      "id": "gossipsub.live_publish_delivery",
+      "protocol": "GossipSub",
+      "source": "donors/libp2p-specs/pubsub/gossipsub/gossipsub-v1.1.md",
+      "donor": "go-libp2p-pubsub publish/subscribe tests and rust-libp2p gossipsub smoke tests",
+      "donor_file": [
+        "donors/go-libp2p-pubsub/floodsub_test.go",
+        "donors/go-libp2p-pubsub/gossipsub_test.go",
+        "donors/rust-libp2p/protocols/gossipsub/tests/smoke.rs"
+      ],
+      "donor_case": [
+        "Subscribe",
+        "Publish",
+        "signed delivery to subscribed peer"
+      ],
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_gossipsub_nodes_deliver_signed_publish_over_negotiated_stream",
+        "p2p_gossipsub_forwards_between_subscribed_peers",
+        "test_fcl_libp2p_interop gossipsub_publish FCL <-> Go/Rust"
+      ],
+      "fcl_live_scenario": [
+        "fcl->go gossipsub_publish",
+        "go->fcl gossipsub_publish",
+        "fcl->rust gossipsub_publish",
+        "rust->fcl gossipsub_publish"
+      ],
+      "known_gap": ""
     }
   ]
 }

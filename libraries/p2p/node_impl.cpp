@@ -6,12 +6,15 @@ module;
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <functional>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -42,6 +45,7 @@ import fcl.p2p.identify;
 import fcl.p2p.exceptions;
 import fcl.p2p.message;
 import fcl.p2p.negotiation;
+import fcl.p2p.pubsub;
 import fcl.p2p.reachability;
 import fcl.p2p.rendezvous;
 import fcl.p2p.resource_manager;
@@ -132,6 +136,18 @@ namespace asio = boost::asio;
       out = (out << 8U) | byte;
    }
    return out == 0 ? 1 : out;
+}
+
+[[nodiscard]] std::string bytes_key(std::span<const std::uint8_t> bytes) {
+   return {bytes.begin(), bytes.end()};
+}
+
+[[nodiscard]] std::vector<std::uint8_t> uint64_be(std::uint64_t value) {
+   auto out = std::vector<std::uint8_t>(8);
+   for (auto i = std::size_t{}; i < out.size(); ++i) {
+      out[out.size() - 1 - i] = static_cast<std::uint8_t>((value >> (i * 8U)) & 0xffU);
+   }
+   return out;
 }
 
 boost::asio::awaitable<std::vector<std::uint8_t>>
@@ -272,7 +288,24 @@ void validate(const node::options& options) {
        options.limits.rendezvous.max_namespace_size == 0 ||
        options.limits.rendezvous.max_registrations_per_peer == 0 ||
        options.limits.rendezvous.max_discover_limit == 0 ||
-       options.limits.rendezvous.max_message_size == 0) {
+       options.limits.rendezvous.max_message_size == 0 ||
+       options.limits.pubsub.limits.max_rpc_size == 0 || options.limits.pubsub.limits.max_message_size == 0 ||
+       options.limits.pubsub.limits.max_data_size == 0 || options.limits.pubsub.limits.max_topic_size == 0 ||
+       options.limits.pubsub.limits.max_subscriptions == 0 || options.limits.pubsub.limits.max_messages == 0 ||
+       options.limits.pubsub.limits.max_control_entries == 0 || options.limits.pubsub.limits.max_message_ids == 0 ||
+       options.limits.pubsub.limits.max_peers_per_topic == 0 || options.limits.pubsub.limits.max_topics == 0 ||
+       options.limits.pubsub.limits.max_validation_queue == 0 ||
+       options.limits.pubsub.limits.max_outbound_queue_bytes == 0 ||
+       options.limits.pubsub.limits.heartbeat_initial_delay.count() <= 0 ||
+       options.limits.pubsub.limits.heartbeat_interval.count() <= 0 ||
+       options.limits.pubsub.limits.fanout_ttl.count() <= 0 ||
+       options.limits.pubsub.limits.prune_backoff.count() <= 0 ||
+       options.limits.pubsub.limits.unsubscribe_backoff.count() <= 0 ||
+       options.limits.pubsub.limits.mesh_n == 0 || options.limits.pubsub.limits.mesh_n_low == 0 ||
+       options.limits.pubsub.limits.mesh_n_high < options.limits.pubsub.limits.mesh_n_low ||
+       options.limits.pubsub.limits.history_length == 0 || options.limits.pubsub.limits.history_gossip == 0 ||
+       options.limits.pubsub.limits.gossip_lazy == 0 || options.limits.pubsub.limits.gossip_factor <= 0.0 ||
+       options.limits.pubsub.limits.gossip_retransmission == 0) {
       exceptions::raise(exceptions::code::invalid_options, "invalid P2P node limits");
    }
    if (!options.path_policy.allow_direct && !options.path_policy.allow_hole_punch && !options.path_policy.allow_relay) {
@@ -463,6 +496,7 @@ void node::impl::forget_session(const peer_id& peer) {
       metrics_value.active_sessions = sessions.size();
       ++metrics_value.sessions_closed;
    }
+   pubsub_value.outbound_streams.erase(peer);
 }
 
 [[nodiscard]] std::shared_ptr<node::impl::session_state> node::impl::session_for(const peer_id& peer) const {
@@ -503,6 +537,12 @@ void node::impl::forget_session(const peer_id& peer) {
        (options.limits.rendezvous.operating_role == rendezvous::role::server ||
         options.limits.rendezvous.operating_role == rendezvous::role::client_and_server)) {
       out.push_back(builtins::rendezvous);
+   }
+   if (options.capabilities.has(capabilities::pubsub)) {
+      out.push_back(builtins::meshsub_v11);
+      if (options.limits.pubsub.allow_v1_0_fallback) {
+         out.push_back(builtins::meshsub_v10);
+      }
    }
    out.reserve(out.size() + handlers.size());
    for (const auto& [protocol, _] : handlers) {
@@ -824,6 +864,164 @@ void node::impl::increment_rendezvous_discover() {
    ++metrics_value.rendezvous_discovers;
 }
 
+void node::impl::increment_pubsub_published() {
+   auto lock = std::scoped_lock{mutex};
+   ++metrics_value.pubsub_messages_published;
+}
+
+void node::impl::increment_pubsub_received() {
+   auto lock = std::scoped_lock{mutex};
+   ++metrics_value.pubsub_messages_received;
+}
+
+void node::impl::increment_pubsub_delivered() {
+   auto lock = std::scoped_lock{mutex};
+   ++metrics_value.pubsub_messages_delivered;
+}
+
+void node::impl::increment_pubsub_duplicate() {
+   auto lock = std::scoped_lock{mutex};
+   ++metrics_value.pubsub_duplicates;
+}
+
+void node::impl::increment_pubsub_invalid(const peer_id& peer) {
+   auto lock = std::scoped_lock{mutex};
+   ++metrics_value.pubsub_invalid_messages;
+   pubsub_value.scores[peer].invalid_messages += 1;
+   pubsub_value.scores[peer].value -= 1.0;
+}
+
+void node::impl::increment_pubsub_control() {
+   auto lock = std::scoped_lock{mutex};
+   ++metrics_value.pubsub_control_messages;
+}
+
+std::vector<std::uint8_t> node::impl::next_pubsub_seqno() {
+   auto lock = std::scoped_lock{mutex};
+   return uint64_be(pubsub_value.next_seqno++);
+}
+
+pubsub::snapshot node::impl::pubsub_snapshot() const {
+   auto lock = std::scoped_lock{mutex};
+   auto mesh_edges = std::size_t{};
+   for (const auto& [_, peers] : pubsub_value.mesh) {
+      mesh_edges += peers.size();
+   }
+   return pubsub::snapshot{
+       .topics = pubsub_value.handlers.size(),
+       .peers = pubsub_value.peer_topics.size(),
+       .mesh_edges = mesh_edges,
+       .cached_messages = pubsub_value.cache.size(),
+       .messages_published = metrics_value.pubsub_messages_published,
+       .messages_received = metrics_value.pubsub_messages_received,
+       .messages_delivered = metrics_value.pubsub_messages_delivered,
+       .duplicates = metrics_value.pubsub_duplicates,
+       .invalid_messages = metrics_value.pubsub_invalid_messages,
+       .control_messages = metrics_value.pubsub_control_messages,
+   };
+}
+
+std::vector<pubsub::subscription> node::impl::local_pubsub_subscriptions() const {
+   auto lock = std::scoped_lock{mutex};
+   auto out = std::vector<pubsub::subscription>{};
+   out.reserve(pubsub_value.handlers.size());
+   for (const auto& [topic_value, _] : pubsub_value.handlers) {
+      out.push_back(pubsub::subscription{.subscribe = true, .subject = pubsub::topic{.value = topic_value}});
+   }
+   return out;
+}
+
+std::vector<peer_id> node::impl::pubsub_candidate_peers(const std::string& topic_value,
+                                                        std::optional<peer_id> except) const {
+   auto out = std::vector<peer_id>{};
+   {
+      auto lock = std::scoped_lock{mutex};
+      if (const auto mesh = pubsub_value.mesh.find(topic_value); mesh != pubsub_value.mesh.end()) {
+         for (const auto& peer : mesh->second) {
+            if (!except || peer != *except) {
+               out.push_back(peer);
+            }
+         }
+      }
+      for (const auto& [peer, topics] : pubsub_value.peer_topics) {
+         if (topics.contains(topic_value) && (!except || peer != *except) &&
+             std::ranges::find(out, peer) == out.end()) {
+            out.push_back(peer);
+         }
+      }
+      for (const auto& [peer, session] : sessions) {
+         (void)session;
+         if ((!except || peer != *except) && std::ranges::find(out, peer) == out.end()) {
+            out.push_back(peer);
+         }
+      }
+   }
+   for (const auto& record : store.snapshot()) {
+      const auto supports_pubsub =
+          record.capabilities.has(capabilities::pubsub) ||
+          std::ranges::any_of(record.protocols, [](const protocol_id& protocol) {
+             return protocol == builtins::meshsub_v11 || protocol == builtins::meshsub_v10;
+          });
+      if (supports_pubsub && (!except || record.peer != *except) && std::ranges::find(out, record.peer) == out.end()) {
+         out.push_back(record.peer);
+      }
+   }
+   return out;
+}
+
+boost::asio::awaitable<void> node::impl::send_pubsub_rpc(const peer_id& peer, const pubsub::rpc& value) {
+   auto protocol = builtins::meshsub_v11;
+   if (options.limits.pubsub.allow_v1_0_fallback) {
+      const auto record = store.find(peer);
+      const auto supports_v11 = record && std::ranges::any_of(record->protocols, [](const protocol_id& value) {
+         return value == builtins::meshsub_v11;
+      });
+      const auto supports_v10 = record && std::ranges::any_of(record->protocols, [](const protocol_id& value) {
+         return value == builtins::meshsub_v10;
+      });
+      if (supports_v10 && !supports_v11) {
+         protocol = builtins::meshsub_v10;
+      }
+   }
+   const auto encoded = pubsub::codec::encode(value, options.limits.pubsub);
+   auto outbound = std::shared_ptr<fcl::p2p::stream>{};
+   {
+      auto lock = std::scoped_lock{mutex};
+      if (const auto existing = pubsub_value.outbound_streams.find(peer);
+          existing != pubsub_value.outbound_streams.end() && existing->second && existing->second->valid()) {
+         outbound = existing->second;
+      }
+   }
+   if (!outbound) {
+      auto stream = co_await open_protocol_direct(peer, protocol, options.limits.discovery.query_timeout);
+      outbound = std::make_shared<fcl::p2p::stream>(std::move(stream));
+      auto lock = std::scoped_lock{mutex};
+      pubsub_value.outbound_streams[peer] = outbound;
+   }
+   try {
+      co_await outbound->async_write(encoded);
+   } catch (const fcl::exception::base&) {
+      auto lock = std::scoped_lock{mutex};
+      pubsub_value.outbound_streams.erase(peer);
+      throw;
+   }
+}
+
+boost::asio::awaitable<void> node::impl::announce_pubsub_subscriptions(const peer_id& peer) {
+   if (!options.capabilities.has(capabilities::pubsub)) {
+      co_return;
+   }
+   auto subscriptions = local_pubsub_subscriptions();
+   if (subscriptions.empty()) {
+      co_return;
+   }
+   try {
+      co_await send_pubsub_rpc(peer, pubsub::rpc{.subscriptions = std::move(subscriptions)});
+   } catch (const fcl::exception::base&) {
+      store.mark_failure(peer);
+   }
+}
+
 boost::asio::awaitable<std::shared_ptr<node::impl::session_state>> node::impl::connect_direct(fcl::quic::endpoint endpoint,
                                                                       node::connect_options connect_options_value) {
    validate_operation_timeout(connect_options_value.timeout, "P2P connect timeout");
@@ -853,6 +1051,7 @@ boost::asio::awaitable<std::shared_ptr<node::impl::session_state>> node::impl::c
       });
       remember_session(session);
       launch_session_accept_loop(session);
+      co_await announce_pubsub_subscriptions(remote);
       co_return session;
    } catch (const fcl::exception::base& error) {
       if (deadline && deadline->timed_out()) {
@@ -1198,6 +1397,7 @@ boost::asio::awaitable<void> node::impl::handle_inbound_connection(fcl::quic::co
       });
       remember_session(session);
       launch_session_accept_loop(session);
+      co_await announce_pubsub_subscriptions(remote);
    } catch (const std::exception&) {
       // The listener owns detached accepts; failed handshakes are reflected in metrics.
       auto lock = std::scoped_lock{mutex};
@@ -1285,6 +1485,10 @@ boost::asio::awaitable<void> node::impl::handle_incoming_stream(std::shared_ptr<
       }
       if (negotiated.protocol == builtins::rendezvous) {
          co_await handle_rendezvous(session, std::move(negotiated.stream));
+         co_return;
+      }
+      if (negotiated.protocol == builtins::meshsub_v11 || negotiated.protocol == builtins::meshsub_v10) {
+         co_await handle_pubsub(session, std::move(negotiated.stream));
          co_return;
       }
       auto handler = handler_for(negotiated.protocol);
@@ -1508,6 +1712,10 @@ boost::asio::awaitable<void> node::impl::handle_relayed_yamux_stream(std::shared
    }
    if (negotiated.protocol == builtins::rendezvous) {
       co_await handle_rendezvous(session, std::move(negotiated.stream));
+      co_return;
+   }
+   if (negotiated.protocol == builtins::meshsub_v11 || negotiated.protocol == builtins::meshsub_v10) {
+      co_await handle_pubsub(session, std::move(negotiated.stream));
       co_return;
    }
    auto handler = handler_for(negotiated.protocol);
@@ -1927,6 +2135,194 @@ boost::asio::awaitable<void> node::impl::handle_rendezvous(std::shared_ptr<node:
    co_await stream.async_close();
 }
 
+boost::asio::awaitable<void> node::impl::handle_pubsub(std::shared_ptr<node::impl::session_state> session,
+                                                       fcl::p2p::stream stream) {
+   if (!options.capabilities.has(capabilities::pubsub)) {
+      exceptions::raise(exceptions::code::unsupported_protocol, "GossipSub is disabled");
+   }
+
+   auto buffer = std::vector<std::uint8_t>{};
+   while (true) {
+      auto payload = std::vector<std::uint8_t>{};
+      try {
+         payload = co_await async_read_length_delimited(stream, buffer, options.limits.pubsub.limits.max_rpc_size);
+      } catch (const fcl::exception::base& error) {
+         if (is_orderly_stream_close(error)) {
+            co_return;
+         }
+         throw;
+      }
+
+      auto value = pubsub::codec::decode(payload, options.limits.pubsub);
+
+      if (!value.subscriptions.empty()) {
+         auto announce_back = std::vector<pubsub::subscription>{};
+         {
+            auto lock = std::scoped_lock{mutex};
+            for (const auto& subscription : value.subscriptions) {
+               if (subscription.subscribe) {
+                  pubsub_value.peer_topics[session->info.remote_peer].insert(subscription.subject.value);
+                  pubsub_value.mesh[subscription.subject.value].insert(session->info.remote_peer);
+                  if (pubsub_value.handlers.contains(subscription.subject.value)) {
+                     announce_back.push_back(pubsub::subscription{
+                         .subscribe = true,
+                         .subject = subscription.subject,
+                     });
+                  }
+               } else if (auto topics = pubsub_value.peer_topics.find(session->info.remote_peer);
+                          topics != pubsub_value.peer_topics.end()) {
+                  topics->second.erase(subscription.subject.value);
+                  if (auto mesh = pubsub_value.mesh.find(subscription.subject.value); mesh != pubsub_value.mesh.end()) {
+                     mesh->second.erase(session->info.remote_peer);
+                  }
+               }
+            }
+         }
+         if (!announce_back.empty()) {
+            co_await send_pubsub_rpc(session->info.remote_peer,
+                                     pubsub::rpc{.subscriptions = std::move(announce_back)});
+         }
+      }
+
+      if (value.control_value) {
+         increment_pubsub_control();
+         auto missing = std::vector<std::vector<std::uint8_t>>{};
+         auto cached = std::vector<pubsub::message>{};
+         {
+            auto lock = std::scoped_lock{mutex};
+            for (const auto& graft : value.control_value->grafts) {
+               if (pubsub_value.handlers.contains(graft.subject.value)) {
+                  pubsub_value.mesh[graft.subject.value].insert(session->info.remote_peer);
+               }
+            }
+            for (const auto& prune : value.control_value->prunes) {
+               if (auto mesh = pubsub_value.mesh.find(prune.subject.value); mesh != pubsub_value.mesh.end()) {
+                  mesh->second.erase(session->info.remote_peer);
+               }
+            }
+            for (const auto& ihave : value.control_value->have) {
+               if (!pubsub_value.handlers.contains(ihave.subject.value)) {
+                  continue;
+               }
+               for (const auto& id : ihave.message_ids) {
+                  if (!pubsub_value.cache.contains(bytes_key(id))) {
+                     missing.push_back(id);
+                  }
+               }
+            }
+            for (const auto& iwant : value.control_value->want) {
+               for (const auto& id : iwant.message_ids) {
+                  if (const auto found = pubsub_value.cache.find(bytes_key(id)); found != pubsub_value.cache.end()) {
+                     cached.push_back(found->second);
+                  }
+               }
+            }
+         }
+         if (!missing.empty()) {
+            try {
+               co_await send_pubsub_rpc(session->info.remote_peer,
+                                        pubsub::rpc{.control_value =
+                                                        pubsub::control{.want = std::vector<pubsub::control::iwant>{
+                                                                             pubsub::control::iwant{
+                                                                                 .message_ids = std::move(missing)}}}});
+            } catch (const fcl::exception::base&) {
+               increment_protocol_rejected();
+            }
+         }
+         if (!cached.empty()) {
+            try {
+               co_await send_pubsub_rpc(session->info.remote_peer, pubsub::rpc{.messages = std::move(cached)});
+            } catch (const fcl::exception::base&) {
+               increment_protocol_rejected();
+            }
+         }
+      }
+
+      for (const auto& published : value.messages) {
+         increment_pubsub_received();
+
+         auto signature_ok = true;
+         const auto signed_message = !published.signature.empty();
+         switch (options.limits.pubsub.signatures) {
+         case pubsub::signature_policy::strict_sign:
+            signature_ok = pubsub::codec::verify_message(published);
+            break;
+         case pubsub::signature_policy::strict_no_sign:
+            signature_ok = !signed_message;
+            break;
+         case pubsub::signature_policy::lax_sign:
+         case pubsub::signature_policy::lax_no_sign:
+            signature_ok = !signed_message || pubsub::codec::verify_message(published);
+            break;
+         }
+         if (!signature_ok) {
+            increment_pubsub_invalid(session->info.remote_peer);
+            continue;
+         }
+
+         const auto id = pubsub::codec::message_id(published);
+         const auto key = bytes_key(id);
+         {
+            auto lock = std::scoped_lock{mutex};
+            if (pubsub_value.cache.contains(key)) {
+               ++pubsub_value.scores[session->info.remote_peer].duplicate_messages;
+               ++metrics_value.pubsub_duplicates;
+               continue;
+            }
+            pubsub_value.cache.emplace(key, published);
+            pubsub_value.history.push_back(key);
+            const auto max_cached =
+                std::max<std::size_t>(options.limits.pubsub.limits.history_length * options.limits.pubsub.limits.max_messages,
+                                      1);
+            while (pubsub_value.history.size() > max_cached) {
+               pubsub_value.cache.erase(pubsub_value.history.front());
+               pubsub_value.history.pop_front();
+            }
+         }
+
+         auto result = pubsub::validation_result::accept;
+         auto handler = std::optional<pubsub::handler>{};
+         {
+            auto lock = std::scoped_lock{mutex};
+            if (const auto found = pubsub_value.handlers.find(published.subject.value);
+                found != pubsub_value.handlers.end()) {
+               handler = found->second;
+            }
+         }
+         if (handler) {
+            result = co_await (*handler)(pubsub::event{
+                .source = published.from.value_or(session->info.remote_peer),
+                .value = published,
+            });
+         }
+         if (result == pubsub::validation_result::reject) {
+            increment_pubsub_invalid(session->info.remote_peer);
+            continue;
+         }
+         if (result == pubsub::validation_result::accept && handler) {
+            increment_pubsub_delivered();
+         }
+
+         auto should_forward = false;
+         {
+            auto lock = std::scoped_lock{mutex};
+            should_forward = pubsub_value.handlers.contains(published.subject.value) ||
+                             pubsub_value.mesh.contains(published.subject.value);
+         }
+         if (!should_forward) {
+            continue;
+         }
+         for (const auto& peer : pubsub_candidate_peers(published.subject.value, session->info.remote_peer)) {
+            try {
+               co_await send_pubsub_rpc(peer, pubsub::rpc{.messages = std::vector<pubsub::message>{published}});
+            } catch (const fcl::exception::base&) {
+               increment_protocol_rejected();
+            }
+         }
+      }
+   }
+}
+
 boost::asio::awaitable<bool> node::impl::wait_for_direct_session(const peer_id& peer, std::chrono::milliseconds timeout) {
    const auto started = std::chrono::steady_clock::now();
    while (std::chrono::steady_clock::now() - started < timeout) {
@@ -2060,6 +2456,8 @@ node::impl::serve_relayed_streams_until_hole_punch(peer_id peer, std::optional<p
                 }
              },
              asio::detached);
+      } else if (negotiated.protocol == builtins::meshsub_v11 || negotiated.protocol == builtins::meshsub_v10) {
+         co_await handle_pubsub(relayed_session, std::move(negotiated.stream));
       } else {
          auto handler = handler_for(negotiated.protocol);
          if (handler) {

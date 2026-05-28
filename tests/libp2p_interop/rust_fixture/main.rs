@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     error::Error,
     fs,
     net::Ipv4Addr,
@@ -33,6 +34,9 @@ struct Options {
     ready_file: PathBuf,
     stop_file: PathBuf,
     result_file: PathBuf,
+    seed_file: PathBuf,
+    payload: String,
+    expected_messages: usize,
 }
 
 #[derive(NetworkBehaviour)]
@@ -67,9 +71,18 @@ fn parse_args() -> Result<Options, Box<dyn Error>> {
             "--ready-file" => out.ready_file = PathBuf::from(value),
             "--stop-file" => out.stop_file = PathBuf::from(value),
             "--result-file" => out.result_file = PathBuf::from(value),
+            "--seed-file" => out.seed_file = PathBuf::from(value),
+            "--payload" => out.payload = value,
+            "--expected-messages" => out.expected_messages = value.parse()?,
             "--store-dir" | "--features" => {}
             _ => return Err(format!("unknown argument {key}").into()),
         }
+    }
+    if out.payload.is_empty() {
+        out.payload = String::from_utf8_lossy(PUBSUB_PAYLOAD).to_string();
+    }
+    if out.expected_messages == 0 {
+        out.expected_messages = 1;
     }
     Ok(out)
 }
@@ -405,6 +418,7 @@ async fn wait_rendezvous_register_discover(
 async fn wait_gossipsub_peer_and_publish(
     swarm: &mut libp2p::Swarm<Behaviour>,
     remote_peer: PeerId,
+    payload: &[u8],
 ) -> Result<(), Box<dyn Error>> {
     let topic = gossipsub::IdentTopic::new(PUBSUB_TOPIC);
     swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
@@ -418,7 +432,7 @@ async fn wait_gossipsub_peer_and_publish(
                     SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(
                         gossipsub::Event::Subscribed { peer_id, topic: subscribed_topic },
                     )) if peer_id == remote_peer && subscribed_topic == topic.hash() => {
-                        swarm.behaviour_mut().gossipsub.publish(topic.clone(), PUBSUB_PAYLOAD)?;
+                        swarm.behaviour_mut().gossipsub.publish(topic.clone(), payload)?;
                         tokio::time::sleep(Duration::from_millis(500)).await;
                         return Ok(());
                     }
@@ -433,16 +447,49 @@ async fn wait_gossipsub_peer_and_publish(
 async fn listen(opts: Options) -> Result<(), Box<dyn Error>> {
     let mut swarm = new_swarm().await?;
     spawn_incoming_stream_echo(&mut swarm, "/fcl/interop/relay-echo/1")?;
-    if opts.scenario == "gossipsub_publish" {
+    if opts.scenario == "gossipsub_publish" || opts.scenario == "gossipsub_mixed_mesh_stress" {
         let topic = gossipsub::IdentTopic::new(PUBSUB_TOPIC);
         swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
     }
     let peer = *swarm.local_peer_id();
     let mut ready = false;
+    let mut seeded = false;
+    let mut payloads = HashSet::<String>::new();
+    let mut duplicates = 0usize;
     loop {
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                if ready && !seeded && opts.scenario == "gossipsub_mixed_mesh_stress" && opts.seed_file.exists() {
+                    let seeds = fs::read_to_string(&opts.seed_file)?;
+                    for line in seeds.lines().filter(|line| !line.is_empty()) {
+                        if let Ok(address) = line.parse::<Multiaddr>() {
+                            if !address.to_string().contains(&peer.to_string()) {
+                                let _ = swarm.dial(address);
+                            }
+                        }
+                    }
+                    seeded = true;
+                }
                 if ready && opts.stop_file.exists() {
+                    if opts.scenario == "gossipsub_mixed_mesh_stress" {
+                        let status = if payloads.len() >= opts.expected_messages && duplicates == 0 {
+                            "ok"
+                        } else {
+                            "mismatch"
+                        };
+                        write_json(
+                            &opts.result_file,
+                            json!({
+                                "implementation": "rust",
+                                "scenario": "gossipsub_mixed_mesh_stress",
+                                "status": status,
+                                "received": payloads.len(),
+                                "expected": opts.expected_messages,
+                                "duplicates": duplicates,
+                                "payloads": payloads.iter().cloned().collect::<Vec<_>>()
+                            }),
+                        )?;
+                    }
                     return Ok(());
                 }
             }
@@ -482,6 +529,14 @@ async fn listen(opts: Options) -> Result<(), Box<dyn Error>> {
                                     "source": message.source.map(|peer| peer.to_string()).unwrap_or_default()
                                 }),
                             )?;
+                    }
+                    SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(
+                        gossipsub::Event::Message { message, .. },
+                    )) if opts.scenario == "gossipsub_mixed_mesh_stress" => {
+                        let payload = String::from_utf8_lossy(&message.data).to_string();
+                        if !payloads.insert(payload) {
+                            duplicates += 1;
+                        }
                     }
                     _ => {}
                 }
@@ -603,8 +658,8 @@ async fn dial(opts: Options) -> Result<(), Box<dyn Error>> {
             )?;
             return Ok(());
         }
-        "gossipsub_publish" => {
-            wait_gossipsub_peer_and_publish(&mut swarm, remote_peer).await?;
+        "gossipsub_publish" | "gossipsub_mixed_mesh_stress" => {
+            wait_gossipsub_peer_and_publish(&mut swarm, remote_peer, opts.payload.as_bytes()).await?;
             write_json(
                 &opts.result_file,
                 json!({
@@ -613,7 +668,8 @@ async fn dial(opts: Options) -> Result<(), Box<dyn Error>> {
                     "scenario": opts.scenario,
                     "status": "ok",
                     "topic": PUBSUB_TOPIC,
-                    "payload_bytes": PUBSUB_PAYLOAD.len(),
+                    "payload": opts.payload,
+                    "payload_bytes": opts.payload.len(),
                     "mesh_peer": true
                 }),
             )?;

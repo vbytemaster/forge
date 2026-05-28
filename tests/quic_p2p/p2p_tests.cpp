@@ -2,13 +2,17 @@
 #include <boost/describe.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
 #include <future>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <ranges>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -325,6 +329,12 @@ node::options pubsub_options_for(capability_set capabilities = capability_set{.b
    auto out = options_for(make_peer_id(key), capabilities);
    out.public_key = encode_public_key(key);
    return out;
+}
+
+node::options pubsub_options_for(const test_certificate_identity& identity,
+                                 capability_set capabilities = capability_set{.bits = capabilities::direct_quic |
+                                                                                       capabilities::pubsub}) {
+   return options_for(identity, capabilities);
 }
 
 std::filesystem::path temp_store_path(std::string_view name) {
@@ -1716,6 +1726,229 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_forwards_between_subscribed_peers) {
    fcl::asio::blocking::run(runtime, publisher.async_stop());
    fcl::asio::blocking::run(runtime, hub.async_stop());
    fcl::asio::blocking::run(runtime, subscriber.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_gossipsub_control_spam_is_penalized_without_stopping_node) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto server_options = pubsub_options_for();
+   server_options.limits.pubsub.limits.max_ihave_per_peer = 1;
+   server_options.limits.pubsub.limits.max_iwant_per_peer = 1;
+   server_options.limits.pubsub.limits.max_graft_per_peer = 1;
+   auto client_options = pubsub_options_for();
+   client_options.explicit_peer_id = peer(160);
+
+   auto server = node{runtime, std::move(server_options)};
+   auto client = node{runtime, std::move(client_options)};
+   const auto server_endpoint = listen(server, runtime);
+   client.peers().learn_endpoint(server.local_peer(), server_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::pubsub});
+
+   fcl::asio::blocking::run(
+       runtime, server.async_subscribe(pubsub::topic{.value = "fcl.spam"},
+                                       [](pubsub::event) -> boost::asio::awaitable<pubsub::validation_result> {
+                                          co_return pubsub::validation_result::accept;
+                                       }));
+
+   auto stream =
+       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::meshsub_v11));
+   const auto id = std::vector<std::uint8_t>{'i', 'd'};
+   auto spam = pubsub::rpc{
+       .control_value = pubsub::control{
+           .have = std::vector<pubsub::control::ihave>{
+               pubsub::control::ihave{.subject = pubsub::topic{.value = "fcl.spam"},
+                                      .message_ids = std::vector<std::vector<std::uint8_t>>{id}},
+               pubsub::control::ihave{.subject = pubsub::topic{.value = "fcl.spam"},
+                                      .message_ids = std::vector<std::vector<std::uint8_t>>{id}}},
+           .want = std::vector<pubsub::control::iwant>{
+               pubsub::control::iwant{.message_ids = std::vector<std::vector<std::uint8_t>>{id}},
+               pubsub::control::iwant{.message_ids = std::vector<std::vector<std::uint8_t>>{id}}},
+           .grafts = std::vector<pubsub::control::graft>{
+               pubsub::control::graft{.subject = pubsub::topic{.value = "fcl.spam"}},
+               pubsub::control::graft{.subject = pubsub::topic{.value = "fcl.spam"}}},
+       },
+   };
+   fcl::asio::blocking::run(runtime, stream.async_write(pubsub::codec::encode(spam)));
+   wait_on_runtime(runtime, std::chrono::milliseconds{250}, "gossipsub spam accounting");
+
+   BOOST_TEST(server.metrics().pubsub_invalid_messages >= 1U);
+   BOOST_TEST(server.metrics().protocol_rejections >= 1U);
+   BOOST_TEST(!server.metrics().stopped);
+
+   fcl::asio::blocking::run(runtime, stream.async_close());
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_gossipsub_outbound_byte_limit_rejects_publish_without_stopping_node) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto publisher_options = pubsub_options_for();
+   publisher_options.limits.pubsub.limits.max_outbound_queue_bytes = 8;
+   auto subscriber_options = pubsub_options_for();
+   subscriber_options.explicit_peer_id = peer(161);
+
+   auto publisher = node{runtime, std::move(publisher_options)};
+   auto subscriber = node{runtime, std::move(subscriber_options)};
+   const auto subscriber_endpoint = listen(subscriber, runtime);
+   publisher.peers().learn_endpoint(subscriber.local_peer(), subscriber_endpoint,
+                                    capability_set{.bits = capabilities::direct_quic | capabilities::pubsub});
+   fcl::asio::blocking::run(
+       runtime, subscriber.async_subscribe(pubsub::topic{.value = "fcl.limit"},
+                                          [](pubsub::event) -> boost::asio::awaitable<pubsub::validation_result> {
+                                             co_return pubsub::validation_result::accept;
+                                          }));
+
+   BOOST_CHECK_THROW((void)fcl::asio::blocking::run(runtime, publisher.async_publish(
+                                                               pubsub::topic{.value = "fcl.limit"},
+                                                               std::vector<std::uint8_t>{'o', 'v', 'e', 'r'})),
+                     fcl::exception::base);
+   BOOST_TEST(publisher.metrics().backpressure_rejections >= 1U);
+   BOOST_TEST(!publisher.metrics().stopped);
+
+   fcl::asio::blocking::run(runtime, publisher.async_stop());
+   fcl::asio::blocking::run(runtime, subscriber.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_gossipsub_validation_queue_limit_drops_excess_and_shutdown_is_clean) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 6}};
+   auto subscriber_options = pubsub_options_for(make_test_certificate_identity("pubsub-validation-subscriber"));
+   subscriber_options.limits.pubsub.limits.max_validation_queue = 1;
+   subscriber_options.limits.pubsub.signatures = pubsub::signature_policy::lax_no_sign;
+   auto publisher_a_options = pubsub_options_for(make_test_certificate_identity("pubsub-validation-a"));
+   publisher_a_options.limits.pubsub.signatures = pubsub::signature_policy::lax_no_sign;
+   auto publisher_b_options = pubsub_options_for(make_test_certificate_identity("pubsub-validation-b"));
+   publisher_b_options.limits.pubsub.signatures = pubsub::signature_policy::lax_no_sign;
+
+   auto subscriber = node{runtime, std::move(subscriber_options)};
+   auto publisher_a = node{runtime, std::move(publisher_a_options)};
+   auto publisher_b = node{runtime, std::move(publisher_b_options)};
+   const auto subscriber_endpoint = listen(subscriber, runtime);
+   publisher_a.peers().learn_endpoint(subscriber.local_peer(), subscriber_endpoint,
+                                      capability_set{.bits = capabilities::direct_quic | capabilities::pubsub});
+   publisher_b.peers().learn_endpoint(subscriber.local_peer(), subscriber_endpoint,
+                                      capability_set{.bits = capabilities::direct_quic | capabilities::pubsub});
+
+   auto entered = std::make_shared<std::atomic_uint64_t>(0);
+   fcl::asio::blocking::run(
+       runtime, subscriber.async_subscribe(
+                    pubsub::topic{.value = "fcl.validation"},
+                    [entered](pubsub::event) mutable -> boost::asio::awaitable<pubsub::validation_result> {
+                       entered->fetch_add(1, std::memory_order_relaxed);
+                       auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+                       timer.expires_after(std::chrono::milliseconds{500});
+                       boost::system::error_code ec;
+                       co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+                       co_return pubsub::validation_result::accept;
+                    }));
+
+   auto publish_a = boost::asio::co_spawn(
+       runtime.context(),
+      [&publisher_a]() -> boost::asio::awaitable<void> {
+          (void)co_await publisher_a.async_publish(pubsub::topic{.value = "fcl.validation"},
+                                                   std::vector<std::uint8_t>{'a'}, pubsub::publish_options{.sign = false});
+       },
+       boost::asio::use_future);
+   auto publish_b = boost::asio::co_spawn(
+       runtime.context(),
+       [&publisher_b]() -> boost::asio::awaitable<void> {
+          (void)co_await publisher_b.async_publish(pubsub::topic{.value = "fcl.validation"},
+                                                   std::vector<std::uint8_t>{'b'}, pubsub::publish_options{.sign = false});
+       },
+       boost::asio::use_future);
+   wait_for_server(publish_a, std::chrono::seconds{5}, "first validation publish");
+   wait_for_server(publish_b, std::chrono::seconds{5}, "second validation publish");
+   wait_on_runtime(runtime, std::chrono::milliseconds{750}, "validation queue drain");
+
+   BOOST_TEST(entered->load(std::memory_order_relaxed) == 1U);
+   BOOST_TEST(subscriber.metrics().pubsub_invalid_messages >= 1U);
+   BOOST_TEST(subscriber.pubsub_snapshot().messages_delivered == 1U);
+
+   fcl::asio::blocking::run(runtime, subscriber.async_stop());
+   BOOST_TEST(subscriber.metrics().stopped);
+   fcl::asio::blocking::run(runtime, publisher_a.async_stop());
+   fcl::asio::blocking::run(runtime, publisher_b.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_gossipsub_ten_node_mesh_delivers_multiple_publishes_once) {
+   constexpr auto node_count = std::size_t{10};
+   constexpr auto publish_count = std::size_t{3};
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 12}};
+   auto identities = std::vector<test_certificate_identity>{};
+   auto nodes = std::vector<std::unique_ptr<node>>{};
+   auto endpoints = std::vector<fcl::quic::endpoint>{};
+   identities.reserve(node_count);
+   nodes.reserve(node_count);
+   endpoints.reserve(node_count);
+   for (auto index = std::size_t{}; index < node_count; ++index) {
+      identities.push_back(make_test_certificate_identity("pubsub-mesh-" + std::to_string(index)));
+      auto options = pubsub_options_for(identities.back());
+      options.limits.pubsub.signatures = pubsub::signature_policy::lax_no_sign;
+      nodes.push_back(std::make_unique<node>(runtime, std::move(options)));
+      endpoints.push_back(listen(*nodes.back(), runtime));
+   }
+   for (auto index = std::size_t{}; index < node_count; ++index) {
+      for (auto peer_index = std::size_t{}; peer_index < node_count; ++peer_index) {
+         if (index == peer_index) {
+            continue;
+         }
+         nodes[index]->peers().learn_endpoint(nodes[peer_index]->local_peer(), endpoints[peer_index],
+                                              capability_set{.bits = capabilities::direct_quic | capabilities::pubsub});
+      }
+   }
+
+   struct delivery_state {
+      std::mutex mutex;
+      std::condition_variable cv;
+      std::map<std::string, std::set<std::size_t>> delivered;
+      std::uint64_t duplicates = 0;
+   };
+   auto state = std::make_shared<delivery_state>();
+   for (auto index = std::size_t{}; index < node_count; ++index) {
+      fcl::asio::blocking::run(
+          runtime, nodes[index]->async_subscribe(
+                       pubsub::topic{.value = "fcl.mesh.stress"},
+                       [state, index](pubsub::event event) mutable -> boost::asio::awaitable<pubsub::validation_result> {
+                          const auto payload = std::string{event.value.data.begin(), event.value.data.end()};
+                          {
+                             auto lock = std::unique_lock{state->mutex};
+                             if (!state->delivered[payload].insert(index).second) {
+                                ++state->duplicates;
+                             }
+                          }
+                          state->cv.notify_all();
+                          co_return pubsub::validation_result::accept;
+                       }));
+   }
+
+   for (auto index = std::size_t{}; index < publish_count; ++index) {
+      const auto payload = std::string{"stress-" + std::to_string(index)};
+      fcl::asio::blocking::run(runtime, nodes[index]->async_publish(
+                                            pubsub::topic{.value = "fcl.mesh.stress"},
+                                            std::vector<std::uint8_t>{payload.begin(), payload.end()},
+                                            pubsub::publish_options{.sign = false}));
+   }
+
+   {
+      auto lock = std::unique_lock{state->mutex};
+      const auto completed = state->cv.wait_for(lock, std::chrono::seconds{15}, [&] {
+         for (auto index = std::size_t{}; index < publish_count; ++index) {
+            const auto payload = std::string{"stress-" + std::to_string(index)};
+            if (state->delivered[payload].size() < node_count - 1) {
+               return false;
+            }
+         }
+         return true;
+      });
+      BOOST_REQUIRE(completed);
+      BOOST_TEST(state->duplicates == 0U);
+   }
+
+   for (auto index = std::size_t{}; index < publish_count; ++index) {
+      const auto payload = std::string{"stress-" + std::to_string(index)};
+      BOOST_TEST(!state->delivered[payload].contains(index));
+   }
+   for (auto& value : nodes) {
+      fcl::asio::blocking::run(runtime, value->async_stop());
+   }
 }
 
 BOOST_AUTO_TEST_CASE(p2p_identify_push_updates_peer_store) {

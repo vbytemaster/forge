@@ -292,27 +292,70 @@
       "source": "donors/libp2p-specs/pubsub/gossipsub/gossipsub-v1.1.md",
       "donor": "go-libp2p-pubsub publish/subscribe tests and rust-libp2p gossipsub smoke tests",
       "donor_file": [
-        "donors/go-libp2p-pubsub/floodsub_test.go",
         "donors/go-libp2p-pubsub/gossipsub_test.go",
+        "donors/go-libp2p-pubsub/sign_test.go",
+        "donors/go-libp2p-pubsub/mcache_test.go",
         "donors/rust-libp2p/protocols/gossipsub/tests/smoke.rs"
       ],
       "donor_case": [
         "Subscribe",
         "Publish",
-        "signed delivery to subscribed peer"
+        "signed delivery to subscribed peer",
+        "mesh forwarding",
+        "message cache duplicate suppression"
       ],
       "status": "ported",
       "supported": true,
       "fcl_tests": [
         "p2p_gossipsub_nodes_deliver_signed_publish_over_negotiated_stream",
         "p2p_gossipsub_forwards_between_subscribed_peers",
+        "p2p_gossipsub_ten_node_mesh_delivers_multiple_publishes_once",
         "test_fcl_libp2p_interop gossipsub_publish FCL <-> Go/Rust"
       ],
       "fcl_live_scenario": [
         "fcl->go gossipsub_publish",
         "go->fcl gossipsub_publish",
         "fcl->rust gossipsub_publish",
-        "rust->fcl gossipsub_publish"
+        "rust->fcl gossipsub_publish",
+        "mixed 4 FCL + 3 Go + 3 Rust gossipsub_mixed_mesh_stress"
+      ],
+      "known_gap": ""
+    },
+    {
+      "id": "gossipsub.mesh_hardening_and_resource_limits",
+      "protocol": "GossipSub",
+      "source": "donors/libp2p-specs/pubsub/gossipsub/gossipsub-v1.1.md",
+      "donor": "go-libp2p-pubsub validation/spam/queue/backoff/score tests and rust-libp2p gossipsub cache/queue/score/backoff components",
+      "donor_file": [
+        "donors/go-libp2p-pubsub/validation_test.go",
+        "donors/go-libp2p-pubsub/gossipsub_spam_test.go",
+        "donors/go-libp2p-pubsub/rpc_queue_test.go",
+        "donors/go-libp2p-pubsub/score_test.go",
+        "donors/go-libp2p-pubsub/backoff_test.go",
+        "donors/rust-libp2p/protocols/gossipsub/src/mcache.rs",
+        "donors/rust-libp2p/protocols/gossipsub/src/queue.rs",
+        "donors/rust-libp2p/protocols/gossipsub/src/peer_score/tests.rs",
+        "donors/rust-libp2p/protocols/gossipsub/src/backoff.rs",
+        "donors/rust-libp2p/protocols/gossipsub/src/time_cache.rs"
+      ],
+      "donor_case": [
+        "slow validation remains bounded",
+        "RPC/control spam is penalized",
+        "outbound queue byte pressure rejects locally",
+        "GRAFT/PRUNE backoff",
+        "heartbeat mesh maintenance"
+      ],
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_gossipsub_control_spam_is_penalized_without_stopping_node",
+        "p2p_gossipsub_outbound_byte_limit_rejects_publish_without_stopping_node",
+        "p2p_gossipsub_validation_queue_limit_drops_excess_and_shutdown_is_clean",
+        "p2p_gossipsub_ten_node_mesh_delivers_multiple_publishes_once",
+        "test_fcl_libp2p_interop gossipsub_mixed_mesh_stress"
+      ],
+      "fcl_live_scenario": [
+        "mixed 4 FCL + 3 Go + 3 Rust gossipsub_mixed_mesh_stress"
       ],
       "known_gap": ""
     }

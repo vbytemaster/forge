@@ -57,7 +57,10 @@ struct node::impl : std::enable_shared_from_this<impl> {
       std::deque<std::string> history;
       std::map<peer_id, pubsub::score> scores;
       std::map<peer_id, std::shared_ptr<fcl::p2p::stream>> outbound_streams;
+      std::map<peer_id, std::size_t> active_validations_by_peer;
+      std::size_t active_validations = 0;
       std::uint64_t next_seqno = 1;
+      bool heartbeat_started = false;
    };
 
    impl(fcl::asio::runtime& runtime_value, node::options options_value);
@@ -185,6 +188,8 @@ struct node::impl : std::enable_shared_from_this<impl> {
 
    void increment_pubsub_control();
 
+   void increment_pubsub_backpressure();
+
    [[nodiscard]] std::vector<std::uint8_t> next_pubsub_seqno();
 
    [[nodiscard]] pubsub::snapshot pubsub_snapshot() const;
@@ -197,6 +202,16 @@ struct node::impl : std::enable_shared_from_this<impl> {
    boost::asio::awaitable<void> send_pubsub_rpc(const peer_id& peer, const pubsub::rpc& value);
 
    boost::asio::awaitable<void> announce_pubsub_subscriptions(const peer_id& peer);
+
+   [[nodiscard]] bool try_begin_pubsub_validation(const peer_id& peer);
+
+   void finish_pubsub_validation(const peer_id& peer);
+
+   [[nodiscard]] bool pubsub_control_over_limit(const pubsub::control& value) const noexcept;
+
+   void launch_pubsub_heartbeat();
+
+   boost::asio::awaitable<void> pubsub_heartbeat_once();
 
    boost::asio::awaitable<std::shared_ptr<session_state>> connect_direct(fcl::quic::endpoint endpoint,
                                                                          node::connect_options connect_options_value);

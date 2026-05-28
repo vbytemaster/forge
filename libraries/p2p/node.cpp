@@ -137,6 +137,7 @@ boost::asio::awaitable<void> node::async_listen(fcl::quic::endpoint endpoint) {
           std::make_unique<fcl::quic::listener>(self->runtime, std::move(endpoint), self->quic_server_options());
    }
    self->launch_accept_loop();
+   self->launch_pubsub_heartbeat();
    co_return;
 }
 
@@ -710,6 +711,9 @@ boost::asio::awaitable<void> node::async_stop() {
       self->sessions.clear();
       self->inbound_relay_reservations.clear();
       self->outbound_relay_reservations.clear();
+      self->pubsub_value.outbound_streams.clear();
+      self->pubsub_value.active_validations_by_peer.clear();
+      self->pubsub_value.active_validations = 0;
       self->metrics_value.active_sessions = 0;
       self->metrics_value.active_relay_reservations = 0;
       self->metrics_value.stopped = true;

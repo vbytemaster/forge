@@ -5,6 +5,8 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <mutex>
+#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -157,6 +159,29 @@ const std::string& required(const std::map<std::string, std::string>& args, std:
       throw std::runtime_error{"missing required argument --" + std::string{key}};
    }
    return it->second;
+}
+
+std::string optional_value(const std::map<std::string, std::string>& args, std::string_view key,
+                           std::string_view fallback = {}) {
+   const auto it = args.find(std::string{key});
+   if (it == args.end() || it->second.empty()) {
+      return std::string{fallback};
+   }
+   return it->second;
+}
+
+std::vector<std::string> read_lines(const std::filesystem::path& path) {
+   auto in = std::ifstream{path};
+   if (!in) {
+      throw std::runtime_error{"failed to open " + path.string()};
+   }
+   auto out = std::vector<std::string>{};
+   for (auto line = std::string{}; std::getline(in, line);) {
+      if (!line.empty()) {
+         out.push_back(line);
+      }
+   }
+   return out;
 }
 
 void write_file(const std::filesystem::path& path, std::string_view value) {
@@ -399,6 +424,13 @@ void register_echo(fcl::p2p::node& value) {
                                    });
 }
 
+struct pubsub_stress_state {
+   std::mutex mutex;
+   std::set<std::string> payloads;
+   std::uint64_t duplicates = 0;
+   std::uint64_t invalid = 0;
+};
+
 void register_pubsub_listener(fcl::asio::runtime& runtime, fcl::p2p::node& value, std::filesystem::path result_file) {
    fcl::asio::blocking::run(
        runtime, value.async_subscribe(
@@ -415,6 +447,48 @@ void register_pubsub_listener(fcl::asio::runtime& runtime, fcl::p2p::node& value
                                       "\"}\n");
                        co_return fcl::p2p::pubsub::validation_result::accept;
                     }));
+}
+
+std::shared_ptr<pubsub_stress_state> register_pubsub_stress_listener(fcl::asio::runtime& runtime,
+                                                                      fcl::p2p::node& value) {
+   auto state = std::make_shared<pubsub_stress_state>();
+   fcl::asio::blocking::run(
+       runtime, value.async_subscribe(
+                    fcl::p2p::pubsub::topic{.value = std::string{pubsub_topic}},
+                    [state](fcl::p2p::pubsub::event event)
+                        -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+                       const auto payload = std::string{event.value.data.begin(), event.value.data.end()};
+                       auto lock = std::scoped_lock{state->mutex};
+                       if (!state->payloads.insert(payload).second) {
+                          ++state->duplicates;
+                       }
+                       co_return fcl::p2p::pubsub::validation_result::accept;
+                    }));
+   return state;
+}
+
+void write_pubsub_stress_result(const std::filesystem::path& result_file, std::string_view implementation,
+                                const pubsub_stress_state& state, std::uint64_t expected, const fcl::p2p::node& value) {
+   auto payloads = std::string{};
+   auto first = true;
+   for (const auto& payload : state.payloads) {
+      if (!first) {
+         payloads += ",";
+      }
+      first = false;
+      payloads += "\"" + json_escape(payload) + "\"";
+   }
+   const auto metrics = value.metrics();
+   write_file(result_file,
+              "{\"implementation\":\"" + std::string{implementation} +
+                  "\",\"scenario\":\"gossipsub_mixed_mesh_stress\",\"status\":\"" +
+                  std::string{state.payloads.size() >= expected && state.duplicates == 0 ? "ok" : "mismatch"} +
+                  "\",\"received\":" + std::to_string(state.payloads.size()) +
+                  ",\"expected\":" + std::to_string(expected) +
+                  ",\"duplicates\":" + std::to_string(state.duplicates) +
+                  ",\"invalid\":" + std::to_string(metrics.pubsub_invalid_messages) +
+                  ",\"rejected\":" + std::to_string(metrics.protocol_rejections) +
+                  ",\"payloads\":[" + payloads + "]}\n");
 }
 
 std::vector<std::uint8_t> unwrap_length_delimited(std::span<const std::uint8_t> bytes, std::size_t max_payload_size) {
@@ -469,8 +543,12 @@ int listen_mode(const std::map<std::string, std::string>& args) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
    auto value = fcl::p2p::node{runtime, node_options(required(args, "store-dir"))};
    register_echo(value);
-   if (const auto scenario = args.find("scenario"); scenario != args.end() && scenario->second == "gossipsub_publish") {
+   const auto scenario = optional_value(args, "scenario");
+   auto stress_state = std::shared_ptr<pubsub_stress_state>{};
+   if (scenario == "gossipsub_publish") {
       register_pubsub_listener(runtime, value, required(args, "result-file"));
+   } else if (scenario == "gossipsub_mixed_mesh_stress") {
+      stress_state = register_pubsub_stress_listener(runtime, value);
    }
    fcl::asio::blocking::run(runtime, value.async_listen(fcl::quic::endpoint{.host = "127.0.0.1", .port = 0}));
    const auto local = value.local_endpoint();
@@ -484,7 +562,33 @@ int listen_mode(const std::map<std::string, std::string>& args) {
                   "],\"status\":\"ready\"}\n");
 
    const auto stop_file = std::filesystem::path{required(args, "stop-file")};
+   auto seeded = false;
    while (!std::filesystem::exists(stop_file)) {
+      if (!seeded && scenario == "gossipsub_mixed_mesh_stress") {
+         const auto seed_file = std::filesystem::path{required(args, "seed-file")};
+         if (std::filesystem::exists(seed_file)) {
+            for (const auto& line : read_lines(seed_file)) {
+               const auto remote = fcl::p2p::parse_endpoint(line);
+               if (!remote.peer || *remote.peer == value.local_peer()) {
+                  continue;
+               }
+               value.peers().learn_endpoint(*remote.peer, remote.quic_endpoint(),
+                                            fcl::p2p::capability_set{.bits = fcl::p2p::capabilities::direct_quic |
+                                                                             fcl::p2p::capabilities::pubsub});
+               try {
+                  (void)fcl::asio::blocking::run(
+                      runtime, value.async_connect(remote.quic_endpoint(),
+                                                   fcl::p2p::node::connect_options{
+                                                       .expected_peer = *remote.peer,
+                                                       .allow_relay = false,
+                                                       .allow_hole_punch = false,
+                                                   }));
+               } catch (const fcl::exception::base&) {
+               }
+            }
+            seeded = true;
+         }
+      }
       std::this_thread::sleep_for(100ms);
    }
    const auto metrics = value.metrics();
@@ -494,6 +598,12 @@ int listen_mode(const std::map<std::string, std::string>& args) {
              << " handshakes_failed=" << metrics.handshakes_failed
              << " protocol_streams_accepted=" << metrics.protocol_streams_accepted
              << " protocol_rejections=" << metrics.protocol_rejections << "\n";
+   if (stress_state) {
+      auto lock = std::scoped_lock{stress_state->mutex};
+      write_pubsub_stress_result(required(args, "result-file"), "fcl", *stress_state,
+                                 static_cast<std::uint64_t>(std::stoull(optional_value(args, "expected-messages", "3"))),
+                                 value);
+   }
    fcl::asio::blocking::run(runtime, value.async_stop());
    return 0;
 }
@@ -539,6 +649,7 @@ int destination_mode(const std::map<std::string, std::string>& args) {
 }
 
 std::string run_scenario(fcl::asio::runtime& runtime, fcl::p2p::node& value, std::string_view scenario,
+                         std::string_view payload,
                          const fcl::p2p::peer_id& peer) {
    if (scenario == "ping") {
       const auto rtt = fcl::asio::blocking::run(runtime, value.async_ping(
@@ -613,13 +724,13 @@ std::string run_scenario(fcl::asio::runtime& runtime, fcl::p2p::node& value, std
       return "\"registration_count\":" + std::to_string(discovered.registrations.size()) +
              ",\"cookie_bytes\":" + std::to_string(discovered.cookie.size());
    }
-   if (scenario == "gossipsub_publish") {
+   if (scenario == "gossipsub_publish" || scenario == "gossipsub_mixed_mesh_stress") {
       const auto message = fcl::asio::blocking::run(runtime, value.async_publish(
                                                                 fcl::p2p::pubsub::topic{
                                                                     .value = std::string{pubsub_topic},
                                                                 },
                                                                 std::vector<std::uint8_t>{
-                                                                    pubsub_payload.begin(), pubsub_payload.end()}));
+                                                                    payload.begin(), payload.end()}));
       std::this_thread::sleep_for(500ms);
       return "\"topic\":\"" + json_escape(message.subject.value) + "\",\"payload_bytes\":" +
              std::to_string(message.data.size()) + ",\"signed\":" +
@@ -664,7 +775,8 @@ int dial_mode(const std::map<std::string, std::string>& args) {
                                                                  fcl::p2p::capabilities::rendezvous |
                                                                  fcl::p2p::capabilities::pubsub});
 
-   const auto details = run_scenario(runtime, value, required(args, "scenario"), peer);
+   const auto details = run_scenario(runtime, value, required(args, "scenario"),
+                                     optional_value(args, "payload", pubsub_payload), peer);
    fcl::asio::blocking::run(runtime, value.async_stop());
    write_file(required(args, "result-file"),
               "{\"implementation\":\"fcl\",\"role\":\"dialer\",\"scenario\":\"" + json_escape(required(args, "scenario")) +

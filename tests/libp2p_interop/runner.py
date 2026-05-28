@@ -15,6 +15,7 @@ SCENARIOS = ("ping", "identify", "autonatv2", "relay_reserve", "unknown_protocol
 DHT_SCENARIOS = ("dht_find_peer", "dht_provide_find_provider")
 RENDEZVOUS_SCENARIOS = ("rendezvous_register_discover",)
 PUBSUB_SCENARIOS = ("gossipsub_publish",)
+PUBSUB_STRESS_SCENARIO = "gossipsub_mixed_mesh_stress"
 TOPOLOGY_SCENARIOS = ("relay_echo_topology", "dcutr_relay_topology")
 NATIVE_TOPOLOGIES = (
     ("fcl", "go", "go"),
@@ -88,7 +89,8 @@ class Listener:
 
 
 def start_listener(binary: Path, implementation: str, work: Path, scenario: Optional[str] = None,
-                   result_file: Optional[Path] = None) -> Listener:
+                   result_file: Optional[Path] = None, seed_file: Optional[Path] = None,
+                   expected_messages: Optional[int] = None) -> Listener:
     ready_file = work / f"{implementation}-ready.json"
     stop_file = work / f"{implementation}.stop"
     log_file = work / f"{implementation}.log"
@@ -109,6 +111,10 @@ def start_listener(binary: Path, implementation: str, work: Path, scenario: Opti
         command.extend(["--scenario", scenario])
     if result_file is not None:
         command.extend(["--result-file", str(result_file)])
+    if seed_file is not None:
+        command.extend(["--seed-file", str(seed_file)])
+    if expected_messages is not None:
+        command.extend(["--expected-messages", str(expected_messages)])
     log = log_file.open("w")
     process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
     try:
@@ -152,10 +158,12 @@ def start_destination(binary: Path, implementation: str, relay_addr: str, relay_
     return Listener(process, ready, stop_file, log_file, log)
 
 
-def run_dial(binary: Path, implementation: str, scenario: str, peer_id: str, addr: str, work: Path) -> dict:
-    result_file = work / f"{implementation}-dial-{scenario}.json"
-    log_file = work / f"{implementation}-dial-{scenario}.log"
-    store_dir = work / f"{implementation}-dial-{scenario}-store"
+def run_dial(binary: Path, implementation: str, scenario: str, peer_id: str, addr: str, work: Path,
+             payload: Optional[str] = None) -> dict:
+    payload_suffix = "" if payload is None else f"-{payload}"
+    result_file = work / f"{implementation}-dial-{scenario}{payload_suffix}.json"
+    log_file = work / f"{implementation}-dial-{scenario}{payload_suffix}.log"
+    store_dir = work / f"{implementation}-dial-{scenario}{payload_suffix}-store"
     command = [
         str(binary),
         "dial",
@@ -170,6 +178,8 @@ def run_dial(binary: Path, implementation: str, scenario: str, peer_id: str, add
         "--store-dir",
         str(store_dir),
     ]
+    if payload is not None:
+        command.extend(["--payload", payload])
     try:
         with log_file.open("w") as log:
             subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=40)
@@ -181,6 +191,96 @@ def run_dial(binary: Path, implementation: str, scenario: str, peer_id: str, add
             detail += f"; result={result_file.read_text(errors='replace')}"
         raise RuntimeError(detail)
     return json.loads(result_file.read_text())
+
+
+def run_pubsub_mixed_mesh_stress(binaries: dict[str, Path], root: Path) -> dict:
+    work = root / PUBSUB_STRESS_SCENARIO
+    work.mkdir(parents=True, exist_ok=True)
+    seed_file = work / "mesh-seeds.txt"
+    expected_messages = 3
+    participants = [
+        ("fcl", "fcl0"),
+        ("fcl", "fcl1"),
+        ("fcl", "fcl2"),
+        ("fcl", "fcl3"),
+        ("go", "go0"),
+        ("go", "go1"),
+        ("go", "go2"),
+        ("rust", "rust0"),
+        ("rust", "rust1"),
+        ("rust", "rust2"),
+    ]
+    listeners: list[Listener] = []
+    result_files: list[tuple[str, Path]] = []
+    try:
+        for implementation, name in participants:
+            result_file = work / f"{name}-stress-result.json"
+            listeners.append(
+                start_listener(
+                    binaries[implementation],
+                    name,
+                    work,
+                    PUBSUB_STRESS_SCENARIO,
+                    result_file,
+                    seed_file,
+                    expected_messages,
+                )
+            )
+            result_files.append((name, result_file))
+
+        seed_file.write_text(
+            "\n".join(listener.ready["listen_addrs"][0] for listener in listeners) + "\n"
+        )
+        time.sleep(4)
+
+        publishers = [
+            ("fcl", "stress-fcl"),
+            ("go", "stress-go"),
+            ("rust", "stress-rust"),
+        ]
+        publish_results = []
+        for index, (implementation, payload) in enumerate(publishers):
+            target = listeners[index]
+            publish_results.append(
+                run_dial(
+                    binaries[implementation],
+                    f"{implementation}-stress-publisher",
+                    PUBSUB_STRESS_SCENARIO,
+                    target.ready["peer_id"],
+                    target.ready["listen_addrs"][0],
+                    work,
+                    payload,
+                )
+            )
+
+        time.sleep(8)
+    finally:
+        for listener in listeners:
+            listener.close()
+
+    listener_results = []
+    for name, result_file in result_files:
+        result = wait_json(result_file, 10)
+        result["name"] = name
+        listener_results.append(result)
+        if result.get("status") != "ok":
+            raise RuntimeError(f"{name} stress listener reported {result}")
+
+    return {
+        "implementation": "mixed",
+        "scenario": PUBSUB_STRESS_SCENARIO,
+        "participants": [
+            {
+                "name": name,
+                "implementation": implementation,
+                "peer_id": listener.ready["peer_id"],
+                "listen_addr": listener.ready["listen_addrs"][0],
+            }
+            for (implementation, name), listener in zip(participants, listeners)
+        ],
+        "publishers": publish_results,
+        "listeners": listener_results,
+    }
 
 
 def run_relay_dial(binary: Path, implementation: str, scenario: str, target_peer_id: str, relay_peer_id: str,
@@ -423,6 +523,10 @@ def main() -> int:
                     artifacts.append(run_pair(binaries[dialer], dialer, binaries[listener], listener, scenario, root))
                 except Exception as error:
                     failures.append(f"{dialer}->{listener} {scenario}: {error}")
+    try:
+        artifacts.append(run_pubsub_mixed_mesh_stress(binaries, root))
+    except Exception as error:
+        failures.append(f"{PUBSUB_STRESS_SCENARIO}: {error}")
     for listener, dialer in (("rust", "fcl"), ("fcl", "rust")):
         for scenario in RENDEZVOUS_SCENARIOS:
             try:

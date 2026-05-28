@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	cid "github.com/ipfs/go-cid"
@@ -44,6 +46,9 @@ type options struct {
 	readyFile   string
 	stopFile    string
 	resultFile  string
+	seedFile    string
+	payload     string
+	expected    int
 }
 
 func parseArgs() (options, error) {
@@ -75,11 +80,27 @@ func parseArgs() (options, error) {
 			out.stopFile = value
 		case "--result-file":
 			out.resultFile = value
+		case "--seed-file":
+			out.seedFile = value
+		case "--payload":
+			out.payload = value
+		case "--expected-messages":
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				return options{}, err
+			}
+			out.expected = n
 		case "--store-dir", "--features":
 			// Accepted for CLI parity with the FCL fixture.
 		default:
 			return options{}, fmt.Errorf("unknown argument %s", key)
 		}
+	}
+	if out.payload == "" {
+		out.payload = pubsubPayload
+	}
+	if out.expected == 0 {
+		out.expected = 1
 	}
 	return out, nil
 }
@@ -266,14 +287,97 @@ func installPubSubListener(h *fixtureHost, resultFile string) error {
 	return nil
 }
 
+type pubsubStressState struct {
+	mu         sync.Mutex
+	payloads   map[string]struct{}
+	duplicates int
+}
+
+func installPubSubStressListener(h *fixtureHost) (*pubsubStressState, error) {
+	sub, err := h.pubsub.Subscribe(pubsubTopic, pubsub.WithBufferSize(64))
+	if err != nil {
+		return nil, err
+	}
+	state := &pubsubStressState{payloads: make(map[string]struct{})}
+	go func() {
+		for {
+			msg, err := sub.Next(context.Background())
+			if err != nil {
+				return
+			}
+			payload := string(msg.Data)
+			state.mu.Lock()
+			if _, ok := state.payloads[payload]; ok {
+				state.duplicates++
+			}
+			state.payloads[payload] = struct{}{}
+			state.mu.Unlock()
+		}
+	}()
+	return state, nil
+}
+
+func connectSeedPeers(ctx context.Context, h host.Host, seedFile string) error {
+	data, err := os.ReadFile(seedFile)
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		addr, err := ma.NewMultiaddr(line)
+		if err != nil {
+			continue
+		}
+		info, err := peer.AddrInfoFromP2pAddr(addr)
+		if err != nil || info.ID == h.ID() {
+			continue
+		}
+		if err := h.Connect(ctx, *info); err != nil {
+			continue
+		}
+	}
+	return nil
+}
+
+func writePubSubStressResult(opts options, state *pubsubStressState) error {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	payloads := make([]string, 0, len(state.payloads))
+	for payload := range state.payloads {
+		payloads = append(payloads, payload)
+	}
+	status := "ok"
+	if len(payloads) < opts.expected || state.duplicates != 0 {
+		status = "mismatch"
+	}
+	return writeJSON(opts.resultFile, map[string]any{
+		"implementation": "go",
+		"scenario":       "gossipsub_mixed_mesh_stress",
+		"status":         status,
+		"received":       len(payloads),
+		"expected":       opts.expected,
+		"duplicates":     state.duplicates,
+		"payloads":       payloads,
+	})
+}
+
 func listen(opts options) error {
 	h, err := newHost()
 	if err != nil {
 		return err
 	}
 	defer h.Close()
+	var stress *pubsubStressState
 	if opts.scenario == "gossipsub_publish" {
 		if err := installPubSubListener(h, opts.resultFile); err != nil {
+			return err
+		}
+	} else if opts.scenario == "gossipsub_mixed_mesh_stress" {
+		stress, err = installPubSubStressListener(h)
+		if err != nil {
 			return err
 		}
 	}
@@ -296,8 +400,20 @@ func listen(opts options) error {
 	}); err != nil {
 		return err
 	}
+	seeded := false
 	for {
+		if !seeded && opts.scenario == "gossipsub_mixed_mesh_stress" && opts.seedFile != "" {
+			if _, err := os.Stat(opts.seedFile); err == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				_ = connectSeedPeers(ctx, h, opts.seedFile)
+				cancel()
+				seeded = true
+			}
+		}
 		if _, err := os.Stat(opts.stopFile); err == nil {
+			if stress != nil {
+				return writePubSubStressResult(opts, stress)
+			}
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -509,19 +625,20 @@ func dial(opts options) error {
 			return fmt.Errorf("dht FindProviders did not return local provider")
 		}
 		result["provider_count"] = count
-	case "gossipsub_publish":
+	case "gossipsub_publish", "gossipsub_mixed_mesh_stress":
 		if _, err := h.pubsub.Subscribe(pubsubTopic, pubsub.WithBufferSize(8)); err != nil {
 			return err
 		}
 		waitCtx, waitCancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer waitCancel()
 		meshPeer := waitPubSubPeer(waitCtx, h.pubsub, pubsubTopic, info.ID)
-		if err := h.pubsub.Publish(pubsubTopic, []byte(pubsubPayload)); err != nil {
+		if err := h.pubsub.Publish(pubsubTopic, []byte(opts.payload)); err != nil {
 			return fmt.Errorf("gossipsub publish failed: %w", err)
 		}
 		time.Sleep(500 * time.Millisecond)
 		result["topic"] = pubsubTopic
-		result["payload_bytes"] = len(pubsubPayload)
+		result["payload"] = opts.payload
+		result["payload_bytes"] = len(opts.payload)
 		result["mesh_peer"] = meshPeer
 	case "unknown_protocol":
 		expected, err := expectUnsupportedProtocol(ctx, h, info.ID, protocol.ID("/fcl/interop/unknown/1"))

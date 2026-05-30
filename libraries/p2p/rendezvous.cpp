@@ -15,7 +15,7 @@ module;
 module fcl.p2p.rendezvous;
 
 import fcl.multiformats.exceptions;
-import fcl.multiformats.address;
+import fcl.multiformats.multiaddr;
 import fcl.multiformats.varint;
 import fcl.p2p.exceptions;
 
@@ -380,14 +380,14 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
 }
 
 [[nodiscard]] std::vector<std::uint8_t> encode_peer_record_address(const endpoint& value) {
-   const auto address = fcl::multiformats::address::parse(value.to_string());
+   const auto address = fcl::multiformats::multiaddr::parse(value.to_string());
    return address.to_bytes();
 }
 
 [[nodiscard]] std::optional<endpoint> decode_peer_record_address(std::span<const std::uint8_t> bytes,
                                                                  const peer_id& peer) {
    try {
-      auto out = parse_endpoint(fcl::multiformats::address::from_bytes(bytes).to_string());
+      auto out = parse_endpoint(fcl::multiformats::multiaddr::from_bytes(bytes).to_string());
       if (!out.peer) {
          out.peer = peer;
       }

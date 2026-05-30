@@ -6,6 +6,7 @@ module;
 
 export module fcl.p2p.endpoint;
 
+import fcl.multiformats.multiaddr;
 import fcl.p2p.identity;
 import fcl.transport.endpoint;
 
@@ -15,14 +16,22 @@ struct endpoint {
    using address_kind = fcl::transport::endpoint::address_kind;
    using protocol_kind = fcl::transport::endpoint::protocol_kind;
 
+   enum class encapsulation_kind {
+      none,
+      ws,
+      wss,
+   };
+
    struct circuit {
       peer_id target;
    };
 
    fcl::transport::endpoint address;
+   encapsulation_kind encapsulation = encapsulation_kind::none;
    std::optional<peer_id> peer;
    std::optional<circuit> relayed;
 
+   [[nodiscard]] fcl::multiformats::multiaddr to_multiaddr() const;
    [[nodiscard]] std::string to_string() const;
    [[nodiscard]] bool is_direct_quic() const noexcept;
    [[nodiscard]] bool is_direct_tcp() const noexcept;

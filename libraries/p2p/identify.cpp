@@ -49,12 +49,12 @@ void append_string(std::vector<std::uint8_t>& out, std::uint32_t field, std::str
 }
 
 [[nodiscard]] std::vector<std::uint8_t> endpoint_bytes(const endpoint& value) {
-   return fcl::multiformats::address::parse(value.to_string()).to_bytes();
+   return fcl::multiformats::multiaddr::parse(value.to_string()).to_bytes();
 }
 
 [[nodiscard]] std::optional<endpoint> supported_endpoint(std::span<const std::uint8_t> value) {
    try {
-      return parse_endpoint(fcl::multiformats::address::from_bytes(value).to_string());
+      return parse_endpoint(fcl::multiformats::multiaddr::from_bytes(value).to_string());
    } catch (const fcl::multiformats::exceptions::invalid_format&) {
       return std::nullopt;
    } catch (const fcl::exception::base&) {

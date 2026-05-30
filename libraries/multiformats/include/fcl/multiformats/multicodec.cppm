@@ -28,6 +28,8 @@ enum class multicodec_code : std::uint64_t {
    p2p = 0x01a5,
    quic = 0x01cc,
    quic_v1 = 0x01cd,
+   ws = 0x01dd,
+   wss = 0x01de,
 };
 
 [[nodiscard]] constexpr std::uint64_t code_value(multicodec_code code) noexcept {
@@ -37,6 +39,6 @@ enum class multicodec_code : std::uint64_t {
 [[nodiscard]] bytes multicodec_encode(multicodec_code code);
 [[nodiscard]] multicodec_code multicodec_decode(std::span<const std::uint8_t> data, std::size_t& consumed);
 [[nodiscard]] std::string_view protocol_name(multicodec_code code);
-[[nodiscard]] multicodec_code protocol_code(std::string_view name);
+[[nodiscard]] multicodec_code parse_protocol_code(std::string_view name);
 
 } // namespace fcl::multiformats

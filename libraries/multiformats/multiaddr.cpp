@@ -7,13 +7,14 @@ module;
 #include <cstddef>
 #include <cstdlib>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <system_error>
 #include <utility>
 #include <vector>
 
-module fcl.multiformats.address;
+module fcl.multiformats.multiaddr;
 
 import fcl.multiformats.exceptions;
 
@@ -111,31 +112,78 @@ void append_big_endian_port(bytes& out, std::uint16_t port) {
    out.push_back(static_cast<std::uint8_t>(port & 0xffU));
 }
 
+[[nodiscard]] multicodec_code to_multicodec(protocol_code code) noexcept {
+   return static_cast<multicodec_code>(code_value(code));
+}
+
+[[nodiscard]] protocol_code from_multicodec(multicodec_code code) {
+   switch (code) {
+      case multicodec_code::ip4:
+         return protocol_code::ip4;
+      case multicodec_code::tcp:
+         return protocol_code::tcp;
+      case multicodec_code::ip6:
+         return protocol_code::ip6;
+      case multicodec_code::dns:
+         return protocol_code::dns;
+      case multicodec_code::dns4:
+         return protocol_code::dns4;
+      case multicodec_code::dns6:
+         return protocol_code::dns6;
+      case multicodec_code::udp:
+         return protocol_code::udp;
+      case multicodec_code::p2p_circuit:
+         return protocol_code::p2p_circuit;
+      case multicodec_code::p2p:
+         return protocol_code::p2p;
+      case multicodec_code::quic:
+         return protocol_code::quic;
+      case multicodec_code::quic_v1:
+         return protocol_code::quic_v1;
+      case multicodec_code::ws:
+         return protocol_code::ws;
+      case multicodec_code::wss:
+         return protocol_code::wss;
+      default:
+         throw exceptions::invalid_format{"unsupported multiaddr protocol"};
+   }
+}
+
+[[nodiscard]] protocol_code parse_multiaddr_protocol(std::string_view value) {
+   return from_multicodec(parse_protocol_code(value));
+}
+
+[[nodiscard]] std::string_view multiaddr_protocol_name(protocol_code code) {
+   return protocol_name(to_multicodec(code));
+}
+
 } // namespace
 
-address address::parse(std::string_view value) {
+multiaddr multiaddr::parse(std::string_view value) {
    auto parts = split_path(value);
-   auto result = address{};
+   auto result = multiaddr{};
 
    for (std::size_t i = 0; i < parts.size(); ++i) {
-      auto code = protocol_code(parts[i]);
+      auto code = parse_multiaddr_protocol(parts[i]);
       switch (code) {
-         case multicodec_code::ip4:
-         case multicodec_code::ip6:
-         case multicodec_code::dns:
-         case multicodec_code::dns4:
-         case multicodec_code::dns6:
-         case multicodec_code::tcp:
-         case multicodec_code::udp:
-         case multicodec_code::p2p:
+         case protocol_code::ip4:
+         case protocol_code::ip6:
+         case protocol_code::dns:
+         case protocol_code::dns4:
+         case protocol_code::dns6:
+         case protocol_code::tcp:
+         case protocol_code::udp:
+         case protocol_code::p2p:
             if (++i >= parts.size()) {
                throw exceptions::invalid_format{"address protocol is missing a value"};
             }
             result.push({.code = code, .value = std::string{parts[i]}});
             break;
-         case multicodec_code::p2p_circuit:
-         case multicodec_code::quic:
-         case multicodec_code::quic_v1:
+         case protocol_code::p2p_circuit:
+         case protocol_code::quic:
+         case protocol_code::quic_v1:
+         case protocol_code::ws:
+         case protocol_code::wss:
             result.push({.code = code, .value = {}});
             break;
          default:
@@ -146,16 +194,16 @@ address address::parse(std::string_view value) {
    return result;
 }
 
-address address::from_bytes(std::span<const std::uint8_t> data) {
-   auto result = address{};
+multiaddr multiaddr::from_bytes(std::span<const std::uint8_t> data) {
+   auto result = multiaddr{};
    std::size_t offset = 0;
    while (offset < data.size()) {
       std::size_t consumed = 0;
-      auto code = multicodec_decode(data.subspan(offset), consumed);
+      auto code = from_multicodec(multicodec_decode(data.subspan(offset), consumed));
       offset += consumed;
 
       switch (code) {
-         case multicodec_code::ip4: {
+         case protocol_code::ip4: {
             if (data.size() - offset < 4) {
                throw exceptions::invalid_format{"address ip4 component is truncated"};
             }
@@ -163,7 +211,7 @@ address address::from_bytes(std::span<const std::uint8_t> data) {
             offset += 4;
             break;
          }
-         case multicodec_code::ip6: {
+         case protocol_code::ip6: {
             if (data.size() - offset < 16) {
                throw exceptions::invalid_format{"address ip6 component is truncated"};
             }
@@ -171,16 +219,16 @@ address address::from_bytes(std::span<const std::uint8_t> data) {
             offset += 16;
             break;
          }
-         case multicodec_code::tcp:
-         case multicodec_code::udp:
+         case protocol_code::tcp:
+         case protocol_code::udp:
             result.push({.code = code, .value = std::to_string(read_big_endian_port(data, offset))});
             break;
-         case multicodec_code::dns:
-         case multicodec_code::dns4:
-         case multicodec_code::dns6:
+         case protocol_code::dns:
+         case protocol_code::dns4:
+         case protocol_code::dns6:
             result.push({.code = code, .value = read_prefixed_string(data, offset)});
             break;
-         case multicodec_code::p2p: {
+         case protocol_code::p2p: {
             const auto length = varint_decode(data.subspan(offset));
             offset += length.size;
             if (length.value > data.size() - offset) {
@@ -192,9 +240,11 @@ address address::from_bytes(std::span<const std::uint8_t> data) {
             offset += static_cast<std::size_t>(length.value);
             break;
          }
-         case multicodec_code::p2p_circuit:
-         case multicodec_code::quic:
-         case multicodec_code::quic_v1:
+         case protocol_code::p2p_circuit:
+         case protocol_code::quic:
+         case protocol_code::quic_v1:
+         case protocol_code::ws:
+         case protocol_code::wss:
             result.push({.code = code, .value = {}});
             break;
          default:
@@ -205,11 +255,11 @@ address address::from_bytes(std::span<const std::uint8_t> data) {
    return result;
 }
 
-std::string address::to_string() const {
+std::string multiaddr::to_string() const {
    auto out = std::string{};
    for (const auto& component : components_) {
       out += "/";
-      out += protocol_name(component.code);
+      out += multiaddr_protocol_name(component.code);
       if (!component.value.empty()) {
          out += "/";
          out += component.value;
@@ -218,40 +268,42 @@ std::string address::to_string() const {
    return out;
 }
 
-bytes address::to_bytes() const {
+bytes multiaddr::to_bytes() const {
    auto out = bytes{};
    for (const auto& component : components_) {
       append_var(out, code_value(component.code));
       switch (component.code) {
-         case multicodec_code::ip4: {
+         case protocol_code::ip4: {
             auto parsed = parse_ip(component.value, AF_INET, 4);
             out.insert(out.end(), parsed.begin(), parsed.end());
             break;
          }
-         case multicodec_code::ip6: {
+         case protocol_code::ip6: {
             auto parsed = parse_ip(component.value, AF_INET6, 16);
             out.insert(out.end(), parsed.begin(), parsed.end());
             break;
          }
-         case multicodec_code::tcp:
-         case multicodec_code::udp:
+         case protocol_code::tcp:
+         case protocol_code::udp:
             append_big_endian_port(out, parse_port(component.value));
             break;
-         case multicodec_code::dns:
-         case multicodec_code::dns4:
-         case multicodec_code::dns6: {
+         case protocol_code::dns:
+         case protocol_code::dns4:
+         case protocol_code::dns6: {
             auto payload = bytes{component.value.begin(), component.value.end()};
             append_prefixed(out, payload);
             break;
          }
-         case multicodec_code::p2p: {
+         case protocol_code::p2p: {
             auto payload = fcl::crypto::base58_decode(component.value);
             append_prefixed(out, payload);
             break;
          }
-         case multicodec_code::p2p_circuit:
-         case multicodec_code::quic:
-         case multicodec_code::quic_v1:
+         case protocol_code::p2p_circuit:
+         case protocol_code::quic:
+         case protocol_code::quic_v1:
+         case protocol_code::ws:
+         case protocol_code::wss:
             break;
          default:
             throw exceptions::invalid_format{"unsupported address protocol"};
@@ -260,11 +312,38 @@ bytes address::to_bytes() const {
    return out;
 }
 
-const std::vector<address::component>& address::components() const noexcept {
+const std::vector<multiaddr_component>& multiaddr::components() const noexcept {
    return components_;
 }
 
-void address::push(component value) {
+multiaddr multiaddr::encapsulate(const multiaddr& value) const {
+   auto out = *this;
+   out.components_.insert(out.components_.end(), value.components_.begin(), value.components_.end());
+   return out;
+}
+
+multiaddr multiaddr::decapsulate(const multiaddr& value) const {
+   if (value.components_.empty() || value.components_.size() > components_.size()) {
+      return *this;
+   }
+
+   auto found = std::optional<std::size_t>{};
+   const auto needle_size = value.components_.size();
+   for (std::size_t offset = 0; offset + needle_size <= components_.size(); ++offset) {
+      if (std::equal(value.components_.begin(), value.components_.end(), components_.begin() + static_cast<std::ptrdiff_t>(offset))) {
+         found = offset;
+      }
+   }
+   if (!found) {
+      return *this;
+   }
+
+   auto out = multiaddr{};
+   out.components_.assign(components_.begin(), components_.begin() + static_cast<std::ptrdiff_t>(*found));
+   return out;
+}
+
+void multiaddr::push(multiaddr_component value) {
    components_.push_back(std::move(value));
 }
 

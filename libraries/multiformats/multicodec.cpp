@@ -32,6 +32,8 @@ constexpr auto protocols = std::array{
     protocol_entry{.name = "p2p-circuit", .code = multicodec_code::p2p_circuit},
     protocol_entry{.name = "quic", .code = multicodec_code::quic},
     protocol_entry{.name = "quic-v1", .code = multicodec_code::quic_v1},
+    protocol_entry{.name = "ws", .code = multicodec_code::ws},
+    protocol_entry{.name = "wss", .code = multicodec_code::wss},
     protocol_entry{.name = "p2p", .code = multicodec_code::p2p},
 };
 
@@ -75,6 +77,10 @@ multicodec_code multicodec_decode(std::span<const std::uint8_t> data, std::size_
          return multicodec_code::quic;
       case code_value(multicodec_code::quic_v1):
          return multicodec_code::quic_v1;
+      case code_value(multicodec_code::ws):
+         return multicodec_code::ws;
+      case code_value(multicodec_code::wss):
+         return multicodec_code::wss;
       default:
          throw exceptions::invalid_format{"unsupported multicodec code: " + std::to_string(decoded.value)};
    }
@@ -89,7 +95,7 @@ std::string_view protocol_name(multicodec_code code) {
    throw exceptions::invalid_format{"multicodec code is not an address protocol"};
 }
 
-multicodec_code protocol_code(std::string_view name) {
+multicodec_code parse_protocol_code(std::string_view name) {
    auto canonical = name == "ipfs" ? std::string_view{"p2p"} : name;
    for (const auto& entry : protocols) {
       if (entry.name == canonical) {

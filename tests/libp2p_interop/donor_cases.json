@@ -6,6 +6,42 @@
   ],
   "cases": [
     {
+      "id": "multiaddr.text_binary_roundtrip",
+      "protocol": "Multiaddr",
+      "source": "donors/libp2p-specs/addressing/README.md and donors/multiaddr/protocols.csv",
+      "donor": "donors/multiaddr/test/multiaddr.feature Simple string form/Simple packed form; donors/go-multiaddr/multiaddr_test.go valid roundtrip cases; donors/rust-multiaddr/tests/lib.rs valid multiaddr cases",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "test_fcl_multiformats multiaddr_matches_donor_tcp_and_quic_binary_vectors",
+        "test_fcl_multiformats multiaddr_roundtrips_dns_wss_peer_and_relay_circuit"
+      ]
+    },
+    {
+      "id": "multiaddr.encapsulation_decapsulation",
+      "protocol": "Multiaddr",
+      "source": "donors/libp2p-specs/addressing/README.md Composing multiaddrs",
+      "donor": "donors/go-multiaddr/multiaddr_test.go TestEncapsulate/TestDecapsulate/TestDecapsulateComment",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "test_fcl_multiformats multiaddr_encapsulates_and_decapsulates_like_libp2p"
+      ]
+    },
+    {
+      "id": "multiaddr.p2p_endpoint_views",
+      "protocol": "Multiaddr/P2P Endpoint",
+      "source": "donors/libp2p-specs/addressing/README.md Transport multiaddrs and p2p-circuit Relay Addresses",
+      "donor": "donors/libp2p-specs/quic/README.md QUIC multiaddress examples; donors/go-libp2p/libp2p_test.go listen address expectations",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "test_fcl_quic_p2p p2p_endpoint_parses_libp2p_quic_address_format",
+        "test_fcl_quic_p2p p2p_endpoint_uses_multiaddr_for_tcp_wss_and_relay_views",
+        "test_fcl_quic_p2p p2p_websocket_multiaddr_is_parseable_but_not_dialable"
+      ]
+    },
+    {
       "id": "autonatv2.dial_request_response_nonce",
       "protocol": "AutoNAT v2",
       "source": "donors/libp2p-specs/autonat/autonat-v2.md",

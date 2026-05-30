@@ -695,6 +695,53 @@ BOOST_AUTO_TEST_CASE(p2p_endpoint_parses_libp2p_quic_address_format) {
    BOOST_TEST(parsed.is_direct_quic());
 }
 
+BOOST_AUTO_TEST_CASE(p2p_endpoint_uses_multiaddr_for_tcp_wss_and_relay_views) {
+   const auto id = peer(43);
+
+   auto tcp = parse_endpoint("/dns4/example.com/tcp/4001/p2p/" + id.to_string());
+   BOOST_TEST(static_cast<int>(tcp.address.address) == static_cast<int>(endpoint::address_kind::dns4));
+   BOOST_TEST(static_cast<int>(tcp.address.protocol) == static_cast<int>(endpoint::protocol_kind::tcp));
+   BOOST_TEST(tcp.address.host == "example.com");
+   BOOST_TEST(tcp.address.port == 4001);
+   BOOST_TEST(tcp.is_direct_tcp());
+   BOOST_TEST(tcp.to_string() == "/dns4/example.com/tcp/4001/p2p/" + id.to_string());
+
+   auto wss = parse_endpoint("/dns4/example.com/tcp/443/wss/p2p/" + id.to_string());
+   BOOST_TEST(!wss.is_direct_tcp());
+   BOOST_TEST(!wss.is_direct_quic());
+   BOOST_TEST(wss.to_string() == "/dns4/example.com/tcp/443/wss/p2p/" + id.to_string());
+
+   auto relayed = parse_endpoint("/ip4/127.0.0.1/tcp/9090/p2p-circuit/p2p/" + id.to_string());
+   BOOST_TEST(!relayed.peer.has_value());
+   BOOST_REQUIRE(relayed.relayed.has_value());
+   BOOST_TEST(relayed.relayed->target.to_string() == id.to_string());
+   BOOST_TEST(relayed.to_string() == "/ip4/127.0.0.1/tcp/9090/p2p-circuit/p2p/" + id.to_string());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_websocket_multiaddr_is_parseable_but_not_dialable) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto value = node{runtime, options_for(peer(44))};
+   const auto endpoint = parse_endpoint("/dns4/example.com/tcp/443/wss/p2p/" + peer(45).to_string());
+
+   try {
+      fcl::asio::blocking::run(runtime, value.async_listen(endpoint));
+      BOOST_FAIL("expected unsupported listen endpoint");
+   } catch (const fcl::exception::base& error) {
+      BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+                 static_cast<int>(exceptions::code::unsupported_protocol));
+   }
+
+   try {
+      fcl::asio::blocking::run(runtime, value.async_connect(endpoint));
+      BOOST_FAIL("expected unsupported connect endpoint");
+   } catch (const fcl::exception::base& error) {
+      BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+                 static_cast<int>(exceptions::code::unsupported_protocol));
+   }
+}
+
 BOOST_AUTO_TEST_CASE(quic_libp2p_profile_sets_required_alpn) {
    auto client = fcl::quic::libp2p::client_profile();
    auto server = fcl::quic::libp2p::server_profile();
@@ -750,9 +797,10 @@ BOOST_AUTO_TEST_CASE(quic_transport_adapter_preserves_endpoint_kind_and_authorit
    const auto ip4 = fcl::quic::to_transport_endpoint(fcl::quic::endpoint{.host = "127.0.0.1", .port = 4001});
    BOOST_TEST(static_cast<int>(ip4.address) == static_cast<int>(fcl::transport::endpoint::address_kind::ip4));
    BOOST_TEST(static_cast<int>(ip4.protocol) == static_cast<int>(fcl::transport::endpoint::protocol_kind::quic_v1));
-   BOOST_TEST(ip4.authority() == "127.0.0.1:4001");
+   const auto authority = std::string{"127.0.0.1"} + ":" + std::to_string(4001);
+   BOOST_TEST(ip4.authority() == authority);
    const auto roundtrip = fcl::quic::from_transport_endpoint(ip4);
-   BOOST_TEST(roundtrip.authority() == "127.0.0.1:4001");
+   BOOST_TEST(roundtrip.authority() == authority);
 
    const auto dns = fcl::quic::to_transport_endpoint(fcl::quic::endpoint{.host = "localhost", .port = 4002});
    BOOST_TEST(static_cast<int>(dns.address) == static_cast<int>(fcl::transport::endpoint::address_kind::dns));

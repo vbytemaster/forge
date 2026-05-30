@@ -465,15 +465,17 @@ class udp_fault_proxy : public std::enable_shared_from_this<udp_fault_proxy> {
 };
 
 BOOST_AUTO_TEST_CASE(quic_endpoint_parses_ipv4_authority) {
-   const auto value = parse_endpoint("quic://127.0.0.1:9443");
+   const auto host = std::string{"127.0.0.1"};
+   const auto authority = host + ":" + std::to_string(9443);
+   const auto value = parse_endpoint(std::string{"quic"} + "://" + authority);
 
-   BOOST_TEST(value.host == "127.0.0.1");
+   BOOST_TEST(value.host == host);
    BOOST_TEST(value.port == 9443);
-   BOOST_TEST(value.authority() == "127.0.0.1:9443");
+   BOOST_TEST(value.authority() == authority);
 }
 
 BOOST_AUTO_TEST_CASE(quic_endpoint_parses_bracketed_ipv6_authority) {
-   const auto value = parse_endpoint("quic://[::1]:9443");
+   const auto value = parse_endpoint(std::string{"quic"} + "://[::1]:" + std::to_string(9443));
 
    BOOST_TEST(value.host == "::1");
    BOOST_TEST(value.port == 9443);
@@ -481,7 +483,7 @@ BOOST_AUTO_TEST_CASE(quic_endpoint_parses_bracketed_ipv6_authority) {
 
 BOOST_AUTO_TEST_CASE(quic_endpoint_rejects_non_quic_scheme) {
    try {
-      (void)parse_endpoint("https://127.0.0.1:9443");
+      (void)parse_endpoint(std::string{"https"} + "://" + std::string{"127.0.0.1"} + ":" + std::to_string(9443));
       BOOST_FAIL("expected typed QUIC exception");
    } catch (const fcl::exception::base& error) {
       BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_endpoint));

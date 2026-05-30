@@ -87,17 +87,68 @@ BOOST_AUTO_TEST_CASE(multibase_uses_libp2p_required_prefixes) try {
 }
 FCL_LOG_AND_RETHROW();
 
-BOOST_AUTO_TEST_CASE(address_parses_and_formats_libp2p_quic_endpoint) try {
-   static_assert(std::is_same_v<decltype(fcl::multiformats::address{}.components()),
-                                const std::vector<fcl::multiformats::address::component>&>);
+BOOST_AUTO_TEST_CASE(multiaddr_matches_donor_tcp_and_quic_binary_vectors) try {
+   static_assert(std::is_same_v<decltype(fcl::multiformats::multiaddr{}.components()),
+                                const std::vector<fcl::multiformats::multiaddr_component>&>);
 
-   const auto value = std::string{"/ip4/127.0.0.1/udp/4001/quic-v1/p2p/12D3KooWJwq7uD4Kz3fJF7uY2QZtxJ3nSqJtV9f1UB1dJ5kF2Fq9"};
-   auto address = fcl::multiformats::address::parse(value);
-   BOOST_CHECK_EQUAL(address.to_string(), value);
+   const auto tcp = fcl::multiformats::multiaddr::parse("/ip4/192.0.2.42/tcp/443");
+   const auto expected_tcp = fcl::multiformats::bytes{0x04, 0xc0, 0x00, 0x02, 0x2a, 0x06, 0x01, 0xbb};
+   const auto encoded_tcp = tcp.to_bytes();
+   BOOST_CHECK_EQUAL(tcp.to_string(), "/ip4/192.0.2.42/tcp/443");
+   BOOST_CHECK_EQUAL_COLLECTIONS(encoded_tcp.begin(), encoded_tcp.end(), expected_tcp.begin(), expected_tcp.end());
+   BOOST_CHECK_EQUAL(fcl::multiformats::multiaddr::from_bytes(expected_tcp).to_string(), "/ip4/192.0.2.42/tcp/443");
 
-   auto encoded = address.to_bytes();
-   auto decoded = fcl::multiformats::address::from_bytes(encoded);
-   BOOST_CHECK_EQUAL(decoded.to_string(), value);
+   const auto quic = fcl::multiformats::multiaddr::parse("/ip4/127.0.0.1/udp/4001/quic-v1");
+   const auto expected_quic =
+       fcl::multiformats::bytes{0x04, 0x7f, 0x00, 0x00, 0x01, 0x91, 0x02, 0x0f, 0xa1, 0xcd, 0x03};
+   const auto encoded_quic = quic.to_bytes();
+   BOOST_CHECK_EQUAL(quic.to_string(), "/ip4/127.0.0.1/udp/4001/quic-v1");
+   BOOST_CHECK_EQUAL_COLLECTIONS(encoded_quic.begin(), encoded_quic.end(), expected_quic.begin(), expected_quic.end());
+   BOOST_CHECK_EQUAL(fcl::multiformats::multiaddr::from_bytes(expected_quic).to_string(),
+                     "/ip4/127.0.0.1/udp/4001/quic-v1");
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(multiaddr_roundtrips_dns_wss_peer_and_relay_circuit) try {
+   const auto peer = std::string{"QmcgpsyWgH8Y8ajJz1Cu72KnS5uo2Aa2LpzU7kinSupNKC"};
+   const auto wss = "/dns4/example.com/tcp/443/wss/p2p/" + peer;
+   const auto relayed = "/ip4/127.0.0.1/tcp/9090/p2p-circuit/p2p/" + peer;
+
+   auto wss_address = fcl::multiformats::multiaddr::parse(wss);
+   BOOST_CHECK_EQUAL(wss_address.to_string(), wss);
+   BOOST_CHECK_EQUAL(fcl::multiformats::multiaddr::from_bytes(wss_address.to_bytes()).to_string(), wss);
+
+   auto relayed_address = fcl::multiformats::multiaddr::parse(relayed);
+   BOOST_CHECK_EQUAL(relayed_address.to_string(), relayed);
+   BOOST_CHECK_EQUAL(fcl::multiformats::multiaddr::from_bytes(relayed_address.to_bytes()).to_string(), relayed);
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(multiaddr_encapsulates_and_decapsulates_like_libp2p) try {
+   const auto base = fcl::multiformats::multiaddr::parse("/ip4/1.2.3.4");
+   const auto inner = fcl::multiformats::multiaddr::parse("/tcp/80/ws");
+   BOOST_CHECK_EQUAL(base.encapsulate(inner).to_string(), "/ip4/1.2.3.4/tcp/80/ws");
+
+   const auto quic = fcl::multiformats::multiaddr::parse("/ip4/1.2.3.6/udp/1234/quic-v1");
+   BOOST_CHECK_EQUAL(quic.decapsulate(fcl::multiformats::multiaddr::parse("/udp/1234")).to_string(),
+                     "/ip4/1.2.3.6");
+   BOOST_CHECK_EQUAL(quic.decapsulate(fcl::multiformats::multiaddr::parse("/udp/1234/quic-v1")).to_string(),
+                     "/ip4/1.2.3.6");
+   BOOST_CHECK_EQUAL(quic.decapsulate(fcl::multiformats::multiaddr::parse("/tcp/80")).to_string(),
+                     "/ip4/1.2.3.6/udp/1234/quic-v1");
+   BOOST_CHECK_EQUAL(fcl::multiformats::multiaddr::parse("/ip4/1.2.3.4").decapsulate(base).to_string(), "");
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(multiaddr_rejects_malformed_donor_cases_with_typed_errors) try {
+   BOOST_CHECK_THROW((void)fcl::multiformats::multiaddr::parse("/ip4/127.0.0.1/quic-v1/1234"),
+                     fcl::multiformats::exceptions::invalid_format);
+   BOOST_CHECK_THROW((void)fcl::multiformats::multiaddr::parse("/ip4/not-an-ip/tcp/80").to_bytes(),
+                     fcl::multiformats::exceptions::invalid_format);
+   BOOST_CHECK_THROW((void)fcl::multiformats::multiaddr::from_bytes(fcl::multiformats::bytes{0x04, 0x7f}),
+                     fcl::multiformats::exceptions::invalid_format);
+   BOOST_CHECK_THROW((void)fcl::multiformats::multiaddr::from_bytes(fcl::multiformats::bytes{0xff, 0xff, 0xff, 0xff}),
+                     fcl::multiformats::exceptions::invalid_format);
 }
 FCL_LOG_AND_RETHROW();
 

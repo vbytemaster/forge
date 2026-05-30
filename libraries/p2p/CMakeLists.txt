@@ -15,6 +15,8 @@ add_library(
    stream.cpp
    negotiation.cpp
    peer_store.cpp
+   direct_transport.cpp
+   direct_transport.hpp
    node.cpp
    node_impl.cpp
    node_impl.hpp
@@ -24,6 +26,8 @@ add_library(
    peer_exchange_codec.hpp
    relay_transport.cpp
    relay_transport.hpp
+   yamux.cpp
+   yamux.hpp
 )
 fcl_target_modules(fcl_p2p p2p)
 
@@ -37,6 +41,7 @@ target_link_libraries(
       fcl_crypto
       fcl_multiformats
       fcl_asio
+      fcl_transport
       fcl_quic
       Boost::asio
 )

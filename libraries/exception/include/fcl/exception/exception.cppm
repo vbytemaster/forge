@@ -127,6 +127,29 @@ class coded_exception : public context_error {
        : context_error(std::move(message), std::move(context), location, detail::enum_error_code(Value)) {}
 };
 
+template <typename Enum>
+class runtime_coded_exception : public context_error {
+ public:
+   using enum_type = Enum;
+
+   runtime_coded_exception(Enum value, std::string message, fields context = {},
+                           std::source_location location = std::source_location::current())
+       : context_error(std::move(message), std::move(context), location, detail::enum_error_code(value)), _value(value) {}
+
+   [[nodiscard]] Enum value() const noexcept {
+      return _value;
+   }
+
+ private:
+   Enum _value;
+};
+
+template <typename Enum>
+[[noreturn]] void throw_code(Enum value, std::string message, fields context,
+                             std::source_location location = std::source_location::current()) {
+   throw runtime_coded_exception<Enum>{value, std::move(message), std::move(context), location};
+}
+
 std::string format_fields(const fields& context);
 std::string format_context_message(std::string_view message, const fields& context,
                                    const std::source_location& location, const std::error_code& code = {});
@@ -226,11 +249,13 @@ using fcl::exception::log_current_exception;
 using fcl::exception::log_sink;
 using fcl::exception::make_error_code;
 using fcl::exception::make_fields;
+using fcl::exception::runtime_coded_exception;
 using fcl::exception::secret;
 using fcl::exception::set_log_sink;
 using fcl::exception::throw_assertion_error;
 using fcl::exception::throw_assertion_failure;
 using fcl::exception::throw_context_error;
+using fcl::exception::throw_code;
 using fcl::exception::throw_deadline_exceeded;
 using fcl::exception::throw_timeout_error;
 using fcl::exception::throw_with_context;

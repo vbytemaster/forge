@@ -31,6 +31,8 @@ import fcl.config.component;
 import fcl.config.decode;
 import fcl.exception.exception;
 import fcl.p2p;
+import fcl.quic.endpoint;
+import fcl.quic.transport;
 
 namespace fcl::plugins {
 namespace {
@@ -69,14 +71,18 @@ struct parsed_config {
    });
 }
 
-[[nodiscard]] std::vector<fcl::quic::endpoint> parse_endpoint_list(const std::vector<std::string>& values) {
-   auto out = std::vector<fcl::quic::endpoint>{};
+[[nodiscard]] fcl::p2p::endpoint p2p_endpoint_for(fcl::quic::endpoint endpoint) {
+   return fcl::p2p::endpoint{.address = fcl::quic::to_transport_endpoint(endpoint)};
+}
+
+[[nodiscard]] std::vector<fcl::p2p::endpoint> parse_endpoint_list(const std::vector<std::string>& values) {
+   auto out = std::vector<fcl::p2p::endpoint>{};
    out.reserve(values.size());
    for (const auto& value : values) {
       if (!value.empty() && value.front() == '/') {
-         out.push_back(fcl::p2p::parse_endpoint(value).quic_endpoint());
+         out.push_back(fcl::p2p::parse_endpoint(value));
       } else {
-         out.push_back(fcl::quic::parse_endpoint(value));
+         out.push_back(p2p_endpoint_for(fcl::quic::parse_endpoint(value)));
       }
    }
    return out;
@@ -412,8 +418,8 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
    fcl::api::codec_id api_codec{.value = "fcl.raw"};
    parsed_config policy{};
    std::size_t max_inflight_per_peer = 64;
-   std::vector<fcl::quic::endpoint> listen;
-   std::vector<fcl::quic::endpoint> bootstrap;
+   std::vector<fcl::p2p::endpoint> listen;
+   std::vector<fcl::p2p::endpoint> bootstrap;
    std::vector<std::pair<fcl::p2p::protocol_id, fcl::p2p::node::protocol_handler>> routes;
    fcl::p2p::node* raw = nullptr;
    std::unique_ptr<fcl::p2p::node> node;
@@ -747,7 +753,7 @@ class p2p_node::api::impl final : public p2p_node::api {
       return impl_->require_node().local_peer();
    }
 
-   std::optional<fcl::quic::endpoint> local_endpoint() const override {
+   std::optional<fcl::p2p::endpoint> local_endpoint() const override {
       return impl_->require_node().local_endpoint();
    }
 

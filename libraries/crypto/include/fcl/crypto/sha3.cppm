@@ -1,10 +1,13 @@
 module;
+#include <cstdint>
+#include <fcl/exception/macros.hpp>
 #include <memory>
 #include <boost/functional/hash.hpp>
 
 export module fcl.crypto.sha3;
 
 import fcl.core.string;
+export import fcl.crypto.digest;
 import fcl.crypto.packhash;
 import fcl.raw.raw;
 import fcl.variant;

@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include "wrapper_handles.hpp"
 
 #include <memory>
@@ -57,7 +59,7 @@ namespace {
 }
 
 [[noreturn]] void raise_engine_failure(const detail::engine_failure& error) {
-   exceptions::raise(map_error(error.kind()), error.what());
+   FCL_THROW_CODE(map_error(error.kind()), error.what());
 }
 
 [[nodiscard]] detail::engine_transport_limits map_limits(const transport_limits& limits) noexcept {
@@ -117,7 +119,7 @@ listener::listener(fcl::asio::runtime& runtime, endpoint bind_endpoint, server_o
    validate(options);
    const auto capabilities = initialize_runtime();
    if (!capabilities.crypto_ossl_initialized) {
-      exceptions::raise(exceptions::code::dependency_unavailable, "ngtcp2 OpenSSL crypto backend initialization failed");
+      FCL_THROW_EXCEPTION(exceptions::dependency_unavailable, "ngtcp2 OpenSSL crypto backend initialization failed");
    }
    impl_ = std::make_unique<impl>(runtime, std::move(bind_endpoint), std::move(options));
 }
@@ -134,7 +136,7 @@ endpoint listener::local_endpoint() const {
 
 boost::asio::awaitable<connection> listener::async_accept() {
    if (!impl_) {
-      exceptions::raise(exceptions::code::connection_closed, "invalid QUIC listener");
+      FCL_THROW_EXCEPTION(exceptions::connection_closed, "invalid QUIC listener");
    }
    try {
       auto engine_connection = co_await impl_->engine.async_accept();

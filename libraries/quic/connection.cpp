@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include "wrapper_handles.hpp"
 
 #include <memory>
@@ -58,7 +60,7 @@ namespace {
 }
 
 [[noreturn]] void raise_engine_failure(const detail::engine_failure& error) {
-   exceptions::raise(map_error(error.kind()), error.what());
+   FCL_THROW_CODE(map_error(error.kind()), error.what());
 }
 
 [[nodiscard]] connection_metrics map_metrics(const detail::engine_connection_metrics& metrics) noexcept {
@@ -126,7 +128,7 @@ std::optional<peer_certificate> connection::peer_certificate() const {
 
 boost::asio::awaitable<stream> connection::async_open_stream() {
    if (!impl_ || !impl_->engine) {
-      exceptions::raise(exceptions::code::connection_closed, "invalid QUIC connection");
+      FCL_THROW_EXCEPTION(exceptions::connection_closed, "invalid QUIC connection");
    }
    try {
       auto engine_stream = co_await impl_->engine->async_open_stream();
@@ -138,7 +140,7 @@ boost::asio::awaitable<stream> connection::async_open_stream() {
 
 boost::asio::awaitable<stream> connection::async_accept_stream() {
    if (!impl_ || !impl_->engine) {
-      exceptions::raise(exceptions::code::connection_closed, "invalid QUIC connection");
+      FCL_THROW_EXCEPTION(exceptions::connection_closed, "invalid QUIC connection");
    }
    try {
       auto engine_stream = co_await impl_->engine->async_accept_stream();

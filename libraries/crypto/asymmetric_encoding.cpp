@@ -11,7 +11,6 @@ module fcl.crypto.asymmetric;
 
 import fcl.core.utility;
 import fcl.crypto.base58;
-import fcl.crypto.exceptions;
 import fcl.crypto.p256;
 import fcl.crypto.ripemd160;
 import fcl.crypto.secp256k1;
@@ -263,7 +262,7 @@ public_key encoding::parse_public(std::string_view text) const {
    if (suite == "R1") {
       return public_key{public_key::storage_type{parse_checked<p256::public_key_shim>(payload, "R1")}};
    }
-   exceptions::raise(exceptions::code::invalid_key, "unsupported EOS public key suite");
+   FCL_THROW_EXCEPTION(exceptions::invalid_key, "unsupported EOS public key suite");
 }
 
 private_key encoding::parse_private(std::string_view text) const {
@@ -280,7 +279,7 @@ private_key encoding::parse_private(std::string_view text) const {
    if (suite == "R1") {
       return private_key{private_key::storage_type{parse_checked<p256::private_key_shim>(payload, "R1")}};
    }
-   exceptions::raise(exceptions::code::invalid_key, "unsupported EOS private key suite");
+   FCL_THROW_EXCEPTION(exceptions::invalid_key, "unsupported EOS private key suite");
 }
 
 signature encoding::parse_signature(std::string_view text) const {
@@ -294,7 +293,7 @@ signature encoding::parse_signature(std::string_view text) const {
    if (suite == "R1") {
       return signature{signature::storage_type{parse_checked<p256::signature_shim>(payload, "R1")}};
    }
-   exceptions::raise(exceptions::code::invalid_key, "unsupported EOS signature suite");
+   FCL_THROW_EXCEPTION(exceptions::invalid_key, "unsupported EOS signature suite");
 }
 
 std::string encoding::format(const public_key& key) const {
@@ -309,7 +308,7 @@ std::string encoding::format(const public_key& key) const {
          } else if constexpr (std::is_same_v<key_type, p256::public_key_shim>) {
             return "PUB_R1_" + format_checked(value, "R1");
          } else {
-            exceptions::raise(exceptions::code::invalid_key, "EOS encoding does not support this public key type");
+            FCL_THROW_EXCEPTION(exceptions::invalid_key, "EOS encoding does not support this public key type");
          }
       },
       key._storage);
@@ -326,7 +325,7 @@ std::string encoding::format(const private_key& key) const {
       } else if constexpr (std::is_same_v<key_type, p256::private_key_shim>) {
          return "PVT_R1_" + format_checked(value, "R1");
       } else {
-         exceptions::raise(exceptions::code::invalid_key, "EOS encoding does not support this private key type");
+         FCL_THROW_EXCEPTION(exceptions::invalid_key, "EOS encoding does not support this private key type");
       }
    });
 }
@@ -342,7 +341,7 @@ std::string encoding::format(const signature& sig) const {
       } else if constexpr (std::is_same_v<sig_type, p256::signature_shim>) {
          return "SIG_R1_" + format_checked(value, "R1");
       } else {
-         exceptions::raise(exceptions::code::invalid_key, "EOS encoding does not support this signature type");
+         FCL_THROW_EXCEPTION(exceptions::invalid_key, "EOS encoding does not support this signature type");
       }
    });
 }

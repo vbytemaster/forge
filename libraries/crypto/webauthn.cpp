@@ -335,7 +335,8 @@ class client_data_json_reader {
    }
 
    [[noreturn]] void fail(const std::string& reason) const {
-      FCL_THROW("Failed to parse client data JSON", fcl::exception::ctx("reason", reason), fcl::exception::ctx("offset", _pos));
+      FCL_THROW_EXCEPTION(exceptions::invalid_client_data, "failed to parse client data JSON",
+                          fcl::exception::ctx("reason", reason), fcl::exception::ctx("offset", _pos));
    }
 
    std::string_view _input;
@@ -346,7 +347,8 @@ client_data_fields parse_client_data_json(std::string_view input) {
    try {
       return client_data_json_reader{input}.parse();
    } catch (const std::invalid_argument& e) {
-      FCL_THROW("Failed to parse client data JSON", fcl::exception::ctx("reason", e.what()));
+      FCL_THROW_EXCEPTION(exceptions::invalid_client_data, "failed to parse client data JSON",
+                          fcl::exception::ctx("reason", e.what()));
    }
 }
 
@@ -387,7 +389,7 @@ credential_public_key::credential_public_key(const assertion& c, const fcl::cryp
 
    int nV = c.compact_signature.data()[0];
    if (nV < 31 || nV >= 35)
-      FCL_THROW("unable to reconstruct public key from signature");
+      FCL_THROW_EXCEPTION(exceptions::invalid_signature, "unable to reconstruct public key from signature");
    public_key_data = p256::recover_public_key_data(c.compact_signature, signed_digest, false);
 }
 

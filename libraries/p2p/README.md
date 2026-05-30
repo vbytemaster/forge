@@ -35,15 +35,15 @@ GossipSub/pubsub.
 
 Target: `fcl_p2p`.
 
-Dependencies: `fcl_api`, `fcl_asio`, `fcl_quic`, `fcl_multiformats`,
+Dependencies: `fcl_api`, `fcl_asio`, `fcl_transport`, `fcl_quic`, `fcl_multiformats`,
 Boost.Asio and RocksDB.
 
 Foundation compatibility modules below P2P live in `fcl_multiformats`:
 `fcl.multiformats.varint`, `fcl.multiformats.multicodec`,
 `fcl.multiformats.multihash`, `fcl.multiformats.multibase` and
-`fcl.multiformats.address`.
+first-class multiaddr/address support.
 
-## Production Network Roadmap
+## Production Network Direction
 
 `fcl_p2p` is the owner for production peer-network mechanics. The direction is
 a clean C++23 libp2p-compatible implementation: FCL public types stay
@@ -54,9 +54,19 @@ Compatibility is not a direct libp2p dependency and not a Go/Rust runtime clone.
 It means the same peer identity model, address encoding, protocol negotiation,
 handshake, protocol IDs and message rules for protocols FCL marks as supported.
 
-The canonical detailed roadmap and donor test rules live in
+The canonical block order and donor test rules live in
 [`docs/network/quic-p2p.md`](../../docs/network/quic-p2p.md). Keep this README
-as a library overview; do not duplicate the full block roadmap here.
+as a library overview; do not duplicate the block sequence here.
+
+Current direction: P2P must sit above first-class multiaddr, reusable
+`fcl_transport`, and reusable TCP/STCP/Yamux/QUIC layers. QUIC is the only
+direct transport currently wired, but future transports must plug into the same
+multiaddr and transport session boundary, not fork P2P core.
+
+`fcl_transport` is the stream/session substrate for `fcl_p2p`; it is not an API
+or RPC layer. API-over-transport is intentionally future work in
+`fcl.api.transport`, where QUIC/P2P/TCP API bindings can share frame serve-loop
+logic without putting `fcl::api` into `fcl_transport` or `fcl_p2p`.
 
 Network-level behaviors that must not be pushed into plugins:
 
@@ -79,8 +89,8 @@ permission checks above P2P.
 #include <boost/asio/awaitable.hpp>
 
 import fcl.p2p.identity;
+import fcl.p2p.endpoint;
 import fcl.p2p.node;
-import fcl.quic.endpoint;
 
 boost::asio::awaitable<void> start_node(fcl::asio::runtime& runtime) {
    auto options = fcl::p2p::node::options{
@@ -91,7 +101,7 @@ boost::asio::awaitable<void> start_node(fcl::asio::runtime& runtime) {
 
    auto peer = fcl::p2p::make_peer_id_from_certificate_pem(certificate_pem);
    auto node = fcl::p2p::node{runtime, options};
-   co_await node.async_listen(fcl::quic::parse_endpoint("127.0.0.1:9443"));
+   co_await node.async_listen(fcl::p2p::parse_endpoint("/ip4/127.0.0.1/udp/9443/quic-v1"));
    advertise_peer(peer);
 }
 ```
@@ -108,8 +118,12 @@ import fcl.p2p.endpoint;
 auto endpoint = fcl::p2p::parse_endpoint(
    "/ip4/127.0.0.1/udp/4001/quic-v1/p2p/12D3KooW...");
 
-co_await node.async_listen(endpoint.quic_endpoint());
+co_await node.async_listen(endpoint);
 ```
+
+QUIC is currently the only registered direct transport. TCP will plug into the
+same `fcl::p2p::endpoint` path in the next transport block. Future transports
+must use the same direct driver boundary.
 
 ### Peer Store Backends
 
@@ -198,7 +212,7 @@ import fcl.p2p.peer_store;
 
 node.peers().learn_endpoint(
    remote_peer,
-   fcl::quic::parse_endpoint("127.0.0.1:9444"),
+   fcl::p2p::parse_endpoint("/ip4/127.0.0.1/udp/9444/quic-v1"),
    {.bits = fcl::p2p::capabilities::direct_quic | fcl::p2p::capabilities::peer_exchange});
 
 boost::asio::awaitable<void> update_reachability(fcl::p2p::node& node) {

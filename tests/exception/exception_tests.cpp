@@ -88,6 +88,29 @@ BOOST_AUTO_TEST_CASE(custom_uint8_exception_category_works) {
    BOOST_FAIL("expected product typed exception");
 }
 
+BOOST_AUTO_TEST_CASE(throw_code_throws_runtime_coded_exception_with_call_site_context) {
+   const auto runtime_code = test_http_exceptions::code::internal;
+   unsigned expected_line = 0;
+
+   try {
+      expected_line = __LINE__ + 1;
+      FCL_THROW_CODE(runtime_code, "dynamic failure", fcl::exception::ctx("phase", "runtime-map"));
+   } catch (const fcl::exception::runtime_coded_exception<test_http_exceptions::code>& error) {
+      BOOST_CHECK_EQUAL(static_cast<int>(error.value()), static_cast<int>(test_http_exceptions::code::internal));
+      BOOST_CHECK_EQUAL(error.message(), "dynamic failure");
+      BOOST_CHECK_EQUAL(error.code().value(), 500);
+      BOOST_CHECK_EQUAL(std::string(error.code().category().name()), "test.http");
+      BOOST_CHECK_EQUAL(error.context().size(), 1u);
+      BOOST_CHECK_EQUAL(error.context().front().key, "phase");
+      BOOST_CHECK_EQUAL(error.context().front().value, "runtime-map");
+      BOOST_CHECK_EQUAL(error.location().line(), expected_line);
+      BOOST_CHECK(std::string(error.location().file_name()).find("exception_tests.cpp") != std::string::npos);
+      return;
+   }
+
+   BOOST_FAIL("expected runtime coded exception");
+}
+
 BOOST_AUTO_TEST_CASE(capture_and_rethrow_preserves_nested_exception) {
    try {
       try {

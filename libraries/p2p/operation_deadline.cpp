@@ -51,13 +51,6 @@ import fcl.crypto.x25519;
 import fcl.multiformats.types;
 import fcl.multiformats.varint;
 import fcl.multiformats.exceptions;
-import fcl.quic.connection;
-import fcl.quic.connector;
-import fcl.quic.exceptions;
-import fcl.quic.framed_stream;
-import fcl.quic.listener;
-import fcl.quic.options;
-import fcl.quic.security;
 
 #include "operation_deadline.hpp"
 

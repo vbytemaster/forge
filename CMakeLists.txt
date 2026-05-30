@@ -203,6 +203,7 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/asio/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/http/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/websocket/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/transport/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/quic/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/p2p/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/app/include"
@@ -322,6 +323,7 @@ add_subdirectory(libraries/multiformats)
 add_subdirectory(libraries/asio)
 add_subdirectory(libraries/http)
 add_subdirectory(libraries/websocket)
+add_subdirectory(libraries/transport)
 add_subdirectory(libraries/quic)
 add_subdirectory(libraries/p2p)
 add_subdirectory(libraries/app)
@@ -350,6 +352,7 @@ set(
    fcl_asio
    fcl_http
    fcl_websocket
+   fcl_transport
    fcl_quic
    fcl_p2p
    fcl_app
@@ -409,6 +412,7 @@ install(
              libraries/asio/include/fcl
              libraries/http/include/fcl
              libraries/websocket/include/fcl
+             libraries/transport/include/fcl
              libraries/quic/include/fcl
              libraries/p2p/include/fcl
              libraries/app/include/fcl

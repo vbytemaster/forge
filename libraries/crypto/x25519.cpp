@@ -1,12 +1,12 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <openssl/evp.h>
 
 #include <memory>
 
 module fcl.crypto.x25519;
-
-import fcl.crypto.exceptions;
 
 namespace fcl::crypto::x25519 {
 namespace {
@@ -27,13 +27,13 @@ using pkey_ptr = std::unique_ptr<EVP_PKEY, pkey_deleter>;
 using pkey_ctx_ptr = std::unique_ptr<EVP_PKEY_CTX, pkey_ctx_deleter>;
 
 [[noreturn]] void fail(std::string message) {
-   exceptions::raise(exceptions::code::backend_error, std::move(message));
+   FCL_THROW_EXCEPTION(exceptions::backend_error, std::move(message));
 }
 
 [[nodiscard]] pkey_ptr make_private(const private_key_secret& secret) {
    auto* raw = EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, secret.data(), secret.size());
    if (raw == nullptr) {
-      exceptions::raise(exceptions::code::invalid_key, "invalid X25519 private key");
+      FCL_THROW_EXCEPTION(exceptions::invalid_key, "invalid X25519 private key");
    }
    return pkey_ptr{raw};
 }
@@ -41,7 +41,7 @@ using pkey_ctx_ptr = std::unique_ptr<EVP_PKEY_CTX, pkey_ctx_deleter>;
 [[nodiscard]] pkey_ptr make_public(const public_key_data& data) {
    auto* raw = EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, nullptr, data.data(), data.size());
    if (raw == nullptr) {
-      exceptions::raise(exceptions::code::invalid_key, "invalid X25519 public key");
+      FCL_THROW_EXCEPTION(exceptions::invalid_key, "invalid X25519 public key");
    }
    return pkey_ptr{raw};
 }

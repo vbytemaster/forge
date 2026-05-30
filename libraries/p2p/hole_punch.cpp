@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -36,7 +38,7 @@ namespace {
    if (value == static_cast<std::uint16_t>(hole_punch::message::message_kind::sync)) {
       return hole_punch::message::message_kind::sync;
    }
-   exceptions::raise(exceptions::code::codec_error, "unknown DCUtR message type");
+   FCL_THROW_EXCEPTION(exceptions::codec_error, "unknown DCUtR message type");
 }
 
 [[nodiscard]] std::vector<std::uint8_t> make_message_payload(const hole_punch::message& value) {
@@ -58,14 +60,14 @@ namespace {
       switch (field) {
       case 1:
          if (type != detail::wire_type::varint) {
-            exceptions::raise(exceptions::code::codec_error, "DCUtR type must be varint");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DCUtR type must be varint");
          }
          out.kind = checked_kind(in.read_varint());
          saw_type = true;
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "DCUtR observed address must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DCUtR observed address must be bytes");
          }
          out.observed_endpoints.push_back(endpoint_from_bytes(in.bytes()));
          break;
@@ -75,7 +77,7 @@ namespace {
       }
    }
    if (!saw_type) {
-      exceptions::raise(exceptions::code::codec_error, "DCUtR message is missing required type");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "DCUtR message is missing required type");
    }
    return out;
 }
@@ -93,7 +95,7 @@ hole_punch::message hole_punch::codec::decode(std::span<const std::uint8_t> byte
 hole_punch::message hole_punch::codec::decode(std::span<const std::uint8_t> bytes, hole_punch::options options) {
    auto out = read_message_payload(detail::unwrap_message(bytes, options.max_message_size));
    if (out.observed_endpoints.size() > options.max_observed_endpoints) {
-      exceptions::raise(exceptions::code::codec_error, "DCUtR message has too many observed addresses");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "DCUtR message has too many observed addresses");
    }
    return out;
 }

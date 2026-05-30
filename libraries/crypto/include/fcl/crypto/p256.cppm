@@ -1,4 +1,5 @@
 module;
+#include <fcl/exception/macros.hpp>
 #include <array>
 #include <boost/describe.hpp>
 #include <memory>
@@ -10,9 +11,28 @@ export module fcl.crypto.p256;
 import fcl.crypto.bigint;
 import fcl.crypto.sha256;
 import fcl.crypto.sha512;
+export import fcl.exception.exception;
 import fcl.raw.raw;
 
 export namespace fcl::crypto::p256 {
+namespace exceptions {
+
+enum class code : std::uint16_t {
+   invalid_key = 1,
+   invalid_signature = 2,
+   invalid_options = 3,
+   backend_error = 4,
+};
+
+FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.p256")
+
+using invalid_key = fcl::exception::coded_exception<code, code::invalid_key>;
+using invalid_signature = fcl::exception::coded_exception<code, code::invalid_signature>;
+using invalid_options = fcl::exception::coded_exception<code, code::invalid_options>;
+using backend_error = fcl::exception::coded_exception<code, code::backend_error>;
+
+} // namespace exceptions
+
 namespace detail {
 class public_key_impl;
 class private_key_impl;

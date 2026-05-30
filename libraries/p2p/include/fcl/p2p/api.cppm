@@ -19,7 +19,7 @@ import fcl.p2p.node;
 import fcl.p2p.protocol;
 import fcl.p2p.stream;
 import fcl.raw.raw;
-import fcl.quic.exceptions;
+import fcl.transport.exceptions;
 
 export namespace fcl::p2p {
 
@@ -106,10 +106,9 @@ class api_binding {
             auto responses = co_await plan_.dispatch_many(std::move(request), calls);
             co_await write_responses(stream.stream, responses);
          } catch (const fcl::exception::base& error) {
-            if (fcl::quic::exceptions::is(error, fcl::quic::exceptions::code::connection_closed) ||
-                fcl::quic::exceptions::is(error, fcl::quic::exceptions::code::stream_closed) ||
-                fcl::quic::exceptions::is(error, fcl::quic::exceptions::code::stream_reset) ||
-                fcl::quic::exceptions::is(error, fcl::quic::exceptions::code::canceled)) {
+            if (fcl::p2p::exceptions::is(error, fcl::p2p::exceptions::code::closed) ||
+                fcl::transport::exceptions::is(error, fcl::transport::exceptions::code::closed) ||
+                fcl::transport::exceptions::is(error, fcl::transport::exceptions::code::canceled)) {
                co_return;
             }
             throw;

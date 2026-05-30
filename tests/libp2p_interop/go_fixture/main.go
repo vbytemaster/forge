@@ -635,7 +635,7 @@ func dial(opts options) error {
 		if err := h.pubsub.Publish(pubsubTopic, []byte(opts.payload)); err != nil {
 			return fmt.Errorf("gossipsub publish failed: %w", err)
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(2 * time.Second)
 		result["topic"] = pubsubTopic
 		result["payload"] = opts.payload
 		result["payload_bytes"] = len(opts.payload)

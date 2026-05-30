@@ -67,46 +67,4 @@ using internal = fcl::exception::coded_exception<code, code::internal>;
    return error.code() == fcl::exception::make_error_code(value);
 }
 
-[[noreturn]] inline void raise(code value, std::string message) {
-   switch (value) {
-   case code::invalid_endpoint:
-      throw invalid_endpoint{std::move(message)};
-   case code::invalid_options:
-      throw invalid_options{std::move(message)};
-   case code::dependency_unavailable:
-      throw dependency_unavailable{std::move(message)};
-   case code::connect_timeout:
-      throw connect_timeout{std::move(message)};
-   case code::handshake_timeout:
-      throw handshake_timeout{std::move(message)};
-   case code::idle_timeout:
-      throw idle_timeout{std::move(message)};
-   case code::tls_failed:
-      throw tls_failed{std::move(message)};
-   case code::peer_verification_failed:
-      throw peer_verification_failed{std::move(message)};
-   case code::alpn_mismatch:
-      throw alpn_mismatch{std::move(message)};
-   case code::frame_too_large:
-      throw frame_too_large{std::move(message)};
-   case code::malformed_frame:
-      throw malformed_frame{std::move(message)};
-   case code::backpressure_rejected:
-      throw backpressure_rejected{std::move(message)};
-   case code::connection_closed:
-      throw connection_closed{std::move(message)};
-   case code::stream_closed:
-      throw stream_closed{std::move(message)};
-   case code::stream_reset:
-      throw stream_reset{std::move(message)};
-   case code::canceled:
-      throw canceled{std::move(message)};
-   case code::unsupported:
-      throw unsupported{std::move(message)};
-   case code::internal:
-      throw internal{std::move(message)};
-   }
-   throw internal{std::move(message)};
-}
-
 } // namespace fcl::quic::exceptions

@@ -9,6 +9,7 @@ add_library(
    quic_engine.cpp
    stream.cpp
    connection.cpp
+   transport.cpp
    connector.cpp
    listener.cpp
 )
@@ -23,6 +24,7 @@ target_link_libraries(
       fcl_raw
       fcl_crypto
       fcl_asio
+      fcl_transport
       Boost::asio
       OpenSSL::SSL
       OpenSSL::Crypto

@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
@@ -32,12 +34,12 @@ std::string normalize_sha256_fingerprint(std::string_view value) {
          continue;
       }
       if (!is_hex(ch)) {
-         exceptions::raise(exceptions::code::invalid_options, "invalid SHA-256 fingerprint");
+         FCL_THROW_EXCEPTION(exceptions::invalid_options, "invalid SHA-256 fingerprint");
       }
       normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
    }
    if (normalized.size() != 64) {
-      exceptions::raise(exceptions::code::invalid_options, "SHA-256 fingerprint must contain 32 bytes");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "SHA-256 fingerprint must contain 32 bytes");
    }
    return normalized;
 }
@@ -57,7 +59,7 @@ std::string certificate_sha256_fingerprint_from_pem(std::string_view certificate
    try {
       return fcl::crypto::x509::certificate::from_pem(certificate_pem).fingerprint_sha256_text();
    } catch (const fcl::exception::base& error) {
-      exceptions::raise(exceptions::code::tls_failed, error.what());
+      FCL_THROW_EXCEPTION(exceptions::tls_failed, error.what());
    }
 }
 

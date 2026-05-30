@@ -9,6 +9,7 @@ module;
 export module fcl.crypto.sha224;
 
 import fcl.crypto.packhash;
+export import fcl.crypto.digest;
 import fcl.raw.raw;
 import fcl.core.string;
 import fcl.variant;

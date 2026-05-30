@@ -7,12 +7,14 @@
 #include <set>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 import fcl.exception.exception;
 import fcl.crypto.hex;
 import fcl.crypto.sha256;
 import fcl.raw.datastream;
+import fcl.raw.exceptions;
 import fcl.raw.raw;
 import fcl.variant;
 import fcl.variant.dynamic_bitset;
@@ -136,6 +138,14 @@ BOOST_AUTO_TEST_CASE(raw_can_pack_into_uint8_byte_containers_without_changing_le
 
    const auto view = std::span<const std::uint8_t>{bytes.data(), bytes.size()};
    BOOST_CHECK(fcl::raw::unpack<macro_serialized_record>(view) == value);
+}
+
+BOOST_AUTO_TEST_CASE(unknown_variant_wire_type_throws_codec_error) {
+   const std::vector<std::uint8_t> invalid_variant{0xff};
+   BOOST_CHECK_EXCEPTION((void)fcl::raw::unpack<fcl::variant>(invalid_variant), fcl::raw::exceptions::codec_error,
+                         [](const fcl::raw::exceptions::codec_error& error) {
+      return error.code().category().name() == std::string_view{"fcl.raw"};
+   });
 }
 
 BOOST_AUTO_TEST_CASE(std_chrono_preserves_old_fc_raw_layout) {

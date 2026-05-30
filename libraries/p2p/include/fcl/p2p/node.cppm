@@ -17,6 +17,7 @@ export module fcl.p2p.node;
 import fcl.asio.runtime;
 import fcl.p2p.dht;
 import fcl.p2p.discovery;
+import fcl.p2p.endpoint;
 import fcl.p2p.hole_punch;
 import fcl.p2p.identity;
 import fcl.p2p.peer_store;
@@ -28,8 +29,7 @@ import fcl.p2p.relay;
 import fcl.p2p.resource_manager;
 import fcl.p2p.scoring;
 import fcl.p2p.stream;
-import fcl.quic.endpoint;
-import fcl.quic.options;
+import fcl.transport.limits;
 
 export namespace fcl::p2p {
 
@@ -57,8 +57,8 @@ class node {
       limits limits{};
       relay::policy relay_policy{.service_enabled = true, .client_enabled = true, .public_relay_allowed = false};
       path::policy path_policy{};
-      fcl::quic::transport_limits transport_limits{};
-      std::vector<fcl::quic::endpoint> advertised_endpoints;
+      fcl::transport::limits transport_limits{};
+      std::vector<fcl::p2p::endpoint> advertised_endpoints;
       std::vector<std::uint8_t> public_key;
       std::string protocol_version = "/fcl/0.1.0";
       std::string agent_version = "fcl/0.1.0";
@@ -159,15 +159,15 @@ class node {
    node& operator=(node&&) noexcept;
 
    [[nodiscard]] const peer_id& local_peer() const noexcept;
-   [[nodiscard]] std::optional<fcl::quic::endpoint> local_endpoint() const;
+   [[nodiscard]] std::optional<fcl::p2p::endpoint> local_endpoint() const;
    [[nodiscard]] metrics_snapshot metrics() const;
    [[nodiscard]] peer_store& peers() noexcept;
    [[nodiscard]] const peer_store& peers() const noexcept;
 
    void register_protocol_handler(protocol_id protocol, protocol_handler handler);
-   boost::asio::awaitable<void> async_listen(fcl::quic::endpoint endpoint);
-   boost::asio::awaitable<session_info> async_connect(fcl::quic::endpoint endpoint);
-   boost::asio::awaitable<session_info> async_connect(fcl::quic::endpoint endpoint, connect_options options);
+   boost::asio::awaitable<void> async_listen(fcl::p2p::endpoint endpoint);
+   boost::asio::awaitable<session_info> async_connect(fcl::p2p::endpoint endpoint);
+   boost::asio::awaitable<session_info> async_connect(fcl::p2p::endpoint endpoint, connect_options options);
    boost::asio::awaitable<void> async_request_peer_exchange(peer_id peer);
    boost::asio::awaitable<reachability::state> async_probe_reachability(peer_id observer);
    boost::asio::awaitable<relay::reservation::info> async_reserve_relay(peer_id relay_peer);

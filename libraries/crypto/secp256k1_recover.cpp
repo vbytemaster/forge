@@ -1,5 +1,5 @@
 module;
-#include <variant>
+#include <fcl/exception/macros.hpp>
 #include <vector>
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>
@@ -13,30 +13,30 @@ const secp256k1_context* recover_context() {
    return ctx;
 }
 
-std::variant<recover_error, recover_bytes> recover(const recover_bytes& signature, const recover_bytes& digest) {
+recover_bytes recover(const recover_bytes& signature, const recover_bytes& digest) {
    const secp256k1_context* context{recover_context()};
    if (context == nullptr) {
-      return recover_error::init_error;
+      FCL_THROW_EXCEPTION(exceptions::backend_error, "failed to initialize secp256k1 recovery context");
    }
 
    if (signature.size() != 65 || digest.size() != 32) {
-      return recover_error::input_error;
+      FCL_THROW_EXCEPTION(exceptions::invalid_input, "invalid secp256k1 recovery input size");
    }
 
    int recid = signature[0];
    if (recid < 27 || recid >= 35)
-      return recover_error::invalid_signature;
+      FCL_THROW_EXCEPTION(exceptions::invalid_signature, "invalid secp256k1 recovery id");
    recid = (recid - 27) & 3;
 
    secp256k1_ecdsa_recoverable_signature sig;
    if (!secp256k1_ecdsa_recoverable_signature_parse_compact(context, &sig, (const unsigned char*)&signature[1],
                                                             recid)) {
-      return recover_error::invalid_signature;
+      FCL_THROW_EXCEPTION(exceptions::invalid_signature, "invalid secp256k1 recoverable signature");
    }
 
    secp256k1_pubkey pub_key;
    if (!secp256k1_ecdsa_recover(context, &pub_key, &sig, (const unsigned char*)&digest[0])) {
-      return recover_error::recover_error;
+      FCL_THROW_EXCEPTION(exceptions::backend_error, "failed to recover secp256k1 public key");
    }
 
    size_t kOutLen{65};

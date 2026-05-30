@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -51,13 +53,7 @@ import fcl.crypto.x25519;
 import fcl.multiformats.types;
 import fcl.multiformats.varint;
 import fcl.multiformats.exceptions;
-import fcl.quic.connection;
-import fcl.quic.connector;
-import fcl.quic.exceptions;
-import fcl.quic.framed_stream;
-import fcl.quic.listener;
-import fcl.quic.options;
-import fcl.quic.security;
+import fcl.transport.stream;
 
 #include "protobuf.hpp"
 
@@ -71,7 +67,7 @@ void trace_relay(std::string_view message) {
 }
 
 [[noreturn]] void throw_crypto_failure(std::string message) {
-   exceptions::raise(exceptions::code::invalid_identity, std::move(message));
+   FCL_THROW_EXCEPTION(exceptions::invalid_identity, std::move(message));
 }
 
 [[nodiscard]] std::vector<std::uint8_t> sha256(std::span<const std::uint8_t> value) {
@@ -139,7 +135,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
 [[nodiscard]] fcl::crypto::asymmetric::public_key crypto_public_key(const public_key& key) {
    if (key.type == public_key::type::ed25519) {
       if (key.data.size() != fcl::crypto::ed25519::public_key_data{}.size()) {
-         exceptions::raise(exceptions::code::invalid_identity, "invalid Ed25519 public key size");
+         FCL_THROW_EXCEPTION(exceptions::invalid_identity, "invalid Ed25519 public key size");
       }
       auto data = fcl::crypto::ed25519::public_key_data{};
       std::copy(key.data.begin(), key.data.end(), data.begin());
@@ -184,7 +180,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
    if (key.type == public_key::type::rsa) {
       return fcl::crypto::rsa::public_key{key.data}.verify(message, {signature.begin(), signature.end()});
    }
-   exceptions::raise(exceptions::code::invalid_identity, "ECDSA Noise identity verification requires DER signature support");
+   FCL_THROW_EXCEPTION(exceptions::invalid_identity, "ECDSA Noise identity verification requires DER signature support");
 }
 
 struct x25519_key {
@@ -207,7 +203,7 @@ struct x25519_key {
 
 [[nodiscard]] std::array<std::uint8_t, 32> checked_x25519_public(std::span<const std::uint8_t> bytes) {
    if (bytes.size() != 32) {
-      exceptions::raise(exceptions::code::protocol_error, "Noise X25519 public key must be 32 bytes");
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "Noise X25519 public key must be 32 bytes");
    }
    auto out = std::array<std::uint8_t, 32>{};
    std::copy(bytes.begin(), bytes.end(), out.begin());
@@ -227,7 +223,7 @@ struct x25519_key {
                                                                   std::span<const std::uint8_t> ad,
                                                                   std::span<const std::uint8_t> plaintext) {
    if (key.size() != fcl::crypto::chacha20_poly1305::key{}.size()) {
-      exceptions::raise(exceptions::code::protocol_error, "Noise cipher key must be 32 bytes");
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "Noise cipher key must be 32 bytes");
    }
    auto cipher_key = fcl::crypto::chacha20_poly1305::key{};
    std::copy(key.begin(), key.end(), cipher_key.begin());
@@ -240,10 +236,10 @@ struct x25519_key {
                                                                   std::span<const std::uint8_t> ad,
                                                                   std::span<const std::uint8_t> ciphertext) {
    if (ciphertext.size() < 16) {
-      exceptions::raise(exceptions::code::protocol_error, "Noise ciphertext is missing authentication tag");
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "Noise ciphertext is missing authentication tag");
    }
    if (key.size() != fcl::crypto::chacha20_poly1305::key{}.size()) {
-      exceptions::raise(exceptions::code::protocol_error, "Noise cipher key must be 32 bytes");
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "Noise cipher key must be 32 bytes");
    }
    auto cipher_key = fcl::crypto::chacha20_poly1305::key{};
    std::copy(key.begin(), key.end(), cipher_key.begin());
@@ -251,7 +247,7 @@ struct x25519_key {
    try {
       return fcl::crypto::chacha20_poly1305::decrypt(cipher_key, nonce, ad, ciphertext);
    } catch (const fcl::exception::base&) {
-      exceptions::raise(exceptions::code::peer_verification_failed, "Noise authentication failed");
+      FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "Noise authentication failed");
    }
 }
 
@@ -395,7 +391,7 @@ struct noise_handshake_payload {
 [[nodiscard]] noise_handshake_payload make_noise_payload(const node::options& options,
                                                          std::span<const std::uint8_t> static_key) {
    if (options.private_key_pem.empty()) {
-      exceptions::raise(exceptions::code::invalid_identity, "Noise handshake requires libp2p identity key material");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "Noise handshake requires libp2p identity key material");
    }
    auto private_key = private_key_from_pem(options.private_key_pem);
    auto identity_key = options.public_key;
@@ -418,15 +414,15 @@ struct verified_noise_payload {
                                                           std::span<const std::uint8_t> static_key,
                                                           const std::optional<peer_id>& expected_peer) {
    if (payload.identity_key.empty() || payload.identity_signature.empty()) {
-      exceptions::raise(exceptions::code::peer_verification_failed, "Noise handshake payload is missing identity proof");
+      FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "Noise handshake payload is missing identity proof");
    }
    const auto key = decode_public_key(payload.identity_key);
    const auto peer = make_peer_id(key);
    if (expected_peer && peer != *expected_peer) {
-      exceptions::raise(exceptions::code::peer_verification_failed, "Noise identity peer id mismatch");
+      FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "Noise identity peer id mismatch");
    }
    if (!verify_identity_signature(key, noise_signature_payload(static_key), payload.identity_signature)) {
-      exceptions::raise(exceptions::code::peer_verification_failed, "Noise identity signature is invalid");
+      FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "Noise identity signature is invalid");
    }
    return verified_noise_payload{
        .peer = peer,
@@ -448,7 +444,7 @@ class relay_secure_io : public std::enable_shared_from_this<relay_secure_io> {
 
    boost::asio::awaitable<void> write_plain_frame(std::span<const std::uint8_t> bytes) {
       if (bytes.size() > std::numeric_limits<std::uint16_t>::max()) {
-         exceptions::raise(exceptions::code::codec_error, "Noise frame is too large");
+         FCL_THROW_EXCEPTION(exceptions::codec_error, "Noise frame is too large");
       }
       auto out = std::vector<std::uint8_t>{
           static_cast<std::uint8_t>((bytes.size() >> 8U) & 0xffU),
@@ -489,7 +485,7 @@ class relay_secure_io : public std::enable_shared_from_this<relay_secure_io> {
       while (buffer_.size() < size) {
          auto chunk = co_await stream_.async_read();
          if (chunk.empty()) {
-            exceptions::raise(exceptions::code::closed, "Noise stream closed");
+            FCL_THROW_EXCEPTION(exceptions::closed, "Noise stream closed");
          }
          buffer_.insert(buffer_.end(), chunk.begin(), chunk.end());
       }
@@ -504,9 +500,9 @@ class relay_secure_io : public std::enable_shared_from_this<relay_secure_io> {
    noise_cipher_state write_state_;
 };
 
-class relay_secure_stream_backend final : public detail::stream_backend {
+class relay_secure_stream_concept final : public fcl::transport::detail::stream_concept {
  public:
-   explicit relay_secure_stream_backend(std::shared_ptr<relay_secure_io> secure) : secure_(std::move(secure)) {}
+   explicit relay_secure_stream_concept(std::shared_ptr<relay_secure_io> secure) : secure_(std::move(secure)) {}
 
    [[nodiscard]] bool valid() const noexcept override {
       return secure_ && secure_->valid();
@@ -532,8 +528,9 @@ class relay_secure_stream_backend final : public detail::stream_backend {
    std::shared_ptr<relay_secure_io> secure_;
 };
 
-[[nodiscard]] fcl::p2p::stream secure_stream(std::shared_ptr<relay_secure_io> secure) {
-   return detail::stream_access::make(std::make_shared<relay_secure_stream_backend>(std::move(secure)));
+[[nodiscard]] fcl::transport::stream secure_transport_stream(std::shared_ptr<relay_secure_io> secure) {
+   return fcl::transport::detail::stream_access::make(
+       std::make_shared<relay_secure_stream_concept>(std::move(secure)));
 }
 
 struct noise_result {
@@ -554,7 +551,7 @@ boost::asio::awaitable<noise_result> noise_initiator(fcl::p2p::stream stream, co
 
    auto message2 = co_await io->read_plain_frame();
    if (message2.size() < 48) {
-      exceptions::raise(exceptions::code::protocol_error, "Noise responder message is truncated");
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "Noise responder message is truncated");
    }
    const auto responder_ephemeral = checked_x25519_public(std::span<const std::uint8_t>{message2}.subspan(0, 32));
    symmetric.mix_hash(responder_ephemeral);
@@ -602,7 +599,7 @@ boost::asio::awaitable<noise_result> noise_responder(fcl::p2p::stream stream, co
 
    const auto message3 = co_await io->read_plain_frame();
    if (message3.size() < 48) {
-      exceptions::raise(exceptions::code::protocol_error, "Noise initiator message is truncated");
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "Noise initiator message is truncated");
    }
    const auto initiator_static_plain =
        symmetric.decrypt_and_hash(std::span<const std::uint8_t>{message3}.subspan(0, 48));
@@ -618,225 +615,7 @@ boost::asio::awaitable<noise_result> noise_responder(fcl::p2p::stream stream, co
 }
 
 
-void trace_yamux(std::string_view direction, const yamux_frame& frame) {
-   (void)direction;
-   (void)frame;
-}
-
-
-class yamux_session::yamux_stream_backend final : public detail::stream_backend {
- public:
-   yamux_stream_backend(std::shared_ptr<yamux_session> session, std::uint32_t stream_id)
-       : session_(std::move(session)), stream_id_(stream_id) {}
-
-   [[nodiscard]] bool valid() const noexcept override {
-      return session_ != nullptr;
-   }
-
-   [[nodiscard]] std::int64_t id() const noexcept override {
-      return static_cast<std::int64_t>(stream_id_);
-   }
-
-   boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> bytes) override {
-      co_await session_->write_data(stream_id_, bytes);
-   }
-
-   boost::asio::awaitable<std::vector<std::uint8_t>> async_read() override {
-      co_return co_await session_->read_data(stream_id_);
-   }
-
-   boost::asio::awaitable<void> async_close() override {
-      co_await session_->close_stream(stream_id_);
-   }
-
- private:
-   std::shared_ptr<yamux_session> session_;
-   std::uint32_t stream_id_ = 0;
-};
-yamux_session::yamux_session(std::shared_ptr<relay_secure_io> secure, bool initiator)
-    : secure_(std::move(secure)), next_stream_id_(initiator ? 1U : 2U) {}
-
-boost::asio::awaitable<fcl::p2p::stream> yamux_session::async_open_stream() {
-   const auto id = next_stream_id_;
-   next_stream_id_ += 2;
-   co_await write_frame(yamux_frame{
-       .kind = yamux_frame::type::window_update,
-       .flags = yamux_syn,
-       .stream_id = id,
-       .length_value = yamux_initial_window,
-   });
-   co_return detail::stream_access::make(std::make_shared<yamux_stream_backend>(shared_from_this(), id));
-}
-
-boost::asio::awaitable<fcl::p2p::stream> yamux_session::async_accept_stream() {
-   if (!pending_streams_.empty()) {
-      const auto id = pending_streams_.front();
-      pending_streams_.erase(pending_streams_.begin());
-      co_return detail::stream_access::make(std::make_shared<yamux_stream_backend>(shared_from_this(), id));
-   }
-   while (true) {
-      auto frame = co_await read_frame();
-      if (frame.kind == yamux_frame::type::ping && (frame.flags & yamux_ack) == 0) {
-         co_await write_frame(yamux_frame{
-             .kind = yamux_frame::type::ping,
-             .flags = yamux_ack,
-             .stream_id = 0,
-             .payload = frame.payload,
-             .length_value = frame.length_value,
-         });
-         continue;
-      }
-      if (frame.kind == yamux_frame::type::go_away) {
-         exceptions::raise(exceptions::code::closed, "Yamux session closed");
-      }
-      if (frame.kind != yamux_frame::type::data && frame.kind != yamux_frame::type::window_update) {
-         continue;
-      }
-      if ((frame.flags & yamux_syn) == 0) {
-         if (!frame.payload.empty()) {
-            pending_[frame.stream_id].push_back(std::move(frame.payload));
-         }
-         continue;
-      }
-      co_await accept_remote_stream(frame.stream_id);
-      if (!frame.payload.empty()) {
-         pending_[frame.stream_id].push_back(std::move(frame.payload));
-      }
-      co_return detail::stream_access::make(
-          std::make_shared<yamux_stream_backend>(shared_from_this(), frame.stream_id));
-   }
-}
-
-[[nodiscard]] bool yamux_session::has_pending_stream() const noexcept {
-   return !pending_streams_.empty();
-}
-
-boost::asio::awaitable<void> yamux_session::async_close() {
-   co_await secure_->async_close();
-}
-
-boost::asio::awaitable<void> yamux_session::write_data(std::uint32_t stream_id, std::span<const std::uint8_t> bytes,
-                                        std::uint16_t flags) {
-   co_await write_frame(yamux_frame{
-       .kind = yamux_frame::type::data,
-       .flags = flags,
-       .stream_id = stream_id,
-       .payload = std::vector<std::uint8_t>{bytes.begin(), bytes.end()},
-   });
-}
-
-boost::asio::awaitable<std::vector<std::uint8_t>> yamux_session::read_data(std::uint32_t stream_id) {
-   if (auto it = pending_.find(stream_id); it != pending_.end() && !it->second.empty()) {
-      auto out = std::move(it->second.front());
-      it->second.erase(it->second.begin());
-      co_return out;
-   }
-   while (true) {
-      auto frame = co_await read_frame();
-      if (frame.kind == yamux_frame::type::ping && (frame.flags & yamux_ack) == 0) {
-         co_await write_frame(yamux_frame{
-             .kind = yamux_frame::type::ping,
-             .flags = yamux_ack,
-             .stream_id = 0,
-             .payload = frame.payload,
-             .length_value = frame.length_value,
-         });
-         continue;
-      }
-      if (frame.stream_id != stream_id) {
-         if ((frame.kind == yamux_frame::type::data || frame.kind == yamux_frame::type::window_update) &&
-             (frame.flags & yamux_syn) != 0) {
-            co_await accept_remote_stream(frame.stream_id);
-            if (std::ranges::find(pending_streams_, frame.stream_id) == pending_streams_.end()) {
-               pending_streams_.push_back(frame.stream_id);
-            }
-         }
-         if (!frame.payload.empty()) {
-            pending_[frame.stream_id].push_back(std::move(frame.payload));
-         }
-         continue;
-      }
-      if ((frame.flags & yamux_rst) != 0) {
-         exceptions::raise(exceptions::code::closed, "Yamux stream was reset");
-      }
-      if (!frame.payload.empty()) {
-         co_return frame.payload;
-      }
-      if ((frame.flags & yamux_fin) != 0) {
-         exceptions::raise(exceptions::code::closed, "Yamux stream closed");
-      }
-   }
-}
-
-boost::asio::awaitable<void> yamux_session::close_stream(std::uint32_t stream_id) {
-   co_await write_frame(yamux_frame{
-       .kind = yamux_frame::type::data,
-       .flags = yamux_fin,
-       .stream_id = stream_id,
-   });
-}
-
-boost::asio::awaitable<void> yamux_session::accept_remote_stream(std::uint32_t stream_id) {
-   co_await write_frame(yamux_frame{
-       .kind = yamux_frame::type::window_update,
-       .flags = yamux_ack,
-       .stream_id = stream_id,
-       .length_value = yamux_initial_window,
-   });
-}
-
-boost::asio::awaitable<void> yamux_session::write_frame(const yamux_frame& frame) {
-   trace_yamux("write", frame);
-   auto out = std::vector<std::uint8_t>{};
-   const auto length = frame.payload.empty() ? frame.length_value : static_cast<std::uint32_t>(frame.payload.size());
-   out.reserve(12 + frame.payload.size());
-   out.push_back(0);
-   out.push_back(static_cast<std::uint8_t>(frame.kind));
-   out.push_back(static_cast<std::uint8_t>((frame.flags >> 8U) & 0xffU));
-   out.push_back(static_cast<std::uint8_t>(frame.flags & 0xffU));
-   for (auto shift : {24, 16, 8, 0}) {
-      out.push_back(static_cast<std::uint8_t>((frame.stream_id >> shift) & 0xffU));
-   }
-   for (auto shift : {24, 16, 8, 0}) {
-      out.push_back(static_cast<std::uint8_t>((length >> shift) & 0xffU));
-   }
-   out.insert(out.end(), frame.payload.begin(), frame.payload.end());
-   co_await secure_->async_write(out);
-}
-
-boost::asio::awaitable<yamux_frame> yamux_session::read_frame() {
-   while (buffer_.size() < 12) {
-      auto chunk = co_await secure_->async_read();
-      buffer_.insert(buffer_.end(), chunk.begin(), chunk.end());
-   }
-   if (buffer_[0] != 0) {
-      exceptions::raise(exceptions::code::protocol_error, "unsupported Yamux version");
-   }
-   auto frame = yamux_frame{
-       .kind = static_cast<yamux_frame::type>(buffer_[1]),
-       .flags = static_cast<std::uint16_t>((buffer_[2] << 8U) | buffer_[3]),
-       .stream_id = (static_cast<std::uint32_t>(buffer_[4]) << 24U) |
-                    (static_cast<std::uint32_t>(buffer_[5]) << 16U) |
-                    (static_cast<std::uint32_t>(buffer_[6]) << 8U) | buffer_[7],
-       .length_value = (static_cast<std::uint32_t>(buffer_[8]) << 24U) |
-                       (static_cast<std::uint32_t>(buffer_[9]) << 16U) |
-                       (static_cast<std::uint32_t>(buffer_[10]) << 8U) | buffer_[11],
-   };
-   const auto payload_length = frame.kind == yamux_frame::type::data ? frame.length_value : 0U;
-   while (buffer_.size() < 12ULL + payload_length) {
-      auto chunk = co_await secure_->async_read();
-      buffer_.insert(buffer_.end(), chunk.begin(), chunk.end());
-   }
-   if (payload_length > 0) {
-      frame.payload.assign(buffer_.begin() + 12,
-                           buffer_.begin() + static_cast<std::ptrdiff_t>(12ULL + payload_length));
-   }
-   buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(12ULL + payload_length));
-   trace_yamux("read", frame);
-   co_return frame;
-}
-
-boost::asio::awaitable<std::shared_ptr<yamux_session>>
+boost::asio::awaitable<std::shared_ptr<fcl::p2p::yamux::session>>
 upgrade_relay_outbound_session(fcl::p2p::stream stream, const node::options& options, const peer_id& expected_peer) {
    const auto noise_protocol = protocol_id{.value = "/noise"};
    const auto yamux_protocol = protocol_id{.value = "/yamux/1.0.0"};
@@ -848,14 +627,14 @@ upgrade_relay_outbound_session(fcl::p2p::stream stream, const node::options& opt
    trace_relay("outbound upgrade: noise complete");
    if (!secure.early_yamux) {
       trace_relay("outbound upgrade: select yamux");
-      (void)co_await protocol_negotiation::async_select(secure_stream(secure.secure), yamux_protocol);
+      (void)co_await protocol_negotiation::async_select(secure_transport_stream(secure.secure), yamux_protocol);
    }
-   auto yamux = std::make_shared<yamux_session>(std::move(secure.secure), true);
+   auto yamux = std::make_shared<fcl::p2p::yamux::session>(secure_transport_stream(std::move(secure.secure)), true);
    trace_relay("outbound upgrade: yamux ready");
    co_return yamux;
 }
 
-boost::asio::awaitable<std::shared_ptr<yamux_session>>
+boost::asio::awaitable<std::shared_ptr<fcl::p2p::yamux::session>>
 upgrade_relay_inbound_session(fcl::p2p::stream stream, const node::options& options, const peer_id& expected_peer) {
    const auto noise_protocol = protocol_id{.value = "/noise"};
    const auto yamux_protocol = protocol_id{.value = "/yamux/1.0.0"};
@@ -867,10 +646,10 @@ upgrade_relay_inbound_session(fcl::p2p::stream stream, const node::options& opti
    trace_relay("inbound upgrade: noise complete");
    if (!secure.early_yamux) {
       trace_relay("inbound upgrade: accept yamux");
-      (void)co_await protocol_negotiation::async_accept(secure_stream(secure.secure), {yamux_protocol});
+      (void)co_await protocol_negotiation::async_accept(secure_transport_stream(secure.secure), {yamux_protocol});
    }
    trace_relay("inbound upgrade: yamux ready");
-   co_return std::make_shared<yamux_session>(std::move(secure.secure), false);
+   co_return std::make_shared<fcl::p2p::yamux::session>(secure_transport_stream(std::move(secure.secure)), false);
 }
 
 } // namespace fcl::p2p

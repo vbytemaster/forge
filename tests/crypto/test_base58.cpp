@@ -1,6 +1,7 @@
 #include <boost/test/unit_test.hpp>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <fcl/exception/macros.hpp>
@@ -33,7 +34,11 @@ BOOST_AUTO_TEST_CASE(base58_legacy_char_api_stays_compatible) try {
 FCL_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(base58_rejects_invalid_characters) try {
-   BOOST_CHECK_THROW((void)fcl::crypto::base58_decode("0OIl"), fcl::exception::context_error);
+   BOOST_CHECK_EXCEPTION((void)fcl::crypto::base58_decode("0OIl"),
+                         fcl::crypto::base58::exceptions::invalid_character,
+                         [](const fcl::crypto::base58::exceptions::invalid_character& error) {
+      return error.code().category().name() == std::string_view{"fcl.crypto.base58"};
+   });
 }
 FCL_LOG_AND_RETHROW();
 

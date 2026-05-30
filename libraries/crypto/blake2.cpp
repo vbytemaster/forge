@@ -1,10 +1,10 @@
 module;
+#include <fcl/exception/macros.hpp>
 #include <array>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <utility>
-#include <variant>
 #include <vector>
 
 module fcl.crypto.blake2;
@@ -125,10 +125,10 @@ void blake2b_wrapper::finish(blake2b_state* state) {
 
 } // namespace
 
-std::variant<blake2b_error, bytes> blake2b(std::uint32_t rounds, const bytes& h, const bytes& m, const bytes& t0_offset,
-                                           const bytes& t1_offset, bool final_block, const yield_function_t& yield) {
+bytes blake2b(std::uint32_t rounds, const bytes& h, const bytes& m, const bytes& t0_offset, const bytes& t1_offset,
+              bool final_block, const yield_function_t& yield) {
    if (h.size() != 64 || m.size() != blake2b_wrapper::block_bytes || t0_offset.size() != 8 || t1_offset.size() != 8) {
-      return std::variant<blake2b_error, bytes>{std::in_place_index<0>, blake2b_error::input_len_error};
+      FCL_THROW_EXCEPTION(blake2::exceptions::invalid_input, "invalid BLAKE2b compression input length");
    }
 
    blake2b_wrapper wrapper;
@@ -147,7 +147,7 @@ std::variant<blake2b_error, bytes> blake2b(std::uint32_t rounds, const bytes& h,
 
    bytes out(sizeof(state.h), 0);
    std::memcpy(out.data(), state.h, out.size());
-   return std::variant<blake2b_error, bytes>{std::in_place_index<1>, std::move(out)};
+   return out;
 }
 
 } // namespace fcl::crypto

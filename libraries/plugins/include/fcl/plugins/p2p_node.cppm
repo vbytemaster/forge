@@ -21,7 +21,6 @@ import fcl.app.plugin_registry;
 import fcl.config.component;
 import fcl.exception.exception;
 import fcl.p2p;
-import fcl.quic.endpoint;
 import fcl.schema;
 
 export namespace fcl::plugins {
@@ -212,7 +211,7 @@ class p2p_node::api {
    [[nodiscard]] static fcl::api::descriptor describe();
 
    [[nodiscard]] virtual fcl::p2p::peer_id local_peer() const = 0;
-   [[nodiscard]] virtual std::optional<fcl::quic::endpoint> local_endpoint() const = 0;
+   [[nodiscard]] virtual std::optional<fcl::p2p::endpoint> local_endpoint() const = 0;
    [[nodiscard]] virtual fcl::p2p::node::metrics_snapshot metrics() const = 0;
    [[nodiscard]] virtual std::vector<fcl::p2p::peer_store::record> peers() const = 0;
 

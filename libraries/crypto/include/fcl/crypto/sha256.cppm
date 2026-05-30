@@ -1,4 +1,5 @@
 module;
+#include <fcl/exception/macros.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <bit>
@@ -12,6 +13,7 @@ module;
 export module fcl.crypto.sha256;
 
 import fcl.core.string;
+export import fcl.crypto.digest;
 import fcl.crypto.packhash;
 import fcl.raw.raw;
 import fcl.variant;

@@ -61,40 +61,4 @@ using internal = fcl::exception::coded_exception<code, code::internal>;
    return error.code() == fcl::exception::make_error_code(value);
 }
 
-[[noreturn]] inline void raise(code value, std::string message) {
-   switch (value) {
-   case code::invalid_options:
-      throw invalid_options{std::move(message)};
-   case code::invalid_identity:
-      throw invalid_identity{std::move(message)};
-   case code::protocol_error:
-      throw protocol_error{std::move(message)};
-   case code::codec_error:
-      throw codec_error{std::move(message)};
-   case code::unsupported_protocol:
-      throw unsupported_protocol{std::move(message)};
-   case code::duplicate_protocol:
-      throw duplicate_protocol{std::move(message)};
-   case code::peer_not_found:
-      throw peer_not_found{std::move(message)};
-   case code::peer_verification_failed:
-      throw peer_verification_failed{std::move(message)};
-   case code::relay_not_available:
-      throw relay_not_available{std::move(message)};
-   case code::relay_rejected:
-      throw relay_rejected{std::move(message)};
-   case code::backpressure_rejected:
-      throw backpressure_rejected{std::move(message)};
-   case code::timeout:
-      throw timeout{std::move(message)};
-   case code::canceled:
-      throw canceled{std::move(message)};
-   case code::closed:
-      throw closed{std::move(message)};
-   case code::internal:
-      throw internal{std::move(message)};
-   }
-   throw internal{std::move(message)};
-}
-
 } // namespace fcl::p2p::exceptions

@@ -10,7 +10,7 @@ export module fcl.p2p.negotiation;
 
 import fcl.p2p.protocol;
 import fcl.p2p.stream;
-import fcl.quic.stream;
+import fcl.transport.stream;
 
 export namespace fcl::p2p {
 
@@ -53,11 +53,11 @@ namespace protocol_negotiation {
    [[nodiscard]] std::vector<std::uint8_t> encode_message(const message& value, options opts = {});
    [[nodiscard]] message decode_message(std::span<const std::uint8_t> bytes, options opts = {});
 
-   boost::asio::awaitable<fcl::p2p::stream> async_select(fcl::quic::stream stream, protocol_id protocol,
+   boost::asio::awaitable<fcl::p2p::stream> async_select(fcl::transport::stream stream, protocol_id protocol,
                                                          options opts = {});
    boost::asio::awaitable<fcl::p2p::stream> async_select(fcl::p2p::stream stream, protocol_id protocol,
                                                          options opts = {});
-   boost::asio::awaitable<negotiated_stream> async_accept(fcl::quic::stream stream,
+   boost::asio::awaitable<negotiated_stream> async_accept(fcl::transport::stream stream,
                                                           std::vector<protocol_id> protocols, options opts = {});
    boost::asio::awaitable<negotiated_stream> async_accept(fcl::p2p::stream stream,
                                                           std::vector<protocol_id> protocols, options opts = {});

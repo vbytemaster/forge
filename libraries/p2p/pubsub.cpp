@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
@@ -50,16 +52,16 @@ void validate_options(const options& opts) {
        limits.unsubscribe_backoff.count() <= 0 || limits.mesh_n == 0 || limits.mesh_n_low == 0 ||
        limits.mesh_n_high < limits.mesh_n_low || limits.history_length == 0 || limits.history_gossip == 0 ||
        limits.gossip_lazy == 0 || limits.gossip_factor <= 0.0 || limits.gossip_retransmission == 0) {
-      exceptions::raise(exceptions::code::invalid_options, "invalid GossipSub options");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "invalid GossipSub options");
    }
 }
 
 void validate_topic(const topic& value, const options& opts) {
    if (value.value.empty()) {
-      exceptions::raise(exceptions::code::invalid_options, "GossipSub topic must not be empty");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub topic must not be empty");
    }
    if (value.value.size() > opts.limits.max_topic_size) {
-      exceptions::raise(exceptions::code::invalid_options, "GossipSub topic exceeds max size");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub topic exceeds max size");
    }
 }
 
@@ -80,11 +82,11 @@ void validate_topic(const topic& value, const options& opts) {
 
 [[nodiscard]] fcl::crypto::asymmetric::public_key crypto_public_key(const public_key& key) {
    if (key.data.empty()) {
-      exceptions::raise(exceptions::code::invalid_identity, "GossipSub public key is empty");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "GossipSub public key is empty");
    }
    if (key.type == public_key::type::ed25519) {
       if (key.data.size() != fcl::crypto::ed25519::public_key_data{}.size()) {
-         exceptions::raise(exceptions::code::invalid_identity, "invalid GossipSub Ed25519 key size");
+         FCL_THROW_EXCEPTION(exceptions::invalid_identity, "invalid GossipSub Ed25519 key size");
       }
       auto data = fcl::crypto::ed25519::public_key_data{};
       std::copy(key.data.begin(), key.data.end(), data.begin());
@@ -98,7 +100,7 @@ void validate_topic(const topic& value, const options& opts) {
    try {
       return fcl::crypto::der::read_public_key(key.data);
    } catch (const fcl::exception::base& error) {
-      exceptions::raise(exceptions::code::invalid_identity, error.what());
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, error.what());
    }
 }
 
@@ -132,13 +134,13 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
       switch (field) {
       case 1:
          if (type != detail::wire_type::varint) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub subscription flag must be varint");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub subscription flag must be varint");
          }
          out.subscribe = in.read_varint() != 0;
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub subscription topic must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub subscription topic must be bytes");
          }
          out.subject.value = in.string();
          saw_topic = true;
@@ -149,7 +151,7 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
       }
    }
    if (!saw_topic) {
-      exceptions::raise(exceptions::code::codec_error, "GossipSub subscription is missing topic");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub subscription is missing topic");
    }
    validate_topic(out.subject, opts);
    return out;
@@ -159,7 +161,7 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
                                                                bool include_signature_key) {
    validate_topic(value.subject, opts);
    if (value.data.size() > opts.limits.max_data_size) {
-      exceptions::raise(exceptions::code::invalid_options, "GossipSub message exceeds max data size");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub message exceeds max data size");
    }
    auto out = std::vector<std::uint8_t>{};
    if (value.from) {
@@ -179,14 +181,14 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
       detail::append_bytes(out, 6, value.key);
    }
    if (out.size() > opts.limits.max_message_size) {
-      exceptions::raise(exceptions::code::invalid_options, "GossipSub message exceeds max size");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub message exceeds max size");
    }
    return out;
 }
 
 [[nodiscard]] message decode_message_payload(std::span<const std::uint8_t> bytes, const options& opts) {
    if (bytes.size() > opts.limits.max_message_size) {
-      exceptions::raise(exceptions::code::codec_error, "GossipSub message exceeds max size");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message exceeds max size");
    }
    auto out = message{};
    auto saw_topic = false;
@@ -196,41 +198,41 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub message source must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message source must be bytes");
          }
          out.from = peer_id::from_bytes(in.bytes());
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub message data must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message data must be bytes");
          }
          out.data = in.bytes();
          if (out.data.size() > opts.limits.max_data_size) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub message exceeds max data size");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message exceeds max data size");
          }
          break;
       case 3:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub message seqno must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message seqno must be bytes");
          }
          out.seqno = in.bytes();
          break;
       case 4:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub message topic must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message topic must be bytes");
          }
          out.subject.value = in.string();
          saw_topic = true;
          break;
       case 5:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub message signature must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message signature must be bytes");
          }
          out.signature = in.bytes();
          break;
       case 6:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub message key must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message key must be bytes");
          }
          out.key = in.bytes();
          break;
@@ -240,7 +242,7 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
       }
    }
    if (!saw_topic) {
-      exceptions::raise(exceptions::code::codec_error, "GossipSub message is missing topic");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message is missing topic");
    }
    validate_topic(out.subject, opts);
    return out;
@@ -264,14 +266,14 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub peer id must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub peer id must be bytes");
          }
          out.peer = peer_id::from_bytes(in.bytes());
          saw_peer = true;
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub signed peer record must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub signed peer record must be bytes");
          }
          out.signed_peer_record = in.bytes();
          break;
@@ -281,7 +283,7 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
       }
    }
    if (!saw_peer) {
-      exceptions::raise(exceptions::code::codec_error, "GossipSub peer info is missing peer id");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub peer info is missing peer id");
    }
    return out;
 }
@@ -289,11 +291,11 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
 void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
                         const std::vector<std::vector<std::uint8_t>>& ids, const options& opts) {
    if (ids.size() > opts.limits.max_message_ids) {
-      exceptions::raise(exceptions::code::invalid_options, "GossipSub control has too many message ids");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub control has too many message ids");
    }
    for (const auto& id : ids) {
       if (id.empty()) {
-         exceptions::raise(exceptions::code::invalid_options, "GossipSub message id must not be empty");
+         FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub message id must not be empty");
       }
       detail::append_bytes(out, field, id);
    }
@@ -316,14 +318,14 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub IHAVE topic must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IHAVE topic must be bytes");
          }
          out.subject.value = in.string();
          saw_topic = true;
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub IHAVE message id must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IHAVE message id must be bytes");
          }
          out.message_ids.push_back(in.bytes());
          break;
@@ -333,11 +335,11 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
       }
    }
    if (!saw_topic) {
-      exceptions::raise(exceptions::code::codec_error, "GossipSub IHAVE is missing topic");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IHAVE is missing topic");
    }
    validate_topic(out.subject, opts);
    if (out.message_ids.size() > opts.limits.max_message_ids) {
-      exceptions::raise(exceptions::code::codec_error, "GossipSub IHAVE has too many message ids");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IHAVE has too many message ids");
    }
    return out;
 }
@@ -356,7 +358,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub IWANT message id must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IWANT message id must be bytes");
          }
          out.message_ids.push_back(in.bytes());
          break;
@@ -366,7 +368,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
       }
    }
    if (out.message_ids.size() > opts.limits.max_message_ids) {
-      exceptions::raise(exceptions::code::codec_error, "GossipSub IWANT has too many message ids");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IWANT has too many message ids");
    }
    return out;
 }
@@ -387,7 +389,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub GRAFT topic must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub GRAFT topic must be bytes");
          }
          out.subject.value = in.string();
          saw_topic = true;
@@ -398,7 +400,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
       }
    }
    if (!saw_topic) {
-      exceptions::raise(exceptions::code::codec_error, "GossipSub GRAFT is missing topic");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub GRAFT is missing topic");
    }
    validate_topic(out.subject, opts);
    return out;
@@ -407,7 +409,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
 [[nodiscard]] std::vector<std::uint8_t> encode_prune_payload(const control::prune& value, const options& opts) {
    validate_topic(value.subject, opts);
    if (value.peers.size() > opts.limits.max_peers_per_topic) {
-      exceptions::raise(exceptions::code::invalid_options, "GossipSub PRUNE has too many peers");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub PRUNE has too many peers");
    }
    auto out = std::vector<std::uint8_t>{};
    detail::append_string(out, 1, value.subject.value);
@@ -429,20 +431,20 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub PRUNE topic must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub PRUNE topic must be bytes");
          }
          out.subject.value = in.string();
          saw_topic = true;
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub PRUNE peer must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub PRUNE peer must be bytes");
          }
          out.peers.push_back(decode_peer_payload(in.bytes()));
          break;
       case 3:
          if (type != detail::wire_type::varint) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub PRUNE backoff must be varint");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub PRUNE backoff must be varint");
          }
          out.backoff = std::chrono::seconds{static_cast<std::int64_t>(in.read_varint())};
          break;
@@ -452,11 +454,11 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
       }
    }
    if (!saw_topic) {
-      exceptions::raise(exceptions::code::codec_error, "GossipSub PRUNE is missing topic");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub PRUNE is missing topic");
    }
    validate_topic(out.subject, opts);
    if (out.peers.size() > opts.limits.max_peers_per_topic) {
-      exceptions::raise(exceptions::code::codec_error, "GossipSub PRUNE has too many peers");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub PRUNE has too many peers");
    }
    return out;
 }
@@ -464,7 +466,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
 [[nodiscard]] std::vector<std::uint8_t> encode_control_payload(const control& value, const options& opts) {
    const auto total = value.have.size() + value.want.size() + value.grafts.size() + value.prunes.size();
    if (total > opts.limits.max_control_entries) {
-      exceptions::raise(exceptions::code::invalid_options, "GossipSub control message has too many entries");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub control message has too many entries");
    }
    auto out = std::vector<std::uint8_t>{};
    for (const auto& item : value.have) {
@@ -488,7 +490,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
    while (!in.done()) {
       const auto [field, type] = in.key();
       if (type != detail::wire_type::length_delimited) {
-         exceptions::raise(exceptions::code::codec_error, "GossipSub control entry must be bytes");
+         FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub control entry must be bytes");
       }
       switch (field) {
       case 1:
@@ -510,7 +512,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
    }
    const auto total = out.have.size() + out.want.size() + out.grafts.size() + out.prunes.size();
    if (total > opts.limits.max_control_entries) {
-      exceptions::raise(exceptions::code::codec_error, "GossipSub control message has too many entries");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub control message has too many entries");
    }
    return out;
 }
@@ -543,7 +545,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
    if (key.type == public_key::type::rsa) {
       return fcl::crypto::rsa::public_key{key.data}.verify(message_bytes, {signature_bytes.begin(), signature_bytes.end()});
    }
-   exceptions::raise(exceptions::code::invalid_identity, "GossipSub ECDSA signature verification requires DER signature support");
+   FCL_THROW_EXCEPTION(exceptions::invalid_identity, "GossipSub ECDSA signature verification requires DER signature support");
 }
 
 } // namespace
@@ -565,10 +567,10 @@ std::vector<std::uint8_t> codec::encode(const rpc& value) {
 std::vector<std::uint8_t> codec::encode(const rpc& value, const options& opts) {
    validate_options(opts);
    if (value.subscriptions.size() > opts.limits.max_subscriptions) {
-      exceptions::raise(exceptions::code::invalid_options, "GossipSub RPC has too many subscriptions");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub RPC has too many subscriptions");
    }
    if (value.messages.size() > opts.limits.max_messages) {
-      exceptions::raise(exceptions::code::invalid_options, "GossipSub RPC has too many messages");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub RPC has too many messages");
    }
    auto out = std::vector<std::uint8_t>{};
    for (const auto& item : value.subscriptions) {
@@ -581,7 +583,7 @@ std::vector<std::uint8_t> codec::encode(const rpc& value, const options& opts) {
       detail::append_bytes(out, 3, encode_control_payload(*value.control_value, opts));
    }
    if (out.size() > opts.limits.max_rpc_size) {
-      exceptions::raise(exceptions::code::invalid_options, "GossipSub RPC exceeds max size");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub RPC exceeds max size");
    }
    return detail::wrap_message(out);
 }
@@ -594,7 +596,7 @@ rpc codec::decode(std::span<const std::uint8_t> bytes, const options& opts) {
    validate_options(opts);
    const auto payload = detail::unwrap_message(bytes, opts.limits.max_rpc_size);
    if (payload.size() > opts.limits.max_rpc_size) {
-      exceptions::raise(exceptions::code::codec_error, "GossipSub RPC exceeds max size");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub RPC exceeds max size");
    }
    auto out = rpc{};
    auto in = detail::reader{payload};
@@ -603,19 +605,19 @@ rpc codec::decode(std::span<const std::uint8_t> bytes, const options& opts) {
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub subscription must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub subscription must be bytes");
          }
          out.subscriptions.push_back(decode_subscription_payload(in.bytes(), opts));
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub publish message must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub publish message must be bytes");
          }
          out.messages.push_back(decode_message_payload(in.bytes(), opts));
          break;
       case 3:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "GossipSub control message must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub control message must be bytes");
          }
          out.control_value = decode_control_payload(in.bytes(), opts);
          break;
@@ -625,7 +627,7 @@ rpc codec::decode(std::span<const std::uint8_t> bytes, const options& opts) {
       }
    }
    if (out.subscriptions.size() > opts.limits.max_subscriptions || out.messages.size() > opts.limits.max_messages) {
-      exceptions::raise(exceptions::code::codec_error, "GossipSub RPC exceeds element limits");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub RPC exceeds element limits");
    }
    return out;
 }
@@ -653,7 +655,7 @@ std::vector<std::uint8_t> codec::message_id(const message& value) {
 
 void codec::sign_message(message& value, const fcl::crypto::asymmetric::private_key& key) {
    if (value.seqno.empty()) {
-      exceptions::raise(exceptions::code::invalid_options, "GossipSub signed message requires seqno");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub signed message requires seqno");
    }
    const auto public_value = public_key_from_crypto(key.get_public_key());
    value.from = make_peer_id(public_value);
@@ -663,7 +665,7 @@ void codec::sign_message(message& value, const fcl::crypto::asymmetric::private_
    try {
       value.signature = raw_signature(key.sign(payload));
    } catch (const fcl::exception::base& error) {
-      exceptions::raise(exceptions::code::invalid_identity, error.what());
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, error.what());
    }
 }
 

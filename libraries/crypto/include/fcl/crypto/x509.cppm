@@ -1,5 +1,6 @@
 module;
 
+#include <fcl/exception/macros.hpp>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -9,8 +10,23 @@ export module fcl.crypto.x509;
 
 import fcl.crypto.asymmetric;
 import fcl.crypto.types;
+export import fcl.exception.exception;
 
 export namespace fcl::crypto::x509 {
+
+namespace exceptions {
+
+enum class code : std::uint16_t {
+   invalid_key = 1,
+   backend_error = 2,
+};
+
+FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.x509")
+
+using invalid_key = fcl::exception::coded_exception<code, code::invalid_key>;
+using backend_error = fcl::exception::coded_exception<code, code::backend_error>;
+
+} // namespace exceptions
 
 class certificate {
  public:

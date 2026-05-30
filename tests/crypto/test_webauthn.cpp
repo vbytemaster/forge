@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 import fcl.exception.exception;
@@ -296,8 +297,9 @@ BOOST_AUTO_TEST_CASE(challenge_junk) try {
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
-                            return std::string(e.what()).find("sha256: size mismatch") != std::string::npos;
+                         fcl::crypto::digest::exceptions::invalid_size,
+                         [](const fcl::crypto::digest::exceptions::invalid_size& e) {
+                            return e.code().category().name() == std::string_view{"fcl.crypto.digest"};
                          });
 }
 FCL_LOG_AND_RETHROW();
@@ -525,8 +527,9 @@ BOOST_AUTO_TEST_CASE(missing_challenge) try {
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
-                            return std::string(e.what()).find("sha256: size mismatch") != std::string::npos;
+                         fcl::crypto::digest::exceptions::invalid_size,
+                         [](const fcl::crypto::digest::exceptions::invalid_size& e) {
+                            return e.code().category().name() == std::string_view{"fcl.crypto.digest"};
                          });
 }
 FCL_LOG_AND_RETHROW();
@@ -572,8 +575,9 @@ BOOST_AUTO_TEST_CASE(not_json_object) try {
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
-                            return std::string(e.what()).find("Failed to parse client data JSON") != std::string::npos;
+                         fcl::crypto::webauthn::exceptions::invalid_client_data,
+                         [](const fcl::crypto::webauthn::exceptions::invalid_client_data& e) {
+                            return e.code().category().name() == std::string_view{"fcl.crypto.webauthn"};
                          });
 }
 FCL_LOG_AND_RETHROW();
@@ -676,8 +680,9 @@ BOOST_AUTO_TEST_CASE(empty_json) try {
    memcpy(auth_data.data(), test_origin_hash().data(), sizeof(test_origin_hash()));
 
    BOOST_CHECK_EXCEPTION(make_webauthn_sig(test_priv(), auth_data, json).recover(challenge_digest(), true),
-                         fcl::exception::context_error, [](const fcl::exception::context_error& e) {
-                            return std::string(e.what()).find("Failed to parse client data JSON") != std::string::npos;
+                         fcl::crypto::webauthn::exceptions::invalid_client_data,
+                         [](const fcl::crypto::webauthn::exceptions::invalid_client_data& e) {
+                            return e.code().category().name() == std::string_view{"fcl.crypto.webauthn"};
                          });
 }
 FCL_LOG_AND_RETHROW();

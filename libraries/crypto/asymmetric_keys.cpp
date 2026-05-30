@@ -1,4 +1,6 @@
 module;
+
+#include <fcl/exception/macros.hpp>
 #include <algorithm>
 #include <compare>
 #include <cstddef>
@@ -10,7 +12,6 @@ module;
 module fcl.crypto.asymmetric;
 
 import fcl.core.utility;
-import fcl.crypto.exceptions;
 import fcl.exception.exception;
 import fcl.variant.static_variant;
 
@@ -79,7 +80,7 @@ struct recovery_visitor : fcl::visitor<public_key::storage_type> {
       if constexpr (requires { s.recover(_digest, _check_canonical); }) {
          return public_key::storage_type(s.recover(_digest, _check_canonical));
       } else {
-         exceptions::raise(exceptions::code::invalid_options, "signature type does not support public key recovery");
+         FCL_THROW_EXCEPTION(exceptions::invalid_options, "signature type does not support public key recovery");
       }
    }
 
@@ -153,7 +154,7 @@ bool public_key::valid() const {
 
 bool public_key::verify(std::span<const std::uint8_t> message, const signature& sig) const {
    if (_storage.index() != sig.storage().index()) {
-      exceptions::raise(exceptions::code::invalid_key, "signature algorithm does not match public key");
+      FCL_THROW_EXCEPTION(exceptions::invalid_key, "signature algorithm does not match public key");
    }
 
    return std::visit(

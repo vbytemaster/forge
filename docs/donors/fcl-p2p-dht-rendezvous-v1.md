@@ -57,8 +57,10 @@ register/discover against rust-libp2p.
 - Global AutoRelay discovery policy over DHT/rendezvous.
 - Go Rendezvous behaviour proof is not claimed because no official go-libp2p
   rendezvous behaviour donor is present in the workspace.
-- GossipSub/pubsub.
 
 These gaps are also tracked in `tests/libp2p_interop/donor_cases.json`.
 They must not be described as supported until matching donor-derived tests and
 live artifacts are produced.
+
+GossipSub/pubsub is tracked separately in
+`docs/donors/fcl-p2p-gossipsub-v1.md` and is no longer a DHT/Rendezvous gap.

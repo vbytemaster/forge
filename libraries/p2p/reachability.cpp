@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <cstdint>
 #include <cstddef>
 #include <span>
@@ -84,19 +86,19 @@ namespace {
       switch (field) {
       case 1:
          if (type != detail::wire_type::varint) {
-            exceptions::raise(exceptions::code::codec_error, "AutoNAT status must be varint");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT status must be varint");
          }
          out.status = static_cast<reachability::dial_status>(in.read_varint());
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "AutoNAT status text must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT status text must be bytes");
          }
          out.status_text = in.string();
          break;
       case 3:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "AutoNAT observed address must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT observed address must be bytes");
          }
          out.endpoint = endpoint_from_bytes(in.bytes());
          break;
@@ -115,7 +117,7 @@ namespace {
    if (value == static_cast<std::uint16_t>(reachability::message::message_kind::dial_response)) {
       return reachability::message::message_kind::dial_response;
    }
-   exceptions::raise(exceptions::code::codec_error, "unknown AutoNAT v1 message type");
+   FCL_THROW_EXCEPTION(exceptions::codec_error, "unknown AutoNAT v1 message type");
 }
 
 [[nodiscard]] reachability::v2::dial_status checked_v2_dial_status(std::uint64_t value) {
@@ -126,7 +128,7 @@ namespace {
    case reachability::v2::dial_status::ok:
       return static_cast<reachability::v2::dial_status>(value);
    }
-   exceptions::raise(exceptions::code::codec_error, "unknown AutoNAT v2 dial status");
+   FCL_THROW_EXCEPTION(exceptions::codec_error, "unknown AutoNAT v2 dial status");
 }
 
 [[nodiscard]] reachability::v2::response_status checked_v2_response_status(std::uint64_t value) {
@@ -137,14 +139,14 @@ namespace {
    case reachability::v2::response_status::ok:
       return static_cast<reachability::v2::response_status>(value);
    }
-   exceptions::raise(exceptions::code::codec_error, "unknown AutoNAT v2 response status");
+   FCL_THROW_EXCEPTION(exceptions::codec_error, "unknown AutoNAT v2 response status");
 }
 
 [[nodiscard]] reachability::v2::dial_back_status checked_v2_dial_back_status(std::uint64_t value) {
    if (value == static_cast<std::uint16_t>(reachability::v2::dial_back_status::ok)) {
       return reachability::v2::dial_back_status::ok;
    }
-   exceptions::raise(exceptions::code::codec_error, "unknown AutoNAT v2 dial-back status");
+   FCL_THROW_EXCEPTION(exceptions::codec_error, "unknown AutoNAT v2 dial-back status");
 }
 
 [[nodiscard]] reachability::v2::dial_request decode_v2_dial_request(std::span<const std::uint8_t> bytes,
@@ -156,16 +158,16 @@ namespace {
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "AutoNAT v2 address must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT v2 address must be bytes");
          }
          out.endpoints.push_back(endpoint_from_bytes(in.bytes()));
          if (out.endpoints.size() > options.max_endpoints) {
-            exceptions::raise(exceptions::code::codec_error, "AutoNAT v2 request has too many addresses");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT v2 request has too many addresses");
          }
          break;
       case 2:
          if (type != detail::wire_type::fixed64) {
-            exceptions::raise(exceptions::code::codec_error, "AutoNAT v2 nonce must be fixed64");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT v2 nonce must be fixed64");
          }
          out.nonce = in.fixed64();
          break;
@@ -175,7 +177,7 @@ namespace {
       }
    }
    if (out.nonce == 0 || out.endpoints.empty()) {
-      exceptions::raise(exceptions::code::codec_error, "AutoNAT v2 request missing nonce or address");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT v2 request missing nonce or address");
    }
    return out;
 }
@@ -183,7 +185,7 @@ namespace {
 [[nodiscard]] std::vector<std::uint8_t> encode_v2_dial_request(const reachability::v2::dial_request& value,
                                                                reachability::options options) {
    if (value.nonce == 0 || value.endpoints.empty() || value.endpoints.size() > options.max_endpoints) {
-      exceptions::raise(exceptions::code::invalid_options, "invalid AutoNAT v2 dial request");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "invalid AutoNAT v2 dial request");
    }
    auto out = std::vector<std::uint8_t>{};
    for (const auto& endpoint : value.endpoints) {
@@ -202,20 +204,20 @@ namespace {
       switch (field) {
       case 1:
          if (type != detail::wire_type::varint) {
-            exceptions::raise(exceptions::code::codec_error, "AutoNAT v2 response status must be varint");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT v2 response status must be varint");
          }
          out.status = checked_v2_response_status(in.read_varint());
          saw_status = true;
          break;
       case 2:
          if (type != detail::wire_type::varint) {
-            exceptions::raise(exceptions::code::codec_error, "AutoNAT v2 response address index must be varint");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT v2 response address index must be varint");
          }
          out.index = static_cast<std::uint32_t>(in.read_varint());
          break;
       case 3:
          if (type != detail::wire_type::varint) {
-            exceptions::raise(exceptions::code::codec_error, "AutoNAT v2 dial status must be varint");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT v2 dial status must be varint");
          }
          out.dial_status = checked_v2_dial_status(in.read_varint());
          break;
@@ -225,7 +227,7 @@ namespace {
       }
    }
    if (!saw_status) {
-      exceptions::raise(exceptions::code::codec_error, "AutoNAT v2 response missing status");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT v2 response missing status");
    }
    return out;
 }
@@ -256,14 +258,14 @@ namespace {
       }
    }
    if (out.bytes == 0) {
-      exceptions::raise(exceptions::code::codec_error, "AutoNAT v2 data request missing byte count");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT v2 data request missing byte count");
    }
    return out;
 }
 
 [[nodiscard]] std::vector<std::uint8_t> encode_v2_dial_data_request(const reachability::v2::dial_data_request& value) {
    if (value.bytes == 0) {
-      exceptions::raise(exceptions::code::invalid_options, "invalid AutoNAT v2 data request");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "invalid AutoNAT v2 data request");
    }
    auto out = std::vector<std::uint8_t>{};
    detail::append_uint64(out, 1, value.index);
@@ -279,7 +281,7 @@ namespace {
       const auto [field, type] = in.key();
       if (field == 1) {
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "AutoNAT v2 data response must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT v2 data response must be bytes");
          }
          out.data = in.bytes();
       } else {
@@ -287,7 +289,7 @@ namespace {
       }
    }
    if (out.data.empty() || out.data.size() > options.max_data_response_size) {
-      exceptions::raise(exceptions::code::codec_error, "AutoNAT v2 data response has invalid data size");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT v2 data response has invalid data size");
    }
    return out;
 }
@@ -295,7 +297,7 @@ namespace {
 [[nodiscard]] std::vector<std::uint8_t> encode_v2_dial_data_response(const reachability::v2::dial_data_response& value,
                                                                      reachability::options options) {
    if (value.data.empty() || value.data.size() > options.max_data_response_size) {
-      exceptions::raise(exceptions::code::invalid_options, "invalid AutoNAT v2 data response");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "invalid AutoNAT v2 data response");
    }
    auto out = std::vector<std::uint8_t>{};
    detail::append_bytes(out, 1, value.data);
@@ -324,19 +326,19 @@ namespace {
       switch (field) {
       case 1:
          if (type != detail::wire_type::varint) {
-            exceptions::raise(exceptions::code::codec_error, "AutoNAT message type must be varint");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT message type must be varint");
          }
          out.kind = checked_kind(in.read_varint());
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "AutoNAT dial peer must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT dial peer must be bytes");
          }
          out.peer = decode_peer_info(in.bytes());
          break;
       case 3:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "AutoNAT dial response must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT dial response must be bytes");
          }
          out.response = decode_dial_response(in.bytes());
          break;
@@ -354,25 +356,25 @@ namespace {
    switch (value.type) {
    case reachability::v2::message::kind::dial_request:
       if (!value.dial_request) {
-         exceptions::raise(exceptions::code::invalid_options, "AutoNAT v2 message missing dial request");
+         FCL_THROW_EXCEPTION(exceptions::invalid_options, "AutoNAT v2 message missing dial request");
       }
       detail::append_bytes(out, 1, encode_v2_dial_request(*value.dial_request, options));
       break;
    case reachability::v2::message::kind::dial_response:
       if (!value.dial_response) {
-         exceptions::raise(exceptions::code::invalid_options, "AutoNAT v2 message missing dial response");
+         FCL_THROW_EXCEPTION(exceptions::invalid_options, "AutoNAT v2 message missing dial response");
       }
       detail::append_bytes(out, 2, encode_v2_dial_response(*value.dial_response));
       break;
    case reachability::v2::message::kind::dial_data_request:
       if (!value.dial_data_request) {
-         exceptions::raise(exceptions::code::invalid_options, "AutoNAT v2 message missing dial data request");
+         FCL_THROW_EXCEPTION(exceptions::invalid_options, "AutoNAT v2 message missing dial data request");
       }
       detail::append_bytes(out, 3, encode_v2_dial_data_request(*value.dial_data_request));
       break;
    case reachability::v2::message::kind::dial_data_response:
       if (!value.dial_data_response) {
-         exceptions::raise(exceptions::code::invalid_options, "AutoNAT v2 message missing dial data response");
+         FCL_THROW_EXCEPTION(exceptions::invalid_options, "AutoNAT v2 message missing dial data response");
       }
       detail::append_bytes(out, 4, encode_v2_dial_data_response(*value.dial_data_response, options));
       break;
@@ -416,14 +418,14 @@ namespace {
       }
    }
    if (seen != 1U) {
-      exceptions::raise(exceptions::code::codec_error, "AutoNAT v2 message must contain exactly one payload");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT v2 message must contain exactly one payload");
    }
    return out;
 }
 
 [[nodiscard]] std::vector<std::uint8_t> make_v2_dial_back_payload(const reachability::v2::dial_back& value) {
    if (value.nonce == 0) {
-      exceptions::raise(exceptions::code::invalid_options, "AutoNAT v2 dial-back nonce is required");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "AutoNAT v2 dial-back nonce is required");
    }
    auto out = std::vector<std::uint8_t>{};
    detail::append_fixed64(out, 1, value.nonce);
@@ -437,7 +439,7 @@ namespace {
       const auto [field, type] = in.key();
       if (field == 1) {
          if (type != detail::wire_type::fixed64) {
-            exceptions::raise(exceptions::code::codec_error, "AutoNAT v2 dial-back nonce must be fixed64");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT v2 dial-back nonce must be fixed64");
          }
          out.nonce = in.fixed64();
       } else {
@@ -445,7 +447,7 @@ namespace {
       }
    }
    if (out.nonce == 0) {
-      exceptions::raise(exceptions::code::codec_error, "AutoNAT v2 dial-back missing nonce");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT v2 dial-back missing nonce");
    }
    return out;
 }
@@ -465,7 +467,7 @@ make_v2_dial_back_response_payload(const reachability::v2::dial_back_response& v
       const auto [field, type] = in.key();
       if (field == 1) {
          if (type != detail::wire_type::varint) {
-            exceptions::raise(exceptions::code::codec_error, "AutoNAT v2 dial-back response status must be varint");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT v2 dial-back response status must be varint");
          }
          out.status = checked_v2_dial_back_status(in.read_varint());
          saw_status = true;
@@ -474,7 +476,7 @@ make_v2_dial_back_response_payload(const reachability::v2::dial_back_response& v
       }
    }
    if (!saw_status) {
-      exceptions::raise(exceptions::code::codec_error, "AutoNAT v2 dial-back response missing status");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "AutoNAT v2 dial-back response missing status");
    }
    return out;
 }

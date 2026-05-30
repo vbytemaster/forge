@@ -46,7 +46,6 @@ import fcl.p2p.reachability;
 import fcl.p2p.rendezvous;
 import fcl.p2p.relay;
 import fcl.p2p.stream;
-import fcl.quic.endpoint;
 
 namespace {
 
@@ -382,13 +381,16 @@ std::string endpoint_json(const fcl::p2p::endpoint& endpoint) {
    return "\"" + json_escape(endpoint.to_string()) + "\"";
 }
 
-fcl::p2p::endpoint p2p_endpoint_for(const fcl::quic::endpoint& value, const fcl::p2p::peer_id& peer) {
-   return fcl::p2p::endpoint{
-       .kind = fcl::p2p::endpoint::address_kind::ip4,
-       .host = value.host,
-       .port = value.port,
-       .peer = peer,
-   };
+fcl::p2p::endpoint loopback_quic_endpoint(std::uint16_t port = 0) {
+   return fcl::p2p::endpoint{.address = {.address = fcl::p2p::endpoint::address_kind::ip4,
+                                         .protocol = fcl::p2p::endpoint::protocol_kind::quic_v1,
+                                         .host = "127.0.0.1",
+                                         .port = port}};
+}
+
+fcl::p2p::endpoint p2p_endpoint_for(fcl::p2p::endpoint value, const fcl::p2p::peer_id& peer) {
+   value.peer = peer;
+   return value;
 }
 
 fcl::p2p::dht::key provider_key() {
@@ -550,7 +552,7 @@ int listen_mode(const std::map<std::string, std::string>& args) {
    } else if (scenario == "gossipsub_mixed_mesh_stress") {
       stress_state = register_pubsub_stress_listener(runtime, value);
    }
-   fcl::asio::blocking::run(runtime, value.async_listen(fcl::quic::endpoint{.host = "127.0.0.1", .port = 0}));
+   fcl::asio::blocking::run(runtime, value.async_listen(loopback_quic_endpoint()));
    const auto local = value.local_endpoint();
    if (!local) {
       throw std::runtime_error{"FCL fixture did not expose a local endpoint"};
@@ -572,17 +574,15 @@ int listen_mode(const std::map<std::string, std::string>& args) {
                if (!remote.peer || *remote.peer == value.local_peer()) {
                   continue;
                }
-               value.peers().learn_endpoint(*remote.peer, remote.quic_endpoint(),
+               value.peers().learn_endpoint(*remote.peer, remote,
                                             fcl::p2p::capability_set{.bits = fcl::p2p::capabilities::direct_quic |
                                                                              fcl::p2p::capabilities::pubsub});
                try {
                   (void)fcl::asio::blocking::run(
-                      runtime, value.async_connect(remote.quic_endpoint(),
-                                                   fcl::p2p::node::connect_options{
-                                                       .expected_peer = *remote.peer,
-                                                       .allow_relay = false,
-                                                       .allow_hole_punch = false,
-                                                   }));
+                      runtime, value.async_connect(remote,
+                                                   fcl::p2p::node::connect_options{.expected_peer = *remote.peer,
+                                                                                   .allow_relay = false,
+                                                                                   .allow_hole_punch = false}));
                } catch (const fcl::exception::base&) {
                }
             }
@@ -612,11 +612,11 @@ int destination_mode(const std::map<std::string, std::string>& args) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
    auto value = fcl::p2p::node{runtime, node_options(required(args, "store-dir"))};
    register_echo(value);
-   fcl::asio::blocking::run(runtime, value.async_listen(fcl::quic::endpoint{.host = "127.0.0.1", .port = 0}));
+   fcl::asio::blocking::run(runtime, value.async_listen(loopback_quic_endpoint()));
 
    const auto relay_addr = fcl::p2p::parse_endpoint(required(args, "relay-addr"));
    const auto relay_peer = fcl::p2p::peer_id::from_string(required(args, "relay-peer-id"));
-   value.peers().learn_endpoint(relay_peer, relay_addr.quic_endpoint(),
+   value.peers().learn_endpoint(relay_peer, relay_addr,
                                 fcl::p2p::capability_set{.bits = fcl::p2p::capabilities::direct_quic |
                                                                  fcl::p2p::capabilities::relay |
                                                                  fcl::p2p::capabilities::relay_reservation});
@@ -731,7 +731,7 @@ std::string run_scenario(fcl::asio::runtime& runtime, fcl::p2p::node& value, std
                                                                 },
                                                                 std::vector<std::uint8_t>{
                                                                     payload.begin(), payload.end()}));
-      std::this_thread::sleep_for(500ms);
+      std::this_thread::sleep_for(2s);
       return "\"topic\":\"" + json_escape(message.subject.value) + "\",\"payload_bytes\":" +
              std::to_string(message.data.size()) + ",\"signed\":" +
              std::string{message.signature.empty() ? "false" : "true"};
@@ -760,11 +760,11 @@ std::string run_scenario(fcl::asio::runtime& runtime, fcl::p2p::node& value, std
 int dial_mode(const std::map<std::string, std::string>& args) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
    auto value = fcl::p2p::node{runtime, node_options(required(args, "store-dir"))};
-   fcl::asio::blocking::run(runtime, value.async_listen(fcl::quic::endpoint{.host = "127.0.0.1", .port = 0}));
+   fcl::asio::blocking::run(runtime, value.async_listen(loopback_quic_endpoint()));
 
    auto remote = fcl::p2p::parse_endpoint(required(args, "addr"));
    auto peer = fcl::p2p::peer_id::from_string(required(args, "peer-id"));
-   value.peers().learn_endpoint(peer, remote.quic_endpoint(),
+   value.peers().learn_endpoint(peer, remote,
                                 fcl::p2p::capability_set{.bits = fcl::p2p::capabilities::direct_quic |
                                                                  fcl::p2p::capabilities::peer_exchange |
                                                                  fcl::p2p::capabilities::autonat |
@@ -787,12 +787,12 @@ int dial_mode(const std::map<std::string, std::string>& args) {
 int dial_relay_mode(const std::map<std::string, std::string>& args) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
    auto value = fcl::p2p::node{runtime, node_options(required(args, "store-dir"))};
-   fcl::asio::blocking::run(runtime, value.async_listen(fcl::quic::endpoint{.host = "127.0.0.1", .port = 0}));
+   fcl::asio::blocking::run(runtime, value.async_listen(loopback_quic_endpoint()));
 
    const auto relay_addr = fcl::p2p::parse_endpoint(required(args, "relay-addr"));
    const auto relay_peer = fcl::p2p::peer_id::from_string(required(args, "relay-peer-id"));
    const auto target_peer = fcl::p2p::peer_id::from_string(required(args, "peer-id"));
-   value.peers().learn_endpoint(relay_peer, relay_addr.quic_endpoint(),
+   value.peers().learn_endpoint(relay_peer, relay_addr,
                                 fcl::p2p::capability_set{.bits = fcl::p2p::capabilities::direct_quic |
                                                                  fcl::p2p::capabilities::relay |
                                                                  fcl::p2p::capabilities::relay_reservation |
@@ -870,9 +870,9 @@ int topology_mode(const std::map<std::string, std::string>& args) {
    auto destination = fcl::p2p::node{runtime, std::move(destination_options)};
    register_echo(destination);
 
-   fcl::asio::blocking::run(runtime, relay.async_listen(fcl::quic::endpoint{.host = "127.0.0.1", .port = 0}));
-   fcl::asio::blocking::run(runtime, source.async_listen(fcl::quic::endpoint{.host = "127.0.0.1", .port = 0}));
-   fcl::asio::blocking::run(runtime, destination.async_listen(fcl::quic::endpoint{.host = "127.0.0.1", .port = 0}));
+   fcl::asio::blocking::run(runtime, relay.async_listen(loopback_quic_endpoint()));
+   fcl::asio::blocking::run(runtime, source.async_listen(loopback_quic_endpoint()));
+   fcl::asio::blocking::run(runtime, destination.async_listen(loopback_quic_endpoint()));
 
    const auto relay_endpoint = relay.local_endpoint();
    const auto source_endpoint = source.local_endpoint();

@@ -85,8 +85,8 @@ const ec_group& get_curve() {
 }
 
 void raise_openssl_failure(const char* message) {
-   FCL_THROW("OpenSSL error", fcl::exception::ctx("message", message),
-             fcl::exception::ctx("code", static_cast<uint32_t>(ERR_get_error())));
+   FCL_THROW_EXCEPTION(exceptions::backend_error, "OpenSSL error", fcl::exception::ctx("message", message),
+                       fcl::exception::ctx("code", static_cast<uint32_t>(ERR_get_error())));
 }
 
 bool is_empty(const public_key_data& key) {
@@ -318,7 +318,7 @@ std::optional<public_key_data> recover_public_key_from_sig(ECDSA_SIG* sig, const
 public_key_data recover_public_key_data(const compact_signature& c, const fcl::crypto::sha256& digest, bool check_canonical) {
    int nV = c.data()[0];
    if (nV < 27 || nV >= 35)
-      FCL_THROW("unable to reconstruct public key from signature");
+      FCL_THROW_EXCEPTION(exceptions::invalid_signature, "unable to reconstruct public key from signature");
    ecdsa_sig sig(ECDSA_SIG_new());
    BIGNUM* r = BN_new();
    BIGNUM* s = BN_new();
@@ -331,13 +331,13 @@ public_key_data recover_public_key_data(const compact_signature& c, const fcl::c
    FCL_ASSERT(EC_GROUP_get_order(group, order, ctx));
    BN_rshift1(halforder, order);
    if (check_canonical && BN_cmp(s, halforder) > 0)
-      FCL_THROW("invalid high s-value encountered in P-256 signature");
+      FCL_THROW_EXCEPTION(exceptions::invalid_signature, "invalid high s-value encountered in P-256 signature");
    ECDSA_SIG_set0(sig, r, s);
    if (nV >= 31)
       nV -= 4;
    auto recovered = recover_public_key_from_sig(sig, digest, nV - 27, false);
    if (!recovered)
-      FCL_THROW("unable to reconstruct public key from signature");
+      FCL_THROW_EXCEPTION(exceptions::invalid_signature, "unable to reconstruct public key from signature");
    return *recovered;
 }
 
@@ -362,7 +362,7 @@ compact_signature signature_from_ecdsa(const public_key_data& pub_data, fcl::cry
    const int nBitsR = BN_num_bits(r);
    const int nBitsS = BN_num_bits(s);
    if (nBitsR > 256 || nBitsS > 256)
-      FCL_THROW("Unable to sign");
+      FCL_THROW_EXCEPTION(exceptions::backend_error, "unable to sign");
 
    ECDSA_SIG_set0(sig, r, s);
 
@@ -375,7 +375,7 @@ compact_signature signature_from_ecdsa(const public_key_data& pub_data, fcl::cry
       }
    }
    if (nRecId == -1)
-      FCL_THROW("unable to construct recoverable key");
+      FCL_THROW_EXCEPTION(exceptions::backend_error, "unable to construct recoverable key");
 
    csig.data()[0] = nRecId + 27 + 4;
    BN_bn2bin(r, &csig.data()[33 - (nBitsR + 7) / 8]);
@@ -407,7 +407,7 @@ public_key public_key::add(const fcl::crypto::sha256& digest) const {
       ssl_bignum order;
       EC_GROUP_get_order(group, order, ctx);
       if (BN_cmp(digest_bn, order) > 0)
-         FCL_THROW("digest > group order");
+         FCL_THROW_EXCEPTION(exceptions::invalid_options, "digest is greater than group order");
 
       ec_point master(EC_POINT_new(group));
       FCL_ASSERT(EC_POINT_oct2point(group, master, reinterpret_cast<const unsigned char*>(my->_key.data()),
@@ -419,7 +419,7 @@ public_key public_key::add(const fcl::crypto::sha256& digest) const {
       ec_point result(EC_POINT_new(group));
       FCL_ASSERT(EC_POINT_add(group, result, digest_point, master, ctx));
       if (EC_POINT_is_at_infinity(group, result))
-         FCL_THROW("point at  infinity");
+         FCL_THROW_EXCEPTION(exceptions::invalid_options, "point at infinity");
       return public_key(point_to_public_key_data(result));
    }
    FCL_CAPTURE_AND_RETHROW("digest: ${digest}", fcl::exception::ctx("digest", digest));

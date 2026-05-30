@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <openssl/rand.h>
 
 #include <cstdint>
@@ -8,14 +10,12 @@ module;
 
 module fcl.crypto.random;
 
-import fcl.crypto.exceptions;
-
 namespace fcl::crypto {
 namespace {
 
 void require_rand_size(std::size_t size) {
    if (size > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-      exceptions::raise(exceptions::code::invalid_options, "random byte request is too large");
+      FCL_THROW_EXCEPTION(random::exceptions::invalid_options, "random byte request is too large");
    }
 }
 
@@ -24,7 +24,7 @@ void require_rand_size(std::size_t size) {
 void fill_random(std::span<std::uint8_t> out) {
    require_rand_size(out.size());
    if (!out.empty() && RAND_bytes(out.data(), static_cast<int>(out.size())) != 1) {
-      exceptions::raise(exceptions::code::backend_error, "OpenSSL RAND_bytes failed");
+      FCL_THROW_EXCEPTION(random::exceptions::backend_error, "OpenSSL RAND_bytes failed");
    }
 }
 

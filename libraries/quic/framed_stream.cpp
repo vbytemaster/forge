@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -31,7 +33,7 @@ void write_u32_be(std::vector<std::uint8_t>& out, std::uint32_t value) {
 
 std::vector<std::uint8_t> encode_frame(std::span<const std::uint8_t> payload, frame_codec_options options) {
    if (payload.size() > options.max_frame_size) {
-      exceptions::raise(exceptions::code::frame_too_large, "QUIC frame payload exceeds max_frame_size");
+      FCL_THROW_EXCEPTION(exceptions::frame_too_large, "QUIC frame payload exceeds max_frame_size");
    }
 
    auto out = std::vector<std::uint8_t>{};
@@ -48,7 +50,7 @@ frame_decode_result decode_frame(std::span<const std::uint8_t> bytes, frame_code
 
    const auto size = read_u32_be(std::span<const std::uint8_t, header_size>{bytes.data(), header_size});
    if (size > options.max_frame_size) {
-      exceptions::raise(exceptions::code::frame_too_large, "QUIC frame payload exceeds max_frame_size");
+      FCL_THROW_EXCEPTION(exceptions::frame_too_large, "QUIC frame payload exceeds max_frame_size");
    }
 
    const auto total = header_size + static_cast<std::size_t>(size);

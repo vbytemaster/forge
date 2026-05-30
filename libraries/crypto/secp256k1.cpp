@@ -141,7 +141,7 @@ public_key::public_key(const compact_signature& c, const fcl::crypto::sha256& di
     : my(std::make_unique<detail::public_key_impl>()) {
    int nV = c.data()[0];
    if (nV < 27 || nV >= 35)
-      FCL_THROW("unable to reconstruct public key from signature");
+      FCL_THROW_EXCEPTION(exceptions::invalid_signature, "unable to reconstruct public key from signature");
 
    if (check_canonical) {
       FCL_ASSERT(is_canonical(c), "signature is not canonical");

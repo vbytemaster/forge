@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -39,7 +41,7 @@ void validate_options(const dht::options& opts) {
    if (opts.replication == 0 || opts.alpha == 0 || opts.max_message_size == 0 || opts.max_record_size == 0 ||
        opts.max_closer_peers == 0 || opts.max_provider_peers == 0 || opts.query_timeout.count() <= 0 ||
        opts.refresh_interval.count() <= 0 || opts.provider_record_ttl.count() <= 0) {
-      exceptions::raise(exceptions::code::invalid_options, "invalid DHT options");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "invalid DHT options");
    }
 }
 
@@ -53,7 +55,7 @@ void validate_options(const dht::options& opts) {
    case dht::message_type::ping:
       return static_cast<dht::message_type>(value);
    }
-   exceptions::raise(exceptions::code::codec_error, "unknown DHT message type");
+   FCL_THROW_EXCEPTION(exceptions::codec_error, "unknown DHT message type");
 }
 
 [[nodiscard]] dht::connection_type checked_connection_type(std::uint64_t value) {
@@ -64,15 +66,15 @@ void validate_options(const dht::options& opts) {
    case dht::connection_type::cannot_connect:
       return static_cast<dht::connection_type>(value);
    }
-   exceptions::raise(exceptions::code::codec_error, "unknown DHT peer connection type");
+   FCL_THROW_EXCEPTION(exceptions::codec_error, "unknown DHT peer connection type");
 }
 
 [[nodiscard]] std::vector<std::uint8_t> encode_record_payload(const dht::record& value, const dht::options& opts) {
    if (value.key_value.bytes.empty()) {
-      exceptions::raise(exceptions::code::invalid_options, "DHT record key must not be empty");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "DHT record key must not be empty");
    }
    if (value.value.size() > opts.max_record_size) {
-      exceptions::raise(exceptions::code::invalid_options, "DHT record exceeds max size");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "DHT record exceeds max size");
    }
    auto out = std::vector<std::uint8_t>{};
    detail::append_bytes(out, 1, value.key_value.bytes);
@@ -97,34 +99,34 @@ void validate_options(const dht::options& opts) {
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "DHT record key must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT record key must be bytes");
          }
          out.key_value = dht::key{.bytes = in.bytes()};
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "DHT record value must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT record value must be bytes");
          }
          out.value = in.bytes();
          if (out.value.size() > opts.max_record_size) {
-            exceptions::raise(exceptions::code::codec_error, "DHT record exceeds max size");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT record exceeds max size");
          }
          break;
       case 5:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "DHT record timeReceived must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT record timeReceived must be bytes");
          }
          out.time_received = in.string();
          break;
       case 666:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "DHT record publisher must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT record publisher must be bytes");
          }
          out.publisher = peer_id::from_bytes(in.bytes());
          break;
       case 777:
          if (type != detail::wire_type::varint) {
-            exceptions::raise(exceptions::code::codec_error, "DHT record ttl must be varint");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT record ttl must be varint");
          }
          out.ttl = std::chrono::seconds{static_cast<std::int64_t>(in.read_varint())};
          break;
@@ -134,14 +136,14 @@ void validate_options(const dht::options& opts) {
       }
    }
    if (out.key_value.bytes.empty()) {
-      exceptions::raise(exceptions::code::codec_error, "DHT record missing key");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT record missing key");
    }
    return out;
 }
 
 void append_peer(std::vector<std::uint8_t>& out, std::uint32_t field, const dht::peer& value) {
    if (!valid_peer_id(value.id)) {
-      exceptions::raise(exceptions::code::invalid_options, "DHT peer has invalid Peer ID");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "DHT peer has invalid Peer ID");
    }
    auto encoded = std::vector<std::uint8_t>{};
    detail::append_bytes(encoded, 1, value.id.to_bytes());
@@ -161,20 +163,20 @@ void append_peer(std::vector<std::uint8_t>& out, std::uint32_t field, const dht:
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "DHT peer id must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT peer id must be bytes");
          }
          out.id = peer_id::from_bytes(in.bytes());
          saw_id = true;
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "DHT peer address must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT peer address must be bytes");
          }
          out.endpoints.push_back(endpoint_from_bytes(in.bytes()));
          break;
       case 3:
          if (type != detail::wire_type::varint) {
-            exceptions::raise(exceptions::code::codec_error, "DHT peer connection type must be varint");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT peer connection type must be varint");
          }
          out.connection = checked_connection_type(in.read_varint());
          break;
@@ -184,7 +186,7 @@ void append_peer(std::vector<std::uint8_t>& out, std::uint32_t field, const dht:
       }
    }
    if (!saw_id) {
-      exceptions::raise(exceptions::code::codec_error, "DHT peer missing id");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT peer missing id");
    }
    return out;
 }
@@ -203,13 +205,13 @@ void append_peer(std::vector<std::uint8_t>& out, std::uint32_t field, const dht:
       detail::append_bytes(out, 3, record);
    }
    if (value.closer_peers.size() > opts.max_closer_peers) {
-      exceptions::raise(exceptions::code::invalid_options, "DHT message has too many closer peers");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "DHT message has too many closer peers");
    }
    for (const auto& peer : value.closer_peers) {
       append_peer(out, 8, peer);
    }
    if (value.provider_peers.size() > opts.max_provider_peers) {
-      exceptions::raise(exceptions::code::invalid_options, "DHT message has too many provider peers");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "DHT message has too many provider peers");
    }
    for (const auto& peer : value.provider_peers) {
       append_peer(out, 9, peer);
@@ -243,45 +245,45 @@ dht::message dht::codec::decode(std::span<const std::uint8_t> bytes, const dht::
       switch (field) {
       case 1:
          if (type != detail::wire_type::varint) {
-            exceptions::raise(exceptions::code::codec_error, "DHT message type must be varint");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT message type must be varint");
          }
          out.type = checked_message_type(in.read_varint());
          saw_type = true;
          break;
       case 10:
          if (type != detail::wire_type::varint) {
-            exceptions::raise(exceptions::code::codec_error, "DHT cluster level must be varint");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT cluster level must be varint");
          }
          out.cluster_level_raw = static_cast<std::int32_t>(in.read_varint());
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "DHT key must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT key must be bytes");
          }
          out.key_value = dht::key{.bytes = in.bytes()};
          break;
       case 3:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "DHT record must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT record must be bytes");
          }
          out.record_value = decode_record_payload(in.bytes(), opts);
          break;
       case 8:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "DHT closer peer must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT closer peer must be bytes");
          }
          out.closer_peers.push_back(decode_peer(in.bytes()));
          if (out.closer_peers.size() > opts.max_closer_peers) {
-            exceptions::raise(exceptions::code::codec_error, "DHT message has too many closer peers");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT message has too many closer peers");
          }
          break;
       case 9:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "DHT provider peer must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT provider peer must be bytes");
          }
          out.provider_peers.push_back(decode_peer(in.bytes()));
          if (out.provider_peers.size() > opts.max_provider_peers) {
-            exceptions::raise(exceptions::code::codec_error, "DHT message has too many provider peers");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT message has too many provider peers");
          }
          break;
       default:
@@ -290,7 +292,7 @@ dht::message dht::codec::decode(std::span<const std::uint8_t> bytes, const dht::
       }
    }
    if (!saw_type) {
-      exceptions::raise(exceptions::code::codec_error, "DHT message missing type");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "DHT message missing type");
    }
    return out;
 }

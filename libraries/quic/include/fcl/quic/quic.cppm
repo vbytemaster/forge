@@ -11,4 +11,5 @@ export import fcl.quic.metrics;
 export import fcl.quic.options;
 export import fcl.quic.runtime;
 export import fcl.quic.security;
+export import fcl.quic.transport;
 export import fcl.quic.api;

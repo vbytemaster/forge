@@ -1,4 +1,5 @@
 module;
+#include <fcl/exception/macros.hpp>
 #include <array>
 #include <boost/describe.hpp>
 #include <cstdint>
@@ -13,10 +14,29 @@ export module fcl.crypto.secp256k1;
 import fcl.crypto.bigint;
 import fcl.crypto.sha256;
 import fcl.crypto.sha512;
+export import fcl.exception.exception;
 export import fcl.crypto.types;
 import fcl.raw.raw;
 
 export namespace fcl::crypto::secp256k1 {
+namespace exceptions {
+
+enum class code : std::uint16_t {
+   invalid_input = 1,
+   invalid_signature = 2,
+   invalid_options = 3,
+   backend_error = 4,
+};
+
+FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.secp256k1")
+
+using invalid_input = fcl::exception::coded_exception<code, code::invalid_input>;
+using invalid_signature = fcl::exception::coded_exception<code, code::invalid_signature>;
+using invalid_options = fcl::exception::coded_exception<code, code::invalid_options>;
+using backend_error = fcl::exception::coded_exception<code, code::backend_error>;
+
+} // namespace exceptions
+
 namespace detail {
 class public_key_impl;
 class private_key_impl;
@@ -257,16 +277,9 @@ inline bool verify_message(const public_key_shim& key, std::span<const std::uint
    return verify_digest(key, sha256::hash(message), signature, true);
 }
 
-enum class recover_error : std::int32_t {
-   init_error,
-   input_error,
-   invalid_signature,
-   recover_error,
-};
-
 using recover_bytes = fcl::crypto::bytes;
 
-std::variant<recover_error, recover_bytes> recover(const recover_bytes& signature, const recover_bytes& digest);
+recover_bytes recover(const recover_bytes& signature, const recover_bytes& digest);
 
 BOOST_DESCRIBE_STRUCT(public_key_shim, (), (_data))
 BOOST_DESCRIBE_STRUCT(signature_shim, (), (_data))

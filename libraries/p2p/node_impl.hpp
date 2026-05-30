@@ -1,5 +1,6 @@
 #pragma once
 
+#include "direct_transport.hpp"
 #include "operation_deadline.hpp"
 #include "peer_exchange_codec.hpp"
 #include "relay_transport.hpp"
@@ -7,7 +8,7 @@
 namespace fcl::p2p {
 
 [[nodiscard]] exceptions::code p2p_code(const fcl::exception::base& error);
-[[noreturn]] void rethrow_quic_as_p2p(const fcl::exception::base& error);
+[[noreturn]] void rethrow_transport_as_p2p(const fcl::exception::base& error);
 [[nodiscard]] bool is_orderly_stream_close(const fcl::exception::base& error) noexcept;
 [[nodiscard]] std::uint64_t random_nonce();
 [[nodiscard]] std::string bytes_key(std::span<const std::uint8_t> bytes);
@@ -17,7 +18,6 @@ async_read_length_delimited(fcl::p2p::stream& stream, std::vector<std::uint8_t>&
 [[nodiscard]] std::vector<std::uint8_t> unwrap_length_delimited(std::span<const std::uint8_t> bytes,
                                                                 std::size_t max_payload_size);
 [[nodiscard]] peer_exchange_codec::options codec_for(const node::options& options) noexcept;
-[[nodiscard]] fcl::quic::frame_codec_options frame_codec_for(const node::options& options) noexcept;
 void validate_operation_timeout(std::chrono::milliseconds timeout, std::string_view name);
 [[nodiscard]] std::chrono::milliseconds remaining_timeout(std::chrono::steady_clock::time_point started,
                                                           std::chrono::milliseconds timeout,
@@ -31,8 +31,8 @@ void validate(const node::options& options);
 struct node::impl : std::enable_shared_from_this<impl> {
    struct session_state {
       node::session_info info;
-      fcl::quic::connection connection;
-      std::optional<fcl::quic::endpoint> direct_endpoint;
+      fcl::transport::session connection;
+      std::optional<fcl::p2p::endpoint> direct_endpoint;
       bool closed = false;
    };
 
@@ -67,8 +67,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
    fcl::asio::runtime& runtime;
    node::options options;
    peer_id local;
-   fcl::quic::connector connector;
-   std::unique_ptr<fcl::quic::listener> listener;
+   direct::driver direct_driver;
 
    mutable std::mutex mutex;
    peer_store store;
@@ -85,23 +84,9 @@ struct node::impl : std::enable_shared_from_this<impl> {
    bool stopped = false;
 
 
-   [[nodiscard]] std::optional<fcl::quic::endpoint> local_endpoint_for_control() const;
-
-   [[nodiscard]] fcl::quic::security_options peer_verifier(std::optional<peer_id> expected = std::nullopt) const;
-
-   [[nodiscard]] fcl::quic::client_options quic_client_options(std::optional<peer_id> expected) const;
-
-   [[nodiscard]] fcl::quic::client_options quic_client_options(std::optional<peer_id> expected,
-                                                               std::chrono::milliseconds timeout) const;
-
-   [[nodiscard]] fcl::quic::server_options quic_server_options() const;
-
-   [[nodiscard]] peer_id verified_peer_id(const fcl::quic::connection& connection,
-                                          const std::optional<peer_id>& expected) const;
+   [[nodiscard]] std::optional<fcl::p2p::endpoint> local_endpoint_for_control() const;
 
    void learn_from_message(const peer_exchange_message& message);
-
-   [[nodiscard]] fcl::p2p::endpoint p2p_endpoint_for(const fcl::quic::endpoint& value) const;
 
    [[nodiscard]] identify::document local_identify_document() const;
 
@@ -213,7 +198,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
 
    boost::asio::awaitable<void> pubsub_heartbeat_once();
 
-   boost::asio::awaitable<std::shared_ptr<session_state>> connect_direct(fcl::quic::endpoint endpoint,
+   boost::asio::awaitable<std::shared_ptr<session_state>> connect_direct(fcl::p2p::endpoint endpoint,
                                                                          node::connect_options connect_options_value);
 
    boost::asio::awaitable<std::shared_ptr<session_state>> ensure_direct_session(
@@ -232,7 +217,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
 
    boost::asio::awaitable<void> ensure_relay_reservation(const peer_id& relay_peer, std::chrono::milliseconds timeout);
 
-   boost::asio::awaitable<std::shared_ptr<yamux_session>>
+   boost::asio::awaitable<std::shared_ptr<fcl::p2p::yamux::session>>
    open_relay_yamux(const peer_id& peer, const peer_id& relay_peer, std::chrono::milliseconds timeout);
 
    boost::asio::awaitable<fcl::p2p::stream> open_protocol_via_relay(const peer_id& peer, const protocol_id& protocol,
@@ -243,11 +228,12 @@ struct node::impl : std::enable_shared_from_this<impl> {
 
    void launch_accept_loop();
 
-   boost::asio::awaitable<void> handle_inbound_connection(fcl::quic::connection connection);
+   boost::asio::awaitable<void> handle_inbound_connection(fcl::transport::session connection, peer_id remote);
 
    void launch_session_accept_loop(std::shared_ptr<session_state> session);
 
-   boost::asio::awaitable<void> handle_incoming_stream(std::shared_ptr<session_state> session, fcl::quic::stream raw);
+   boost::asio::awaitable<void> handle_incoming_stream(std::shared_ptr<session_state> session,
+                                                       fcl::transport::stream raw);
 
    boost::asio::awaitable<void> handle_ping(fcl::p2p::stream stream);
 
@@ -281,13 +267,15 @@ struct node::impl : std::enable_shared_from_this<impl> {
    boost::asio::awaitable<bool> wait_for_direct_session(const peer_id& peer, std::chrono::milliseconds timeout);
 
    boost::asio::awaitable<hole_punch::status>
-   run_dcutr_initiator(const peer_id& peer, std::shared_ptr<yamux_session> yamux, std::chrono::milliseconds timeout);
+   run_dcutr_initiator(const peer_id& peer, std::shared_ptr<fcl::p2p::yamux::session> yamux,
+                       std::chrono::milliseconds timeout);
 
    boost::asio::awaitable<hole_punch::status>
    serve_relayed_streams_until_hole_punch(peer_id peer, std::optional<peer_id> relay_peer,
-                                          std::shared_ptr<yamux_session> yamux, std::chrono::milliseconds timeout);
+                                          std::shared_ptr<fcl::p2p::yamux::session> yamux,
+                                          std::chrono::milliseconds timeout);
 
-   boost::asio::awaitable<void> handle_peer_exchange(fcl::quic::framed_stream framed, std::uint64_t request_id);
+   boost::asio::awaitable<void> handle_peer_exchange(fcl::p2p::stream stream, std::uint64_t request_id);
 
    void launch_relay_pumps(peer_id owner, fcl::p2p::stream left, fcl::p2p::stream right);
 

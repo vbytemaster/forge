@@ -132,6 +132,25 @@ return fcl::api::contract<cache>({.id = {"cache.bulk"}, .version = {1, 0}})
    .build();
 ```
 
+## Future API Over Transport
+
+`fcl.api.transport` is the planned reusable binding for API-over-stream
+transports. It will sit above `fcl_api` and `fcl_transport`, use
+`fcl::transport::stream` / `fcl::transport::session`, and own the shared frame
+read/write loop, codec checks, grouped stream handling, max-inflight limits,
+deadlines and error projection.
+
+This layer must not move into `fcl_transport`: transport stays a low-level
+byte-stream/session contract and must not import `fcl.api`. Once implemented,
+`fcl.quic.api`, `fcl.p2p.api` and future TCP API bindings should become thin
+adapters or policy wrappers over `fcl.api.transport`. HTTP remains a separate
+binding because it is request/response oriented rather than a long-lived
+bidirectional stream.
+
+The network/P2P implementation order is tracked only in
+[`docs/network/quic-p2p.md`](../../docs/network/quic-p2p.md); this README only
+records the API-layer boundary.
+
 ## Interceptors
 
 Interceptors are protocol-neutral API middleware. Use them for tracing,

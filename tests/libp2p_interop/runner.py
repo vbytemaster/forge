@@ -234,13 +234,14 @@ def run_pubsub_mixed_mesh_stress(binaries: dict[str, Path], root: Path) -> dict:
         time.sleep(4)
 
         publishers = [
-            ("fcl", "stress-fcl"),
-            ("go", "stress-go"),
-            ("rust", "stress-rust"),
+            ("fcl", "stress-fcl", "fcl0"),
+            ("go", "stress-go", "go0"),
+            ("rust", "stress-rust", "rust0"),
         ]
+        listeners_by_name = {name: listener for (_, name), listener in zip(participants, listeners)}
         publish_results = []
-        for index, (implementation, payload) in enumerate(publishers):
-            target = listeners[index]
+        for implementation, payload, target_name in publishers:
+            target = listeners_by_name[target_name]
             publish_results.append(
                 run_dial(
                     binaries[implementation],

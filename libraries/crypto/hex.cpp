@@ -18,7 +18,8 @@ uint8_t from_hex(char c) {
       return c - 'a' + 10;
    if (c >= 'A' && c <= 'F')
       return c - 'A' + 10;
-   FCL_THROW("Invalid hex character '${c}'", fcl::exception::ctx("c", std::string(&c, 1)));
+   FCL_THROW_EXCEPTION(hex::exceptions::invalid_character, "invalid hex character",
+                       fcl::exception::ctx("c", std::string(&c, 1)));
    return 0;
 }
 

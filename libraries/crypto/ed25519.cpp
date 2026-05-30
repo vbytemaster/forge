@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <openssl/evp.h>
 
 #include <algorithm>
@@ -7,8 +9,6 @@ module;
 #include <span>
 
 module fcl.crypto.ed25519;
-
-import fcl.crypto.exceptions;
 
 namespace fcl::crypto::ed25519 {
 namespace {
@@ -36,7 +36,7 @@ using pkey_ctx_ptr = std::unique_ptr<EVP_PKEY_CTX, pkey_ctx_deleter>;
 using md_ctx_ptr = std::unique_ptr<EVP_MD_CTX, md_ctx_deleter>;
 
 [[noreturn]] void fail(std::string message) {
-   exceptions::raise(exceptions::code::backend_error, std::move(message));
+   FCL_THROW_EXCEPTION(exceptions::backend_error, std::move(message));
 }
 
 [[nodiscard]] pkey_ptr make_private(const private_key_secret& secret) {

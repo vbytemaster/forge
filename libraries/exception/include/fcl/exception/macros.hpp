@@ -56,6 +56,15 @@
                        std::source_location::current());                                                               \
    FCL_MULTILINE_MACRO_END
 
+#define FCL_THROW_CODE(CodeValue, MESSAGE, ...)                                                                        \
+   FCL_MULTILINE_MACRO_BEGIN                                                                                           \
+   const auto fcl_exception_code_value = (CodeValue);                                                                  \
+   fcl::exception::throw_code(fcl_exception_code_value,                                                                 \
+                              std::string(MESSAGE),                                                                    \
+                              fcl::exception::make_fields(__VA_ARGS__),                                                \
+                              std::source_location::current());                                                        \
+   FCL_MULTILINE_MACRO_END
+
 #define FCL_ASSERT(TEST, ...)                                                                                          \
    FCL_MULTILINE_MACRO_BEGIN                                                                                           \
    if (UNLIKELY(!(TEST))) {                                                                                            \

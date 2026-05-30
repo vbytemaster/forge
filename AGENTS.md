@@ -148,7 +148,19 @@ class p2p_node {
 - Public FCL/app/network/API boundary failures should use typed exceptions
   under `fcl::{lib}::exceptions::*`, without `_exception` suffix.
 - `FCL_THROW_EXCEPTION(ExceptionType, ...)` is the canonical typed throw macro.
+- Use `FCL_THROW_EXCEPTION(ExceptionType, ...)` when the concrete typed
+  exception is known at the throw site.
+- Use `FCL_THROW_CODE(code_value, ...)` only when the exception code is computed
+  at runtime, for example after mapping an engine status or retry result.
+- `FCL_DECLARE_EXCEPTION_CATEGORY` only declares `enum -> std::error_code`; it
+  is not a throwing mechanism.
+- New local `exceptions::raise(...)` helpers are forbidden. Add missing shared
+  exception machinery to `fcl.exception` instead of recreating switch-based
+  throw helpers in each library.
 - Use `FCL_THROW`, `FCL_ASSERT`, deadline checks and capture/log helpers with explicit `fcl::exception::ctx(...)` or `fcl::exception::secret(...)` fields.
+- `FCL_THROW(...)` is for generic context errors and internal legacy debt.
+  Public library boundaries should prefer `FCL_THROW_EXCEPTION` or
+  `FCL_THROW_CODE`.
 - `fcl::error` is only a temporary compatibility alias; new code and docs should
   use `fcl::exception`.
 - The old FC exception hierarchy, old declare/throw macros and variant-backed exception serialization are removed and must not reappear.

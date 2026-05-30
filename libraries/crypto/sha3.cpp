@@ -188,7 +188,7 @@ sha3::sha3() {
 }
 sha3::sha3(const char* data, size_t size) {
    if (size != sizeof(_hash))
-      FCL_THROW("sha3: size mismatch");
+      FCL_THROW_EXCEPTION(digest::exceptions::invalid_size, "sha3 size mismatch");
    memcpy(_hash, data, size);
 }
 sha3::sha3(const std::string& hex_str) {

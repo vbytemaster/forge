@@ -1,5 +1,7 @@
 #pragma once
 
+#include <fcl/exception/macros.hpp>
+
 namespace fcl::p2p::detail {
 
 enum class wire_type : std::uint8_t {
@@ -58,7 +60,7 @@ class reader {
       const auto decoded = read_varint();
       const auto type = static_cast<wire_type>(decoded & 0x07U);
       if (type != wire_type::varint && type != wire_type::fixed64 && type != wire_type::length_delimited) {
-         exceptions::raise(exceptions::code::codec_error, "unsupported libp2p protobuf wire type");
+         FCL_THROW_EXCEPTION(exceptions::codec_error, "unsupported libp2p protobuf wire type");
       }
       return {static_cast<std::uint32_t>(decoded >> 3U), type};
    }
@@ -69,7 +71,7 @@ class reader {
          offset_ += decoded.size;
          return decoded.value;
       } catch (const fcl::multiformats::exceptions::invalid_format& error) {
-         exceptions::raise(exceptions::code::codec_error, error.what());
+         FCL_THROW_EXCEPTION(exceptions::codec_error, error.what());
       }
    }
 
@@ -85,7 +87,7 @@ class reader {
    [[nodiscard]] std::vector<std::uint8_t> bytes() {
       const auto size = read_varint();
       if (size > bytes_.size() - offset_) {
-         exceptions::raise(exceptions::code::codec_error, "truncated libp2p protobuf bytes field");
+         FCL_THROW_EXCEPTION(exceptions::codec_error, "truncated libp2p protobuf bytes field");
       }
       auto out = std::vector<std::uint8_t>{bytes_.begin() + static_cast<std::ptrdiff_t>(offset_),
                                            bytes_.begin() + static_cast<std::ptrdiff_t>(offset_ + size)};
@@ -115,7 +117,7 @@ class reader {
  private:
    void require(std::size_t size) const {
       if (size > bytes_.size() - offset_) {
-         exceptions::raise(exceptions::code::codec_error, "truncated libp2p protobuf message");
+         FCL_THROW_EXCEPTION(exceptions::codec_error, "truncated libp2p protobuf message");
       }
    }
 
@@ -128,14 +130,14 @@ inline std::vector<std::uint8_t> unwrap_message(std::span<const std::uint8_t> by
    try {
       decoded = fcl::multiformats::varint_decode(bytes);
    } catch (const fcl::multiformats::exceptions::invalid_format& error) {
-      exceptions::raise(exceptions::code::codec_error, error.what());
+      FCL_THROW_EXCEPTION(exceptions::codec_error, error.what());
    }
    if (decoded.value > max_payload_size) {
-      exceptions::raise(exceptions::code::codec_error, "libp2p protobuf message exceeds max size");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "libp2p protobuf message exceeds max size");
    }
    const auto total = decoded.size + static_cast<std::size_t>(decoded.value);
    if (total != bytes.size()) {
-      exceptions::raise(exceptions::code::codec_error, "libp2p protobuf message length mismatch");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "libp2p protobuf message length mismatch");
    }
    return {bytes.begin() + static_cast<std::ptrdiff_t>(decoded.size), bytes.end()};
 }

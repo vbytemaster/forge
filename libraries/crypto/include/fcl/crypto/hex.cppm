@@ -1,11 +1,26 @@
 module;
+#include <cstdint>
+#include <fcl/exception/macros.hpp>
 #include <string>
 #include <vector>
 
 export module fcl.crypto.hex;
 
 import fcl.core.utility;
+export import fcl.exception.exception;
 export import fcl.crypto.types;
+
+export namespace fcl::crypto::hex::exceptions {
+
+enum class code : std::uint16_t {
+   invalid_character = 1,
+};
+
+FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.hex")
+
+using invalid_character = fcl::exception::coded_exception<code, code::invalid_character>;
+
+} // namespace fcl::crypto::hex::exceptions
 
 export namespace fcl::crypto {
 uint8_t from_hex(char c);

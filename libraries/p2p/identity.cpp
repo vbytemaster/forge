@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -35,7 +37,7 @@ void append_varint(fcl::multiformats::bytes& out, std::uint64_t value) {
 
 [[nodiscard]] std::size_t read_der_length(std::span<const std::uint8_t> bytes, std::size_t& offset) {
    if (offset >= bytes.size()) {
-      exceptions::raise(exceptions::code::invalid_identity, "libp2p certificate extension is truncated");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "libp2p certificate extension is truncated");
    }
    const auto first = bytes[offset++];
    if ((first & 0x80U) == 0) {
@@ -43,7 +45,7 @@ void append_varint(fcl::multiformats::bytes& out, std::uint64_t value) {
    }
    const auto count = static_cast<std::size_t>(first & 0x7fU);
    if (count == 0 || count > sizeof(std::size_t) || offset + count > bytes.size()) {
-      exceptions::raise(exceptions::code::invalid_identity, "invalid libp2p certificate extension length");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "invalid libp2p certificate extension length");
    }
    auto out = std::size_t{};
    for (auto i = std::size_t{}; i < count; ++i) {
@@ -54,11 +56,11 @@ void append_varint(fcl::multiformats::bytes& out, std::uint64_t value) {
 
 [[nodiscard]] std::vector<std::uint8_t> read_der_octet(std::span<const std::uint8_t> bytes, std::size_t& offset) {
    if (offset >= bytes.size() || bytes[offset++] != 0x04) {
-      exceptions::raise(exceptions::code::invalid_identity, "libp2p certificate extension expected octet string");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "libp2p certificate extension expected octet string");
    }
    const auto length = read_der_length(bytes, offset);
    if (offset + length > bytes.size()) {
-      exceptions::raise(exceptions::code::invalid_identity, "libp2p certificate extension octet string is truncated");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "libp2p certificate extension octet string is truncated");
    }
    auto out = std::vector<std::uint8_t>{bytes.begin() + static_cast<std::ptrdiff_t>(offset),
                                         bytes.begin() + static_cast<std::ptrdiff_t>(offset + length)};
@@ -74,17 +76,17 @@ struct signed_key_extension {
 [[nodiscard]] signed_key_extension decode_signed_key_extension(std::span<const std::uint8_t> bytes) {
    auto offset = std::size_t{};
    if (bytes.empty() || bytes[offset++] != 0x30) {
-      exceptions::raise(exceptions::code::invalid_identity, "libp2p certificate extension expected sequence");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "libp2p certificate extension expected sequence");
    }
    const auto length = read_der_length(bytes, offset);
    if (offset + length != bytes.size()) {
-      exceptions::raise(exceptions::code::invalid_identity, "libp2p certificate extension sequence length mismatch");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "libp2p certificate extension sequence length mismatch");
    }
    auto out = signed_key_extension{};
    out.public_key = read_der_octet(bytes, offset);
    out.signature = read_der_octet(bytes, offset);
    if (offset != bytes.size() || out.public_key.empty() || out.signature.empty()) {
-      exceptions::raise(exceptions::code::invalid_identity, "libp2p certificate extension is incomplete");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "libp2p certificate extension is incomplete");
    }
    return out;
 }
@@ -103,14 +105,14 @@ void verify_libp2p_certificate_extension(const fcl::crypto::x509::certificate& c
 
    if (public_key.data.size() != fcl::crypto::ed25519::public_key_data{}.size() ||
        extension.signature.size() != fcl::crypto::ed25519::signature_data{}.size()) {
-      exceptions::raise(exceptions::code::invalid_identity, "libp2p certificate extension has invalid Ed25519 sizes");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "libp2p certificate extension has invalid Ed25519 sizes");
    }
    auto key_data = fcl::crypto::ed25519::public_key_data{};
    std::copy(public_key.data.begin(), public_key.data.end(), key_data.begin());
    auto signature_data = fcl::crypto::ed25519::signature_data{};
    std::copy(extension.signature.begin(), extension.signature.end(), signature_data.begin());
    if (!fcl::crypto::ed25519::public_key{key_data}.verify(message, signature_data)) {
-      exceptions::raise(exceptions::code::invalid_identity, "libp2p certificate extension signature is invalid");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "libp2p certificate extension signature is invalid");
    }
 }
 
@@ -149,12 +151,12 @@ peer_id peer_id::from_string(std::string_view value) {
       auto span = std::span<const std::uint8_t>{decoded.bytes};
       auto version = fcl::multiformats::varint_decode(span);
       if (version.value != 1) {
-         exceptions::raise(exceptions::code::invalid_identity, "Peer ID CID uses an unsupported CID version");
+         FCL_THROW_EXCEPTION(exceptions::invalid_identity, "Peer ID CID uses an unsupported CID version");
       }
       std::size_t consumed = 0;
       const auto codec = fcl::multiformats::multicodec_decode(span.subspan(version.size), consumed);
       if (codec != fcl::multiformats::multicodec_code::libp2p_key) {
-         exceptions::raise(exceptions::code::invalid_identity, "Peer ID CID is not a libp2p-key CID");
+         FCL_THROW_EXCEPTION(exceptions::invalid_identity, "Peer ID CID is not a libp2p-key CID");
       }
       auto multihash = fcl::multiformats::multihash::decode(span.subspan(version.size + consumed));
       return from_bytes(multihash.encode());
@@ -162,7 +164,7 @@ peer_id peer_id::from_string(std::string_view value) {
 
    auto id = peer_id{.value = std::string{value}};
    if (!valid_peer_id(id)) {
-      exceptions::raise(exceptions::code::invalid_identity, "Peer ID string is not a valid libp2p multihash");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "Peer ID string is not a valid libp2p multihash");
    }
    return id;
 }
@@ -174,7 +176,7 @@ peer_id peer_id::from_bytes(std::span<const std::uint8_t> value) {
 
 fcl::multiformats::bytes encode_public_key(const public_key& key) {
    if (key.data.empty()) {
-      exceptions::raise(exceptions::code::invalid_identity, "libp2p public key data is empty");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "libp2p public key data is empty");
    }
 
    auto out = fcl::multiformats::bytes{};
@@ -199,7 +201,7 @@ public_key decode_public_key(std::span<const std::uint8_t> bytes) {
       switch (field) {
       case 1: {
          if (wire != 0) {
-            exceptions::raise(exceptions::code::codec_error, "libp2p public key type must be varint");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "libp2p public key type must be varint");
          }
          const auto value = fcl::multiformats::varint_decode(bytes.subspan(offset));
          offset += value.size;
@@ -209,12 +211,12 @@ public_key decode_public_key(std::span<const std::uint8_t> bytes) {
       }
       case 2: {
          if (wire != 2) {
-            exceptions::raise(exceptions::code::codec_error, "libp2p public key data must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "libp2p public key data must be bytes");
          }
          const auto size = fcl::multiformats::varint_decode(bytes.subspan(offset));
          offset += size.size;
          if (size.value > bytes.size() - offset) {
-            exceptions::raise(exceptions::code::codec_error, "truncated libp2p public key data");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "truncated libp2p public key data");
          }
          out.data = fcl::multiformats::bytes{
              bytes.begin() + static_cast<std::ptrdiff_t>(offset),
@@ -224,11 +226,11 @@ public_key decode_public_key(std::span<const std::uint8_t> bytes) {
          break;
       }
       default:
-         exceptions::raise(exceptions::code::codec_error, "unsupported libp2p public key field");
+         FCL_THROW_EXCEPTION(exceptions::codec_error, "unsupported libp2p public key field");
       }
    }
    if (!saw_type || !saw_data || out.data.empty()) {
-      exceptions::raise(exceptions::code::codec_error, "libp2p public key is incomplete");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "libp2p public key is incomplete");
    }
    return out;
 }
@@ -248,19 +250,19 @@ peer_id make_peer_id_from_certificate_pem(std::string_view certificate_pem) {
    }
    auto id = peer_id_from_multihash(fcl::multiformats::multihash::sha2_256(certificate.der()));
    if (!valid_peer_id(id)) {
-      exceptions::raise(exceptions::code::invalid_identity, "certificate did not produce a valid P2P peer id");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "certificate did not produce a valid P2P peer id");
    }
    return id;
 }
 
-peer_id make_peer_id_from_certificate(const fcl::quic::peer_certificate& certificate) {
-   auto parsed = fcl::crypto::x509::certificate::from_der(certificate.der);
+peer_id make_peer_id_from_certificate_der(std::span<const std::uint8_t> certificate_der) {
+   auto parsed = fcl::crypto::x509::certificate::from_der(certificate_der);
    if (auto id = peer_id_from_libp2p_certificate_extension(parsed)) {
       return *id;
    }
-   auto id = peer_id_from_multihash(fcl::multiformats::multihash::sha2_256(certificate.der));
+   auto id = peer_id_from_multihash(fcl::multiformats::multihash::sha2_256(certificate_der));
    if (!valid_peer_id(id)) {
-      exceptions::raise(exceptions::code::invalid_identity, "peer certificate did not produce a valid P2P peer id");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "peer certificate did not produce a valid P2P peer id");
    }
    return id;
 }

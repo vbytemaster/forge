@@ -182,7 +182,7 @@ template <typename Stream> inline void unpack(Stream& s, variant& v) {
       return;
    }
    default:
-      FCL_THROW("Unknown Variant Type ${t}", fcl::exception::ctx("t", t));
+      FCL_THROW_EXCEPTION(fcl::raw::exceptions::codec_error, "unknown variant type", fcl::exception::ctx("t", t));
    }
 }
 

@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
@@ -8,8 +10,6 @@ module;
 #include <span>
 
 module fcl.crypto.rsa;
-
-import fcl.crypto.exceptions;
 
 namespace fcl::crypto::rsa {
 namespace {
@@ -37,14 +37,14 @@ using pkey_ctx_ptr = std::unique_ptr<EVP_PKEY_CTX, pkey_ctx_deleter>;
 using md_ctx_ptr = std::unique_ptr<EVP_MD_CTX, md_ctx_deleter>;
 
 [[noreturn]] void fail(std::string message) {
-   exceptions::raise(exceptions::code::backend_error, std::move(message));
+   FCL_THROW_EXCEPTION(exceptions::backend_error, std::move(message));
 }
 
 [[nodiscard]] pkey_ptr read_public(std::span<const std::uint8_t> der) {
    const auto* cursor = der.data();
    auto* raw = d2i_PUBKEY(nullptr, &cursor, static_cast<long>(der.size()));
    if (raw == nullptr) {
-      exceptions::raise(exceptions::code::invalid_key, "invalid RSA public key DER");
+      FCL_THROW_EXCEPTION(exceptions::invalid_key, "invalid RSA public key DER");
    }
    return pkey_ptr{raw};
 }
@@ -53,7 +53,7 @@ using md_ctx_ptr = std::unique_ptr<EVP_MD_CTX, md_ctx_deleter>;
    const auto* cursor = der.data();
    auto* raw = d2i_AutoPrivateKey(nullptr, &cursor, static_cast<long>(der.size()));
    if (raw == nullptr) {
-      exceptions::raise(exceptions::code::invalid_key, "invalid RSA private key DER");
+      FCL_THROW_EXCEPTION(exceptions::invalid_key, "invalid RSA private key DER");
    }
    return pkey_ptr{raw};
 }

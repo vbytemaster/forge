@@ -1,4 +1,5 @@
 module;
+#include <fcl/exception/macros.hpp>
 #include <array>
 #include <boost/describe.hpp>
 #include <cstdint>
@@ -7,10 +8,25 @@ module;
 
 export module fcl.crypto.ed25519;
 
+export import fcl.exception.exception;
 import fcl.crypto.types;
 import fcl.raw.raw;
 
 export namespace fcl::crypto::ed25519 {
+
+namespace exceptions {
+
+enum class code : std::uint16_t {
+   invalid_key = 1,
+   backend_error = 2,
+};
+
+FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.ed25519")
+
+using invalid_key = fcl::exception::coded_exception<code, code::invalid_key>;
+using backend_error = fcl::exception::coded_exception<code, code::backend_error>;
+
+} // namespace exceptions
 
 using public_key_data = std::array<std::uint8_t, 32>;
 using private_key_secret = std::array<std::uint8_t, 32>;

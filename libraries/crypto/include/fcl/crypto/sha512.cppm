@@ -8,6 +8,7 @@ module;
 export module fcl.crypto.sha512;
 
 import fcl.core.string;
+export import fcl.crypto.digest;
 import fcl.crypto.packhash;
 import fcl.variant;
 

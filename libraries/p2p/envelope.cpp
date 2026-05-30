@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <algorithm>
@@ -35,12 +37,12 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
 
 [[nodiscard]] fcl::crypto::asymmetric::public_key crypto_public_key(const public_key& key) {
    if (key.data.empty()) {
-      exceptions::raise(exceptions::code::invalid_identity, "signed envelope public key is empty");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "signed envelope public key is empty");
    }
 
    if (key.type == decltype(key.type)::ed25519) {
       if (key.data.size() != fcl::crypto::ed25519::public_key_data{}.size()) {
-         exceptions::raise(exceptions::code::invalid_identity, "invalid signed envelope Ed25519 key size");
+         FCL_THROW_EXCEPTION(exceptions::invalid_identity, "invalid signed envelope Ed25519 key size");
       }
       auto data = fcl::crypto::ed25519::public_key_data{};
       std::copy(key.data.begin(), key.data.end(), data.begin());
@@ -56,7 +58,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
    try {
       return fcl::crypto::der::read_public_key(key.data);
    } catch (const fcl::exception::base& error) {
-      exceptions::raise(exceptions::code::invalid_identity, error.what());
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, error.what());
    }
 }
 
@@ -66,7 +68,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
       const auto signature = key.sign(message);
       return signature.visit([](const auto& value) { return bytes_from_range(value.serialize()); });
    } catch (const fcl::exception::base& error) {
-      exceptions::raise(exceptions::code::invalid_identity, error.what());
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, error.what());
    }
 }
 
@@ -83,7 +85,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
    if (key.type == decltype(key.type)::rsa) {
       return fcl::crypto::rsa::public_key{key.data}.verify(message, {signature.begin(), signature.end()});
    }
-   exceptions::raise(exceptions::code::invalid_identity, "ECDSA signed envelope verification requires DER signature support");
+   FCL_THROW_EXCEPTION(exceptions::invalid_identity, "ECDSA signed envelope verification requires DER signature support");
 }
 
 } // namespace
@@ -94,7 +96,7 @@ peer_id signed_envelope::signer() const {
 
 std::vector<std::uint8_t> signed_envelope::signing_payload(std::string_view domain) const {
    if (domain.empty()) {
-      exceptions::raise(exceptions::code::invalid_options, "signed envelope domain must not be empty");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "signed envelope domain must not be empty");
    }
    auto out = std::vector<std::uint8_t>{};
    auto append_len_bytes = [&out](std::span<const std::uint8_t> bytes) {
@@ -111,7 +113,7 @@ std::vector<std::uint8_t> signed_envelope::signing_payload(std::string_view doma
 
 std::vector<std::uint8_t> signed_envelope::encode() const {
    if (signature.empty()) {
-      exceptions::raise(exceptions::code::invalid_options, "signed envelope signature is empty");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "signed envelope signature is empty");
    }
    auto out = std::vector<std::uint8_t>{};
    const auto encoded_key = encode_public_key(key);
@@ -124,15 +126,15 @@ std::vector<std::uint8_t> signed_envelope::encode() const {
 
 void signed_envelope::verify(std::string_view domain, std::optional<peer_id> expected_signer) const {
    if (payload_type.empty() || payload.empty() || signature.empty()) {
-      exceptions::raise(exceptions::code::codec_error, "signed envelope is incomplete");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "signed envelope is incomplete");
    }
    const auto actual_signer = signer();
    if (expected_signer && actual_signer != *expected_signer) {
-      exceptions::raise(exceptions::code::invalid_identity, "signed envelope signer peer id mismatch");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "signed envelope signer peer id mismatch");
    }
    const auto message = signing_payload(domain);
    if (!verify_signature(key, message, signature)) {
-      exceptions::raise(exceptions::code::invalid_identity, "signed envelope signature verification failed");
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "signed envelope signature verification failed");
    }
 }
 
@@ -148,28 +150,28 @@ signed_envelope signed_envelope::decode(std::span<const std::uint8_t> bytes) {
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "signed envelope public key must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "signed envelope public key must be bytes");
          }
          out.key = decode_public_key(in.bytes());
          saw_key = true;
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "signed envelope payload type must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "signed envelope payload type must be bytes");
          }
          out.payload_type = in.bytes();
          saw_payload_type = true;
          break;
       case 3:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "signed envelope payload must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "signed envelope payload must be bytes");
          }
          out.payload = in.bytes();
          saw_payload = true;
          break;
       case 5:
          if (type != detail::wire_type::length_delimited) {
-            exceptions::raise(exceptions::code::codec_error, "signed envelope signature must be bytes");
+            FCL_THROW_EXCEPTION(exceptions::codec_error, "signed envelope signature must be bytes");
          }
          out.signature = in.bytes();
          saw_signature = true;
@@ -180,7 +182,7 @@ signed_envelope signed_envelope::decode(std::span<const std::uint8_t> bytes) {
       }
    }
    if (!saw_key || !saw_payload_type || !saw_payload || !saw_signature) {
-      exceptions::raise(exceptions::code::codec_error, "signed envelope missing required fields");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "signed envelope missing required fields");
    }
    return out;
 }
@@ -190,7 +192,7 @@ signed_envelope signed_envelope::seal(const public_key& key, const fcl::crypto::
                                       std::span<const std::uint8_t> payload_type,
                                       std::span<const std::uint8_t> payload) {
    if (payload_type.empty() || payload.empty()) {
-      exceptions::raise(exceptions::code::invalid_options, "signed envelope payload and type must not be empty");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "signed envelope payload and type must not be empty");
    }
    auto out = signed_envelope{
        .key = key,

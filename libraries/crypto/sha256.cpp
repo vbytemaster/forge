@@ -25,7 +25,7 @@ sha256::sha256() {
 }
 sha256::sha256(const char* data, size_t size) {
    if (size != sizeof(_hash))
-      FCL_THROW("sha256: size mismatch");
+      FCL_THROW_EXCEPTION(digest::exceptions::invalid_size, "sha256 size mismatch");
    memcpy(_hash, data, size);
 }
 sha256::sha256(const std::string& hex_str) {

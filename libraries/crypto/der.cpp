@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <openssl/bn.h>
 #include <openssl/core_names.h>
 #include <openssl/ec.h>
@@ -18,7 +20,6 @@ module fcl.crypto.der;
 
 import fcl.crypto.asymmetric;
 import fcl.crypto.ed25519;
-import fcl.crypto.exceptions;
 import fcl.crypto.p256;
 import fcl.crypto.rsa;
 import fcl.crypto.secp256k1;
@@ -68,11 +69,11 @@ using bn_ctx_ptr = std::unique_ptr<BN_CTX, bn_ctx_deleter>;
 using pkey_ctx_ptr = std::unique_ptr<EVP_PKEY_CTX, pkey_ctx_deleter>;
 
 [[noreturn]] void invalid_key(std::string message) {
-   exceptions::raise(exceptions::code::invalid_key, std::move(message));
+   FCL_THROW_EXCEPTION(exceptions::invalid_key, std::move(message));
 }
 
 [[noreturn]] void backend_error(std::string message) {
-   exceptions::raise(exceptions::code::backend_error, std::move(message));
+   FCL_THROW_EXCEPTION(exceptions::backend_error, std::move(message));
 }
 
 [[nodiscard]] pkey_ptr parse_public(std::span<const std::uint8_t> bytes) {
@@ -323,7 +324,7 @@ bytes write_public_key(const public_key& key) {
          const auto data = bytes_from_range(value.serialize());
          return write_spki(make_ec_public_key("secp256k1", data).get());
       } else {
-         exceptions::raise(exceptions::code::invalid_options, "public key DER export is not implemented");
+         FCL_THROW_EXCEPTION(exceptions::invalid_options, "public key DER export is not implemented");
       }
    });
 }

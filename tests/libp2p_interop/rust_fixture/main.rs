@@ -433,7 +433,7 @@ async fn wait_gossipsub_peer_and_publish(
                         gossipsub::Event::Subscribed { peer_id, topic: subscribed_topic },
                     )) if peer_id == remote_peer && subscribed_topic == topic.hash() => {
                         swarm.behaviour_mut().gossipsub.publish(topic.clone(), payload)?;
-                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        tokio::time::sleep(Duration::from_secs(2)).await;
                         return Ok(());
                     }
                     SwarmEvent::NewListenAddr { address, .. } => swarm.add_external_address(address),

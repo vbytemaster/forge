@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -51,13 +53,6 @@ import fcl.crypto.x25519;
 import fcl.multiformats.types;
 import fcl.multiformats.varint;
 import fcl.multiformats.exceptions;
-import fcl.quic.connection;
-import fcl.quic.connector;
-import fcl.quic.exceptions;
-import fcl.quic.framed_stream;
-import fcl.quic.listener;
-import fcl.quic.options;
-import fcl.quic.security;
 
 #include "peer_exchange_codec.hpp"
 
@@ -91,7 +86,7 @@ void append_u64(std::vector<std::uint8_t>& out, std::uint64_t value) {
 
 void append_string(std::vector<std::uint8_t>& out, const std::string& value) {
    if (value.size() > std::numeric_limits<std::uint32_t>::max()) {
-      exceptions::raise(exceptions::code::codec_error, "P2P string field is too large");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "P2P string field is too large");
    }
    append_u32(out, static_cast<std::uint32_t>(value.size()));
    out.insert(out.end(), value.begin(), value.end());
@@ -99,7 +94,7 @@ void append_string(std::vector<std::uint8_t>& out, const std::string& value) {
 
 void append_bytes(std::vector<std::uint8_t>& out, const std::vector<std::uint8_t>& value) {
    if (value.size() > std::numeric_limits<std::uint32_t>::max()) {
-      exceptions::raise(exceptions::code::codec_error, "P2P bytes field is too large");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "P2P bytes field is too large");
    }
    append_u32(out, static_cast<std::uint32_t>(value.size()));
    out.insert(out.end(), value.begin(), value.end());
@@ -160,21 +155,21 @@ class reader {
    void require_magic() {
       require(sizeof(magic));
       if (std::memcmp(bytes_.data() + offset_, magic, sizeof(magic)) != 0) {
-         exceptions::raise(exceptions::code::codec_error, "invalid peer exchange message magic");
+         FCL_THROW_EXCEPTION(exceptions::codec_error, "invalid peer exchange message magic");
       }
       offset_ += sizeof(magic);
    }
 
    void expect_end() const {
       if (offset_ != bytes_.size()) {
-         exceptions::raise(exceptions::code::codec_error, "trailing bytes in peer exchange message");
+         FCL_THROW_EXCEPTION(exceptions::codec_error, "trailing bytes in peer exchange message");
       }
    }
 
  private:
    void require(std::size_t size) const {
       if (size > bytes_.size() - offset_) {
-         exceptions::raise(exceptions::code::codec_error, "truncated peer exchange message");
+         FCL_THROW_EXCEPTION(exceptions::codec_error, "truncated peer exchange message");
       }
    }
 
@@ -192,7 +187,7 @@ class reader {
    case peer_exchange_message::type::goaway:
       return static_cast<peer_exchange_message::type>(value);
    }
-   exceptions::raise(exceptions::code::codec_error, "unknown peer exchange message type");
+   FCL_THROW_EXCEPTION(exceptions::codec_error, "unknown peer exchange message type");
 }
 
 [[nodiscard]] std::vector<std::uint8_t> encode(const peer_exchange_message& message, options opts) {
@@ -209,36 +204,35 @@ class reader {
    append_u64(out, message.max_frame_size);
    append_string(out, message.reason);
    if (message.endpoints.size() > opts.max_endpoint_records) {
-      exceptions::raise(exceptions::code::codec_error, "too many peer exchange endpoint records");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "too many peer exchange endpoint records");
    }
    append_u32(out, static_cast<std::uint32_t>(message.endpoints.size()));
    for (const auto& endpoint : message.endpoints) {
       append_string(out, endpoint.peer.value);
-      append_string(out, endpoint.endpoint.host);
-      append_u16(out, endpoint.endpoint.port);
+      append_string(out, endpoint.endpoint.to_string());
       append_u64(out, endpoint.capabilities.bits);
    }
    append_bytes(out, message.payload);
    if (out.size() > opts.max_message_size) {
-      exceptions::raise(exceptions::code::codec_error, "peer exchange message exceeds max size");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "peer exchange message exceeds max size");
    }
    return out;
 }
 
 [[nodiscard]] peer_exchange_message decode(std::span<const std::uint8_t> bytes, options opts) {
    if (bytes.size() > opts.max_message_size) {
-      exceptions::raise(exceptions::code::codec_error, "peer exchange message exceeds max size");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "peer exchange message exceeds max size");
    }
    auto in = reader{bytes};
    in.require_magic();
    if (in.u16() != peer_exchange_wire_version_v1) {
-      exceptions::raise(exceptions::code::codec_error, "unsupported peer exchange wire version");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "unsupported peer exchange wire version");
    }
    auto out = peer_exchange_message{};
    out.kind = checked_kind(in.u16());
    out.flags = in.u32();
    if ((out.flags & mandatory_flag_mask) != 0) {
-      exceptions::raise(exceptions::code::codec_error, "unknown mandatory peer exchange flags");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "unknown mandatory peer exchange flags");
    }
    out.request_id = in.u64();
    out.peer = peer_id{.value = in.string()};
@@ -248,13 +242,13 @@ class reader {
    out.reason = in.string();
    const auto endpoint_count = in.u32();
    if (endpoint_count > opts.max_endpoint_records) {
-      exceptions::raise(exceptions::code::codec_error, "too many peer exchange endpoint records");
+      FCL_THROW_EXCEPTION(exceptions::codec_error, "too many peer exchange endpoint records");
    }
    out.endpoints.reserve(endpoint_count);
    for (auto i = std::uint32_t{0}; i != endpoint_count; ++i) {
       out.endpoints.push_back(peer_exchange_message::endpoint_record{
           .peer = peer_id{.value = in.string()},
-          .endpoint = fcl::quic::endpoint{.host = in.string(), .port = in.u16()},
+          .endpoint = parse_endpoint(in.string()),
           .capabilities = capability_set{.bits = in.u64()},
       });
    }
@@ -263,13 +257,13 @@ class reader {
    return out;
 }
 
-boost::asio::awaitable<void> async_write(fcl::quic::framed_stream& stream, const peer_exchange_message& message,
+boost::asio::awaitable<void> async_write(fcl::p2p::stream& stream, const peer_exchange_message& message,
                                          options opts) {
    auto encoded = encode(message, opts);
    co_await stream.async_write_frame(encoded);
 }
 
-boost::asio::awaitable<peer_exchange_message> async_read(fcl::quic::framed_stream& stream, options opts) {
+boost::asio::awaitable<peer_exchange_message> async_read(fcl::p2p::stream& stream, options opts) {
    auto encoded = co_await stream.async_read_frame();
    co_return decode(encoded, opts);
 }

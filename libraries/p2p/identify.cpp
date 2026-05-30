@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -72,7 +74,7 @@ class reader {
       const auto decoded = read_varint();
       const auto type = static_cast<wire_type>(decoded & 0x07U);
       if (type != wire_type::varint && type != wire_type::length_delimited) {
-         exceptions::raise(exceptions::code::codec_error, "unsupported Identify protobuf wire type");
+         FCL_THROW_EXCEPTION(exceptions::codec_error, "unsupported Identify protobuf wire type");
       }
       return {static_cast<std::uint32_t>(decoded >> 3U), type};
    }
@@ -83,14 +85,14 @@ class reader {
          offset_ += decoded.size;
          return decoded.value;
       } catch (const fcl::multiformats::exceptions::invalid_format& error) {
-         exceptions::raise(exceptions::code::codec_error, error.what());
+         FCL_THROW_EXCEPTION(exceptions::codec_error, error.what());
       }
    }
 
    [[nodiscard]] std::vector<std::uint8_t> bytes() {
       const auto size = read_varint();
       if (size > bytes_.size() - offset_) {
-         exceptions::raise(exceptions::code::codec_error, "truncated Identify protobuf bytes field");
+         FCL_THROW_EXCEPTION(exceptions::codec_error, "truncated Identify protobuf bytes field");
       }
       auto out = std::vector<std::uint8_t>{bytes_.begin() + static_cast<std::ptrdiff_t>(offset_),
                                            bytes_.begin() + static_cast<std::ptrdiff_t>(offset_ + size)};

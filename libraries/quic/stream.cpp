@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include "wrapper_handles.hpp"
 
 #include <cstdint>
@@ -58,7 +60,7 @@ namespace {
 }
 
 [[noreturn]] void raise_engine_failure(const detail::engine_failure& error) {
-   exceptions::raise(map_error(error.kind()), error.what());
+   FCL_THROW_CODE(map_error(error.kind()), error.what());
 }
 
 } // namespace
@@ -87,7 +89,7 @@ std::int64_t stream::id() const noexcept {
 
 boost::asio::awaitable<void> stream::async_write(std::span<const std::uint8_t> bytes) {
    if (!impl_ || !impl_->engine) {
-      exceptions::raise(exceptions::code::stream_closed, "invalid QUIC stream");
+      FCL_THROW_EXCEPTION(exceptions::stream_closed, "invalid QUIC stream");
    }
    try {
       co_await impl_->engine->async_write(bytes);
@@ -99,7 +101,7 @@ boost::asio::awaitable<void> stream::async_write(std::span<const std::uint8_t> b
 
 boost::asio::awaitable<std::vector<std::uint8_t>> stream::async_read() {
    if (!impl_ || !impl_->engine) {
-      exceptions::raise(exceptions::code::stream_closed, "invalid QUIC stream");
+      FCL_THROW_EXCEPTION(exceptions::stream_closed, "invalid QUIC stream");
    }
    try {
       co_return co_await impl_->engine->async_read();

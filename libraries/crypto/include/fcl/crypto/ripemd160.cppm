@@ -8,6 +8,7 @@ module;
 export module fcl.crypto.ripemd160;
 
 import fcl.crypto.packhash;
+export import fcl.crypto.digest;
 import fcl.raw.raw;
 import fcl.core.type_name;
 import fcl.variant;

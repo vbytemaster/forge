@@ -6,6 +6,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <future>
 #include <map>
@@ -58,6 +59,10 @@ import fcl.p2p.scoring;
 import fcl.p2p.stream;
 import fcl.quic.endpoint;
 import fcl.quic.libp2p;
+import fcl.quic.transport;
+import fcl.transport.endpoint;
+import fcl.transport.frame;
+import fcl.transport.stream;
 import fcl.multiformats;
 
 namespace fcl::p2p {
@@ -378,8 +383,15 @@ void register_echo(node& value, protocol_id protocol) {
                                    });
 }
 
-fcl::quic::endpoint listen(node& value, fcl::asio::runtime& runtime) {
-   fcl::asio::blocking::run(runtime, value.async_listen(fcl::quic::endpoint{.host = "127.0.0.1", .port = 0}));
+[[nodiscard]] endpoint make_quic_endpoint(std::uint16_t port, std::string host = "127.0.0.1") {
+   return endpoint{.address = {.address = endpoint::address_kind::ip4,
+                               .protocol = endpoint::protocol_kind::quic_v1,
+                               .host = std::move(host),
+                               .port = port}};
+}
+
+endpoint listen(node& value, fcl::asio::runtime& runtime) {
+   fcl::asio::blocking::run(runtime, value.async_listen(make_quic_endpoint(0)));
    auto endpoint = value.local_endpoint();
    BOOST_REQUIRE(endpoint.has_value());
    return *endpoint;
@@ -442,6 +454,43 @@ read_length_delimited(stream& value, std::size_t max_payload_size = 4 * 1024 * 1
    }
 }
 
+class queued_transport_stream final : public fcl::transport::detail::stream_concept {
+ public:
+   explicit queued_transport_stream(std::int64_t stream_id) : stream_id_{stream_id} {}
+
+   [[nodiscard]] bool valid() const noexcept override {
+      return true;
+   }
+
+   [[nodiscard]] std::int64_t id() const noexcept override {
+      return stream_id_;
+   }
+
+   boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> bytes) override {
+      writes.push_back({bytes.begin(), bytes.end()});
+      co_return;
+   }
+
+   boost::asio::awaitable<std::vector<std::uint8_t>> async_read() override {
+      BOOST_REQUIRE(!reads.empty());
+      auto out = std::move(reads.front());
+      reads.pop_front();
+      co_return out;
+   }
+
+   boost::asio::awaitable<void> async_close() override {
+      closed = true;
+      co_return;
+   }
+
+   std::deque<std::vector<std::uint8_t>> reads;
+   std::vector<std::vector<std::uint8_t>> writes;
+   bool closed = false;
+
+ private:
+   std::int64_t stream_id_ = 0;
+};
+
 class counting_peer_store_backend final : public peer_store::backend {
  public:
    void upsert(peer_store::record value) override {
@@ -449,7 +498,7 @@ class counting_peer_store_backend final : public peer_store::backend {
       records[value.peer] = std::move(value);
    }
 
-   void learn_endpoint(peer_id value, fcl::quic::endpoint endpoint, capability_set capabilities) override {
+   void learn_endpoint(peer_id value, fcl::p2p::endpoint endpoint, capability_set capabilities) override {
       ++learn_endpoint_count;
       auto& record = records[value];
       record.peer = std::move(value);
@@ -458,7 +507,7 @@ class counting_peer_store_backend final : public peer_store::backend {
    }
 
    void mark_reachability(peer_id value, reachability::state state,
-                          std::optional<fcl::quic::endpoint> observed) override {
+                          std::optional<fcl::p2p::endpoint> observed) override {
       auto& record = records[value];
       record.peer = std::move(value);
       record.reachability = state;
@@ -478,14 +527,14 @@ class counting_peer_store_backend final : public peer_store::backend {
       ++record.failures;
    }
 
-   void mark_endpoint_success(const peer_id& value, const fcl::quic::endpoint& endpoint, path::kind kind,
+   void mark_endpoint_success(const peer_id& value, const fcl::p2p::endpoint& endpoint, path::kind kind,
                               std::chrono::milliseconds latency) override {
       auto& record = records[value];
       record.peer = value;
       record.endpoints.push_back(peer_store::endpoint_record{.endpoint = endpoint, .kind = kind, .last_latency = latency});
    }
 
-   void mark_endpoint_failure(const peer_id& value, const fcl::quic::endpoint& endpoint, path::kind kind,
+   void mark_endpoint_failure(const peer_id& value, const fcl::p2p::endpoint& endpoint, path::kind kind,
                               std::chrono::system_clock::time_point backoff_until) override {
       auto& record = records[value];
       record.peer = value;
@@ -499,7 +548,7 @@ class counting_peer_store_backend final : public peer_store::backend {
       record.discovered_by = source;
       record.discovery_expires_at = expires_at;
       for (const auto& endpoint : value.endpoints) {
-         record.endpoints.push_back(peer_store::endpoint_record{.endpoint = endpoint.quic_endpoint()});
+         record.endpoints.push_back(peer_store::endpoint_record{.endpoint = endpoint});
       }
    }
 
@@ -540,11 +589,9 @@ class counting_peer_store_backend final : public peer_store::backend {
       for (const auto& [peer, record] : records) {
          auto endpoints = std::vector<endpoint>{};
          for (const auto& item : record.endpoints) {
-            endpoints.push_back(endpoint{
-                .host = item.endpoint.host,
-                .port = item.endpoint.port,
-                .peer = peer,
-            });
+            auto discovered = item.endpoint;
+            discovered.peer = peer;
+            endpoints.push_back(std::move(discovered));
          }
          out.push_back(dht::peer{.id = peer, .endpoints = std::move(endpoints)});
          if (out.size() >= limit) {
@@ -633,19 +680,19 @@ BOOST_AUTO_TEST_CASE(p2p_peer_id_legacy_and_cid_strings_roundtrip) {
 }
 
 BOOST_AUTO_TEST_CASE(p2p_endpoint_parses_libp2p_quic_address_format) {
-   static_assert(std::is_same_v<decltype(endpoint{}.kind), endpoint::address_kind>);
+   static_assert(std::is_same_v<decltype(endpoint{}.address.address), endpoint::address_kind>);
 
    const auto id = peer(42);
    auto parsed = parse_endpoint("/ip4/127.0.0.1/udp/4001/quic-v1/p2p/" + id.to_string());
 
-   BOOST_TEST(static_cast<int>(parsed.kind) == static_cast<int>(endpoint::address_kind::ip4));
+   BOOST_TEST(static_cast<int>(parsed.address.address) == static_cast<int>(endpoint::address_kind::ip4));
 
-   BOOST_TEST(parsed.host == "127.0.0.1");
-   BOOST_TEST(parsed.port == 4001);
+   BOOST_TEST(parsed.address.host == "127.0.0.1");
+   BOOST_TEST(parsed.address.port == 4001);
    BOOST_REQUIRE(parsed.peer.has_value());
    BOOST_TEST(parsed.peer->to_string() == id.to_string());
    BOOST_TEST(parsed.to_string() == "/ip4/127.0.0.1/udp/4001/quic-v1/p2p/" + id.to_string());
-   BOOST_TEST(parsed.quic_endpoint().authority() == "127.0.0.1:4001");
+   BOOST_TEST(parsed.is_direct_quic());
 }
 
 BOOST_AUTO_TEST_CASE(quic_libp2p_profile_sets_required_alpn) {
@@ -655,6 +702,60 @@ BOOST_AUTO_TEST_CASE(quic_libp2p_profile_sets_required_alpn) {
    BOOST_TEST(client.alpn == "libp2p");
    BOOST_TEST(server.alpn == "libp2p");
    BOOST_TEST(fcl::quic::libp2p::is_profile_alpn(client.alpn));
+}
+
+BOOST_AUTO_TEST_CASE(transport_frame_and_stream_round_trip_payload) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto backend = std::make_shared<queued_transport_stream>(42);
+   auto value = fcl::transport::detail::stream_access::make(backend);
+   const auto payload = std::vector<std::uint8_t>{'t', 'r', 'a', 'n', 's', 'p', 'o', 'r', 't'};
+   const auto encoded = fcl::transport::encode_frame(payload);
+   const auto decoded = fcl::transport::decode_frame(encoded);
+   BOOST_TEST(static_cast<int>(decoded.status) == static_cast<int>(fcl::transport::frame_decode_status::complete));
+   BOOST_TEST(decoded.payload == payload, boost::test_tools::per_element());
+
+   fcl::asio::blocking::run(runtime, value.async_write_frame(payload));
+   BOOST_REQUIRE_EQUAL(backend->writes.size(), 1U);
+   BOOST_TEST(fcl::transport::decode_frame(backend->writes.front()).payload == payload, boost::test_tools::per_element());
+
+   backend->reads.push_back({encoded.begin(), encoded.begin() + 3});
+   backend->reads.push_back({encoded.begin() + 3, encoded.end()});
+   const auto read = fcl::asio::blocking::run(runtime, value.async_read_frame());
+   BOOST_TEST(read == payload, boost::test_tools::per_element());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_stream_wraps_transport_stream) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto backend = std::make_shared<queued_transport_stream>(77);
+   auto value = fcl::p2p::stream{fcl::transport::detail::stream_access::make(backend)};
+   const auto payload = std::vector<std::uint8_t>{'p', '2', 'p'};
+   const auto reply = std::vector<std::uint8_t>{'o', 'k'};
+
+   BOOST_TEST(value.valid());
+   BOOST_TEST(value.id() == 77);
+
+   fcl::asio::blocking::run(runtime, value.async_write(payload));
+   BOOST_REQUIRE_EQUAL(backend->writes.size(), 1U);
+   BOOST_TEST(backend->writes.front() == payload, boost::test_tools::per_element());
+
+   backend->reads.push_back(reply);
+   const auto read = fcl::asio::blocking::run(runtime, value.async_read());
+   BOOST_TEST(read == reply, boost::test_tools::per_element());
+
+   fcl::asio::blocking::run(runtime, value.async_close());
+   BOOST_TEST(backend->closed);
+}
+
+BOOST_AUTO_TEST_CASE(quic_transport_adapter_preserves_endpoint_kind_and_authority) {
+   const auto ip4 = fcl::quic::to_transport_endpoint(fcl::quic::endpoint{.host = "127.0.0.1", .port = 4001});
+   BOOST_TEST(static_cast<int>(ip4.address) == static_cast<int>(fcl::transport::endpoint::address_kind::ip4));
+   BOOST_TEST(static_cast<int>(ip4.protocol) == static_cast<int>(fcl::transport::endpoint::protocol_kind::quic_v1));
+   BOOST_TEST(ip4.authority() == "127.0.0.1:4001");
+   const auto roundtrip = fcl::quic::from_transport_endpoint(ip4);
+   BOOST_TEST(roundtrip.authority() == "127.0.0.1:4001");
+
+   const auto dns = fcl::quic::to_transport_endpoint(fcl::quic::endpoint{.host = "localhost", .port = 4002});
+   BOOST_TEST(static_cast<int>(dns.address) == static_cast<int>(fcl::transport::endpoint::address_kind::dns));
 }
 
 BOOST_AUTO_TEST_CASE(p2p_multistream_select_encodes_libp2p_messages) {
@@ -1874,7 +1975,7 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_ten_node_mesh_delivers_multiple_publishes_onc
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 12}};
    auto identities = std::vector<test_certificate_identity>{};
    auto nodes = std::vector<std::unique_ptr<node>>{};
-   auto endpoints = std::vector<fcl::quic::endpoint>{};
+   auto endpoints = std::vector<endpoint>{};
    identities.reserve(node_count);
    nodes.reserve(node_count);
    endpoints.reserve(node_count);
@@ -2030,7 +2131,7 @@ BOOST_AUTO_TEST_CASE(p2p_identify_push_persists_rocksdb_peer_record) {
    BOOST_TEST(found->signed_peer_record == std::vector<std::uint8_t>({6, 5, 4}), boost::test_tools::per_element());
    BOOST_TEST(std::ranges::any_of(found->protocols, [](const protocol_id& value) { return value == builtins::identify; }));
    BOOST_REQUIRE_EQUAL(found->endpoints.size(), 1U);
-   BOOST_TEST(found->endpoints.front().endpoint.port == 4201);
+   BOOST_TEST(found->endpoints.front().endpoint.address.port == 4201);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_unsupported_protocol_rejection_keeps_session_usable) {
@@ -2067,7 +2168,7 @@ BOOST_AUTO_TEST_CASE(p2p_path_manager_tries_next_direct_endpoint_after_attempt_t
    register_echo(server);
 
    const auto server_endpoint = listen(server, runtime);
-   client.peers().learn_endpoint(server.local_peer(), fcl::quic::endpoint{.host = "127.0.0.1", .port = 9},
+   client.peers().learn_endpoint(server.local_peer(), make_quic_endpoint(9),
                                  capability_set{.bits = capabilities::direct_quic});
    client.peers().learn_endpoint(server.local_peer(), server_endpoint,
                                  capability_set{.bits = capabilities::direct_quic});
@@ -2149,7 +2250,7 @@ BOOST_AUTO_TEST_CASE(p2p_connect_rejects_non_positive_timeout) {
    try {
       (void)fcl::asio::blocking::run(
           runtime,
-          client.async_connect(fcl::quic::endpoint{.host = "127.0.0.1", .port = 9},
+          client.async_connect(make_quic_endpoint(9),
                                node::connect_options{.expected_peer = peer(33), .timeout = std::chrono::milliseconds{0}}));
       BOOST_FAIL("expected invalid connect timeout");
    } catch (const fcl::exception::base& error) {
@@ -2181,7 +2282,7 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_expires_stale_reachability_observation) {
        .peer = peer(70),
        .capabilities = capability_set{.bits = capabilities::direct_quic},
        .reachability = reachability::state::publicly_reachable,
-       .observed_endpoint = fcl::quic::endpoint{.host = "127.0.0.1", .port = 12345},
+       .observed_endpoint = make_quic_endpoint(12345),
        .reachability_expires_at = std::chrono::system_clock::now() - std::chrono::seconds{1},
    });
 
@@ -2206,8 +2307,7 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_uses_injected_backend) {
        .agent_version = "fcl-test/1",
        .protocols = std::vector<protocol_id>{builtins::ping},
    });
-   store.learn_endpoint(id, fcl::quic::endpoint{.host = "127.0.0.1", .port = 4001},
-                        capability_set{.bits = capabilities::direct_quic});
+   store.learn_endpoint(id, make_quic_endpoint(4001), capability_set{.bits = capabilities::direct_quic});
 
    BOOST_TEST(backend->upsert_count == 1U);
    BOOST_TEST(backend->learn_endpoint_count == 1U);
@@ -2215,16 +2315,16 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_uses_injected_backend) {
    BOOST_REQUIRE(found.has_value());
    BOOST_TEST(found->protocol_version == "/fcl/test/1");
    BOOST_REQUIRE_EQUAL(found->endpoints.size(), 1U);
-   BOOST_TEST(found->endpoints.front().endpoint.port == 4001);
+   BOOST_TEST(found->endpoints.front().endpoint.address.port == 4001);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_survives_reopen) {
    auto temp = temp_store_dir{"rocksdb-reopen"};
    const auto id = peer(82);
    const auto relay_id = peer(83);
-   const auto endpoint = fcl::quic::endpoint{.host = "127.0.0.1", .port = 4101};
-   const auto observed = fcl::quic::endpoint{.host = "127.0.0.1", .port = 4102};
-   const auto relay_endpoint = fcl::quic::endpoint{.host = "127.0.0.1", .port = 4103};
+   const auto endpoint = make_quic_endpoint(4101);
+   const auto observed = make_quic_endpoint(4102);
+   const auto relay_endpoint = make_quic_endpoint(4103);
    const auto reservation_expires_at = std::chrono::system_clock::now() + std::chrono::minutes{15};
 
    {
@@ -2251,7 +2351,7 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_survives_reopen) {
               .relay = relay_id,
               .reservation_id = 99,
               .expires_at = reservation_expires_at,
-              .endpoints = std::vector<fcl::quic::endpoint>{relay_endpoint},
+              .endpoints = std::vector<fcl::p2p::endpoint>{relay_endpoint},
               .voucher = std::vector<std::uint8_t>{8, 9, 10},
               .successes = 3,
               .failures = 1,
@@ -2275,18 +2375,18 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_survives_reopen) {
    BOOST_TEST(found->public_key == std::vector<std::uint8_t>({1, 2, 3, 4}), boost::test_tools::per_element());
    BOOST_TEST(found->signed_peer_record == std::vector<std::uint8_t>({5, 6, 7}), boost::test_tools::per_element());
    BOOST_TEST(found->observed_endpoint.has_value());
-   BOOST_TEST(found->observed_endpoint->port == observed.port);
+   BOOST_TEST(found->observed_endpoint->address.port == observed.address.port);
    BOOST_REQUIRE_EQUAL(found->protocols.size(), 2U);
    BOOST_REQUIRE_EQUAL(found->endpoints.size(), 1U);
    BOOST_REQUIRE_EQUAL(found->relay_reservations.size(), 1U);
-   BOOST_TEST(found->endpoints.front().endpoint.port == endpoint.port);
+   BOOST_TEST(found->endpoints.front().endpoint.address.port == endpoint.address.port);
    BOOST_TEST(found->endpoints.front().successes >= 1U);
    BOOST_TEST(found->endpoints.front().failures >= 1U);
    BOOST_TEST(found->endpoints.front().last_latency == std::chrono::milliseconds{11});
    BOOST_TEST(found->relay_reservations.front().relay.to_string() == relay_id.to_string());
    BOOST_TEST(found->relay_reservations.front().reservation_id == 99U);
    BOOST_REQUIRE_EQUAL(found->relay_reservations.front().endpoints.size(), 1U);
-   BOOST_TEST(found->relay_reservations.front().endpoints.front().port == relay_endpoint.port);
+   BOOST_TEST(found->relay_reservations.front().endpoints.front().address.port == relay_endpoint.address.port);
    BOOST_TEST(found->relay_reservations.front().voucher == std::vector<std::uint8_t>({8, 9, 10}),
               boost::test_tools::per_element());
    BOOST_TEST(found->relay_reservations.front().successes == 3U);

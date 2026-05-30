@@ -6,9 +6,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 import fcl.crypto.aes;
-import fcl.crypto.exceptions;
 import fcl.crypto.kdf;
 import fcl.crypto.random;
 import fcl.crypto.types;
@@ -109,9 +109,9 @@ BOOST_AUTO_TEST_CASE(aes256_gcm_rejects_bad_tag) try {
       });
    };
 
-   BOOST_CHECK_EXCEPTION(decrypt_with_bad_tag(), fcl::crypto::exceptions::authentication_failed,
-                         [](const fcl::crypto::exceptions::authentication_failed& error) {
-      return fcl::crypto::exceptions::is(error, fcl::crypto::exceptions::code::authentication_failed);
+   BOOST_CHECK_EXCEPTION(decrypt_with_bad_tag(), fcl::crypto::aes::exceptions::authentication_failed,
+                         [](const fcl::crypto::aes::exceptions::authentication_failed& error) {
+      return error.code().category().name() == std::string_view{"fcl.crypto.aes"};
    });
 }
 FCL_LOG_AND_RETHROW();

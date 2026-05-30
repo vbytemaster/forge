@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -58,13 +60,8 @@ import fcl.crypto.x25519;
 import fcl.multiformats.types;
 import fcl.multiformats.varint;
 import fcl.multiformats.exceptions;
-import fcl.quic.connection;
-import fcl.quic.connector;
-import fcl.quic.exceptions;
-import fcl.quic.framed_stream;
-import fcl.quic.listener;
-import fcl.quic.options;
-import fcl.quic.security;
+import fcl.transport.session;
+import fcl.transport.stream;
 
 #include "node_impl.hpp"
 
@@ -83,12 +80,13 @@ const peer_id& node::local_peer() const noexcept {
    return impl_->local;
 }
 
-std::optional<fcl::quic::endpoint> node::local_endpoint() const {
+std::optional<fcl::p2p::endpoint> node::local_endpoint() const {
    auto lock = std::scoped_lock{impl_->mutex};
-   if (!impl_->listener) {
+   auto endpoint = impl_->direct_driver.local_endpoint();
+   if (!endpoint) {
       return std::nullopt;
    }
-   return impl_->listener->local_endpoint();
+   return endpoint;
 }
 
 node::metrics_snapshot node::metrics() const {
@@ -111,41 +109,40 @@ const peer_store& node::peers() const noexcept {
 
 void node::register_protocol_handler(protocol_id protocol, node::protocol_handler handler) {
    if (protocol.value.empty() || !handler) {
-      exceptions::raise(exceptions::code::invalid_options, "P2P protocol handler requires protocol id and handler");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P protocol handler requires protocol id and handler");
    }
    auto lock = std::scoped_lock{impl_->mutex};
    if (impl_->handlers.size() >= impl_->options.limits.max_protocol_handlers) {
-      exceptions::raise(exceptions::code::backpressure_rejected, "P2P max protocol handlers reached");
+      FCL_THROW_EXCEPTION(exceptions::backpressure_rejected, "P2P max protocol handlers reached");
    }
    const auto [_, inserted] = impl_->handlers.emplace(std::move(protocol), std::move(handler));
    if (!inserted) {
-      exceptions::raise(exceptions::code::duplicate_protocol, "duplicate P2P protocol handler");
+      FCL_THROW_EXCEPTION(exceptions::duplicate_protocol, "duplicate P2P protocol handler");
    }
 }
 
-boost::asio::awaitable<void> node::async_listen(fcl::quic::endpoint endpoint) {
+boost::asio::awaitable<void> node::async_listen(fcl::p2p::endpoint endpoint) {
    auto self = impl_;
    {
       auto lock = std::scoped_lock{self->mutex};
       if (self->stopped) {
-         exceptions::raise(exceptions::code::closed, "P2P node is stopped");
+         FCL_THROW_EXCEPTION(exceptions::closed, "P2P node is stopped");
       }
-      if (self->listener) {
-         exceptions::raise(exceptions::code::invalid_options, "P2P node is already listening");
+      if (self->direct_driver.listening()) {
+         FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P node is already listening");
       }
-      self->listener =
-          std::make_unique<fcl::quic::listener>(self->runtime, std::move(endpoint), self->quic_server_options());
+      self->direct_driver.listen(std::move(endpoint));
    }
    self->launch_accept_loop();
    self->launch_pubsub_heartbeat();
    co_return;
 }
 
-boost::asio::awaitable<node::session_info> node::async_connect(fcl::quic::endpoint endpoint) {
+boost::asio::awaitable<node::session_info> node::async_connect(fcl::p2p::endpoint endpoint) {
    return async_connect(std::move(endpoint), connect_options{});
 }
 
-boost::asio::awaitable<node::session_info> node::async_connect(fcl::quic::endpoint endpoint,
+boost::asio::awaitable<node::session_info> node::async_connect(fcl::p2p::endpoint endpoint,
                                                                node::connect_options options) {
    validate_operation_timeout(options.timeout, "P2P connect timeout");
    auto self = impl_;
@@ -162,7 +159,7 @@ boost::asio::awaitable<reachability::state> node::async_probe_reachability(peer_
    auto self = impl_;
    auto endpoints = std::vector<endpoint>{};
    if (auto endpoint = self->local_endpoint_for_control()) {
-      endpoints.push_back(self->p2p_endpoint_for(*endpoint));
+      endpoints.push_back(*endpoint);
    }
    if (endpoints.empty()) {
       co_return reachability::state::private_network;
@@ -181,7 +178,7 @@ boost::asio::awaitable<reachability::state> node::async_probe_reachability(peer_
               },
       }));
       auto state = reachability::state::private_network;
-      auto observed = std::optional<fcl::quic::endpoint>{};
+      auto observed = std::optional<fcl::p2p::endpoint>{};
       auto buffer = std::vector<std::uint8_t>{};
       for (auto step = 0U; step != 8U; ++step) {
          auto message = reachability::codec::decode_v2(
@@ -203,13 +200,13 @@ boost::asio::awaitable<reachability::state> node::async_probe_reachability(peer_
             continue;
          }
          if (message.type != reachability::v2::message::kind::dial_response || !message.dial_response) {
-            exceptions::raise(exceptions::code::protocol_error, "AutoNAT v2 probe expected dial response");
+            FCL_THROW_EXCEPTION(exceptions::protocol_error, "AutoNAT v2 probe expected dial response");
          }
          if (message.dial_response->status == reachability::v2::response_status::ok &&
              message.dial_response->dial_status == reachability::v2::dial_status::ok) {
             state = reachability::state::publicly_reachable;
             if (message.dial_response->index < endpoints.size()) {
-               observed = endpoints[message.dial_response->index].quic_endpoint();
+               observed = endpoints[message.dial_response->index];
             }
          } else if (message.dial_response->status == reachability::v2::response_status::dial_refused ||
                     message.dial_response->dial_status == reachability::v2::dial_status::dial_back_error) {
@@ -220,7 +217,7 @@ boost::asio::awaitable<reachability::state> node::async_probe_reachability(peer_
          self->store.mark_reachability(self->local, state, observed);
          co_return state;
       }
-      exceptions::raise(exceptions::code::protocol_error, "AutoNAT v2 probe exceeded message exchange limit");
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "AutoNAT v2 probe exceeded message exchange limit");
    } catch (const fcl::exception::base& error) {
       self->forget_autonat_v2_nonce(observer);
       if (p2p_code(error) != exceptions::code::unsupported_protocol) {
@@ -238,7 +235,7 @@ boost::asio::awaitable<reachability::state> node::async_probe_reachability(peer_
    }));
    auto response = reachability::codec::decode_v1(co_await stream.async_read());
    if (response.kind != reachability::message::message_kind::dial_response || !response.response) {
-      exceptions::raise(exceptions::code::protocol_error, "AutoNAT probe expected dial response");
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "AutoNAT probe expected dial response");
    }
    auto state = reachability::state::private_network;
    if (response.response->status == reachability::dial_status::ok) {
@@ -249,7 +246,7 @@ boost::asio::awaitable<reachability::state> node::async_probe_reachability(peer_
    self->increment_reachability_check(state);
    self->store.mark_reachability(
        self->local, state,
-       response.response->endpoint ? std::make_optional(response.response->endpoint->quic_endpoint()) : std::nullopt);
+       response.response->endpoint ? std::make_optional(*response.response->endpoint) : std::nullopt);
    co_return state;
 }
 
@@ -324,7 +321,7 @@ boost::asio::awaitable<void> node::async_provide(dht::key key) {
    auto self = impl_;
    auto endpoints = std::vector<endpoint>{};
    if (auto local_endpoint = self->local_endpoint_for_control()) {
-      endpoints.push_back(self->p2p_endpoint_for(*local_endpoint));
+      endpoints.push_back(*local_endpoint);
    }
    auto provider = dht::peer{.id = self->local, .endpoints = endpoints, .connection = dht::connection_type::connected};
    self->store.upsert_provider(peer_store::provider_record{
@@ -410,7 +407,7 @@ node::async_rendezvous_register(peer_id rendezvous_peer, rendezvous::register_re
        co_await async_read_length_delimited(stream, buffer, self->options.limits.rendezvous.max_message_size),
        self->options.limits.rendezvous);
    if (response.type != rendezvous::message_type::register_response || !response.register_response_value) {
-      exceptions::raise(exceptions::code::protocol_error, "rendezvous expected register response");
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "rendezvous expected register response");
    }
    co_await stream.async_close();
    co_return *response.register_response_value;
@@ -431,7 +428,7 @@ node::async_rendezvous_discover(peer_id rendezvous_peer, rendezvous::discover_re
        co_await async_read_length_delimited(stream, buffer, self->options.limits.rendezvous.max_message_size),
        self->options.limits.rendezvous);
    if (response.type != rendezvous::message_type::discover_response || !response.discover_response_value) {
-      exceptions::raise(exceptions::code::protocol_error, "rendezvous expected discover response");
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "rendezvous expected discover response");
    }
    for (const auto& registration : response.discover_response_value->registrations) {
       if (valid_peer_id(registration.peer)) {
@@ -444,7 +441,7 @@ node::async_rendezvous_discover(peer_id rendezvous_peer, rendezvous::discover_re
 
 boost::asio::awaitable<pubsub::subscription> node::async_subscribe(pubsub::topic subject, pubsub::handler handler) {
    if (subject.value.empty() || !handler) {
-      exceptions::raise(exceptions::code::invalid_options, "GossipSub subscription requires topic and handler");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub subscription requires topic and handler");
    }
    auto self = impl_;
    auto subscription = pubsub::subscription{.subscribe = true, .subject = std::move(subject)};
@@ -452,7 +449,7 @@ boost::asio::awaitable<pubsub::subscription> node::async_subscribe(pubsub::topic
       auto lock = std::scoped_lock{self->mutex};
       if (self->pubsub_value.handlers.size() >= self->options.limits.pubsub.limits.max_topics &&
           !self->pubsub_value.handlers.contains(subscription.subject.value)) {
-         exceptions::raise(exceptions::code::backpressure_rejected, "GossipSub topic limit reached");
+         FCL_THROW_EXCEPTION(exceptions::backpressure_rejected, "GossipSub topic limit reached");
       }
       self->pubsub_value.handlers[subscription.subject.value] = std::move(handler);
    }
@@ -469,7 +466,7 @@ boost::asio::awaitable<pubsub::subscription> node::async_subscribe(pubsub::topic
 
 boost::asio::awaitable<void> node::async_unsubscribe(pubsub::topic subject) {
    if (subject.value.empty()) {
-      exceptions::raise(exceptions::code::invalid_options, "GossipSub unsubscribe requires topic");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub unsubscribe requires topic");
    }
    auto self = impl_;
    auto subscription = pubsub::subscription{.subscribe = false, .subject = std::move(subject)};
@@ -496,11 +493,11 @@ boost::asio::awaitable<pubsub::message> node::async_publish(pubsub::topic subjec
 boost::asio::awaitable<pubsub::message> node::async_publish(pubsub::topic subject, std::vector<std::uint8_t> data,
                                                             pubsub::publish_options publish_options) {
    if (subject.value.empty()) {
-      exceptions::raise(exceptions::code::invalid_options, "GossipSub publish requires topic");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub publish requires topic");
    }
    auto self = impl_;
    if (data.size() > self->options.limits.pubsub.limits.max_data_size) {
-      exceptions::raise(exceptions::code::backpressure_rejected, "GossipSub publish exceeds max data size");
+      FCL_THROW_EXCEPTION(exceptions::backpressure_rejected, "GossipSub publish exceeds max data size");
    }
    auto value = pubsub::message{
        .data = std::move(data),
@@ -511,10 +508,10 @@ boost::asio::awaitable<pubsub::message> node::async_publish(pubsub::topic subjec
       const auto key = fcl::crypto::pem::read_private_key(self->options.private_key_pem);
       pubsub::codec::sign_message(value, key);
       if (!value.from || *value.from != self->local) {
-         exceptions::raise(exceptions::code::invalid_identity, "GossipSub signing key does not match local Peer ID");
+         FCL_THROW_EXCEPTION(exceptions::invalid_identity, "GossipSub signing key does not match local Peer ID");
       }
    } else if (self->options.limits.pubsub.signatures == pubsub::signature_policy::strict_sign) {
-      exceptions::raise(exceptions::code::invalid_options, "GossipSub strict-sign node cannot publish unsigned messages");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub strict-sign node cannot publish unsigned messages");
    }
 
    const auto id = pubsub::codec::message_id(value);
@@ -543,7 +540,7 @@ boost::asio::awaitable<pubsub::message> node::async_publish(pubsub::topic subjec
       }
    }
    if (attempted > 0 && sent == 0) {
-      exceptions::raise(exceptions::code::protocol_error, "GossipSub publish could not reach any candidate peer");
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "GossipSub publish could not reach any candidate peer");
    }
    co_return value;
 }
@@ -563,7 +560,7 @@ boost::asio::awaitable<std::chrono::milliseconds> node::async_ping(peer_id peer,
    co_await stream.async_write(payload);
    const auto reply = co_await stream.async_read();
    if (reply != payload) {
-      exceptions::raise(exceptions::code::protocol_error, "libp2p ping payload mismatch");
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "libp2p ping payload mismatch");
    }
    co_await stream.async_close();
    co_return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started);
@@ -585,7 +582,7 @@ boost::asio::awaitable<fcl::p2p::stream> node::async_open_protocol_stream(peer_i
    validate_operation_timeout(options.direct_attempt_timeout, "P2P direct attempt timeout");
    validate_operation_timeout(options.relay_attempt_timeout, "P2P relay attempt timeout");
    if (options.max_direct_endpoints == 0 || options.max_relay_candidates == 0) {
-      exceptions::raise(exceptions::code::invalid_options, "P2P path attempt limits must be positive");
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P path attempt limits must be positive");
    }
    auto self = impl_;
    auto effective = options;
@@ -667,13 +664,13 @@ boost::asio::awaitable<fcl::p2p::stream> node::async_open_protocol_stream(peer_i
 
    if (!effective.allow_relay) {
       if (last_kind) {
-         exceptions::raise(*last_kind, last_message);
+         FCL_THROW_CODE(*last_kind, last_message);
       }
-      exceptions::raise(exceptions::code::relay_not_available, "P2P relay fallback is disabled");
+      FCL_THROW_EXCEPTION(exceptions::relay_not_available, "P2P relay fallback is disabled");
    }
 
    if (relay_candidates.empty()) {
-      exceptions::raise(exceptions::code::relay_not_available, "P2P path manager found no reserved relay candidate");
+      FCL_THROW_EXCEPTION(exceptions::relay_not_available, "P2P path manager found no reserved relay candidate");
    }
    self->record_direct_failure(peer);
    for (const auto& relay_peer : relay_candidates) {
@@ -687,9 +684,9 @@ boost::asio::awaitable<fcl::p2p::stream> node::async_open_protocol_stream(peer_i
       }
    }
    if (last_kind) {
-      exceptions::raise(*last_kind, last_message);
+      FCL_THROW_CODE(*last_kind, last_message);
    }
-   exceptions::raise(exceptions::code::relay_not_available, "P2P path manager exhausted relay candidates");
+   FCL_THROW_EXCEPTION(exceptions::relay_not_available, "P2P path manager exhausted relay candidates");
 }
 
 boost::asio::awaitable<void> node::async_stop() {
@@ -701,9 +698,7 @@ boost::asio::awaitable<void> node::async_stop() {
          co_return;
       }
       self->stopped = true;
-      if (self->listener) {
-         self->listener->stop();
-      }
+      self->direct_driver.stop();
       for (auto& [_, session] : self->sessions) {
          session->closed = true;
          sessions.push_back(session);
@@ -734,9 +729,7 @@ void node::stop() {
          return;
       }
       impl_->stopped = true;
-      if (impl_->listener) {
-         impl_->listener->stop();
-      }
+      impl_->direct_driver.stop();
       for (auto& [_, session] : impl_->sessions) {
          session->closed = true;
          session->connection.cancel();

@@ -14,19 +14,19 @@ export import fcl.transport.stream;
 export namespace fcl::transport {
 
 struct connect_options {
-   limits resource_limits{};
+   limits limits{};
 };
 
-struct connected_stream {
+struct stream_connection {
    endpoint local_endpoint;
    endpoint remote_endpoint;
-   stream value;
+   stream stream;
 };
 
-struct connected_session {
+struct session_connection {
    endpoint local_endpoint;
    endpoint remote_endpoint;
-   session value;
+   session session;
 };
 
 namespace detail {
@@ -49,7 +49,7 @@ class stream_connector {
 
    [[nodiscard]] bool valid() const noexcept;
 
-   boost::asio::awaitable<connected_stream> async_connect(endpoint remote, connect_options options = {});
+   boost::asio::awaitable<stream_connection> async_connect(endpoint remote, connect_options options = {});
    void cancel();
 
  private:
@@ -74,7 +74,7 @@ class session_connector {
 
    [[nodiscard]] bool valid() const noexcept;
 
-   boost::asio::awaitable<connected_session> async_connect(endpoint remote, connect_options options = {});
+   boost::asio::awaitable<session_connection> async_connect(endpoint remote, connect_options options = {});
    void cancel();
 
  private:
@@ -93,7 +93,7 @@ class stream_connector_concept {
    virtual ~stream_connector_concept() = default;
 
    [[nodiscard]] virtual bool valid() const noexcept = 0;
-   virtual boost::asio::awaitable<connected_stream> async_connect(endpoint remote, connect_options options) = 0;
+   virtual boost::asio::awaitable<stream_connection> async_connect(endpoint remote, connect_options options) = 0;
    virtual void cancel() = 0;
 };
 
@@ -102,7 +102,7 @@ class session_connector_concept {
    virtual ~session_connector_concept() = default;
 
    [[nodiscard]] virtual bool valid() const noexcept = 0;
-   virtual boost::asio::awaitable<connected_session> async_connect(endpoint remote, connect_options options) = 0;
+   virtual boost::asio::awaitable<session_connection> async_connect(endpoint remote, connect_options options) = 0;
    virtual void cancel() = 0;
 };
 

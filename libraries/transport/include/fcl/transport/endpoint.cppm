@@ -8,7 +8,7 @@ export module fcl.transport.endpoint;
 export namespace fcl::transport {
 
 struct endpoint {
-   enum class address_kind {
+   enum class host_kind {
       ip4,
       ip6,
       dns,
@@ -21,7 +21,7 @@ struct endpoint {
       tcp,
    };
 
-   address_kind address = address_kind::ip4;
+   host_kind host_type = host_kind::ip4;
    protocol_kind protocol = protocol_kind::quic_v1;
    std::string host;
    std::uint16_t port = 0;

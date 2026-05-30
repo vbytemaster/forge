@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <future>
 #include <memory>
 #include <optional>
@@ -230,7 +231,9 @@ udp::endpoint to_udp_endpoint(const endpoint& value) {
 }
 
 endpoint to_quic_endpoint(const udp::endpoint& value) {
-   return endpoint{.host = value.address().to_string(), .port = value.port()};
+   using address_member = boost::asio::ip::address (udp::endpoint::*)() const;
+   const auto host = std::invoke(static_cast<address_member>(&udp::endpoint::address), value).to_string();
+   return endpoint{.host = host, .port = value.port()};
 }
 
 template <typename T>

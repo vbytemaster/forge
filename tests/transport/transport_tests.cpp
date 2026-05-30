@@ -32,7 +32,7 @@ using bytes = std::vector<std::uint8_t>;
 [[nodiscard]] fcl::transport::endpoint endpoint(std::string host,
                                                 fcl::transport::endpoint::protocol_kind protocol,
                                                 std::uint16_t port) {
-   return fcl::transport::endpoint{.address = fcl::transport::endpoint::address_kind::ip4,
+   return fcl::transport::endpoint{.host_type = fcl::transport::endpoint::host_kind::ip4,
                                    .protocol = protocol,
                                    .host = std::move(host),
                                    .port = port};
@@ -125,14 +125,15 @@ class fake_stream_connector final : public fcl::transport::detail::stream_connec
       return active;
    }
 
-   boost::asio::awaitable<fcl::transport::connected_stream>
-   async_connect(fcl::transport::endpoint remote, fcl::transport::connect_options) override {
+   boost::asio::awaitable<fcl::transport::stream_connection>
+   async_connect(fcl::transport::endpoint remote, fcl::transport::connect_options options) override {
       ++connect_count;
       last_remote = remote;
-      co_return fcl::transport::connected_stream{
+      last_limits = options.limits;
+      co_return fcl::transport::stream_connection{
           .local_endpoint = local,
           .remote_endpoint = std::move(remote),
-          .value = fcl::transport::detail::stream_access::make(std::make_shared<fake_stream>(700)),
+          .stream = fcl::transport::detail::stream_access::make(std::make_shared<fake_stream>(700)),
       };
    }
 
@@ -143,6 +144,7 @@ class fake_stream_connector final : public fcl::transport::detail::stream_connec
 
    fcl::transport::endpoint local;
    fcl::transport::endpoint last_remote;
+   fcl::transport::limits last_limits;
    std::uint64_t connect_count = 0;
    std::uint64_t cancel_count = 0;
    bool active = true;
@@ -156,14 +158,15 @@ class fake_session_connector final : public fcl::transport::detail::session_conn
       return active;
    }
 
-   boost::asio::awaitable<fcl::transport::connected_session>
-   async_connect(fcl::transport::endpoint remote, fcl::transport::connect_options) override {
+   boost::asio::awaitable<fcl::transport::session_connection>
+   async_connect(fcl::transport::endpoint remote, fcl::transport::connect_options options) override {
       ++connect_count;
       last_remote = remote;
-      co_return fcl::transport::connected_session{
+      last_limits = options.limits;
+      co_return fcl::transport::session_connection{
           .local_endpoint = local,
           .remote_endpoint = std::move(remote),
-          .value = fcl::transport::detail::session_access::make(std::make_shared<fake_session>()),
+          .session = fcl::transport::detail::session_access::make(std::make_shared<fake_session>()),
       };
    }
 
@@ -174,6 +177,7 @@ class fake_session_connector final : public fcl::transport::detail::session_conn
 
    fcl::transport::endpoint local;
    fcl::transport::endpoint last_remote;
+   fcl::transport::limits last_limits;
    std::uint64_t connect_count = 0;
    std::uint64_t cancel_count = 0;
    bool active = true;
@@ -191,7 +195,7 @@ class fake_stream_listener final : public fcl::transport::detail::stream_listene
       return local;
    }
 
-   boost::asio::awaitable<fcl::transport::connected_stream> async_accept() override {
+   boost::asio::awaitable<fcl::transport::stream_connection> async_accept() override {
       ++accept_count;
       BOOST_REQUIRE(!accepted.empty());
       auto out = std::move(accepted.front());
@@ -211,7 +215,7 @@ class fake_stream_listener final : public fcl::transport::detail::stream_listene
    }
 
    fcl::transport::endpoint local;
-   std::deque<fcl::transport::connected_stream> accepted;
+   std::deque<fcl::transport::stream_connection> accepted;
    std::uint64_t accept_count = 0;
    std::uint64_t close_count = 0;
    std::uint64_t cancel_count = 0;
@@ -230,7 +234,7 @@ class fake_session_listener final : public fcl::transport::detail::session_liste
       return local;
    }
 
-   boost::asio::awaitable<fcl::transport::connected_session> async_accept() override {
+   boost::asio::awaitable<fcl::transport::session_connection> async_accept() override {
       ++accept_count;
       BOOST_REQUIRE(!accepted.empty());
       auto out = std::move(accepted.front());
@@ -250,7 +254,7 @@ class fake_session_listener final : public fcl::transport::detail::session_liste
    }
 
    fcl::transport::endpoint local;
-   std::deque<fcl::transport::connected_session> accepted;
+   std::deque<fcl::transport::session_connection> accepted;
    std::uint64_t accept_count = 0;
    std::uint64_t close_count = 0;
    std::uint64_t cancel_count = 0;
@@ -362,50 +366,68 @@ BOOST_AUTO_TEST_CASE(transport_frame_handles_partial_multiple_and_limit) {
                      fcl::transport::exceptions::frame_too_large);
 }
 
+BOOST_AUTO_TEST_CASE(transport_endpoint_formats_authority_by_host_kind) {
+   auto ip4 = endpoint("127.0.0.1", fcl::transport::endpoint::protocol_kind::tcp, 443);
+   BOOST_CHECK_EQUAL(ip4.authority(), "127.0.0.1:443");
+
+   auto dns = endpoint("example.com", fcl::transport::endpoint::protocol_kind::tcp, 8443);
+   dns.host_type = fcl::transport::endpoint::host_kind::dns;
+   BOOST_CHECK_EQUAL(dns.authority(), "example.com:8443");
+
+   auto ip6 = endpoint("2001:db8::1", fcl::transport::endpoint::protocol_kind::tcp, 443);
+   ip6.host_type = fcl::transport::endpoint::host_kind::ip6;
+   BOOST_CHECK_EQUAL(ip6.authority(), "[2001:db8::1]:443");
+}
+
 BOOST_AUTO_TEST_CASE(transport_connector_listener_wrappers_preserve_endpoints) {
    auto runtime = fcl::asio::runtime{};
    const auto local = endpoint("127.0.0.1", fcl::transport::endpoint::protocol_kind::tcp, 7001);
    const auto remote = endpoint("127.0.0.2", fcl::transport::endpoint::protocol_kind::tcp, 7002);
+   const auto connection_limits = fcl::transport::limits{.max_connections = 7};
 
    auto stream_connector_model = std::make_shared<fake_stream_connector>(local);
    auto stream_connector = make_stream_connector(stream_connector_model);
-   auto connected_stream = fcl::asio::blocking::run(runtime, stream_connector.async_connect(remote, {}));
-   BOOST_CHECK_EQUAL(connected_stream.local_endpoint.port, local.port);
-   BOOST_CHECK_EQUAL(connected_stream.remote_endpoint.host, remote.host);
-   BOOST_CHECK_EQUAL(connected_stream.value.id(), 700);
+   auto stream_conn = fcl::asio::blocking::run(
+       runtime, stream_connector.async_connect(remote, fcl::transport::connect_options{.limits = connection_limits}));
+   BOOST_CHECK_EQUAL(stream_conn.local_endpoint.port, local.port);
+   BOOST_CHECK_EQUAL(stream_conn.remote_endpoint.host, remote.host);
+   BOOST_CHECK_EQUAL(stream_conn.stream.id(), 700);
+   BOOST_CHECK_EQUAL(stream_connector_model->last_limits.max_connections, connection_limits.max_connections);
    stream_connector.cancel();
    BOOST_CHECK_EQUAL(stream_connector_model->cancel_count, 1U);
    BOOST_CHECK(!stream_connector.valid());
 
    auto session_connector_model = std::make_shared<fake_session_connector>(local);
    auto session_connector = make_session_connector(session_connector_model);
-   auto connected_session = fcl::asio::blocking::run(runtime, session_connector.async_connect(remote, {}));
-   BOOST_CHECK_EQUAL(connected_session.local_endpoint.port, local.port);
-   BOOST_CHECK_EQUAL(connected_session.remote_endpoint.host, remote.host);
-   BOOST_CHECK(connected_session.value.valid());
+   auto session_conn = fcl::asio::blocking::run(
+       runtime, session_connector.async_connect(remote, fcl::transport::connect_options{.limits = connection_limits}));
+   BOOST_CHECK_EQUAL(session_conn.local_endpoint.port, local.port);
+   BOOST_CHECK_EQUAL(session_conn.remote_endpoint.host, remote.host);
+   BOOST_CHECK(session_conn.session.valid());
+   BOOST_CHECK_EQUAL(session_connector_model->last_limits.max_connections, connection_limits.max_connections);
 
    auto stream_listener_model = std::make_shared<fake_stream_listener>(local);
-   stream_listener_model->accepted.push_back(fcl::transport::connected_stream{
+   stream_listener_model->accepted.push_back(fcl::transport::stream_connection{
        .local_endpoint = local,
        .remote_endpoint = remote,
-       .value = make_stream(std::make_shared<fake_stream>(800)),
+       .stream = make_stream(std::make_shared<fake_stream>(800)),
    });
    auto stream_listener = make_stream_listener(stream_listener_model);
    BOOST_CHECK_EQUAL(stream_listener.local_endpoint().port, local.port);
    auto accepted_stream = fcl::asio::blocking::run(runtime, stream_listener.async_accept());
-   BOOST_CHECK_EQUAL(accepted_stream.value.id(), 800);
+   BOOST_CHECK_EQUAL(accepted_stream.stream.id(), 800);
    fcl::asio::blocking::run(runtime, stream_listener.async_close());
    BOOST_CHECK(!stream_listener.valid());
 
    auto session_listener_model = std::make_shared<fake_session_listener>(local);
-   session_listener_model->accepted.push_back(fcl::transport::connected_session{
+   session_listener_model->accepted.push_back(fcl::transport::session_connection{
        .local_endpoint = local,
        .remote_endpoint = remote,
-       .value = make_session(std::make_shared<fake_session>()),
+       .session = make_session(std::make_shared<fake_session>()),
    });
    auto session_listener = make_session_listener(session_listener_model);
    auto accepted_session = fcl::asio::blocking::run(runtime, session_listener.async_accept());
-   BOOST_CHECK(accepted_session.value.valid());
+   BOOST_CHECK(accepted_session.session.valid());
    session_listener.cancel();
    BOOST_CHECK_EQUAL(session_listener_model->cancel_count, 1U);
 }
@@ -418,23 +440,31 @@ BOOST_AUTO_TEST_CASE(transport_registry_routes_and_rejects_missing_or_duplicate)
 
    auto connector_model = std::make_shared<fake_stream_connector>(local);
    auto listener_model = std::make_shared<fake_stream_listener>(local);
-   registry.register_stream_transport(
+   auto received_listen_limits = fcl::transport::limits{};
+   registry.register_stream(
        fcl::transport::endpoint::protocol_kind::tcp,
        [connector_model] { return make_stream_connector(connector_model); },
-       [listener_model](fcl::transport::endpoint, fcl::transport::listen_options)
+       [listener_model, &received_listen_limits](fcl::transport::endpoint, fcl::transport::listen_options options)
            -> boost::asio::awaitable<fcl::transport::stream_listener> {
+          received_listen_limits = options.limits;
           co_return make_stream_listener(listener_model);
        });
+   BOOST_CHECK(registry.has_stream(fcl::transport::endpoint::protocol_kind::tcp));
+   BOOST_CHECK(!registry.has_session(fcl::transport::endpoint::protocol_kind::tcp));
 
-   auto connected = fcl::asio::blocking::run(runtime, registry.async_connect_stream(remote, {}));
+   auto connected = fcl::asio::blocking::run(
+       runtime, registry.async_connect_stream(remote, fcl::transport::connect_options{.limits = {.max_connections = 11}}));
    BOOST_CHECK_EQUAL(connected.local_endpoint.port, local.port);
    BOOST_CHECK_EQUAL(connected.remote_endpoint.port, remote.port);
    BOOST_CHECK_EQUAL(connector_model->connect_count, 1U);
+   BOOST_CHECK_EQUAL(connector_model->last_limits.max_connections, 11U);
 
-   auto listener = fcl::asio::blocking::run(runtime, registry.async_listen_stream(local, {}));
+   auto listener = fcl::asio::blocking::run(
+       runtime, registry.async_listen_stream(local, fcl::transport::listen_options{.limits = {.max_connections = 13}}));
    BOOST_CHECK_EQUAL(listener.local_endpoint().port, local.port);
+   BOOST_CHECK_EQUAL(received_listen_limits.max_connections, 13U);
 
-   BOOST_CHECK_THROW(registry.register_stream_transport(
+   BOOST_CHECK_THROW(registry.register_stream(
                          fcl::transport::endpoint::protocol_kind::tcp,
                          [] { return fcl::transport::stream_connector{}; },
                          [](fcl::transport::endpoint, fcl::transport::listen_options)

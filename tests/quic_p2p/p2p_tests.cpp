@@ -384,10 +384,10 @@ void register_echo(node& value, protocol_id protocol) {
 }
 
 [[nodiscard]] endpoint make_quic_endpoint(std::uint16_t port, std::string host = "127.0.0.1") {
-   return endpoint{.address = {.address = endpoint::address_kind::ip4,
-                               .protocol = endpoint::protocol_kind::quic_v1,
-                               .host = std::move(host),
-                               .port = port}};
+   return endpoint{.transport = {.host_type = endpoint::host_kind::ip4,
+                                 .protocol = endpoint::protocol_kind::quic_v1,
+                                 .host = std::move(host),
+                                 .port = port}};
 }
 
 endpoint listen(node& value, fcl::asio::runtime& runtime) {
@@ -680,15 +680,15 @@ BOOST_AUTO_TEST_CASE(p2p_peer_id_legacy_and_cid_strings_roundtrip) {
 }
 
 BOOST_AUTO_TEST_CASE(p2p_endpoint_parses_libp2p_quic_address_format) {
-   static_assert(std::is_same_v<decltype(endpoint{}.address.address), endpoint::address_kind>);
+   static_assert(std::is_same_v<decltype(endpoint{}.transport.host_type), endpoint::host_kind>);
 
    const auto id = peer(42);
    auto parsed = parse_endpoint("/ip4/127.0.0.1/udp/4001/quic-v1/p2p/" + id.to_string());
 
-   BOOST_TEST(static_cast<int>(parsed.address.address) == static_cast<int>(endpoint::address_kind::ip4));
+   BOOST_TEST(static_cast<int>(parsed.transport.host_type) == static_cast<int>(endpoint::host_kind::ip4));
 
-   BOOST_TEST(parsed.address.host == "127.0.0.1");
-   BOOST_TEST(parsed.address.port == 4001);
+   BOOST_TEST(parsed.transport.host == "127.0.0.1");
+   BOOST_TEST(parsed.transport.port == 4001);
    BOOST_REQUIRE(parsed.peer.has_value());
    BOOST_TEST(parsed.peer->to_string() == id.to_string());
    BOOST_TEST(parsed.to_string() == "/ip4/127.0.0.1/udp/4001/quic-v1/p2p/" + id.to_string());
@@ -699,10 +699,10 @@ BOOST_AUTO_TEST_CASE(p2p_endpoint_uses_multiaddr_for_tcp_wss_and_relay_views) {
    const auto id = peer(43);
 
    auto tcp = parse_endpoint("/dns4/example.com/tcp/4001/p2p/" + id.to_string());
-   BOOST_TEST(static_cast<int>(tcp.address.address) == static_cast<int>(endpoint::address_kind::dns4));
-   BOOST_TEST(static_cast<int>(tcp.address.protocol) == static_cast<int>(endpoint::protocol_kind::tcp));
-   BOOST_TEST(tcp.address.host == "example.com");
-   BOOST_TEST(tcp.address.port == 4001);
+   BOOST_TEST(static_cast<int>(tcp.transport.host_type) == static_cast<int>(endpoint::host_kind::dns4));
+   BOOST_TEST(static_cast<int>(tcp.transport.protocol) == static_cast<int>(endpoint::protocol_kind::tcp));
+   BOOST_TEST(tcp.transport.host == "example.com");
+   BOOST_TEST(tcp.transport.port == 4001);
    BOOST_TEST(tcp.is_direct_tcp());
    BOOST_TEST(tcp.to_string() == "/dns4/example.com/tcp/4001/p2p/" + id.to_string());
 
@@ -795,7 +795,7 @@ BOOST_AUTO_TEST_CASE(p2p_stream_wraps_transport_stream) {
 
 BOOST_AUTO_TEST_CASE(quic_transport_adapter_preserves_endpoint_kind_and_authority) {
    const auto ip4 = fcl::quic::to_transport_endpoint(fcl::quic::endpoint{.host = "127.0.0.1", .port = 4001});
-   BOOST_TEST(static_cast<int>(ip4.address) == static_cast<int>(fcl::transport::endpoint::address_kind::ip4));
+   BOOST_TEST(static_cast<int>(ip4.host_type) == static_cast<int>(fcl::transport::endpoint::host_kind::ip4));
    BOOST_TEST(static_cast<int>(ip4.protocol) == static_cast<int>(fcl::transport::endpoint::protocol_kind::quic_v1));
    const auto authority = std::string{"127.0.0.1"} + ":" + std::to_string(4001);
    BOOST_TEST(ip4.authority() == authority);
@@ -803,7 +803,7 @@ BOOST_AUTO_TEST_CASE(quic_transport_adapter_preserves_endpoint_kind_and_authorit
    BOOST_TEST(roundtrip.authority() == authority);
 
    const auto dns = fcl::quic::to_transport_endpoint(fcl::quic::endpoint{.host = "localhost", .port = 4002});
-   BOOST_TEST(static_cast<int>(dns.address) == static_cast<int>(fcl::transport::endpoint::address_kind::dns));
+   BOOST_TEST(static_cast<int>(dns.host_type) == static_cast<int>(fcl::transport::endpoint::host_kind::dns));
 }
 
 BOOST_AUTO_TEST_CASE(p2p_multistream_select_encodes_libp2p_messages) {
@@ -2179,7 +2179,7 @@ BOOST_AUTO_TEST_CASE(p2p_identify_push_persists_rocksdb_peer_record) {
    BOOST_TEST(found->signed_peer_record == std::vector<std::uint8_t>({6, 5, 4}), boost::test_tools::per_element());
    BOOST_TEST(std::ranges::any_of(found->protocols, [](const protocol_id& value) { return value == builtins::identify; }));
    BOOST_REQUIRE_EQUAL(found->endpoints.size(), 1U);
-   BOOST_TEST(found->endpoints.front().endpoint.address.port == 4201);
+   BOOST_TEST(found->endpoints.front().endpoint.transport.port == 4201);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_unsupported_protocol_rejection_keeps_session_usable) {
@@ -2363,7 +2363,7 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_uses_injected_backend) {
    BOOST_REQUIRE(found.has_value());
    BOOST_TEST(found->protocol_version == "/fcl/test/1");
    BOOST_REQUIRE_EQUAL(found->endpoints.size(), 1U);
-   BOOST_TEST(found->endpoints.front().endpoint.address.port == 4001);
+   BOOST_TEST(found->endpoints.front().endpoint.transport.port == 4001);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_survives_reopen) {
@@ -2423,18 +2423,18 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_survives_reopen) {
    BOOST_TEST(found->public_key == std::vector<std::uint8_t>({1, 2, 3, 4}), boost::test_tools::per_element());
    BOOST_TEST(found->signed_peer_record == std::vector<std::uint8_t>({5, 6, 7}), boost::test_tools::per_element());
    BOOST_TEST(found->observed_endpoint.has_value());
-   BOOST_TEST(found->observed_endpoint->address.port == observed.address.port);
+   BOOST_TEST(found->observed_endpoint->transport.port == observed.transport.port);
    BOOST_REQUIRE_EQUAL(found->protocols.size(), 2U);
    BOOST_REQUIRE_EQUAL(found->endpoints.size(), 1U);
    BOOST_REQUIRE_EQUAL(found->relay_reservations.size(), 1U);
-   BOOST_TEST(found->endpoints.front().endpoint.address.port == endpoint.address.port);
+   BOOST_TEST(found->endpoints.front().endpoint.transport.port == endpoint.transport.port);
    BOOST_TEST(found->endpoints.front().successes >= 1U);
    BOOST_TEST(found->endpoints.front().failures >= 1U);
    BOOST_TEST(found->endpoints.front().last_latency == std::chrono::milliseconds{11});
    BOOST_TEST(found->relay_reservations.front().relay.to_string() == relay_id.to_string());
    BOOST_TEST(found->relay_reservations.front().reservation_id == 99U);
    BOOST_REQUIRE_EQUAL(found->relay_reservations.front().endpoints.size(), 1U);
-   BOOST_TEST(found->relay_reservations.front().endpoints.front().address.port == relay_endpoint.address.port);
+   BOOST_TEST(found->relay_reservations.front().endpoints.front().transport.port == relay_endpoint.transport.port);
    BOOST_TEST(found->relay_reservations.front().voucher == std::vector<std::uint8_t>({8, 9, 10}),
               boost::test_tools::per_element());
    BOOST_TEST(found->relay_reservations.front().successes == 3U);

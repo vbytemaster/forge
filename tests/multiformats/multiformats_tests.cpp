@@ -143,12 +143,31 @@ FCL_LOG_AND_RETHROW();
 BOOST_AUTO_TEST_CASE(multiaddr_rejects_malformed_donor_cases_with_typed_errors) try {
    BOOST_CHECK_THROW((void)fcl::multiformats::multiaddr::parse("/ip4/127.0.0.1/quic-v1/1234"),
                      fcl::multiformats::exceptions::invalid_format);
-   BOOST_CHECK_THROW((void)fcl::multiformats::multiaddr::parse("/ip4/not-an-ip/tcp/80").to_bytes(),
+   BOOST_CHECK_THROW((void)fcl::multiformats::multiaddr::parse("/ip4/not-an-ip/tcp/80"),
+                     fcl::multiformats::exceptions::invalid_format);
+   BOOST_CHECK_THROW((void)fcl::multiformats::multiaddr::parse("/ip4/127.0.0.1/tcp/not-a-port"),
+                     fcl::multiformats::exceptions::invalid_format);
+   BOOST_CHECK_THROW((void)fcl::multiformats::multiaddr::parse("/ip4/127.0.0.1/tcp/65536"),
+                     fcl::multiformats::exceptions::invalid_format);
+   BOOST_CHECK_THROW((void)fcl::multiformats::multiaddr::parse("/ip4/127.0.0.1/p2p/not-base58-0"),
                      fcl::multiformats::exceptions::invalid_format);
    BOOST_CHECK_THROW((void)fcl::multiformats::multiaddr::from_bytes(fcl::multiformats::bytes{0x04, 0x7f}),
                      fcl::multiformats::exceptions::invalid_format);
    BOOST_CHECK_THROW((void)fcl::multiformats::multiaddr::from_bytes(fcl::multiformats::bytes{0xff, 0xff, 0xff, 0xff}),
                      fcl::multiformats::exceptions::invalid_format);
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(multiaddr_push_rejects_invalid_component_state) try {
+   using enum fcl::multiformats::protocol_code;
+
+   auto value = fcl::multiformats::multiaddr{};
+   BOOST_CHECK_THROW(value.push({.code = ip4, .value = {}}), fcl::multiformats::exceptions::invalid_format);
+   BOOST_CHECK_THROW(value.push({.code = tcp, .value = {}}), fcl::multiformats::exceptions::invalid_format);
+   BOOST_CHECK_THROW(value.push({.code = p2p, .value = {}}), fcl::multiformats::exceptions::invalid_format);
+   BOOST_CHECK_THROW(value.push({.code = quic_v1, .value = "unexpected"}), fcl::multiformats::exceptions::invalid_format);
+   BOOST_CHECK_THROW(value.push({.code = ws, .value = "unexpected"}), fcl::multiformats::exceptions::invalid_format);
+   BOOST_CHECK_THROW(value.push({.code = wss, .value = "unexpected"}), fcl::multiformats::exceptions::invalid_format);
 }
 FCL_LOG_AND_RETHROW();
 

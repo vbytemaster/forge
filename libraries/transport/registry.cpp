@@ -43,8 +43,8 @@ registry::~registry() = default;
 registry::registry(registry&&) noexcept = default;
 registry& registry::operator=(registry&&) noexcept = default;
 
-void registry::register_stream_transport(endpoint::protocol_kind protocol, stream_connector_factory connector,
-                                         stream_listener_factory listener) {
+void registry::register_stream(endpoint::protocol_kind protocol, stream_connector_factory connector,
+                               stream_listener_factory listener) {
    require_factory(static_cast<bool>(connector));
    require_factory(static_cast<bool>(listener));
    if (impl_->streams.contains(protocol)) {
@@ -53,8 +53,8 @@ void registry::register_stream_transport(endpoint::protocol_kind protocol, strea
    impl_->streams.emplace(protocol, impl::stream_transport{.connector = std::move(connector), .listener = std::move(listener)});
 }
 
-void registry::register_session_transport(endpoint::protocol_kind protocol, session_connector_factory connector,
-                                          session_listener_factory listener) {
+void registry::register_session(endpoint::protocol_kind protocol, session_connector_factory connector,
+                                session_listener_factory listener) {
    require_factory(static_cast<bool>(connector));
    require_factory(static_cast<bool>(listener));
    if (impl_->sessions.contains(protocol)) {
@@ -64,15 +64,15 @@ void registry::register_session_transport(endpoint::protocol_kind protocol, sess
                            impl::session_transport{.connector = std::move(connector), .listener = std::move(listener)});
 }
 
-bool registry::has_stream_transport(endpoint::protocol_kind protocol) const {
+bool registry::has_stream(endpoint::protocol_kind protocol) const {
    return impl_->streams.contains(protocol);
 }
 
-bool registry::has_session_transport(endpoint::protocol_kind protocol) const {
+bool registry::has_session(endpoint::protocol_kind protocol) const {
    return impl_->sessions.contains(protocol);
 }
 
-boost::asio::awaitable<connected_stream> registry::async_connect_stream(endpoint remote, connect_options options) {
+boost::asio::awaitable<stream_connection> registry::async_connect_stream(endpoint remote, connect_options options) {
    const auto found = impl_->streams.find(remote.protocol);
    if (found == impl_->streams.end()) {
       FCL_THROW_EXCEPTION(exceptions::unsupported_protocol, "no registered stream transport for endpoint protocol");
@@ -81,7 +81,7 @@ boost::asio::awaitable<connected_stream> registry::async_connect_stream(endpoint
    co_return co_await connector.async_connect(std::move(remote), options);
 }
 
-boost::asio::awaitable<connected_session> registry::async_connect_session(endpoint remote, connect_options options) {
+boost::asio::awaitable<session_connection> registry::async_connect_session(endpoint remote, connect_options options) {
    const auto found = impl_->sessions.find(remote.protocol);
    if (found == impl_->sessions.end()) {
       FCL_THROW_EXCEPTION(exceptions::unsupported_protocol, "no registered session transport for endpoint protocol");

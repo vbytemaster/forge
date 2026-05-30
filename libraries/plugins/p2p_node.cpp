@@ -72,7 +72,7 @@ struct parsed_config {
 }
 
 [[nodiscard]] fcl::p2p::endpoint p2p_endpoint_for(fcl::quic::endpoint endpoint) {
-   return fcl::p2p::endpoint{.address = fcl::quic::to_transport_endpoint(endpoint)};
+   return fcl::p2p::endpoint{.transport = fcl::quic::to_transport_endpoint(endpoint)};
 }
 
 [[nodiscard]] std::vector<fcl::p2p::endpoint> parse_endpoint_list(const std::vector<std::string>& values) {

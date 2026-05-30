@@ -46,11 +46,11 @@ namespace {
    if (!value.is_direct_quic()) {
       FCL_THROW_EXCEPTION(exceptions::unsupported_protocol, "P2P endpoint is not a direct QUIC endpoint");
    }
-   return fcl::quic::from_transport_endpoint(value.address);
+   return fcl::quic::from_transport_endpoint(value.transport);
 }
 
 [[nodiscard]] fcl::p2p::endpoint p2p_endpoint_for(const fcl::quic::endpoint& value) {
-   return fcl::p2p::endpoint{.address = fcl::quic::to_transport_endpoint(value)};
+   return fcl::p2p::endpoint{.transport = fcl::quic::to_transport_endpoint(value)};
 }
 
 [[nodiscard]] exceptions::code map_quic_error(fcl::quic::exceptions::code kind) noexcept {

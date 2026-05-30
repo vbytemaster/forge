@@ -27,16 +27,15 @@ class registry {
    registry(const registry&) = delete;
    registry& operator=(const registry&) = delete;
 
-   void register_stream_transport(endpoint::protocol_kind protocol, stream_connector_factory connector,
-                                  stream_listener_factory listener);
-   void register_session_transport(endpoint::protocol_kind protocol, session_connector_factory connector,
-                                   session_listener_factory listener);
+   void register_stream(endpoint::protocol_kind protocol, stream_connector_factory connector, stream_listener_factory listener);
+   void register_session(endpoint::protocol_kind protocol, session_connector_factory connector,
+                         session_listener_factory listener);
 
-   [[nodiscard]] bool has_stream_transport(endpoint::protocol_kind protocol) const;
-   [[nodiscard]] bool has_session_transport(endpoint::protocol_kind protocol) const;
+   [[nodiscard]] bool has_stream(endpoint::protocol_kind protocol) const;
+   [[nodiscard]] bool has_session(endpoint::protocol_kind protocol) const;
 
-   boost::asio::awaitable<connected_stream> async_connect_stream(endpoint remote, connect_options options = {});
-   boost::asio::awaitable<connected_session> async_connect_session(endpoint remote, connect_options options = {});
+   boost::asio::awaitable<stream_connection> async_connect_stream(endpoint remote, connect_options options = {});
+   boost::asio::awaitable<session_connection> async_connect_session(endpoint remote, connect_options options = {});
    boost::asio::awaitable<stream_listener> async_listen_stream(endpoint local, listen_options options = {});
    boost::asio::awaitable<session_listener> async_listen_session(endpoint local, listen_options options = {});
 

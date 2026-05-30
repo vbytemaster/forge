@@ -42,7 +42,7 @@ endpoint stream_listener::local_endpoint() const {
    return impl_->model->local_endpoint();
 }
 
-boost::asio::awaitable<connected_stream> stream_listener::async_accept() {
+boost::asio::awaitable<stream_connection> stream_listener::async_accept() {
    if (!valid()) {
       FCL_THROW_EXCEPTION(exceptions::closed, "invalid transport stream listener");
    }
@@ -83,7 +83,7 @@ endpoint session_listener::local_endpoint() const {
    return impl_->model->local_endpoint();
 }
 
-boost::asio::awaitable<connected_session> session_listener::async_accept() {
+boost::asio::awaitable<session_connection> session_listener::async_accept() {
    if (!valid()) {
       FCL_THROW_EXCEPTION(exceptions::closed, "invalid transport session listener");
    }

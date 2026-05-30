@@ -358,7 +358,7 @@
       "known_gap": ""
     },
     {
-      "id": "gossipsub.mesh_hardening_and_resource_limits",
+      "id": "gossipsub.mesh_hardening_and_resource_bounds",
       "protocol": "GossipSub",
       "source": "donors/libp2p-specs/pubsub/gossipsub/gossipsub-v1.1.md",
       "donor": "go-libp2p-pubsub validation/spam/queue/backoff/score tests and rust-libp2p gossipsub cache/queue/score/backoff components",

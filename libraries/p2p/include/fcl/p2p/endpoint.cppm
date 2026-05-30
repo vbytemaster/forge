@@ -13,7 +13,7 @@ import fcl.transport.endpoint;
 export namespace fcl::p2p {
 
 struct endpoint {
-   using address_kind = fcl::transport::endpoint::address_kind;
+   using host_kind = fcl::transport::endpoint::host_kind;
    using protocol_kind = fcl::transport::endpoint::protocol_kind;
 
    enum class encapsulation_kind {
@@ -26,7 +26,7 @@ struct endpoint {
       peer_id target;
    };
 
-   fcl::transport::endpoint address;
+   fcl::transport::endpoint transport;
    encapsulation_kind encapsulation = encapsulation_kind::none;
    std::optional<peer_id> peer;
    std::optional<circuit> relayed;

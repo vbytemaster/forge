@@ -382,10 +382,10 @@ std::string endpoint_json(const fcl::p2p::endpoint& endpoint) {
 }
 
 fcl::p2p::endpoint loopback_quic_endpoint(std::uint16_t port = 0) {
-   return fcl::p2p::endpoint{.address = {.address = fcl::p2p::endpoint::address_kind::ip4,
-                                         .protocol = fcl::p2p::endpoint::protocol_kind::quic_v1,
-                                         .host = "127.0.0.1",
-                                         .port = port}};
+   return fcl::p2p::endpoint{.transport = {.host_type = fcl::p2p::endpoint::host_kind::ip4,
+                                           .protocol = fcl::p2p::endpoint::protocol_kind::quic_v1,
+                                           .host = "127.0.0.1",
+                                           .port = port}};
 }
 
 fcl::p2p::endpoint p2p_endpoint_for(fcl::p2p::endpoint value, const fcl::p2p::peer_id& peer) {

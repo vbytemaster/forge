@@ -35,7 +35,7 @@ bool stream_connector::valid() const noexcept {
    return impl_ && impl_->model && impl_->model->valid();
 }
 
-boost::asio::awaitable<connected_stream> stream_connector::async_connect(endpoint remote, connect_options options) {
+boost::asio::awaitable<stream_connection> stream_connector::async_connect(endpoint remote, connect_options options) {
    if (!valid()) {
       FCL_THROW_EXCEPTION(exceptions::closed, "invalid transport stream connector");
    }
@@ -62,7 +62,7 @@ bool session_connector::valid() const noexcept {
    return impl_ && impl_->model && impl_->model->valid();
 }
 
-boost::asio::awaitable<connected_session> session_connector::async_connect(endpoint remote, connect_options options) {
+boost::asio::awaitable<session_connection> session_connector::async_connect(endpoint remote, connect_options options) {
    if (!valid()) {
       FCL_THROW_EXCEPTION(exceptions::closed, "invalid transport session connector");
    }

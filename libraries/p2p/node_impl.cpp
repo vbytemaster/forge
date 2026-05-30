@@ -84,6 +84,10 @@ namespace asio = boost::asio;
    case transport_kind::frame_too_large:
    case transport_kind::protocol_error:
       return exceptions::code::codec_error;
+   case transport_kind::unsupported_protocol:
+      return exceptions::code::unsupported_protocol;
+   case transport_kind::duplicate_registration:
+      return exceptions::code::invalid_options;
    }
    return exceptions::code::internal;
 }

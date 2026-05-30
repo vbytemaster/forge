@@ -92,7 +92,7 @@ std::string_view protocol_name(multicodec_code code) {
          return entry.name;
       }
    }
-   throw exceptions::invalid_format{"multicodec code is not an address protocol"};
+   throw exceptions::invalid_format{"multicodec code is not a multiaddr protocol"};
 }
 
 multicodec_code parse_protocol_code(std::string_view name) {
@@ -102,7 +102,7 @@ multicodec_code parse_protocol_code(std::string_view name) {
          return entry.code;
       }
    }
-   throw exceptions::invalid_format{"unsupported address protocol"};
+   throw exceptions::invalid_format{"unsupported multiaddr protocol"};
 }
 
 } // namespace fcl::multiformats

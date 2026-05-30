@@ -77,21 +77,21 @@ class quic_session_concept final : public fcl::transport::detail::session_concep
 
 } // namespace
 
-[[nodiscard]] fcl::transport::endpoint::address_kind address_kind_for(std::string_view host) {
+[[nodiscard]] fcl::transport::endpoint::host_kind host_kind_for(std::string_view host) {
    auto error = boost::system::error_code{};
    const auto address = boost::asio::ip::make_address(host, error);
    if (error) {
-      return fcl::transport::endpoint::address_kind::dns;
+      return fcl::transport::endpoint::host_kind::dns;
    }
    if (address.is_v4()) {
-      return fcl::transport::endpoint::address_kind::ip4;
+      return fcl::transport::endpoint::host_kind::ip4;
    }
-   return fcl::transport::endpoint::address_kind::ip6;
+   return fcl::transport::endpoint::host_kind::ip6;
 }
 
 fcl::transport::endpoint to_transport_endpoint(const endpoint& value) {
    return fcl::transport::endpoint{
-       .address = address_kind_for(value.host),
+       .host_type = host_kind_for(value.host),
        .protocol = fcl::transport::endpoint::protocol_kind::quic_v1,
        .host = value.host,
        .port = value.port,

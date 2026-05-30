@@ -38,7 +38,28 @@ using duplicate_registration = fcl::exception::coded_exception<code, code::dupli
    if (!actual || std::string_view{actual.category().name()} != "fcl.transport") {
       return std::nullopt;
    }
-   return static_cast<code>(actual.value());
+   if (actual == fcl::exception::make_error_code(code::invalid_endpoint)) {
+      return code::invalid_endpoint;
+   }
+   if (actual == fcl::exception::make_error_code(code::closed)) {
+      return code::closed;
+   }
+   if (actual == fcl::exception::make_error_code(code::canceled)) {
+      return code::canceled;
+   }
+   if (actual == fcl::exception::make_error_code(code::frame_too_large)) {
+      return code::frame_too_large;
+   }
+   if (actual == fcl::exception::make_error_code(code::protocol_error)) {
+      return code::protocol_error;
+   }
+   if (actual == fcl::exception::make_error_code(code::unsupported_protocol)) {
+      return code::unsupported_protocol;
+   }
+   if (actual == fcl::exception::make_error_code(code::duplicate_registration)) {
+      return code::duplicate_registration;
+   }
+   return std::nullopt;
 }
 
 [[nodiscard]] inline bool is(const fcl::exception::base& value, code expected) noexcept {

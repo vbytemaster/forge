@@ -11,7 +11,7 @@ export import fcl.transport.connector;
 export namespace fcl::transport {
 
 struct listen_options {
-   limits resource_limits{};
+   limits limits{};
 };
 
 namespace detail {
@@ -35,7 +35,7 @@ class stream_listener {
    [[nodiscard]] bool valid() const noexcept;
    [[nodiscard]] endpoint local_endpoint() const;
 
-   boost::asio::awaitable<connected_stream> async_accept();
+   boost::asio::awaitable<stream_connection> async_accept();
    boost::asio::awaitable<void> async_close();
    void cancel();
 
@@ -62,7 +62,7 @@ class session_listener {
    [[nodiscard]] bool valid() const noexcept;
    [[nodiscard]] endpoint local_endpoint() const;
 
-   boost::asio::awaitable<connected_session> async_accept();
+   boost::asio::awaitable<session_connection> async_accept();
    boost::asio::awaitable<void> async_close();
    void cancel();
 
@@ -83,7 +83,7 @@ class stream_listener_concept {
 
    [[nodiscard]] virtual bool valid() const noexcept = 0;
    [[nodiscard]] virtual endpoint local_endpoint() const = 0;
-   virtual boost::asio::awaitable<connected_stream> async_accept() = 0;
+   virtual boost::asio::awaitable<stream_connection> async_accept() = 0;
    virtual boost::asio::awaitable<void> async_close() = 0;
    virtual void cancel() = 0;
 };
@@ -94,7 +94,7 @@ class session_listener_concept {
 
    [[nodiscard]] virtual bool valid() const noexcept = 0;
    [[nodiscard]] virtual endpoint local_endpoint() const = 0;
-   virtual boost::asio::awaitable<connected_session> async_accept() = 0;
+   virtual boost::asio::awaitable<session_connection> async_accept() = 0;
    virtual boost::asio::awaitable<void> async_close() = 0;
    virtual void cancel() = 0;
 };

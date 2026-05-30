@@ -19,6 +19,8 @@ enum class code : std::uint16_t {
    canceled = 3,
    frame_too_large = 4,
    protocol_error = 5,
+   unsupported_protocol = 6,
+   duplicate_registration = 7,
 };
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.transport")
@@ -28,6 +30,8 @@ using closed = fcl::exception::coded_exception<code, code::closed>;
 using canceled = fcl::exception::coded_exception<code, code::canceled>;
 using frame_too_large = fcl::exception::coded_exception<code, code::frame_too_large>;
 using protocol_error = fcl::exception::coded_exception<code, code::protocol_error>;
+using unsupported_protocol = fcl::exception::coded_exception<code, code::unsupported_protocol>;
+using duplicate_registration = fcl::exception::coded_exception<code, code::duplicate_registration>;
 
 [[nodiscard]] inline std::optional<code> code_of(const fcl::exception::base& value) noexcept {
    const auto& actual = value.code();

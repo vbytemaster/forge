@@ -1,7 +1,10 @@
 add_library(
    fcl_transport STATIC
+   connector.cpp
    endpoint.cpp
    frame.cpp
+   listener.cpp
+   registry.cpp
    stream.cpp
    session.cpp
 )

@@ -6,14 +6,18 @@ framed streams without defining application protocols.
 
 ## Transport Alignment Checkpoint
 
-`fcl_quic` currently exposes adapters in `fcl.quic.transport`:
-`quic::as_transport_stream(...)` and `quic::as_transport_session(...)`. These
-allow existing QUIC streams and connections to be used through
-`fcl_transport`.
+`fcl_quic` is a native `fcl_transport` session transport. The
+`fcl.quic.transport` module exposes:
 
-The final Block D target is stricter: QUIC should expose native
-`transport::session_connector` and `transport::session_listener` integration,
-because QUIC is already a multiplexed session transport. TCP and STCP remain
+- `quic::as_transport_stream(...)` and `quic::as_transport_session(...)` for
+  adapting existing QUIC objects.
+- `quic::make_session_connector(...)` and
+  `quic::make_session_listener(...)` for direct `transport::session` usage.
+- `quic::register_session(...)` for `transport::registry` integration.
+- `quic::to_transport_limits(...)` and `quic::from_transport_limits(...)` for
+  explicit limit mapping.
+
+QUIC is already a multiplexed session transport. TCP and STCP remain
 byte-stream transports; they become sessions only after a muxer such as Yamux.
 
 ## When To Use

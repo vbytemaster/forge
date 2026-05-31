@@ -126,6 +126,14 @@ target_link_libraries(test_fcl_yamux fcl Boost::included_unit_test_framework)
 add_test(NAME test_fcl_yamux COMMAND test_fcl_yamux WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
+   test_fcl_quic
+   unit/main.cpp
+   quic/quic_transport_tests.cpp
+)
+target_link_libraries(test_fcl_quic fcl Boost::included_unit_test_framework)
+add_test(NAME test_fcl_quic COMMAND test_fcl_quic WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(
    test_fcl_app
    unit/main.cpp
    app/app_tests.cpp

@@ -156,6 +156,8 @@ class engine_connection : public std::enable_shared_from_this<engine_connection>
    ~engine_connection();
 
    [[nodiscard]] engine_connection_metrics metrics() const;
+   [[nodiscard]] engine_endpoint local_endpoint() const;
+   [[nodiscard]] engine_endpoint remote_endpoint() const;
    [[nodiscard]] std::optional<engine_peer_certificate> peer_certificate() const;
    boost::asio::awaitable<std::shared_ptr<engine_stream>> async_open_stream();
    boost::asio::awaitable<std::shared_ptr<engine_stream>> async_accept_stream();
@@ -178,9 +180,11 @@ class engine_connector {
 
    boost::asio::awaitable<std::shared_ptr<engine_connection>> async_connect(engine_endpoint remote,
                                                                             engine_client_options options);
+   void cancel();
 
  private:
-   boost::asio::io_context& context_;
+   struct impl;
+   std::shared_ptr<impl> impl_;
 };
 
 class engine_listener {

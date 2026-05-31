@@ -9,6 +9,7 @@ export module fcl.quic.connection;
 
 import fcl.quic.metrics;
 import fcl.quic.security;
+export import fcl.quic.endpoint;
 export import fcl.quic.stream;
 
 export namespace fcl::quic {
@@ -30,6 +31,8 @@ class connection {
    connection& operator=(const connection&) = delete;
 
    [[nodiscard]] bool valid() const noexcept;
+   [[nodiscard]] endpoint local_endpoint() const;
+   [[nodiscard]] endpoint remote_endpoint() const;
    [[nodiscard]] connection_metrics metrics() const;
    [[nodiscard]] std::optional<peer_certificate> peer_certificate() const;
 

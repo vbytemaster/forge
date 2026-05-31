@@ -158,10 +158,10 @@ READMEs may link here, but must not define a second block order.
 - D.4 `fcl_yamux`: reusable muxer from `transport::stream` to
   `transport::session`, donor-derived from go-libp2p and rust-libp2p Yamux.
 - D.5 `fcl_quic`: QUIC adapted to native `transport::session`.
-- Current checkpoint: `fcl_quic` already has `quic::as_transport_stream(...)`
-  and `quic::as_transport_session(...)`; native
-  `transport::session_connector/session_listener` integration is reserved for
-  the QUIC alignment pass after Yamux.
+- Current checkpoint: `fcl_quic` exposes `quic::as_transport_stream(...)`,
+  `quic::as_transport_session(...)`, native
+  `transport::session_connector/session_listener` construction and
+  `transport::registry` registration for `/quic-v1` endpoints.
 - WebSocket transport is not implemented in this block. Product
   `fcl_websocket` remains an application WebSocket API, not a libp2p transport
   claim.

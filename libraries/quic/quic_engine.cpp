@@ -399,6 +399,10 @@ void wake(std::vector<std::weak_ptr<asio::steady_timer>>& waiters) {
    }
 }
 
+[[nodiscard]] engine_endpoint from_udp_endpoint(const udp::endpoint& value) {
+   return engine_endpoint{.host = value.address().to_string(), .port = value.port()};
+}
+
 } // namespace
 
 engine_failure::engine_failure(engine_error_kind kind, std::string message)
@@ -1606,6 +1610,14 @@ engine_connection_metrics engine_connection::metrics() const {
    return impl_ ? impl_->metrics.snapshot() : engine_connection_metrics{};
 }
 
+engine_endpoint engine_connection::local_endpoint() const {
+   return impl_ ? from_udp_endpoint(impl_->local_endpoint()) : engine_endpoint{};
+}
+
+engine_endpoint engine_connection::remote_endpoint() const {
+   return impl_ ? from_udp_endpoint(impl_->remote_endpoint) : engine_endpoint{};
+}
+
 std::optional<engine_peer_certificate> engine_connection::peer_certificate() const {
    if (!impl_ || !impl_->ssl) {
       return std::nullopt;
@@ -1691,20 +1703,19 @@ void engine_connection::cancel() {
    });
 }
 
-engine_connector::engine_connector(boost::asio::io_context& context) : context_(context) {}
-
-boost::asio::awaitable<std::shared_ptr<engine_connection>>
-engine_connector::async_connect(engine_endpoint remote, engine_client_options options) {
-   const auto executor = co_await asio::this_coro::executor;
-   const auto connect_started = std::chrono::steady_clock::now();
-   auto resolver = std::make_shared<udp::resolver>(executor);
-   auto connect_timer = std::make_shared<asio::steady_timer>(executor);
-   struct connect_deadline_state {
-      enum class state_value : std::uint8_t { pending, completed, timed_out };
+struct engine_connector::impl {
+   struct active_connect {
+      enum class state_value : std::uint8_t {
+         pending,
+         completed,
+         timed_out,
+         canceled,
+      };
 
       std::atomic<state_value> state{state_value::pending};
       std::mutex mutex;
       std::shared_ptr<udp::resolver> resolver;
+      std::weak_ptr<udp::socket> socket;
       std::weak_ptr<engine_connection::impl> connection;
 
       [[nodiscard]] bool mark_timed_out() noexcept {
@@ -1712,34 +1723,129 @@ engine_connector::async_connect(engine_endpoint remote, engine_client_options op
          return state.compare_exchange_strong(expected, state_value::timed_out, std::memory_order_acq_rel);
       }
 
+      [[nodiscard]] bool mark_canceled() noexcept {
+         auto expected = state_value::pending;
+         return state.compare_exchange_strong(expected, state_value::canceled, std::memory_order_acq_rel);
+      }
+
       [[nodiscard]] bool finish() noexcept {
          auto expected = state_value::pending;
-         if (state.compare_exchange_strong(expected, state_value::completed, std::memory_order_acq_rel)) {
-            return true;
-         }
-         return state.load(std::memory_order_acquire) != state_value::timed_out;
+         return state.compare_exchange_strong(expected, state_value::completed, std::memory_order_acq_rel);
       }
 
       [[nodiscard]] bool timed_out() const noexcept {
          return state.load(std::memory_order_acquire) == state_value::timed_out;
       }
+
+      [[nodiscard]] bool canceled() const noexcept {
+         return state.load(std::memory_order_acquire) == state_value::canceled;
+      }
+
+      void cancel_io() {
+         if (!mark_canceled()) {
+            return;
+         }
+         auto resolver_value = std::shared_ptr<udp::resolver>{};
+         auto socket_value = std::shared_ptr<udp::socket>{};
+         auto connection_value = std::shared_ptr<engine_connection::impl>{};
+         {
+            auto lock = std::scoped_lock{mutex};
+            resolver_value = resolver;
+            socket_value = socket.lock();
+            connection_value = connection.lock();
+         }
+         if (resolver_value) {
+            try {
+               resolver_value->cancel();
+            } catch (...) {
+               // Resolver cancellation is best-effort once the caller has canceled connect.
+            }
+         }
+         if (socket_value) {
+            auto ignored = boost::system::error_code{};
+            socket_value->cancel(ignored);
+         }
+         if (connection_value) {
+            asio::post(connection_value->strand, [connection_value] {
+               connection_value->metrics.cancellations.fetch_add(1, std::memory_order_relaxed);
+               connection_value->fail_all();
+               connection_value->cancel_transport_io(true);
+            });
+         }
+      }
    };
-   auto connect_deadline = std::make_shared<connect_deadline_state>();
-   connect_deadline->resolver = resolver;
+
+   explicit impl(boost::asio::io_context& context_value) : context(context_value) {}
+
+   [[nodiscard]] bool valid() const noexcept {
+      return !canceled.load(std::memory_order_acquire);
+   }
+
+   [[nodiscard]] std::shared_ptr<active_connect> track_connect() {
+      if (!valid()) {
+         throw_engine(engine_error_kind::canceled, "QUIC connector is canceled");
+      }
+      auto connect = std::make_shared<active_connect>();
+      auto lock = std::scoped_lock{mutex};
+      active.erase(std::remove_if(active.begin(), active.end(), [](const auto& value) { return value.expired(); }),
+                   active.end());
+      active.push_back(connect);
+      return connect;
+   }
+
+   void cancel() {
+      canceled.store(true, std::memory_order_release);
+      auto connections = std::vector<std::shared_ptr<active_connect>>{};
+      {
+         auto lock = std::scoped_lock{mutex};
+         connections.reserve(active.size());
+         for (auto& value : active) {
+            if (auto connect = value.lock()) {
+               connections.push_back(std::move(connect));
+            }
+         }
+      }
+      for (auto& connect : connections) {
+         connect->cancel_io();
+      }
+   }
+
+   boost::asio::io_context& context;
+   std::mutex mutex;
+   std::vector<std::weak_ptr<active_connect>> active;
+   std::atomic_bool canceled = false;
+};
+
+engine_connector::engine_connector(boost::asio::io_context& context) : impl_(std::make_shared<impl>(context)) {}
+
+boost::asio::awaitable<std::shared_ptr<engine_connection>>
+engine_connector::async_connect(engine_endpoint remote, engine_client_options options) {
+   if (!impl_ || !impl_->valid()) {
+      throw_engine(engine_error_kind::canceled, "QUIC connector is canceled");
+   }
+   const auto executor = co_await asio::this_coro::executor;
+   const auto connect_started = std::chrono::steady_clock::now();
+   auto resolver = std::make_shared<udp::resolver>(executor);
+   auto connect_timer = std::make_shared<asio::steady_timer>(executor);
+   auto active_connect = impl_->track_connect();
+   {
+      auto lock = std::scoped_lock{active_connect->mutex};
+      active_connect->resolver = resolver;
+   }
    connect_timer->expires_after(options.connect_timeout);
-   connect_timer->async_wait([connect_timer, connect_deadline](boost::system::error_code ec) {
+   connect_timer->async_wait([connect_timer, active_connect](boost::system::error_code ec) {
       if (ec) {
          return;
       }
-      if (!connect_deadline->mark_timed_out()) {
+      if (!active_connect->mark_timed_out()) {
          return;
       }
       auto resolver = std::shared_ptr<udp::resolver>{};
       auto connection = std::shared_ptr<engine_connection::impl>{};
       {
-         auto lock = std::scoped_lock{connect_deadline->mutex};
-         resolver = connect_deadline->resolver;
-         connection = connect_deadline->connection.lock();
+         auto lock = std::scoped_lock{active_connect->mutex};
+         resolver = active_connect->resolver;
+         connection = active_connect->connection.lock();
       }
       if (connection) {
          asio::post(connection->strand, [connection] {
@@ -1756,12 +1862,15 @@ engine_connector::async_connect(engine_endpoint remote, engine_client_options op
          }
       }
    });
-   auto finish_connect_deadline_or_throw_timeout = [&] {
+   auto finish_connect_or_throw = [&] {
       if (connect_failpoint_enabled("timeout_before_pre_connection_error_finish")) {
-         (void)connect_deadline->mark_timed_out();
+         (void)active_connect->mark_timed_out();
       }
-      if (!connect_deadline->finish()) {
+      if (!active_connect->finish()) {
          connect_timer->cancel();
+         if (active_connect->canceled()) {
+            throw_engine(engine_error_kind::canceled, "QUIC client connect canceled");
+         }
          throw_engine(engine_error_kind::connect_timeout, "QUIC client connect timed out");
       }
       connect_timer->cancel();
@@ -1770,43 +1879,65 @@ engine_connector::async_connect(engine_endpoint remote, engine_client_options op
    auto resolved = co_await resolver->async_resolve(remote.host, std::to_string(remote.port),
                                                     asio::redirect_error(asio::use_awaitable, ec));
    {
-      auto lock = std::scoped_lock{connect_deadline->mutex};
-      connect_deadline->resolver.reset();
+      auto lock = std::scoped_lock{active_connect->mutex};
+      active_connect->resolver.reset();
    }
-   if (connect_deadline->timed_out()) {
+   if (active_connect->canceled()) {
+      connect_timer->cancel();
+      throw_engine(engine_error_kind::canceled, "QUIC endpoint resolution canceled");
+   }
+   if (active_connect->timed_out()) {
+      connect_timer->cancel();
       throw_engine(engine_error_kind::connect_timeout, "QUIC endpoint resolution timed out");
    }
    if (ec || resolved.empty()) {
-      finish_connect_deadline_or_throw_timeout();
+      finish_connect_or_throw();
       throw_engine(engine_error_kind::invalid_endpoint, "failed to resolve QUIC endpoint: " + ec.message());
    }
    auto remote_endpoint = *resolved.begin();
-   auto socket = std::make_shared<udp::socket>(context_);
+   auto socket = std::make_shared<udp::socket>(impl_->context);
+   {
+      auto lock = std::scoped_lock{active_connect->mutex};
+      active_connect->socket = socket;
+   }
    socket->open(remote_endpoint.endpoint().protocol(), ec);
    if (ec) {
-      finish_connect_deadline_or_throw_timeout();
+      finish_connect_or_throw();
       throw_engine(engine_error_kind::internal_error, "failed to open QUIC UDP socket: " + ec.message());
    }
    socket->bind(udp::endpoint{remote_endpoint.endpoint().protocol(), 0}, ec);
    if (ec) {
-      finish_connect_deadline_or_throw_timeout();
+      finish_connect_or_throw();
       throw_engine(engine_error_kind::internal_error, "failed to bind QUIC UDP socket: " + ec.message());
    }
-   if (connect_deadline->timed_out()) {
+   if (active_connect->canceled()) {
+      connect_timer->cancel();
+      throw_engine(engine_error_kind::canceled, "QUIC client connect canceled");
+   }
+   if (active_connect->timed_out()) {
+      connect_timer->cancel();
       throw_engine(engine_error_kind::connect_timeout, "QUIC client connect timed out");
    }
 
    auto connection_impl =
-       std::make_shared<engine_connection::impl>(context_, socket, remote_endpoint.endpoint(), options.limits);
+       std::make_shared<engine_connection::impl>(impl_->context, socket, remote_endpoint.endpoint(), options.limits);
    connection_impl->self = connection_impl;
    connection_impl->metrics.connections_opened.store(1, std::memory_order_relaxed);
    connection_impl->metrics.handshakes_started.store(1, std::memory_order_relaxed);
    connection_impl->server_side = false;
    {
-      auto lock = std::scoped_lock{connect_deadline->mutex};
-      connect_deadline->connection = connection_impl;
+      auto lock = std::scoped_lock{active_connect->mutex};
+      active_connect->connection = connection_impl;
    }
-   if (connect_deadline->timed_out()) {
+   if (active_connect->canceled()) {
+      connect_timer->cancel();
+      co_await asio::dispatch(connection_impl->strand, asio::use_awaitable);
+      connection_impl->fail_all();
+      connection_impl->cancel_transport_io(true);
+      throw_engine(engine_error_kind::canceled, "QUIC client connect canceled");
+   }
+   if (active_connect->timed_out()) {
+      connect_timer->cancel();
       co_await asio::dispatch(connection_impl->strand, asio::use_awaitable);
       connection_impl->fail_all();
       throw_engine(engine_error_kind::connect_timeout, "QUIC client connect timed out");
@@ -1850,17 +1981,20 @@ engine_connector::async_connect(engine_endpoint remote, engine_client_options op
       }
       handshake_limited_by_connect_deadline = remaining_connect_timeout < options.handshake_timeout;
       co_await connection_impl->wait_handshake(std::min(options.handshake_timeout, remaining_connect_timeout));
-      if (connect_deadline->timed_out()) {
+      if (active_connect->canceled()) {
+         throw_engine(engine_error_kind::canceled, "QUIC client connect canceled");
+      }
+      if (active_connect->timed_out()) {
          throw_engine(engine_error_kind::connect_timeout, "QUIC client connect timed out");
       }
       connection_impl->verify_selected_alpn(options.alpn);
       connection_impl->verify_peer(options.security);
-      if (!connect_deadline->finish()) {
-         throw_engine(engine_error_kind::connect_timeout, "QUIC client connect timed out");
-      }
+      finish_connect_or_throw();
       connect_timer->cancel();
    } catch (const engine_failure& error) {
-      if (connect_deadline->timed_out() ||
+      if (active_connect->canceled()) {
+         connect_error = std::make_exception_ptr(engine_failure{engine_error_kind::canceled, "QUIC client connect canceled"});
+      } else if (active_connect->timed_out() ||
           (error.kind() == engine_error_kind::handshake_timeout && handshake_limited_by_connect_deadline)) {
          connect_error =
              std::make_exception_ptr(engine_failure{engine_error_kind::connect_timeout, "QUIC client connect timed out"});
@@ -1871,7 +2005,7 @@ engine_connector::async_connect(engine_endpoint remote, engine_client_options op
       connect_error = std::current_exception();
    }
    if (connect_error) {
-      (void)connect_deadline->finish();
+      (void)active_connect->finish();
       connect_timer->cancel();
       co_await asio::dispatch(connection_impl->strand, asio::use_awaitable);
       connection_impl->fail_all();
@@ -1879,6 +2013,12 @@ engine_connector::async_connect(engine_endpoint remote, engine_client_options op
       std::rethrow_exception(connect_error);
    }
    co_return std::shared_ptr<engine_connection>{new engine_connection{std::move(connection_impl)}};
+}
+
+void engine_connector::cancel() {
+   if (impl_) {
+      impl_->cancel();
+   }
 }
 
 struct engine_listener::impl {

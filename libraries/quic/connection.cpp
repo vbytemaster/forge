@@ -13,6 +13,7 @@ module;
 module fcl.quic.connection;
 
 import fcl.quic.exceptions;
+import fcl.quic.endpoint;
 import fcl.quic.security;
 import fcl.quic.stream;
 
@@ -106,6 +107,22 @@ connection& connection::operator=(connection&&) noexcept = default;
 
 bool connection::valid() const noexcept {
    return impl_ != nullptr;
+}
+
+endpoint connection::local_endpoint() const {
+   if (!impl_ || !impl_->engine) {
+      return endpoint{};
+   }
+   const auto local = impl_->engine->local_endpoint();
+   return endpoint{.host = local.host, .port = local.port};
+}
+
+endpoint connection::remote_endpoint() const {
+   if (!impl_ || !impl_->engine) {
+      return endpoint{};
+   }
+   const auto remote = impl_->engine->remote_endpoint();
+   return endpoint{.host = remote.host, .port = remote.port};
 }
 
 connection_metrics connection::metrics() const {

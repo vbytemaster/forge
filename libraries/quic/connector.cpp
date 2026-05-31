@@ -117,6 +117,9 @@ connector::connector(fcl::asio::runtime& runtime) : impl_(std::make_unique<impl>
 connector::~connector() = default;
 
 boost::asio::awaitable<connection> connector::async_connect(endpoint remote, client_options options) {
+   if (!impl_) {
+      FCL_THROW_EXCEPTION(exceptions::canceled, "invalid QUIC connector");
+   }
    validate(options);
    const auto capabilities = initialize_runtime();
    if (!capabilities.crypto_ossl_initialized) {
@@ -128,6 +131,12 @@ boost::asio::awaitable<connection> connector::async_connect(endpoint remote, cli
       co_return detail::connection_access::make(detail::connection_handle{.engine = std::move(engine_connection)});
    } catch (const detail::engine_failure& error) {
       raise_engine_failure(error);
+   }
+}
+
+void connector::cancel() {
+   if (impl_) {
+      impl_->engine.cancel();
    }
 }
 

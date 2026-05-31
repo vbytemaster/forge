@@ -54,6 +54,7 @@ import fcl.multiformats.types;
 import fcl.multiformats.varint;
 import fcl.multiformats.exceptions;
 import fcl.transport.stream;
+import fcl.yamux.session;
 
 #include "protobuf.hpp"
 
@@ -615,7 +616,7 @@ boost::asio::awaitable<noise_result> noise_responder(fcl::p2p::stream stream, co
 }
 
 
-boost::asio::awaitable<std::shared_ptr<fcl::p2p::yamux::session>>
+boost::asio::awaitable<std::shared_ptr<fcl::yamux::session>>
 upgrade_relay_outbound_session(fcl::p2p::stream stream, const node::options& options, const peer_id& expected_peer) {
    const auto noise_protocol = protocol_id{.value = "/noise"};
    const auto yamux_protocol = protocol_id{.value = "/yamux/1.0.0"};
@@ -629,12 +630,13 @@ upgrade_relay_outbound_session(fcl::p2p::stream stream, const node::options& opt
       trace_relay("outbound upgrade: select yamux");
       (void)co_await protocol_negotiation::async_select(secure_transport_stream(secure.secure), yamux_protocol);
    }
-   auto yamux = std::make_shared<fcl::p2p::yamux::session>(secure_transport_stream(std::move(secure.secure)), true);
+   auto yamux = std::make_shared<fcl::yamux::session>(secure_transport_stream(std::move(secure.secure)),
+                                                      fcl::yamux::side::initiator);
    trace_relay("outbound upgrade: yamux ready");
    co_return yamux;
 }
 
-boost::asio::awaitable<std::shared_ptr<fcl::p2p::yamux::session>>
+boost::asio::awaitable<std::shared_ptr<fcl::yamux::session>>
 upgrade_relay_inbound_session(fcl::p2p::stream stream, const node::options& options, const peer_id& expected_peer) {
    const auto noise_protocol = protocol_id{.value = "/noise"};
    const auto yamux_protocol = protocol_id{.value = "/yamux/1.0.0"};
@@ -649,7 +651,8 @@ upgrade_relay_inbound_session(fcl::p2p::stream stream, const node::options& opti
       (void)co_await protocol_negotiation::async_accept(secure_transport_stream(secure.secure), {yamux_protocol});
    }
    trace_relay("inbound upgrade: yamux ready");
-   co_return std::make_shared<fcl::p2p::yamux::session>(secure_transport_stream(std::move(secure.secure)), false);
+   co_return std::make_shared<fcl::yamux::session>(secure_transport_stream(std::move(secure.secure)),
+                                                   fcl::yamux::side::responder);
 }
 
 } // namespace fcl::p2p

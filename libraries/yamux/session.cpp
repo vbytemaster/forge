@@ -670,7 +670,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
    }
 
    boost::asio::awaitable<void> handle_data(const frame_header& header, const bytes& payload) {
-      if (header.stream_id == 0 || (header.flags & syn) != 0U || header.length != payload.size()) {
+      if (header.stream_id == 0 || header.length != payload.size()) {
          FCL_THROW_EXCEPTION(exceptions::protocol_error, "invalid yamux data frame");
       }
 
@@ -679,10 +679,18 @@ struct session::impl : std::enable_shared_from_this<impl> {
          co_return;
       }
 
+      auto opened = std::shared_ptr<stream_state>{};
+      if ((header.flags & syn) != 0U) {
+         opened = co_await handle_stream_open(header, options_.initial_window);
+         if (!opened) {
+            co_return;
+         }
+      }
+
       auto needs_reset = false;
       {
          auto lock = std::scoped_lock{mutex_};
-         auto state = get_stream_locked(header.stream_id);
+         auto state = opened ? opened : get_stream_locked(header.stream_id);
          if (!payload.empty()) {
             if (state->buffered + payload.size() > options_.max_stream_buffer ||
                 session_buffer_ + payload.size() > options_.max_session_buffer) {
@@ -709,21 +717,40 @@ struct session::impl : std::enable_shared_from_this<impl> {
    }
 
    boost::asio::awaitable<void> handle_window_update(const frame_header& header) {
-      if (header.stream_id == 0 || (header.flags & (fin | rst)) != 0U) {
+      if (header.stream_id == 0) {
          FCL_THROW_EXCEPTION(exceptions::protocol_error, "invalid yamux window update frame");
       }
 
+      auto opened = std::shared_ptr<stream_state>{};
       if ((header.flags & syn) != 0U) {
-         co_await handle_stream_open(header);
+         auto send_window = options_.initial_window;
+         if (header.length > 0) {
+            const auto available = options_.max_stream_window - send_window;
+            send_window += std::min(header.length, available);
+         }
+         opened = co_await handle_stream_open(header, send_window);
+         if (!opened) {
+            co_return;
+         }
+      }
+
+      if ((header.flags & rst) != 0U) {
+         reset_stream(header.stream_id);
          co_return;
       }
 
       {
          auto lock = std::scoped_lock{mutex_};
-         auto state = get_stream_locked(header.stream_id);
-         if ((header.flags & ack) == 0U && header.length > 0) {
+         auto state = opened ? opened : get_stream_locked(header.stream_id);
+         if ((header.flags & syn) == 0U && (header.flags & ack) == 0U && header.length > 0) {
             const auto available = options_.max_stream_window - state->send_window;
             state->send_window += std::min(header.length, available);
+         }
+         if ((header.flags & fin) != 0U) {
+            state->remote_fin = true;
+         }
+         if (state->read_timer) {
+            notify_waiters(state->read_timer);
          }
          if (state->window_timer) {
             notify_waiters(state->window_timer);
@@ -731,12 +758,14 @@ struct session::impl : std::enable_shared_from_this<impl> {
       }
    }
 
-   boost::asio::awaitable<void> handle_stream_open(const frame_header& header) {
+   boost::asio::awaitable<std::shared_ptr<stream_state>>
+   handle_stream_open(const frame_header& header, std::uint32_t send_window) {
       if (!remote_opens_stream(side_, header.stream_id)) {
          FCL_THROW_EXCEPTION(exceptions::protocol_error, "yamux stream id has invalid parity");
       }
 
       auto reject = false;
+      auto state = std::shared_ptr<stream_state>{};
       {
          auto lock = std::scoped_lock{mutex_};
          if (streams_.contains(header.stream_id)) {
@@ -745,7 +774,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
          if (streams_.size() >= options_.max_streams || pending_accepts_.size() >= options_.max_pending_accepts) {
             reject = true;
          } else {
-            auto state = make_stream_locked(header.stream_id, header.length);
+            state = make_stream_locked(header.stream_id, send_window);
             streams_.emplace(header.stream_id, state);
             pending_accepts_.push_back(header.stream_id);
             if (accept_timer_) {
@@ -756,9 +785,10 @@ struct session::impl : std::enable_shared_from_this<impl> {
 
       if (reject) {
          co_await write_frame(frame_type::data, rst, header.stream_id, 0);
-         co_return;
+         co_return std::shared_ptr<stream_state>{};
       }
-      co_await write_frame(frame_type::window_update, ack, header.stream_id, 0);
+      co_await write_frame(frame_type::window_update, ack, header.stream_id, options_.initial_window);
+      co_return state;
    }
 
    boost::asio::awaitable<void> handle_ping(const frame_header& header) {

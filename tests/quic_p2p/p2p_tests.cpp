@@ -718,27 +718,33 @@ BOOST_AUTO_TEST_CASE(p2p_endpoint_uses_multiaddr_for_tcp_wss_and_relay_views) {
    BOOST_TEST(relayed.to_string() == "/ip4/127.0.0.1/tcp/9090/p2p-circuit/p2p/" + id.to_string());
 }
 
-BOOST_AUTO_TEST_CASE(p2p_websocket_multiaddr_is_parseable_but_not_dialable) {
+BOOST_AUTO_TEST_CASE(p2p_non_quic_multiaddr_is_parseable_but_not_dialable) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
    auto value = node{runtime, options_for(peer(44))};
-   const auto endpoint = parse_endpoint("/dns4/example.com/tcp/443/wss/p2p/" + peer(45).to_string());
+   const auto endpoints = std::vector<endpoint>{
+       parse_endpoint("/ip4/127.0.0.1/tcp/4001/p2p/" + peer(45).to_string()),
+       parse_endpoint("/dns4/example.com/tcp/80/ws/p2p/" + peer(46).to_string()),
+       parse_endpoint("/dns4/example.com/tcp/443/wss/p2p/" + peer(47).to_string()),
+   };
 
-   try {
-      fcl::asio::blocking::run(runtime, value.async_listen(endpoint));
-      BOOST_FAIL("expected unsupported listen endpoint");
-   } catch (const fcl::exception::base& error) {
-      BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
-                 static_cast<int>(exceptions::code::unsupported_protocol));
-   }
+   for (const auto& endpoint : endpoints) {
+      try {
+         fcl::asio::blocking::run(runtime, value.async_listen(endpoint));
+         BOOST_FAIL("expected unsupported listen endpoint");
+      } catch (const fcl::exception::base& error) {
+         BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
+         BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+                    static_cast<int>(exceptions::code::unsupported_protocol));
+      }
 
-   try {
-      fcl::asio::blocking::run(runtime, value.async_connect(endpoint));
-      BOOST_FAIL("expected unsupported connect endpoint");
-   } catch (const fcl::exception::base& error) {
-      BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
-                 static_cast<int>(exceptions::code::unsupported_protocol));
+      try {
+         fcl::asio::blocking::run(runtime, value.async_connect(endpoint));
+         BOOST_FAIL("expected unsupported connect endpoint");
+      } catch (const fcl::exception::base& error) {
+         BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
+         BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+                    static_cast<int>(exceptions::code::unsupported_protocol));
+      }
    }
 }
 

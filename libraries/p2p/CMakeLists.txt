@@ -17,6 +17,7 @@ add_library(
    peer_store.cpp
    direct_transport.cpp
    direct_transport.hpp
+   quic_direct_transport.cpp
    node.cpp
    node_impl.cpp
    node_impl.hpp
@@ -26,8 +27,6 @@ add_library(
    peer_exchange_codec.hpp
    relay_transport.cpp
    relay_transport.hpp
-   yamux.cpp
-   yamux.hpp
 )
 fcl_target_modules(fcl_p2p p2p)
 
@@ -43,6 +42,7 @@ target_link_libraries(
       fcl_asio
       fcl_transport
       fcl_quic
+      fcl_yamux
       Boost::asio
 )
 

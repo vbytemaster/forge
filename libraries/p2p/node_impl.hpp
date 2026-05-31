@@ -67,7 +67,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
    fcl::asio::runtime& runtime;
    node::options options;
    peer_id local;
-   direct::driver direct_driver;
+   direct::registry direct_registry;
 
    mutable std::mutex mutex;
    peer_store store;
@@ -217,7 +217,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
 
    boost::asio::awaitable<void> ensure_relay_reservation(const peer_id& relay_peer, std::chrono::milliseconds timeout);
 
-   boost::asio::awaitable<std::shared_ptr<fcl::p2p::yamux::session>>
+   boost::asio::awaitable<std::shared_ptr<fcl::yamux::session>>
    open_relay_yamux(const peer_id& peer, const peer_id& relay_peer, std::chrono::milliseconds timeout);
 
    boost::asio::awaitable<fcl::p2p::stream> open_protocol_via_relay(const peer_id& peer, const protocol_id& protocol,
@@ -267,12 +267,12 @@ struct node::impl : std::enable_shared_from_this<impl> {
    boost::asio::awaitable<bool> wait_for_direct_session(const peer_id& peer, std::chrono::milliseconds timeout);
 
    boost::asio::awaitable<hole_punch::status>
-   run_dcutr_initiator(const peer_id& peer, std::shared_ptr<fcl::p2p::yamux::session> yamux,
+   run_dcutr_initiator(const peer_id& peer, std::shared_ptr<fcl::yamux::session> yamux,
                        std::chrono::milliseconds timeout);
 
    boost::asio::awaitable<hole_punch::status>
    serve_relayed_streams_until_hole_punch(peer_id peer, std::optional<peer_id> relay_peer,
-                                          std::shared_ptr<fcl::p2p::yamux::session> yamux,
+                                          std::shared_ptr<fcl::yamux::session> yamux,
                                           std::chrono::milliseconds timeout);
 
    boost::asio::awaitable<void> handle_peer_exchange(fcl::p2p::stream stream, std::uint64_t request_id);

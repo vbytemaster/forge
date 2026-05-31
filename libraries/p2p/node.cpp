@@ -62,6 +62,7 @@ import fcl.multiformats.varint;
 import fcl.multiformats.exceptions;
 import fcl.transport.session;
 import fcl.transport.stream;
+import fcl.yamux.session;
 
 #include "node_impl.hpp"
 
@@ -82,7 +83,7 @@ const peer_id& node::local_peer() const noexcept {
 
 std::optional<fcl::p2p::endpoint> node::local_endpoint() const {
    auto lock = std::scoped_lock{impl_->mutex};
-   auto endpoint = impl_->direct_driver.local_endpoint();
+   auto endpoint = impl_->direct_registry.local_endpoint();
    if (!endpoint) {
       return std::nullopt;
    }
@@ -128,10 +129,10 @@ boost::asio::awaitable<void> node::async_listen(fcl::p2p::endpoint endpoint) {
       if (self->stopped) {
          FCL_THROW_EXCEPTION(exceptions::closed, "P2P node is stopped");
       }
-      if (self->direct_driver.listening()) {
+      if (self->direct_registry.listening()) {
          FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P node is already listening");
       }
-      self->direct_driver.listen(std::move(endpoint));
+      self->direct_registry.listen(std::move(endpoint));
    }
    self->launch_accept_loop();
    self->launch_pubsub_heartbeat();
@@ -698,7 +699,7 @@ boost::asio::awaitable<void> node::async_stop() {
          co_return;
       }
       self->stopped = true;
-      self->direct_driver.stop();
+      self->direct_registry.stop();
       for (auto& [_, session] : self->sessions) {
          session->closed = true;
          sessions.push_back(session);
@@ -729,7 +730,7 @@ void node::stop() {
          return;
       }
       impl_->stopped = true;
-      impl_->direct_driver.stop();
+      impl_->direct_registry.stop();
       for (auto& [_, session] : impl_->sessions) {
          session->closed = true;
          session->connection.cancel();

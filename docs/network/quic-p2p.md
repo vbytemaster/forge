@@ -173,6 +173,14 @@ READMEs may link here, but must not define a second block order.
 - QUIC path: `/udp/.../quic-v1 -> fcl_quic -> transport::session`.
 - TCP path: `/tcp/... -> fcl_tcp -> libp2p security upgrade -> fcl_yamux ->
   transport::session`.
+- E.1 checkpoint: QUIC is hidden behind a private P2P direct profile. The
+  profile may inspect native QUIC certificates before erasing the connection to
+  `transport::session`, because Peer ID verification is P2P semantics.
+- E.1 checkpoint: relay and DCUtR use reusable `fcl_yamux`; the old private
+  P2P Yamux runtime is removed.
+- E.1 checkpoint: `/tcp`, `/ws` and `/wss` endpoints remain parseable but
+  direct dial/listen returns typed unsupported until the TCP compatibility
+  block adds security negotiation and live interop proof.
 - P2P owns Peer ID, Identify, libp2p Noise/TLS payload semantics,
   multistream-select, Relay, DCUtR, DHT, Rendezvous and GossipSub.
 - P2P does not own generic TCP, STCP or Yamux runtime.

@@ -35,8 +35,8 @@ GossipSub/pubsub.
 
 Target: `fcl_p2p`.
 
-Dependencies: `fcl_api`, `fcl_asio`, `fcl_transport`, `fcl_quic`, `fcl_multiformats`,
-Boost.Asio and RocksDB.
+Dependencies: `fcl_api`, `fcl_asio`, `fcl_transport`, `fcl_quic`, `fcl_yamux`,
+`fcl_multiformats`, Boost.Asio and RocksDB.
 
 Foundation compatibility modules below P2P live in `fcl_multiformats`:
 `fcl.multiformats.varint`, `fcl.multiformats.multicodec`,
@@ -58,10 +58,11 @@ The canonical block order and donor test rules live in
 [`docs/network/quic-p2p.md`](../../docs/network/quic-p2p.md). Keep this README
 as a library overview; do not duplicate the block sequence here.
 
-Current direction: P2P must sit above first-class multiaddr, reusable
+Current direction: P2P sits above first-class multiaddr, reusable
 `fcl_transport`, and reusable TCP/STCP/Yamux/QUIC layers. QUIC is the only
-direct transport currently wired, but future transports must plug into the same
-multiaddr and transport session boundary, not fork P2P core.
+direct transport currently wired and is hidden behind a private direct profile.
+Future transports must plug into the same multiaddr and transport session
+boundary, not fork P2P core.
 
 `fcl_transport` is the stream/session substrate for `fcl_p2p`; it is not an API
 or RPC layer. API-over-transport is intentionally future work in
@@ -121,9 +122,10 @@ auto endpoint = fcl::p2p::parse_endpoint(
 co_await node.async_listen(endpoint);
 ```
 
-QUIC is currently the only registered direct transport. TCP will plug into the
-same `fcl::p2p::endpoint` path in the next transport block. Future transports
-must use the same direct driver boundary.
+QUIC is currently the only registered direct transport. TCP, `/ws` and `/wss`
+multiaddrs are parseable but direct dial/listen returns typed unsupported until
+their compatibility blocks add security negotiation and live interop proof.
+Future transports must use the same private direct profile boundary.
 
 ### Peer Store Backends
 

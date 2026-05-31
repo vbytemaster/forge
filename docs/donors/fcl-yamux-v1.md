@@ -33,6 +33,9 @@ discovery, pubsub, TCP, STCP or QUIC mechanics.
 - One session read loop owns all reads from the underlying byte stream.
 - All writes are serialized through one frame write path.
 - Per-stream DATA writes are split by remote window and `options::max_frame_size`.
+- Both sides assume the initial stream window from the spec; a
+  `WINDOW_UPDATE|SYN` length is treated as an additive update, so Go-style
+  zero-length SYN opens still allow immediate response writes.
 - Read-side DATA accounting sends WINDOW_UPDATE only after the consumer reads
   bytes from the substream.
 - `async_close()` sends GOAWAY where possible and closes the underlying stream;
@@ -48,6 +51,7 @@ discovery, pubsub, TCP, STCP or QUIC mechanics.
 | Early DATA before ACK | libp2p spec, Go Yamux behavior | `test_fcl_yamux yamux_supports_open_accept_and_early_data` |
 | Concurrent streams do not cross-deliver payloads | Rust muxer harness | `test_fcl_yamux yamux_keeps_concurrent_stream_payloads_isolated` |
 | Flow control waits for WINDOW_UPDATE | libp2p spec, Go/Rust Yamux | `test_fcl_yamux yamux_applies_flow_control_with_window_updates` |
+| Initial stream window is assumed even when `WINDOW_UPDATE|SYN` carries zero length | libp2p spec, Go Yamux behavior | `test_fcl_yamux yamux_rejects_limits_and_malformed_frames_with_typed_errors` |
 | Close flushes pending DATA; read after FIN fails typed | Rust compliance | `test_fcl_yamux yamux_close_flushes_and_read_after_close_is_rejected` |
 | Frame size split, stream buffer limit and malformed frame rejection | libp2p spec, Rust inbound buffer limit | `test_fcl_yamux yamux_rejects_limits_and_malformed_frames_with_typed_errors` |
 | Stream count, pending accept backlog, session buffer and max stream window limits | Go resource-manager-backed limits, Rust inbound backlog behavior | `test_fcl_yamux yamux_enforces_configured_runtime_limits` |
@@ -55,8 +59,9 @@ discovery, pubsub, TCP, STCP or QUIC mechanics.
 | PING ACK and GOAWAY close | libp2p spec | `test_fcl_yamux yamux_handles_ping_and_goaway_control_frames` |
 | `transport::session` wrapper delegation | Rust muxer harness | `test_fcl_yamux yamux_exposes_transport_session_wrapper` |
 
-## Deferred To Block E
+## P2P Adoption
 
-- Replacing the private P2P Yamux compatibility code.
-- Negotiating the muxer protocol in the P2P stack.
-- Live FCL to Go/Rust P2P interop over TCP paths.
+- Block E.1 replaces the private P2P Yamux compatibility code with this reusable
+  layer for Relay/DCUtR.
+- TCP-path muxer negotiation remains future P2P work.
+- Live FCL to Go/Rust P2P interop over TCP paths remains future work.

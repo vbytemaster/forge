@@ -1,7 +1,5 @@
 #pragma once
 
-#include "yamux.hpp"
-
 namespace fcl::p2p {
 
 void trace_relay(std::string_view message);
@@ -9,10 +7,10 @@ void trace_relay(std::string_view message);
 
 class relay_secure_io;
 
-boost::asio::awaitable<std::shared_ptr<fcl::p2p::yamux::session>>
+boost::asio::awaitable<std::shared_ptr<fcl::yamux::session>>
 upgrade_relay_outbound_session(fcl::p2p::stream stream, const node::options& options, const peer_id& expected_peer);
 
-boost::asio::awaitable<std::shared_ptr<fcl::p2p::yamux::session>>
+boost::asio::awaitable<std::shared_ptr<fcl::yamux::session>>
 upgrade_relay_inbound_session(fcl::p2p::stream stream, const node::options& options, const peer_id& expected_peer);
 
 } // namespace fcl::p2p

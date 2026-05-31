@@ -65,6 +65,8 @@ import fcl.multiformats.exceptions;
 import fcl.transport.exceptions;
 import fcl.transport.session;
 import fcl.transport.stream;
+import fcl.yamux.exceptions;
+import fcl.yamux.session;
 
 #include "node_impl.hpp"
 
@@ -310,11 +312,11 @@ node::impl::impl(fcl::asio::runtime& runtime_value, node::options options_value)
     : runtime(runtime_value), options(std::move(options_value)),
       local(options.explicit_peer_id ? *options.explicit_peer_id
                                      : make_peer_id_from_certificate_pem(options.certificate_pem)),
-      direct_driver(runtime_value, options), store(peer_store::options{.backend = make_peer_store_backend(options)}) {}
+      direct_registry(runtime_value, options), store(peer_store::options{.backend = make_peer_store_backend(options)}) {}
 
 [[nodiscard]] std::optional<fcl::p2p::endpoint> node::impl::local_endpoint_for_control() const {
    auto lock = std::scoped_lock{mutex};
-   if (auto endpoint = direct_driver.local_endpoint()) {
+   if (auto endpoint = direct_registry.local_endpoint()) {
       auto out = *endpoint;
       out.peer = local;
       return out;
@@ -1109,7 +1111,7 @@ boost::asio::awaitable<std::shared_ptr<node::impl::session_state>> node::impl::c
    auto endpoint_copy = endpoint;
    try {
       auto started = std::chrono::steady_clock::now();
-      auto result = co_await direct_driver.async_connect(std::move(endpoint), connect_options_value);
+      auto result = co_await direct_registry.async_connect(std::move(endpoint), connect_options_value);
       store.mark_endpoint_success(
           result.peer, endpoint_copy, path::kind::direct,
           std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started));
@@ -1339,7 +1341,7 @@ boost::asio::awaitable<void> node::impl::ensure_relay_reservation(const peer_id&
                                             timeout);
 }
 
-boost::asio::awaitable<std::shared_ptr<fcl::p2p::yamux::session>>
+boost::asio::awaitable<std::shared_ptr<fcl::yamux::session>>
 node::impl::open_relay_yamux(const peer_id& peer, const peer_id& relay_peer, std::chrono::milliseconds timeout) {
    const auto started = std::chrono::steady_clock::now();
    record_path_attempt(path::kind::relay);
@@ -1421,12 +1423,12 @@ void node::impl::launch_accept_loop() {
          while (true) {
             {
                auto lock = std::scoped_lock{self->mutex};
-               if (self->stopped || !self->direct_driver.listening()) {
+               if (self->stopped || !self->direct_registry.listening()) {
                   co_return;
                }
             }
             try {
-               auto connection = co_await self->direct_driver.async_accept();
+               auto connection = co_await self->direct_registry.async_accept();
                asio::co_spawn(
                    self->runtime.context(),
                    [self, connection = std::move(connection)]() mutable -> asio::awaitable<void> {
@@ -1818,15 +1820,29 @@ boost::asio::awaitable<void> node::impl::handle_relay_stop(std::shared_ptr<node:
    auto yamux = co_await upgrade_relay_inbound_session(std::move(stream), options, request.source->id);
    auto dcutr_started = false;
    while (true) {
-      trace_relay("stop: accepting yamux stream");
-      auto relayed_stream = co_await yamux->async_accept_stream();
-      auto relayed = session->info;
-      relayed.remote_peer = request.source->id;
-      relayed.path = path::kind::relay;
-      relayed.relay_peer = session->info.remote_peer;
-      auto relayed_session = std::make_shared<session_state>();
-      relayed_session->info = std::move(relayed);
-      co_await handle_relayed_yamux_stream(relayed_session, fcl::p2p::stream{std::move(relayed_stream)});
+      try {
+         trace_relay("stop: accepting yamux stream");
+         auto relayed_stream = co_await yamux->async_accept_stream();
+         auto relayed = session->info;
+         relayed.remote_peer = request.source->id;
+         relayed.path = path::kind::relay;
+         relayed.relay_peer = session->info.remote_peer;
+         auto relayed_session = std::make_shared<session_state>();
+         relayed_session->info = std::move(relayed);
+         co_await handle_relayed_yamux_stream(relayed_session, fcl::p2p::stream{std::move(relayed_stream)});
+      } catch (const fcl::yamux::exceptions::closed&) {
+         co_return;
+      } catch (const fcl::yamux::exceptions::canceled&) {
+         co_return;
+      } catch (const std::exception& error) {
+         trace_relay(std::string{"stop: relayed stream failed "} + error.what());
+         increment_protocol_rejected();
+         continue;
+      } catch (...) {
+         trace_relay("stop: relayed stream failed");
+         increment_protocol_rejected();
+         continue;
+      }
       if (!dcutr_started && options.capabilities.has(capabilities::hole_punching)) {
          dcutr_started = true;
          const auto dcutr_status =
@@ -2448,7 +2464,7 @@ boost::asio::awaitable<bool> node::impl::wait_for_direct_session(const peer_id& 
 }
 
 boost::asio::awaitable<hole_punch::status>
-node::impl::run_dcutr_initiator(const peer_id& peer, std::shared_ptr<fcl::p2p::yamux::session> yamux,
+node::impl::run_dcutr_initiator(const peer_id& peer, std::shared_ptr<fcl::yamux::session> yamux,
                                 std::chrono::milliseconds timeout) {
    auto observed = std::vector<endpoint>{};
    if (auto local_endpoint = local_endpoint_for_control()) {
@@ -2518,7 +2534,7 @@ node::impl::run_dcutr_initiator(const peer_id& peer, std::shared_ptr<fcl::p2p::y
 
 boost::asio::awaitable<hole_punch::status>
 node::impl::serve_relayed_streams_until_hole_punch(peer_id peer, std::optional<peer_id> relay_peer,
-                                                   std::shared_ptr<fcl::p2p::yamux::session> yamux,
+                                                   std::shared_ptr<fcl::yamux::session> yamux,
                                                    std::chrono::milliseconds timeout) {
    const auto started = std::chrono::steady_clock::now();
    for (auto handled = 0U; handled != 8U; ++handled) {
@@ -2543,38 +2559,52 @@ node::impl::serve_relayed_streams_until_hole_punch(peer_id peer, std::optional<p
           .path = path::kind::relay,
           .relay_peer = relay_peer,
       };
-      auto incoming = co_await yamux->async_accept_stream();
-      auto negotiated = co_await protocol_negotiation::async_accept(std::move(incoming), supported_protocols());
-      trace_relay(std::string{"relayed yamux wait: negotiated "} + negotiated.protocol.value);
-      if (negotiated.protocol == builtins::dcutr) {
-         co_await handle_dcutr(relayed_session, std::move(negotiated.stream));
-      } else if (negotiated.protocol == builtins::identify) {
-         co_await handle_identify(std::move(negotiated.stream));
-      } else if (negotiated.protocol == builtins::identify_push) {
-         co_await handle_identify_push(relayed_session, std::move(negotiated.stream));
-      } else if (negotiated.protocol == builtins::ping) {
-         auto self = shared_from_this();
-         asio::co_spawn(
-             runtime.context(),
-             [self, stream = std::move(negotiated.stream)]() mutable -> asio::awaitable<void> {
-                try {
-                   co_await self->handle_ping(std::move(stream));
-                } catch (...) {
-                   self->increment_protocol_rejected();
-                }
-             },
-             asio::detached);
-      } else if (negotiated.protocol == builtins::meshsub_v11 || negotiated.protocol == builtins::meshsub_v10) {
-         co_await handle_pubsub(relayed_session, std::move(negotiated.stream));
-      } else {
-         auto handler = handler_for(negotiated.protocol);
-         if (handler) {
-            co_await (*handler)(node::incoming_protocol_stream{
-                .session = relayed_session->info,
-                .protocol = negotiated.protocol,
-                .stream = std::move(negotiated.stream),
-            });
+      try {
+         auto incoming = co_await yamux->async_accept_stream();
+         auto negotiated = co_await protocol_negotiation::async_accept(std::move(incoming), supported_protocols());
+         trace_relay(std::string{"relayed yamux wait: negotiated "} + negotiated.protocol.value);
+         if (negotiated.protocol == builtins::dcutr) {
+            co_await handle_dcutr(relayed_session, std::move(negotiated.stream));
+         } else if (negotiated.protocol == builtins::identify) {
+            co_await handle_identify(std::move(negotiated.stream));
+         } else if (negotiated.protocol == builtins::identify_push) {
+            co_await handle_identify_push(relayed_session, std::move(negotiated.stream));
+         } else if (negotiated.protocol == builtins::ping) {
+            auto self = shared_from_this();
+            asio::co_spawn(
+                runtime.context(),
+                [self, stream = std::move(negotiated.stream)]() mutable -> asio::awaitable<void> {
+                   try {
+                      co_await self->handle_ping(std::move(stream));
+                   } catch (...) {
+                      self->increment_protocol_rejected();
+                   }
+                },
+                asio::detached);
+         } else if (negotiated.protocol == builtins::meshsub_v11 || negotiated.protocol == builtins::meshsub_v10) {
+            co_await handle_pubsub(relayed_session, std::move(negotiated.stream));
+         } else {
+            auto handler = handler_for(negotiated.protocol);
+            if (handler) {
+               co_await (*handler)(node::incoming_protocol_stream{
+                   .session = relayed_session->info,
+                   .protocol = negotiated.protocol,
+                   .stream = std::move(negotiated.stream),
+               });
+            }
          }
+      } catch (const fcl::yamux::exceptions::closed&) {
+         break;
+      } catch (const fcl::yamux::exceptions::canceled&) {
+         break;
+      } catch (const std::exception& error) {
+         trace_relay(std::string{"relayed yamux wait: stream failed "} + error.what());
+         increment_protocol_rejected();
+         continue;
+      } catch (...) {
+         trace_relay("relayed yamux wait: stream failed");
+         increment_protocol_rejected();
+         continue;
       }
       auto after = std::uint64_t{0};
       {

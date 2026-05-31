@@ -324,6 +324,7 @@ add_subdirectory(libraries/asio)
 add_subdirectory(libraries/http)
 add_subdirectory(libraries/websocket)
 add_subdirectory(libraries/transport)
+add_subdirectory(libraries/tcp)
 add_subdirectory(libraries/quic)
 add_subdirectory(libraries/p2p)
 add_subdirectory(libraries/app)
@@ -353,6 +354,7 @@ set(
    fcl_http
    fcl_websocket
    fcl_transport
+   fcl_tcp
    fcl_quic
    fcl_p2p
    fcl_app

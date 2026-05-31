@@ -19,6 +19,7 @@ import fcl.tcp.connector;
 import fcl.tcp.exceptions;
 import fcl.tcp.listener;
 import fcl.tcp.options;
+import fcl.tcp.transport;
 import fcl.transport.endpoint;
 import fcl.transport.exceptions;
 import fcl.transport.frame;
@@ -112,16 +113,7 @@ boost::asio::awaitable<void> tcp_read_chunk_limit_is_behavioral() {
 boost::asio::awaitable<void> tcp_registry_roundtrip() {
    auto executor = co_await boost::asio::this_coro::executor;
    auto registry = fcl::transport::registry{};
-   registry.register_stream(
-       fcl::transport::endpoint::protocol_kind::tcp,
-       [executor] {
-          return fcl::tcp::connector{executor}.as_transport();
-       },
-       [executor](fcl::transport::endpoint local,
-                  fcl::transport::listen_options listen_options) -> boost::asio::awaitable<fcl::transport::stream_listener> {
-          auto listener = fcl::tcp::listener{executor, std::move(local), listen_options};
-          co_return listener.as_transport();
-       });
+   fcl::tcp::register_stream(registry, executor);
 
    auto listener = co_await registry.async_listen_stream(loopback(0));
    auto accept = boost::asio::co_spawn(executor, listener.async_accept(), boost::asio::use_awaitable);

@@ -42,10 +42,10 @@ live above P2P and define their own messages, durability and authorization.
 ## QUIC Responsibilities
 
 - UDP socket/timer integration with Asio.
-- ngtcp2 packet engine and OpenSSL 3.0+ TLS backend.
+- ngtcp2 QUIC engine and OpenSSL 3.0+ TLS backend.
 - ALPN, certificate verification, pinned fingerprints and mTLS checks.
 - Framed stream codec and transport limits.
-- Backpressure for streams, queued bytes and inbound packet queues.
+- Backpressure for streams, queued bytes and inbound datagram queues.
 
 QUIC does not own peer discovery, relay policy or application protocol naming.
 
@@ -152,6 +152,10 @@ READMEs may link here, but must not define a second block order.
 - `fcl_yamux`: reusable muxer from `transport::stream` to
   `transport::session`, donor-derived from go-libp2p and rust-libp2p Yamux.
 - `fcl_quic`: QUIC adapted to native `transport::session`.
+- Current checkpoint: `fcl_quic` already has `quic::as_transport_stream(...)`
+  and `quic::as_transport_session(...)`; native
+  `transport::session_connector/session_listener` integration is reserved for
+  the QUIC alignment pass in D.4.
 - WebSocket transport is not implemented in this block. Product
   `fcl_websocket` remains an application WebSocket API, not a libp2p transport
   claim.

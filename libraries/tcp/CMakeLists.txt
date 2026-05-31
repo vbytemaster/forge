@@ -2,6 +2,7 @@ add_library(
    fcl_tcp STATIC
    connector.cpp
    listener.cpp
+   transport.cpp
 )
 fcl_target_modules(fcl_tcp tcp)
 

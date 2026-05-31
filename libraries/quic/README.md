@@ -4,6 +4,18 @@
 It exposes endpoints, security options, listeners, connectors, connections and
 framed streams without defining application protocols.
 
+## Transport Alignment Checkpoint
+
+`fcl_quic` currently exposes adapters in `fcl.quic.transport`:
+`quic::as_transport_stream(...)` and `quic::as_transport_session(...)`. These
+allow existing QUIC streams and connections to be used through
+`fcl_transport`.
+
+The final Block D target is stricter: QUIC should expose native
+`transport::session_connector` and `transport::session_listener` integration,
+because QUIC is already a multiplexed session transport. TCP and STCP remain
+byte-stream transports; they become sessions only after a muxer such as Yamux.
+
 ## When To Use
 
 - Need multiplexed, TLS-backed streams over UDP.

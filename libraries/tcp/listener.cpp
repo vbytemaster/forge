@@ -4,12 +4,9 @@ module;
 
 #include <algorithm>
 #include <atomic>
-#include <cstdint>
 #include <memory>
-#include <span>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/error.hpp>
@@ -17,22 +14,14 @@ module;
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/use_awaitable.hpp>
-#include <boost/asio/write.hpp>
 #include <boost/system/error_code.hpp>
 
 module fcl.tcp.listener;
-
-import fcl.transport.stream;
 
 namespace fcl::tcp {
 namespace {
 
 using asio_tcp = boost::asio::ip::tcp;
-
-[[nodiscard]] std::int64_t next_stream_id() noexcept {
-   static auto next = std::atomic<std::int64_t>{1};
-   return next.fetch_add(1, std::memory_order_relaxed);
-}
 
 [[noreturn]] void throw_invalid_endpoint(const transport::endpoint& endpoint, std::string message) {
    FCL_THROW_EXCEPTION(exceptions::invalid_endpoint, std::move(message),
@@ -50,18 +39,6 @@ using asio_tcp = boost::asio::ip::tcp;
                        fcl::exception::ctx("host", endpoint.host),
                        fcl::exception::ctx("port", endpoint.port),
                        fcl::exception::ctx("reason", error.message()));
-}
-
-[[noreturn]] void throw_read_write_error(const boost::system::error_code& error) {
-   if (error == boost::asio::error::operation_aborted) {
-      FCL_THROW_EXCEPTION(exceptions::canceled, "tcp stream operation canceled",
-                          fcl::exception::ctx("reason", error.message()));
-   }
-   if (error == boost::asio::error::eof || error == boost::asio::error::connection_reset ||
-       error == boost::asio::error::broken_pipe) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "tcp stream closed", fcl::exception::ctx("reason", error.message()));
-   }
-   FCL_THROW_EXCEPTION(exceptions::io_error, "tcp stream I/O failed", fcl::exception::ctx("reason", error.message()));
 }
 
 void validate_options(const options& value) {
@@ -125,66 +102,6 @@ void configure_socket(asio_tcp::socket& socket, const options& tcp_options) {
    }
 }
 
-class socket_stream final : public transport::detail::stream_concept {
- public:
-   socket_stream(std::shared_ptr<asio_tcp::socket> socket, options tcp_options)
-       : socket_(std::move(socket)), options_(tcp_options), id_(next_stream_id()) {}
-
-   [[nodiscard]] bool valid() const noexcept override {
-      return socket_ && socket_->is_open();
-   }
-
-   [[nodiscard]] std::int64_t id() const noexcept override {
-      return id_;
-   }
-
-   boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> bytes) override {
-      if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp stream");
-      }
-      auto error = boost::system::error_code{};
-      co_await boost::asio::async_write(*socket_, boost::asio::buffer(bytes),
-                                        boost::asio::redirect_error(boost::asio::use_awaitable, error));
-      if (error) {
-         throw_read_write_error(error);
-      }
-   }
-
-   boost::asio::awaitable<std::vector<std::uint8_t>> async_read() override {
-      if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp stream");
-      }
-      auto out = std::vector<std::uint8_t>(options_.read_chunk_size);
-      auto error = boost::system::error_code{};
-      const auto size = co_await socket_->async_read_some(boost::asio::buffer(out),
-                                                          boost::asio::redirect_error(boost::asio::use_awaitable, error));
-      if (error) {
-         throw_read_write_error(error);
-      }
-      out.resize(size);
-      co_return out;
-   }
-
-   boost::asio::awaitable<void> async_close() override {
-      if (!socket_) {
-         co_return;
-      }
-      auto ignored = boost::system::error_code{};
-      socket_->shutdown(asio_tcp::socket::shutdown_both, ignored);
-      socket_->close(ignored);
-      co_return;
-   }
-
- private:
-   std::shared_ptr<asio_tcp::socket> socket_;
-   options options_;
-   std::int64_t id_ = -1;
-};
-
-[[nodiscard]] transport::stream make_stream(std::shared_ptr<asio_tcp::socket> socket, options tcp_options) {
-   return transport::detail::stream_access::make(std::make_shared<socket_stream>(std::move(socket), tcp_options));
-}
-
 } // namespace
 
 struct listener::impl final : transport::detail::stream_listener_concept {
@@ -234,13 +151,13 @@ struct listener::impl final : transport::detail::stream_listener_concept {
       return local;
    }
 
-   boost::asio::awaitable<transport::stream_connection> async_accept() override {
+   boost::asio::awaitable<connection> async_accept_connection() {
       if (!valid()) {
          FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp listener");
       }
-      auto socket = std::make_shared<asio_tcp::socket>(acceptor.get_executor());
+      auto socket = asio_tcp::socket{acceptor.get_executor()};
       auto error = boost::system::error_code{};
-      co_await acceptor.async_accept(*socket, boost::asio::redirect_error(boost::asio::use_awaitable, error));
+      co_await acceptor.async_accept(socket, boost::asio::redirect_error(boost::asio::use_awaitable, error));
       if (error) {
          if (error == boost::asio::error::operation_aborted) {
             if (close_requested.load(std::memory_order_acquire)) {
@@ -248,23 +165,17 @@ struct listener::impl final : transport::detail::stream_listener_concept {
             }
             FCL_THROW_EXCEPTION(exceptions::canceled, "tcp listener accept canceled");
          }
-         FCL_THROW_EXCEPTION(exceptions::accept_failed, "tcp accept failed", fcl::exception::ctx("reason", error.message()));
+         FCL_THROW_EXCEPTION(exceptions::accept_failed, "tcp accept failed",
+                             fcl::exception::ctx("reason", error.message()));
       }
 
-      configure_socket(*socket, tcp_options);
-      auto accepted_local = from_asio_endpoint(socket->local_endpoint(error));
-      if (error) {
-         FCL_THROW_EXCEPTION(exceptions::io_error, "failed to read tcp accepted local endpoint",
-                             fcl::exception::ctx("reason", error.message()));
-      }
-      auto accepted_remote = from_asio_endpoint(socket->remote_endpoint(error));
-      if (error) {
-         FCL_THROW_EXCEPTION(exceptions::io_error, "failed to read tcp accepted remote endpoint",
-                             fcl::exception::ctx("reason", error.message()));
-      }
-      co_return transport::stream_connection{.local_endpoint = std::move(accepted_local),
-                                             .remote_endpoint = std::move(accepted_remote),
-                                             .stream = make_stream(std::move(socket), tcp_options)};
+      configure_socket(socket, tcp_options);
+      co_return connection{std::move(socket), tcp_options};
+   }
+
+   boost::asio::awaitable<transport::stream_connection> async_accept() override {
+      auto tcp_connection = co_await async_accept_connection();
+      co_return std::move(tcp_connection).into_transport_stream();
    }
 
    boost::asio::awaitable<void> async_close() override {
@@ -302,6 +213,13 @@ transport::endpoint listener::local_endpoint() const {
       FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp listener");
    }
    return impl_->local_endpoint();
+}
+
+boost::asio::awaitable<connection> listener::async_accept_connection() {
+   if (!valid()) {
+      FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp listener");
+   }
+   co_return co_await impl_->async_accept_connection();
 }
 
 boost::asio::awaitable<transport::stream_connection> listener::async_accept() {

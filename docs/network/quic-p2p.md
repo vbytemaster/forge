@@ -147,15 +147,21 @@ READMEs may link here, but must not define a second block order.
 
 ### Block D: Reusable Network Layers
 
-- `fcl_tcp`: Boost.Asio TCP adapted to `transport::stream`.
-- `fcl_stcp`: TLS-over-TCP adapted to secure `transport::stream`.
-- `fcl_yamux`: reusable muxer from `transport::stream` to
+- D.1 `fcl_tcp`: Boost.Asio TCP adapted to `transport::stream`.
+- D.2 TCP upgrade surface: `tcp::connection` owns the native socket until an
+  upper layer either turns it into `transport::stream` or releases it for a
+  TLS/security upgrade.
+- D.3 `fcl_stcp`: TCP+TLS mechanics adapted to secure `transport::stream`.
+  This layer owns certificates, trust stores, fingerprint checks, ALPN and TLS
+  handshakes, but not P2P Peer ID verification, libp2p protocol choice or
+  multistream decisions.
+- D.4 `fcl_yamux`: reusable muxer from `transport::stream` to
   `transport::session`, donor-derived from go-libp2p and rust-libp2p Yamux.
-- `fcl_quic`: QUIC adapted to native `transport::session`.
+- D.5 `fcl_quic`: QUIC adapted to native `transport::session`.
 - Current checkpoint: `fcl_quic` already has `quic::as_transport_stream(...)`
   and `quic::as_transport_session(...)`; native
   `transport::session_connector/session_listener` integration is reserved for
-  the QUIC alignment pass in D.4.
+  the QUIC alignment pass after Yamux.
 - WebSocket transport is not implemented in this block. Product
   `fcl_websocket` remains an application WebSocket API, not a libp2p transport
   claim.

@@ -15,6 +15,7 @@
 
 import fcl.asio.blocking;
 import fcl.asio.runtime;
+import fcl.tcp.connection;
 import fcl.tcp.connector;
 import fcl.tcp.exceptions;
 import fcl.tcp.listener;
@@ -110,6 +111,52 @@ boost::asio::awaitable<void> tcp_read_chunk_limit_is_behavioral() {
    co_await listener.async_close();
 }
 
+boost::asio::awaitable<void> tcp_connection_roundtrip_and_handoff() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto listener = fcl::tcp::listener{executor, loopback(0)};
+   const auto local = listener.local_endpoint();
+
+   auto accept = boost::asio::co_spawn(executor, listener.async_accept_connection(), boost::asio::use_awaitable);
+   auto connector = fcl::tcp::connector{executor};
+   auto client = co_await connector.async_connect_connection(local);
+   auto server = co_await std::move(accept);
+
+   BOOST_CHECK(client.valid());
+   BOOST_CHECK(server.valid());
+   BOOST_CHECK_EQUAL(client.remote_endpoint().port, local.port);
+   BOOST_CHECK_EQUAL(server.local_endpoint().port, local.port);
+
+   const auto ping = text_bytes("connection ping");
+   co_await client.async_write(ping);
+   auto received_ping = co_await server.async_read();
+   BOOST_CHECK_EQUAL_COLLECTIONS(received_ping.begin(), received_ping.end(), ping.begin(), ping.end());
+
+   auto stream_connection = std::move(client).into_transport_stream();
+   BOOST_CHECK(stream_connection.stream.valid());
+   const auto framed = text_bytes("connection framed");
+   co_await stream_connection.stream.async_write_frame(framed);
+   auto received_frame = co_await server.async_read();
+   auto decoded = fcl::transport::decode_frame(received_frame);
+   BOOST_REQUIRE(decoded.status == fcl::transport::frame_decode_status::complete);
+   BOOST_CHECK_EQUAL_COLLECTIONS(decoded.payload.begin(), decoded.payload.end(), framed.begin(), framed.end());
+
+   co_await stream_connection.stream.async_close();
+   co_await server.async_close();
+   co_await listener.async_close();
+
+   auto release_listener = fcl::tcp::listener{executor, loopback(0)};
+   auto release_accept =
+       boost::asio::co_spawn(executor, release_listener.async_accept_connection(), boost::asio::use_awaitable);
+   auto release_client = co_await connector.async_connect_connection(release_listener.local_endpoint());
+   auto release_server = co_await std::move(release_accept);
+   auto socket = std::move(release_client).release_socket();
+   BOOST_CHECK(socket.is_open());
+   auto ignored = boost::system::error_code{};
+   socket.close(ignored);
+   co_await release_server.async_close();
+   co_await release_listener.async_close();
+}
+
 boost::asio::awaitable<void> tcp_registry_roundtrip() {
    auto executor = co_await boost::asio::this_coro::executor;
    auto registry = fcl::transport::registry{};
@@ -202,6 +249,11 @@ BOOST_AUTO_TEST_CASE(tcp_stream_roundtrip_and_framing) {
 BOOST_AUTO_TEST_CASE(tcp_options_affect_stream_reads) {
    auto runtime = fcl::asio::runtime{};
    fcl::asio::blocking::run(runtime, tcp_read_chunk_limit_is_behavioral());
+}
+
+BOOST_AUTO_TEST_CASE(tcp_connection_supports_native_handoff) {
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, tcp_connection_roundtrip_and_handoff());
 }
 
 BOOST_AUTO_TEST_CASE(tcp_integrates_with_transport_registry) {

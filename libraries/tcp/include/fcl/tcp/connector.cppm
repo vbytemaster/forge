@@ -7,6 +7,7 @@ module;
 
 export module fcl.tcp.connector;
 
+export import fcl.tcp.connection;
 export import fcl.tcp.exceptions;
 export import fcl.tcp.options;
 export import fcl.transport.connector;
@@ -27,6 +28,8 @@ class connector {
 
    [[nodiscard]] bool valid() const noexcept;
 
+   boost::asio::awaitable<connection> async_connect_connection(transport::endpoint remote,
+                                                               transport::connect_options connect_options = {});
    boost::asio::awaitable<transport::stream_connection>
    async_connect(transport::endpoint remote, transport::connect_options connect_options = {});
    void cancel();

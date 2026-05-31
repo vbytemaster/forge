@@ -5,18 +5,18 @@ module;
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
 
-export module fcl.tcp.listener;
+export module fcl.stcp.listener;
 
-export import fcl.tcp.connector;
-export import fcl.transport.listener;
+export import fcl.stcp.connection;
+export import fcl.tcp.listener;
 
-export namespace fcl::tcp {
+export namespace fcl::stcp {
 
 class listener {
  public:
    listener();
-   listener(boost::asio::any_io_executor executor, transport::endpoint local,
-            transport::listen_options listen_options = {}, options tcp_options = {});
+   listener(boost::asio::any_io_executor executor, transport::endpoint local, server_options tls_options,
+            transport::listen_options listen_options = {}, tcp::options tcp_options = {});
    ~listener();
 
    listener(listener&&) noexcept;
@@ -33,11 +33,9 @@ class listener {
    boost::asio::awaitable<void> async_close();
    void cancel();
 
-   [[nodiscard]] transport::stream_listener as_transport() const;
-
  private:
    struct impl;
    std::shared_ptr<impl> impl_;
 };
 
-} // namespace fcl::tcp
+} // namespace fcl::stcp

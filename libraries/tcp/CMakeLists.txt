@@ -1,5 +1,6 @@
 add_library(
    fcl_tcp STATIC
+   connection.cpp
    connector.cpp
    listener.cpp
    transport.cpp

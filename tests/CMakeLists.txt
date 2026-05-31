@@ -110,6 +110,14 @@ target_link_libraries(test_fcl_tcp fcl Boost::included_unit_test_framework)
 add_test(NAME test_fcl_tcp COMMAND test_fcl_tcp WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
+   test_fcl_stcp
+   unit/main.cpp
+   stcp/stcp_tests.cpp
+)
+target_link_libraries(test_fcl_stcp fcl Boost::included_unit_test_framework OpenSSL::SSL)
+add_test(NAME test_fcl_stcp COMMAND test_fcl_stcp WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(
    test_fcl_app
    unit/main.cpp
    app/app_tests.cpp

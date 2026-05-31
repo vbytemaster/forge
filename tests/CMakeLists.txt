@@ -118,6 +118,14 @@ target_link_libraries(test_fcl_stcp fcl Boost::included_unit_test_framework Open
 add_test(NAME test_fcl_stcp COMMAND test_fcl_stcp WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
+   test_fcl_yamux
+   unit/main.cpp
+   yamux/yamux_tests.cpp
+)
+target_link_libraries(test_fcl_yamux fcl Boost::included_unit_test_framework)
+add_test(NAME test_fcl_yamux COMMAND test_fcl_yamux WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(
    test_fcl_app
    unit/main.cpp
    app/app_tests.cpp

@@ -117,27 +117,27 @@ namespace {
    return remote;
 }
 
-class quic_profile final : public profile {
+class quic_profile final {
  public:
    quic_profile(fcl::asio::runtime& runtime_value, const node::options& options_value)
        : runtime_(runtime_value), options_(options_value), connector_(runtime_value) {}
 
-   [[nodiscard]] bool supports(const fcl::p2p::endpoint& endpoint) const noexcept override {
+   [[nodiscard]] bool supports(const fcl::p2p::endpoint& endpoint) const noexcept {
       return endpoint.is_direct_quic();
    }
 
-   [[nodiscard]] bool listening() const noexcept override {
+   [[nodiscard]] bool listening() const noexcept {
       return listener_ != nullptr;
    }
 
-   [[nodiscard]] std::optional<fcl::p2p::endpoint> local_endpoint() const override {
+   [[nodiscard]] std::optional<fcl::p2p::endpoint> local_endpoint() const {
       if (!listening()) {
          return std::nullopt;
       }
       return p2p_endpoint_for(listener_->local_endpoint());
    }
 
-   void listen(fcl::p2p::endpoint endpoint) override {
+   void listen(fcl::p2p::endpoint endpoint) {
       try {
          listener_ = std::make_unique<fcl::quic::listener>(runtime_, quic_endpoint_for(endpoint), server_options());
       } catch (const fcl::exception::base& error) {
@@ -145,14 +145,14 @@ class quic_profile final : public profile {
       }
    }
 
-   void stop() override {
+   void stop() {
       if (listener_) {
          listener_->stop();
       }
    }
 
    boost::asio::awaitable<connection> async_connect(fcl::p2p::endpoint endpoint,
-                                                    const node::connect_options& options) override {
+                                                    const node::connect_options& options) {
       try {
          auto quic = co_await connector_.async_connect(quic_endpoint_for(endpoint),
                                                        client_options(options.expected_peer, options.timeout));
@@ -170,7 +170,7 @@ class quic_profile final : public profile {
       }
    }
 
-   boost::asio::awaitable<connection> async_accept() override {
+   boost::asio::awaitable<connection> async_accept() {
       try {
          auto quic = co_await listener_->async_accept();
          const auto remote = verified_peer_id_for(quic, std::nullopt, options_.allow_insecure_test_mode);
@@ -237,7 +237,19 @@ class quic_profile final : public profile {
 } // namespace
 
 void register_quic_profile(registry& value, fcl::asio::runtime& runtime, const node::options& options) {
-   value.add(std::make_unique<quic_profile>(runtime, options));
+   auto owned = std::make_shared<quic_profile>(runtime, options);
+   value.add(profile{
+       .supports = [owned](const fcl::p2p::endpoint& endpoint) { return owned->supports(endpoint); },
+       .listening = [owned] { return owned->listening(); },
+       .local_endpoint = [owned] { return owned->local_endpoint(); },
+       .listen = [owned](fcl::p2p::endpoint endpoint) { owned->listen(std::move(endpoint)); },
+       .stop = [owned] { owned->stop(); },
+       .async_connect =
+           [owned](fcl::p2p::endpoint endpoint, const node::connect_options& options) {
+              return owned->async_connect(std::move(endpoint), options);
+           },
+       .async_accept = [owned] { return owned->async_accept(); },
+   });
 }
 
 } // namespace fcl::p2p::direct

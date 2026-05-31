@@ -132,6 +132,52 @@
       ]
     },
     {
+      "id": "transport.tcp_noise_yamux_direct",
+      "protocol": "TCP + Noise + Yamux",
+      "source": "donors/libp2p-specs/connections/README.md and libp2p TCP transport composition",
+      "donor": "go-libp2p defaults/upgrader/TCP/noise/yamux and rust-libp2p builder TCP+Noise+Yamux examples",
+      "donor_file": [
+        "donors/go-libp2p/defaults.go",
+        "donors/go-libp2p/p2p/net/upgrader/upgrader.go",
+        "donors/go-libp2p/p2p/transport/tcp/tcp.go",
+        "donors/go-libp2p/p2p/security/noise/handshake.go",
+        "donors/go-libp2p/p2p/test/negotiation/security_test.go",
+        "donors/go-libp2p/p2p/test/negotiation/muxer_test.go",
+        "donors/rust-libp2p/libp2p/src/builder.rs",
+        "donors/rust-libp2p/interop-tests/src/arch.rs",
+        "donors/rust-libp2p/examples/ping/src/main.rs"
+      ],
+      "donor_case": [
+        "TCP direct transport",
+        "Noise security negotiation",
+        "Yamux muxer negotiation",
+        "Ping over TCP",
+        "Identify over TCP"
+      ],
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "test_fcl_quic_p2p p2p_direct_tcp_nodes_negotiate_noise_yamux_and_echo_frames",
+        "test_fcl_quic_p2p p2p_direct_tcp_rejects_noise_peer_mismatch",
+        "test_fcl_libp2p_interop tcp ping/identify/echo FCL <-> Go/Rust"
+      ],
+      "fcl_live_scenario": [
+        "fcl->go tcp ping",
+        "go->fcl tcp ping",
+        "fcl->rust tcp ping",
+        "rust->fcl tcp ping",
+        "fcl->go tcp identify",
+        "go->fcl tcp identify",
+        "fcl->rust tcp identify",
+        "rust->fcl tcp identify",
+        "fcl->go tcp echo",
+        "go->fcl tcp echo",
+        "fcl->rust tcp echo",
+        "rust->fcl tcp echo"
+      ],
+      "known_gap": "libp2p TCP TLS security branch is deferred to Block E.2b; WebSocket paths remain outside this scope"
+    },
+    {
       "id": "interop.live_dcutr_relay_topology",
       "protocol": "DCUtR",
       "source": "donors/libp2p-specs/relay/DCUtR.md",

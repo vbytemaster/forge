@@ -321,6 +321,15 @@ node::options options_for(const test_certificate_identity& identity,
    };
 }
 
+node::options options_for(const test_identity& identity,
+                          capability_set capabilities = capability_set{
+                              .bits = capabilities::direct_quic | capabilities::peer_exchange}) {
+   auto out = options_for(identity.peer, capabilities);
+   out.private_key_pem = identity.private_key_pem;
+   out.public_key = encode_public_key(identity.key);
+   return out;
+}
+
 public_key test_rsa_public_key() {
    return public_key{
        .type = public_key::type::rsa,
@@ -390,8 +399,22 @@ void register_echo(node& value, protocol_id protocol) {
                                  .port = port}};
 }
 
+[[nodiscard]] endpoint make_tcp_endpoint(std::uint16_t port, std::string host = "127.0.0.1") {
+   return endpoint{.transport = {.host_type = endpoint::host_kind::ip4,
+                                 .protocol = endpoint::protocol_kind::tcp,
+                                 .host = std::move(host),
+                                 .port = port}};
+}
+
 endpoint listen(node& value, fcl::asio::runtime& runtime) {
    fcl::asio::blocking::run(runtime, value.async_listen(make_quic_endpoint(0)));
+   auto endpoint = value.local_endpoint();
+   BOOST_REQUIRE(endpoint.has_value());
+   return *endpoint;
+}
+
+endpoint listen_tcp(node& value, fcl::asio::runtime& runtime) {
+   fcl::asio::blocking::run(runtime, value.async_listen(make_tcp_endpoint(0)));
    auto endpoint = value.local_endpoint();
    BOOST_REQUIRE(endpoint.has_value());
    return *endpoint;
@@ -718,11 +741,10 @@ BOOST_AUTO_TEST_CASE(p2p_endpoint_uses_multiaddr_for_tcp_wss_and_relay_views) {
    BOOST_TEST(relayed.to_string() == "/ip4/127.0.0.1/tcp/9090/p2p-circuit/p2p/" + id.to_string());
 }
 
-BOOST_AUTO_TEST_CASE(p2p_non_quic_multiaddr_is_parseable_but_not_dialable) {
+BOOST_AUTO_TEST_CASE(p2p_websocket_multiaddr_is_parseable_but_not_dialable) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
    auto value = node{runtime, options_for(peer(44))};
    const auto endpoints = std::vector<endpoint>{
-       parse_endpoint("/ip4/127.0.0.1/tcp/4001/p2p/" + peer(45).to_string()),
        parse_endpoint("/dns4/example.com/tcp/80/ws/p2p/" + peer(46).to_string()),
        parse_endpoint("/dns4/example.com/tcp/443/wss/p2p/" + peer(47).to_string()),
    };
@@ -746,6 +768,63 @@ BOOST_AUTO_TEST_CASE(p2p_non_quic_multiaddr_is_parseable_but_not_dialable) {
                     static_cast<int>(exceptions::code::unsupported_protocol));
       }
    }
+}
+
+BOOST_AUTO_TEST_CASE(p2p_direct_tcp_nodes_negotiate_noise_yamux_and_echo_frames) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   const auto server_identity = make_test_identity();
+   const auto client_identity = make_test_identity();
+   auto server = node{runtime, options_for(server_identity)};
+   auto client = node{runtime, options_for(client_identity)};
+   register_echo(server);
+
+   const auto server_endpoint = listen_tcp(server, runtime);
+   BOOST_TEST(server_endpoint.is_direct_tcp());
+
+   const auto session = fcl::asio::blocking::run(
+       runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
+   BOOST_TEST(session.remote_peer.value == server.local_peer().value);
+
+   auto stream =
+       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::echo));
+   const auto payload = std::vector<std::uint8_t>{'t', 'c', 'p'};
+   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+
+   BOOST_TEST(reply == payload, boost::test_tools::per_element());
+   BOOST_TEST(client.metrics().path_direct_opens >= 1U);
+   BOOST_TEST(server.metrics().protocol_streams_accepted >= 1U);
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_direct_tcp_rejects_noise_peer_mismatch) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   const auto server_identity = make_test_identity();
+   const auto client_identity = make_test_identity();
+   auto server_options = options_for(server_identity);
+   auto client_options = options_for(client_identity);
+   server_options.allow_insecure_test_mode = false;
+   client_options.allow_insecure_test_mode = false;
+   server_options.peer_store_backend = peer_store::make_memory_backend();
+   client_options.peer_store_backend = peer_store::make_memory_backend();
+   auto server = node{runtime, std::move(server_options)};
+   auto client = node{runtime, std::move(client_options)};
+
+   const auto server_endpoint = listen_tcp(server, runtime);
+   try {
+      (void)fcl::asio::blocking::run(
+          runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = peer(150)}));
+      BOOST_FAIL("expected TCP Noise peer mismatch");
+   } catch (const fcl::exception::base& error) {
+      BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+                 static_cast<int>(exceptions::code::peer_verification_failed));
+   }
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(quic_libp2p_profile_sets_required_alpn) {

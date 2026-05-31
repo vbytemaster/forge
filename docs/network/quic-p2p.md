@@ -178,17 +178,23 @@ READMEs may link here, but must not define a second block order.
   `transport::session`, because Peer ID verification is P2P semantics.
 - E.1 checkpoint: relay and DCUtR use reusable `fcl_yamux`; the old private
   P2P Yamux runtime is removed.
-- E.1 checkpoint: `/tcp`, `/ws` and `/wss` endpoints remain parseable but
-  direct dial/listen returns typed unsupported until the TCP compatibility
-  block adds security negotiation and live interop proof.
+- E.1 checkpoint: `/tcp`, `/ws` and `/wss` endpoints became parseable. E.2a
+  supersedes the `/tcp` part by wiring direct TCP; `/ws` and `/wss` still return
+  typed unsupported from P2P dial/listen.
+- E.2a checkpoint: direct `/tcp/...` now uses the libp2p TCP stack shape:
+  `fcl_tcp -> multistream-select -> Noise -> fcl_yamux -> transport::session`.
+  FCL, go-libp2p and rust-libp2p live scenarios cover Ping, Identify and a
+  framed echo stream in both FCL directions.
+- E.2a checkpoint: `/ws` and `/wss` remain parse/store only at multiaddr level.
+  The TLS security branch for libp2p TCP is deferred to E.2b.
 - P2P owns Peer ID, Identify, libp2p Noise/TLS payload semantics,
   multistream-select, Relay, DCUtR, DHT, Rendezvous and GossipSub.
 - P2P does not own generic TCP, STCP or Yamux runtime.
 
 ### Block F: P2P Completion
 
-- Finish DHT/Rendezvous hardening, global AutoRelay discovery, TCP live interop
-  and donor-doc cleanup.
+- Finish DHT/Rendezvous hardening, global AutoRelay discovery, remaining TCP
+  security branches and donor-doc cleanup.
 - Do not claim WebSocket transport support.
 - Supported P2P behavior requires spec-derived tests, donor-derived tests and
   live FCL <-> Go/Rust artifacts.
@@ -325,6 +331,8 @@ Accepted:
   QUIC/P2P/TCP API bindings from duplicating API frame serve-loop logic.
 - TCP + Noise/TLS + Yamux as the next libp2p-compatible direct transport after
   the abstraction pass.
+- TCP + Noise + Yamux direct path is accepted as the first TCP compatibility
+  slice; proof is tracked in `docs/donors/fcl-p2p-tcp-noise-yamux-v1.md`.
 - FCL multi-hop relay only as a future extension above the compatible one-hop
   Relay v2 baseline, never as a replacement for libp2p Relay v2 semantics.
 - Syncthing/libtorrent-style path scoring/backoff.

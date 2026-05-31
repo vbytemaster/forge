@@ -20,11 +20,10 @@ import fcl.transport.session;
 namespace fcl::p2p::direct {
 namespace {
 
-[[nodiscard]] profile& profile_for(std::vector<std::unique_ptr<profile>>& profiles,
-                                   const fcl::p2p::endpoint& endpoint) {
+[[nodiscard]] profile& profile_for(std::vector<profile>& profiles, const fcl::p2p::endpoint& endpoint) {
    for (auto& candidate : profiles) {
-      if (candidate->supports(endpoint)) {
-         return *candidate;
+      if (candidate.supports(endpoint)) {
+         return candidate;
       }
    }
    FCL_THROW_EXCEPTION(exceptions::unsupported_protocol, "unsupported P2P direct transport");
@@ -33,12 +32,13 @@ namespace {
 } // namespace
 
 struct registry::state {
-   std::vector<std::unique_ptr<profile>> profiles;
+   std::vector<profile> profiles;
    profile* active_listener = nullptr;
 };
 
 registry::registry(fcl::asio::runtime& runtime, const node::options& options) : state_(std::make_unique<state>()) {
    register_quic_profile(*this, runtime, options);
+   register_tcp_profile(*this, runtime, options);
 }
 
 registry::~registry() = default;
@@ -54,8 +54,9 @@ std::optional<fcl::p2p::endpoint> registry::local_endpoint() const {
    return state_->active_listener->local_endpoint();
 }
 
-void registry::add(std::unique_ptr<profile> value) {
-   if (!value) {
+void registry::add(profile value) {
+   if (!value.supports || !value.listening || !value.local_endpoint || !value.listen || !value.stop ||
+       !value.async_connect || !value.async_accept) {
       FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P direct transport profile is empty");
    }
    state_->profiles.push_back(std::move(value));

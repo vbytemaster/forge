@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -15,20 +16,14 @@ struct connection {
    std::optional<fcl::p2p::endpoint> remote_endpoint;
 };
 
-class profile {
- public:
-   virtual ~profile() = default;
-
-   [[nodiscard]] virtual bool supports(const fcl::p2p::endpoint& endpoint) const noexcept = 0;
-   [[nodiscard]] virtual bool listening() const noexcept = 0;
-   [[nodiscard]] virtual std::optional<fcl::p2p::endpoint> local_endpoint() const = 0;
-
-   virtual void listen(fcl::p2p::endpoint endpoint) = 0;
-   virtual void stop() = 0;
-
-   virtual boost::asio::awaitable<connection> async_connect(fcl::p2p::endpoint endpoint,
-                                                            const node::connect_options& options) = 0;
-   virtual boost::asio::awaitable<connection> async_accept() = 0;
+struct profile {
+   std::function<bool(const fcl::p2p::endpoint&)> supports;
+   std::function<bool()> listening;
+   std::function<std::optional<fcl::p2p::endpoint>()> local_endpoint;
+   std::function<void(fcl::p2p::endpoint)> listen;
+   std::function<void()> stop;
+   std::function<boost::asio::awaitable<connection>(fcl::p2p::endpoint, const node::connect_options&)> async_connect;
+   std::function<boost::asio::awaitable<connection>()> async_accept;
 };
 
 class registry {
@@ -42,7 +37,7 @@ class registry {
    [[nodiscard]] bool listening() const noexcept;
    [[nodiscard]] std::optional<fcl::p2p::endpoint> local_endpoint() const;
 
-   void add(std::unique_ptr<profile> value);
+   void add(profile value);
    void listen(fcl::p2p::endpoint endpoint);
    void stop();
 
@@ -56,5 +51,6 @@ class registry {
 };
 
 void register_quic_profile(registry& value, fcl::asio::runtime& runtime, const node::options& options);
+void register_tcp_profile(registry& value, fcl::asio::runtime& runtime, const node::options& options);
 
 } // namespace fcl::p2p::direct

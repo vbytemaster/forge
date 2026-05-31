@@ -12,6 +12,7 @@ from typing import Optional
 
 
 SCENARIOS = ("ping", "identify", "autonatv2", "relay_reserve", "unknown_protocol")
+TCP_DIRECT_SCENARIOS = ("ping", "identify", "echo")
 DHT_SCENARIOS = ("dht_find_peer", "dht_provide_find_provider")
 RENDEZVOUS_SCENARIOS = ("rendezvous_register_discover",)
 PUBSUB_SCENARIOS = ("gossipsub_publish",)
@@ -90,7 +91,7 @@ class Listener:
 
 def start_listener(binary: Path, implementation: str, work: Path, scenario: Optional[str] = None,
                    result_file: Optional[Path] = None, seed_file: Optional[Path] = None,
-                   expected_messages: Optional[int] = None) -> Listener:
+                   expected_messages: Optional[int] = None, transport: str = "quic") -> Listener:
     ready_file = work / f"{implementation}-ready.json"
     stop_file = work / f"{implementation}.stop"
     log_file = work / f"{implementation}.log"
@@ -106,6 +107,8 @@ def start_listener(binary: Path, implementation: str, work: Path, scenario: Opti
         str(store_dir),
         "--features",
         "ping,identify,autonatv2,relay,dcutr,dht,rendezvous,pubsub",
+        "--transport",
+        transport,
     ]
     if scenario is not None:
         command.extend(["--scenario", scenario])
@@ -159,7 +162,7 @@ def start_destination(binary: Path, implementation: str, relay_addr: str, relay_
 
 
 def run_dial(binary: Path, implementation: str, scenario: str, peer_id: str, addr: str, work: Path,
-             payload: Optional[str] = None) -> dict:
+             payload: Optional[str] = None, transport: str = "quic") -> dict:
     payload_suffix = "" if payload is None else f"-{payload}"
     result_file = work / f"{implementation}-dial-{scenario}{payload_suffix}.json"
     log_file = work / f"{implementation}-dial-{scenario}{payload_suffix}.log"
@@ -177,6 +180,8 @@ def run_dial(binary: Path, implementation: str, scenario: str, peer_id: str, add
         str(result_file),
         "--store-dir",
         str(store_dir),
+        "--transport",
+        transport,
     ]
     if payload is not None:
         command.extend(["--payload", payload])
@@ -365,26 +370,36 @@ def prepare_rust_fixture(source_dir: Path, build_dir: Path, donors_root: Path) -
 
 
 def run_pair(dialer_binary: Path, dialer: str, listener_binary: Path, listener: str, scenario: str, root: Path) -> dict:
-    work = root / f"{dialer}-to-{listener}-{scenario}"
+    return run_pair_with_transport(dialer_binary, dialer, listener_binary, listener, scenario, root, "quic")
+
+
+def run_pair_with_transport(dialer_binary: Path, dialer: str, listener_binary: Path, listener: str, scenario: str,
+                            root: Path, transport: str) -> dict:
+    work = root / f"{transport}-{dialer}-to-{listener}-{scenario}"
     work.mkdir(parents=True, exist_ok=True)
     listener_result = work / f"{listener}-listen-{scenario}.json" if scenario in PUBSUB_SCENARIOS else None
-    server = start_listener(listener_binary, listener, work, scenario, listener_result)
+    server = start_listener(listener_binary, listener, work, scenario, listener_result, transport=transport)
     try:
         addr = server.ready["listen_addrs"][0]
         peer_id = server.ready["peer_id"]
-        result = run_dial(dialer_binary, dialer, scenario, peer_id, addr, work)
+        result = run_dial(dialer_binary, dialer, scenario, peer_id, addr, work, transport=transport)
         delivered = wait_json(listener_result, 20) if listener_result is not None else None
         if delivered is not None and delivered.get("status") != "ok":
             raise RuntimeError(f"{listener} listener reported {delivered}")
-        return {
+        out = {
             "dialer": dialer,
             "listener": listener,
             "scenario": scenario,
+            "transport": transport,
             "addr": addr,
             "peer_id": peer_id,
             "result": result,
             "listener_result": delivered,
         }
+        if transport == "tcp":
+            out["negotiated_security"] = "/noise"
+            out["negotiated_muxer"] = "/yamux/1.0.0"
+        return out
     finally:
         server.close()
 
@@ -524,6 +539,16 @@ def main() -> int:
                     artifacts.append(run_pair(binaries[dialer], dialer, binaries[listener], listener, scenario, root))
                 except Exception as error:
                     failures.append(f"{dialer}->{listener} {scenario}: {error}")
+    for dialer, listener in (("fcl", "go"), ("go", "fcl"), ("fcl", "rust"), ("rust", "fcl")):
+        for scenario in TCP_DIRECT_SCENARIOS:
+            try:
+                artifacts.append(
+                    run_pair_with_transport(
+                        binaries[dialer], dialer, binaries[listener], listener, scenario, root, "tcp"
+                    )
+                )
+            except Exception as error:
+                failures.append(f"{dialer}->{listener} tcp {scenario}: {error}")
     try:
         artifacts.append(run_pubsub_mixed_mesh_stress(binaries, root))
     except Exception as error:

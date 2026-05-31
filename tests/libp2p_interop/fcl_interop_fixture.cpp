@@ -388,6 +388,23 @@ fcl::p2p::endpoint loopback_quic_endpoint(std::uint16_t port = 0) {
                                            .port = port}};
 }
 
+fcl::p2p::endpoint loopback_tcp_endpoint(std::uint16_t port = 0) {
+   return fcl::p2p::endpoint{.transport = {.host_type = fcl::p2p::endpoint::host_kind::ip4,
+                                           .protocol = fcl::p2p::endpoint::protocol_kind::tcp,
+                                           .host = "127.0.0.1",
+                                           .port = port}};
+}
+
+fcl::p2p::endpoint loopback_endpoint_for(std::string_view transport) {
+   if (transport == "tcp") {
+      return loopback_tcp_endpoint();
+   }
+   if (transport == "quic" || transport.empty()) {
+      return loopback_quic_endpoint();
+   }
+   throw std::runtime_error{"unsupported FCL fixture transport: " + std::string{transport}};
+}
+
 fcl::p2p::endpoint p2p_endpoint_for(fcl::p2p::endpoint value, const fcl::p2p::peer_id& peer) {
    value.peer = peer;
    return value;
@@ -552,7 +569,8 @@ int listen_mode(const std::map<std::string, std::string>& args) {
    } else if (scenario == "gossipsub_mixed_mesh_stress") {
       stress_state = register_pubsub_stress_listener(runtime, value);
    }
-   fcl::asio::blocking::run(runtime, value.async_listen(loopback_quic_endpoint()));
+   const auto transport = optional_value(args, "transport", "quic");
+   fcl::asio::blocking::run(runtime, value.async_listen(loopback_endpoint_for(transport)));
    const auto local = value.local_endpoint();
    if (!local) {
       throw std::runtime_error{"FCL fixture did not expose a local endpoint"};
@@ -735,6 +753,21 @@ std::string run_scenario(fcl::asio::runtime& runtime, fcl::p2p::node& value, std
       return "\"topic\":\"" + json_escape(message.subject.value) + "\",\"payload_bytes\":" +
              std::to_string(message.data.size()) + ",\"signed\":" +
              std::string{message.signature.empty() ? "false" : "true"};
+   }
+   if (scenario == "echo") {
+      auto stream = fcl::asio::blocking::run(runtime, value.async_open_protocol_stream(
+                                                         peer,
+                                                         fcl::p2p::protocol_id{.value = std::string{echo_protocol}},
+                                                         fcl::p2p::node::open_options{.allow_relay = false,
+                                                                                      .allow_hole_punch = false}));
+      const auto bytes = std::vector<std::uint8_t>{payload.begin(), payload.end()};
+      fcl::asio::blocking::run(runtime, stream.async_write(wrap_length_delimited(bytes)));
+      const auto echoed = fcl::asio::blocking::run(runtime, read_length_delimited(stream, 16 * 1024));
+      if (echoed != bytes) {
+         throw std::runtime_error{"FCL echo mismatch"};
+      }
+      return "\"protocol\":\"" + json_escape(echo_protocol) + "\",\"payload_bytes\":" +
+             std::to_string(echoed.size()) + ",\"echo_ok\":true";
    }
    if (scenario == "dcutr") {
       const auto status = fcl::asio::blocking::run(runtime, value.async_attempt_hole_punch(peer));

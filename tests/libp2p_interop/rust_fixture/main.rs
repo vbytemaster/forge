@@ -9,12 +9,12 @@ use std::{
 
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use libp2p::{
-    autonat, dcutr, gossipsub, identify, identity,
+    Multiaddr, PeerId, StreamProtocol, SwarmBuilder, autonat, dcutr, gossipsub, identify, identity,
     kad,
     multiaddr::Protocol,
     noise, ping, relay, rendezvous,
     swarm::{NetworkBehaviour, SwarmEvent},
-    yamux, Multiaddr, PeerId, StreamProtocol, SwarmBuilder,
+    tcp, yamux,
 };
 use libp2p_stream as raw_stream;
 use rand::rngs::OsRng;
@@ -36,6 +36,7 @@ struct Options {
     result_file: PathBuf,
     seed_file: PathBuf,
     payload: String,
+    transport: String,
     expected_messages: usize,
 }
 
@@ -73,6 +74,7 @@ fn parse_args() -> Result<Options, Box<dyn Error>> {
             "--result-file" => out.result_file = PathBuf::from(value),
             "--seed-file" => out.seed_file = PathBuf::from(value),
             "--payload" => out.payload = value,
+            "--transport" => out.transport = value,
             "--expected-messages" => out.expected_messages = value.parse()?,
             "--store-dir" | "--features" => {}
             _ => return Err(format!("unknown argument {key}").into()),
@@ -80,6 +82,9 @@ fn parse_args() -> Result<Options, Box<dyn Error>> {
     }
     if out.payload.is_empty() {
         out.payload = String::from_utf8_lossy(PUBSUB_PAYLOAD).to_string();
+    }
+    if out.transport.is_empty() {
+        out.transport = "quic".to_string();
     }
     if out.expected_messages == 0 {
         out.expected_messages = 1;
@@ -95,62 +100,80 @@ fn write_json(path: &PathBuf, value: serde_json::Value) -> Result<(), Box<dyn Er
     Ok(())
 }
 
-async fn new_swarm() -> Result<libp2p::Swarm<Behaviour>, Box<dyn Error>> {
-    let key = identity::Keypair::generate_ed25519();
-    let mut swarm = SwarmBuilder::with_existing_identity(key)
-        .with_tokio()
-        .with_quic()
-        .with_relay_client(noise::Config::new, yamux::Config::default)?
-        .with_behaviour(|key, relay_client| {
-            let peer = key.public().to_peer_id();
-            let mut kad_config = kad::Config::new(StreamProtocol::new("/ipfs/kad/1.0.0"));
-            kad_config.set_query_timeout(Duration::from_secs(10));
-            let mut kad_behaviour =
-                kad::Behaviour::with_config(peer, kad::store::MemoryStore::new(peer), kad_config);
-            kad_behaviour.set_mode(Some(kad::Mode::Server));
-            Behaviour {
-                autonat: autonat::v2::server::Behaviour::new(OsRng),
-                relay: relay::Behaviour::new(peer, Default::default()),
-                relay_client,
-                kad: kad_behaviour,
-                rendezvous_server: rendezvous::server::Behaviour::new(
-                    rendezvous::server::Config::default(),
-                ),
-                rendezvous_client: rendezvous::client::Behaviour::new(key.clone()),
-                gossipsub: gossipsub::Behaviour::new(
-                    gossipsub::MessageAuthenticity::Signed(key.clone()),
-                    gossipsub::ConfigBuilder::default()
-                        .protocol_id_prefix("/meshsub")
-                        .validation_mode(gossipsub::ValidationMode::Strict)
-                        .build()
-                        .expect("valid gossipsub config"),
-                )
-                .expect("valid gossipsub behaviour"),
-                ping: ping::Behaviour::new(ping::Config::new()),
-                identify: identify::Behaviour::new(identify::Config::new(
-                    "/fcl-interop/0.1.0".into(),
-                    key.public(),
-                )),
-                dcutr: dcutr::Behaviour::new(peer),
-                stream: raw_stream::Behaviour::new(),
-            }
-        })?
-        .build();
+fn behaviour_for(key: &identity::Keypair, relay_client: relay::client::Behaviour) -> Behaviour {
+    let peer = key.public().to_peer_id();
+    let mut kad_config = kad::Config::new(StreamProtocol::new("/ipfs/kad/1.0.0"));
+    kad_config.set_query_timeout(Duration::from_secs(10));
+    let mut kad_behaviour =
+        kad::Behaviour::with_config(peer, kad::store::MemoryStore::new(peer), kad_config);
+    kad_behaviour.set_mode(Some(kad::Mode::Server));
+    Behaviour {
+        autonat: autonat::v2::server::Behaviour::new(OsRng),
+        relay: relay::Behaviour::new(peer, Default::default()),
+        relay_client,
+        kad: kad_behaviour,
+        rendezvous_server: rendezvous::server::Behaviour::new(rendezvous::server::Config::default()),
+        rendezvous_client: rendezvous::client::Behaviour::new(key.clone()),
+        gossipsub: gossipsub::Behaviour::new(
+            gossipsub::MessageAuthenticity::Signed(key.clone()),
+            gossipsub::ConfigBuilder::default()
+                .protocol_id_prefix("/meshsub")
+                .validation_mode(gossipsub::ValidationMode::Strict)
+                .build()
+                .expect("valid gossipsub config"),
+        )
+        .expect("valid gossipsub behaviour"),
+        ping: ping::Behaviour::new(ping::Config::new()),
+        identify: identify::Behaviour::new(identify::Config::new(
+            "/fcl-interop/0.1.0".into(),
+            key.public(),
+        )),
+        dcutr: dcutr::Behaviour::new(peer),
+        stream: raw_stream::Behaviour::new(),
+    }
+}
 
-    swarm.listen_on(
+async fn new_swarm(transport: &str) -> Result<libp2p::Swarm<Behaviour>, Box<dyn Error>> {
+    let key = identity::Keypair::generate_ed25519();
+    let mut swarm = match transport {
+        "quic" | "" => SwarmBuilder::with_existing_identity(key)
+            .with_tokio()
+            .with_quic()
+            .with_relay_client(noise::Config::new, yamux::Config::default)?
+            .with_behaviour(behaviour_for)?
+            .build(),
+        "tcp" => SwarmBuilder::with_existing_identity(key)
+            .with_tokio()
+            .with_tcp(
+                tcp::Config::default().nodelay(true),
+                noise::Config::new,
+                yamux::Config::default,
+            )?
+            .with_relay_client(noise::Config::new, yamux::Config::default)?
+            .with_behaviour(behaviour_for)?
+            .build(),
+        other => return Err(format!("unsupported transport {other}").into()),
+    };
+
+    let listen_addr = if transport == "tcp" {
+        Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::LOCALHOST))
+            .with(Protocol::Tcp(0))
+    } else {
         Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::LOCALHOST))
             .with(Protocol::Udp(0))
-            .with(Protocol::QuicV1),
-    )?;
+            .with(Protocol::QuicV1)
+    };
+    swarm.listen_on(listen_addr)?;
     Ok(swarm)
 }
 
 fn dht_provider_key() -> kad::RecordKey {
     kad::RecordKey::new(&[
-        0x12, 0x20, 0x2e, 0xaa, 0xd0, 0x06, 0x69, 0x42, 0x0a, 0xc7, 0x3a, 0x56, 0xd9, 0x80,
-        0xb7, 0x9d, 0xeb, 0x2d, 0x2e, 0x3f, 0xb6, 0x86, 0x6d, 0x1c, 0xac, 0x9e, 0x37, 0x3f,
-        0x5e, 0x5d, 0x4a, 0x62, 0xad, 0xf9,
+        0x12, 0x20, 0x2e, 0xaa, 0xd0, 0x06, 0x69, 0x42, 0x0a, 0xc7, 0x3a, 0x56, 0xd9, 0x80, 0xb7,
+        0x9d, 0xeb, 0x2d, 0x2e, 0x3f, 0xb6, 0x86, 0x6d, 0x1c, 0xac, 0x9e, 0x37, 0x3f, 0x5e, 0x5d,
+        0x4a, 0x62, 0xad, 0xf9,
     ])
 }
 
@@ -251,6 +274,40 @@ async fn open_required_stream(
             }
             _ = &mut deadline => {
                 return Err(format!("timed out opening {protocol}").into());
+            }
+            event = swarm.select_next_some() => {
+                if let SwarmEvent::NewListenAddr { address, .. } = event {
+                    swarm.add_external_address(address);
+                }
+            }
+        }
+    }
+}
+
+async fn open_echo_stream_direct(
+    swarm: &mut libp2p::Swarm<Behaviour>,
+    peer: PeerId,
+    payload: &[u8],
+) -> Result<usize, Box<dyn Error>> {
+    let mut control = swarm.behaviour().stream.new_control();
+    let mut open =
+        Box::pin(control.open_stream(peer, StreamProtocol::new("/fcl/interop/relay-echo/1")));
+    let deadline = tokio::time::sleep(Duration::from_secs(15));
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            result = &mut open => {
+                let mut stream = result?;
+                write_frame(&mut stream, payload).await?;
+                let echoed = read_frame(&mut stream).await?;
+                stream.close().await?;
+                if echoed != payload {
+                    return Err("echo mismatch".into());
+                }
+                return Ok(echoed.len());
+            }
+            _ = &mut deadline => {
+                return Err("timed out opening echo stream".into());
             }
             event = swarm.select_next_some() => {
                 if let SwarmEvent::NewListenAddr { address, .. } = event {
@@ -445,7 +502,7 @@ async fn wait_gossipsub_peer_and_publish(
 }
 
 async fn listen(opts: Options) -> Result<(), Box<dyn Error>> {
-    let mut swarm = new_swarm().await?;
+    let mut swarm = new_swarm(&opts.transport).await?;
     spawn_incoming_stream_echo(&mut swarm, "/fcl/interop/relay-echo/1")?;
     if opts.scenario == "gossipsub_publish" || opts.scenario == "gossipsub_mixed_mesh_stress" {
         let topic = gossipsub::IdentTopic::new(PUBSUB_TOPIC);
@@ -504,6 +561,7 @@ async fn listen(opts: Options) -> Result<(), Box<dyn Error>> {
                                 "role": "listener",
                                 "peer_id": peer.to_string(),
                                 "listen_addrs": [format!("{address}/p2p/{peer}")],
+                                "transport": opts.transport.clone(),
                                 "status": "ready"
                             }))?;
                             ready = true;
@@ -546,7 +604,7 @@ async fn listen(opts: Options) -> Result<(), Box<dyn Error>> {
 }
 
 async fn dial(opts: Options) -> Result<(), Box<dyn Error>> {
-    let mut swarm = new_swarm().await?;
+    let mut swarm = new_swarm(&opts.transport).await?;
     let remote_peer: PeerId = opts.peer_id.parse()?;
     let remote: Multiaddr = opts.addr.parse()?;
     if opts.scenario == "gossipsub_publish" {
@@ -612,6 +670,23 @@ async fn dial(opts: Options) -> Result<(), Box<dyn Error>> {
             open_required_stream(&mut swarm, remote_peer, "/libp2p/circuit/relay/0.2.0/hop")
                 .await?;
         }
+        "echo" => {
+            let bytes =
+                open_echo_stream_direct(&mut swarm, remote_peer, opts.payload.as_bytes()).await?;
+            write_json(
+                &opts.result_file,
+                json!({
+                    "implementation": "rust",
+                    "role": "dialer",
+                    "scenario": opts.scenario,
+                    "status": "ok",
+                    "protocol": "/fcl/interop/relay-echo/1",
+                    "payload_bytes": bytes,
+                    "echo_ok": true
+                }),
+            )?;
+            return Ok(());
+        }
         "dcutr" => {
             open_required_stream(&mut swarm, remote_peer, "/libp2p/dcutr").await?;
         }
@@ -659,7 +734,8 @@ async fn dial(opts: Options) -> Result<(), Box<dyn Error>> {
             return Ok(());
         }
         "gossipsub_publish" | "gossipsub_mixed_mesh_stress" => {
-            wait_gossipsub_peer_and_publish(&mut swarm, remote_peer, opts.payload.as_bytes()).await?;
+            wait_gossipsub_peer_and_publish(&mut swarm, remote_peer, opts.payload.as_bytes())
+                .await?;
             write_json(
                 &opts.result_file,
                 json!({
@@ -707,7 +783,7 @@ async fn dial(opts: Options) -> Result<(), Box<dyn Error>> {
 }
 
 async fn destination(opts: Options) -> Result<(), Box<dyn Error>> {
-    let mut swarm = new_swarm().await?;
+    let mut swarm = new_swarm(&opts.transport).await?;
     spawn_incoming_stream_echo(&mut swarm, "/fcl/interop/relay-echo/1")?;
     let peer = *swarm.local_peer_id();
     let relay_addr: Multiaddr = opts.relay_addr.parse()?;
@@ -816,13 +892,13 @@ async fn open_echo_stream(
                     loop {
                         tokio::select! {
                             _ = &mut settle => return Ok(direct_upgrade),
-	                            event = swarm.select_next_some() => {
-	                                if let SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } = event {
-	                                    if peer_id == peer && !format!("{endpoint:?}").contains("P2pCircuit") {
-	                                        return Ok(true);
-	                                    }
-	                                }
-	                            }
+                                event = swarm.select_next_some() => {
+                                    if let SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } = event {
+                                        if peer_id == peer && !format!("{endpoint:?}").contains("P2pCircuit") {
+                                            return Ok(true);
+                                        }
+                                    }
+                                }
                         }
                     }
                 }
@@ -873,7 +949,7 @@ async fn dial_and_wait(
 }
 
 async fn dial_relay(opts: Options) -> Result<(), Box<dyn Error>> {
-    let mut swarm = new_swarm().await?;
+    let mut swarm = new_swarm(&opts.transport).await?;
     let target_peer: PeerId = opts.peer_id.parse()?;
     let relay_peer: PeerId = opts.relay_peer_id.parse()?;
     let relay_addr: Multiaddr = opts.relay_addr.parse()?;

@@ -16,18 +16,21 @@ import (
 	cid "github.com/ipfs/go-cid"
 	libp2p "github.com/libp2p/go-libp2p"
 	kad "github.com/libp2p/go-libp2p-kad-dht"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/protocol"
-	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/p2p/muxer/yamux"
 	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	relayv2 "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	"github.com/libp2p/go-libp2p/p2p/protocol/holepunch"
 	"github.com/libp2p/go-libp2p/p2p/protocol/identify"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
+	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
+	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	ma "github.com/multiformats/go-multiaddr"
 	mh "github.com/multiformats/go-multihash"
 )
@@ -48,6 +51,7 @@ type options struct {
 	resultFile  string
 	seedFile    string
 	payload     string
+	transport   string
 	expected    int
 }
 
@@ -84,6 +88,8 @@ func parseArgs() (options, error) {
 			out.seedFile = value
 		case "--payload":
 			out.payload = value
+		case "--transport":
+			out.transport = value
 		case "--expected-messages":
 			n, err := strconv.Atoi(value)
 			if err != nil {
@@ -98,6 +104,9 @@ func parseArgs() (options, error) {
 	}
 	if out.payload == "" {
 		out.payload = pubsubPayload
+	}
+	if out.transport == "" {
+		out.transport = "quic"
 	}
 	if out.expected == 0 {
 		out.expected = 1
@@ -169,15 +178,30 @@ func (h *fixtureHost) Close() error {
 	return h.Host.Close()
 }
 
-func newHost() (*fixtureHost, error) {
-	h, err := libp2p.New(
+func newHost(transport string) (*fixtureHost, error) {
+	options := []libp2p.Option{
 		libp2p.NoTransports,
-		libp2p.Transport(quic.NewTransport),
-		libp2p.ListenAddrStrings("/ip4/127.0.0.1/udp/0/quic-v1"),
 		libp2p.ForceReachabilityPublic(),
 		libp2p.EnableAutoNATv2(),
 		libp2p.EnableRelay(),
-	)
+	}
+	switch transport {
+	case "quic", "":
+		options = append(options,
+			libp2p.Transport(quic.NewTransport),
+			libp2p.ListenAddrStrings("/ip4/127.0.0.1/udp/0/quic-v1"),
+		)
+	case "tcp":
+		options = append(options,
+			libp2p.Transport(tcp.NewTCPTransport),
+			libp2p.Security(noise.ID, noise.New),
+			libp2p.Muxer(yamux.ID, yamux.DefaultTransport),
+			libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"),
+		)
+	default:
+		return nil, fmt.Errorf("unsupported transport %s", transport)
+	}
+	h, err := libp2p.New(options...)
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +389,7 @@ func writePubSubStressResult(opts options, state *pubsubStressState) error {
 }
 
 func listen(opts options) error {
-	h, err := newHost()
+	h, err := newHost(opts.transport)
 	if err != nil {
 		return err
 	}
@@ -396,6 +420,7 @@ func listen(opts options) error {
 		"peer_id":        h.ID().String(),
 		"listen_addrs":   out,
 		"protocols":      protocols,
+		"transport":      opts.transport,
 		"status":         "ready",
 	}); err != nil {
 		return err
@@ -421,7 +446,7 @@ func listen(opts options) error {
 }
 
 func destination(opts options) error {
-	h, err := newHost()
+	h, err := newHost(opts.transport)
 	if err != nil {
 		return err
 	}
@@ -508,6 +533,39 @@ func openRequiredProtocol(ctx context.Context, h host.Host, peer peer.ID, id pro
 	return 0, nil
 }
 
+func openEchoProtocol(ctx context.Context, h host.Host, peer peer.ID, payload []byte) (int, error) {
+	stream, err := h.NewStream(ctx, peer, echoProtocol)
+	if err != nil {
+		return 0, err
+	}
+	defer stream.Close()
+	if err := writeFrame(stream, payload); err != nil {
+		_ = stream.Reset()
+		return 0, err
+	}
+	echoed, err := readFrame(bufio.NewReader(stream))
+	if err != nil {
+		_ = stream.Reset()
+		return 0, err
+	}
+	if string(echoed) != string(payload) {
+		return 0, fmt.Errorf("echo mismatch: %q", string(echoed))
+	}
+	return len(echoed), nil
+}
+
+func connectionState(h host.Host, peer peer.ID) map[string]string {
+	for _, conn := range h.Network().ConnsToPeer(peer) {
+		state := conn.ConnState()
+		return map[string]string{
+			"negotiated_security": string(state.Security),
+			"negotiated_muxer":    string(state.StreamMultiplexer),
+			"transport":           state.Transport,
+		}
+	}
+	return map[string]string{}
+}
+
 func expectUnsupportedProtocol(ctx context.Context, h host.Host, peer peer.ID, id protocol.ID) (string, error) {
 	stream, err := h.NewStream(ctx, peer, id)
 	if err == nil {
@@ -522,7 +580,7 @@ func expectUnsupportedProtocol(ctx context.Context, h host.Host, peer peer.ID, i
 }
 
 func dial(opts options) error {
-	h, err := newHost()
+	h, err := newHost(opts.transport)
 	if err != nil {
 		return err
 	}
@@ -551,6 +609,9 @@ func dial(opts options) error {
 		"local_peer_id":  h.ID().String(),
 		"status":         "ok",
 	}
+	for key, value := range connectionState(h, info.ID) {
+		result[key] = value
+	}
 	switch opts.scenario {
 	case "ping":
 		pingService := ping.NewPingService(h)
@@ -570,6 +631,14 @@ func dial(opts options) error {
 			return err
 		}
 		result["payload_bytes"] = size
+	case "echo":
+		size, err := openEchoProtocol(ctx, h, info.ID, []byte(opts.payload))
+		if err != nil {
+			return err
+		}
+		result["protocol"] = string(echoProtocol)
+		result["payload_bytes"] = size
+		result["echo_ok"] = true
 	case "autonatv2":
 		if _, err = openRequiredProtocol(ctx, h, info.ID, protocol.ID("/libp2p/autonat/2/dial-request")); err != nil {
 			return err
@@ -682,7 +751,7 @@ func waitDirectConnection(ctx context.Context, h host.Host, target peer.ID) bool
 }
 
 func dialRelay(opts options) error {
-	h, err := newHost()
+	h, err := newHost(opts.transport)
 	if err != nil {
 		return err
 	}

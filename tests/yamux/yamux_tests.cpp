@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <ostream>
 #include <span>
 #include <string>
 #include <string_view>
@@ -42,6 +43,15 @@ enum class frame_type : std::uint8_t {
    go_away = 3,
 };
 
+std::ostream& operator<<(std::ostream& out, frame_type value) {
+   return out << static_cast<int>(value);
+}
+
+inline constexpr std::uint16_t syn = 0x01;
+inline constexpr std::uint16_t ack = 0x02;
+inline constexpr std::uint16_t rst = 0x08;
+inline constexpr std::size_t header_size = 12;
+
 [[nodiscard]] bytes text_bytes(std::string_view value) {
    return {value.begin(), value.end()};
 }
@@ -49,7 +59,7 @@ enum class frame_type : std::uint8_t {
 [[nodiscard]] bytes frame(frame_type type, std::uint16_t flags, std::uint32_t stream_id, std::uint32_t length,
                           std::span<const std::uint8_t> payload = {}) {
    auto out = bytes{};
-   out.reserve(12 + payload.size());
+   out.reserve(header_size + payload.size());
    out.push_back(0);
    out.push_back(static_cast<std::uint8_t>(type));
    out.push_back(static_cast<std::uint8_t>((flags >> 8U) & 0xffU));
@@ -62,6 +72,32 @@ enum class frame_type : std::uint8_t {
    }
    out.insert(out.end(), payload.begin(), payload.end());
    return out;
+}
+
+[[nodiscard]] std::uint32_t load_u32(const bytes& value, std::size_t offset) {
+   BOOST_REQUIRE_GE(value.size(), offset + 4);
+   return (static_cast<std::uint32_t>(value[offset]) << 24U) |
+          (static_cast<std::uint32_t>(value[offset + 1]) << 16U) |
+          (static_cast<std::uint32_t>(value[offset + 2]) << 8U) |
+          static_cast<std::uint32_t>(value[offset + 3]);
+}
+
+[[nodiscard]] frame_type type_of(const bytes& value) {
+   BOOST_REQUIRE_GE(value.size(), header_size);
+   return static_cast<frame_type>(value[1]);
+}
+
+[[nodiscard]] std::uint16_t flags_of(const bytes& value) {
+   BOOST_REQUIRE_GE(value.size(), header_size);
+   return static_cast<std::uint16_t>((static_cast<std::uint16_t>(value[2]) << 8U) | value[3]);
+}
+
+[[nodiscard]] std::uint32_t stream_id_of(const bytes& value) {
+   return load_u32(value, 4);
+}
+
+[[nodiscard]] std::uint32_t length_of(const bytes& value) {
+   return load_u32(value, 8);
 }
 
 template <typename T>
@@ -414,6 +450,104 @@ boost::asio::awaitable<void> yamux_limits_and_malformed_frames_are_typed() {
    }
 }
 
+boost::asio::awaitable<void> yamux_configured_limits_are_behavioral() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   {
+      auto pair = make_stream_pair(executor);
+      auto left = fcl::yamux::session{std::move(pair.left), fcl::yamux::side::initiator,
+                                      fcl::yamux::options{.max_streams = 1}};
+      auto right = fcl::yamux::session{std::move(pair.right), fcl::yamux::side::responder};
+      auto accept = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
+      auto first = co_await left.async_open_stream();
+      auto inbound = co_await take_result(accept);
+      BOOST_CHECK_EQUAL(first.id(), 1);
+      BOOST_CHECK_EQUAL(inbound.id(), 1);
+      BOOST_CHECK_THROW((void)co_await left.async_open_stream(), fcl::yamux::exceptions::resource_limit);
+      co_await left.async_close();
+      co_await right.async_close();
+   }
+
+   {
+      auto pair = make_stream_pair(executor);
+      auto right = fcl::yamux::session{std::move(pair.right), fcl::yamux::side::responder,
+                                       fcl::yamux::options{.max_pending_accepts = 1}};
+      auto local_open = spawn_result<fcl::transport::stream>(executor, right.async_open_stream());
+      auto local_syn = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(local_syn), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(local_syn), syn);
+      BOOST_CHECK_EQUAL(stream_id_of(local_syn), 2U);
+      (void)co_await take_result(local_open);
+
+      co_await pair.left.async_write(frame(frame_type::window_update, syn, 1, 256 * 1024));
+      auto first_response = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(first_response), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(first_response), ack);
+      BOOST_CHECK_EQUAL(stream_id_of(first_response), 1U);
+
+      co_await pair.left.async_write(frame(frame_type::window_update, syn, 3, 256 * 1024));
+      auto second_response = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(second_response), frame_type::data);
+      BOOST_CHECK_EQUAL(flags_of(second_response), rst);
+      BOOST_CHECK_EQUAL(stream_id_of(second_response), 3U);
+
+      auto accepted = co_await right.async_accept_stream();
+      BOOST_CHECK_EQUAL(accepted.id(), 1);
+      co_await pair.left.async_close();
+      co_await right.async_close();
+   }
+
+   {
+      auto pair = make_stream_pair(executor);
+      auto left = fcl::yamux::session{std::move(pair.left), fcl::yamux::side::initiator};
+      auto right = fcl::yamux::session{
+          std::move(pair.right),
+          fcl::yamux::side::responder,
+          fcl::yamux::options{.max_stream_buffer = 8, .max_session_buffer = 3},
+      };
+      auto accept = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
+      auto outbound = co_await left.async_open_stream();
+      auto inbound = co_await take_result(accept);
+      co_await outbound.async_write(text_bytes("four"));
+      BOOST_CHECK_THROW((void)co_await inbound.async_read(), fcl::yamux::exceptions::stream_reset);
+      co_await left.async_close();
+      co_await right.async_close();
+   }
+
+   {
+      auto pair = make_stream_pair(executor);
+      auto session_options = fcl::yamux::options{.initial_window = 1, .max_stream_window = 2, .max_frame_size = 8};
+      auto left = fcl::yamux::session{std::move(pair.right), fcl::yamux::side::initiator, session_options};
+      auto outbound = co_await left.async_open_stream();
+      auto local_syn = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(local_syn), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(local_syn), syn);
+      BOOST_CHECK_EQUAL(stream_id_of(local_syn), 1U);
+      BOOST_CHECK_EQUAL(length_of(local_syn), 1U);
+
+      const auto payload = text_bytes("abcd");
+      auto write = spawn_result<void>(executor, outbound.async_write(payload));
+      auto first = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(first), frame_type::data);
+      BOOST_CHECK_EQUAL(stream_id_of(first), 1U);
+      BOOST_CHECK_EQUAL(length_of(first), 1U);
+
+      co_await pair.left.async_write(frame(frame_type::window_update, 0, 1, 100));
+      auto second = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(second), frame_type::data);
+      BOOST_CHECK_EQUAL(stream_id_of(second), 1U);
+      BOOST_CHECK_EQUAL(length_of(second), 2U);
+
+      co_await pair.left.async_write(frame(frame_type::window_update, 0, 1, 1));
+      auto third = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(third), frame_type::data);
+      BOOST_CHECK_EQUAL(stream_id_of(third), 1U);
+      BOOST_CHECK_EQUAL(length_of(third), 1U);
+      co_await take_result(write);
+      co_await pair.left.async_close();
+      co_await left.async_close();
+   }
+}
+
 boost::asio::awaitable<void> yamux_control_frames_are_handled() {
    auto executor = co_await boost::asio::this_coro::executor;
    {
@@ -490,6 +624,11 @@ BOOST_AUTO_TEST_CASE(yamux_close_flushes_and_read_after_close_is_rejected) {
 BOOST_AUTO_TEST_CASE(yamux_rejects_limits_and_malformed_frames_with_typed_errors) {
    auto runtime = fcl::asio::runtime{};
    fcl::asio::blocking::run(runtime, yamux_limits_and_malformed_frames_are_typed());
+}
+
+BOOST_AUTO_TEST_CASE(yamux_enforces_configured_runtime_limits) {
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, yamux_configured_limits_are_behavioral());
 }
 
 BOOST_AUTO_TEST_CASE(yamux_handles_ping_and_goaway_control_frames) {

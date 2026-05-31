@@ -50,6 +50,7 @@ discovery, pubsub, TCP, STCP or QUIC mechanics.
 | Flow control waits for WINDOW_UPDATE | libp2p spec, Go/Rust Yamux | `test_fcl_yamux yamux_applies_flow_control_with_window_updates` |
 | Close flushes pending DATA; read after FIN fails typed | Rust compliance | `test_fcl_yamux yamux_close_flushes_and_read_after_close_is_rejected` |
 | Frame size split, stream buffer limit and malformed frame rejection | libp2p spec, Rust inbound buffer limit | `test_fcl_yamux yamux_rejects_limits_and_malformed_frames_with_typed_errors` |
+| Stream count, pending accept backlog, session buffer and max stream window limits | Go resource-manager-backed limits, Rust inbound backlog behavior | `test_fcl_yamux yamux_enforces_configured_runtime_limits` |
 | Stream zero misuse and oversized DATA rejection | libp2p spec | `test_fcl_yamux yamux_rejects_limits_and_malformed_frames_with_typed_errors` |
 | PING ACK and GOAWAY close | libp2p spec | `test_fcl_yamux yamux_handles_ping_and_goaway_control_frames` |
 | `transport::session` wrapper delegation | Rust muxer harness | `test_fcl_yamux yamux_exposes_transport_session_wrapper` |

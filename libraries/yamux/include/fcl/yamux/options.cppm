@@ -20,7 +20,6 @@ struct options {
    std::size_t max_pending_accepts = 256;
    std::size_t max_stream_buffer = 1024 * 1024;
    std::size_t max_session_buffer = 16 * 1024 * 1024;
-   std::size_t read_chunk_size = 64 * 1024;
 };
 
 } // namespace fcl::yamux

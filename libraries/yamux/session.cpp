@@ -170,10 +170,8 @@ struct session::impl : std::enable_shared_from_this<impl> {
          auto lock = std::scoped_lock{mutex_};
          if (!executor_) {
             executor_ = executor;
-            accept_timer_ = std::make_shared<boost::asio::steady_timer>(
-            executor, (std::chrono::steady_clock::time_point::max)());
-            write_timer_ = std::make_shared<boost::asio::steady_timer>(
-                executor, (std::chrono::steady_clock::time_point::max)());
+            accept_timer_ = std::make_shared<boost::asio::steady_timer>(executor, far_future());
+            write_timer_ = std::make_shared<boost::asio::steady_timer>(executor, far_future());
          }
          if (!started_) {
             started_ = true;
@@ -422,7 +420,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
       }
       if (options_.initial_window == 0 || options_.max_stream_window < options_.initial_window ||
           options_.max_frame_size == 0 || options_.max_streams == 0 || options_.max_pending_accepts == 0 ||
-          options_.max_stream_buffer == 0 || options_.max_session_buffer == 0 || options_.read_chunk_size == 0) {
+          options_.max_stream_buffer == 0 || options_.max_session_buffer == 0) {
          FCL_THROW_EXCEPTION(exceptions::invalid_options, "invalid yamux options");
       }
       if (options_.max_frame_size > static_cast<std::size_t>((std::numeric_limits<std::uint32_t>::max)())) {
@@ -434,10 +432,8 @@ struct session::impl : std::enable_shared_from_this<impl> {
       auto state = std::make_shared<stream_state>(id);
       state->send_window = std::min(send_window, options_.max_stream_window);
       if (executor_) {
-         state->read_timer = std::make_shared<boost::asio::steady_timer>(
-             *executor_, (std::chrono::steady_clock::time_point::max)());
-         state->window_timer = std::make_shared<boost::asio::steady_timer>(
-             *executor_, (std::chrono::steady_clock::time_point::max)());
+         state->read_timer = std::make_shared<boost::asio::steady_timer>(*executor_, far_future());
+         state->window_timer = std::make_shared<boost::asio::steady_timer>(*executor_, far_future());
       }
       return state;
    }

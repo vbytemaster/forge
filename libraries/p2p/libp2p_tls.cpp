@@ -227,7 +227,7 @@ void verify_certificate_basics(X509* certificate) {
          return static_cast<std::size_t>(first);
       }
       const auto count = static_cast<std::size_t>(first & 0x7fU);
-      if (count == 0 || count > sizeof(std::size_t) || cursor + count > value.size()) {
+      if (count == 0 || count > sizeof(std::size_t) || count > value.size() - cursor) {
          FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "invalid libp2p TLS extension length");
       }
       auto out = std::size_t{};
@@ -242,11 +242,12 @@ void verify_certificate_basics(X509* certificate) {
                              "libp2p TLS extension expected octet string");
       }
       const auto length = read_length(cursor);
-      if (cursor + length > value.size()) {
+      if (length > value.size() - cursor) {
          FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS extension octet is truncated");
       }
-      auto out = std::vector<std::uint8_t>{value.begin() + static_cast<std::ptrdiff_t>(cursor),
-                                           value.begin() + static_cast<std::ptrdiff_t>(cursor + length)};
+      const auto begin = value.begin() + static_cast<std::ptrdiff_t>(cursor);
+      const auto end = begin + static_cast<std::ptrdiff_t>(length);
+      auto out = std::vector<std::uint8_t>{begin, end};
       cursor += length;
       return out;
    };
@@ -254,7 +255,7 @@ void verify_certificate_basics(X509* certificate) {
       FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS extension expected sequence");
    }
    const auto length = read_length(offset);
-   if (offset + length != value.size()) {
+   if (length != value.size() - offset) {
       FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS extension sequence length mismatch");
    }
    auto encoded_key = read_octet(offset);

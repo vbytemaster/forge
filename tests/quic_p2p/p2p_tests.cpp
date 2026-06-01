@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <ranges>
 #include <set>
 #include <stdexcept>
@@ -434,6 +435,12 @@ std::vector<std::uint8_t> signed_key_der(std::span<const std::uint8_t> public_ke
    auto out = std::vector<std::uint8_t>{0x30};
    append_der_length(out, content.size());
    out.insert(out.end(), content.begin(), content.end());
+   return out;
+}
+
+std::vector<std::uint8_t> signed_key_der_with_overflowing_octet_length() {
+   auto out = std::vector<std::uint8_t>{0x30, 0x0a, 0x04, 0x88};
+   out.insert(out.end(), 8, 0xff);
    return out;
 }
 
@@ -939,6 +946,13 @@ BOOST_AUTO_TEST_CASE(p2p_certificate_extension_rejects_unverified_non_ed25519_id
    const auto identity = make_secp256k1_identity();
    auto bogus_signature = std::vector<std::uint8_t>(72, 0x42);
    const auto extension = signed_key_der(encode_public_key(identity.key), bogus_signature);
+   const auto certificate = make_certificate_der_with_libp2p_extension(extension);
+
+   BOOST_CHECK_THROW((void)make_peer_id_from_certificate_der(certificate), exceptions::invalid_identity);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_certificate_extension_rejects_overflowing_identity_octet_length) {
+   const auto extension = signed_key_der_with_overflowing_octet_length();
    const auto certificate = make_certificate_der_with_libp2p_extension(extension);
 
    BOOST_CHECK_THROW((void)make_peer_id_from_certificate_der(certificate), exceptions::invalid_identity);

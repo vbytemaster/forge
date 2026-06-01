@@ -44,7 +44,7 @@ void append_varint(fcl::multiformats::bytes& out, std::uint64_t value) {
       return first;
    }
    const auto count = static_cast<std::size_t>(first & 0x7fU);
-   if (count == 0 || count > sizeof(std::size_t) || offset + count > bytes.size()) {
+   if (count == 0 || count > sizeof(std::size_t) || count > bytes.size() - offset) {
       FCL_THROW_EXCEPTION(exceptions::invalid_identity, "invalid libp2p certificate extension length");
    }
    auto out = std::size_t{};
@@ -59,11 +59,12 @@ void append_varint(fcl::multiformats::bytes& out, std::uint64_t value) {
       FCL_THROW_EXCEPTION(exceptions::invalid_identity, "libp2p certificate extension expected octet string");
    }
    const auto length = read_der_length(bytes, offset);
-   if (offset + length > bytes.size()) {
+   if (length > bytes.size() - offset) {
       FCL_THROW_EXCEPTION(exceptions::invalid_identity, "libp2p certificate extension octet string is truncated");
    }
-   auto out = std::vector<std::uint8_t>{bytes.begin() + static_cast<std::ptrdiff_t>(offset),
-                                        bytes.begin() + static_cast<std::ptrdiff_t>(offset + length)};
+   const auto begin = bytes.begin() + static_cast<std::ptrdiff_t>(offset);
+   const auto end = begin + static_cast<std::ptrdiff_t>(length);
+   auto out = std::vector<std::uint8_t>{begin, end};
    offset += length;
    return out;
 }
@@ -79,7 +80,7 @@ struct signed_key_extension {
       FCL_THROW_EXCEPTION(exceptions::invalid_identity, "libp2p certificate extension expected sequence");
    }
    const auto length = read_der_length(bytes, offset);
-   if (offset + length != bytes.size()) {
+   if (length != bytes.size() - offset) {
       FCL_THROW_EXCEPTION(exceptions::invalid_identity, "libp2p certificate extension sequence length mismatch");
    }
    auto out = signed_key_extension{};

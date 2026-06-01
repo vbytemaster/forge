@@ -387,3 +387,9 @@ Rejected:
 `test_fcl_quic_p2p` covers QUIC handshake, frame codec, ALPN and mTLS failures,
 pinned fingerprints, direct protocol streams, peer exchange, relay, reachability,
 hole punching, malformed envelopes and production option checks.
+
+Validation note, 2026-06-02: during the P2P identity signature hardening review
+checkpoint, one `ctest` run caught a transient `test_fcl_quic_p2p` segfault.
+The follow-up full binary run (`test_fcl_quic_p2p`, 110 cases) and repeated
+`ctest` gate passed. Treat any recurrence in CI as a Block E/F hardening flake
+blocker and debug it from artifacts before broadening P2P scope.

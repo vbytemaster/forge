@@ -216,6 +216,7 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/http/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/websocket/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/transport/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/tcp/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/yamux/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/quic/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/stcp/include"
@@ -433,6 +434,7 @@ install(
              libraries/http/include/fcl
              libraries/websocket/include/fcl
              libraries/transport/include/fcl
+             libraries/tcp/include/fcl
              libraries/yamux/include/fcl
              libraries/quic/include/fcl
              libraries/stcp/include/fcl

@@ -51,6 +51,7 @@ class fake_stream final : public fcl::transport::detail::stream_concept {
    }
 
    boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> value) override {
+      last_write_data = value.data();
       writes.push_back({value.begin(), value.end()});
       co_return;
    }
@@ -71,6 +72,7 @@ class fake_stream final : public fcl::transport::detail::stream_concept {
 
    std::deque<bytes> reads;
    std::vector<bytes> writes;
+   const std::uint8_t* last_write_data = nullptr;
    std::uint64_t reads_started = 0;
    std::uint64_t close_count = 0;
    bool open = true;
@@ -318,6 +320,19 @@ BOOST_AUTO_TEST_CASE(transport_stream_delegates_and_preserves_buffered_frames) {
    fcl::asio::blocking::run(runtime, value.async_close());
    BOOST_CHECK_EQUAL(model->close_count, 1U);
    BOOST_CHECK(!value.valid());
+}
+
+BOOST_AUTO_TEST_CASE(transport_stream_write_owns_caller_buffer_across_await) {
+   auto runtime = fcl::asio::runtime{};
+   auto model = std::make_shared<fake_stream>(43);
+   auto value = make_stream(model);
+   const auto payload = text_bytes("owned write payload");
+
+   fcl::asio::blocking::run(runtime, value.async_write(payload));
+
+   BOOST_REQUIRE_EQUAL(model->writes.size(), 1U);
+   BOOST_CHECK_EQUAL_COLLECTIONS(model->writes.front().begin(), model->writes.front().end(), payload.begin(), payload.end());
+   BOOST_CHECK(model->last_write_data != payload.data());
 }
 
 BOOST_AUTO_TEST_CASE(transport_session_delegates_open_accept_close_cancel) {

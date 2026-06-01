@@ -23,6 +23,10 @@ set(
    crypto
    multiformats
    asio
+   transport
+   tcp
+   stcp
+   yamux
    app
    http
    websocket
@@ -85,6 +89,15 @@ macro(_fcl_add_component component)
          _fcl_add_component(variant)
       elseif("${component}" STREQUAL "multiformats")
          _fcl_add_component(crypto)
+      elseif("${component}" STREQUAL "transport")
+         _fcl_add_component(exception)
+      elseif("${component}" STREQUAL "tcp")
+         _fcl_add_component(transport)
+      elseif("${component}" STREQUAL "stcp")
+         _fcl_add_component(tcp)
+         _fcl_add_component(crypto)
+      elseif("${component}" STREQUAL "yamux")
+         _fcl_add_component(transport)
       elseif("${component}" STREQUAL "app")
          _fcl_add_component(api)
          _fcl_add_component(asio)
@@ -102,11 +115,15 @@ macro(_fcl_add_component component)
       elseif("${component}" STREQUAL "quic")
          _fcl_add_component(api)
          _fcl_add_component(asio)
+         _fcl_add_component(transport)
       elseif("${component}" STREQUAL "p2p")
          _fcl_add_component(api)
          _fcl_add_component(asio)
          _fcl_add_component(multiformats)
          _fcl_add_component(quic)
+         _fcl_add_component(tcp)
+         _fcl_add_component(stcp)
+         _fcl_add_component(yamux)
       elseif("${component}" STREQUAL "plugins")
          _fcl_add_component(app)
          _fcl_add_component(p2p)
@@ -179,7 +196,7 @@ if("log" IN_LIST _FCL_COMPONENTS)
    find_package(boost_stacktrace_basic CONFIG QUIET)
 endif()
 
-if("asio" IN_LIST _FCL_COMPONENTS)
+if("asio" IN_LIST _FCL_COMPONENTS OR "transport" IN_LIST _FCL_COMPONENTS)
    _fcl_require_package(Threads)
 endif()
 
@@ -187,7 +204,7 @@ set(_FCL_OPENSSL_COMPONENTS)
 if("crypto" IN_LIST _FCL_COMPONENTS)
    list(APPEND _FCL_OPENSSL_COMPONENTS Crypto)
 endif()
-if("http" IN_LIST _FCL_COMPONENTS OR "websocket" IN_LIST _FCL_COMPONENTS)
+if("http" IN_LIST _FCL_COMPONENTS OR "websocket" IN_LIST _FCL_COMPONENTS OR "stcp" IN_LIST _FCL_COMPONENTS)
    list(APPEND _FCL_OPENSSL_COMPONENTS SSL)
 endif()
 if("quic" IN_LIST _FCL_COMPONENTS OR "p2p" IN_LIST _FCL_COMPONENTS)

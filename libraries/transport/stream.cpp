@@ -42,7 +42,8 @@ boost::asio::awaitable<void> stream::async_write(std::span<const std::uint8_t> b
    if (!valid()) {
       FCL_THROW_EXCEPTION(exceptions::closed, "invalid transport stream");
    }
-   co_await impl_->model->async_write(bytes);
+   auto owned = std::vector<std::uint8_t>{bytes.begin(), bytes.end()};
+   co_await impl_->model->async_write(owned);
 }
 
 boost::asio::awaitable<std::vector<std::uint8_t>> stream::async_read() {

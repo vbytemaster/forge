@@ -43,6 +43,7 @@ import fcl.crypto.p256;
 import fcl.crypto.pem;
 import fcl.crypto.rsa;
 import fcl.crypto.secp256k1;
+import fcl.crypto.x509;
 import fcl.p2p.dht;
 import fcl.p2p.discovery;
 import fcl.p2p.endpoint;
@@ -187,6 +188,11 @@ template <typename Range> std::vector<std::uint8_t> bytes_from_range(const Range
    return out;
 }
 
+std::vector<std::uint8_t> certificate_public_key_der(X509* certificate);
+std::vector<std::uint8_t> signed_key_der(std::span<const std::uint8_t> public_key,
+                                         std::span<const std::uint8_t> signature);
+std::vector<std::uint8_t> tls_identity_message(std::span<const std::uint8_t> certificate_public_key);
+
 test_identity make_secp256k1_identity() {
    auto private_key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::secp256k1::private_key_shim>();
    auto key = public_key{
@@ -248,6 +254,12 @@ test_certificate_identity make_test_certificate_identity(std::string_view common
       throw std::runtime_error{"failed to generate test RSA key"};
    }
    auto key = std::unique_ptr<EVP_PKEY, evp_pkey_deleter>{raw_key};
+   auto private_key_bio = std::unique_ptr<BIO, bio_deleter>{BIO_new(BIO_s_mem())};
+   if (!private_key_bio ||
+       PEM_write_bio_PrivateKey(private_key_bio.get(), key.get(), nullptr, nullptr, 0, nullptr, nullptr) != 1) {
+      throw std::runtime_error{"failed to write test private key PEM"};
+   }
+   const auto private_key_pem = bio_to_string(private_key_bio.get());
 
    auto certificate = std::unique_ptr<X509, x509_deleter>{X509_new()};
    if (!certificate) {
@@ -266,24 +278,42 @@ test_certificate_identity make_test_certificate_identity(std::string_view common
        X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
                                   reinterpret_cast<const unsigned char*>(common_name.data()),
                                   static_cast<int>(common_name.size()), -1, 0) != 1 ||
-       X509_set_issuer_name(certificate.get(), name) != 1 ||
+       X509_set_issuer_name(certificate.get(), name) != 1) {
+      throw std::runtime_error{"failed to configure test certificate subject"};
+   }
+
+   const auto identity_private_key = fcl::crypto::pem::read_private_key(private_key_pem);
+   const auto identity_key = public_key{
+       .type = public_key::type::rsa,
+       .data = fcl::crypto::der::write_public_key(identity_private_key.get_public_key()),
+   };
+   const auto spki = certificate_public_key_der(certificate.get());
+   const auto signature = identity_private_key.sign(tls_identity_message(spki)).visit(
+       [](const auto& value) { return bytes_from_range(value.serialize()); });
+   const auto extension_value = signed_key_der(encode_public_key(identity_key), signature);
+   auto object = std::unique_ptr<ASN1_OBJECT, asn1_object_deleter>{OBJ_txt2obj("1.3.6.1.4.1.53594.1.1", 1)};
+   auto octets = std::unique_ptr<ASN1_OCTET_STRING, asn1_octet_string_deleter>{ASN1_OCTET_STRING_new()};
+   if (!object || !octets ||
+       ASN1_OCTET_STRING_set(octets.get(), extension_value.data(), static_cast<int>(extension_value.size())) != 1) {
+      throw std::runtime_error{"failed to create test libp2p extension value"};
+   }
+   auto extension = std::unique_ptr<X509_EXTENSION, x509_extension_deleter>{
+       X509_EXTENSION_create_by_OBJ(nullptr, object.get(), 1, octets.get())};
+   if (!extension || X509_add_ext(certificate.get(), extension.get(), -1) != 1 ||
        X509_sign(certificate.get(), key.get(), EVP_sha256()) <= 0) {
       throw std::runtime_error{"failed to sign test certificate"};
    }
 
    auto certificate_bio = std::unique_ptr<BIO, bio_deleter>{BIO_new(BIO_s_mem())};
-   auto private_key_bio = std::unique_ptr<BIO, bio_deleter>{BIO_new(BIO_s_mem())};
-   if (!certificate_bio || !private_key_bio ||
-       PEM_write_bio_X509(certificate_bio.get(), certificate.get()) != 1 ||
-       PEM_write_bio_PrivateKey(private_key_bio.get(), key.get(), nullptr, nullptr, 0, nullptr, nullptr) != 1) {
+   if (!certificate_bio || PEM_write_bio_X509(certificate_bio.get(), certificate.get()) != 1) {
       throw std::runtime_error{"failed to write test certificate PEM"};
    }
 
    auto out = test_certificate_identity{
        .certificate_pem = bio_to_string(certificate_bio.get()),
-       .private_key_pem = bio_to_string(private_key_bio.get()),
+       .private_key_pem = private_key_pem,
    };
-   out.peer = make_peer_id_from_certificate_pem(out.certificate_pem);
+   out.peer = make_peer_id(identity_key);
    return out;
 }
 
@@ -336,6 +366,12 @@ std::string_view test_private_key() {
           "NWMlYP7rUFQ3ekYWqrRlshZdJ/h24PALd1nPCvhc4C9dvn+zW3BLVez1lBuFO8n8\n"
           "0YkgmTgW7Ieibqnf4DqYp//nkw==\n"
           "-----END PRIVATE KEY-----\n";
+}
+
+peer_id legacy_cert_hash_peer_id(std::string_view certificate_pem) {
+   const auto certificate = fcl::crypto::x509::certificate::from_pem(certificate_pem);
+   const auto der = certificate.der();
+   return peer_id::from_bytes(fcl::multiformats::multihash::sha2_256(der).encode());
 }
 
 peer_id peer(std::uint8_t value) {
@@ -863,12 +899,20 @@ class counting_peer_store_backend final : public peer_store::backend {
 } // namespace
 
 BOOST_AUTO_TEST_CASE(p2p_identity_uses_libp2p_multihash_shape) {
-   const auto id = make_peer_id_from_certificate_pem(test_certificate());
+   const auto identity = make_test_certificate_identity("p2p-identity-shape");
+   const auto id = make_peer_id_from_certificate_pem(identity.certificate_pem);
 
+   BOOST_TEST(id.to_string() == identity.peer.to_string());
    BOOST_TEST(valid_peer_id(id));
    auto decoded = fcl::multiformats::multihash::decode(id.to_bytes());
    BOOST_TEST(decoded.code == fcl::multiformats::code_value(fcl::multiformats::multicodec_code::sha2_256));
    BOOST_TEST(decoded.digest.size() == 32U);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_certificate_without_libp2p_extension_is_rejected) {
+   BOOST_CHECK_THROW((void)make_peer_id_from_certificate_pem(test_certificate()), exceptions::invalid_identity);
+   const auto certificate = fcl::crypto::x509::certificate::from_pem(test_certificate());
+   BOOST_CHECK_THROW((void)make_peer_id_from_certificate_der(certificate.der()), exceptions::invalid_identity);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_public_key_encoding_matches_libp2p_vectors) {
@@ -2028,6 +2072,64 @@ BOOST_AUTO_TEST_CASE(p2p_direct_quic_explicit_expected_peer_matches_certificate_
        runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
 
    BOOST_TEST(session.remote_peer.value == server.local_peer().value);
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_direct_quic_rejects_missing_certificate_identity_without_expected_peer) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server_options = node::options{
+       .certificate_pem = std::string{test_certificate()},
+       .private_key_pem = std::string{test_private_key()},
+       .explicit_peer_id = legacy_cert_hash_peer_id(test_certificate()),
+       .peer_store_backend = peer_store::make_memory_backend(),
+   };
+   auto client_options = options_for(make_test_certificate_identity("quic-missing-extension-client"));
+   client_options.allow_insecure_test_mode = false;
+   client_options.peer_store_backend = peer_store::make_memory_backend();
+   auto server = node{runtime, std::move(server_options)};
+   auto client = node{runtime, std::move(client_options)};
+
+   const auto server_endpoint = listen(server, runtime);
+   try {
+      (void)fcl::asio::blocking::run(runtime, client.async_connect(server_endpoint));
+      BOOST_FAIL("expected missing QUIC certificate identity extension to fail");
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+                 static_cast<int>(exceptions::code::peer_verification_failed));
+   }
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_direct_quic_rejects_missing_certificate_identity_with_endpoint_peer) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   const auto legacy_peer = legacy_cert_hash_peer_id(test_certificate());
+   auto server_options = node::options{
+       .certificate_pem = std::string{test_certificate()},
+       .private_key_pem = std::string{test_private_key()},
+       .explicit_peer_id = legacy_peer,
+       .peer_store_backend = peer_store::make_memory_backend(),
+   };
+   auto client_options = options_for(make_test_certificate_identity("quic-missing-extension-endpoint-client"));
+   client_options.allow_insecure_test_mode = false;
+   client_options.peer_store_backend = peer_store::make_memory_backend();
+   auto server = node{runtime, std::move(server_options)};
+   auto client = node{runtime, std::move(client_options)};
+
+   auto server_endpoint = listen(server, runtime);
+   server_endpoint.peer = legacy_peer;
+   try {
+      (void)fcl::asio::blocking::run(runtime, client.async_connect(server_endpoint));
+      BOOST_FAIL("expected missing QUIC certificate identity extension to fail");
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+                 static_cast<int>(exceptions::code::peer_verification_failed));
+   }
 
    fcl::asio::blocking::run(runtime, client.async_stop());
    fcl::asio::blocking::run(runtime, server.async_stop());

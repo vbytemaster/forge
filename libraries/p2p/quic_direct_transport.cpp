@@ -15,6 +15,7 @@ import fcl.asio.runtime;
 import fcl.p2p.endpoint;
 import fcl.p2p.exceptions;
 import fcl.p2p.identity;
+import fcl.multiformats;
 import fcl.quic.connection;
 import fcl.quic.connector;
 import fcl.quic.endpoint;
@@ -94,6 +95,19 @@ namespace {
    throw;
 }
 
+[[nodiscard]] peer_id insecure_legacy_peer_id(std::span<const std::uint8_t> der) {
+   return peer_id::from_bytes(fcl::multiformats::multihash::sha2_256(der).encode());
+}
+
+[[nodiscard]] peer_id strict_peer_id_from_certificate_der(std::span<const std::uint8_t> der) {
+   try {
+      return make_peer_id_from_certificate_der(der);
+   } catch (const fcl::exceptions::base&) {
+      FCL_THROW_EXCEPTION(exceptions::peer_verification_failed,
+                          "P2P peer certificate is missing a valid signed libp2p identity extension");
+   }
+}
+
 [[nodiscard]] peer_id verified_peer_id_for(const fcl::quic::connection& connection,
                                            const std::optional<peer_id>& expected, bool insecure_test_mode) {
    if (insecure_test_mode) {
@@ -101,7 +115,12 @@ namespace {
          return *expected;
       }
       if (const auto certificate = connection.peer_certificate()) {
-         return make_peer_id_from_certificate_der(certificate->der);
+         try {
+            return make_peer_id_from_certificate_der(certificate->der);
+         } catch (const fcl::exceptions::base&) {
+            // Insecure test mode still accepts legacy certificates without the libp2p extension.
+         }
+         return insecure_legacy_peer_id(certificate->der);
       }
       return peer_id{.value = "insecure-test-peer"};
    }
@@ -110,7 +129,7 @@ namespace {
    if (!certificate) {
       FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "P2P session has no verified peer certificate");
    }
-   const auto remote = make_peer_id_from_certificate_der(certificate->der);
+   const auto remote = strict_peer_id_from_certificate_der(certificate->der);
    if (expected && remote != *expected) {
       FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "P2P peer id does not match expected peer");
    }

@@ -44,7 +44,7 @@ struct peer_id {
 [[nodiscard]] public_key decode_public_key(std::span<const std::uint8_t> bytes);
 [[nodiscard]] peer_id make_peer_id(const public_key& key);
 [[nodiscard]] peer_id make_peer_id_from_certificate_pem(std::string_view certificate_pem);
-[[nodiscard]] peer_id make_peer_id_from_certificate_der(std::span<const std::uint8_t> certificate_der);
+[[nodiscard]] peer_id make_peer_id_from_certificate_der(std::span<const std::uint8_t> der);
 [[nodiscard]] bool valid_peer_id(const peer_id& id) noexcept;
 
 } // namespace fcl::p2p

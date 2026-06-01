@@ -195,6 +195,7 @@
       "donor_case": [
         "TLS security negotiation",
         "libp2p certificate extension verification",
+        "missing certificate identity extension rejection",
         "Peer ID verification",
         "ALPN Yamux negotiation",
         "fallback post-TLS mux negotiation",
@@ -210,6 +211,9 @@
         "test_fcl_stcp stcp_alpn_selects_client_preferred_supported_protocol",
         "test_fcl_quic_p2p p2p_direct_tcp_nodes_prefer_tls_yamux_and_echo_frames",
         "test_fcl_quic_p2p p2p_direct_tcp_rejects_tls_peer_mismatch",
+        "test_fcl_quic_p2p p2p_certificate_without_libp2p_extension_is_rejected",
+        "test_fcl_quic_p2p p2p_direct_quic_rejects_missing_certificate_identity_without_expected_peer",
+        "test_fcl_quic_p2p p2p_direct_quic_rejects_missing_certificate_identity_with_endpoint_peer",
         "test_fcl_libp2p_interop tcp-tls ping/identify/echo FCL <-> Go/Rust"
       ],
       "fcl_live_scenario": [

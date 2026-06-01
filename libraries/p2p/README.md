@@ -108,6 +108,10 @@ boost::asio::awaitable<void> start_node(fcl::asio::runtime& runtime) {
 }
 ```
 
+Production certificates must carry the signed libp2p identity extension. Peer
+IDs are not derived from a bare certificate hash in production verification
+paths.
+
 ### Parse A libp2p QUIC Endpoint
 
 `fcl::p2p::endpoint` is FCL-style public vocabulary. It accepts and emits the
@@ -256,10 +260,11 @@ node.stop();
 
 ## Security Notes
 
-Production options require mTLS identity. `allow_insecure_test_mode` exists for
-tests and explicit local experiments only; in that mode the node may use the
-in-memory peer store when no path/backend is provided. Peer mismatch, TLS
-verification failure and invalid envelopes are correctness failures.
+Production options require mTLS identity with a signed libp2p certificate
+extension. `allow_insecure_test_mode` exists for tests and explicit local
+experiments only; in that mode the node may use the in-memory peer store when no
+path/backend is provided. Peer mismatch, TLS verification failure, missing
+identity extension and invalid envelopes are correctness failures.
 
 ## Risks And Anti-Patterns
 

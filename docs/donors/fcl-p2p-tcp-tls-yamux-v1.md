@@ -14,6 +14,8 @@ Supported in this slice:
   `1.3.6.1.4.1.53594.1.1`;
 - `SignedKey` verification over `libp2p-tls-handshake:` plus certificate SPKI;
 - Peer ID verification from the certificate extension key;
+- missing or malformed certificate identity extensions are rejected in P2P
+  verification paths;
 - ALPN negotiation for `/yamux/1.0.0`, with `libp2p`/empty ALPN falling back
   to post-TLS multistream mux negotiation;
 - reusable `fcl_stcp` and `fcl_yamux` mechanics, with P2P identity semantics
@@ -43,6 +45,7 @@ Deferred:
 | --- | --- | --- |
 | FCL TCP listener/dialer establishes direct P2P session through TLS and Yamux | `test_fcl_quic_p2p p2p_direct_tcp_nodes_prefer_tls_yamux_and_echo_frames` | `test_fcl_libp2p_interop` `tcp-tls ping`, `tcp-tls identify`, `tcp-tls echo` for FCL <-> Go/Rust |
 | Expected Peer ID mismatch is rejected as typed P2P failure | `test_fcl_quic_p2p p2p_direct_tcp_rejects_tls_peer_mismatch` | Component-level only; live fixtures use valid libp2p identities |
+| Missing signed certificate identity extension is rejected | `test_fcl_quic_p2p p2p_certificate_without_libp2p_extension_is_rejected`, `p2p_direct_quic_rejects_missing_certificate_identity_without_expected_peer`, `p2p_direct_quic_rejects_missing_certificate_identity_with_endpoint_peer` | Component-level failure path; live fixtures use valid libp2p identities |
 | Generic TLS mechanics enforce SNI policy, full certificate-chain verifier, TLS 1.3 and ALPN selection | `test_fcl_stcp stcp_controls_sni_explicitly`, `stcp_verifier_receives_full_certificate_chain`, `stcp_requires_tls13_by_default`, `stcp_alpn_selects_client_preferred_supported_protocol` | Covered indirectly by TCP TLS live fixtures |
 | Noise fallback remains supported | `test_fcl_libp2p_interop` `tcp ping`, `tcp identify`, `tcp echo` for FCL <-> Go/Rust | FCL listener/dialer interop with Go/Rust Noise-only TCP fixtures |
 | WebSocket paths remain outside the support claim | `test_fcl_quic_p2p p2p_websocket_multiaddr_is_parseable_but_not_dialable` | No live scenario |

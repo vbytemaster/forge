@@ -4,7 +4,6 @@ module;
 
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -106,11 +105,11 @@ void verify_libp2p_certificate_extension(const fcl::crypto::x509::certificate& c
    }
 }
 
-[[nodiscard]] std::optional<peer_id> peer_id_from_libp2p_certificate_extension(
-    const fcl::crypto::x509::certificate& certificate) {
+[[nodiscard]] peer_id peer_id_from_libp2p_certificate_extension(const fcl::crypto::x509::certificate& certificate) {
    const auto value = certificate.extension("1.3.6.1.4.1.53594.1.1");
    if (value.empty()) {
-      return std::nullopt;
+      FCL_THROW_EXCEPTION(exceptions::invalid_identity,
+                          "libp2p peer certificate is missing signed identity extension");
    }
    const auto extension = decode_signed_key_extension(value);
    verify_libp2p_certificate_extension(certificate, extension);
@@ -235,26 +234,12 @@ peer_id make_peer_id(const public_key& key) {
 
 peer_id make_peer_id_from_certificate_pem(std::string_view certificate_pem) {
    auto certificate = fcl::crypto::x509::certificate::from_pem(certificate_pem);
-   if (auto id = peer_id_from_libp2p_certificate_extension(certificate)) {
-      return *id;
-   }
-   auto id = peer_id_from_multihash(fcl::multiformats::multihash::sha2_256(certificate.der()));
-   if (!valid_peer_id(id)) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "certificate did not produce a valid P2P peer id");
-   }
-   return id;
+   return peer_id_from_libp2p_certificate_extension(certificate);
 }
 
-peer_id make_peer_id_from_certificate_der(std::span<const std::uint8_t> certificate_der) {
-   auto parsed = fcl::crypto::x509::certificate::from_der(certificate_der);
-   if (auto id = peer_id_from_libp2p_certificate_extension(parsed)) {
-      return *id;
-   }
-   auto id = peer_id_from_multihash(fcl::multiformats::multihash::sha2_256(certificate_der));
-   if (!valid_peer_id(id)) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "peer certificate did not produce a valid P2P peer id");
-   }
-   return id;
+peer_id make_peer_id_from_certificate_der(std::span<const std::uint8_t> der) {
+   auto parsed = fcl::crypto::x509::certificate::from_der(der);
+   return peer_id_from_libp2p_certificate_extension(parsed);
 }
 
 bool valid_peer_id(const peer_id& id) noexcept {

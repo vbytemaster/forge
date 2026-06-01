@@ -127,8 +127,8 @@ READMEs may link here, but must not define a second block order.
   roundtrip.
 - Supported address components for this block: `ip4`, `ip6`, `dns`, `dns4`,
   `dns6`, `tcp`, `udp/quic-v1`, `ws`, `wss`, `p2p` and `p2p-circuit`.
-- `/ws` and `/wss` are parse/store only. Dial/listen returns typed unsupported
-  until a real browser/proxy requirement exists.
+- `/ws` and `/wss` are parse/store only. Dial/listen rejects them with a typed
+  P2P error until a real browser/proxy requirement exists.
 - `p2p::endpoint` becomes a typed view over `multiaddr`, not the source of
   truth for address encoding.
 
@@ -185,16 +185,20 @@ READMEs may link here, but must not define a second block order.
   `fcl_tcp -> multistream-select -> Noise -> fcl_yamux -> transport::session`.
   FCL, go-libp2p and rust-libp2p live scenarios cover Ping, Identify and a
   framed echo stream in both FCL directions.
-- E.2a checkpoint: `/ws` and `/wss` remain parse/store only at multiaddr level.
-  The TLS security branch for libp2p TCP is deferred to E.2b.
+- E.2b checkpoint: direct TCP now prefers the libp2p TLS security branch:
+  `fcl_tcp -> multistream-select -> /tls/1.0.0 -> fcl_stcp -> fcl_yamux ->
+  transport::session`. Noise remains a supported fallback. FCL, go-libp2p and
+  rust-libp2p live scenarios cover Ping, Identify and a framed echo stream for
+  both TCP security branches.
+- E.2b checkpoint: `/ws` and `/wss` remain parse/store only at multiaddr level.
 - P2P owns Peer ID, Identify, libp2p Noise/TLS payload semantics,
   multistream-select, Relay, DCUtR, DHT, Rendezvous and GossipSub.
 - P2P does not own generic TCP, STCP or Yamux runtime.
 
 ### Block F: P2P Completion
 
-- Finish DHT/Rendezvous hardening, global AutoRelay discovery, remaining TCP
-  security branches and donor-doc cleanup.
+- Finish DHT/Rendezvous hardening, global AutoRelay discovery and donor-doc
+  cleanup.
 - Do not claim WebSocket transport support.
 - Supported P2P behavior requires spec-derived tests, donor-derived tests and
   live FCL <-> Go/Rust artifacts.
@@ -329,10 +333,10 @@ Accepted:
 - `fcl_transport` as a reusable byte-stream/session substrate, not an API/RPC
   framework. A future `fcl.api.transport` layer should sit above it and stop
   QUIC/P2P/TCP API bindings from duplicating API frame serve-loop logic.
-- TCP + Noise/TLS + Yamux as the next libp2p-compatible direct transport after
-  the abstraction pass.
-- TCP + Noise + Yamux direct path is accepted as the first TCP compatibility
-  slice; proof is tracked in `docs/donors/fcl-p2p-tcp-noise-yamux-v1.md`.
+- TCP + Noise/TLS + Yamux direct path is accepted as the TCP compatibility
+  baseline; proof is tracked in
+  `docs/donors/fcl-p2p-tcp-noise-yamux-v1.md` and
+  `docs/donors/fcl-p2p-tcp-tls-yamux-v1.md`.
 - FCL multi-hop relay only as a future extension above the compatible one-hop
   Relay v2 baseline, never as a replacement for libp2p Relay v2 semantics.
 - Syncthing/libtorrent-style path scoring/backoff.

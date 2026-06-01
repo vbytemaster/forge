@@ -358,7 +358,7 @@ def prepare_rust_fixture(source_dir: Path, build_dir: Path, donors_root: Path) -
         "version = \"0.1.0\"\n"
         "edition = \"2024\"\n\n"
         "[dependencies]\n"
-        f"libp2p = {{ path = \"{donors_root / 'rust-libp2p' / 'libp2p'}\", features = [\"tokio\", \"tcp\", \"dns\", \"noise\", \"yamux\", \"quic\", \"ping\", \"identify\", \"autonat\", \"relay\", \"dcutr\", \"kad\", \"rendezvous\", \"gossipsub\", \"macros\"] }}\n"
+        f"libp2p = {{ path = \"{donors_root / 'rust-libp2p' / 'libp2p'}\", features = [\"tokio\", \"tcp\", \"dns\", \"noise\", \"tls\", \"yamux\", \"quic\", \"ping\", \"identify\", \"autonat\", \"relay\", \"dcutr\", \"kad\", \"rendezvous\", \"gossipsub\", \"macros\"] }}\n"
         f"libp2p-stream = {{ path = \"{donors_root / 'rust-libp2p' / 'protocols' / 'stream'}\" }}\n"
         "futures = \"0.3\"\n"
         "rand = \"0.8.5\"\n"
@@ -398,6 +398,9 @@ def run_pair_with_transport(dialer_binary: Path, dialer: str, listener_binary: P
         }
         if transport == "tcp":
             out["negotiated_security"] = "/noise"
+            out["negotiated_muxer"] = "/yamux/1.0.0"
+        elif transport == "tcp-tls":
+            out["negotiated_security"] = "/tls/1.0.0"
             out["negotiated_muxer"] = "/yamux/1.0.0"
         return out
     finally:
@@ -549,6 +552,14 @@ def main() -> int:
                 )
             except Exception as error:
                 failures.append(f"{dialer}->{listener} tcp {scenario}: {error}")
+            try:
+                artifacts.append(
+                    run_pair_with_transport(
+                        binaries[dialer], dialer, binaries[listener], listener, scenario, root, "tcp-tls"
+                    )
+                )
+            except Exception as error:
+                failures.append(f"{dialer}->{listener} tcp-tls {scenario}: {error}")
     try:
         artifacts.append(run_pubsub_mixed_mesh_stress(binaries, root))
     except Exception as error:

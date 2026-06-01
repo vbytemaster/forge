@@ -19,6 +19,8 @@ add_library(
    direct_transport.hpp
    quic_direct_transport.cpp
    tcp_direct_transport.cpp
+   libp2p_tls.cpp
+   libp2p_tls.hpp
    node.cpp
    node_impl.cpp
    node_impl.hpp
@@ -30,6 +32,7 @@ add_library(
    relay_transport.hpp
    stream_upgrade.cpp
    stream_upgrade.hpp
+   tcp_stream_upgrade.hpp
 )
 fcl_target_modules(fcl_p2p p2p)
 
@@ -46,6 +49,7 @@ target_link_libraries(
       fcl_transport
       fcl_quic
       fcl_tcp
+      fcl_stcp
       fcl_yamux
       Boost::asio
 )

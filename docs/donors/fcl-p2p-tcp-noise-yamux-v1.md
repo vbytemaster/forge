@@ -14,9 +14,10 @@ Supported in this slice:
 - reusable `fcl_yamux` session as the resulting `transport::session`;
 - FCL <-> go-libp2p and FCL <-> rust-libp2p Ping, Identify and framed echo.
 
-Deferred:
+Deferred in E.2a:
 
-- the TLS security branch for libp2p TCP;
+- the TLS security branch for libp2p TCP, now closed by E.2b and tracked in
+  `docs/donors/fcl-p2p-tcp-tls-yamux-v1.md`;
 - WebSocket transport paths `/ws` and `/wss`;
 - product/API integration above P2P.
 
@@ -34,8 +35,8 @@ Deferred:
 
 | Behavior | FCL component test | Live interop scenario |
 | --- | --- | --- |
-| FCL TCP listener/dialer establishes direct P2P session through Noise and Yamux | `test_fcl_quic_p2p p2p_direct_tcp_nodes_negotiate_noise_yamux_and_echo_frames` | FCL listener <-> Go/Rust dialer `tcp ping`, `tcp identify`, `tcp echo`; Go/Rust listener <-> FCL dialer same scenarios |
-| Noise peer mismatch is rejected as typed P2P failure | `test_fcl_quic_p2p p2p_direct_tcp_rejects_noise_peer_mismatch` | Component-level only; live fixtures use valid libp2p identities |
+| FCL TCP listener/dialer establishes direct P2P session through Noise and Yamux | `test_fcl_libp2p_interop tcp ping/identify/echo FCL <-> Go/Rust` | FCL listener <-> Go/Rust dialer `tcp ping`, `tcp identify`, `tcp echo`; Go/Rust listener <-> FCL dialer same scenarios |
+| Peer mismatch is rejected as typed P2P failure | `test_fcl_quic_p2p p2p_direct_tcp_rejects_tls_peer_mismatch` covers the TCP direct path verification contract; Noise fallback is covered by live TCP fixtures | Component-level mismatch and live valid identities |
 | WebSocket paths remain outside the support claim | `test_fcl_quic_p2p p2p_websocket_multiaddr_is_parseable_but_not_dialable` | No live scenario |
 | Relay/DCUtR continue to use reusable Yamux without changing wire behavior | Existing relay/DCUtR component and live interop scenarios | Existing Relay v2, relayed stream and DCUtR live matrix |
 

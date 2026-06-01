@@ -396,7 +396,7 @@ fcl::p2p::endpoint loopback_tcp_endpoint(std::uint16_t port = 0) {
 }
 
 fcl::p2p::endpoint loopback_endpoint_for(std::string_view transport) {
-   if (transport == "tcp") {
+   if (transport == "tcp" || transport == "tcp-tls") {
       return loopback_tcp_endpoint();
    }
    if (transport == "quic" || transport.empty()) {
@@ -805,14 +805,22 @@ int dial_mode(const std::map<std::string, std::string>& args) {
                                                                  fcl::p2p::capabilities::hole_punching |
                                                                  fcl::p2p::capabilities::relay_reservation |
                                                                  fcl::p2p::capabilities::dht |
-                                                                 fcl::p2p::capabilities::rendezvous |
-                                                                 fcl::p2p::capabilities::pubsub});
+                                                                  fcl::p2p::capabilities::rendezvous |
+                                                                  fcl::p2p::capabilities::pubsub});
 
-   const auto details = run_scenario(runtime, value, required(args, "scenario"),
-                                     optional_value(args, "payload", pubsub_payload), peer);
+   const auto scenario = required(args, "scenario");
+   if (scenario == "gossipsub_publish" || scenario == "gossipsub_mixed_mesh_stress") {
+      (void)fcl::asio::blocking::run(
+          runtime, value.async_connect(remote,
+                                       fcl::p2p::node::connect_options{.expected_peer = peer,
+                                                                       .allow_relay = false,
+                                                                       .allow_hole_punch = false}));
+   }
+
+   const auto details = run_scenario(runtime, value, scenario, optional_value(args, "payload", pubsub_payload), peer);
    fcl::asio::blocking::run(runtime, value.async_stop());
    write_file(required(args, "result-file"),
-              "{\"implementation\":\"fcl\",\"role\":\"dialer\",\"scenario\":\"" + json_escape(required(args, "scenario")) +
+              "{\"implementation\":\"fcl\",\"role\":\"dialer\",\"scenario\":\"" + json_escape(scenario) +
                   "\",\"status\":\"ok\"," + details + "}\n");
    return 0;
 }

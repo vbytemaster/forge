@@ -16,7 +16,9 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/redirect_error.hpp>
+#include <boost/asio/ssl.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
@@ -26,6 +28,7 @@
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
+#include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
@@ -241,12 +244,49 @@ void add_extension(X509* certificate, X509* issuer, int nid, std::string_view va
    auto out = fcl::stcp::client_options{};
    out.security.trusted_ca_pem = material.ca.certificate;
    out.server_name = "localhost";
+   out.sni = fcl::stcp::sni_policy::explicit_name;
    out.alpn_protocols = {"fcl-test/1"};
    if (with_certificate) {
       out.certificate_pem = material.client.certificate;
       out.private_key_pem = material.client.private_key;
    }
    return out;
+}
+
+struct raw_tls_observation {
+   std::string sni;
+};
+
+int capture_sni_callback(SSL* ssl, int*, void* arg) {
+   auto* observation = static_cast<raw_tls_observation*>(arg);
+   if (const auto* name = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name)) {
+      observation->sni = name;
+   }
+   return SSL_TLSEXT_ERR_OK;
+}
+
+boost::asio::awaitable<raw_tls_observation> accept_raw_tls_once(fcl::tcp::listener& listener,
+                                                               const tls_material& material) {
+   namespace asio = boost::asio;
+   auto observation = raw_tls_observation{};
+   auto tcp = co_await listener.async_accept_connection();
+   auto context = asio::ssl::context{asio::ssl::context::tls_server};
+   context.use_certificate_chain(asio::buffer(material.server.certificate.data(), material.server.certificate.size()));
+   context.use_private_key(asio::buffer(material.server.private_key.data(), material.server.private_key.size()),
+                           asio::ssl::context::pem);
+   SSL_CTX_set_min_proto_version(context.native_handle(), TLS1_3_VERSION);
+   SSL_CTX_set_tlsext_servername_callback(context.native_handle(), capture_sni_callback);
+   SSL_CTX_set_tlsext_servername_arg(context.native_handle(), &observation);
+   auto stream = asio::ssl::stream<boost::asio::ip::tcp::socket>{std::move(tcp).release_socket(), context};
+   auto error = boost::system::error_code{};
+   co_await stream.async_handshake(asio::ssl::stream_base::server,
+                                   boost::asio::redirect_error(boost::asio::use_awaitable, error));
+   if (error) {
+      throw boost::system::system_error{error};
+   }
+   auto ignored = boost::system::error_code{};
+   stream.lowest_layer().close(ignored);
+   co_return observation;
 }
 
 boost::asio::awaitable<void> stcp_direct_roundtrip() {
@@ -395,6 +435,117 @@ boost::asio::awaitable<void> stcp_mutual_tls() {
    co_await rejecting_listener.async_close();
 }
 
+boost::asio::awaitable<void> stcp_sni_policy() {
+   const auto material = make_tls_material();
+   auto executor = co_await boost::asio::this_coro::executor;
+
+   {
+      auto listener = fcl::tcp::listener{executor, loopback(0)};
+      auto accept = spawn_result<raw_tls_observation>(executor, accept_raw_tls_once(listener, material));
+      auto connector = fcl::tcp::connector{executor};
+      auto tcp = co_await connector.async_connect_connection(listener.local_endpoint());
+      auto options = fcl::stcp::client_options{};
+      options.security.verify_peer = false;
+      options.sni = fcl::stcp::sni_policy::disabled;
+      auto tls = co_await fcl::stcp::async_upgrade_client(std::move(tcp), options);
+      const auto observation = co_await take_result(accept);
+      BOOST_TEST(observation.sni.empty());
+      co_await tls.async_close();
+      co_await listener.async_close();
+   }
+
+   {
+      auto listener = fcl::tcp::listener{executor, loopback(0)};
+      auto accept = spawn_result<raw_tls_observation>(executor, accept_raw_tls_once(listener, material));
+      auto connector = fcl::tcp::connector{executor};
+      auto tcp = co_await connector.async_connect_connection(listener.local_endpoint());
+      auto options = fcl::stcp::client_options{};
+      options.security.verify_peer = false;
+      options.sni = fcl::stcp::sni_policy::explicit_name;
+      options.server_name = "libp2p.example";
+      auto tls = co_await fcl::stcp::async_upgrade_client(std::move(tcp), options);
+      const auto observation = co_await take_result(accept);
+      BOOST_TEST(observation.sni == "libp2p.example");
+      co_await tls.async_close();
+      co_await listener.async_close();
+   }
+}
+
+boost::asio::awaitable<void> stcp_verifier_receives_certificate_chain() {
+   const auto material = make_tls_material();
+   auto executor = co_await boost::asio::this_coro::executor;
+
+   auto server = server_options(material, false);
+   server.security.require_peer_certificate = true;
+   auto saw_chain = std::make_shared<bool>(false);
+   auto seen_size = std::make_shared<std::size_t>(0);
+   server.security.verifier = [saw_chain, seen_size](const fcl::stcp::certificate_chain& chain) {
+      *saw_chain = true;
+      *seen_size = chain.certificates.size();
+      return !chain.certificates.empty() && !chain.certificates.front().der.empty();
+   };
+
+   auto listener = fcl::stcp::listener{executor, loopback(0), server};
+   auto accept = spawn_result<fcl::stcp::connection>(executor, listener.async_accept_connection());
+   auto connector = fcl::stcp::connector{executor, client_options(material, true)};
+   auto client = co_await connector.async_connect_connection(listener.local_endpoint());
+   auto server_connection = co_await take_result(accept);
+
+   BOOST_TEST(*saw_chain);
+   BOOST_TEST(*seen_size >= 1U);
+   BOOST_TEST(server_connection.peer_certificate_chain().certificates.size() == *seen_size);
+
+   co_await client.async_close();
+   co_await server_connection.async_close();
+   co_await listener.async_close();
+}
+
+boost::asio::awaitable<void> stcp_alpn_uses_client_preference() {
+   const auto material = make_tls_material();
+   auto executor = co_await boost::asio::this_coro::executor;
+
+   auto server = server_options(material);
+   server.alpn_protocols = {"muxer2", "/yamux/1.0.0", "libp2p"};
+   auto client = client_options(material);
+   client.alpn_protocols = {"/yamux/1.0.0", "muxer2", "libp2p"};
+
+   auto listener = fcl::stcp::listener{executor, loopback(0), server};
+   auto accept = spawn_result<fcl::stcp::connection>(executor, listener.async_accept_connection());
+   auto connector = fcl::stcp::connector{executor, client};
+   auto client_connection = co_await connector.async_connect_connection(listener.local_endpoint());
+   auto server_connection = co_await take_result(accept);
+
+   BOOST_TEST(client_connection.selected_alpn() == "/yamux/1.0.0");
+   BOOST_TEST(server_connection.selected_alpn() == "/yamux/1.0.0");
+
+   co_await client_connection.async_close();
+   co_await server_connection.async_close();
+   co_await listener.async_close();
+}
+
+boost::asio::awaitable<void> stcp_rejects_tls12_peer() {
+   namespace asio = boost::asio;
+   const auto material = make_tls_material();
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto listener = fcl::stcp::listener{executor, loopback(0), server_options(material)};
+   auto accept = spawn_result<fcl::stcp::connection>(executor, listener.async_accept_connection());
+
+   auto socket = boost::asio::ip::tcp::socket{executor};
+   co_await socket.async_connect(boost::asio::ip::tcp::endpoint{boost::asio::ip::make_address("127.0.0.1"),
+                                                                 listener.local_endpoint().port},
+                                 boost::asio::use_awaitable);
+   auto context = asio::ssl::context{asio::ssl::context::tls_client};
+   SSL_CTX_set_max_proto_version(context.native_handle(), TLS1_2_VERSION);
+   context.set_verify_mode(asio::ssl::verify_none);
+   auto stream = asio::ssl::stream<boost::asio::ip::tcp::socket>{std::move(socket), context};
+   auto error = boost::system::error_code{};
+   co_await stream.async_handshake(asio::ssl::stream_base::client,
+                                   boost::asio::redirect_error(boost::asio::use_awaitable, error));
+   BOOST_TEST(error.failed());
+   BOOST_CHECK_THROW((void)co_await take_result(accept), fcl::stcp::exceptions::handshake_failed);
+   co_await listener.async_close();
+}
+
 } // namespace
 
 BOOST_AUTO_TEST_SUITE(stcp)
@@ -417,6 +568,26 @@ BOOST_AUTO_TEST_CASE(stcp_rejects_wrong_hostname_and_fingerprint) {
 BOOST_AUTO_TEST_CASE(stcp_supports_mutual_tls) {
    auto runtime = fcl::asio::runtime{};
    fcl::asio::blocking::run(runtime, stcp_mutual_tls());
+}
+
+BOOST_AUTO_TEST_CASE(stcp_controls_sni_explicitly) {
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, stcp_sni_policy());
+}
+
+BOOST_AUTO_TEST_CASE(stcp_verifier_receives_full_certificate_chain) {
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, stcp_verifier_receives_certificate_chain());
+}
+
+BOOST_AUTO_TEST_CASE(stcp_alpn_selects_client_preferred_supported_protocol) {
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, stcp_alpn_uses_client_preference());
+}
+
+BOOST_AUTO_TEST_CASE(stcp_requires_tls13_by_default) {
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, stcp_rejects_tls12_peer());
 }
 
 BOOST_AUTO_TEST_SUITE_END()

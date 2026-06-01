@@ -157,8 +157,6 @@
       "status": "ported",
       "supported": true,
       "fcl_tests": [
-        "test_fcl_quic_p2p p2p_direct_tcp_nodes_negotiate_noise_yamux_and_echo_frames",
-        "test_fcl_quic_p2p p2p_direct_tcp_rejects_noise_peer_mismatch",
         "test_fcl_libp2p_interop tcp ping/identify/echo FCL <-> Go/Rust"
       ],
       "fcl_live_scenario": [
@@ -175,7 +173,60 @@
         "fcl->rust tcp echo",
         "rust->fcl tcp echo"
       ],
-      "known_gap": "libp2p TCP TLS security branch is deferred to Block E.2b; WebSocket paths remain outside this scope"
+      "known_gap": "WebSocket paths remain outside this scope"
+    },
+    {
+      "id": "transport.tcp_tls_yamux_direct",
+      "protocol": "TCP + TLS + Yamux",
+      "source": "donors/libp2p-specs/tls/tls.md and connections/inlined-muxer-negotiation.md",
+      "donor": "go-libp2p p2p/security/tls, rust-libp2p transports/tls and builder TCP+TLS+Yamux examples",
+      "donor_file": [
+        "donors/libp2p-specs/tls/tls.md",
+        "donors/libp2p-specs/connections/inlined-muxer-negotiation.md",
+        "donors/go-libp2p/p2p/security/tls/crypto.go",
+        "donors/go-libp2p/p2p/security/tls/transport.go",
+        "donors/go-libp2p/p2p/security/tls/transport_test.go",
+        "donors/rust-libp2p/transports/tls/src/certificate.rs",
+        "donors/rust-libp2p/transports/tls/src/verifier.rs",
+        "donors/rust-libp2p/transports/tls/src/upgrade.rs",
+        "donors/rust-libp2p/transports/tls/tests/smoke.rs",
+        "donors/rust-libp2p/libp2p/src/builder.rs"
+      ],
+      "donor_case": [
+        "TLS security negotiation",
+        "libp2p certificate extension verification",
+        "Peer ID verification",
+        "ALPN Yamux negotiation",
+        "fallback post-TLS mux negotiation",
+        "Ping over TCP TLS",
+        "Identify over TCP TLS"
+      ],
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "test_fcl_stcp stcp_controls_sni_explicitly",
+        "test_fcl_stcp stcp_verifier_receives_full_certificate_chain",
+        "test_fcl_stcp stcp_requires_tls13_by_default",
+        "test_fcl_stcp stcp_alpn_selects_client_preferred_supported_protocol",
+        "test_fcl_quic_p2p p2p_direct_tcp_nodes_prefer_tls_yamux_and_echo_frames",
+        "test_fcl_quic_p2p p2p_direct_tcp_rejects_tls_peer_mismatch",
+        "test_fcl_libp2p_interop tcp-tls ping/identify/echo FCL <-> Go/Rust"
+      ],
+      "fcl_live_scenario": [
+        "fcl->go tcp-tls ping",
+        "go->fcl tcp-tls ping",
+        "fcl->rust tcp-tls ping",
+        "rust->fcl tcp-tls ping",
+        "fcl->go tcp-tls identify",
+        "go->fcl tcp-tls identify",
+        "fcl->rust tcp-tls identify",
+        "rust->fcl tcp-tls identify",
+        "fcl->go tcp-tls echo",
+        "go->fcl tcp-tls echo",
+        "fcl->rust tcp-tls echo",
+        "rust->fcl tcp-tls echo"
+      ],
+      "known_gap": "WebSocket paths remain outside this scope"
     },
     {
       "id": "interop.live_dcutr_relay_topology",

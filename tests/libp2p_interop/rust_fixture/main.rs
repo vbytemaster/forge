@@ -12,7 +12,7 @@ use libp2p::{
     Multiaddr, PeerId, StreamProtocol, SwarmBuilder, autonat, dcutr, gossipsub, identify, identity,
     kad,
     multiaddr::Protocol,
-    noise, ping, relay, rendezvous,
+    noise, ping, relay, rendezvous, tls,
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux,
 };
@@ -152,10 +152,20 @@ async fn new_swarm(transport: &str) -> Result<libp2p::Swarm<Behaviour>, Box<dyn 
             .with_relay_client(noise::Config::new, yamux::Config::default)?
             .with_behaviour(behaviour_for)?
             .build(),
+        "tcp-tls" => SwarmBuilder::with_existing_identity(key)
+            .with_tokio()
+            .with_tcp(
+                tcp::Config::default().nodelay(true),
+                tls::Config::new,
+                yamux::Config::default,
+            )?
+            .with_relay_client(noise::Config::new, yamux::Config::default)?
+            .with_behaviour(behaviour_for)?
+            .build(),
         other => return Err(format!("unsupported transport {other}").into()),
     };
 
-    let listen_addr = if transport == "tcp" {
+    let listen_addr = if transport == "tcp" || transport == "tcp-tls" {
         Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::LOCALHOST))
             .with(Protocol::Tcp(0))

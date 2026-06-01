@@ -770,7 +770,7 @@ BOOST_AUTO_TEST_CASE(p2p_websocket_multiaddr_is_parseable_but_not_dialable) {
    }
 }
 
-BOOST_AUTO_TEST_CASE(p2p_direct_tcp_nodes_negotiate_noise_yamux_and_echo_frames) {
+BOOST_AUTO_TEST_CASE(p2p_direct_tcp_nodes_prefer_tls_yamux_and_echo_frames) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
    const auto server_identity = make_test_identity();
    const auto client_identity = make_test_identity();
@@ -799,7 +799,7 @@ BOOST_AUTO_TEST_CASE(p2p_direct_tcp_nodes_negotiate_noise_yamux_and_echo_frames)
    fcl::asio::blocking::run(runtime, server.async_stop());
 }
 
-BOOST_AUTO_TEST_CASE(p2p_direct_tcp_rejects_noise_peer_mismatch) {
+BOOST_AUTO_TEST_CASE(p2p_direct_tcp_rejects_tls_peer_mismatch) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
    const auto server_identity = make_test_identity();
    const auto client_identity = make_test_identity();
@@ -816,7 +816,7 @@ BOOST_AUTO_TEST_CASE(p2p_direct_tcp_rejects_noise_peer_mismatch) {
    try {
       (void)fcl::asio::blocking::run(
           runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = peer(150)}));
-      BOOST_FAIL("expected TCP Noise peer mismatch");
+      BOOST_FAIL("expected TCP TLS peer mismatch");
    } catch (const fcl::exception::base& error) {
       BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
       BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==

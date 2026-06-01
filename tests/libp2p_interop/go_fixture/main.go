@@ -29,6 +29,7 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/protocol/identify"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
+	sectls "github.com/libp2p/go-libp2p/p2p/security/tls"
 	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	ma "github.com/multiformats/go-multiaddr"
@@ -195,6 +196,13 @@ func newHost(transport string) (*fixtureHost, error) {
 		options = append(options,
 			libp2p.Transport(tcp.NewTCPTransport),
 			libp2p.Security(noise.ID, noise.New),
+			libp2p.Muxer(yamux.ID, yamux.DefaultTransport),
+			libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"),
+		)
+	case "tcp-tls":
+		options = append(options,
+			libp2p.Transport(tcp.NewTCPTransport),
+			libp2p.Security(sectls.ID, sectls.New),
 			libp2p.Muxer(yamux.ID, yamux.DefaultTransport),
 			libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"),
 		)

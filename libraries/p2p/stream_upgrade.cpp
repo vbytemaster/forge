@@ -36,9 +36,13 @@ import fcl.p2p.negotiation;
 import fcl.p2p.stream;
 import fcl.multiformats.exceptions;
 import fcl.multiformats.varint;
+import fcl.stcp.connection;
+import fcl.stcp.exceptions;
 import fcl.transport.stream;
+import fcl.tcp.connection;
 import fcl.yamux.session;
 
+#include "libp2p_tls.hpp"
 #include "protobuf.hpp"
 #include "stream_upgrade.hpp"
 
@@ -596,37 +600,254 @@ boost::asio::awaitable<noise_result> noise_responder(fcl::p2p::stream stream, co
                           .early_yamux = verified_initiator.supports_yamux};
 }
 
-} // namespace
+template <typename Connection>
+class exact_negotiation_io {
+ public:
+   explicit exact_negotiation_io(Connection& connection) : connection_(connection) {}
 
-boost::asio::awaitable<upgraded_session>
-upgrade_outbound_stream(fcl::p2p::stream stream, const node::options& options, std::optional<peer_id> expected_peer) {
-   const auto noise_protocol = protocol_id{.value = "/noise"};
-   const auto yamux_protocol = protocol_id{.value = "/yamux/1.0.0"};
-   auto noise_stream = co_await protocol_negotiation::async_select(std::move(stream), noise_protocol);
-   auto secure = co_await noise_initiator(std::move(noise_stream), options,
+   boost::asio::awaitable<void> write(protocol_negotiation::message value) {
+      const auto payload = protocol_negotiation::encode_message(value);
+      const auto frame = protocol_negotiation::encode_frame(payload);
+      co_await connection_.async_write(frame);
+   }
+
+   boost::asio::awaitable<protocol_negotiation::message> read() {
+      while (true) {
+         try {
+            auto frame = protocol_negotiation::decode_frame(buffer_);
+            auto payload = std::move(frame.payload);
+            buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(frame.consumed));
+            co_return protocol_negotiation::decode_message(payload);
+         } catch (const fcl::exception::base& error) {
+            const auto code = exceptions::code_of(error);
+            if (!code || *code != exceptions::code::closed) {
+               throw;
+            }
+         }
+         auto byte = std::array<std::uint8_t, 1>{};
+         const auto size = co_await connection_.async_read_some(byte);
+         if (size == 0) {
+            FCL_THROW_EXCEPTION(exceptions::closed, "multistream-select connection closed");
+         }
+         buffer_.push_back(byte.front());
+      }
+   }
+
+ private:
+   Connection& connection_;
+   std::vector<std::uint8_t> buffer_;
+};
+
+template <typename Connection>
+boost::asio::awaitable<protocol_id> select_protocol(Connection& connection, std::span<const protocol_id> protocols) {
+   auto io = exact_negotiation_io<Connection>{connection};
+   co_await io.write(protocol_negotiation::message{.kind = protocol_negotiation::message_kind::header,
+                                                   .protocol = protocol_negotiation::multistream_v1});
+   auto first = true;
+   for (const auto& protocol : protocols) {
+      co_await io.write(protocol_negotiation::message{.kind = protocol_negotiation::message_kind::protocol,
+                                                      .protocol = protocol});
+      if (first) {
+         auto header = co_await io.read();
+         if (header.kind != protocol_negotiation::message_kind::header) {
+            FCL_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select expected security header response");
+         }
+         first = false;
+      }
+      auto selected = co_await io.read();
+      if (selected.kind == protocol_negotiation::message_kind::not_available) {
+         continue;
+      }
+      if (selected.kind != protocol_negotiation::message_kind::protocol || selected.protocol.value != protocol.value) {
+         FCL_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select selected unexpected security protocol");
+      }
+      co_return protocol;
+   }
+   FCL_THROW_EXCEPTION(exceptions::unsupported_protocol, "remote peer supports no compatible security protocol");
+}
+
+template <typename Connection>
+boost::asio::awaitable<protocol_id> accept_protocol(Connection& connection, std::span<const protocol_id> protocols) {
+   auto io = exact_negotiation_io<Connection>{connection};
+   auto header = co_await io.read();
+   if (header.kind != protocol_negotiation::message_kind::header) {
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select expected security header");
+   }
+   co_await io.write(protocol_negotiation::message{.kind = protocol_negotiation::message_kind::header,
+                                                   .protocol = protocol_negotiation::multistream_v1});
+   while (true) {
+      auto proposal = co_await io.read();
+      if (proposal.kind != protocol_negotiation::message_kind::protocol) {
+         FCL_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select expected security protocol proposal");
+      }
+      const auto found = std::ranges::find_if(protocols, [&proposal](const auto& value) {
+         return value.value == proposal.protocol.value;
+      });
+      if (found != protocols.end()) {
+         co_await io.write(protocol_negotiation::message{.kind = protocol_negotiation::message_kind::protocol,
+                                                         .protocol = *found});
+         co_return *found;
+      }
+      co_await io.write(protocol_negotiation::message{.kind = protocol_negotiation::message_kind::not_available,
+                                                      .protocol = protocol_negotiation::not_available});
+   }
+}
+
+template <typename Connection>
+boost::asio::awaitable<void> negotiate_yamux(Connection& connection, bool outbound) {
+   const auto yamux = protocol_id{.value = "/yamux/1.0.0"};
+   if (outbound) {
+      auto selected = co_await select_protocol(connection, std::span<const protocol_id>{&yamux, 1});
+      (void)selected;
+      co_return;
+   }
+   auto selected = co_await accept_protocol(connection, std::span<const protocol_id>{&yamux, 1});
+   (void)selected;
+}
+
+[[nodiscard]] exceptions::code map_stcp_error(fcl::stcp::exceptions::code kind) noexcept {
+   using stcp_kind = fcl::stcp::exceptions::code;
+   switch (kind) {
+   case stcp_kind::invalid_endpoint:
+   case stcp_kind::invalid_options:
+      return exceptions::code::invalid_options;
+   case stcp_kind::connect_failed:
+   case stcp_kind::listen_failed:
+   case stcp_kind::accept_failed:
+   case stcp_kind::io_error:
+      return exceptions::code::internal;
+   case stcp_kind::verification_failed:
+   case stcp_kind::handshake_failed:
+      return exceptions::code::peer_verification_failed;
+   case stcp_kind::canceled:
+      return exceptions::code::canceled;
+   case stcp_kind::closed:
+      return exceptions::code::closed;
+   }
+   return exceptions::code::internal;
+}
+
+[[noreturn]] void rethrow_stcp_as_p2p(const fcl::exception::base& error) {
+   const auto code = fcl::stcp::exceptions::code_of(error);
+   if (code) {
+      FCL_THROW_CODE(map_stcp_error(*code), error.what());
+   }
+   throw;
+}
+
+boost::asio::awaitable<upgraded_session> finish_noise_outbound(fcl::p2p::stream stream, const node::options& options,
+                                                               std::optional<peer_id> expected_peer) {
+   auto secure = co_await noise_initiator(std::move(stream), options,
                                           options.allow_insecure_test_mode ? std::nullopt : std::move(expected_peer));
    if (!secure.early_yamux) {
-      (void)co_await protocol_negotiation::async_select(secure_transport_stream(secure.secure), yamux_protocol);
+      (void)co_await protocol_negotiation::async_select(secure_transport_stream(secure.secure),
+                                                        protocol_id{.value = "/yamux/1.0.0"});
    }
    auto yamux = std::make_shared<fcl::yamux::session>(secure_transport_stream(std::move(secure.secure)),
                                                       fcl::yamux::side::initiator);
    co_return upgraded_session{.peer = std::move(secure.peer), .session = std::move(yamux)};
 }
 
-boost::asio::awaitable<upgraded_session>
-upgrade_inbound_stream(fcl::p2p::stream stream, const node::options& options, std::optional<peer_id> expected_peer) {
-   const auto noise_protocol = protocol_id{.value = "/noise"};
-   const auto yamux_protocol = protocol_id{.value = "/yamux/1.0.0"};
-   auto noise_stream = co_await protocol_negotiation::async_accept(std::move(stream), {noise_protocol});
+boost::asio::awaitable<upgraded_session> finish_noise_inbound(fcl::p2p::stream stream, const node::options& options,
+                                                              std::optional<peer_id> expected_peer) {
    auto secure =
-       co_await noise_responder(std::move(noise_stream.stream), options,
+       co_await noise_responder(std::move(stream), options,
                                 options.allow_insecure_test_mode ? std::nullopt : std::move(expected_peer));
    if (!secure.early_yamux) {
-      (void)co_await protocol_negotiation::async_accept(secure_transport_stream(secure.secure), {yamux_protocol});
+      (void)co_await protocol_negotiation::async_accept(secure_transport_stream(secure.secure),
+                                                        {protocol_id{.value = "/yamux/1.0.0"}});
    }
    auto yamux = std::make_shared<fcl::yamux::session>(secure_transport_stream(std::move(secure.secure)),
                                                       fcl::yamux::side::responder);
    co_return upgraded_session{.peer = std::move(secure.peer), .session = std::move(yamux)};
+}
+
+boost::asio::awaitable<upgraded_session> finish_tls_outbound(fcl::tcp::connection connection,
+                                                             const node::options& options,
+                                                             std::optional<peer_id> expected_peer) {
+   try {
+      auto tls = co_await fcl::stcp::async_upgrade_client(std::move(connection), make_libp2p_tls_client_options(options));
+      const auto peer = verify_libp2p_tls_chain(tls.peer_certificate_chain(),
+                                                options.allow_insecure_test_mode ? std::nullopt : expected_peer);
+      const auto selected_alpn = tls.selected_alpn();
+      if (selected_alpn.empty() || selected_alpn == "libp2p") {
+         co_await negotiate_yamux(tls, true);
+      } else if (selected_alpn != "/yamux/1.0.0") {
+         FCL_THROW_EXCEPTION(exceptions::unsupported_protocol, "libp2p TLS selected unsupported muxer");
+      }
+      auto stream = std::move(tls).into_transport_stream();
+      auto yamux = std::make_shared<fcl::yamux::session>(std::move(stream.stream), fcl::yamux::side::initiator);
+      co_return upgraded_session{.peer = peer, .session = std::move(yamux)};
+   } catch (const fcl::exception::base& error) {
+      rethrow_stcp_as_p2p(error);
+   }
+}
+
+boost::asio::awaitable<upgraded_session> finish_tls_inbound(fcl::tcp::connection connection,
+                                                            const node::options& options,
+                                                            std::optional<peer_id> expected_peer) {
+   try {
+      auto tls = co_await fcl::stcp::async_upgrade_server(std::move(connection), make_libp2p_tls_server_options(options));
+      const auto peer = verify_libp2p_tls_chain(tls.peer_certificate_chain(),
+                                                options.allow_insecure_test_mode ? std::nullopt : expected_peer);
+      const auto selected_alpn = tls.selected_alpn();
+      if (selected_alpn.empty() || selected_alpn == "libp2p") {
+         co_await negotiate_yamux(tls, false);
+      } else if (selected_alpn != "/yamux/1.0.0") {
+         FCL_THROW_EXCEPTION(exceptions::unsupported_protocol, "libp2p TLS selected unsupported muxer");
+      }
+      auto stream = std::move(tls).into_transport_stream();
+      auto yamux = std::make_shared<fcl::yamux::session>(std::move(stream.stream), fcl::yamux::side::responder);
+      co_return upgraded_session{.peer = peer, .session = std::move(yamux)};
+   } catch (const fcl::exception::base& error) {
+      rethrow_stcp_as_p2p(error);
+   }
+}
+
+} // namespace
+
+boost::asio::awaitable<upgraded_session>
+upgrade_outbound_stream(fcl::p2p::stream stream, const node::options& options, std::optional<peer_id> expected_peer) {
+   const auto noise_protocol = protocol_id{.value = "/noise"};
+   auto noise_stream = co_await protocol_negotiation::async_select(std::move(stream), noise_protocol);
+   co_return co_await finish_noise_outbound(std::move(noise_stream), options, std::move(expected_peer));
+}
+
+boost::asio::awaitable<upgraded_session>
+upgrade_inbound_stream(fcl::p2p::stream stream, const node::options& options, std::optional<peer_id> expected_peer) {
+   const auto noise_protocol = protocol_id{.value = "/noise"};
+   auto noise_stream = co_await protocol_negotiation::async_accept(std::move(stream), {noise_protocol});
+   co_return co_await finish_noise_inbound(std::move(noise_stream.stream), options, std::move(expected_peer));
+}
+
+boost::asio::awaitable<upgraded_session>
+upgrade_outbound_tcp(fcl::tcp::connection connection, const node::options& options, std::optional<peer_id> expected_peer) {
+   const auto protocols = std::array{
+       protocol_id{.value = "/tls/1.0.0"},
+       protocol_id{.value = "/noise"},
+   };
+   const auto selected = co_await select_protocol(connection, protocols);
+   if (selected.value == "/tls/1.0.0") {
+      co_return co_await finish_tls_outbound(std::move(connection), options, std::move(expected_peer));
+   }
+   auto stream = std::move(connection).into_transport_stream();
+   co_return co_await finish_noise_outbound(fcl::p2p::stream{std::move(stream.stream)}, options,
+                                            std::move(expected_peer));
+}
+
+boost::asio::awaitable<upgraded_session>
+upgrade_inbound_tcp(fcl::tcp::connection connection, const node::options& options, std::optional<peer_id> expected_peer) {
+   const auto protocols = std::array{
+       protocol_id{.value = "/tls/1.0.0"},
+       protocol_id{.value = "/noise"},
+   };
+   const auto selected = co_await accept_protocol(connection, protocols);
+   if (selected.value == "/tls/1.0.0") {
+      co_return co_await finish_tls_inbound(std::move(connection), options, std::move(expected_peer));
+   }
+   auto stream = std::move(connection).into_transport_stream();
+   co_return co_await finish_noise_inbound(fcl::p2p::stream{std::move(stream.stream)}, options,
+                                           std::move(expected_peer));
 }
 
 } // namespace fcl::p2p

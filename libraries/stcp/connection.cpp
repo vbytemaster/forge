@@ -145,6 +145,16 @@ void validate_common(std::size_t read_chunk_size, const std::vector<std::string>
    (void)encode_alpn(alpn_protocols);
 }
 
+void configure_tls_version(asio::ssl::context& context, bool tls13_only) {
+   if (!tls13_only) {
+      return;
+   }
+   if (SSL_CTX_set_min_proto_version(context.native_handle(), TLS1_3_VERSION) != 1 ||
+       SSL_CTX_set_max_proto_version(context.native_handle(), TLS1_3_VERSION) != 1) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "failed to configure stcp TLS 1.3 only mode");
+   }
+}
+
 void load_identity(asio::ssl::context& context, std::string_view certificate_pem, std::string_view private_key_pem) {
    if (certificate_pem.empty() && private_key_pem.empty()) {
       return;
@@ -184,6 +194,7 @@ void load_trust(asio::ssl::context& context, const security_options& security) {
    auto context = std::make_shared<asio::ssl::context>(asio::ssl::context::tls_client);
    context->set_options(asio::ssl::context::default_workarounds | asio::ssl::context::no_sslv2 |
                         asio::ssl::context::no_sslv3);
+   configure_tls_version(*context, options.tls13_only);
    load_identity(*context, options.certificate_pem, options.private_key_pem);
    load_trust(*context, options.security);
    context->set_verify_mode(options.security.verify_peer ? asio::ssl::verify_peer : asio::ssl::verify_none);
@@ -198,11 +209,21 @@ void load_trust(asio::ssl::context& context, const security_options& security) {
    auto context = std::make_shared<asio::ssl::context>(asio::ssl::context::tls_server);
    context->set_options(asio::ssl::context::default_workarounds | asio::ssl::context::no_sslv2 |
                         asio::ssl::context::no_sslv3);
+   configure_tls_version(*context, options.tls13_only);
    load_identity(*context, options.certificate_pem, options.private_key_pem);
    load_trust(*context, options.security);
-   auto mode = options.security.verify_peer ? asio::ssl::verify_peer | asio::ssl::verify_fail_if_no_peer_cert
-                                            : asio::ssl::verify_none;
+   auto mode = asio::ssl::verify_none;
+   if (options.security.verify_peer || options.security.require_peer_certificate) {
+      mode = asio::ssl::verify_peer;
+      if (options.security.verify_peer || options.security.require_peer_certificate) {
+         mode |= asio::ssl::verify_fail_if_no_peer_cert;
+      }
+   }
    context->set_verify_mode(mode);
+   if (options.security.require_peer_certificate && !options.security.verify_peer) {
+      SSL_CTX_set_verify(context->native_handle(), SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
+                         [](int, X509_STORE_CTX*) { return 1; });
+   }
    return context;
 }
 
@@ -238,6 +259,41 @@ void load_trust(asio::ssl::context& context, const security_options& security) {
    return peer_certificate{.der = std::move(der), .sha256_fingerprint = parsed.fingerprint_sha256_text()};
 }
 
+[[nodiscard]] peer_certificate peer_certificate_from_x509(X509* certificate) {
+   auto der = certificate_der(certificate);
+   auto parsed = crypto::x509::certificate::from_der(der);
+   return peer_certificate{.der = std::move(der), .sha256_fingerprint = parsed.fingerprint_sha256_text()};
+}
+
+[[nodiscard]] bool same_der(std::span<const std::uint8_t> left, std::span<const std::uint8_t> right) {
+   return left.size() == right.size() && std::equal(left.begin(), left.end(), right.begin());
+}
+
+[[nodiscard]] certificate_chain read_peer_certificate_chain(native_stream& stream) {
+   auto out = certificate_chain{};
+   if (auto leaf = read_peer_certificate(stream)) {
+      out.certificates.push_back(std::move(*leaf));
+   }
+   auto* chain = SSL_get_peer_cert_chain(stream.native_handle());
+   if (chain == nullptr) {
+      return out;
+   }
+   const auto count = sk_X509_num(chain);
+   for (auto index = 0; index < count; ++index) {
+      auto* certificate = sk_X509_value(chain, index);
+      if (certificate == nullptr) {
+         continue;
+      }
+      auto next = peer_certificate_from_x509(certificate);
+      const auto duplicate_leaf =
+          !out.certificates.empty() && same_der(out.certificates.front().der, next.der);
+      if (!duplicate_leaf) {
+         out.certificates.push_back(std::move(next));
+      }
+   }
+   return out;
+}
+
 void verify_host_name(const peer_certificate& certificate, std::string_view host) {
    if (host.empty()) {
       return;
@@ -262,30 +318,52 @@ void verify_peer(native_stream& stream, const security_options& security, std::s
    if (!security.verify_peer && !security.expected_sha256_fingerprint && !security.verifier) {
       return;
    }
-   const auto certificate = read_peer_certificate(stream);
-   if (!certificate) {
+   auto chain = read_peer_certificate_chain(stream);
+   if (chain.certificates.empty()) {
       throw_verification_failed("stcp peer did not present certificate");
    }
+   const auto& certificate = chain.certificates.front();
    if (security.verify_peer) {
-      verify_host_name(*certificate, expected_host);
+      verify_host_name(certificate, expected_host);
    }
    if (security.expected_sha256_fingerprint) {
-      const auto actual = normalize_fingerprint(certificate->sha256_fingerprint);
+      const auto actual = normalize_fingerprint(certificate.sha256_fingerprint);
       const auto expected = normalize_fingerprint(*security.expected_sha256_fingerprint);
       if (actual != expected) {
          FCL_THROW_EXCEPTION(exceptions::verification_failed, "stcp peer certificate fingerprint mismatch",
                              fcl::exception::ctx("actual", actual));
       }
    }
-   if (security.verifier && !security.verifier(*certificate)) {
+   if (security.verifier && !security.verifier(chain)) {
       throw_verification_failed("stcp peer verifier rejected certificate");
    }
 }
 
+[[nodiscard]] std::optional<std::string> sni_host(const client_options& options, std::string_view remote_host) {
+   switch (options.sni) {
+   case sni_policy::endpoint_host:
+      if (!options.server_name.empty()) {
+         return options.server_name;
+      }
+      if (!remote_host.empty()) {
+         return std::string{remote_host};
+      }
+      return std::nullopt;
+   case sni_policy::explicit_name:
+      if (options.server_name.empty()) {
+         throw_invalid_options("stcp explicit SNI requires server_name");
+      }
+      return options.server_name;
+   case sni_policy::disabled:
+      return std::nullopt;
+   }
+   throw_invalid_options("unknown stcp SNI policy");
+}
+
 void configure_client_stream(native_stream& stream, const client_options& options, std::string_view remote_host) {
-   const auto host = options.server_name.empty() ? std::string{remote_host} : options.server_name;
-   if (!host.empty()) {
-      if (SSL_set_tlsext_host_name(stream.native_handle(), host.c_str()) != 1) {
+   const auto host = sni_host(options, remote_host);
+   if (host && !host->empty()) {
+      if (SSL_set_tlsext_host_name(stream.native_handle(), host->c_str()) != 1) {
          FCL_THROW_EXCEPTION(exceptions::invalid_options, "failed to configure stcp SNI");
       }
    }
@@ -417,6 +495,19 @@ struct connection::impl final {
       }
    }
 
+   boost::asio::awaitable<std::size_t> async_read_some(std::span<std::uint8_t> bytes) {
+      if (!valid()) {
+         FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+      }
+      auto error = boost::system::error_code{};
+      const auto size = co_await stream->async_read_some(boost::asio::buffer(bytes),
+                                                         boost::asio::redirect_error(boost::asio::use_awaitable, error));
+      if (error) {
+         throw_read_write_error(error);
+      }
+      co_return size;
+   }
+
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read() {
       if (!valid()) {
          FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
@@ -495,6 +586,13 @@ std::optional<peer_certificate> connection::peer_certificate() const {
    return read_peer_certificate(*impl_->stream);
 }
 
+certificate_chain connection::peer_certificate_chain() const {
+   if (!valid()) {
+      FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+   }
+   return read_peer_certificate_chain(*impl_->stream);
+}
+
 std::string connection::selected_alpn() const {
    if (!valid()) {
       FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
@@ -507,6 +605,13 @@ boost::asio::awaitable<void> connection::async_write(std::span<const std::uint8_
       FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
    }
    co_await impl_->async_write(bytes);
+}
+
+boost::asio::awaitable<std::size_t> connection::async_read_some(std::span<std::uint8_t> bytes) {
+   if (!valid()) {
+      FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+   }
+   co_return co_await impl_->async_read_some(bytes);
 }
 
 boost::asio::awaitable<std::vector<std::uint8_t>> connection::async_read() {

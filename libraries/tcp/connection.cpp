@@ -179,6 +179,19 @@ struct connection::impl final {
       }
    }
 
+   boost::asio::awaitable<std::size_t> async_read_some(std::span<std::uint8_t> bytes) {
+      if (!valid()) {
+         FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
+      }
+      auto error = boost::system::error_code{};
+      const auto size = co_await socket->async_read_some(boost::asio::buffer(bytes),
+                                                         boost::asio::redirect_error(boost::asio::use_awaitable, error));
+      if (error) {
+         throw_read_write_error(error);
+      }
+      co_return size;
+   }
+
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read() {
       if (!valid()) {
          FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
@@ -261,6 +274,13 @@ boost::asio::awaitable<void> connection::async_write(std::span<const std::uint8_
       FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
    }
    co_await impl_->async_write(bytes);
+}
+
+boost::asio::awaitable<std::size_t> connection::async_read_some(std::span<std::uint8_t> bytes) {
+   if (!valid()) {
+      FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
+   }
+   co_return co_await impl_->async_read_some(bytes);
 }
 
 boost::asio::awaitable<std::vector<std::uint8_t>> connection::async_read() {

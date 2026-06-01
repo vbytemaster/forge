@@ -61,9 +61,9 @@ as a library overview; do not duplicate the block sequence here.
 
 Current direction: P2P sits above first-class multiaddr, reusable
 `fcl_transport`, and reusable TCP/STCP/Yamux/QUIC layers. QUIC and
-TCP+Noise+Yamux direct paths are wired through private direct profiles. Future
-transports must plug into the same multiaddr and transport session boundary,
-not fork P2P core.
+TCP+TLS/Noise+Yamux direct paths are wired through private direct profiles.
+Future transports must plug into the same multiaddr and transport session
+boundary, not fork P2P core.
 
 `fcl_transport` is the stream/session substrate for `fcl_p2p`; it is not an API
 or RPC layer. API-over-transport is intentionally future work in
@@ -123,10 +123,11 @@ auto endpoint = fcl::p2p::parse_endpoint(
 co_await node.async_listen(endpoint);
 ```
 
-QUIC and TCP+Noise+Yamux are currently registered direct transports. `/ws` and
-`/wss` multiaddrs are parseable but direct dial/listen returns typed unsupported
-until a dedicated compatibility block wires a production transport. Future
-transports must use the same private direct profile boundary.
+QUIC and TCP+TLS/Noise+Yamux are currently registered direct transports. TCP
+prefers libp2p TLS (`/tls/1.0.0`) and keeps Noise as fallback. `/ws` and `/wss`
+multiaddrs are parseable but direct dial/listen returns typed unsupported until
+a dedicated compatibility block wires a production transport. Future transports
+must use the same private direct profile boundary.
 
 ### Peer Store Backends
 

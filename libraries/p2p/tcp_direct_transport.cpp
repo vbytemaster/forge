@@ -25,6 +25,7 @@ import fcl.yamux.session;
 
 #include "direct_transport.hpp"
 #include "stream_upgrade.hpp"
+#include "tcp_stream_upgrade.hpp"
 
 namespace fcl::p2p::direct {
 namespace {
@@ -114,14 +115,14 @@ class tcp_profile final {
       }
       try {
          auto tcp = co_await connector_.async_connect_connection(endpoint.transport);
-         auto tcp_stream = std::move(tcp).into_transport_stream();
-         auto upgraded = co_await upgrade_outbound_stream(
-             fcl::p2p::stream{std::move(tcp_stream.stream)}, options_, expected_peer_for(endpoint, options));
+         const auto local_endpoint = p2p_endpoint_for(tcp.local_endpoint());
+         const auto remote_endpoint = p2p_endpoint_for(tcp.remote_endpoint());
+         auto upgraded = co_await upgrade_outbound_tcp(std::move(tcp), options_, expected_peer_for(endpoint, options));
          co_return connection{
              .peer = std::move(upgraded.peer),
              .session = std::move(*upgraded.session).as_transport(),
-             .local_endpoint = p2p_endpoint_for(std::move(tcp_stream.local_endpoint)),
-             .remote_endpoint = p2p_endpoint_for(std::move(tcp_stream.remote_endpoint)),
+             .local_endpoint = std::move(local_endpoint),
+             .remote_endpoint = std::move(remote_endpoint),
          };
       } catch (const fcl::exception::base& error) {
          rethrow_tcp_as_p2p(error);
@@ -134,14 +135,14 @@ class tcp_profile final {
       }
       try {
          auto tcp = co_await listener_->async_accept_connection();
-         auto tcp_stream = std::move(tcp).into_transport_stream();
-         auto upgraded = co_await upgrade_inbound_stream(fcl::p2p::stream{std::move(tcp_stream.stream)}, options_,
-                                                         std::nullopt);
+         const auto local_endpoint = p2p_endpoint_for(tcp.local_endpoint());
+         const auto remote_endpoint = p2p_endpoint_for(tcp.remote_endpoint());
+         auto upgraded = co_await upgrade_inbound_tcp(std::move(tcp), options_, std::nullopt);
          co_return connection{
              .peer = std::move(upgraded.peer),
              .session = std::move(*upgraded.session).as_transport(),
-             .local_endpoint = p2p_endpoint_for(std::move(tcp_stream.local_endpoint)),
-             .remote_endpoint = p2p_endpoint_for(std::move(tcp_stream.remote_endpoint)),
+             .local_endpoint = std::move(local_endpoint),
+             .remote_endpoint = std::move(remote_endpoint),
          };
       } catch (const fcl::exception::base& error) {
          rethrow_tcp_as_p2p(error);

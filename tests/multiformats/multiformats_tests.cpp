@@ -39,6 +39,18 @@ BOOST_AUTO_TEST_CASE(varint_uses_minimal_unsigned_leb128_encoding) try {
 }
 FCL_LOG_AND_RETHROW();
 
+BOOST_AUTO_TEST_CASE(varint_rejects_overlong_zero_payload_before_shift) try {
+   using fcl::multiformats::varint_decode;
+
+   const std::vector<std::uint8_t> overflowing_zero_payload{
+       0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00};
+
+   BOOST_CHECK_EXCEPTION((void)varint_decode(overflowing_zero_payload),
+                         fcl::multiformats::exceptions::invalid_format,
+                         [](const auto& error) { return std::string{error.what()}.find("overflows") != std::string::npos; });
+}
+FCL_LOG_AND_RETHROW();
+
 BOOST_AUTO_TEST_CASE(multicodec_constants_match_libp2p_foundation_codes) try {
    using enum fcl::multiformats::multicodec_code;
 

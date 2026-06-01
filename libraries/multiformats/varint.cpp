@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exception/macros.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -29,22 +31,23 @@ decoded_varint varint_decode(std::span<const std::uint8_t> data) {
    std::uint32_t shift = 0;
    for (std::size_t index = 0; index < data.size(); ++index) {
       const auto byte = data[index];
-      if (shift >= 64 && (byte & 0x7fU) != 0) {
-         throw exceptions::invalid_format{"multiformats varint overflows uint64"};
+      const auto payload = static_cast<std::uint8_t>(byte & 0x7fU);
+      if (shift >= 64 || (shift == 63 && payload > 1)) {
+         FCL_THROW_EXCEPTION(exceptions::invalid_format, "multiformats varint overflows uint64");
       }
 
-      value |= static_cast<std::uint64_t>(byte & 0x7fU) << shift;
+      value |= static_cast<std::uint64_t>(payload) << shift;
       if ((byte & 0x80U) == 0) {
          const auto encoded = varint_encode(value);
          if (encoded.size() != index + 1) {
-            throw exceptions::invalid_format{"multiformats varint is not minimally encoded"};
+            FCL_THROW_EXCEPTION(exceptions::invalid_format, "multiformats varint is not minimally encoded");
          }
          return {.value = value, .size = index + 1};
       }
       shift += 7;
    }
 
-   throw exceptions::invalid_format{"unterminated multiformats varint"};
+   FCL_THROW_EXCEPTION(exceptions::invalid_format, "unterminated multiformats varint");
 }
 
 } // namespace fcl::multiformats

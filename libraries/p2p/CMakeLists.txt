@@ -37,6 +37,7 @@ add_library(
 fcl_target_modules(fcl_p2p p2p)
 
 target_include_directories(fcl_p2p PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+target_compile_definitions(fcl_p2p PRIVATE FCL_HAS_ROCKSDB=$<BOOL:${FCL_HAS_ROCKSDB}>)
 
 target_link_libraries(
    fcl_p2p PUBLIC
@@ -54,7 +55,9 @@ target_link_libraries(
       Boost::asio
 )
 
-target_link_libraries(
-   fcl_p2p PRIVATE
-      RocksDB::rocksdb
-)
+if(FCL_HAS_ROCKSDB)
+   target_link_libraries(
+      fcl_p2p PRIVATE
+         RocksDB::rocksdb
+   )
+endif()

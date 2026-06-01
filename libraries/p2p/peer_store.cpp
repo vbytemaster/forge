@@ -15,8 +15,10 @@ module;
 #include <utility>
 #include <vector>
 
+#if FCL_HAS_ROCKSDB
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
+#endif
 
 module fcl.p2p.peer_store;
 
@@ -28,11 +30,6 @@ import fcl.p2p.rendezvous;
 
 namespace fcl::p2p {
 namespace {
-
-constexpr auto peer_store_magic = std::string_view{"FCLP2PPS"};
-constexpr auto provider_store_magic = std::string_view{"FCLP2PPV"};
-constexpr auto rendezvous_store_magic = std::string_view{"FCLP2PRV"};
-constexpr auto peer_store_version = std::uint8_t{4};
 
 [[nodiscard]] bool same_endpoint(const fcl::p2p::endpoint& left, const fcl::p2p::endpoint& right) {
    return left.to_string() == right.to_string();
@@ -75,6 +72,12 @@ void normalize_for_storage(peer_store::record& value) {
    const auto kind = value.endpoints.empty() ? path::kind::direct : value.endpoints.front().kind;
    refresh_record_score(value, kind, value.successes > 0);
 }
+
+#if FCL_HAS_ROCKSDB
+constexpr auto peer_store_magic = std::string_view{"FCLP2PPS"};
+constexpr auto provider_store_magic = std::string_view{"FCLP2PPV"};
+constexpr auto rendezvous_store_magic = std::string_view{"FCLP2PRV"};
+constexpr auto peer_store_version = std::uint8_t{4};
 
 class binary_writer {
  public:
@@ -506,6 +509,7 @@ class binary_reader {
    reader.finish();
    return out;
 }
+#endif
 
 void mutate_endpoint(peer_store::record& record, const fcl::p2p::endpoint& endpoint, path::kind kind,
                      auto&& callback) {
@@ -750,6 +754,7 @@ class memory_peer_store_backend final : public peer_store::backend {
    std::uint64_t rendezvous_sequence_ = 0;
 };
 
+#if FCL_HAS_ROCKSDB
 class rocksdb_peer_store_backend final : public peer_store::backend {
  public:
    explicit rocksdb_peer_store_backend(peer_store::rocksdb_options options) : options_(std::move(options)) {
@@ -1096,6 +1101,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
    mutable std::mutex mutex_;
    std::unique_ptr<rocksdb::DB> db_;
 };
+#endif
 
 } // namespace
 
@@ -1108,7 +1114,12 @@ std::shared_ptr<peer_store::backend> peer_store::make_memory_backend() {
 }
 
 std::shared_ptr<peer_store::backend> peer_store::make_rocksdb_backend(peer_store::rocksdb_options options) {
+#if FCL_HAS_ROCKSDB
    return std::make_shared<rocksdb_peer_store_backend>(std::move(options));
+#else
+   (void)options;
+   FCL_THROW_EXCEPTION(exceptions::invalid_options, "RocksDB peer store backend is not enabled in this build");
+#endif
 }
 
 peer_store::peer_store() : peer_store{options{.backend = make_memory_backend()}} {}

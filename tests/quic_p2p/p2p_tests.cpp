@@ -2217,6 +2217,7 @@ BOOST_AUTO_TEST_CASE(p2p_identify_push_updates_peer_store) {
    fcl::asio::blocking::run(runtime, server.async_stop());
 }
 
+#if FCL_HAS_ROCKSDB
 BOOST_AUTO_TEST_CASE(p2p_identify_push_persists_rocksdb_peer_record) {
    auto temp = temp_store_dir{"identify-push-rocksdb"};
    const auto client_id = peer(178);
@@ -2266,6 +2267,7 @@ BOOST_AUTO_TEST_CASE(p2p_identify_push_persists_rocksdb_peer_record) {
    BOOST_REQUIRE_EQUAL(found->endpoints.size(), 1U);
    BOOST_TEST(found->endpoints.front().endpoint.transport.port == 4201);
 }
+#endif
 
 BOOST_AUTO_TEST_CASE(p2p_unsupported_protocol_rejection_keeps_session_usable) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
@@ -2451,6 +2453,7 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_uses_injected_backend) {
    BOOST_TEST(found->endpoints.front().endpoint.transport.port == 4001);
 }
 
+#if FCL_HAS_ROCKSDB
 BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_survives_reopen) {
    auto temp = temp_store_dir{"rocksdb-reopen"};
    const auto id = peer(82);
@@ -2595,6 +2598,12 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_persists_discovery_dht_and_rendezvou
    BOOST_TEST(registrations.front().endpoints.front().to_string() == rendezvous_endpoint.to_string());
    BOOST_TEST(reopened.discover_rendezvous("fcl.discovery", registrations.front().sequence, 10).empty());
 }
+#else
+BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_backend_reports_disabled_when_not_built) {
+   BOOST_CHECK_THROW((void)peer_store::make_rocksdb_backend(peer_store::rocksdb_options{.path = "peer-store"}),
+                     exceptions::invalid_options);
+}
+#endif
 
 BOOST_AUTO_TEST_CASE(p2p_production_options_reject_missing_mtls_identity) {
    try {
@@ -2617,6 +2626,7 @@ BOOST_AUTO_TEST_CASE(p2p_production_options_require_peer_store_path) {
    }
 }
 
+#if FCL_HAS_ROCKSDB
 BOOST_AUTO_TEST_CASE(p2p_production_options_use_rocksdb_peer_store_path) {
    auto temp = temp_store_dir{"node-rocksdb-path"};
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
@@ -2649,5 +2659,6 @@ BOOST_AUTO_TEST_CASE(p2p_production_options_use_rocksdb_peer_store_path) {
       fcl::asio::blocking::run(runtime, value.async_stop());
    }
 }
+#endif
 
 } // namespace fcl::p2p

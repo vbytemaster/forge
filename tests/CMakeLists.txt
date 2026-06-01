@@ -205,6 +205,7 @@ add_executable(
    quic_p2p/p2p_tests.cpp
 )
 target_link_libraries(test_fcl_quic_p2p fcl Boost::included_unit_test_framework)
+target_compile_definitions(test_fcl_quic_p2p PRIVATE FCL_HAS_ROCKSDB=$<BOOL:${FCL_HAS_ROCKSDB}>)
 add_test(NAME test_fcl_quic_p2p COMMAND test_fcl_quic_p2p WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(

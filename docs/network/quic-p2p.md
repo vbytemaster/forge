@@ -191,17 +191,46 @@ READMEs may link here, but must not define a second block order.
   rust-libp2p live scenarios cover Ping, Identify and a framed echo stream for
   both TCP security branches.
 - E.2b checkpoint: `/ws` and `/wss` remain parse/store only at multiaddr level.
+- E.3 is the next required block after the review checkpoint merges:
+  multi-transport host support. A production node must listen on several direct
+  transports at the same time, for example `/udp/.../quic-v1` and `/tcp/...`,
+  and must advertise all selected addresses through Identify, peer exchange,
+  DHT and rendezvous. This is critical for network reachability: otherwise FCL
+  supports QUIC and TCP as protocols but still risks splitting the network into
+  transport-specific islands.
+- E.3 must replace the single active direct listener with per-profile listeners,
+  add `node::local_endpoints()` while keeping `local_endpoint()` as a
+  compatibility convenience, and make `async_listen(...)` safe to call for
+  multiple endpoints.
+- E.3 must make direct path selection transport-aware: QUIC, TCP+TLS,
+  TCP+Noise and relay/circuit candidates are selected from the same peer-store
+  record using per-endpoint score, backoff, freshness and policy. The dialer
+  must not just try the first direct endpoint.
+- E.3 must harden Identify address hygiene: preserve canonical multiaddrs,
+  attach `/p2p/<peer>` suffixes consistently, separate listen/advertised/observed
+  addresses, reject stale or malformed addresses, and avoid polluting peer store
+  state with unverified transport addresses.
 - P2P owns Peer ID, Identify, libp2p Noise/TLS payload semantics,
   multistream-select, Relay, DCUtR, DHT, Rendezvous and GossipSub.
 - P2P does not own generic TCP, STCP or Yamux runtime.
 
 ### Block F: P2P Completion
 
-- Finish DHT/Rendezvous hardening, global AutoRelay discovery and donor-doc
-  cleanup.
+- F.1 Global AutoRelay discovery: relay candidates must come from peer store,
+  Identify, DHT and rendezvous discovery, not from manual configuration luck.
+  The node must maintain reservation lifecycle, candidate freshness, backoff and
+  relay trust policy inside `fcl_p2p`.
+- F.2 DHT/Rendezvous hardening for larger networks: iterative DHT many-peer
+  topology, refresh/republish, stale record cleanup, rendezvous registration
+  refresh/expiry and discovery-backed relay candidates.
+- F.3 Connection manager and resource policy: protected peers, max
+  inbound/outbound connections, pruning, reconnect/backoff, per-peer abuse
+  accounting and transport-aware limits. Mixed QUIC/TCP networks must not become
+  a denial-of-service amplifier.
+- F.4 Donor-doc cleanup and support-claim audit: every supported behavior must
+  keep spec-derived tests, donor-derived tests and live FCL <-> Go/Rust
+  artifacts.
 - Do not claim WebSocket transport support.
-- Supported P2P behavior requires spec-derived tests, donor-derived tests and
-  live FCL <-> Go/Rust artifacts.
 - `p2p_node` and focused friend plugins come after core behavior is proven.
   Plugins configure and expose the shared node; they do not implement network
   algorithms.

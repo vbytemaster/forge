@@ -117,6 +117,14 @@ namespace {
    return remote;
 }
 
+[[nodiscard]] std::optional<peer_id> expected_peer_for(const fcl::p2p::endpoint& endpoint,
+                                                       const node::connect_options& options) {
+   if (options.expected_peer) {
+      return options.expected_peer;
+   }
+   return endpoint.peer;
+}
+
 class quic_profile final {
  public:
    quic_profile(fcl::asio::runtime& runtime_value, const node::options& options_value)
@@ -154,9 +162,10 @@ class quic_profile final {
    boost::asio::awaitable<connection> async_connect(fcl::p2p::endpoint endpoint,
                                                     const node::connect_options& options) {
       try {
+         const auto expected_peer = expected_peer_for(endpoint, options);
          auto quic = co_await connector_.async_connect(quic_endpoint_for(endpoint),
-                                                       client_options(options.expected_peer, options.timeout));
-         const auto remote = verified_peer_id_for(quic, options.expected_peer, options_.allow_insecure_test_mode);
+                                                       client_options(expected_peer, options.timeout));
+         const auto remote = verified_peer_id_for(quic, expected_peer, options_.allow_insecure_test_mode);
          auto local_endpoint = p2p_endpoint_for(quic.local_endpoint());
          auto remote_endpoint = p2p_endpoint_for(quic.remote_endpoint());
          co_return connection{
@@ -195,13 +204,17 @@ class quic_profile final {
          return security;
       }
       auto security = fcl::quic::security_options{.verify_peer = true};
-      if (expected) {
-         security.expected_sha256_fingerprint = expected->value;
-      } else {
-         security.verifier = [](const fcl::quic::peer_certificate& certificate) {
-            return valid_peer_id(make_peer_id_from_certificate_der(certificate.der));
-         };
-      }
+      security.verifier = [expected = std::move(expected)](const fcl::quic::peer_certificate& certificate) {
+         try {
+            const auto remote = make_peer_id_from_certificate_der(certificate.der);
+            if (expected) {
+               return remote == *expected;
+            }
+            return valid_peer_id(remote);
+         } catch (const fcl::exceptions::base&) {
+            return false;
+         }
+      };
       return security;
    }
 

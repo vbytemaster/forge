@@ -1707,6 +1707,74 @@ BOOST_AUTO_TEST_CASE(p2p_direct_nodes_negotiate_protocol_and_echo_frames) {
    fcl::asio::blocking::run(runtime, server.async_stop());
 }
 
+BOOST_AUTO_TEST_CASE(p2p_direct_quic_uses_endpoint_peer_when_expected_peer_is_absent) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server_options = options_for(make_test_certificate_identity("quic-endpoint-peer-server"));
+   auto client_options = options_for(make_test_certificate_identity("quic-endpoint-peer-client"));
+   server_options.allow_insecure_test_mode = false;
+   client_options.allow_insecure_test_mode = false;
+   server_options.peer_store_backend = peer_store::make_memory_backend();
+   client_options.peer_store_backend = peer_store::make_memory_backend();
+   auto server = node{runtime, std::move(server_options)};
+   auto client = node{runtime, std::move(client_options)};
+
+   auto server_endpoint = listen(server, runtime);
+   server_endpoint.peer = server.local_peer();
+   const auto session = fcl::asio::blocking::run(runtime, client.async_connect(server_endpoint));
+
+   BOOST_TEST(session.remote_peer.value == server.local_peer().value);
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_direct_quic_rejects_endpoint_peer_mismatch) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server_options = options_for(make_test_certificate_identity("quic-endpoint-peer-mismatch-server"));
+   auto client_options = options_for(make_test_certificate_identity("quic-endpoint-peer-mismatch-client"));
+   server_options.allow_insecure_test_mode = false;
+   client_options.allow_insecure_test_mode = false;
+   server_options.peer_store_backend = peer_store::make_memory_backend();
+   client_options.peer_store_backend = peer_store::make_memory_backend();
+   auto server = node{runtime, std::move(server_options)};
+   auto client = node{runtime, std::move(client_options)};
+
+   auto server_endpoint = listen(server, runtime);
+   server_endpoint.peer = peer(150);
+   try {
+      (void)fcl::asio::blocking::run(runtime, client.async_connect(server_endpoint));
+      BOOST_FAIL("expected QUIC endpoint peer mismatch");
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+                 static_cast<int>(exceptions::code::peer_verification_failed));
+   }
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_direct_quic_explicit_expected_peer_matches_certificate_peer_id) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server_options = options_for(make_test_certificate_identity("quic-expected-peer-server"));
+   auto client_options = options_for(make_test_certificate_identity("quic-expected-peer-client"));
+   server_options.allow_insecure_test_mode = false;
+   client_options.allow_insecure_test_mode = false;
+   server_options.peer_store_backend = peer_store::make_memory_backend();
+   client_options.peer_store_backend = peer_store::make_memory_backend();
+   auto server = node{runtime, std::move(server_options)};
+   auto client = node{runtime, std::move(client_options)};
+
+   const auto server_endpoint = listen(server, runtime);
+   const auto session = fcl::asio::blocking::run(
+       runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
+
+   BOOST_TEST(session.remote_peer.value == server.local_peer().value);
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
 BOOST_AUTO_TEST_CASE(p2p_ping_protocol_uses_libp2p_payload_echo) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
    auto server = node{runtime, options_for(peer(72))};

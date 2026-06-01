@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <algorithm>
 #include <array>
 #include <bls12-381/bls12-381.hpp>
@@ -12,7 +12,7 @@ module fcl.crypto.bls;
 
 import fcl.core.utility;
 import fcl.crypto.random;
-import fcl.exception.exception;
+import fcl.exceptions;
 
 namespace fcl::crypto::bls {
 
@@ -42,7 +42,7 @@ static std::array<uint64_t, 4> priv_parse_base64url(const std::string& base64url
    auto res = std::mismatch(config::private_key_prefix.begin(), config::private_key_prefix.end(),
                             base64urlstr.begin());
    FCL_ASSERT(res.first == config::private_key_prefix.end(), "BLS Private Key has invalid format : ${str}",
-              fcl::exception::ctx("str", base64urlstr));
+              fcl::exceptions::ctx("str", base64urlstr));
 
    auto data_str = base64urlstr.substr(config::private_key_prefix.size());
 

@@ -7,6 +7,6 @@ target_include_directories(fcl_multiformats PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
    fcl_multiformats PUBLIC
-      fcl_exception
+      fcl_exceptions
       fcl_crypto
 )

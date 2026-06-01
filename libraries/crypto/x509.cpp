@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <openssl/asn1.h>
 #include <openssl/bio.h>

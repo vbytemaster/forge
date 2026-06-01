@@ -194,7 +194,7 @@ void validate_component(const multiaddr_component& component) {
             if (bytes.empty()) {
                throw exceptions::invalid_format{"multiaddr p2p component is invalid"};
             }
-         } catch (const fcl::exception::base&) {
+         } catch (const fcl::exceptions::base&) {
             throw exceptions::invalid_format{"multiaddr p2p component is invalid"};
          }
          break;

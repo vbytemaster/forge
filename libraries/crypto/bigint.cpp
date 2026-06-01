@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <bit>
 #include <openssl/bn.h>
 #include <string>
@@ -12,7 +12,7 @@ import fcl.core.utility;
 import fcl.variant;
 import fcl.crypto.base64;
 
-import fcl.exception.exception;
+import fcl.exceptions;
 
 namespace fcl::crypto {
 bigint::bigint(const std::uint8_t* bige, uint32_t l) {

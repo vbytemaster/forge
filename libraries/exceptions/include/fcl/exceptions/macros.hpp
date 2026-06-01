@@ -35,40 +35,40 @@
 
 #define FCL_THROW(MESSAGE, ...)                                                                                        \
    FCL_MULTILINE_MACRO_BEGIN                                                                                           \
-   fcl::exception::throw_with_context(MESSAGE, std::source_location::current() __VA_OPT__(, ) __VA_ARGS__);            \
+   fcl::exceptions::throw_with_context(MESSAGE, std::source_location::current() __VA_OPT__(, ) __VA_ARGS__);            \
    FCL_MULTILINE_MACRO_END
 
 #define FCL_DECLARE_EXCEPTION_CATEGORY(Enum, CATEGORY_NAME)                                                            \
-   inline const std::error_category& fcl_exception_category(Enum) noexcept {                                           \
-      static const fcl::exception::category instance{CATEGORY_NAME};                                                    \
+   inline const std::error_category& fcl_exceptions_category(Enum) noexcept {                                           \
+      static const fcl::exceptions::category instance{CATEGORY_NAME};                                                    \
       return instance;                                                                                                 \
    }                                                                                                                   \
    inline std::error_code make_error_code(Enum value) noexcept {                                                       \
-      return std::error_code{static_cast<int>(value), fcl_exception_category(value)};                                   \
+      return std::error_code{static_cast<int>(value), fcl_exceptions_category(value)};                                   \
    }
 
 #define FCL_THROW_EXCEPTION(ExceptionType, MESSAGE, ...)                                                               \
    FCL_MULTILINE_MACRO_BEGIN                                                                                           \
-   static_assert(std::is_base_of_v<fcl::exception::base, ExceptionType>,                                               \
-                 "FCL_THROW_EXCEPTION expects a type derived from fcl::exception::base");                             \
+   static_assert(std::is_base_of_v<fcl::exceptions::base, ExceptionType>,                                               \
+                 "FCL_THROW_EXCEPTION expects a type derived from fcl::exceptions::base");                             \
    throw ExceptionType(std::string(MESSAGE),                                                                           \
-                       fcl::exception::make_fields(__VA_ARGS__),                                                       \
+                       fcl::exceptions::make_fields(__VA_ARGS__),                                                       \
                        std::source_location::current());                                                               \
    FCL_MULTILINE_MACRO_END
 
 #define FCL_THROW_CODE(CodeValue, MESSAGE, ...)                                                                        \
    FCL_MULTILINE_MACRO_BEGIN                                                                                           \
-   const auto fcl_exception_code_value = (CodeValue);                                                                  \
-   fcl::exception::throw_code(fcl_exception_code_value,                                                                 \
+   const auto fcl_exceptions_code_value = (CodeValue);                                                                  \
+   fcl::exceptions::throw_code(fcl_exceptions_code_value,                                                                 \
                               std::string(MESSAGE),                                                                    \
-                              fcl::exception::make_fields(__VA_ARGS__),                                                \
+                              fcl::exceptions::make_fields(__VA_ARGS__),                                                \
                               std::source_location::current());                                                        \
    FCL_MULTILINE_MACRO_END
 
 #define FCL_ASSERT(TEST, ...)                                                                                          \
    FCL_MULTILINE_MACRO_BEGIN                                                                                           \
    if (UNLIKELY(!(TEST))) {                                                                                            \
-      fcl::exception::throw_assertion_failure(#TEST, std::source_location::current() __VA_OPT__(, ) __VA_ARGS__);      \
+      fcl::exceptions::throw_assertion_failure(#TEST, std::source_location::current() __VA_OPT__(, ) __VA_ARGS__);      \
    }                                                                                                                   \
    FCL_MULTILINE_MACRO_END
 
@@ -77,25 +77,25 @@
    const auto fcl_deadline_value = (DEADLINE);                                                                         \
    if (fcl_deadline_value < decltype(fcl_deadline_value)::max() &&                                                     \
        fcl_deadline_value < decltype(fcl_deadline_value)::clock::now()) {                                              \
-      fcl::exception::throw_deadline_exceeded("deadline exceeded",                                                     \
+      fcl::exceptions::throw_deadline_exceeded("deadline exceeded",                                                     \
                                               std::source_location::current() __VA_OPT__(, ) __VA_ARGS__);             \
    }                                                                                                                   \
    FCL_MULTILINE_MACRO_END
 
 #define FCL_CAPTURE_AND_RETHROW(MESSAGE, ...)                                                                          \
    catch (...) {                                                                                                       \
-      fcl::exception::capture_and_rethrow(MESSAGE, std::source_location::current() __VA_OPT__(, ) __VA_ARGS__);        \
+      fcl::exceptions::capture_and_rethrow(MESSAGE, std::source_location::current() __VA_OPT__(, ) __VA_ARGS__);        \
    }
 
 #define FCL_CAPTURE_LOG_AND_RETHROW(MESSAGE, ...)                                                                      \
    catch (...) {                                                                                                       \
-      fcl::exception::capture_and_log(MESSAGE __VA_OPT__(, ) __VA_ARGS__);                                             \
-      fcl::exception::capture_and_rethrow(MESSAGE, std::source_location::current() __VA_OPT__(, ) __VA_ARGS__);        \
+      fcl::exceptions::capture_and_log(MESSAGE __VA_OPT__(, ) __VA_ARGS__);                                             \
+      fcl::exceptions::capture_and_rethrow(MESSAGE, std::source_location::current() __VA_OPT__(, ) __VA_ARGS__);        \
    }
 
 #define FCL_CAPTURE_AND_LOG(MESSAGE, ...)                                                                              \
    catch (...) {                                                                                                       \
-      fcl::exception::capture_and_log(MESSAGE __VA_OPT__(, ) __VA_ARGS__);                                             \
+      fcl::exceptions::capture_and_log(MESSAGE __VA_OPT__(, ) __VA_ARGS__);                                             \
    }
 
 #define FCL_LOG_AND_RETHROW() FCL_CAPTURE_AND_RETHROW("rethrow")

@@ -1,7 +1,7 @@
 #include <boost/describe.hpp>
 #include <boost/test/unit_test.hpp>
 #include <chrono>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <string>
 
 import fcl.variant;
@@ -9,7 +9,7 @@ import fcl.variant.value;
 import fcl.variant.format;
 import fcl.core.chrono;
 import fcl.variant.described;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.crypto.base64;
 using namespace fcl;
 using std::string;

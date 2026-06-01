@@ -7,9 +7,9 @@
 
 namespace fcl::p2p {
 
-[[nodiscard]] exceptions::code p2p_code(const fcl::exception::base& error);
-[[noreturn]] void rethrow_transport_as_p2p(const fcl::exception::base& error);
-[[nodiscard]] bool is_orderly_stream_close(const fcl::exception::base& error) noexcept;
+[[nodiscard]] exceptions::code p2p_code(const fcl::exceptions::base& error);
+[[noreturn]] void rethrow_transport_as_p2p(const fcl::exceptions::base& error);
+[[nodiscard]] bool is_orderly_stream_close(const fcl::exceptions::base& error) noexcept;
 [[nodiscard]] std::uint64_t random_nonce();
 [[nodiscard]] std::string bytes_key(std::span<const std::uint8_t> bytes);
 boost::asio::awaitable<std::vector<std::uint8_t>>

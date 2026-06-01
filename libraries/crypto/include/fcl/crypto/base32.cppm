@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -7,7 +7,7 @@ module;
 
 export module fcl.crypto.base32;
 
-export import fcl.exception.exception;
+export import fcl.exceptions;
 import fcl.crypto.types;
 
 export namespace fcl::crypto::base32::exceptions {
@@ -18,7 +18,7 @@ enum class code : std::uint16_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.base32")
 
-using invalid_options = fcl::exception::coded_exception<code, code::invalid_options>;
+using invalid_options = fcl::exceptions::coded_exception<code, code::invalid_options>;
 
 } // namespace fcl::crypto::base32::exceptions
 

@@ -15,7 +15,7 @@ export module fcl.api.descriptor;
 
 export import fcl.api.exceptions;
 export import fcl.api.types;
-export import fcl.exception.exception;
+export import fcl.exceptions;
 export import fcl.raw.raw;
 
 export namespace fcl::api {
@@ -61,9 +61,9 @@ struct descriptor {
 
 template <typename Exception>
 error_identity exception_identity() {
-   static_assert(std::is_base_of_v<fcl::exception::base, Exception>,
-                 "API errors must derive from fcl::exception::base");
-   const auto code = fcl::exception::make_error_code(Exception::value);
+   static_assert(std::is_base_of_v<fcl::exceptions::base, Exception>,
+                 "API errors must derive from fcl::exceptions::base");
+   const auto code = fcl::exceptions::make_error_code(Exception::value);
    return error_identity{.category = code.category().name(), .code = static_cast<std::uint32_t>(code.value())};
 }
 
@@ -234,9 +234,9 @@ template <typename Interface> class method_builder {
           .thrower =
               [](const error_payload& payload) -> void {
              throw Exception{payload.message,
-                             fcl::exception::make_fields(
-                                 fcl::exception::ctx("remote.category", payload.identity.category),
-                                 fcl::exception::ctx("remote.code", payload.identity.code))};
+                             fcl::exceptions::make_fields(
+                                 fcl::exceptions::ctx("remote.category", payload.identity.category),
+                                 fcl::exceptions::ctx("remote.code", payload.identity.code))};
           },
       });
       return *this;

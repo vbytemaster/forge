@@ -30,7 +30,7 @@ modern FCL modules and Boost.Describe for structure traversal.
 
 Target: `fcl_raw`.
 
-Dependencies: `fcl_core`, `fcl_exception`, `fcl_reflect`, `fcl_variant`,
+Dependencies: `fcl_core`, `fcl_exceptions`, `fcl_reflect`, `fcl_variant`,
 Boost headers and Boost.Multiprecision.
 
 ## Examples

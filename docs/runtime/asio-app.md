@@ -163,7 +163,7 @@ Buildable examples:
   config.
 - [examples/app/exception_logging.cpp](../../examples/app/exception_logging.cpp)
   shows exception capture routed into `fcl_log` without making
-  `fcl_exception` depend on logging.
+  `fcl_exceptions` depend on logging.
 
 ## Failure And Rollback
 

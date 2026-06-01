@@ -9,14 +9,14 @@ namespace fcl::api {
 
 namespace {
 
-std::string external_message(const fcl::exception::base& error) {
+std::string external_message(const fcl::exceptions::base& error) {
    if (error.message().empty()) {
       return "request failed";
    }
    return error.message();
 }
 
-const error_descriptor* find_error(const method_descriptor& method, const fcl::exception::base& error) noexcept {
+const error_descriptor* find_error(const method_descriptor& method, const fcl::exceptions::base& error) noexcept {
    const auto& code = error.code();
    for (const auto& descriptor : method.errors) {
       if (descriptor.identity.category == code.category().name() &&
@@ -27,7 +27,7 @@ const error_descriptor* find_error(const method_descriptor& method, const fcl::e
    return nullptr;
 }
 
-error_payload make_error_payload(const fcl::exception::base& error, const error_descriptor* descriptor) {
+error_payload make_error_payload(const fcl::exceptions::base& error, const error_descriptor* descriptor) {
    if (descriptor == nullptr) {
       return make_internal_error_payload();
    }
@@ -48,7 +48,7 @@ error_payload make_error_payload(const fcl::exception::base& error, const error_
 
 } // namespace
 
-error_payload project_error(const method_descriptor& method, const fcl::exception::base& error) {
+error_payload project_error(const method_descriptor& method, const fcl::exceptions::base& error) {
    return make_error_payload(error, find_error(method, error));
 }
 
@@ -76,9 +76,9 @@ void raise_remote_error(const error_payload& payload, const method_descriptor* m
 
    throw exceptions::remote_internal{
        payload.message.empty() ? std::string{"remote API error"} : payload.message,
-       fcl::exception::make_fields(fcl::exception::ctx("remote.error", payload.error),
-                                   fcl::exception::ctx("remote.category", payload.identity.category),
-                                   fcl::exception::ctx("remote.code", payload.identity.code))};
+       fcl::exceptions::make_fields(fcl::exceptions::ctx("remote.error", payload.error),
+                                   fcl::exceptions::ctx("remote.category", payload.identity.category),
+                                   fcl::exceptions::ctx("remote.code", payload.identity.code))};
 }
 
 } // namespace fcl::api

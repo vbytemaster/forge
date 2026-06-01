@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <chrono>
 #include <memory>
@@ -86,7 +86,7 @@ namespace {
    return exceptions::code::internal;
 }
 
-[[noreturn]] void rethrow_quic_as_p2p(const fcl::exception::base& error) {
+[[noreturn]] void rethrow_quic_as_p2p(const fcl::exceptions::base& error) {
    const auto code = fcl::quic::exceptions::code_of(error);
    if (code) {
       FCL_THROW_CODE(map_quic_error(*code), error.what());
@@ -140,7 +140,7 @@ class quic_profile final {
    void listen(fcl::p2p::endpoint endpoint) {
       try {
          listener_ = std::make_unique<fcl::quic::listener>(runtime_, quic_endpoint_for(endpoint), server_options());
-      } catch (const fcl::exception::base& error) {
+      } catch (const fcl::exceptions::base& error) {
          rethrow_quic_as_p2p(error);
       }
    }
@@ -165,7 +165,7 @@ class quic_profile final {
              .local_endpoint = std::move(local_endpoint),
              .remote_endpoint = std::move(remote_endpoint),
          };
-      } catch (const fcl::exception::base& error) {
+      } catch (const fcl::exceptions::base& error) {
          rethrow_quic_as_p2p(error);
       }
    }
@@ -182,7 +182,7 @@ class quic_profile final {
              .local_endpoint = std::move(local_endpoint),
              .remote_endpoint = std::move(remote_endpoint),
          };
-      } catch (const fcl::exception::base& error) {
+      } catch (const fcl::exceptions::base& error) {
          rethrow_quic_as_p2p(error);
       }
    }

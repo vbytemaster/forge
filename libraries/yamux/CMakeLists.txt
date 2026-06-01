@@ -8,7 +8,7 @@ target_include_directories(fcl_yamux PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
    fcl_yamux PUBLIC
-      fcl_exception
+      fcl_exceptions
       fcl_transport
       Boost::asio
 )

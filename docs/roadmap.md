@@ -10,7 +10,7 @@ FCL.
 - Module-first public API under `libraries/<lib>/include/fcl/<lib>/*.cppm`.
 - Boost.Describe as canonical reflection metadata.
 - `fcl_raw` byte compatibility for retained old FC wire layouts.
-- Typed `fcl_exception` categories plus redacted context instead of old
+- Typed `fcl_exceptions` categories plus redacted context instead of old
   exception hierarchy.
 - Neutral `fcl_api` contracts for in-process plugin APIs and transport API
   bindings.
@@ -53,7 +53,7 @@ Build/test gates:
 
 ```bash
 cmake --build build/fcl-debug -j 1 \
-  --target fcl test_fcl test_fcl_exception test_fcl_raw test_fcl_json test_fcl_crypto \
+  --target fcl test_fcl test_fcl_exceptions test_fcl_raw test_fcl_json test_fcl_crypto \
   test_fcl_asio test_fcl_app test_fcl_schema test_fcl_config test_fcl_yaml \
   test_fcl_program_options test_fcl_env test_fcl_http_websocket test_fcl_quic_p2p \
   test_fcl_plugins test_fcl_tui

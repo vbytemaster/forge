@@ -38,7 +38,7 @@ Other primitives:
 
 Target: `fcl_crypto`.
 
-Dependencies: `fcl_core`, `fcl_exception`, `fcl_raw`, `fcl_reflect`,
+Dependencies: `fcl_core`, `fcl_exceptions`, `fcl_raw`, `fcl_reflect`,
 `fcl_variant`, OpenSSL::Crypto, GMP, secp256k1 and BLS vendor code.
 
 ## Examples

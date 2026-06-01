@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <cmath>
 #include <cstring>
 #include <exception>
@@ -13,7 +13,7 @@ module fcl.crypto.sha3;
 import fcl.core.utility;
 import fcl.crypto.hex;
 import fcl.crypto.hmac;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.variant;
 
 #include "_digest_common.hpp"

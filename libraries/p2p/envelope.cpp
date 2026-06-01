@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -57,7 +57,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
 
    try {
       return fcl::crypto::der::read_public_key(key.data);
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       FCL_THROW_EXCEPTION(exceptions::invalid_identity, error.what());
    }
 }
@@ -67,7 +67,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
    try {
       const auto signature = key.sign(message);
       return signature.visit([](const auto& value) { return bytes_from_range(value.serialize()); });
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       FCL_THROW_EXCEPTION(exceptions::invalid_identity, error.what());
    }
 }

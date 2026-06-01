@@ -1,5 +1,5 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <span>
 #include <string>
 #include <vector>
@@ -13,7 +13,7 @@ import fcl.crypto.x25519;
 import fcl.crypto.chacha20_poly1305;
 import fcl.crypto.sha256;
 import fcl.core.utility;
-import fcl.exception.exception;
+import fcl.exceptions;
 
 using namespace fcl::crypto;
 using namespace fcl::crypto::asymmetric;
@@ -138,7 +138,7 @@ BOOST_AUTO_TEST_CASE(chacha20_poly1305_authenticates_ciphertext) try {
    BOOST_CHECK_EQUAL_COLLECTIONS(plaintext.begin(), plaintext.end(), decrypted.begin(), decrypted.end());
 
    encrypted.back() ^= 0x01;
-   BOOST_CHECK_THROW((void)chacha20_poly1305::decrypt(key, nonce, ad, encrypted), fcl::exception::base);
+   BOOST_CHECK_THROW((void)chacha20_poly1305::decrypt(key, nonce, ad, encrypted), fcl::exceptions::base);
 }
 FCL_LOG_AND_RETHROW();
 

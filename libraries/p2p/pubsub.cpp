@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -99,7 +99,7 @@ void validate_topic(const topic& value, const options& opts) {
    }
    try {
       return fcl::crypto::der::read_public_key(key.data);
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       FCL_THROW_EXCEPTION(exceptions::invalid_identity, error.what());
    }
 }
@@ -664,7 +664,7 @@ void codec::sign_message(message& value, const fcl::crypto::asymmetric::private_
    const auto payload = signing_payload(value);
    try {
       value.signature = raw_signature(key.sign(payload));
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       FCL_THROW_EXCEPTION(exceptions::invalid_identity, error.what());
    }
 }
@@ -680,7 +680,7 @@ bool codec::verify_message(const message& value) {
       }
       const auto payload = signing_payload(value);
       return verify_identity_signature(*key, payload, value.signature);
-   } catch (const fcl::exception::base&) {
+   } catch (const fcl::exceptions::base&) {
       return false;
    }
 }

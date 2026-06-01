@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <array>
@@ -95,7 +95,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
 [[nodiscard]] fcl::crypto::asymmetric::private_key private_key_from_pem_for_noise(std::string_view pem) {
    try {
       return fcl::crypto::pem::read_private_key(pem);
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       throw_crypto_failure(error.what());
    }
 }
@@ -131,7 +131,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
    }
    try {
       return fcl::crypto::der::read_public_key(key.data);
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       throw_crypto_failure(error.what());
    }
 }
@@ -145,7 +145,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
    try {
       const auto signature = key.sign(message);
       return signature.visit([](const auto& value) { return bytes_from_range(value.serialize()); });
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       throw_crypto_failure(error.what());
    }
 }
@@ -229,7 +229,7 @@ struct x25519_key {
    const auto nonce = noise_nonce(nonce_value);
    try {
       return fcl::crypto::chacha20_poly1305::decrypt(cipher_key, nonce, ad, ciphertext);
-   } catch (const fcl::exception::base&) {
+   } catch (const fcl::exceptions::base&) {
       FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "Noise authentication failed");
    }
 }
@@ -618,7 +618,7 @@ class exact_negotiation_io {
             auto payload = std::move(frame.payload);
             buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(frame.consumed));
             co_return protocol_negotiation::decode_message(payload);
-         } catch (const fcl::exception::base& error) {
+         } catch (const fcl::exceptions::base& error) {
             const auto code = exceptions::code_of(error);
             if (!code || *code != exceptions::code::closed) {
                throw;
@@ -727,7 +727,7 @@ boost::asio::awaitable<void> negotiate_yamux(Connection& connection, bool outbou
    return exceptions::code::internal;
 }
 
-[[noreturn]] void rethrow_stcp_as_p2p(const fcl::exception::base& error) {
+[[noreturn]] void rethrow_stcp_as_p2p(const fcl::exceptions::base& error) {
    const auto code = fcl::stcp::exceptions::code_of(error);
    if (code) {
       FCL_THROW_CODE(map_stcp_error(*code), error.what());
@@ -778,7 +778,7 @@ boost::asio::awaitable<upgraded_session> finish_tls_outbound(fcl::tcp::connectio
       auto stream = std::move(tls).into_transport_stream();
       auto yamux = std::make_shared<fcl::yamux::session>(std::move(stream.stream), fcl::yamux::side::initiator);
       co_return upgraded_session{.peer = peer, .session = std::move(yamux)};
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       rethrow_stcp_as_p2p(error);
    }
 }
@@ -799,7 +799,7 @@ boost::asio::awaitable<upgraded_session> finish_tls_inbound(fcl::tcp::connection
       auto stream = std::move(tls).into_transport_stream();
       auto yamux = std::make_shared<fcl::yamux::session>(std::move(stream.stream), fcl::yamux::side::responder);
       co_return upgraded_session{.peer = peer, .session = std::move(yamux)};
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       rethrow_stcp_as_p2p(error);
    }
 }

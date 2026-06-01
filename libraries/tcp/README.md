@@ -81,7 +81,7 @@ co_await outbound.stream.async_write_frame(payload);
 
 ## Boundaries
 
-- Depends only on `fcl_transport`, `fcl_exception` and Boost.Asio.
+- Depends only on `fcl_transport`, `fcl_exceptions` and Boost.Asio.
 - Throws typed `fcl::tcp::exceptions::*` at the TCP boundary.
 - `dns`, `dns4` and `dns6` are connect-only host kinds.
 - Listen accepts only concrete `ip4` and `ip6` endpoints.

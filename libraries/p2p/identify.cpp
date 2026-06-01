@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -57,7 +57,7 @@ void append_string(std::vector<std::uint8_t>& out, std::uint32_t field, std::str
       return parse_endpoint(fcl::multiformats::multiaddr::from_bytes(value).to_string());
    } catch (const fcl::multiformats::exceptions::invalid_format&) {
       return std::nullopt;
-   } catch (const fcl::exception::base&) {
+   } catch (const fcl::exceptions::base&) {
       return std::nullopt;
    }
 }

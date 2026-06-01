@@ -1,11 +1,11 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <array>
 #include <cstdint>
 
 export module fcl.crypto.x25519;
 
-export import fcl.exception.exception;
+export import fcl.exceptions;
 
 export namespace fcl::crypto::x25519 {
 
@@ -18,8 +18,8 @@ enum class code : std::uint16_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.x25519")
 
-using invalid_key = fcl::exception::coded_exception<code, code::invalid_key>;
-using backend_error = fcl::exception::coded_exception<code, code::backend_error>;
+using invalid_key = fcl::exceptions::coded_exception<code, code::invalid_key>;
+using backend_error = fcl::exceptions::coded_exception<code, code::backend_error>;
 
 } // namespace exceptions
 

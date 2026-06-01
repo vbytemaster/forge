@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -59,16 +59,16 @@ using x509_ptr = std::unique_ptr<X509, x509_deleter>;
 }
 
 [[noreturn]] void throw_io_error(std::string message, const boost::system::error_code& error) {
-   FCL_THROW_EXCEPTION(exceptions::io_error, std::move(message), fcl::exception::ctx("reason", error.message()));
+   FCL_THROW_EXCEPTION(exceptions::io_error, std::move(message), fcl::exceptions::ctx("reason", error.message()));
 }
 
 [[noreturn]] void throw_handshake_failed(std::string message, const boost::system::error_code& error) {
    if (error == boost::asio::error::operation_aborted) {
       FCL_THROW_EXCEPTION(exceptions::canceled, "stcp handshake canceled",
-                          fcl::exception::ctx("reason", error.message()));
+                          fcl::exceptions::ctx("reason", error.message()));
    }
    FCL_THROW_EXCEPTION(exceptions::handshake_failed, std::move(message),
-                       fcl::exception::ctx("reason", error.message()));
+                       fcl::exceptions::ctx("reason", error.message()));
 }
 
 [[noreturn]] void throw_verification_failed(std::string message) {
@@ -78,11 +78,11 @@ using x509_ptr = std::unique_ptr<X509, x509_deleter>;
 [[noreturn]] void throw_read_write_error(const boost::system::error_code& error) {
    if (error == boost::asio::error::operation_aborted) {
       FCL_THROW_EXCEPTION(exceptions::canceled, "stcp connection operation canceled",
-                          fcl::exception::ctx("reason", error.message()));
+                          fcl::exceptions::ctx("reason", error.message()));
    }
    if (error == boost::asio::error::eof || error == boost::asio::error::connection_reset ||
        error == boost::asio::error::broken_pipe || error == boost::asio::ssl::error::stream_truncated) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "stcp connection closed", fcl::exception::ctx("reason", error.message()));
+      FCL_THROW_EXCEPTION(exceptions::closed, "stcp connection closed", fcl::exceptions::ctx("reason", error.message()));
    }
    throw_io_error("stcp connection I/O failed", error);
 }
@@ -164,7 +164,7 @@ void load_identity(asio::ssl::context& context, std::string_view certificate_pem
       context.use_private_key(asio::buffer(private_key_pem.data(), private_key_pem.size()), asio::ssl::context::pem);
    } catch (const boost::system::system_error& error) {
       FCL_THROW_EXCEPTION(exceptions::invalid_options, "failed to load stcp certificate or private key",
-                          fcl::exception::ctx("reason", error.code().message()));
+                          fcl::exceptions::ctx("reason", error.code().message()));
    }
 }
 
@@ -174,7 +174,7 @@ void load_trust(asio::ssl::context& context, const security_options& security) {
          context.add_certificate_authority(asio::buffer(security.trusted_ca_pem.data(), security.trusted_ca_pem.size()));
       } catch (const boost::system::system_error& error) {
          FCL_THROW_EXCEPTION(exceptions::invalid_options, "failed to load stcp trusted CA",
-                             fcl::exception::ctx("reason", error.code().message()));
+                             fcl::exceptions::ctx("reason", error.code().message()));
       }
       return;
    }
@@ -183,7 +183,7 @@ void load_trust(asio::ssl::context& context, const security_options& security) {
       context.set_default_verify_paths(error);
       if (error) {
          FCL_THROW_EXCEPTION(exceptions::invalid_options, "failed to load default TLS verify paths",
-                             fcl::exception::ctx("reason", error.message()));
+                             fcl::exceptions::ctx("reason", error.message()));
       }
    }
 }
@@ -310,7 +310,7 @@ void verify_host_name(const peer_certificate& certificate, std::string_view host
                                  : X509_check_ip_asc(parsed.get(), std::string{host}.c_str(), 0);
    if (ok != 1) {
       FCL_THROW_EXCEPTION(exceptions::verification_failed, "stcp peer certificate host mismatch",
-                          fcl::exception::ctx("host", std::string{host}));
+                          fcl::exceptions::ctx("host", std::string{host}));
    }
 }
 
@@ -331,7 +331,7 @@ void verify_peer(native_stream& stream, const security_options& security, std::s
       const auto expected = normalize_fingerprint(*security.expected_sha256_fingerprint);
       if (actual != expected) {
          FCL_THROW_EXCEPTION(exceptions::verification_failed, "stcp peer certificate fingerprint mismatch",
-                             fcl::exception::ctx("actual", actual));
+                             fcl::exceptions::ctx("actual", actual));
       }
    }
    if (security.verifier && !security.verifier(chain)) {
@@ -653,7 +653,7 @@ boost::asio::awaitable<connection> async_upgrade_client(tcp::connection source, 
       const auto verify_result = SSL_get_verify_result(stream.native_handle());
       if (options.security.verify_peer && verify_result != X509_V_OK) {
          FCL_THROW_EXCEPTION(exceptions::verification_failed, "stcp server certificate verification failed",
-                             fcl::exception::ctx("reason", X509_verify_cert_error_string(verify_result)));
+                             fcl::exceptions::ctx("reason", X509_verify_cert_error_string(verify_result)));
       }
       throw_handshake_failed("stcp client handshake failed", error);
    }

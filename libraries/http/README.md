@@ -227,7 +227,7 @@ boundary.
 - Do not log request bodies, headers or query strings before redaction. They may
   contain credentials or user data.
 - Do not catch product exceptions in every route by hand. Prefer typed
-  `fcl_exception` categories and let API bindings project them to
+  `fcl_exceptions` categories and let API bindings project them to
   `fcl::api::error_payload`.
 - Do not force all typed APIs into `POST /rpc`; use native HTTP route/status
   mapping where HTTP is the transport.

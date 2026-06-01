@@ -1,5 +1,5 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <chrono>
 #include <limits>
 #include <ostream>
@@ -9,7 +9,7 @@
 #include <tuple>
 #include <vector>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.crypto.hex;
 import fcl.crypto.modular_arithmetic;
 import fcl.core.utility;

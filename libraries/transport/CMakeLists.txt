@@ -14,6 +14,6 @@ target_include_directories(fcl_transport PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
    fcl_transport PUBLIC
-      fcl_exception
+      fcl_exceptions
       Boost::asio
 )

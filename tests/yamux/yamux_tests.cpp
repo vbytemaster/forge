@@ -1,6 +1,6 @@
 #include <boost/test/unit_test.hpp>
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <chrono>
 #include <cstdint>

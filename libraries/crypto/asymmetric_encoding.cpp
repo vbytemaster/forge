@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -15,7 +15,7 @@ import fcl.crypto.p256;
 import fcl.crypto.ripemd160;
 import fcl.crypto.secp256k1;
 import fcl.crypto.sha256;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.raw.datastream;
 import fcl.raw.raw;
 import fcl.variant;
@@ -83,8 +83,8 @@ struct base58_str_parser_impl<Result, Prefixes, Position, KeyType, Rem...> {
 template <typename Result, const char* const* Prefixes, int Position>
 struct base58_str_parser_impl<Result, Prefixes, Position> {
    static Result apply(const std::string& prefix_str, const std::string& data_str) {
-      FCL_ASSERT(false, "No matching suite type", fcl::exception::ctx("prefix", prefix_str),
-                 fcl::exception::ctx("data", data_str));
+      FCL_ASSERT(false, "No matching suite type", fcl::exceptions::ctx("prefix", prefix_str),
+                 fcl::exceptions::ctx("data", data_str));
    }
 };
 
@@ -94,11 +94,11 @@ template <const char* const* Prefixes, typename... Ts> struct base58_str_parser<
    static std::variant<Ts...> apply(const std::string& base58str) {
       const auto pivot = base58str.find('_');
       FCL_ASSERT(pivot != std::string::npos, "No delimiter in data, cannot determine suite type: ${str}",
-                 fcl::exception::ctx("str", base58str));
+                 fcl::exceptions::ctx("str", base58str));
 
       const auto prefix_str = base58str.substr(0, pivot);
       auto data_str = base58str.substr(pivot + 1);
-      FCL_ASSERT(!data_str.empty(), "Data only has suite type prefix: ${str}", fcl::exception::ctx("str", base58str));
+      FCL_ASSERT(!data_str.empty(), "Data only has suite type prefix: ${str}", fcl::exceptions::ctx("str", base58str));
 
       return base58_str_parser_impl<std::variant<Ts...>, Prefixes, 0, Ts...>::apply(prefix_str, data_str);
    }
@@ -196,12 +196,12 @@ template <typename Storage, const char* const* Prefixes>
 [[nodiscard]] Storage parse_fcl_text(const std::string& text, const char* base_prefix) {
    const auto pivot = text.find('_');
    FCL_ASSERT(pivot != std::string::npos, "No delimiter in string, cannot determine key type",
-              fcl::exception::ctx("str", text));
+              fcl::exceptions::ctx("str", text));
    const auto prefix_str = text.substr(0, pivot);
-   FCL_ASSERT(std::string_view(base_prefix) == prefix_str, "invalid key prefix", fcl::exception::ctx("str", text),
-              fcl::exception::ctx("prefix_str", prefix_str));
+   FCL_ASSERT(std::string_view(base_prefix) == prefix_str, "invalid key prefix", fcl::exceptions::ctx("str", text),
+              fcl::exceptions::ctx("prefix_str", prefix_str));
    auto data_str = text.substr(pivot + 1);
-   FCL_ASSERT(!data_str.empty(), "key has no data: ${str}", fcl::exception::ctx("str", text));
+   FCL_ASSERT(!data_str.empty(), "key has no data: ${str}", fcl::exceptions::ctx("str", text));
    return base58_str_parser<Storage, Prefixes>::apply(data_str);
 }
 

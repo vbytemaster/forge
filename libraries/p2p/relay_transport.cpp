@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <memory>
 #include <optional>
@@ -31,7 +31,7 @@ void trace_relay(std::string_view message) {
 [[nodiscard]] fcl::crypto::asymmetric::private_key private_key_from_pem(std::string_view pem) {
    try {
       return fcl::crypto::pem::read_private_key(pem);
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       FCL_THROW_EXCEPTION(exceptions::invalid_identity, error.what());
    }
 }

@@ -2,7 +2,7 @@
 #include <string>
 
 import fcl.variant;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.crypto.base64;
 
 using namespace fcl;

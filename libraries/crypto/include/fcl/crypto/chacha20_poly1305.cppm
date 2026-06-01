@@ -1,12 +1,12 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <array>
 #include <cstdint>
 #include <span>
 
 export module fcl.crypto.chacha20_poly1305;
 
-export import fcl.exception.exception;
+export import fcl.exceptions;
 import fcl.crypto.types;
 
 export namespace fcl::crypto::chacha20_poly1305 {
@@ -21,9 +21,9 @@ enum class code : std::uint16_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.chacha20_poly1305")
 
-using invalid_tag = fcl::exception::coded_exception<code, code::invalid_tag>;
-using authentication_failed = fcl::exception::coded_exception<code, code::authentication_failed>;
-using backend_error = fcl::exception::coded_exception<code, code::backend_error>;
+using invalid_tag = fcl::exceptions::coded_exception<code, code::invalid_tag>;
+using authentication_failed = fcl::exceptions::coded_exception<code, code::authentication_failed>;
+using backend_error = fcl::exceptions::coded_exception<code, code::backend_error>;
 
 } // namespace exceptions
 

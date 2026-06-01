@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -10,7 +10,7 @@ export module fcl.crypto.base58;
 
 import fcl.core.string;
 import fcl.core.utility;
-export import fcl.exception.exception;
+export import fcl.exceptions;
 import fcl.crypto.types;
 
 export namespace fcl::crypto::base58::exceptions {
@@ -22,8 +22,8 @@ enum class code : std::uint16_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.base58")
 
-using invalid_character = fcl::exception::coded_exception<code, code::invalid_character>;
-using backend_error = fcl::exception::coded_exception<code, code::backend_error>;
+using invalid_character = fcl::exceptions::coded_exception<code, code::invalid_character>;
+using backend_error = fcl::exceptions::coded_exception<code, code::backend_error>;
 
 } // namespace fcl::crypto::base58::exceptions
 

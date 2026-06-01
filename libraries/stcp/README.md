@@ -49,7 +49,7 @@ auto stream = std::move(tls).into_transport_stream();
 
 ## Boundaries
 
-- Depends on `fcl_tcp`, `fcl_transport`, `fcl_crypto`, `fcl_exception`,
+- Depends on `fcl_tcp`, `fcl_transport`, `fcl_crypto`, `fcl_exceptions`,
   Boost.Asio SSL and OpenSSL.
 - Throws typed `fcl::stcp::exceptions::*`.
 - Owns TLS mechanics: certificate/key loading, trust anchors, fingerprint

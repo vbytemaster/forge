@@ -1,7 +1,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/describe.hpp>
 #include <boost/test/unit_test.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <cstdint>
 #include <chrono>
@@ -27,7 +27,7 @@ enum class code : std::uint8_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "test.cache")
 
-using chunk_not_found = fcl::exception::coded_exception<code, code::chunk_not_found>;
+using chunk_not_found = fcl::exceptions::coded_exception<code, code::chunk_not_found>;
 
 } // namespace cache_errors
 
@@ -473,8 +473,8 @@ BOOST_AUTO_TEST_CASE(descriptor_declared_exception_maps_to_error_payload) {
 
    try {
       FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found",
-                          fcl::exception::ctx("ref", "bafk..."));
-   } catch (const fcl::exception::base& error) {
+                          fcl::exceptions::ctx("ref", "bafk..."));
+   } catch (const fcl::exceptions::base& error) {
       const auto payload = fcl::api::project_error(*method, error);
 
       BOOST_TEST(payload.error == "chunk_not_found");
@@ -544,19 +544,19 @@ BOOST_AUTO_TEST_CASE(registry_dispatch_invokes_typed_method_over_raw_frame) {
 class throwing_cache_impl final : public cache_api {
  public:
    boost::asio::awaitable<protocol::chunk> read(protocol::read_chunk) override {
-      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exception::ctx("ref", "abc"));
+      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exceptions::ctx("ref", "abc"));
    }
 
    boost::asio::awaitable<std::vector<protocol::chunk>> watch(protocol::read_chunk) override {
-      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exception::ctx("ref", "abc"));
+      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exceptions::ctx("ref", "abc"));
    }
 
    boost::asio::awaitable<protocol::chunk> upload(std::vector<protocol::read_chunk>) override {
-      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exception::ctx("ref", "abc"));
+      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exceptions::ctx("ref", "abc"));
    }
 
    boost::asio::awaitable<std::vector<protocol::chunk>> sync(std::vector<protocol::read_chunk>) override {
-      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exception::ctx("ref", "abc"));
+      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exceptions::ctx("ref", "abc"));
    }
 };
 

@@ -753,7 +753,7 @@ BOOST_AUTO_TEST_CASE(p2p_websocket_multiaddr_is_parseable_but_not_dialable) {
       try {
          fcl::asio::blocking::run(runtime, value.async_listen(endpoint));
          BOOST_FAIL("expected unsupported listen endpoint");
-      } catch (const fcl::exception::base& error) {
+      } catch (const fcl::exceptions::base& error) {
          BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
          BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
                     static_cast<int>(exceptions::code::unsupported_protocol));
@@ -762,7 +762,7 @@ BOOST_AUTO_TEST_CASE(p2p_websocket_multiaddr_is_parseable_but_not_dialable) {
       try {
          fcl::asio::blocking::run(runtime, value.async_connect(endpoint));
          BOOST_FAIL("expected unsupported connect endpoint");
-      } catch (const fcl::exception::base& error) {
+      } catch (const fcl::exceptions::base& error) {
          BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
          BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
                     static_cast<int>(exceptions::code::unsupported_protocol));
@@ -817,7 +817,7 @@ BOOST_AUTO_TEST_CASE(p2p_direct_tcp_rejects_tls_peer_mismatch) {
       (void)fcl::asio::blocking::run(
           runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = peer(150)}));
       BOOST_FAIL("expected TCP TLS peer mismatch");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
       BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::peer_verification_failed));
@@ -915,9 +915,9 @@ BOOST_AUTO_TEST_CASE(p2p_multistream_select_encodes_libp2p_messages) {
    BOOST_TEST(list.protocols.front().value == ping.value);
 
    BOOST_CHECK_THROW((void)decode_frame(std::vector<std::uint8_t>{0x81, 0x81, 0x01}),
-                     fcl::exception::base);
+                     fcl::exceptions::base);
    BOOST_CHECK_THROW((void)decode_message(std::vector<std::uint8_t>{'b', 'a', 'd', '\n'}),
-                     fcl::exception::base);
+                     fcl::exceptions::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_libp2p_reachability_relay_protocol_ids_are_exact) {
@@ -984,8 +984,8 @@ BOOST_AUTO_TEST_CASE(p2p_dht_codec_roundtrips_libp2p_message_shape_and_rejects_m
               static_cast<int>(dht::connection_type::connected));
 
    BOOST_CHECK_THROW((void)dht::codec::decode(std::vector<std::uint8_t>{0x02, 0x08, 0x63}),
-                     fcl::exception::base);
-   BOOST_CHECK_THROW((void)dht::codec::decode(std::vector<std::uint8_t>{0x01, 0x10}), fcl::exception::base);
+                     fcl::exceptions::base);
+   BOOST_CHECK_THROW((void)dht::codec::decode(std::vector<std::uint8_t>{0x01, 0x10}), fcl::exceptions::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_dht_routing_table_uses_sha256_xor_distance_and_bounds_results) {
@@ -1058,12 +1058,12 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_codec_roundtrips_register_discover_cookie_an
    BOOST_TEST(rendezvous::codec::read_cookie(decoded_discover.discover_response_value->cookie) == 42U);
 
    BOOST_CHECK_THROW((void)rendezvous::codec::read_cookie(std::vector<std::uint8_t>{1, 2, 3}),
-                     fcl::exception::base);
+                     fcl::exceptions::base);
    BOOST_CHECK_THROW((void)rendezvous::codec::encode(rendezvous::message{
                          .type = rendezvous::message_type::discover,
                          .discover_value = rendezvous::discover_request{.namespace_name = std::string(300, 'x')},
                      }),
-                     fcl::exception::base);
+                     fcl::exceptions::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_gossipsub_codec_roundtrips_v11_rpc_and_rejects_malformed) {
@@ -1115,10 +1115,10 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_codec_roundtrips_v11_rpc_and_rejects_malforme
    BOOST_TEST(decoded.control_value->prunes.front().backoff == std::chrono::seconds{60});
 
    BOOST_CHECK_THROW((void)pubsub::codec::decode(std::vector<std::uint8_t>{0xff, 0xff, 0xff, 0xff}, pubsub::options{}),
-                     fcl::exception::base);
+                     fcl::exceptions::base);
    auto strict = pubsub::options{};
    strict.limits.max_rpc_size = 4;
-   BOOST_CHECK_THROW((void)pubsub::codec::decode(encoded, strict), fcl::exception::base);
+   BOOST_CHECK_THROW((void)pubsub::codec::decode(encoded, strict), fcl::exceptions::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_gossipsub_signing_rejects_tampered_payload) {
@@ -1151,11 +1151,11 @@ BOOST_AUTO_TEST_CASE(p2p_signed_envelope_seals_and_verifies_domain_payload_and_s
    BOOST_TEST(decoded.payload == payload, boost::test_tools::per_element());
    BOOST_TEST(decoded.signer().to_string() == identity.peer.to_string());
    BOOST_CHECK_NO_THROW(decoded.verify("libp2p-relay-rsvp", identity.peer));
-   BOOST_CHECK_THROW(decoded.verify("wrong-domain", identity.peer), fcl::exception::base);
+   BOOST_CHECK_THROW(decoded.verify("wrong-domain", identity.peer), fcl::exceptions::base);
 
    auto tampered = decoded;
    tampered.payload.back() ^= 0x01U;
-   BOOST_CHECK_THROW(tampered.verify("libp2p-relay-rsvp", identity.peer), fcl::exception::base);
+   BOOST_CHECK_THROW(tampered.verify("libp2p-relay-rsvp", identity.peer), fcl::exceptions::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_relay_voucher_uses_signed_envelope_and_rejects_stale_or_wrong_signer) {
@@ -1176,9 +1176,9 @@ BOOST_AUTO_TEST_CASE(p2p_relay_voucher_uses_signed_envelope_and_rejects_stale_or
    BOOST_TEST(decoded.expires_at == reservation.expires_at);
 
    BOOST_CHECK_THROW((void)relay::codec::open_reservation_voucher(envelope, relay_identity.peer, reservation.expires_at),
-                     fcl::exception::base);
+                     fcl::exceptions::base);
    BOOST_CHECK_THROW((void)relay::codec::open_reservation_voucher(envelope, other_identity.peer, 4'102'444'799ULL),
-                     fcl::exception::base);
+                     fcl::exceptions::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_resource_manager_enforces_relay_stream_and_byte_limits) {
@@ -1300,7 +1300,7 @@ BOOST_AUTO_TEST_CASE(p2p_libp2p_relay_wire_roundtrips_statuses_limits_and_vouche
    }
 
    BOOST_CHECK_THROW((void)relay::codec::decode_hop(std::vector<std::uint8_t>{0x02, 0x28, 0x64}),
-                     fcl::exception::base);
+                     fcl::exceptions::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_libp2p_dcutr_codec_matches_spec_shape) {
@@ -1426,11 +1426,11 @@ BOOST_AUTO_TEST_CASE(p2p_libp2p_autonat_v2_rejects_oversized_data_response_and_u
                          .dial_data_response =
                              reachability::v2::dial_data_response{.data = std::vector<std::uint8_t>(4097, 0x42)},
                      }),
-                     fcl::exception::base);
+                     fcl::exceptions::base);
 
    // Message { dialResponse: DialResponse { status: 999 } }
    BOOST_CHECK_THROW((void)reachability::codec::decode_v2(std::vector<std::uint8_t>{0x06, 0x12, 0x04, 0x08, 0xe7, 0x07}),
-                     fcl::exception::base);
+                     fcl::exceptions::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_autonat_v2_probe_public_and_persists_observation) {
@@ -1502,7 +1502,7 @@ BOOST_AUTO_TEST_CASE(p2p_relay_policy_options_are_behavioral) {
    try {
       (void)fcl::asio::blocking::run(runtime, client.async_reserve_relay(relay_node.local_peer()));
       BOOST_FAIL("expected relay service policy rejection");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::relay_rejected));
    }
 
@@ -1512,7 +1512,7 @@ BOOST_AUTO_TEST_CASE(p2p_relay_policy_options_are_behavioral) {
    try {
       (void)fcl::asio::blocking::run(runtime, disabled_client.async_reserve_relay(relay_node.local_peer()));
       BOOST_FAIL("expected relay client policy rejection");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::relay_not_available));
    }
 
@@ -1554,7 +1554,7 @@ BOOST_AUTO_TEST_CASE(p2p_relay_connect_requires_target_reservation) {
                            .allow_hole_punch = false,
                        }));
       BOOST_FAIL("expected relay CONNECT rejection without target reservation");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::relay_rejected));
    }
 
@@ -2034,7 +2034,7 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_outbound_byte_limit_rejects_publish_without_s
    BOOST_CHECK_THROW((void)fcl::asio::blocking::run(runtime, publisher.async_publish(
                                                                pubsub::topic{.value = "fcl.limit"},
                                                                std::vector<std::uint8_t>{'o', 'v', 'e', 'r'})),
-                     fcl::exception::base);
+                     fcl::exceptions::base);
    BOOST_TEST(publisher.metrics().backpressure_rejections >= 1U);
    BOOST_TEST(!publisher.metrics().stopped);
 
@@ -2282,7 +2282,7 @@ BOOST_AUTO_TEST_CASE(p2p_unsupported_protocol_rejection_keeps_session_usable) {
       (void)fcl::asio::blocking::run(
           runtime, client.async_open_protocol_stream(server.local_peer(), protocol_id{.value = "/product/missing/1"}));
       BOOST_FAIL("expected unsupported protocol rejection");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::unsupported_protocol));
    }
 
@@ -2361,7 +2361,7 @@ BOOST_AUTO_TEST_CASE(p2p_duplicate_protocol_handler_is_rejected) {
    try {
       register_echo(value);
       BOOST_FAIL("expected duplicate protocol handler rejection");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::duplicate_protocol));
    }
 }
@@ -2388,7 +2388,7 @@ BOOST_AUTO_TEST_CASE(p2p_connect_rejects_non_positive_timeout) {
           client.async_connect(make_quic_endpoint(9),
                                node::connect_options{.expected_peer = peer(33), .timeout = std::chrono::milliseconds{0}}));
       BOOST_FAIL("expected invalid connect timeout");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_options));
    }
 
@@ -2404,7 +2404,7 @@ BOOST_AUTO_TEST_CASE(p2p_open_protocol_rejects_non_positive_timeout) {
           runtime, client.async_open_protocol_stream(peer(40), builtins::echo,
                                                      node::open_options{.timeout = std::chrono::milliseconds{0}}));
       BOOST_FAIL("expected invalid protocol open timeout");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_options));
    }
 
@@ -2609,7 +2609,7 @@ BOOST_AUTO_TEST_CASE(p2p_production_options_reject_missing_mtls_identity) {
    try {
       validate(node::options{});
       BOOST_FAIL("expected missing mTLS identity rejection");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_options));
    }
 }
@@ -2621,7 +2621,7 @@ BOOST_AUTO_TEST_CASE(p2p_production_options_require_peer_store_path) {
           .private_key_pem = std::string{test_private_key()},
       });
       BOOST_FAIL("expected missing persistent peer store rejection");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_options));
    }
 }

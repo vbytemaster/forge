@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <algorithm>
 #include <array>
 #include <bls12-381/bls12-381.hpp>
@@ -11,7 +11,7 @@ module;
 
 module fcl.crypto.bls;
 
-import fcl.exception.exception;
+import fcl.exceptions;
 
 namespace fcl::crypto::bls {
 
@@ -19,7 +19,7 @@ inline std::array<uint8_t, 96> deserialize_base64url(const std::string& base64ur
    auto res =
        std::mismatch(config::public_key_prefix.begin(), config::public_key_prefix.end(), base64urlstr.begin());
    FCL_ASSERT(res.first == config::public_key_prefix.end(), "BLS Public Key has invalid format : ${str}",
-              fcl::exception::ctx("str", base64urlstr));
+              fcl::exceptions::ctx("str", base64urlstr));
    auto data_str = base64urlstr.substr(config::public_key_prefix.size());
    return fcl::crypto::bls::detail::deserialize_base64url<std::array<uint8_t, 96>>(data_str);
 }

@@ -28,7 +28,7 @@
 
 import fcl.asio.blocking;
 import fcl.asio.runtime;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.quic.endpoint;
 import fcl.quic.exceptions;
 import fcl.quic.options;
@@ -282,12 +282,12 @@ void add_extension(X509* certificate, X509* issuer, int nid, std::string_view va
    return out;
 }
 
-[[nodiscard]] bool has_quic_code(const fcl::exception::base& error, fcl::quic::exceptions::code expected) {
+[[nodiscard]] bool has_quic_code(const fcl::exceptions::base& error, fcl::quic::exceptions::code expected) {
    const auto actual = fcl::quic::exceptions::code_of(error);
    return actual && *actual == expected;
 }
 
-void require_quic_code(const fcl::exception::base& error, fcl::quic::exceptions::code expected) {
+void require_quic_code(const fcl::exceptions::base& error, fcl::quic::exceptions::code expected) {
    BOOST_TEST_REQUIRE(has_quic_code(error, expected));
 }
 
@@ -378,7 +378,7 @@ boost::asio::awaitable<void> options_and_limit_override(fcl::asio::runtime& runt
    try {
       (void)co_await client.session.async_open_stream();
       BOOST_FAIL("expected stream limit rejection from transport override");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       require_quic_code(error, fcl::quic::exceptions::code::backpressure_rejected);
    }
 
@@ -395,14 +395,14 @@ boost::asio::awaitable<void> invalid_endpoints_are_typed(fcl::asio::runtime& run
    try {
       (void)co_await connector.async_connect(tcp_endpoint(9443));
       BOOST_FAIL("expected invalid protocol rejection");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       require_quic_code(error, fcl::quic::exceptions::code::invalid_endpoint);
    }
 
    try {
       (void)co_await connector.async_connect(loopback_quic(0));
       BOOST_FAIL("expected zero-port rejection");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       require_quic_code(error, fcl::quic::exceptions::code::invalid_endpoint);
    }
 
@@ -410,7 +410,7 @@ boost::asio::awaitable<void> invalid_endpoints_are_typed(fcl::asio::runtime& run
       auto listener = fcl::quic::make_session_listener(runtime, dns_quic(0), make_server_options(material));
       (void)listener;
       BOOST_FAIL("expected DNS listen rejection");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       require_quic_code(error, fcl::quic::exceptions::code::invalid_endpoint);
    }
 }
@@ -426,7 +426,7 @@ boost::asio::awaitable<void> cancellation_unblocks_listener_and_rejects_connecto
    try {
       (void)co_await take_result(accept);
       BOOST_FAIL("expected canceled listener accept to fail");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       const auto acceptable = has_quic_code(error, fcl::quic::exceptions::code::connection_closed) ||
                               has_quic_code(error, fcl::quic::exceptions::code::canceled);
       BOOST_TEST(acceptable);
@@ -437,7 +437,7 @@ boost::asio::awaitable<void> cancellation_unblocks_listener_and_rejects_connecto
    try {
       (void)co_await connector.async_connect(local);
       BOOST_FAIL("expected canceled connector to reject new connects");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       require_quic_code(error, fcl::quic::exceptions::code::canceled);
    }
 }
@@ -470,8 +470,8 @@ BOOST_AUTO_TEST_CASE(endpoint_conversion_preserves_transport_shape) {
    BOOST_TEST(roundtrip.port == 9443U);
 
    BOOST_CHECK_EXCEPTION(
-       (void)fcl::quic::from_transport_endpoint(tcp_endpoint(9443)), fcl::exception::base,
-       [](const fcl::exception::base& error) {
+       (void)fcl::quic::from_transport_endpoint(tcp_endpoint(9443)), fcl::exceptions::base,
+       [](const fcl::exceptions::base& error) {
           return has_quic_code(error, fcl::quic::exceptions::code::invalid_endpoint);
        });
 }

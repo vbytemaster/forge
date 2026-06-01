@@ -11,7 +11,7 @@ target_include_directories(fcl_tui PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 target_link_libraries(
    fcl_tui
    PUBLIC
-      fcl_exception
+      fcl_exceptions
    PRIVATE
       ${FCL_TUI_NOTCURSES_TARGET}
 )

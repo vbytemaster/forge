@@ -1,11 +1,11 @@
 module;
 
 #include <cstdint>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 export module fcl.raw.exceptions;
 
-export import fcl.exception.exception;
+export import fcl.exceptions;
 
 export namespace fcl::raw::exceptions {
 
@@ -16,7 +16,7 @@ enum class code : std::uint16_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.raw")
 
-using range_error = fcl::exception::coded_exception<code, code::range_error>;
-using codec_error = fcl::exception::coded_exception<code, code::codec_error>;
+using range_error = fcl::exceptions::coded_exception<code, code::range_error>;
+using codec_error = fcl::exceptions::coded_exception<code, code::codec_error>;
 
 } // namespace fcl::raw::exceptions

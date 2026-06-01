@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <vector>
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>

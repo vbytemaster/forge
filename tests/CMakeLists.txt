@@ -27,12 +27,12 @@ target_link_libraries(test_fcl fcl Boost::included_unit_test_framework)
 add_test(NAME test_fcl COMMAND test_fcl WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_exception
+   test_fcl_exceptions
    unit/main.cpp
-   exception/exception_tests.cpp
+   exceptions/exception_tests.cpp
 )
-target_link_libraries(test_fcl_exception fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_exception COMMAND test_fcl_exception WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_fcl_exceptions fcl Boost::included_unit_test_framework)
+add_test(NAME test_fcl_exceptions COMMAND test_fcl_exceptions WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
    test_fcl_log

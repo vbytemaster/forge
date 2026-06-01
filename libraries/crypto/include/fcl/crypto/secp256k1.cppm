@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <array>
 #include <boost/describe.hpp>
 #include <cstdint>
@@ -14,7 +14,7 @@ export module fcl.crypto.secp256k1;
 import fcl.crypto.bigint;
 import fcl.crypto.sha256;
 import fcl.crypto.sha512;
-export import fcl.exception.exception;
+export import fcl.exceptions;
 export import fcl.crypto.types;
 import fcl.raw.raw;
 
@@ -30,10 +30,10 @@ enum class code : std::uint16_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.secp256k1")
 
-using invalid_input = fcl::exception::coded_exception<code, code::invalid_input>;
-using invalid_signature = fcl::exception::coded_exception<code, code::invalid_signature>;
-using invalid_options = fcl::exception::coded_exception<code, code::invalid_options>;
-using backend_error = fcl::exception::coded_exception<code, code::backend_error>;
+using invalid_input = fcl::exceptions::coded_exception<code, code::invalid_input>;
+using invalid_signature = fcl::exceptions::coded_exception<code, code::invalid_signature>;
+using invalid_options = fcl::exceptions::coded_exception<code, code::invalid_options>;
+using backend_error = fcl::exceptions::coded_exception<code, code::backend_error>;
 
 } // namespace exceptions
 

@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <cstdint>
 #include <exception>
 #include <string>
@@ -7,7 +7,7 @@ module;
 
 module fcl.crypto.hex;
 
-import fcl.exception.exception;
+import fcl.exceptions;
 
 namespace fcl::crypto {
 
@@ -19,7 +19,7 @@ uint8_t from_hex(char c) {
    if (c >= 'A' && c <= 'F')
       return c - 'A' + 10;
    FCL_THROW_EXCEPTION(hex::exceptions::invalid_character, "invalid hex character",
-                       fcl::exception::ctx("c", std::string(&c, 1)));
+                       fcl::exceptions::ctx("c", std::string(&c, 1)));
    return 0;
 }
 

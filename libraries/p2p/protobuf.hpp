@@ -1,6 +1,6 @@
 #pragma once
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 namespace fcl::p2p::detail {
 

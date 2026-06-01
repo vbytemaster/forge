@@ -1,7 +1,7 @@
 module;
 
 #include <boost/asio/awaitable.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -67,7 +67,7 @@ class api_binding {
       auto request = fcl::raw::unpack<fcl::api::frame>(payload);
       if (request.codec != codec_) {
          FCL_THROW_EXCEPTION(fcl::api::exceptions::codec_failed, "QUIC API frame codec is not accepted",
-                             fcl::exception::ctx("codec", request.codec.value));
+                             fcl::exceptions::ctx("codec", request.codec.value));
       }
       if (grouped_stream_method(request)) {
          calls.observe(request);
@@ -77,7 +77,7 @@ class api_binding {
             auto next = fcl::raw::unpack<fcl::api::frame>(next_payload);
             if (next.codec != codec_) {
                FCL_THROW_EXCEPTION(fcl::api::exceptions::codec_failed, "QUIC API frame codec is not accepted",
-                                   fcl::exception::ctx("codec", next.codec.value));
+                                   fcl::exceptions::ctx("codec", next.codec.value));
             }
             if (next.kind != fcl::api::frame_kind::stream_end) {
                calls.observe(next);
@@ -106,7 +106,7 @@ class api_binding {
             auto request = fcl::raw::unpack<fcl::api::frame>(payload);
             if (request.codec != codec_) {
                FCL_THROW_EXCEPTION(fcl::api::exceptions::codec_failed, "QUIC API frame codec is not accepted",
-                                   fcl::exception::ctx("codec", request.codec.value));
+                                   fcl::exceptions::ctx("codec", request.codec.value));
             }
             if (request.kind == fcl::api::frame_kind::request && grouped_stream_method(request)) {
                calls.observe(request);
@@ -133,7 +133,7 @@ class api_binding {
             }
             auto responses = co_await plan_.dispatch_many(std::move(request), calls);
             co_await write_responses(stream, responses);
-         } catch (const fcl::exception::base& error) {
+         } catch (const fcl::exceptions::base& error) {
             if (fcl::quic::exceptions::is(error, fcl::quic::exceptions::code::connection_closed) ||
                 fcl::quic::exceptions::is(error, fcl::quic::exceptions::code::stream_closed) ||
                 fcl::quic::exceptions::is(error, fcl::quic::exceptions::code::stream_reset) ||

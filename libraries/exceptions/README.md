@@ -1,6 +1,6 @@
-# fcl_exception
+# fcl_exceptions
 
-`fcl_exception` is the central FCL exception layer: std-compatible typed
+`fcl_exceptions` is the central FCL exception layer: std-compatible typed
 exceptions, numeric category codes, redacted diagnostic context and FC-like
 capture semantics without bringing back the old FC exception hierarchy.
 
@@ -22,14 +22,13 @@ capture semantics without bringing back the old FC exception hierarchy.
 
 Modules:
 
-- `fcl.exception.exception`
-- `fcl.exception.exceptions`
+- `fcl.exceptions`
 
 Macro-only header:
 
-- `fcl/exception/macros.hpp`
+- `fcl/exceptions/macros.hpp`
 
-Target: `fcl_exception`.
+Target: `fcl_exceptions`.
 
 Dependencies: `fcl_core` only. It must not import `log`, `variant`, `json`,
 `raw` or `crypto`.
@@ -39,14 +38,14 @@ Dependencies: `fcl_core` only. It must not import `log`, `variant`, `json`,
 ### Throw With Context
 
 ```cpp
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 
 FCL_THROW(
    "cannot open vault",
-   fcl::exception::ctx("path", "fcl.vault"),
-   fcl::exception::secret("passphrase", "not logged"));
+   fcl::exceptions::ctx("path", "fcl.vault"),
+   fcl::exceptions::secret("passphrase", "not logged"));
 ```
 
 `secret(...)` values render as `<redacted>` in `what()`,
@@ -55,9 +54,9 @@ FCL_THROW(
 ### Throw A Typed Exception
 
 ```cpp
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 
 namespace cache_errors {
 enum class code : std::uint8_t {
@@ -67,13 +66,13 @@ enum class code : std::uint8_t {
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "storlane.cache")
 
 using chunk_not_found =
-   fcl::exception::coded_exception<code, code::chunk_not_found>;
+   fcl::exceptions::coded_exception<code, code::chunk_not_found>;
 } // namespace cache_errors
 
 FCL_THROW_EXCEPTION(
    cache_errors::chunk_not_found,
    "chunk not found",
-   fcl::exception::ctx("ref", ref));
+   fcl::exceptions::ctx("ref", ref));
 ```
 
 Callers can catch the concrete type:
@@ -89,16 +88,16 @@ try {
 ### Assert With Debug Context
 
 ```cpp
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 
 void open_slot(std::uint32_t index, std::uint32_t capacity) {
    FCL_ASSERT(
       index < capacity,
       "slot index is out of range",
-      fcl::exception::ctx("index", index),
-      fcl::exception::ctx("capacity", capacity));
+      fcl::exceptions::ctx("index", index),
+      fcl::exceptions::ctx("capacity", capacity));
 }
 ```
 
@@ -109,36 +108,36 @@ standard exceptions such as `std::invalid_argument` and `std::out_of_range`.
 ### Preserve Nested Cause
 
 ```cpp
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 
 try {
    parse_config();
 } FCL_CAPTURE_AND_RETHROW(
    "config bootstrap failed",
-   fcl::error::ctx("component", "http"))
+   fcl::exceptions::ctx("component", "http"))
 ```
 
 The rethrow uses `std::throw_with_nested`, so callers can inspect the outer
-`fcl::error::context_error` and the original inner exception.
+`fcl::exceptions::context_error` and the original inner exception.
 
 ### Format A Nested Exception Chain
 
 ```cpp
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 
 try {
    try {
       parse_config();
    } FCL_CAPTURE_AND_RETHROW(
       "config load failed",
-      fcl::error::ctx("source", "service.yaml"),
-      fcl::error::secret("passphrase", passphrase))
+      fcl::exceptions::ctx("source", "service.yaml"),
+      fcl::exceptions::secret("passphrase", passphrase))
 } catch (const std::exception& error) {
-   auto chain = fcl::error::format_exception_chain(error);
+   auto chain = fcl::exceptions::format_exception_chain(error);
    // chain contains outer context, inner std::exception::what(), and redacted secrets.
 }
 ```
@@ -146,9 +145,9 @@ try {
 ### Deadline Check
 
 ```cpp
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
-FCL_CHECK_DEADLINE(deadline, fcl::error::ctx("phase", "handshake"));
+FCL_CHECK_DEADLINE(deadline, fcl::exceptions::ctx("phase", "handshake"));
 ```
 
 This throws a std-compatible `context_error` with `std::errc::timed_out`.
@@ -160,15 +159,15 @@ shutdown, and return an error. Do not turn recoverable startup failures into
 `abort()` or detached cleanup.
 
 ```cpp
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 
 int run_service() {
    try {
       return run_foreground();
    } catch (const std::exception& error) {
-      auto chain = fcl::error::format_exception_chain(error);
+      auto chain = fcl::exceptions::format_exception_chain(error);
       report_startup_failure(chain);
       request_stop_noexcept();
       shutdown_best_effort();
@@ -182,19 +181,19 @@ use typed domain errors for decisions such as retry, backoff or user messaging.
 
 ### Route Capture Logs To `fcl_log`
 
-`fcl_exception` exposes a neutral callback. The consuming program may route that
+`fcl_exceptions` exposes a neutral callback. The consuming program may route that
 callback to `fcl_log`, syslog, a test capture vector or any other sink.
 
 ```cpp
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.log.logger;
 import fcl.log.record;
 
 auto log = fcl::logger{"worker"};
 
-fcl::error::set_log_sink([&](std::string_view chain) {
+fcl::exceptions::set_log_sink([&](std::string_view chain) {
    log.error(
       "cleanup failed",
       {
@@ -207,8 +206,8 @@ try {
    cleanup_best_effort();
 } FCL_CAPTURE_AND_LOG(
    "cleanup best-effort path failed",
-   fcl::error::ctx("phase", "shutdown"),
-   fcl::error::secret("session-token", token))
+   fcl::exceptions::ctx("phase", "shutdown"),
+   fcl::exceptions::secret("session-token", token))
 ```
 
 `FCL_CAPTURE_AND_LOG` deliberately swallows the current exception after routing
@@ -230,7 +229,7 @@ extra context; non-FCL exceptions are wrapped into a sanitized `context_error`.
 
 ## Typical Mistakes
 
-- Do not catch only `fcl::error::context_error` at process boundaries. Also catch
+- Do not catch only `fcl::exceptions::context_error` at process boundaries. Also catch
   `std::exception` because many FCL layers intentionally throw standard errors.
 - Do not put secrets into the plain message string. Use `secret(key, value)`.
 - Do not use `FCL_CAPTURE_AND_LOG` on correctness paths if the error must
@@ -242,5 +241,5 @@ extra context; non-FCL exceptions are wrapped into a sanitized `context_error`.
 
 ## Tests
 
-`test_fcl_exception` covers redaction, nested exception chains, assertion macro
+`test_fcl_exceptions` covers redaction, nested exception chains, assertion macro
 behavior and deadline errors.

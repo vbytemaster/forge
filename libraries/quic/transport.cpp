@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <atomic>
 #include <cstdint>
@@ -94,9 +94,9 @@ class quic_session_concept final : public fcl::transport::detail::session_concep
 
 [[noreturn]] void throw_invalid_transport_endpoint(const fcl::transport::endpoint& value, std::string message) {
    FCL_THROW_EXCEPTION(exceptions::invalid_endpoint, std::move(message),
-                       fcl::exception::ctx("host", value.host),
-                       fcl::exception::ctx("port", value.port),
-                       fcl::exception::ctx("protocol", static_cast<int>(value.protocol)));
+                       fcl::exceptions::ctx("host", value.host),
+                       fcl::exceptions::ctx("port", value.port),
+                       fcl::exceptions::ctx("protocol", static_cast<int>(value.protocol)));
 }
 
 [[nodiscard]] endpoint validate_connect_endpoint(const fcl::transport::endpoint& value) {

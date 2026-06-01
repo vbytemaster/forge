@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <cstdint>
 #include <span>
 
@@ -8,7 +8,7 @@ export module fcl.crypto.der;
 
 import fcl.crypto.asymmetric;
 import fcl.crypto.types;
-export import fcl.exception.exception;
+export import fcl.exceptions;
 
 export namespace fcl::crypto::der {
 
@@ -22,9 +22,9 @@ enum class code : std::uint16_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.der")
 
-using invalid_key = fcl::exception::coded_exception<code, code::invalid_key>;
-using invalid_options = fcl::exception::coded_exception<code, code::invalid_options>;
-using backend_error = fcl::exception::coded_exception<code, code::backend_error>;
+using invalid_key = fcl::exceptions::coded_exception<code, code::invalid_key>;
+using invalid_options = fcl::exceptions::coded_exception<code, code::invalid_options>;
+using backend_error = fcl::exceptions::coded_exception<code, code::backend_error>;
 
 } // namespace exceptions
 

@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <array>
 #include <string>
 #include <tuple>
@@ -10,7 +10,7 @@ export module fcl.crypto.webauthn;
 
 import fcl.crypto.sha256;
 import fcl.crypto.p256;
-export import fcl.exception.exception;
+export import fcl.exceptions;
 import fcl.raw.raw;
 
 export namespace fcl::crypto::webauthn {
@@ -25,9 +25,9 @@ enum class code : std::uint16_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.webauthn")
 
-using invalid_client_data = fcl::exception::coded_exception<code, code::invalid_client_data>;
-using invalid_signature = fcl::exception::coded_exception<code, code::invalid_signature>;
-using invalid_options = fcl::exception::coded_exception<code, code::invalid_options>;
+using invalid_client_data = fcl::exceptions::coded_exception<code, code::invalid_client_data>;
+using invalid_signature = fcl::exceptions::coded_exception<code, code::invalid_signature>;
+using invalid_options = fcl::exceptions::coded_exception<code, code::invalid_options>;
 
 } // namespace exceptions
 

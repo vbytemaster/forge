@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -155,7 +155,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
    }
    try {
       return fcl::crypto::pem::read_private_key(options.private_key_pem);
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       throw_identity(error.what());
    }
 }
@@ -173,7 +173,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
    try {
       const auto signature = key.sign(message);
       return signature.visit([](const auto& value) { return bytes_from_range(value.serialize()); });
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       throw_identity(error.what());
    }
 }

@@ -10,7 +10,7 @@
 #include <string_view>
 #include <vector>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.crypto.hex;
 import fcl.crypto.sha256;
 import fcl.raw.datastream;

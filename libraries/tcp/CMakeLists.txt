@@ -11,7 +11,7 @@ target_include_directories(fcl_tcp PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
    fcl_tcp PUBLIC
-      fcl_exception
+      fcl_exceptions
       fcl_transport
       Boost::asio
 )

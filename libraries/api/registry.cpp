@@ -77,7 +77,7 @@ boost::asio::awaitable<frame> registry::dispatch(frame request) const {
    try {
       response.payload = co_await method->raw_invoker(entry->implementation, std::move(request.payload));
       co_return response;
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       response.kind = frame_kind::error;
       fcl::raw::pack(response.payload, project_error(*method, error));
       co_return response;
@@ -167,7 +167,7 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_many(frame request
       }
       responses.push_back(make_response_base(request, frame_kind::stream_end));
       co_return responses;
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       co_return std::vector<frame>{make_error_response(request, project_error(*method, error))};
    } catch (const std::exception&) {
       co_return std::vector<frame>{make_error_response(request, make_internal_error_payload())};
@@ -287,7 +287,7 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_stream(std::vector
       }
       responses.push_back(make_response_base(request, frame_kind::stream_end));
       co_return responses;
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       co_return std::vector<frame>{make_error_response(request, project_error(*method, error))};
    } catch (const std::exception&) {
       co_return std::vector<frame>{make_error_response(request, make_internal_error_payload())};

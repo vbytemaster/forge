@@ -63,4 +63,4 @@ The resulting logger is sync-only:
 - `logger` owns level checks and dispatch;
 - stacktrace backend is private;
 - exception capture is connected by callback, not by dependency from
-  `fcl_exception` to `fcl_log`.
+  `fcl_exceptions` to `fcl_log`.

@@ -1,8 +1,8 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 import fcl.crypto.base64;
-import fcl.exception.exception;
+import fcl.exceptions;
 
 using namespace fcl;
 using namespace std::literals;
@@ -55,7 +55,7 @@ FCL_LOG_AND_RETHROW();
 BOOST_AUTO_TEST_CASE(base64dec_bad_stuff) try {
    auto input = "YWJjMTIzJCYoKSc/tPU$B+n5h="s;
 
-   BOOST_CHECK_EXCEPTION(fcl::crypto::base64_decode(input), fcl::exception::context_error, [](const fcl::exception::context_error& e) {
+   BOOST_CHECK_EXCEPTION(fcl::crypto::base64_decode(input), fcl::exceptions::context_error, [](const fcl::exceptions::context_error& e) {
       return std::string(e.what()).find("encountered non-base64 character") != std::string::npos;
    });
 }

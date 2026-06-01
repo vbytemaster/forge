@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -25,9 +25,9 @@ using asio_tcp = boost::asio::ip::tcp;
 
 [[noreturn]] void throw_invalid_endpoint(const transport::endpoint& endpoint, std::string message) {
    FCL_THROW_EXCEPTION(exceptions::invalid_endpoint, std::move(message),
-                       fcl::exception::ctx("host", endpoint.host),
-                       fcl::exception::ctx("port", endpoint.port),
-                       fcl::exception::ctx("protocol", static_cast<int>(endpoint.protocol)));
+                       fcl::exceptions::ctx("host", endpoint.host),
+                       fcl::exceptions::ctx("port", endpoint.port),
+                       fcl::exceptions::ctx("protocol", static_cast<int>(endpoint.protocol)));
 }
 
 [[noreturn]] void throw_invalid_options(std::string message) {
@@ -36,9 +36,9 @@ using asio_tcp = boost::asio::ip::tcp;
 
 [[noreturn]] void throw_listen_failed(const transport::endpoint& endpoint, const boost::system::error_code& error) {
    FCL_THROW_EXCEPTION(exceptions::listen_failed, "tcp listen failed",
-                       fcl::exception::ctx("host", endpoint.host),
-                       fcl::exception::ctx("port", endpoint.port),
-                       fcl::exception::ctx("reason", error.message()));
+                       fcl::exceptions::ctx("host", endpoint.host),
+                       fcl::exceptions::ctx("port", endpoint.port),
+                       fcl::exceptions::ctx("reason", error.message()));
 }
 
 void validate_options(const options& value) {
@@ -93,12 +93,12 @@ void configure_socket(asio_tcp::socket& socket, const options& tcp_options) {
    socket.set_option(asio_tcp::no_delay{tcp_options.no_delay}, error);
    if (error) {
       FCL_THROW_EXCEPTION(exceptions::io_error, "failed to configure tcp no_delay",
-                          fcl::exception::ctx("reason", error.message()));
+                          fcl::exceptions::ctx("reason", error.message()));
    }
    socket.set_option(boost::asio::socket_base::keep_alive{tcp_options.keep_alive}, error);
    if (error) {
       FCL_THROW_EXCEPTION(exceptions::io_error, "failed to configure tcp keep_alive",
-                          fcl::exception::ctx("reason", error.message()));
+                          fcl::exceptions::ctx("reason", error.message()));
    }
 }
 
@@ -166,7 +166,7 @@ struct listener::impl final : transport::detail::stream_listener_concept {
             FCL_THROW_EXCEPTION(exceptions::canceled, "tcp listener accept canceled");
          }
          FCL_THROW_EXCEPTION(exceptions::accept_failed, "tcp accept failed",
-                             fcl::exception::ctx("reason", error.message()));
+                             fcl::exceptions::ctx("reason", error.message()));
       }
 
       configure_socket(socket, tcp_options);

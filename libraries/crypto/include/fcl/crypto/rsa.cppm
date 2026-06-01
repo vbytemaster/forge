@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <boost/describe.hpp>
 #include <cstdint>
 #include <span>
@@ -8,7 +8,7 @@ module;
 
 export module fcl.crypto.rsa;
 
-export import fcl.exception.exception;
+export import fcl.exceptions;
 import fcl.crypto.types;
 import fcl.raw.raw;
 
@@ -24,9 +24,9 @@ enum class code : std::uint16_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.rsa")
 
-using invalid_key = fcl::exception::coded_exception<code, code::invalid_key>;
-using invalid_signature = fcl::exception::coded_exception<code, code::invalid_signature>;
-using backend_error = fcl::exception::coded_exception<code, code::backend_error>;
+using invalid_key = fcl::exceptions::coded_exception<code, code::invalid_key>;
+using invalid_signature = fcl::exceptions::coded_exception<code, code::invalid_signature>;
+using backend_error = fcl::exceptions::coded_exception<code, code::backend_error>;
 
 } // namespace exceptions
 

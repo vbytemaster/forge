@@ -28,7 +28,7 @@ module;
 
 module fcl.websocket.connection;
 
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.websocket.exceptions;
 
 namespace fcl::websocket {
@@ -358,7 +358,7 @@ void connection::start_read_loop() {
              if (self->impl_->on_message) {
                 try {
                    co_await self->impl_->on_message(*self, std::move(message));
-                } catch (const fcl::exception::base&) {
+                } catch (const fcl::exceptions::base&) {
                    self->impl_->record_handler_failure();
                    if (self->impl_->on_close) {
                       self->impl_->on_close(*self);

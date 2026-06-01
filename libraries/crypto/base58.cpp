@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2012 The Bitcoin Developers
 // Distributed under the MIT/X11 software license, see the accompanying
@@ -33,7 +33,7 @@ module fcl.crypto.base58;
 
 import fcl.core.string;
 import fcl.core.utility;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.crypto.types;
 
 [[noreturn]] void raise_bignum_failure(std::string message) {
@@ -619,7 +619,7 @@ bytes base58_decode(std::string_view base58_str) {
    const auto input = std::string{base58_str};
    if (!DecodeBase58(input.c_str(), out)) {
       FCL_THROW_EXCEPTION(base58::exceptions::invalid_character, "unable to decode base58 string",
-                          fcl::exception::ctx("base58_str", input));
+                          fcl::exceptions::ctx("base58_str", input));
    }
    return bytes{out.begin(), out.end()};
 }

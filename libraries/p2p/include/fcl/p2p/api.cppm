@@ -1,7 +1,7 @@
 module;
 
 #include <boost/asio/awaitable.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <cstddef>
 #include <functional>
@@ -78,7 +78,7 @@ class api_binding {
             auto request = fcl::raw::unpack<fcl::api::frame>(payload);
             if (request.codec != codec_) {
                FCL_THROW_EXCEPTION(fcl::api::exceptions::codec_failed, "P2P API frame codec is not accepted",
-                                   fcl::exception::ctx("codec", request.codec.value));
+                                   fcl::exceptions::ctx("codec", request.codec.value));
             }
             if (request.kind == fcl::api::frame_kind::request && grouped_stream_method(request)) {
                calls.observe(request);
@@ -105,7 +105,7 @@ class api_binding {
             }
             auto responses = co_await plan_.dispatch_many(std::move(request), calls);
             co_await write_responses(stream.stream, responses);
-         } catch (const fcl::exception::base& error) {
+         } catch (const fcl::exceptions::base& error) {
             if (fcl::p2p::exceptions::is(error, fcl::p2p::exceptions::code::closed) ||
                 fcl::transport::exceptions::is(error, fcl::transport::exceptions::code::closed) ||
                 fcl::transport::exceptions::is(error, fcl::transport::exceptions::code::canceled)) {
@@ -152,12 +152,12 @@ class api_binding {
    void validate_stream(const node::incoming_protocol_stream& stream) const {
       if (stream.protocol != protocol_) {
          FCL_THROW_EXCEPTION(fcl::p2p::exceptions::unsupported_protocol, "P2P API binding received wrong protocol",
-                             fcl::exception::ctx("protocol", stream.protocol.value));
+                             fcl::exceptions::ctx("protocol", stream.protocol.value));
       }
       if (peer_policy_.require_known_peer) {
          if (owner_ == nullptr || !owner_->peers().find(stream.session.remote_peer).has_value()) {
             FCL_THROW_EXCEPTION(fcl::p2p::exceptions::peer_not_found, "P2P API peer is not known",
-                                fcl::exception::ctx("peer", stream.session.remote_peer.value));
+                                fcl::exceptions::ctx("peer", stream.session.remote_peer.value));
          }
       }
    }
@@ -283,7 +283,7 @@ class route_builder {
       }
       if (!handler_) {
          FCL_THROW_EXCEPTION(fcl::p2p::exceptions::unsupported_protocol, "P2P route handler must not be empty",
-                             fcl::exception::ctx("protocol", protocol_.value));
+                             fcl::exceptions::ctx("protocol", protocol_.value));
       }
       return route_binding{std::move(protocol_), std::move(handler_)};
    }

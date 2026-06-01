@@ -85,6 +85,6 @@ The focused gate is:
 
 ```sh
 ctest --test-dir build/fcl-typed-exceptions-debug --output-on-failure \
-  -R "^(test_fcl_exception|test_fcl_raw|test_fcl_api|test_fcl_app|test_fcl_http_websocket|test_fcl_quic_p2p|test_fcl_plugins)$" \
+  -R "^(test_fcl_exceptions|test_fcl_raw|test_fcl_api|test_fcl_app|test_fcl_http_websocket|test_fcl_quic_p2p|test_fcl_plugins)$" \
   --timeout 300
 ```

@@ -198,7 +198,7 @@ set_target_properties(
 set(
    FCL_SOURCE_INCLUDE_DIRS
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/core/include"
-   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/exception/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/exceptions/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/reflect/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/schema/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/variant/include"
@@ -321,7 +321,7 @@ endif()
 
 
 add_subdirectory(libraries/core)
-add_subdirectory(libraries/exception)
+add_subdirectory(libraries/exceptions)
 add_subdirectory(libraries/reflect)
 add_subdirectory(libraries/schema)
 add_subdirectory(libraries/variant)
@@ -353,7 +353,7 @@ endif()
 set(
    FCL_LEAF_TARGETS
    fcl_core
-   fcl_exception
+   fcl_exceptions
    fcl_reflect
    fcl_schema
    fcl_variant
@@ -416,7 +416,7 @@ install(
 
 install(
    DIRECTORY libraries/core/include/fcl
-             libraries/exception/include/fcl
+             libraries/exceptions/include/fcl
              libraries/reflect/include/fcl
              libraries/schema/include/fcl
              libraries/variant/include/fcl

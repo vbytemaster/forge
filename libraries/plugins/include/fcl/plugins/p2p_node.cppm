@@ -2,7 +2,7 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/describe.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -19,7 +19,7 @@ import fcl.app.plugin;
 import fcl.app.plugin_context;
 import fcl.app.plugin_registry;
 import fcl.config.component;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.p2p;
 import fcl.schema;
 
@@ -80,16 +80,16 @@ class p2p_node::exceptions {
       invalid_delivery_policy = 10,
    };
 
-   using plugin_not_initialized = fcl::exception::coded_exception<code, code::plugin_not_initialized>;
-   using route_conflict = fcl::exception::coded_exception<code, code::route_conflict>;
-   using outbox_required = fcl::exception::coded_exception<code, code::outbox_required>;
-   using outbox_unavailable = fcl::exception::coded_exception<code, code::outbox_unavailable>;
-   using delivery_queue_full = fcl::exception::coded_exception<code, code::delivery_queue_full>;
-   using delivery_expired = fcl::exception::coded_exception<code, code::delivery_expired>;
-   using delivery_cancelled = fcl::exception::coded_exception<code, code::delivery_cancelled>;
-   using relay_policy_denied = fcl::exception::coded_exception<code, code::relay_policy_denied>;
-   using no_delivery_path = fcl::exception::coded_exception<code, code::no_delivery_path>;
-   using invalid_delivery_policy = fcl::exception::coded_exception<code, code::invalid_delivery_policy>;
+   using plugin_not_initialized = fcl::exceptions::coded_exception<code, code::plugin_not_initialized>;
+   using route_conflict = fcl::exceptions::coded_exception<code, code::route_conflict>;
+   using outbox_required = fcl::exceptions::coded_exception<code, code::outbox_required>;
+   using outbox_unavailable = fcl::exceptions::coded_exception<code, code::outbox_unavailable>;
+   using delivery_queue_full = fcl::exceptions::coded_exception<code, code::delivery_queue_full>;
+   using delivery_expired = fcl::exceptions::coded_exception<code, code::delivery_expired>;
+   using delivery_cancelled = fcl::exceptions::coded_exception<code, code::delivery_cancelled>;
+   using relay_policy_denied = fcl::exceptions::coded_exception<code, code::relay_policy_denied>;
+   using no_delivery_path = fcl::exceptions::coded_exception<code, code::no_delivery_path>;
+   using invalid_delivery_policy = fcl::exceptions::coded_exception<code, code::invalid_delivery_policy>;
 };
 
 FCL_DECLARE_EXCEPTION_CATEGORY(p2p_node::exceptions::code, "fcl.plugins.p2p_node")

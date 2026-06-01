@@ -1,6 +1,6 @@
 #include <boost/test/unit_test.hpp>
 #include <boost/describe.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -12,7 +12,7 @@ import fcl.crypto.aes;
 import fcl.crypto.kdf;
 import fcl.crypto.random;
 import fcl.crypto.types;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.raw.raw;
 
 struct encrypted_record {

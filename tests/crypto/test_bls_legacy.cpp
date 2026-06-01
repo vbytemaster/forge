@@ -1,11 +1,11 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <array>
 #include <bls12-381/bls12-381.hpp>
 #include <iostream>
 #include <vector>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 
 import fcl.crypto.bls;
 
@@ -302,113 +302,113 @@ BOOST_AUTO_TEST_CASE(bls_prefix_encoding_check) try {
 
    // test no pivot delimiter
    BOOST_CHECK_THROW(private_key("PVTBLSvh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("PUBBLS82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("SIGBLSRrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
-       fcl::exception::context_error);
+       fcl::exceptions::context_error);
 
    // test first prefix validation
    BOOST_CHECK_THROW(private_key("XYZ_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("XYZ_BLS_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("XYZ_BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
-       fcl::exception::context_error);
+       fcl::exceptions::context_error);
 
    // test second prefix validation
    BOOST_CHECK_THROW(private_key("PVT_XYZ_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("PUB_XYZ_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("SIG_XYZ_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
-       fcl::exception::context_error);
+       fcl::exceptions::context_error);
 
    // test missing prefix
-   BOOST_CHECK_THROW(private_key("vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"), fcl::exception::context_error);
+   BOOST_CHECK_THROW(private_key("vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"), fcl::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
-       fcl::exception::context_error);
+       fcl::exceptions::context_error);
 
    // test incomplete prefix
    BOOST_CHECK_THROW(private_key("PVT_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("PUB_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("SIG_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
-       fcl::exception::context_error);
+       fcl::exceptions::context_error);
    BOOST_CHECK_THROW(private_key("BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("BLS_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
-       fcl::exception::context_error);
+       fcl::exceptions::context_error);
 
    // test invalid data / invalid checksum
    BOOST_CHECK_THROW(private_key("PVT_BLS_wh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("PUB_BLS_92P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("SIG_BLS_SrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
-       fcl::exception::context_error);
+       fcl::exceptions::context_error);
    BOOST_CHECK_THROW(private_key("PVT_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5zc"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("PUB_BLS_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhdg"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("SIG_BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJug"),
-       fcl::exception::context_error);
+       fcl::exceptions::context_error);
    BOOST_CHECK_THROW(private_key("PVT_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yd"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("PUB_BLS_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhTg"),
-                     fcl::exception::context_error);
+                     fcl::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("SIG_BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJUg"),
-       fcl::exception::context_error);
+       fcl::exceptions::context_error);
 }
 FCL_LOG_AND_RETHROW();
 

@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <boost/describe.hpp>
 #include <cstddef>
 #include <ostream>
@@ -17,7 +17,7 @@ import fcl.crypto.p256;
 import fcl.crypto.rsa;
 import fcl.crypto.secp256k1;
 import fcl.crypto.sha256;
-export import fcl.exception.exception;
+export import fcl.exceptions;
 import fcl.reflect.reflect;
 import fcl.variant;
 import fcl.variant.described;
@@ -34,8 +34,8 @@ enum class code : std::uint16_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.asymmetric")
 
-using invalid_key = fcl::exception::coded_exception<code, code::invalid_key>;
-using invalid_options = fcl::exception::coded_exception<code, code::invalid_options>;
+using invalid_key = fcl::exceptions::coded_exception<code, code::invalid_key>;
+using invalid_options = fcl::exceptions::coded_exception<code, code::invalid_options>;
 
 } // namespace exceptions
 

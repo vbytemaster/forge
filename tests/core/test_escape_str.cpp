@@ -1,8 +1,8 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 import fcl.core.string;
-import fcl.exception.exception;
+import fcl.exceptions;
 
 using namespace fcl;
 using namespace std::literals;

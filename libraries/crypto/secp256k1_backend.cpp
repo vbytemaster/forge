@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <exception>
 #include <memory>
 #include <secp256k1.h>
@@ -9,7 +9,7 @@ module;
 module fcl.crypto.secp256k1;
 
 import fcl.crypto.sha256;
-import fcl.exception.exception;
+import fcl.exceptions;
 #include "secp256k1_backend.hpp"
 
 /* used by mixed + secp256k1 */

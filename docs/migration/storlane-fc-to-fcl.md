@@ -42,7 +42,7 @@ Public APIs live in module files under `libraries/<lib>/include/fcl/<lib>`.
 Macro-only headers remain textual, for example:
 
 ```cpp
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <fcl/log/macros.hpp>
 ```
 
@@ -119,20 +119,20 @@ Old exception hierarchy and old throw/declare macros are removed. New errors are
 std-compatible:
 
 ```cpp
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 
 try {
    load_config();
 } FCL_CAPTURE_AND_RETHROW(
    "config load failed",
-   fcl::exception::ctx("source", "service.yaml"),
-   fcl::exception::secret("passphrase", passphrase))
+   fcl::exceptions::ctx("source", "service.yaml"),
+   fcl::exceptions::secret("passphrase", passphrase))
 ```
 
 Catch `std::exception` at process boundaries. Use
-`fcl::exception::context_error` only when you specifically need structured fields.
+`fcl::exceptions::context_error` only when you specifically need structured fields.
 
 ## Logging
 
@@ -148,7 +148,7 @@ log.info("started", {fcl::log_ctx("component", "api")});
 log.error("failed", {fcl::log_secret("token", token)});
 ```
 
-Use `fcl::exception::set_log_sink(...)` to route exception capture into the logger.
+Use `fcl::exceptions::set_log_sink(...)` to route exception capture into the logger.
 `fcl_log` remains sync-only; async logging should be a downstream adapter if
 needed.
 

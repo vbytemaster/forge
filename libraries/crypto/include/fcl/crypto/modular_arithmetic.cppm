@@ -1,10 +1,10 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <cstdint>
 
 export module fcl.crypto.modular_arithmetic;
 
-export import fcl.exception.exception;
+export import fcl.exceptions;
 import fcl.crypto.types;
 
 export namespace fcl::crypto::modular_arithmetic::exceptions {
@@ -15,7 +15,7 @@ enum class code : std::uint16_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.modular_arithmetic")
 
-using invalid_modulus = fcl::exception::coded_exception<code, code::invalid_modulus>;
+using invalid_modulus = fcl::exceptions::coded_exception<code, code::invalid_modulus>;
 
 } // namespace fcl::crypto::modular_arithmetic::exceptions
 

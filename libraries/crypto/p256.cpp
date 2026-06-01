@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include "openssl_backend.hpp"
 #include <openssl/core_names.h>
 #include <openssl/bn.h>
@@ -23,7 +23,7 @@ module fcl.crypto.p256;
 import fcl.crypto.random;
 import fcl.crypto.sha256;
 import fcl.crypto.sha512;
-import fcl.exception.exception;
+import fcl.exceptions;
 
 namespace fcl::crypto::p256 {
 namespace detail {
@@ -85,8 +85,8 @@ const ec_group& get_curve() {
 }
 
 void raise_openssl_failure(const char* message) {
-   FCL_THROW_EXCEPTION(exceptions::backend_error, "OpenSSL error", fcl::exception::ctx("message", message),
-                       fcl::exception::ctx("code", static_cast<uint32_t>(ERR_get_error())));
+   FCL_THROW_EXCEPTION(exceptions::backend_error, "OpenSSL error", fcl::exceptions::ctx("message", message),
+                       fcl::exceptions::ctx("code", static_cast<uint32_t>(ERR_get_error())));
 }
 
 bool is_empty(const public_key_data& key) {
@@ -121,8 +121,8 @@ public_key_data point_to_public_key_data(const EC_POINT* point) {
    public_key_data result;
    const auto written = EC_POINT_point2oct(group, point, POINT_CONVERSION_COMPRESSED,
                                            reinterpret_cast<unsigned char*>(result.data()), result.size(), ctx);
-   FCL_ASSERT(written == result.size(), "unexpected P-256 public key size", fcl::exception::ctx("written", written),
-              fcl::exception::ctx("expected", result.size()));
+   FCL_ASSERT(written == result.size(), "unexpected P-256 public key size", fcl::exceptions::ctx("written", written),
+              fcl::exceptions::ctx("expected", result.size()));
    return result;
 }
 
@@ -135,7 +135,7 @@ public_key_point_data point_to_uncompressed_data(const public_key_data& data) {
    const auto written = EC_POINT_point2oct(group, point, POINT_CONVERSION_UNCOMPRESSED,
                                            reinterpret_cast<unsigned char*>(result.data()), result.size(), ctx);
    FCL_ASSERT(written == result.size(), "unexpected uncompressed P-256 public key size",
-              fcl::exception::ctx("written", written), fcl::exception::ctx("expected", result.size()));
+              fcl::exceptions::ctx("written", written), fcl::exceptions::ctx("expected", result.size()));
    return result;
 }
 
@@ -422,7 +422,7 @@ public_key public_key::add(const fcl::crypto::sha256& digest) const {
          FCL_THROW_EXCEPTION(exceptions::invalid_options, "point at infinity");
       return public_key(point_to_public_key_data(result));
    }
-   FCL_CAPTURE_AND_RETHROW("digest: ${digest}", fcl::exception::ctx("digest", digest));
+   FCL_CAPTURE_AND_RETHROW("digest: ${digest}", fcl::exceptions::ctx("digest", digest));
 }
 
 private_key::private_key() : my(std::make_unique<detail::private_key_impl>()) {}
@@ -467,8 +467,8 @@ signature private_key::sign(const fcl::crypto::sha256& digest) const {
    const auto der = sign_der(my->_key, digest);
    signature sig;
    std::memset(sig.data(), 0, sig.size());
-   FCL_ASSERT(der.size() <= sig.size(), "P-256 DER signature is too large", fcl::exception::ctx("der_size", der.size()),
-              fcl::exception::ctx("signature_size", sig.size()));
+   FCL_ASSERT(der.size() <= sig.size(), "P-256 DER signature is too large", fcl::exceptions::ctx("der_size", der.size()),
+              fcl::exceptions::ctx("signature_size", sig.size()));
    std::memcpy(sig.data(), der.data(), der.size());
    return sig;
 }
@@ -547,7 +547,7 @@ compact_signature private_key::sign_compact(const fcl::crypto::sha256& digest) c
       auto sig = parse_der_signature(der);
       return signature_from_ecdsa(my_pub_key, sig, digest);
    }
-   FCL_CAPTURE_AND_RETHROW("failed to sign ${digest}", fcl::exception::ctx("digest", digest));
+   FCL_CAPTURE_AND_RETHROW("failed to sign ${digest}", fcl::exceptions::ctx("digest", digest));
 }
 
 private_key& private_key::operator=(private_key&& pk) {

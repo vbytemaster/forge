@@ -4,11 +4,11 @@
 #include <string_view>
 #include <vector>
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 import fcl.crypto.base58;
 import fcl.crypto.types;
-import fcl.exception.exception;
+import fcl.exceptions;
 
 BOOST_AUTO_TEST_SUITE(base58)
 

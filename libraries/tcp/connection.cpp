@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <atomic>
 #include <cstdint>
@@ -38,17 +38,17 @@ using asio_tcp = boost::asio::ip::tcp;
 }
 
 [[noreturn]] void throw_io_error(std::string message, const boost::system::error_code& error) {
-   FCL_THROW_EXCEPTION(exceptions::io_error, std::move(message), fcl::exception::ctx("reason", error.message()));
+   FCL_THROW_EXCEPTION(exceptions::io_error, std::move(message), fcl::exceptions::ctx("reason", error.message()));
 }
 
 [[noreturn]] void throw_read_write_error(const boost::system::error_code& error) {
    if (error == boost::asio::error::operation_aborted) {
       FCL_THROW_EXCEPTION(exceptions::canceled, "tcp connection operation canceled",
-                          fcl::exception::ctx("reason", error.message()));
+                          fcl::exceptions::ctx("reason", error.message()));
    }
    if (error == boost::asio::error::eof || error == boost::asio::error::connection_reset ||
        error == boost::asio::error::broken_pipe) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "tcp connection closed", fcl::exception::ctx("reason", error.message()));
+      FCL_THROW_EXCEPTION(exceptions::closed, "tcp connection closed", fcl::exceptions::ctx("reason", error.message()));
    }
    throw_io_error("tcp connection I/O failed", error);
 }

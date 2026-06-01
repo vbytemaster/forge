@@ -4,10 +4,10 @@
 #include <type_traits>
 #include <vector>
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 import fcl.multiformats;
-import fcl.exception.exception;
+import fcl.exceptions;
 
 namespace {
 

@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -59,7 +59,7 @@ class stream_io {
             auto payload = std::move(frame.payload);
             buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(frame.consumed));
             co_return decode_message(payload, opts_);
-         } catch (const fcl::exception::base& error) {
+         } catch (const fcl::exceptions::base& error) {
             if (exceptions::code_of(error).value() != exceptions::code::closed) {
                throw;
             }
@@ -100,7 +100,7 @@ class p2p_stream_io {
             auto payload = std::move(frame.payload);
             buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(frame.consumed));
             co_return decode_message(payload, opts_);
-         } catch (const fcl::exception::base& error) {
+         } catch (const fcl::exceptions::base& error) {
             if (exceptions::code_of(error).value() != exceptions::code::closed) {
                throw;
             }

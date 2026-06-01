@@ -488,7 +488,7 @@ BOOST_AUTO_TEST_CASE(quic_endpoint_rejects_non_quic_scheme) {
    try {
       (void)parse_endpoint(std::string{"https"} + "://" + std::string{"127.0.0.1"} + ":" + std::to_string(9443));
       BOOST_FAIL("expected typed QUIC exception");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_endpoint));
    }
 }
@@ -505,7 +505,7 @@ BOOST_AUTO_TEST_CASE(quic_connect_timeout_wins_over_pre_connection_error_race) {
           client.async_connect(endpoint{.host = "not a valid host name", .port = 443}, loopback_client_options()),
           std::chrono::milliseconds{2'000}, "pre-connection error timeout winner");
       BOOST_FAIL("expected QUIC connect timeout");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::connect_timeout));
    }
 }
@@ -537,7 +537,7 @@ BOOST_AUTO_TEST_CASE(quic_frame_codec_rejects_oversized_payload) {
    try {
       (void)encode_frame(payload, frame_codec_options{.max_frame_size = 3});
       BOOST_FAIL("expected typed QUIC exception");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::frame_too_large));
    }
 }
@@ -566,7 +566,7 @@ BOOST_AUTO_TEST_CASE(quic_options_validation_rejects_bad_alpn) {
    try {
       validate(options);
       BOOST_FAIL("expected typed QUIC exception");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_options));
    }
 }
@@ -1007,7 +1007,7 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_alpn_mismatch) {
                                                             .security = security_options{.verify_peer = false},
                                                         }));
       BOOST_FAIL("expected QUIC handshake/alpn failure");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout ||
                               fcl::quic::exceptions::code_of(error).value() == exceptions::code::alpn_mismatch || fcl::quic::exceptions::code_of(error).value() == exceptions::code::internal;
       BOOST_TEST(acceptable);
@@ -1032,7 +1032,7 @@ BOOST_AUTO_TEST_CASE(quic_connect_timeout_limits_stalled_handshake_budget) {
                               client.async_connect(to_quic_endpoint(blackhole.local_endpoint()), std::move(options)),
                               std::chrono::milliseconds{2'000}, "blackhole connect timeout");
       BOOST_FAIL("expected QUIC connect timeout");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::connect_timeout));
    }
    const auto elapsed =
@@ -1060,7 +1060,7 @@ BOOST_AUTO_TEST_CASE(quic_failed_handshake_releases_listener_connection_slot) {
                                                    }),
                               std::chrono::milliseconds{2'000}, "failed alpn connect");
       BOOST_FAIL("expected QUIC ALPN failure");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout ||
                               fcl::quic::exceptions::code_of(error).value() == exceptions::code::alpn_mismatch || fcl::quic::exceptions::code_of(error).value() == exceptions::code::internal;
       BOOST_TEST(acceptable);
@@ -1105,7 +1105,7 @@ BOOST_AUTO_TEST_CASE(quic_remote_close_during_active_read_is_reported) {
    try {
       (void)fcl::asio::blocking::run(runtime, framed.async_read_frame());
       BOOST_FAIL("expected remote stream close to unblock read with typed error");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_closed ||
                               fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_reset;
       BOOST_TEST(acceptable);
@@ -1159,7 +1159,7 @@ BOOST_AUTO_TEST_CASE(quic_connection_cancel_rejects_new_streams) {
    try {
       (void)fcl::asio::blocking::run(runtime, client_connection.async_open_stream());
       BOOST_FAIL("expected canceled connection to reject new streams");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::canceled;
       BOOST_TEST(acceptable);
    }
@@ -1227,7 +1227,7 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_ca_certificate_hostname_mismatch) {
       (void)run_with_deadline(runtime, client.async_connect(server.local_endpoint(), std::move(client_options_value)),
                               std::chrono::milliseconds{5'000}, "CA hostname mismatch connect");
       BOOST_FAIL("expected QUIC hostname verification failure");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::tls_failed ||
                               fcl::quic::exceptions::code_of(error).value() == exceptions::code::peer_verification_failed ||
                               fcl::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout || fcl::quic::exceptions::code_of(error).value() == exceptions::code::canceled;
@@ -1281,7 +1281,7 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_missing_mtls_client_certificate) {
       client_connected = connection.valid();
       run_with_deadline(runtime, connection.async_close(), std::chrono::milliseconds{5'000},
                         "close missing-cert client");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::peer_verification_failed ||
                               fcl::quic::exceptions::code_of(error).value() == exceptions::code::tls_failed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout;
       BOOST_TEST(acceptable);
@@ -1289,7 +1289,7 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_missing_mtls_client_certificate) {
    try {
       (void)get_with_deadline(accept_future, std::chrono::milliseconds{5'000}, "missing-cert server accept");
       BOOST_FAIL("expected missing client certificate to reject server accept");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::peer_verification_failed ||
                               fcl::quic::exceptions::code_of(error).value() == exceptions::code::tls_failed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout ||
                               fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed;
@@ -1318,7 +1318,7 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_wrong_peer_fingerprint) {
                                        },
                                }));
       BOOST_FAIL("expected peer fingerprint rejection");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::peer_verification_failed));
    }
    server.stop();
@@ -1341,7 +1341,7 @@ BOOST_AUTO_TEST_CASE(quic_connection_close_unblocks_pending_stream_read) {
    try {
       (void)get_with_deadline(read_future, std::chrono::milliseconds{5'000}, "pending stream read after close");
       BOOST_FAIL("expected pending stream read to unblock with a close error");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed ||
                               fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_closed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_reset;
       BOOST_TEST(acceptable);
@@ -1366,7 +1366,7 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_max_streams_backpressure) {
    try {
       (void)fcl::asio::blocking::run(runtime, connection.async_open_stream());
       BOOST_FAIL("expected max streams rejection");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::backpressure_rejected));
    }
    fcl::asio::blocking::run(runtime, connection.async_close());
@@ -1409,7 +1409,7 @@ BOOST_AUTO_TEST_CASE(quic_loopback_allows_new_stream_after_previous_stream_close
       try {
          (void)run_with_deadline(runtime, framed.async_read_frame(), std::chrono::milliseconds{5'000},
                                  "observe active-limited stream close");
-      } catch (const fcl::exception::base& error) {
+      } catch (const fcl::exceptions::base& error) {
          const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_closed ||
                                  fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed ||
                                  fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_reset;
@@ -1437,7 +1437,7 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_max_queued_bytes_backpressure) {
       const auto payload = std::vector<std::uint8_t>{1, 2, 3, 4};
       fcl::asio::blocking::run(runtime, outbound.async_write(payload));
       BOOST_FAIL("expected queued bytes rejection");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::backpressure_rejected));
    }
    BOOST_TEST(connection.metrics().backpressure_rejections >= 1U);
@@ -1468,7 +1468,7 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_inbound_packet_queue_overflow) {
           runtime, client.async_connect(server.local_endpoint(), loopback_client_options("fcl-p2p/1", client_limits)),
           std::chrono::milliseconds{5'000}, "inbound overflow connect");
       BOOST_FAIL("expected inbound packet queue overflow to close the connection");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::canceled ||
                               fcl::quic::exceptions::code_of(error).value() == exceptions::code::backpressure_rejected;
       BOOST_TEST(acceptable);
@@ -1515,7 +1515,7 @@ BOOST_AUTO_TEST_CASE(quic_framed_stream_rejects_oversized_remote_frame) {
    try {
       (void)fcl::asio::blocking::run(runtime, framed.async_read_frame());
       BOOST_FAIL("expected oversized frame rejection");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::frame_too_large));
    }
    server_send.get();
@@ -1533,7 +1533,7 @@ BOOST_AUTO_TEST_CASE(quic_listener_stop_unblocks_pending_accept) {
    try {
       (void)accept_future.get();
       BOOST_FAIL("expected stopped listener to unblock accept with an error");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::connection_closed));
    }
 }

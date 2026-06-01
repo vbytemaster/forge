@@ -1,7 +1,7 @@
 module;
 
 #include <boost/asio/awaitable.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <cstddef>
 #include <functional>
@@ -96,7 +96,7 @@ class api_binding {
              auto request = fcl::raw::unpack<fcl::api::frame>(request_bytes);
              if (request.codec != codec) {
                 FCL_THROW_EXCEPTION(fcl::api::exceptions::codec_failed, "websocket API frame codec is not accepted",
-                                    fcl::exception::ctx("codec", request.codec.value));
+                                    fcl::exceptions::ctx("codec", request.codec.value));
              }
              const auto* descriptor = plan.local == nullptr ? nullptr : plan.local->describe(request.api);
              const auto* method = descriptor == nullptr ? nullptr : fcl::api::find_method(*descriptor, request.method);

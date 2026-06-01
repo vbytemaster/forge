@@ -15,7 +15,7 @@ import fcl.asio.blocking;
 import fcl.asio.runtime;
 import fcl.asio.task_scheduler;
 import fcl.config;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.schema.value_kind;
 import fcl.app.application;
 import fcl.app.diagnostics;
@@ -31,7 +31,7 @@ namespace {
 std::string current_exception_message() {
    try {
       throw;
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       return error.message();
    } catch (const std::exception& error) {
       return error.what();

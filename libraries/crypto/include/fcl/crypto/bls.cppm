@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <array>
 #include <bls12-381/bls12-381.hpp>
 #include <boost/describe.hpp>
@@ -14,7 +14,7 @@ export module fcl.crypto.bls;
 
 import fcl.crypto.base64;
 import fcl.crypto.ripemd160;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.raw.datastream;
 import fcl.raw.raw;
 import fcl.raw.varint;

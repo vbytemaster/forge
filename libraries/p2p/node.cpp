@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -219,7 +219,7 @@ boost::asio::awaitable<reachability::state> node::async_probe_reachability(peer_
          co_return state;
       }
       FCL_THROW_EXCEPTION(exceptions::protocol_error, "AutoNAT v2 probe exceeded message exchange limit");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       self->forget_autonat_v2_nonce(observer);
       if (p2p_code(error) != exceptions::code::unsupported_protocol) {
          throw;
@@ -311,7 +311,7 @@ boost::asio::awaitable<dht::query_result> node::async_find_peer(peer_id peer) {
          if (result.complete) {
             co_return result;
          }
-      } catch (const fcl::exception::base&) {
+      } catch (const fcl::exceptions::base&) {
          self->store.mark_failure(candidate.id);
       }
    }
@@ -343,7 +343,7 @@ boost::asio::awaitable<void> node::async_provide(dht::key key) {
          },
                                                         self->options.limits.dht));
          co_await stream.async_close();
-      } catch (const fcl::exception::base&) {
+      } catch (const fcl::exceptions::base&) {
          self->store.mark_failure(candidate.id);
       }
    }
@@ -386,7 +386,7 @@ boost::asio::awaitable<std::vector<dht::peer>> node::async_find_providers(dht::k
                                             std::chrono::system_clock::now() + self->options.limits.dht.refresh_interval);
          }
          co_await stream.async_close();
-      } catch (const fcl::exception::base&) {
+      } catch (const fcl::exceptions::base&) {
          self->store.mark_failure(candidate.id);
       }
    }
@@ -458,7 +458,7 @@ boost::asio::awaitable<pubsub::subscription> node::async_subscribe(pubsub::topic
    for (const auto& peer : peers) {
       try {
          co_await self->send_pubsub_rpc(peer, pubsub::rpc{.subscriptions = std::vector<pubsub::subscription>{subscription}});
-      } catch (const fcl::exception::base&) {
+      } catch (const fcl::exceptions::base&) {
          self->store.mark_failure(peer);
       }
    }
@@ -480,7 +480,7 @@ boost::asio::awaitable<void> node::async_unsubscribe(pubsub::topic subject) {
    for (const auto& peer : peers) {
       try {
          co_await self->send_pubsub_rpc(peer, pubsub::rpc{.subscriptions = std::vector<pubsub::subscription>{subscription}});
-      } catch (const fcl::exception::base&) {
+      } catch (const fcl::exceptions::base&) {
          self->store.mark_failure(peer);
       }
    }
@@ -536,7 +536,7 @@ boost::asio::awaitable<pubsub::message> node::async_publish(pubsub::topic subjec
       try {
          co_await self->send_pubsub_rpc(peer, pubsub::rpc{.messages = std::vector<pubsub::message>{value}});
          ++sent;
-      } catch (const fcl::exception::base&) {
+      } catch (const fcl::exceptions::base&) {
          self->store.mark_failure(peer);
       }
    }
@@ -601,7 +601,7 @@ boost::asio::awaitable<fcl::p2p::stream> node::async_open_protocol_stream(peer_i
       try {
          co_return co_await self->open_protocol_direct(
              peer, protocol, effective.timeout, effective.max_direct_endpoints, effective.direct_attempt_timeout);
-      } catch (const fcl::exception::base& error) {
+      } catch (const fcl::exceptions::base& error) {
          last_kind = p2p_code(error);
          last_message = error.what();
          if (p2p_code(error) == exceptions::code::unsupported_protocol || p2p_code(error) == exceptions::code::protocol_error ||
@@ -610,7 +610,7 @@ boost::asio::awaitable<fcl::p2p::stream> node::async_open_protocol_stream(peer_i
          }
          try {
             (void)remaining_timeout(started, effective.timeout, "P2P protocol open");
-         } catch (const fcl::exception::base&) {
+         } catch (const fcl::exceptions::base&) {
             throw;
          }
          if (!effective.allow_relay && !(effective.allow_hole_punch && effective.relay_peer)) {
@@ -656,7 +656,7 @@ boost::asio::awaitable<fcl::p2p::stream> node::async_open_protocol_stream(peer_i
                    peer, protocol, remaining_timeout(started, effective.timeout, "P2P protocol open after hole punch"),
                    effective.max_direct_endpoints, effective.direct_attempt_timeout);
             }
-         } catch (const fcl::exception::base& error) {
+         } catch (const fcl::exceptions::base& error) {
             last_kind = p2p_code(error);
             last_message = error.what();
          }
@@ -679,7 +679,7 @@ boost::asio::awaitable<fcl::p2p::stream> node::async_open_protocol_stream(peer_i
       const auto per_attempt = attempt_timeout(remaining, effective.relay_attempt_timeout, "P2P relay path attempt");
       try {
          co_return co_await self->open_protocol_via_relay(peer, protocol, relay_peer, per_attempt);
-      } catch (const fcl::exception::base& error) {
+      } catch (const fcl::exceptions::base& error) {
          last_kind = p2p_code(error);
          last_message = error.what();
       }

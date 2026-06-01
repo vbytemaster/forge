@@ -10,9 +10,9 @@ module;
 #include <utility>
 #include <vector>
 
-export module fcl.exception.exception;
+export module fcl.exceptions;
 
-export namespace fcl::exception {
+export namespace fcl::exceptions {
 
 struct field {
    std::string key;
@@ -162,8 +162,8 @@ void log_current_exception(std::string_view message = {}, fields context = {});
 
 template <typename T> void append_context(fields& out, T&& value) {
    static_assert(std::is_same_v<std::remove_cvref_t<T>, field>,
-                 "FCL error context arguments must be fcl::error::field values; use fcl::error::ctx(...) or "
-                 "fcl::error::secret(...).");
+                 "FCL error context arguments must be fcl::exceptions::field values; use fcl::exceptions::ctx(...) or "
+                 "fcl::exceptions::secret(...).");
    out.push_back(std::forward<T>(value));
 }
 
@@ -227,37 +227,4 @@ template <typename... Args> void capture_and_log(std::string_view message, Args&
    log_current_exception(message, make_fields(std::forward<Args>(args)...));
 }
 
-} // namespace fcl::exception
-
-export namespace fcl {
-namespace error {
-using fcl::exception::base;
-using fcl::exception::capture_and_log;
-using fcl::exception::capture_and_rethrow;
-using fcl::exception::category;
-using fcl::exception::coded_exception;
-using fcl::exception::context_error;
-using fcl::exception::ctx;
-using fcl::exception::field;
-using fcl::exception::fields;
-using fcl::exception::format_context_message;
-using fcl::exception::format_current_exception;
-using fcl::exception::format_exception_chain;
-using fcl::exception::format_fields;
-using fcl::exception::frame;
-using fcl::exception::log_current_exception;
-using fcl::exception::log_sink;
-using fcl::exception::make_error_code;
-using fcl::exception::make_fields;
-using fcl::exception::runtime_coded_exception;
-using fcl::exception::secret;
-using fcl::exception::set_log_sink;
-using fcl::exception::throw_assertion_error;
-using fcl::exception::throw_assertion_failure;
-using fcl::exception::throw_context_error;
-using fcl::exception::throw_code;
-using fcl::exception::throw_deadline_exceeded;
-using fcl::exception::throw_timeout_error;
-using fcl::exception::throw_with_context;
-} // namespace error
-} // namespace fcl
+} // namespace fcl::exceptions

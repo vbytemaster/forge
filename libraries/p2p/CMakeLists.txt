@@ -41,7 +41,7 @@ target_compile_definitions(fcl_p2p PRIVATE FCL_HAS_ROCKSDB=$<BOOL:${FCL_HAS_ROCK
 
 target_link_libraries(
    fcl_p2p PUBLIC
-      fcl_exception
+      fcl_exceptions
       fcl_api
       fcl_raw
       fcl_crypto

@@ -220,7 +220,7 @@ become product defaults.
 - Do not define product API envelopes in QUIC handlers. Use `fcl.quic.api` and
   `fcl::api::frame` for typed API calls over QUIC streams.
 - Do not swallow handler exceptions in detached stream tasks; convert expected
-  failures into typed `fcl_exception` values or API error frames.
+  failures into typed `fcl_exceptions` values or API error frames.
 - Do not treat `.deadline(...)` or `.max_concurrent_calls(...)` as documentation
   only; API frames are checked by the call runtime before product code runs.
 - Do not put ALPN, certificate or listener lifecycle options into

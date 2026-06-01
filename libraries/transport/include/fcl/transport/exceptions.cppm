@@ -5,11 +5,11 @@ module;
 #include <string>
 #include <string_view>
 #include <utility>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 export module fcl.transport.exceptions;
 
-export import fcl.exception.exception;
+export import fcl.exceptions;
 
 export namespace fcl::transport::exceptions {
 
@@ -25,45 +25,45 @@ enum class code : std::uint16_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.transport")
 
-using invalid_endpoint = fcl::exception::coded_exception<code, code::invalid_endpoint>;
-using closed = fcl::exception::coded_exception<code, code::closed>;
-using canceled = fcl::exception::coded_exception<code, code::canceled>;
-using frame_too_large = fcl::exception::coded_exception<code, code::frame_too_large>;
-using protocol_error = fcl::exception::coded_exception<code, code::protocol_error>;
-using unsupported_protocol = fcl::exception::coded_exception<code, code::unsupported_protocol>;
-using duplicate_registration = fcl::exception::coded_exception<code, code::duplicate_registration>;
+using invalid_endpoint = fcl::exceptions::coded_exception<code, code::invalid_endpoint>;
+using closed = fcl::exceptions::coded_exception<code, code::closed>;
+using canceled = fcl::exceptions::coded_exception<code, code::canceled>;
+using frame_too_large = fcl::exceptions::coded_exception<code, code::frame_too_large>;
+using protocol_error = fcl::exceptions::coded_exception<code, code::protocol_error>;
+using unsupported_protocol = fcl::exceptions::coded_exception<code, code::unsupported_protocol>;
+using duplicate_registration = fcl::exceptions::coded_exception<code, code::duplicate_registration>;
 
-[[nodiscard]] inline std::optional<code> code_of(const fcl::exception::base& value) noexcept {
+[[nodiscard]] inline std::optional<code> code_of(const fcl::exceptions::base& value) noexcept {
    const auto& actual = value.code();
    if (!actual || std::string_view{actual.category().name()} != "fcl.transport") {
       return std::nullopt;
    }
-   if (actual == fcl::exception::make_error_code(code::invalid_endpoint)) {
+   if (actual == fcl::exceptions::make_error_code(code::invalid_endpoint)) {
       return code::invalid_endpoint;
    }
-   if (actual == fcl::exception::make_error_code(code::closed)) {
+   if (actual == fcl::exceptions::make_error_code(code::closed)) {
       return code::closed;
    }
-   if (actual == fcl::exception::make_error_code(code::canceled)) {
+   if (actual == fcl::exceptions::make_error_code(code::canceled)) {
       return code::canceled;
    }
-   if (actual == fcl::exception::make_error_code(code::frame_too_large)) {
+   if (actual == fcl::exceptions::make_error_code(code::frame_too_large)) {
       return code::frame_too_large;
    }
-   if (actual == fcl::exception::make_error_code(code::protocol_error)) {
+   if (actual == fcl::exceptions::make_error_code(code::protocol_error)) {
       return code::protocol_error;
    }
-   if (actual == fcl::exception::make_error_code(code::unsupported_protocol)) {
+   if (actual == fcl::exceptions::make_error_code(code::unsupported_protocol)) {
       return code::unsupported_protocol;
    }
-   if (actual == fcl::exception::make_error_code(code::duplicate_registration)) {
+   if (actual == fcl::exceptions::make_error_code(code::duplicate_registration)) {
       return code::duplicate_registration;
    }
    return std::nullopt;
 }
 
-[[nodiscard]] inline bool is(const fcl::exception::base& value, code expected) noexcept {
-   return value.code() == fcl::exception::make_error_code(expected);
+[[nodiscard]] inline bool is(const fcl::exceptions::base& value, code expected) noexcept {
+   return value.code() == fcl::exceptions::make_error_code(expected);
 }
 
 } // namespace fcl::transport::exceptions

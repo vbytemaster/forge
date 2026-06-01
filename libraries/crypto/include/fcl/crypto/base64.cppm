@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <algorithm>
 #include <string>
 #include <string_view>
@@ -7,7 +7,7 @@ module;
 
 export module fcl.crypto.base64;
 
-import fcl.exception.exception;
+import fcl.exceptions;
 
 /*
    base64.cpp and base64.h
@@ -95,7 +95,7 @@ inline unsigned int pos_of_char(const unsigned char chr, bool url) {
    // 2020-10-23: Throw std::exception rather than const char*
    //(Pablo Martin-Gomez, https://github.com/Bouska)
    //
-   // Original version throw fcl::exception::context_error{"Input is not valid base64-encoded data.")};
+   // Original version throw fcl::exceptions::context_error{"Input is not valid base64-encoded data.")};
    // Throw FC assert and the same error text to match existing Spring usages.
    FCL_ASSERT(false, "encountered non-base64 character");
 }

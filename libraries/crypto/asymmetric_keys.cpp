@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <algorithm>
 #include <compare>
 #include <cstddef>
@@ -12,7 +12,7 @@ module;
 module fcl.crypto.asymmetric;
 
 import fcl.core.utility;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.variant.static_variant;
 
 namespace fcl::crypto::asymmetric {

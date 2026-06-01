@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include "openssl_backend.hpp"
 #include <array>
 #include <exception>
@@ -22,7 +22,7 @@ import fcl.crypto.hmac;
 import fcl.crypto.random;
 import fcl.crypto.sha256;
 import fcl.crypto.sha512;
-import fcl.exception.exception;
+import fcl.exceptions;
 
 #include "secp256k1_backend.hpp"
 

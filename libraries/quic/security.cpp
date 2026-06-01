@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -58,7 +58,7 @@ std::string sha256_fingerprint(std::span<const std::uint8_t> data) {
 std::string certificate_sha256_fingerprint_from_pem(std::string_view certificate_pem) {
    try {
       return fcl::crypto::x509::certificate::from_pem(certificate_pem).fingerprint_sha256_text();
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       FCL_THROW_EXCEPTION(exceptions::tls_failed, error.what());
    }
 }

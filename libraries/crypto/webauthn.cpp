@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <cctype>
 #include <cstring>
@@ -16,7 +16,7 @@ module fcl.crypto.webauthn;
 import fcl.crypto.base64;
 import fcl.crypto.p256;
 import fcl.crypto.sha256;
-import fcl.exception.exception;
+import fcl.exceptions;
 
 namespace fcl::crypto::webauthn {
 
@@ -336,7 +336,7 @@ class client_data_json_reader {
 
    [[noreturn]] void fail(const std::string& reason) const {
       FCL_THROW_EXCEPTION(exceptions::invalid_client_data, "failed to parse client data JSON",
-                          fcl::exception::ctx("reason", reason), fcl::exception::ctx("offset", _pos));
+                          fcl::exceptions::ctx("reason", reason), fcl::exceptions::ctx("offset", _pos));
    }
 
    std::string_view _input;
@@ -348,7 +348,7 @@ client_data_fields parse_client_data_json(std::string_view input) {
       return client_data_json_reader{input}.parse();
    } catch (const std::invalid_argument& e) {
       FCL_THROW_EXCEPTION(exceptions::invalid_client_data, "failed to parse client data JSON",
-                          fcl::exception::ctx("reason", e.what()));
+                          fcl::exceptions::ctx("reason", e.what()));
    }
 }
 

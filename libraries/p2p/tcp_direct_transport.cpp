@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <memory>
 #include <optional>
@@ -53,7 +53,7 @@ namespace {
    return exceptions::code::internal;
 }
 
-[[noreturn]] void rethrow_tcp_as_p2p(const fcl::exception::base& error) {
+[[noreturn]] void rethrow_tcp_as_p2p(const fcl::exceptions::base& error) {
    const auto code = fcl::tcp::exceptions::code_of(error);
    if (code) {
       FCL_THROW_CODE(map_tcp_error(*code), error.what());
@@ -97,7 +97,7 @@ class tcp_profile final {
       try {
          listener_ =
              std::make_unique<fcl::tcp::listener>(runtime_.context().get_executor(), endpoint.transport);
-      } catch (const fcl::exception::base& error) {
+      } catch (const fcl::exceptions::base& error) {
          rethrow_tcp_as_p2p(error);
       }
    }
@@ -124,7 +124,7 @@ class tcp_profile final {
              .local_endpoint = std::move(local_endpoint),
              .remote_endpoint = std::move(remote_endpoint),
          };
-      } catch (const fcl::exception::base& error) {
+      } catch (const fcl::exceptions::base& error) {
          rethrow_tcp_as_p2p(error);
       }
    }
@@ -144,7 +144,7 @@ class tcp_profile final {
              .local_endpoint = std::move(local_endpoint),
              .remote_endpoint = std::move(remote_endpoint),
          };
-      } catch (const fcl::exception::base& error) {
+      } catch (const fcl::exceptions::base& error) {
          rethrow_tcp_as_p2p(error);
       }
    }

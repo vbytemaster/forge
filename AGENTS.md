@@ -143,8 +143,8 @@ class p2p_node {
 ## Errors And Logging
 
 - FCL exceptions are `std`-based and support typed categories through
-  `fcl::exception::coded_exception<Enum, Value>` plus structured redacted
-  context through `fcl::exception::context_error`.
+  `fcl::exceptions::coded_exception<Enum, Value>` plus structured redacted
+  context through `fcl::exceptions::context_error`.
 - Public FCL/app/network/API boundary failures should use typed exceptions
   under `fcl::{lib}::exceptions::*`, without `_exception` suffix.
 - `FCL_THROW_EXCEPTION(ExceptionType, ...)` is the canonical typed throw macro.
@@ -155,14 +155,14 @@ class p2p_node {
 - `FCL_DECLARE_EXCEPTION_CATEGORY` only declares `enum -> std::error_code`; it
   is not a throwing mechanism.
 - New local `exceptions::raise(...)` helpers are forbidden. Add missing shared
-  exception machinery to `fcl.exception` instead of recreating switch-based
+  exception machinery to `fcl.exceptions` instead of recreating switch-based
   throw helpers in each library.
-- Use `FCL_THROW`, `FCL_ASSERT`, deadline checks and capture/log helpers with explicit `fcl::exception::ctx(...)` or `fcl::exception::secret(...)` fields.
+- Use `FCL_THROW`, `FCL_ASSERT`, deadline checks and capture/log helpers with explicit `fcl::exceptions::ctx(...)` or `fcl::exceptions::secret(...)` fields.
 - `FCL_THROW(...)` is for generic context errors and internal legacy debt.
   Public library boundaries should prefer `FCL_THROW_EXCEPTION` or
   `FCL_THROW_CODE`.
-- `fcl::error` is only a temporary compatibility alias; new code and docs should
-  use `fcl::exception`.
+- Legacy root error and singular exception namespace aliases are removed; use
+  `fcl::exceptions` directly.
 - The old FC exception hierarchy, old declare/throw macros and variant-backed exception serialization are removed and must not reappear.
 - Context capture must preserve source location and redact secret fields.
 - Logging core should stay small: console/file/JSONL-style sinks and structured fields.

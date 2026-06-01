@@ -1,4 +1,4 @@
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <fcl/log/macros.hpp>
 
 #include <memory>
@@ -6,7 +6,7 @@
 
 import fcl.app.application;
 import fcl.crypto.sha256;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.log.log_message;
 import fcl.log.logger;
 import fcl.log.record;
@@ -30,7 +30,7 @@ int main() {
 
    const auto digest = fcl::crypto::sha256::hash(std::string{"package works"});
    const auto bytes = fcl::raw::pack(std::string{digest});
-   FCL_ASSERT(!bytes.empty(), "raw pack should produce bytes", fcl::exception::ctx("size", bytes.size()));
+   FCL_ASSERT(!bytes.empty(), "raw pack should produce bytes", fcl::exceptions::ctx("size", bytes.size()));
 
    return sink->last_message == "package works" ? 0 : 1;
 }

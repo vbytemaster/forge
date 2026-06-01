@@ -4,11 +4,11 @@ module;
 #include <optional>
 #include <string>
 #include <string_view>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 export module fcl.tcp.exceptions;
 
-export import fcl.exception.exception;
+export import fcl.exceptions;
 
 export namespace fcl::tcp::exceptions {
 
@@ -25,49 +25,49 @@ enum class code : std::uint16_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.tcp")
 
-using invalid_endpoint = fcl::exception::coded_exception<code, code::invalid_endpoint>;
-using invalid_options = fcl::exception::coded_exception<code, code::invalid_options>;
-using connect_failed = fcl::exception::coded_exception<code, code::connect_failed>;
-using listen_failed = fcl::exception::coded_exception<code, code::listen_failed>;
-using accept_failed = fcl::exception::coded_exception<code, code::accept_failed>;
-using closed = fcl::exception::coded_exception<code, code::closed>;
-using canceled = fcl::exception::coded_exception<code, code::canceled>;
-using io_error = fcl::exception::coded_exception<code, code::io_error>;
+using invalid_endpoint = fcl::exceptions::coded_exception<code, code::invalid_endpoint>;
+using invalid_options = fcl::exceptions::coded_exception<code, code::invalid_options>;
+using connect_failed = fcl::exceptions::coded_exception<code, code::connect_failed>;
+using listen_failed = fcl::exceptions::coded_exception<code, code::listen_failed>;
+using accept_failed = fcl::exceptions::coded_exception<code, code::accept_failed>;
+using closed = fcl::exceptions::coded_exception<code, code::closed>;
+using canceled = fcl::exceptions::coded_exception<code, code::canceled>;
+using io_error = fcl::exceptions::coded_exception<code, code::io_error>;
 
-[[nodiscard]] inline std::optional<code> code_of(const fcl::exception::base& value) noexcept {
+[[nodiscard]] inline std::optional<code> code_of(const fcl::exceptions::base& value) noexcept {
    const auto& actual = value.code();
    if (!actual || std::string_view{actual.category().name()} != "fcl.tcp") {
       return std::nullopt;
    }
-   if (actual == fcl::exception::make_error_code(code::invalid_endpoint)) {
+   if (actual == fcl::exceptions::make_error_code(code::invalid_endpoint)) {
       return code::invalid_endpoint;
    }
-   if (actual == fcl::exception::make_error_code(code::invalid_options)) {
+   if (actual == fcl::exceptions::make_error_code(code::invalid_options)) {
       return code::invalid_options;
    }
-   if (actual == fcl::exception::make_error_code(code::connect_failed)) {
+   if (actual == fcl::exceptions::make_error_code(code::connect_failed)) {
       return code::connect_failed;
    }
-   if (actual == fcl::exception::make_error_code(code::listen_failed)) {
+   if (actual == fcl::exceptions::make_error_code(code::listen_failed)) {
       return code::listen_failed;
    }
-   if (actual == fcl::exception::make_error_code(code::accept_failed)) {
+   if (actual == fcl::exceptions::make_error_code(code::accept_failed)) {
       return code::accept_failed;
    }
-   if (actual == fcl::exception::make_error_code(code::closed)) {
+   if (actual == fcl::exceptions::make_error_code(code::closed)) {
       return code::closed;
    }
-   if (actual == fcl::exception::make_error_code(code::canceled)) {
+   if (actual == fcl::exceptions::make_error_code(code::canceled)) {
       return code::canceled;
    }
-   if (actual == fcl::exception::make_error_code(code::io_error)) {
+   if (actual == fcl::exceptions::make_error_code(code::io_error)) {
       return code::io_error;
    }
    return std::nullopt;
 }
 
-[[nodiscard]] inline bool is(const fcl::exception::base& value, code expected) noexcept {
-   return value.code() == fcl::exception::make_error_code(expected);
+[[nodiscard]] inline bool is(const fcl::exceptions::base& value, code expected) noexcept {
+   return value.code() == fcl::exceptions::make_error_code(expected);
 }
 
 } // namespace fcl::tcp::exceptions

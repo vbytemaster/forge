@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -94,7 +94,7 @@ namespace asio = boost::asio;
    return exceptions::code::internal;
 }
 
-[[nodiscard]] exceptions::code p2p_code(const fcl::exception::base& error) {
+[[nodiscard]] exceptions::code p2p_code(const fcl::exceptions::base& error) {
    const auto code = exceptions::code_of(error);
    if (code) {
       return *code;
@@ -106,11 +106,11 @@ namespace asio = boost::asio;
    return exceptions::code::internal;
 }
 
-[[noreturn]] void rethrow_transport_as_p2p(const fcl::exception::base& error) {
+[[noreturn]] void rethrow_transport_as_p2p(const fcl::exceptions::base& error) {
    FCL_THROW_CODE(p2p_code(error), error.what());
 }
 
-[[nodiscard]] bool is_orderly_stream_close(const fcl::exception::base& error) noexcept {
+[[nodiscard]] bool is_orderly_stream_close(const fcl::exceptions::base& error) noexcept {
    return exceptions::is(error, exceptions::code::closed) ||
           fcl::transport::exceptions::is(error, fcl::transport::exceptions::code::closed) ||
           fcl::transport::exceptions::is(error, fcl::transport::exceptions::code::canceled);
@@ -915,7 +915,7 @@ boost::asio::awaitable<void> node::impl::send_pubsub_rpc(const peer_id& peer, co
    }
    try {
       co_await outbound->async_write(encoded);
-   } catch (const fcl::exception::base&) {
+   } catch (const fcl::exceptions::base&) {
       auto lock = std::scoped_lock{mutex};
       pubsub_value.outbound_streams.erase(peer);
       throw;
@@ -932,7 +932,7 @@ boost::asio::awaitable<void> node::impl::announce_pubsub_subscriptions(const pee
    }
    try {
       co_await send_pubsub_rpc(peer, pubsub::rpc{.subscriptions = std::move(subscriptions)});
-   } catch (const fcl::exception::base&) {
+   } catch (const fcl::exceptions::base&) {
       store.mark_failure(peer);
    }
 }
@@ -1085,21 +1085,21 @@ boost::asio::awaitable<void> node::impl::pubsub_heartbeat_once() {
    for (const auto& [peer, items] : grafts) {
       try {
          co_await send_pubsub_rpc(peer, pubsub::rpc{.control_value = pubsub::control{.grafts = items}});
-      } catch (const fcl::exception::base&) {
+      } catch (const fcl::exceptions::base&) {
          store.mark_failure(peer);
       }
    }
    for (const auto& [peer, items] : prunes) {
       try {
          co_await send_pubsub_rpc(peer, pubsub::rpc{.control_value = pubsub::control{.prunes = items}});
-      } catch (const fcl::exception::base&) {
+      } catch (const fcl::exceptions::base&) {
          store.mark_failure(peer);
       }
    }
    for (const auto& [peer, items] : gossip) {
       try {
          co_await send_pubsub_rpc(peer, pubsub::rpc{.control_value = pubsub::control{.have = items}});
-      } catch (const fcl::exception::base&) {
+      } catch (const fcl::exceptions::base&) {
          store.mark_failure(peer);
       }
    }
@@ -1126,7 +1126,7 @@ boost::asio::awaitable<std::shared_ptr<node::impl::session_state>> node::impl::c
       launch_session_accept_loop(session);
       co_await announce_pubsub_subscriptions(result.peer);
       co_return session;
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       FCL_THROW_CODE(p2p_code(error), error.what());
    }
 }
@@ -1178,7 +1178,7 @@ boost::asio::awaitable<std::shared_ptr<node::impl::session_state>> node::impl::e
       try {
          co_return co_await connect_direct(
              endpoint, node::connect_options{.expected_peer = peer, .allow_relay = false, .timeout = per_attempt});
-      } catch (const fcl::exception::base& error) {
+      } catch (const fcl::exceptions::base& error) {
          last_kind = p2p_code(error);
          last_message = error.what();
          store.mark_endpoint_failure(peer, endpoint, path::kind::direct,
@@ -1214,7 +1214,7 @@ boost::asio::awaitable<fcl::p2p::stream> node::impl::open_protocol_direct(
          increment_opened_protocol();
          record_path_open(path::kind::direct);
          co_return selected;
-      } catch (const fcl::exception::base& error) {
+      } catch (const fcl::exceptions::base& error) {
          if (!deadline.finish() || deadline.timed_out()) {
             session->closed = true;
             forget_session(peer);
@@ -1317,7 +1317,7 @@ node::impl::request_relay_reservation(const peer_id& relay_peer, relay::reservat
       });
       remember_relay_reservation_in_store(info);
       co_return info;
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       if (deadline.timed_out()) {
          relay_session->closed = true;
          forget_session(relay_peer);
@@ -1373,7 +1373,7 @@ node::impl::open_relay_yamux(const peer_id& peer, const peer_id& relay_peer, std
       record_path_open(path::kind::relay);
       stream = detail::stream_access::with_buffer(std::move(stream), std::move(relay_buffer));
       co_return co_await upgrade_relay_outbound_session(std::move(stream), options, peer);
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       record_relay_failure();
       if (deadline.timed_out()) {
          relay_session->closed = true;
@@ -1410,7 +1410,7 @@ boost::asio::awaitable<void> node::impl::request_peer_exchange(const peer_id& pe
       }
       learn_from_message(response);
       increment_peer_exchange();
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       rethrow_transport_as_p2p(error);
    }
 }
@@ -1588,7 +1588,7 @@ boost::asio::awaitable<void> node::impl::handle_ping(fcl::p2p::stream stream) {
          }
          co_await stream.async_write(payload);
       }
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       finish_ping_stream();
       if (!is_orderly_stream_close(error)) {
          throw;
@@ -1690,7 +1690,7 @@ boost::asio::awaitable<void> node::impl::handle_autonat_v2_dial_request(std::sha
                response.status = reachability::v2::response_status::ok;
                response.dial_status = reachability::v2::dial_status::dial_back_error;
             }
-         } catch (const fcl::exception::base& error) {
+         } catch (const fcl::exceptions::base& error) {
             response.status = reachability::v2::response_status::ok;
             response.dial_status = p2p_code(error) == exceptions::code::peer_verification_failed
                                        ? reachability::v2::dial_status::dial_back_error
@@ -1736,7 +1736,7 @@ boost::asio::awaitable<void> node::impl::handle_autonat_v1(fcl::p2p::stream stre
             response.status_text.clear();
             response.endpoint = candidate;
             break;
-         } catch (const fcl::exception::base& error) {
+         } catch (const fcl::exceptions::base& error) {
             response.status = p2p_code(error) == exceptions::code::peer_verification_failed
                                   ? reachability::dial_status::dial_refused
                                   : reachability::dial_status::dial_error;
@@ -2130,7 +2130,7 @@ boost::asio::awaitable<void> node::impl::handle_rendezvous(std::shared_ptr<node:
                    signed_envelope::decode(request.register_value->signed_peer_record), session->info.remote_peer);
                registered_peer = record.peer;
                endpoints = record.endpoints;
-            } catch (const fcl::exception::base&) {
+            } catch (const fcl::exceptions::base&) {
                response.status_value = rendezvous::status::invalid_signed_peer_record;
                response.status_text = "rendezvous signed peer record is invalid";
             }
@@ -2224,7 +2224,7 @@ boost::asio::awaitable<void> node::impl::handle_pubsub(std::shared_ptr<node::imp
       auto close_after_error = false;
       try {
          payload = co_await async_read_length_delimited(stream, buffer, options.limits.pubsub.limits.max_rpc_size);
-      } catch (const fcl::exception::base& error) {
+      } catch (const fcl::exceptions::base& error) {
          if (is_orderly_stream_close(error)) {
             co_return;
          }
@@ -2241,7 +2241,7 @@ boost::asio::awaitable<void> node::impl::handle_pubsub(std::shared_ptr<node::imp
       close_after_error = false;
       try {
          value = pubsub::codec::decode(payload, options.limits.pubsub);
-      } catch (const fcl::exception::base&) {
+      } catch (const fcl::exceptions::base&) {
          increment_pubsub_invalid(session->info.remote_peer);
          increment_protocol_rejected();
          close_after_error = true;
@@ -2338,14 +2338,14 @@ boost::asio::awaitable<void> node::impl::handle_pubsub(std::shared_ptr<node::imp
                                                         pubsub::control{.want = std::vector<pubsub::control::iwant>{
                                                                              pubsub::control::iwant{
                                                                                  .message_ids = std::move(missing)}}}});
-            } catch (const fcl::exception::base&) {
+            } catch (const fcl::exceptions::base&) {
                increment_protocol_rejected();
             }
          }
          if (!cached.empty()) {
             try {
                co_await send_pubsub_rpc(session->info.remote_peer, pubsub::rpc{.messages = std::move(cached)});
-            } catch (const fcl::exception::base&) {
+            } catch (const fcl::exceptions::base&) {
                increment_protocol_rejected();
             }
          }
@@ -2437,7 +2437,7 @@ boost::asio::awaitable<void> node::impl::handle_pubsub(std::shared_ptr<node::imp
          for (const auto& peer : pubsub_candidate_peers(published.subject.value, session->info.remote_peer)) {
             try {
                co_await send_pubsub_rpc(peer, pubsub::rpc{.messages = std::vector<pubsub::message>{published}});
-            } catch (const fcl::exception::base&) {
+            } catch (const fcl::exceptions::base&) {
                increment_protocol_rejected();
             }
          }
@@ -2691,7 +2691,7 @@ void node::impl::launch_relay_pumps(peer_id owner, fcl::p2p::stream left, fcl::p
                 pair->left_to_right_bytes += chunk.size();
                 co_await pair->right.async_write(chunk);
              }
-          } catch (const fcl::exception::base& error) {
+          } catch (const fcl::exceptions::base& error) {
              if (!is_orderly_stream_close(error)) {
                 self->record_relay_failure();
              }
@@ -2728,7 +2728,7 @@ void node::impl::launch_relay_pumps(peer_id owner, fcl::p2p::stream left, fcl::p
                 pair->right_to_left_bytes += chunk.size();
                 co_await pair->left.async_write(chunk);
              }
-          } catch (const fcl::exception::base& error) {
+          } catch (const fcl::exceptions::base& error) {
              if (!is_orderly_stream_close(error)) {
                 self->record_relay_failure();
              }

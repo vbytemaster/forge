@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -392,7 +392,7 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
          out.peer = peer;
       }
       return out;
-   } catch (const fcl::exception::base&) {
+   } catch (const fcl::exceptions::base&) {
       return std::nullopt;
    }
 }

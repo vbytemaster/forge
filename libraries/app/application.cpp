@@ -14,7 +14,7 @@ module fcl.app.application;
 import fcl.config.component;
 import fcl.config.document;
 import fcl.api;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.app.events;
 import fcl.app.signals;
 
@@ -24,7 +24,7 @@ namespace {
 std::string exception_message() {
    try {
       throw;
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       return error.message();
    } catch (const std::exception& error) {
       return error.what();

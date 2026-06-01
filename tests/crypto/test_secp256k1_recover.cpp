@@ -1,12 +1,12 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <ostream>
 #include <string>
 #include <string_view>
 #include <tuple>
 #include <vector>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.crypto.hex;
 import fcl.crypto.secp256k1;
 import fcl.core.utility;

@@ -1,6 +1,6 @@
 module;
 #include <cstdint>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <memory>
 #include <boost/functional/hash.hpp>
 

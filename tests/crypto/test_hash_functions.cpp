@@ -1,5 +1,5 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <string>
 
 import fcl.crypto.hex;
@@ -10,7 +10,7 @@ import fcl.crypto.sha256;
 import fcl.crypto.sha3;
 import fcl.crypto.sha512;
 import fcl.core.utility;
-import fcl.exception.exception;
+import fcl.exceptions;
 
 using namespace fcl;
 

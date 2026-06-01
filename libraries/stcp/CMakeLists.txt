@@ -10,7 +10,7 @@ target_include_directories(fcl_stcp PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
    fcl_stcp PUBLIC
-      fcl_exception
+      fcl_exceptions
       fcl_transport
       fcl_tcp
       fcl_crypto

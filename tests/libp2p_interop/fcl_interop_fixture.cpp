@@ -601,7 +601,7 @@ int listen_mode(const std::map<std::string, std::string>& args) {
                                                    fcl::p2p::node::connect_options{.expected_peer = *remote.peer,
                                                                                    .allow_relay = false,
                                                                                    .allow_hole_punch = false}));
-               } catch (const fcl::exception::base&) {
+               } catch (const fcl::exceptions::base&) {
                }
             }
             seeded = true;
@@ -779,7 +779,7 @@ std::string run_scenario(fcl::asio::runtime& runtime, fcl::p2p::node& value, std
                                                      peer, fcl::p2p::protocol_id{.value = "/fcl/interop/unknown/1"},
                                                      fcl::p2p::node::open_options{.allow_relay = false,
                                                                                   .allow_hole_punch = false}));
-      } catch (const fcl::exception::base& error) {
+      } catch (const fcl::exceptions::base& error) {
          if (fcl::p2p::exceptions::code_of(error).value() != fcl::p2p::exceptions::code::unsupported_protocol) {
             throw;
          }

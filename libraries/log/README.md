@@ -17,8 +17,8 @@ identity, JSONL/text sinks, redaction и диагностический stacktra
   source location, timestamp, thread id/name.
 - Нужно автоматически добавлять stacktrace на error/fatal-like путях, но не
   платить за него на `debug`/`info`.
-- Нужно направить `fcl_exception` capture path в logging sink без зависимости
-  `fcl_exception -> fcl_log`.
+- Нужно направить `fcl_exceptions` capture path в logging sink без зависимости
+  `fcl_exceptions -> fcl_log`.
 
 ## When Not To Use
 
@@ -124,18 +124,18 @@ For cheap fields, direct `logger.info(...)`/`logger.error(...)` is clearer.
 
 ### Route Exception Capture Into Logger
 
-`fcl_exception` owns the capture helpers, but it does not depend on `fcl_log`.
+`fcl_exceptions` owns the capture helpers, but it does not depend on `fcl_log`.
 A program wires them together explicitly at the edge.
 
 ```cpp
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.app;
 import fcl.log.logger;
 import fcl.log.record;
 
-fcl::exception::set_log_sink([&](std::string_view chain) {
+fcl::exceptions::set_log_sink([&](std::string_view chain) {
    log.error(
       "operation failed",
       {
@@ -148,8 +148,8 @@ try {
    run_operation();
 } FCL_CAPTURE_AND_LOG(
    "operation failed",
-   fcl::exception::ctx("phase", "startup"),
-   fcl::exception::secret("request-token", token))
+   fcl::exceptions::ctx("phase", "startup"),
+   fcl::exceptions::secret("request-token", token))
 ```
 
 Use `FCL_CAPTURE_AND_LOG` only for explicit cleanup/best-effort paths. If the
@@ -159,9 +159,9 @@ operation must fail the caller, use `FCL_CAPTURE_AND_RETHROW` or
 ### Log Runtime Failures Without Turning Logs Into Recovery
 
 ```cpp
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.log.logger;
 import fcl.log.record;
 
@@ -172,7 +172,7 @@ boost::asio::awaitable<void> start_with_logging(fcl::app::application_shell& app
       log.error(
          "startup failed",
          {
-            fcl::log_ctx("exception-chain", fcl::exception::format_exception_chain(error)),
+            fcl::log_ctx("exception-chain", fcl::exceptions::format_exception_chain(error)),
             fcl::log_secret("bootstrap-token", token),
          });
       app.request_stop();

@@ -73,6 +73,8 @@ import fcl.transport.frame;
 import fcl.transport.stream;
 import fcl.multiformats;
 
+#include "../../libraries/p2p/session_lifecycle.hpp"
+
 namespace fcl::p2p {
 namespace {
 
@@ -1192,6 +1194,27 @@ BOOST_AUTO_TEST_CASE(p2p_stream_wraps_transport_stream) {
 
    fcl::asio::blocking::run(runtime, value.async_close());
    BOOST_TEST(backend->closed);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_session_lifecycle_ignores_stale_replaced_session) {
+   struct tracked_session {
+      node::session_info info;
+   };
+
+   const auto remote = peer(2);
+   auto sessions = std::map<peer_id, std::shared_ptr<tracked_session>>{};
+   auto stale = std::make_shared<tracked_session>(node::session_info{.remote_peer = remote});
+   auto current = std::make_shared<tracked_session>(node::session_info{.remote_peer = remote});
+
+   sessions[remote] = stale;
+   sessions[remote] = current;
+
+   BOOST_TEST(!detail::erase_current_session(sessions, stale));
+   BOOST_REQUIRE(sessions.contains(remote));
+   BOOST_TEST(sessions.at(remote).get() == current.get());
+
+   BOOST_TEST(detail::erase_current_session(sessions, current));
+   BOOST_TEST(!sessions.contains(remote));
 }
 
 BOOST_AUTO_TEST_CASE(quic_transport_adapter_preserves_endpoint_kind_and_authority) {

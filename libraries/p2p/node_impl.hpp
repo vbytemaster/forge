@@ -96,6 +96,8 @@ struct node::impl : std::enable_shared_from_this<impl> {
 
    void forget_session(const peer_id& peer);
 
+   void forget_session(const std::shared_ptr<session_state>& session);
+
    [[nodiscard]] std::shared_ptr<session_state> session_for(const peer_id& peer) const;
 
    [[nodiscard]] std::optional<node::protocol_handler> handler_for(const protocol_id& protocol) const;

@@ -69,6 +69,7 @@ import fcl.yamux.exceptions;
 import fcl.yamux.session;
 
 #include "node_impl.hpp"
+#include "session_lifecycle.hpp"
 
 namespace fcl::p2p {
 
@@ -402,6 +403,16 @@ void node::impl::forget_session(const peer_id& peer) {
       ++metrics_value.sessions_closed;
    }
    pubsub_value.outbound_streams.erase(peer);
+}
+
+void node::impl::forget_session(const std::shared_ptr<node::impl::session_state>& session) {
+   auto lock = std::scoped_lock{mutex};
+   if (!detail::erase_current_session(sessions, session)) {
+      return;
+   }
+   metrics_value.active_sessions = sessions.size();
+   ++metrics_value.sessions_closed;
+   pubsub_value.outbound_streams.erase(session->info.remote_peer);
 }
 
 [[nodiscard]] std::shared_ptr<node::impl::session_state> node::impl::session_for(const peer_id& peer) const {
@@ -1217,7 +1228,7 @@ boost::asio::awaitable<fcl::p2p::stream> node::impl::open_protocol_direct(
       } catch (const fcl::exceptions::base& error) {
          if (!deadline.finish() || deadline.timed_out()) {
             session->closed = true;
-            forget_session(peer);
+            forget_session(session);
             if (session->direct_endpoint) {
                store.mark_endpoint_failure(peer, *session->direct_endpoint, path::kind::direct,
                                            std::chrono::system_clock::now() + std::chrono::seconds{5});
@@ -1233,7 +1244,7 @@ boost::asio::awaitable<fcl::p2p::stream> node::impl::open_protocol_direct(
             throw;
          }
          session->closed = true;
-         forget_session(peer);
+         forget_session(session);
          if (session->direct_endpoint) {
             store.mark_endpoint_failure(peer, *session->direct_endpoint, path::kind::direct,
                                         std::chrono::system_clock::now() + std::chrono::seconds{5});
@@ -1320,7 +1331,7 @@ node::impl::request_relay_reservation(const peer_id& relay_peer, relay::reservat
    } catch (const fcl::exceptions::base& error) {
       if (deadline.timed_out()) {
          relay_session->closed = true;
-         forget_session(relay_peer);
+         forget_session(relay_session);
          throw_operation_timeout("P2P relay reservation");
       }
       rethrow_transport_as_p2p(error);
@@ -1377,7 +1388,7 @@ node::impl::open_relay_yamux(const peer_id& peer, const peer_id& relay_peer, std
       record_relay_failure();
       if (deadline.timed_out()) {
          relay_session->closed = true;
-         forget_session(relay_peer);
+         forget_session(relay_session);
          throw_operation_timeout("P2P relay protocol open");
       }
       rethrow_transport_as_p2p(error);
@@ -1498,7 +1509,7 @@ void node::impl::launch_session_accept_loop(std::shared_ptr<node::impl::session_
                     asio::detached);
              } catch (...) {
                 session->closed = true;
-                self->forget_session(session->info.remote_peer);
+                self->forget_session(session);
                 co_return;
              }
           }
@@ -1726,7 +1737,7 @@ boost::asio::awaitable<void> node::impl::handle_autonat_v1(fcl::p2p::stream stre
                                                                  .timeout = std::chrono::milliseconds{1'500},
                                                              });
             session->closed = true;
-            forget_session(request.peer->peer);
+            forget_session(session);
             try {
                co_await session->connection.async_close();
             } catch (...) {

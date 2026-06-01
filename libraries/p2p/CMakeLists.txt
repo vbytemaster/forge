@@ -32,6 +32,7 @@ add_library(
    peer_exchange_codec.hpp
    relay_transport.cpp
    relay_transport.hpp
+   session_lifecycle.hpp
    stream_upgrade.cpp
    stream_upgrade.hpp
    tcp_stream_upgrade.hpp

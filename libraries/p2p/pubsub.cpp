@@ -2,43 +2,32 @@ module;
 
 #include <fcl/exceptions/macros.hpp>
 
-#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <vector>
 
 module fcl.p2p.pubsub;
 
-import fcl.crypto.der;
-import fcl.crypto.ed25519;
-import fcl.crypto.rsa;
+import fcl.crypto.asymmetric;
 import fcl.crypto.sha256;
 import fcl.multiformats.multicodec;
 import fcl.multiformats.exceptions;
 import fcl.multiformats.multihash;
 import fcl.multiformats.varint;
 import fcl.p2p.exceptions;
+import fcl.p2p.identity;
 
+#include "identity_signature.hpp"
 #include "protobuf.hpp"
 
 namespace fcl::p2p::pubsub {
 namespace {
 
 constexpr auto signing_prefix = std::string_view{"libp2p-pubsub:"};
-
-template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_range(const Range& value) {
-   auto out = std::vector<std::uint8_t>{};
-   out.reserve(value.size());
-   for (const auto byte : value) {
-      out.push_back(static_cast<std::uint8_t>(byte));
-   }
-   return out;
-}
 
 void validate_options(const options& opts) {
    const auto& limits = opts.limits;
@@ -63,49 +52,6 @@ void validate_topic(const topic& value, const options& opts) {
    if (value.value.size() > opts.limits.max_topic_size) {
       FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub topic exceeds max size");
    }
-}
-
-[[nodiscard]] public_key public_key_from_crypto(const fcl::crypto::asymmetric::public_key& key) {
-   return key.visit([](const auto& value) -> public_key {
-      using value_type = std::decay_t<decltype(value)>;
-      if constexpr (std::is_same_v<value_type, fcl::crypto::ed25519::public_key_shim>) {
-         return public_key{.type = public_key::type::ed25519, .data = bytes_from_range(value.serialize())};
-      } else if constexpr (std::is_same_v<value_type, fcl::crypto::rsa::public_key_shim>) {
-         return public_key{.type = public_key::type::rsa, .data = value.serialize()};
-      } else {
-         const auto spki = fcl::crypto::der::write_public_key(fcl::crypto::asymmetric::public_key{
-             fcl::crypto::asymmetric::public_key::storage_type{value}});
-         return public_key{.type = public_key::type::ecdsa, .data = spki};
-      }
-   });
-}
-
-[[nodiscard]] fcl::crypto::asymmetric::public_key crypto_public_key(const public_key& key) {
-   if (key.data.empty()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "GossipSub public key is empty");
-   }
-   if (key.type == public_key::type::ed25519) {
-      if (key.data.size() != fcl::crypto::ed25519::public_key_data{}.size()) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_identity, "invalid GossipSub Ed25519 key size");
-      }
-      auto data = fcl::crypto::ed25519::public_key_data{};
-      std::copy(key.data.begin(), key.data.end(), data.begin());
-      return fcl::crypto::asymmetric::public_key{
-          fcl::crypto::asymmetric::public_key::storage_type{fcl::crypto::ed25519::public_key_shim{data}}};
-   }
-   if (key.type == public_key::type::rsa) {
-      return fcl::crypto::asymmetric::public_key{
-          fcl::crypto::asymmetric::public_key::storage_type{fcl::crypto::rsa::public_key_shim{key.data}}};
-   }
-   try {
-      return fcl::crypto::der::read_public_key(key.data);
-   } catch (const fcl::exceptions::base& error) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_identity, error.what());
-   }
-}
-
-[[nodiscard]] std::vector<std::uint8_t> raw_signature(const fcl::crypto::asymmetric::signature& signature) {
-   return signature.visit([](const auto& value) { return bytes_from_range(value.serialize()); });
 }
 
 [[nodiscard]] std::vector<std::uint8_t> digest_bytes(const fcl::crypto::sha256& digest) {
@@ -532,22 +478,6 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
    return decode_public_key(hash.digest);
 }
 
-[[nodiscard]] bool verify_identity_signature(const public_key& key, std::span<const std::uint8_t> message_bytes,
-                                             std::span<const std::uint8_t> signature_bytes) {
-   if (key.type == public_key::type::ed25519) {
-      if (signature_bytes.size() != fcl::crypto::ed25519::signature_data{}.size()) {
-         return false;
-      }
-      auto value = fcl::crypto::ed25519::signature_data{};
-      std::copy(signature_bytes.begin(), signature_bytes.end(), value.begin());
-      return crypto_public_key(key).as<fcl::crypto::ed25519::public_key_shim>().verify(message_bytes, value);
-   }
-   if (key.type == public_key::type::rsa) {
-      return fcl::crypto::rsa::public_key{key.data}.verify(message_bytes, {signature_bytes.begin(), signature_bytes.end()});
-   }
-   FCL_THROW_EXCEPTION(exceptions::invalid_identity, "GossipSub ECDSA signature verification requires DER signature support");
-}
-
 } // namespace
 
 protocol_id codec::protocol(version value) {
@@ -662,11 +592,7 @@ void codec::sign_message(message& value, const fcl::crypto::asymmetric::private_
    value.key = encode_public_key(public_value);
    value.signature.clear();
    const auto payload = signing_payload(value);
-   try {
-      value.signature = raw_signature(key.sign(payload));
-   } catch (const fcl::exceptions::base& error) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_identity, error.what());
-   }
+   value.signature = sign_identity(key, payload);
 }
 
 bool codec::verify_message(const message& value) {

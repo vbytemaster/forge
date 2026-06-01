@@ -48,6 +48,7 @@ typedef std::array<char, 33> public_key_data;
 typedef fcl::crypto::sha256 private_key_secret;
 typedef std::array<char, 65> public_key_point_data; ///< the full uncompressed secp256k1 point
 typedef std::array<char, 72> signature;
+using der_signature = fcl::crypto::bytes;
 typedef std::array<unsigned char, 65> compact_signature;
 typedef std::array<char, 78> extended_key_data;
 typedef fcl::crypto::sha256 blinded_hash;
@@ -276,6 +277,10 @@ inline bool verify_message(const public_key_shim& key, std::span<const std::uint
                            const signature_shim& signature) {
    return verify_digest(key, sha256::hash(message), signature, true);
 }
+
+[[nodiscard]] der_signature sign_der(const private_key_shim& key, std::span<const std::uint8_t> message);
+[[nodiscard]] bool verify_der(const public_key_shim& key, std::span<const std::uint8_t> message,
+                              std::span<const std::uint8_t> signature);
 
 using recover_bytes = fcl::crypto::bytes;
 

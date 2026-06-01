@@ -72,6 +72,38 @@ BOOST_AUTO_TEST_CASE(test_p256_recovery) try {
 }
 FCL_LOG_AND_RETHROW();
 
+BOOST_AUTO_TEST_CASE(secp256k1_der_signature_matches_message_api) try {
+   const auto message = std::vector<std::uint8_t>{'l', 'i', 'b', 'p', '2', 'p', '-', 'i', 'd'};
+   const auto wrong_message = std::vector<std::uint8_t>{'w', 'r', 'o', 'n', 'g'};
+   const auto key = secp256k1::private_key_shim::generate();
+   const auto signature = secp256k1::sign_der(key, message);
+
+   BOOST_TEST(secp256k1::verify_der(key.get_public_key(), message, signature));
+   BOOST_TEST(!secp256k1::verify_der(key.get_public_key(), wrong_message, signature));
+
+   auto malformed = signature;
+   malformed.front() ^= 0xffU;
+   BOOST_CHECK_THROW((void)secp256k1::verify_der(key.get_public_key(), message, malformed),
+                     secp256k1::exceptions::invalid_signature);
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(p256_der_signature_matches_message_api) try {
+   const auto message = std::vector<std::uint8_t>{'l', 'i', 'b', 'p', '2', 'p', '-', 'e', 'c', 'd', 's', 'a'};
+   const auto wrong_message = std::vector<std::uint8_t>{'w', 'r', 'o', 'n', 'g'};
+   const auto key = p256::private_key_shim::generate();
+   const auto signature = p256::sign_der(key, message);
+
+   BOOST_TEST(p256::verify_der(key.get_public_key(), message, signature));
+   BOOST_TEST(!p256::verify_der(key.get_public_key(), wrong_message, signature));
+
+   auto malformed = signature;
+   malformed.front() ^= 0xffU;
+   BOOST_CHECK_THROW((void)p256::verify_der(key.get_public_key(), message, malformed),
+                     p256::exceptions::invalid_signature);
+}
+FCL_LOG_AND_RETHROW();
+
 BOOST_AUTO_TEST_CASE(test_k1_recyle) try {
    auto key = private_key::generate<secp256k1::private_key_shim>();
    auto pub = key.get_public_key();

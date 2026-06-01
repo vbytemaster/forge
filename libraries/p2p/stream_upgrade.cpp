@@ -12,7 +12,6 @@ module;
 #include <span>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -21,12 +20,9 @@ module;
 module fcl.p2p.node;
 
 import fcl.crypto.chacha20_poly1305;
-import fcl.crypto.der;
-import fcl.crypto.ed25519;
 import fcl.crypto.hmac;
 import fcl.crypto.pem;
 import fcl.crypto.asymmetric;
-import fcl.crypto.rsa;
 import fcl.crypto.sha256;
 import fcl.crypto.x25519;
 import fcl.p2p.exceptions;
@@ -42,6 +38,7 @@ import fcl.transport.stream;
 import fcl.tcp.connection;
 import fcl.yamux.session;
 
+#include "identity_signature.hpp"
 #include "libp2p_tls.hpp"
 #include "protobuf.hpp"
 #include "stream_upgrade.hpp"
@@ -83,87 +80,12 @@ namespace {
    return {out1, hmac_sha256(temp_key, out2_input)};
 }
 
-template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_range(const Range& value) {
-   auto out = std::vector<std::uint8_t>{};
-   out.reserve(value.size());
-   for (const auto byte : value) {
-      out.push_back(static_cast<std::uint8_t>(byte));
-   }
-   return out;
-}
-
 [[nodiscard]] fcl::crypto::asymmetric::private_key private_key_from_pem_for_noise(std::string_view pem) {
    try {
       return fcl::crypto::pem::read_private_key(pem);
    } catch (const fcl::exceptions::base& error) {
       throw_crypto_failure(error.what());
    }
-}
-
-[[nodiscard]] public_key public_key_from_crypto(const fcl::crypto::asymmetric::public_key& key) {
-   return key.visit([](const auto& value) -> public_key {
-      using value_type = std::decay_t<decltype(value)>;
-      if constexpr (std::is_same_v<value_type, fcl::crypto::ed25519::public_key_shim>) {
-         return public_key{.type = public_key::type::ed25519, .data = bytes_from_range(value.serialize())};
-      } else if constexpr (std::is_same_v<value_type, fcl::crypto::rsa::public_key_shim>) {
-         return public_key{.type = public_key::type::rsa, .data = value.serialize()};
-      } else {
-         const auto spki = fcl::crypto::der::write_public_key(fcl::crypto::asymmetric::public_key{
-             fcl::crypto::asymmetric::public_key::storage_type{value}});
-         return public_key{.type = public_key::type::ecdsa, .data = spki};
-      }
-   });
-}
-
-[[nodiscard]] fcl::crypto::asymmetric::public_key crypto_public_key(const public_key& key) {
-   if (key.type == public_key::type::ed25519) {
-      if (key.data.size() != fcl::crypto::ed25519::public_key_data{}.size()) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_identity, "invalid Ed25519 public key size");
-      }
-      auto data = fcl::crypto::ed25519::public_key_data{};
-      std::copy(key.data.begin(), key.data.end(), data.begin());
-      return fcl::crypto::asymmetric::public_key{
-          fcl::crypto::asymmetric::public_key::storage_type{fcl::crypto::ed25519::public_key_shim{data}}};
-   }
-   if (key.type == public_key::type::rsa) {
-      return fcl::crypto::asymmetric::public_key{
-          fcl::crypto::asymmetric::public_key::storage_type{fcl::crypto::rsa::public_key_shim{key.data}}};
-   }
-   try {
-      return fcl::crypto::der::read_public_key(key.data);
-   } catch (const fcl::exceptions::base& error) {
-      throw_crypto_failure(error.what());
-   }
-}
-
-[[nodiscard]] public_key public_key_from_private(const fcl::crypto::asymmetric::private_key& key) {
-   return public_key_from_crypto(key.get_public_key());
-}
-
-[[nodiscard]] std::vector<std::uint8_t> sign_identity(const fcl::crypto::asymmetric::private_key& key,
-                                                      std::span<const std::uint8_t> message) {
-   try {
-      const auto signature = key.sign(message);
-      return signature.visit([](const auto& value) { return bytes_from_range(value.serialize()); });
-   } catch (const fcl::exceptions::base& error) {
-      throw_crypto_failure(error.what());
-   }
-}
-
-[[nodiscard]] bool verify_identity_signature(const public_key& key, std::span<const std::uint8_t> message,
-                                             std::span<const std::uint8_t> signature) {
-   if (key.type == public_key::type::ed25519) {
-      if (signature.size() != fcl::crypto::ed25519::signature_data{}.size()) {
-         return false;
-      }
-      auto value = fcl::crypto::ed25519::signature_data{};
-      std::copy(signature.begin(), signature.end(), value.begin());
-      return crypto_public_key(key).as<fcl::crypto::ed25519::public_key_shim>().verify(message, value);
-   }
-   if (key.type == public_key::type::rsa) {
-      return fcl::crypto::rsa::public_key{key.data}.verify(message, {signature.begin(), signature.end()});
-   }
-   FCL_THROW_EXCEPTION(exceptions::invalid_identity, "ECDSA Noise identity verification requires DER signature support");
 }
 
 struct x25519_key {
@@ -379,7 +301,7 @@ struct noise_handshake_payload {
    auto private_key = private_key_from_pem_for_noise(options.private_key_pem);
    auto identity_key = options.public_key;
    if (identity_key.empty()) {
-      identity_key = encode_public_key(public_key_from_private(private_key));
+      identity_key = encode_public_key(public_key_from_crypto(private_key.get_public_key()));
    }
    return noise_handshake_payload{
        .identity_key = std::move(identity_key),

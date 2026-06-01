@@ -2,7 +2,6 @@ module;
 
 #include <fcl/exceptions/macros.hpp>
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -14,9 +13,11 @@ module;
 module fcl.p2p.identity;
 
 import fcl.crypto.base58;
-import fcl.crypto.ed25519;
+import fcl.crypto.asymmetric;
 import fcl.crypto.x509;
 import fcl.multiformats;
+
+#include "identity_signature.hpp"
 
 namespace fcl::p2p {
 
@@ -94,24 +95,13 @@ struct signed_key_extension {
 void verify_libp2p_certificate_extension(const fcl::crypto::x509::certificate& certificate,
                                          const signed_key_extension& extension) {
    const auto public_key = decode_public_key(extension.public_key);
-   if (public_key.type != decltype(public_key.type)::ed25519) {
-      return;
-   }
    const auto spki = certificate.public_key_der();
    auto message = std::vector<std::uint8_t>{};
    constexpr auto prefix = std::string_view{"libp2p-tls-handshake:"};
    message.insert(message.end(), prefix.begin(), prefix.end());
    message.insert(message.end(), spki.begin(), spki.end());
 
-   if (public_key.data.size() != fcl::crypto::ed25519::public_key_data{}.size() ||
-       extension.signature.size() != fcl::crypto::ed25519::signature_data{}.size()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "libp2p certificate extension has invalid Ed25519 sizes");
-   }
-   auto key_data = fcl::crypto::ed25519::public_key_data{};
-   std::copy(public_key.data.begin(), public_key.data.end(), key_data.begin());
-   auto signature_data = fcl::crypto::ed25519::signature_data{};
-   std::copy(extension.signature.begin(), extension.signature.end(), signature_data.begin());
-   if (!fcl::crypto::ed25519::public_key{key_data}.verify(message, signature_data)) {
+   if (!verify_identity_signature(public_key, message, extension.signature)) {
       FCL_THROW_EXCEPTION(exceptions::invalid_identity, "libp2p certificate extension signature is invalid");
    }
 }

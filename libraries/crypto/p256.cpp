@@ -11,11 +11,13 @@ module;
 #include <openssl/param_build.h>
 #include <openssl/params.h>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <exception>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 module fcl.crypto.p256;
@@ -233,6 +235,15 @@ size_t der_signature_size(const signature& sig) {
    for (size_t i = 0; i < length_bytes; ++i)
       payload_size = (payload_size << 8) | bytes[2 + i];
    return 2 + length_bytes + payload_size;
+}
+
+void require_der_signature(std::span<const std::uint8_t> der) {
+   const auto* cursor = der.data();
+   const auto* end = der.data() + der.size();
+   ecdsa_sig sig(d2i_ECDSA_SIG(nullptr, &cursor, static_cast<long>(der.size())));
+   if (!sig || cursor != end) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_signature, "invalid P-256 DER signature");
+   }
 }
 
 std::optional<public_key_data> recover_public_key_from_sig(ECDSA_SIG* sig, const fcl::crypto::sha256& digest, int recid,
@@ -506,6 +517,22 @@ public_key::public_key(const public_key_data& dat) : my(std::make_unique<detail:
 
 bool private_key::verify(const fcl::crypto::sha256& digest, const fcl::crypto::p256::signature& sig) {
    return get_public_key().verify(digest, sig);
+}
+
+der_signature sign_der(const private_key_shim& key, std::span<const std::uint8_t> message) {
+   const auto der = sign_der(key.serialize(), fcl::crypto::sha256::hash(message));
+   return der_signature{der.begin(), der.end()};
+}
+
+bool verify_der(const public_key_shim& key, std::span<const std::uint8_t> message,
+                std::span<const std::uint8_t> signature_bytes) {
+   if (signature_bytes.empty() || signature_bytes.size() > signature{}.size()) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_signature, "invalid P-256 DER signature size");
+   }
+   require_der_signature(signature_bytes);
+   auto value = signature{};
+   std::copy(signature_bytes.begin(), signature_bytes.end(), value.begin());
+   return public_key(key.serialize()).verify(fcl::crypto::sha256::hash(message), value);
 }
 
 public_key private_key::get_public_key() const {

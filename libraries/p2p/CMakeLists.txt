@@ -1,6 +1,8 @@
 add_library(
    fcl_p2p STATIC
    identity.cpp
+   identity_signature.cpp
+   identity_signature.hpp
    endpoint.cpp
    envelope.cpp
    identify.cpp

@@ -12,6 +12,7 @@ import fcl.crypto.bigint;
 import fcl.crypto.sha256;
 import fcl.crypto.sha512;
 export import fcl.exceptions;
+export import fcl.crypto.types;
 import fcl.raw.raw;
 
 export namespace fcl::crypto::p256 {
@@ -42,6 +43,7 @@ typedef std::array<char, 33> public_key_data;
 typedef fcl::crypto::sha256 private_key_secret;
 typedef std::array<char, 65> public_key_point_data; ///< the full uncompressed P-256 point
 typedef std::array<char, 72> signature;
+using der_signature = fcl::crypto::bytes;
 typedef std::array<unsigned char, 65> compact_signature;
 
 public_key_data recover_public_key_data(const compact_signature& c, const fcl::crypto::sha256& digest,
@@ -264,6 +266,10 @@ inline bool verify_message(const public_key_shim& key, std::span<const std::uint
                            const signature_shim& signature) {
    return verify_digest(key, sha256::hash(message), signature, true);
 }
+
+[[nodiscard]] der_signature sign_der(const private_key_shim& key, std::span<const std::uint8_t> message);
+[[nodiscard]] bool verify_der(const public_key_shim& key, std::span<const std::uint8_t> message,
+                              std::span<const std::uint8_t> signature);
 
 BOOST_DESCRIBE_STRUCT(public_key_shim, (), (_data))
 BOOST_DESCRIBE_STRUCT(signature_shim, (), (_data))

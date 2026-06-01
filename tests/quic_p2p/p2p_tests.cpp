@@ -27,16 +27,22 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_future.hpp>
+#include <openssl/asn1.h>
 #include <openssl/bio.h>
 #include <openssl/evp.h>
+#include <openssl/objects.h>
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
 #include <openssl/x509.h>
 
 import fcl.asio.blocking;
 import fcl.asio.runtime;
+import fcl.crypto.asymmetric;
 import fcl.crypto.der;
+import fcl.crypto.p256;
 import fcl.crypto.pem;
+import fcl.crypto.rsa;
+import fcl.crypto.secp256k1;
 import fcl.p2p.dht;
 import fcl.p2p.discovery;
 import fcl.p2p.endpoint;
@@ -100,8 +106,27 @@ struct x509_deleter {
    }
 };
 
+struct asn1_object_deleter {
+   void operator()(ASN1_OBJECT* value) const noexcept {
+      ASN1_OBJECT_free(value);
+   }
+};
+
+struct asn1_octet_string_deleter {
+   void operator()(ASN1_OCTET_STRING* value) const noexcept {
+      ASN1_OCTET_STRING_free(value);
+   }
+};
+
+struct x509_extension_deleter {
+   void operator()(X509_EXTENSION* value) const noexcept {
+      X509_EXTENSION_free(value);
+   }
+};
+
 struct test_identity {
    public_key key;
+   fcl::crypto::asymmetric::private_key private_key;
    std::string private_key_pem;
    peer_id peer;
 };
@@ -143,10 +168,54 @@ test_identity make_test_identity() {
       throw std::runtime_error{"failed to write Ed25519 private key PEM"};
    }
 
+   const auto private_key_pem = bio_to_string(private_key_bio.get());
    auto out = test_identity{
        .key = public_key{.type = public_key::type::ed25519, .data = std::move(public_bytes)},
-       .private_key_pem = bio_to_string(private_key_bio.get()),
+       .private_key = fcl::crypto::pem::read_private_key(private_key_pem),
+       .private_key_pem = private_key_pem,
    };
+   out.peer = make_peer_id(out.key);
+   return out;
+}
+
+template <typename Range> std::vector<std::uint8_t> bytes_from_range(const Range& value) {
+   auto out = std::vector<std::uint8_t>{};
+   out.reserve(value.size());
+   for (const auto byte : value) {
+      out.push_back(static_cast<std::uint8_t>(byte));
+   }
+   return out;
+}
+
+test_identity make_secp256k1_identity() {
+   auto private_key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::secp256k1::private_key_shim>();
+   auto key = public_key{
+       .type = public_key::type::secp256k1,
+       .data = bytes_from_range(private_key.get_public_key().as<fcl::crypto::secp256k1::public_key_shim>().serialize()),
+   };
+   auto out = test_identity{.key = std::move(key), .private_key = private_key};
+   out.peer = make_peer_id(out.key);
+   return out;
+}
+
+test_identity make_p256_identity() {
+   auto private_key = fcl::crypto::asymmetric::private_key::generate_p256<fcl::crypto::p256::private_key_shim>();
+   auto key = public_key{
+       .type = public_key::type::ecdsa,
+       .data = fcl::crypto::der::write_public_key(private_key.get_public_key()),
+   };
+   auto out = test_identity{.key = std::move(key), .private_key = private_key};
+   out.peer = make_peer_id(out.key);
+   return out;
+}
+
+test_identity make_rsa_identity() {
+   auto private_key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::rsa::private_key_shim>();
+   auto key = public_key{
+       .type = public_key::type::rsa,
+       .data = private_key.get_public_key().as<fcl::crypto::rsa::public_key_shim>().serialize(),
+   };
+   auto out = test_identity{.key = std::move(key), .private_key = private_key};
    out.peer = make_peer_id(out.key);
    return out;
 }
@@ -297,6 +366,139 @@ std::vector<std::uint8_t> bytes_from_hex(std::string_view hex) {
       out.push_back(static_cast<std::uint8_t>((hex_value(hex[i]) << 4U) | hex_value(hex[i + 1])));
    }
    return out;
+}
+
+void append_der_length(std::vector<std::uint8_t>& out, std::size_t value) {
+   if (value < 128) {
+      out.push_back(static_cast<std::uint8_t>(value));
+      return;
+   }
+   auto bytes = std::vector<std::uint8_t>{};
+   while (value != 0) {
+      bytes.push_back(static_cast<std::uint8_t>(value & 0xffU));
+      value >>= 8U;
+   }
+   out.push_back(static_cast<std::uint8_t>(0x80U | bytes.size()));
+   for (auto it = bytes.rbegin(); it != bytes.rend(); ++it) {
+      out.push_back(*it);
+   }
+}
+
+void append_der_octet_string(std::vector<std::uint8_t>& out, std::span<const std::uint8_t> value) {
+   out.push_back(0x04);
+   append_der_length(out, value.size());
+   out.insert(out.end(), value.begin(), value.end());
+}
+
+std::vector<std::uint8_t> signed_key_der(std::span<const std::uint8_t> public_key,
+                                         std::span<const std::uint8_t> signature) {
+   auto content = std::vector<std::uint8_t>{};
+   append_der_octet_string(content, public_key);
+   append_der_octet_string(content, signature);
+   auto out = std::vector<std::uint8_t>{0x30};
+   append_der_length(out, content.size());
+   out.insert(out.end(), content.begin(), content.end());
+   return out;
+}
+
+std::vector<std::uint8_t> certificate_public_key_der(X509* certificate) {
+   auto key = std::unique_ptr<EVP_PKEY, evp_pkey_deleter>{X509_get_pubkey(certificate)};
+   if (!key) {
+      throw std::runtime_error{"failed to get certificate public key"};
+   }
+   const auto length = i2d_PUBKEY(key.get(), nullptr);
+   if (length <= 0) {
+      throw std::runtime_error{"failed to size certificate public key DER"};
+   }
+   auto out = std::vector<std::uint8_t>(static_cast<std::size_t>(length));
+   auto* cursor = out.data();
+   if (i2d_PUBKEY(key.get(), &cursor) != length) {
+      throw std::runtime_error{"failed to write certificate public key DER"};
+   }
+   return out;
+}
+
+template <typename ExtensionFactory>
+std::vector<std::uint8_t> make_certificate_der_with_libp2p_extension_from_factory(ExtensionFactory make_extension) {
+   auto key = std::unique_ptr<EVP_PKEY, evp_pkey_deleter>{EVP_PKEY_Q_keygen(nullptr, nullptr, "ED25519")};
+   if (!key) {
+      throw std::runtime_error{"failed to generate certificate key"};
+   }
+   auto certificate = std::unique_ptr<X509, x509_deleter>{X509_new()};
+   if (!certificate || X509_set_version(certificate.get(), 2) != 1 ||
+       ASN1_INTEGER_set(X509_get_serialNumber(certificate.get()), 77) != 1 ||
+       X509_gmtime_adj(X509_getm_notBefore(certificate.get()), -60) == nullptr ||
+       X509_gmtime_adj(X509_getm_notAfter(certificate.get()), 24 * 60 * 60) == nullptr ||
+       X509_set_pubkey(certificate.get(), key.get()) != 1) {
+      throw std::runtime_error{"failed to configure certificate"};
+   }
+   auto* name = X509_get_subject_name(certificate.get());
+   const auto common_name = std::string_view{"fcl-libp2p-identity-test"};
+   if (name == nullptr ||
+       X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                                  reinterpret_cast<const unsigned char*>(common_name.data()),
+                                  static_cast<int>(common_name.size()), -1, 0) != 1 ||
+       X509_set_issuer_name(certificate.get(), name) != 1) {
+      throw std::runtime_error{"failed to configure certificate subject"};
+   }
+   const auto public_key_der = certificate_public_key_der(certificate.get());
+   const auto extension_value = make_extension(std::span<const std::uint8_t>{public_key_der});
+   auto object = std::unique_ptr<ASN1_OBJECT, asn1_object_deleter>{OBJ_txt2obj("1.3.6.1.4.1.53594.1.1", 1)};
+   auto octets = std::unique_ptr<ASN1_OCTET_STRING, asn1_octet_string_deleter>{ASN1_OCTET_STRING_new()};
+   if (!object || !octets ||
+       ASN1_OCTET_STRING_set(octets.get(), extension_value.data(), static_cast<int>(extension_value.size())) != 1) {
+      throw std::runtime_error{"failed to create certificate extension value"};
+   }
+   auto extension = std::unique_ptr<X509_EXTENSION, x509_extension_deleter>{
+       X509_EXTENSION_create_by_OBJ(nullptr, object.get(), 1, octets.get())};
+   if (!extension || X509_add_ext(certificate.get(), extension.get(), -1) != 1 ||
+       X509_sign(certificate.get(), key.get(), nullptr) <= 0) {
+      throw std::runtime_error{"failed to sign certificate"};
+   }
+   const auto length = i2d_X509(certificate.get(), nullptr);
+   if (length <= 0) {
+      throw std::runtime_error{"failed to size certificate DER"};
+   }
+   auto out = std::vector<std::uint8_t>(static_cast<std::size_t>(length));
+   auto* cursor = out.data();
+   if (i2d_X509(certificate.get(), &cursor) != length) {
+      throw std::runtime_error{"failed to write certificate DER"};
+   }
+   return out;
+}
+
+std::vector<std::uint8_t> make_certificate_der_with_libp2p_extension(std::span<const std::uint8_t> extension_value) {
+   return make_certificate_der_with_libp2p_extension_from_factory([&](std::span<const std::uint8_t>) {
+      return std::vector<std::uint8_t>{extension_value.begin(), extension_value.end()};
+   });
+}
+
+std::vector<std::uint8_t> tls_identity_message(std::span<const std::uint8_t> certificate_public_key) {
+   auto out = std::vector<std::uint8_t>{};
+   constexpr auto prefix = std::string_view{"libp2p-tls-handshake:"};
+   out.insert(out.end(), prefix.begin(), prefix.end());
+   out.insert(out.end(), certificate_public_key.begin(), certificate_public_key.end());
+   return out;
+}
+
+std::vector<std::uint8_t> sign_test_identity(const test_identity& identity, std::span<const std::uint8_t> message) {
+   return identity.private_key.visit([&](const auto& key) -> std::vector<std::uint8_t> {
+      using key_type = std::decay_t<decltype(key)>;
+      if constexpr (std::is_same_v<key_type, fcl::crypto::secp256k1::private_key_shim>) {
+         return fcl::crypto::secp256k1::sign_der(key, message);
+      } else if constexpr (std::is_same_v<key_type, fcl::crypto::p256::private_key_shim>) {
+         return fcl::crypto::p256::sign_der(key, message);
+      } else {
+         return bytes_from_range(key.sign(message).serialize());
+      }
+   });
+}
+
+std::vector<std::uint8_t> signed_tls_extension(const test_identity& identity,
+                                               std::span<const std::uint8_t> certificate_public_key) {
+   const auto message = tls_identity_message(certificate_public_key);
+   const auto signature = sign_test_identity(identity, message);
+   return signed_key_der(encode_public_key(identity.key), signature);
 }
 
 node::options options_for(peer_id id, capability_set capabilities = capability_set{
@@ -687,6 +889,62 @@ BOOST_AUTO_TEST_CASE(p2p_public_key_encoding_matches_libp2p_vectors) {
    auto ecdsa_peer = make_peer_id({.type = public_key::type::ecdsa, .data = ecdsa_public_key});
    auto ecdsa_hash = fcl::multiformats::multihash::decode(ecdsa_peer.to_bytes());
    BOOST_TEST(ecdsa_hash.code == fcl::multiformats::code_value(fcl::multiformats::multicodec_code::sha2_256));
+}
+
+BOOST_AUTO_TEST_CASE(p2p_certificate_extension_rejects_unverified_non_ed25519_identity) {
+   const auto identity = make_secp256k1_identity();
+   auto bogus_signature = std::vector<std::uint8_t>(72, 0x42);
+   const auto extension = signed_key_der(encode_public_key(identity.key), bogus_signature);
+   const auto certificate = make_certificate_der_with_libp2p_extension(extension);
+
+   BOOST_CHECK_THROW((void)make_peer_id_from_certificate_der(certificate), exceptions::invalid_identity);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_certificate_extension_verifies_supported_identities) {
+   const auto identities =
+       std::vector<test_identity>{make_test_identity(), make_rsa_identity(), make_secp256k1_identity(), make_p256_identity()};
+   for (const auto& identity : identities) {
+      const auto certificate = make_certificate_der_with_libp2p_extension_from_factory(
+          [&](std::span<const std::uint8_t> certificate_public_key) {
+             return signed_tls_extension(identity, certificate_public_key);
+          });
+
+      BOOST_TEST(make_peer_id_from_certificate_der(certificate).to_string() == identity.peer.to_string());
+   }
+}
+
+BOOST_AUTO_TEST_CASE(p2p_identity_signatures_support_supported_key_types) {
+   const auto identities =
+       std::vector<test_identity>{make_test_identity(), make_rsa_identity(), make_secp256k1_identity(), make_p256_identity()};
+   for (const auto& identity : identities) {
+      auto message = pubsub::message{
+          .from = identity.peer,
+          .data = std::vector<std::uint8_t>{'m', 'u', 'l', 't', 'i', '-', 'k', 'e', 'y'},
+          .seqno = std::vector<std::uint8_t>{0, 0, 0, 0, 0, 0, 0, 9},
+          .subject = pubsub::topic{.value = "fcl.identity"},
+          .key = encode_public_key(identity.key),
+      };
+      pubsub::codec::sign_message(message, identity.private_key);
+      BOOST_TEST(pubsub::codec::verify_message(message));
+
+      auto tampered = message;
+      tampered.signature.back() ^= 0x01U;
+      BOOST_TEST(!pubsub::codec::verify_message(tampered));
+
+      const auto payload_type = fcl::multiformats::varint_encode(0x0302);
+      const auto payload = std::vector<std::uint8_t>{7, 8, 9};
+      const auto envelope = signed_envelope::seal(identity.key, identity.private_key, "libp2p-relay-rsvp",
+                                                  payload_type, payload);
+      BOOST_CHECK_NO_THROW(envelope.verify("libp2p-relay-rsvp", identity.peer));
+
+      auto tampered_envelope = envelope;
+      tampered_envelope.payload.back() ^= 0x01U;
+      BOOST_CHECK_THROW(tampered_envelope.verify("libp2p-relay-rsvp", identity.peer), exceptions::invalid_identity);
+
+      auto malformed_envelope = envelope;
+      malformed_envelope.signature.pop_back();
+      BOOST_CHECK_THROW(malformed_envelope.verify("libp2p-relay-rsvp", identity.peer), exceptions::invalid_identity);
+   }
 }
 
 BOOST_AUTO_TEST_CASE(p2p_peer_id_legacy_and_cid_strings_roundtrip) {

@@ -2,14 +2,12 @@ module;
 
 #include <fcl/exceptions/macros.hpp>
 
-#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -24,15 +22,14 @@ module;
 module fcl.p2p.node;
 
 import fcl.crypto.asymmetric;
-import fcl.crypto.der;
-import fcl.crypto.ed25519;
 import fcl.crypto.pem;
-import fcl.crypto.rsa;
 import fcl.crypto.x509;
 import fcl.p2p.exceptions;
 import fcl.p2p.identity;
 import fcl.stcp.connection;
 import fcl.stcp.options;
+
+#include "identity_signature.hpp"
 
 #include "libp2p_tls.hpp"
 
@@ -121,34 +118,6 @@ void require_openssl(bool ok, std::string_view message) {
    return out;
 }
 
-template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_range(const Range& value) {
-   auto out = std::vector<std::uint8_t>{};
-   out.reserve(value.size());
-   for (const auto byte : value) {
-      out.push_back(static_cast<std::uint8_t>(byte));
-   }
-   return out;
-}
-
-[[nodiscard]] public_key public_key_from_crypto(const fcl::crypto::asymmetric::public_key& key) {
-   return key.visit([](const auto& value) -> public_key {
-      using value_type = std::decay_t<decltype(value)>;
-      if constexpr (std::is_same_v<value_type, fcl::crypto::ed25519::public_key_shim>) {
-         return public_key{.type = public_key::type::ed25519, .data = bytes_from_range(value.serialize())};
-      } else if constexpr (std::is_same_v<value_type, fcl::crypto::rsa::public_key_shim>) {
-         return public_key{.type = public_key::type::rsa, .data = value.serialize()};
-      } else {
-         const auto spki = fcl::crypto::der::write_public_key(fcl::crypto::asymmetric::public_key{
-             fcl::crypto::asymmetric::public_key::storage_type{value}});
-         return public_key{.type = public_key::type::ecdsa, .data = spki};
-      }
-   });
-}
-
-[[nodiscard]] public_key public_key_from_private(const fcl::crypto::asymmetric::private_key& key) {
-   return public_key_from_crypto(key.get_public_key());
-}
-
 [[nodiscard]] fcl::crypto::asymmetric::private_key identity_private_key(const node::options& options) {
    if (options.private_key_pem.empty()) {
       throw_identity("libp2p TLS requires identity private key material");
@@ -165,17 +134,7 @@ template <typename Range> [[nodiscard]] std::vector<std::uint8_t> bytes_from_ran
    if (!options.public_key.empty()) {
       return options.public_key;
    }
-   return encode_public_key(public_key_from_private(key));
-}
-
-[[nodiscard]] std::vector<std::uint8_t> sign_identity(const fcl::crypto::asymmetric::private_key& key,
-                                                      std::span<const std::uint8_t> message) {
-   try {
-      const auto signature = key.sign(message);
-      return signature.visit([](const auto& value) { return bytes_from_range(value.serialize()); });
-   } catch (const fcl::exceptions::base& error) {
-      throw_identity(error.what());
-   }
+   return encode_public_key(public_key_from_crypto(key.get_public_key()));
 }
 
 void append_der_length(std::vector<std::uint8_t>& out, std::size_t value) {
@@ -225,15 +184,6 @@ void add_libp2p_extension(X509* certificate, std::span<const std::uint8_t> value
                    "failed to add libp2p TLS public key extension");
 }
 
-[[nodiscard]] std::vector<std::uint8_t> certificate_der(X509* certificate) {
-   const auto length = i2d_X509(certificate, nullptr);
-   require_openssl(length > 0, "failed to size libp2p TLS certificate DER");
-   auto out = std::vector<std::uint8_t>(static_cast<std::size_t>(length));
-   auto* cursor = out.data();
-   require_openssl(i2d_X509(certificate, &cursor) == length, "failed to write libp2p TLS certificate DER");
-   return out;
-}
-
 [[nodiscard]] x509_ptr parse_certificate(std::span<const std::uint8_t> der) {
    const auto* cursor = der.data();
    auto certificate = x509_ptr{d2i_X509(nullptr, &cursor, static_cast<long>(der.size()))};
@@ -258,25 +208,6 @@ void verify_certificate_basics(X509* certificate) {
    message.insert(message.end(), signing_prefix.begin(), signing_prefix.end());
    message.insert(message.end(), spki.begin(), spki.end());
    return message;
-}
-
-[[nodiscard]] bool verify_identity_signature(const public_key& key, std::span<const std::uint8_t> message,
-                                             std::span<const std::uint8_t> signature) {
-   if (key.type == public_key::type::ed25519) {
-      if (key.data.size() != fcl::crypto::ed25519::public_key_data{}.size() ||
-          signature.size() != fcl::crypto::ed25519::signature_data{}.size()) {
-         return false;
-      }
-      auto key_data = fcl::crypto::ed25519::public_key_data{};
-      std::copy(key.data.begin(), key.data.end(), key_data.begin());
-      auto signature_data = fcl::crypto::ed25519::signature_data{};
-      std::copy(signature.begin(), signature.end(), signature_data.begin());
-      return fcl::crypto::ed25519::public_key{key_data}.verify(message, signature_data);
-   }
-   if (key.type == public_key::type::rsa) {
-      return fcl::crypto::rsa::public_key{key.data}.verify(message, {signature.begin(), signature.end()});
-   }
-   return false;
 }
 
 [[nodiscard]] peer_id verify_certificate_identity(const fcl::crypto::x509::certificate& certificate,

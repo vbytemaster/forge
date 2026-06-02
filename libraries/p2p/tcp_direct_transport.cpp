@@ -77,6 +77,20 @@ namespace {
    return endpoint.peer;
 }
 
+struct cancel_current_scope {
+   std::shared_ptr<std::function<void()>> value;
+
+   ~cancel_current_scope() {
+      if (!value) {
+         return;
+      }
+      try {
+         *value = {};
+      } catch (...) {
+      }
+   }
+};
+
 class tcp_profile final {
  public:
    tcp_profile(fcl::asio::runtime& runtime_value, const node::options& options_value)
@@ -126,6 +140,7 @@ class tcp_profile final {
       auto connector = fcl::tcp::connector{runtime_.context().get_executor()};
       auto cancel_current = std::make_shared<std::function<void()>>([&connector] { connector.cancel(); });
       auto deadline = operation_deadline{runtime_.context(), options.timeout};
+      auto cancel_scope = cancel_current_scope{cancel_current};
       deadline.arm([cancel_current] {
          if (*cancel_current) {
             (*cancel_current)();
@@ -166,6 +181,7 @@ class tcp_profile final {
          const auto remote_endpoint = p2p_endpoint_for(tcp.remote_endpoint());
          auto cancel_current = std::make_shared<std::function<void()>>([&tcp] { tcp.cancel(); });
          auto deadline = operation_deadline{runtime_.context(), node::connect_options{}.timeout};
+         auto cancel_scope = cancel_current_scope{cancel_current};
          deadline.arm([cancel_current] {
             if (*cancel_current) {
                (*cancel_current)();

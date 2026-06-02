@@ -26,6 +26,7 @@
 
 import fcl.asio.blocking;
 import fcl.asio.runtime;
+import fcl.exceptions;
 import fcl.transport.exceptions;
 import fcl.transport.stream;
 import fcl.yamux.exceptions;
@@ -98,6 +99,11 @@ inline constexpr std::size_t header_size = 12;
 
 [[nodiscard]] std::uint32_t length_of(const bytes& value) {
    return load_u32(value, 8);
+}
+
+[[nodiscard]] bytes payload_of(const bytes& value) {
+   BOOST_REQUIRE_GE(value.size(), header_size);
+   return bytes{value.begin() + static_cast<std::ptrdiff_t>(header_size), value.end()};
 }
 
 template <typename T>
@@ -225,6 +231,16 @@ boost::asio::awaitable<void> take_result_for(std::shared_ptr<spawned_result<void
    }
 }
 
+struct pending_write {
+   pending_write(boost::asio::any_io_executor executor, bytes write_value)
+       : timer(std::move(executor), (std::chrono::steady_clock::time_point::max)()),
+         value(std::move(write_value)) {}
+
+   boost::asio::steady_timer timer;
+   bytes value;
+   bool released = false;
+};
+
 struct pipe_state {
    explicit pipe_state(boost::asio::any_io_executor executor)
        : read_timer(std::move(executor), (std::chrono::steady_clock::time_point::max)()) {}
@@ -232,7 +248,9 @@ struct pipe_state {
    std::mutex mutex;
    boost::asio::steady_timer read_timer;
    std::deque<bytes> reads;
+   std::deque<std::shared_ptr<pending_write>> pending_writes;
    bool closed = false;
+   bool hold_writes = false;
    std::uint64_t writes = 0;
 };
 
@@ -251,13 +269,44 @@ class pipe_stream final : public fcl::transport::detail::stream_concept {
    }
 
    boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> value) override {
+      auto executor = co_await boost::asio::this_coro::executor;
+      auto pending = std::shared_ptr<pending_write>{};
       {
          auto lock = std::scoped_lock{outbound_->mutex};
          if (outbound_->closed) {
             FCL_THROW_EXCEPTION(fcl::transport::exceptions::closed, "pipe stream closed");
          }
-         outbound_->reads.push_back(bytes{value.begin(), value.end()});
-         ++outbound_->writes;
+         auto owned = bytes{value.begin(), value.end()};
+         if (outbound_->hold_writes) {
+            pending = std::make_shared<pending_write>(executor, std::move(owned));
+            outbound_->pending_writes.push_back(pending);
+         } else {
+            outbound_->reads.push_back(std::move(owned));
+            ++outbound_->writes;
+         }
+      }
+      outbound_->read_timer.cancel();
+      if (!pending) {
+         co_return;
+      }
+
+      auto error = boost::system::error_code{};
+      while (true) {
+         {
+            auto lock = std::scoped_lock{outbound_->mutex};
+            if (pending->released) {
+               outbound_->reads.push_back(std::move(pending->value));
+               ++outbound_->writes;
+               break;
+            }
+            if (outbound_->closed) {
+               FCL_THROW_EXCEPTION(fcl::transport::exceptions::closed, "pipe stream closed");
+            }
+         }
+         co_await pending->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+         if (error && error != boost::asio::error::operation_aborted) {
+            throw boost::system::system_error{error};
+         }
       }
       outbound_->read_timer.cancel();
       co_return;
@@ -289,6 +338,14 @@ class pipe_stream final : public fcl::transport::detail::stream_concept {
          auto lock = std::scoped_lock{inbound_->mutex, outbound_->mutex};
          inbound_->closed = true;
          outbound_->closed = true;
+         for (const auto& pending : inbound_->pending_writes) {
+            pending->timer.cancel();
+         }
+         for (const auto& pending : outbound_->pending_writes) {
+            pending->timer.cancel();
+         }
+         inbound_->pending_writes.clear();
+         outbound_->pending_writes.clear();
       }
       inbound_->read_timer.cancel();
       outbound_->read_timer.cancel();
@@ -300,6 +357,14 @@ class pipe_stream final : public fcl::transport::detail::stream_concept {
          auto lock = std::scoped_lock{inbound_->mutex, outbound_->mutex};
          inbound_->closed = true;
          outbound_->closed = true;
+         for (const auto& pending : inbound_->pending_writes) {
+            pending->timer.cancel();
+         }
+         for (const auto& pending : outbound_->pending_writes) {
+            pending->timer.cancel();
+         }
+         inbound_->pending_writes.clear();
+         outbound_->pending_writes.clear();
       }
       inbound_->read_timer.cancel();
       outbound_->read_timer.cancel();
@@ -314,6 +379,8 @@ class pipe_stream final : public fcl::transport::detail::stream_concept {
 struct stream_pair {
    fcl::transport::stream left;
    fcl::transport::stream right;
+   std::shared_ptr<pipe_state> left_state;
+   std::shared_ptr<pipe_state> right_state;
 };
 
 [[nodiscard]] stream_pair make_stream_pair(boost::asio::any_io_executor executor) {
@@ -324,7 +391,43 @@ struct stream_pair {
            std::make_shared<pipe_stream>(1, left_state, right_state)),
        .right = fcl::transport::detail::stream_access::make(
            std::make_shared<pipe_stream>(2, right_state, left_state)),
+       .left_state = left_state,
+       .right_state = right_state,
    };
+}
+
+void hold_writes(const std::shared_ptr<pipe_state>& state, bool value) {
+   auto lock = std::scoped_lock{state->mutex};
+   state->hold_writes = value;
+}
+
+void release_next_write(const std::shared_ptr<pipe_state>& state) {
+   auto pending = std::shared_ptr<pending_write>{};
+   {
+      auto lock = std::scoped_lock{state->mutex};
+      BOOST_REQUIRE(!state->pending_writes.empty());
+      pending = state->pending_writes.front();
+      state->pending_writes.pop_front();
+      pending->released = true;
+   }
+   pending->timer.cancel();
+}
+
+boost::asio::awaitable<void> wait_for_pending_writes(const std::shared_ptr<pipe_state>& state,
+                                                     std::size_t expected) {
+   auto error = boost::system::error_code{};
+   while (true) {
+      {
+         auto lock = std::scoped_lock{state->mutex};
+         if (state->pending_writes.size() >= expected) {
+            co_return;
+         }
+      }
+      co_await state->read_timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+      if (error && error != boost::asio::error::operation_aborted) {
+         throw boost::system::system_error{error};
+      }
+   }
 }
 
 boost::asio::awaitable<void> yamux_open_accept_and_early_data() {
@@ -380,6 +483,86 @@ boost::asio::awaitable<void> yamux_concurrent_streams_do_not_cross_deliver() {
 
    co_await left.async_close();
    co_await right.async_close();
+}
+
+boost::asio::awaitable<void> yamux_concurrent_writes_are_fifo_without_timer_spin() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto pair = make_stream_pair(executor);
+   auto options = fcl::yamux::options{.initial_window = 64, .max_frame_size = 64};
+   auto left = fcl::yamux::session{std::move(pair.left), fcl::yamux::side::initiator, options};
+
+   auto first = co_await left.async_open_stream();
+   auto first_syn = co_await pair.right.async_read();
+   BOOST_CHECK_EQUAL(type_of(first_syn), frame_type::window_update);
+   BOOST_CHECK_EQUAL(stream_id_of(first_syn), 1U);
+   auto second = co_await left.async_open_stream();
+   auto second_syn = co_await pair.right.async_read();
+   BOOST_CHECK_EQUAL(type_of(second_syn), frame_type::window_update);
+   BOOST_CHECK_EQUAL(stream_id_of(second_syn), 3U);
+   auto third = co_await left.async_open_stream();
+   auto third_syn = co_await pair.right.async_read();
+   BOOST_CHECK_EQUAL(type_of(third_syn), frame_type::window_update);
+   BOOST_CHECK_EQUAL(stream_id_of(third_syn), 5U);
+
+   hold_writes(pair.right_state, true);
+   const auto first_payload = text_bytes("first");
+   const auto second_payload = text_bytes("second");
+   const auto third_payload = text_bytes("third");
+   auto first_write = spawn_result<void>(executor, first.async_write(first_payload));
+   auto second_write = spawn_result<void>(executor, second.async_write(second_payload));
+   auto third_write = spawn_result<void>(executor, third.async_write(third_payload));
+
+   co_await wait_for_pending_writes(pair.right_state, 1);
+   release_next_write(pair.right_state);
+   auto first_frame = co_await pair.right.async_read();
+   BOOST_CHECK_EQUAL(type_of(first_frame), frame_type::data);
+   BOOST_CHECK_EQUAL(stream_id_of(first_frame), 1U);
+   BOOST_TEST(payload_of(first_frame) == first_payload, boost::test_tools::per_element());
+   co_await take_result_for(first_write, std::chrono::seconds{1});
+
+   co_await wait_for_pending_writes(pair.right_state, 1);
+   release_next_write(pair.right_state);
+   auto second_frame = co_await pair.right.async_read();
+   BOOST_CHECK_EQUAL(type_of(second_frame), frame_type::data);
+   BOOST_CHECK_EQUAL(stream_id_of(second_frame), 3U);
+   BOOST_TEST(payload_of(second_frame) == second_payload, boost::test_tools::per_element());
+   co_await take_result_for(second_write, std::chrono::seconds{1});
+
+   co_await wait_for_pending_writes(pair.right_state, 1);
+   release_next_write(pair.right_state);
+   auto third_frame = co_await pair.right.async_read();
+   BOOST_CHECK_EQUAL(type_of(third_frame), frame_type::data);
+   BOOST_CHECK_EQUAL(stream_id_of(third_frame), 5U);
+   BOOST_TEST(payload_of(third_frame) == third_payload, boost::test_tools::per_element());
+   co_await take_result_for(third_write, std::chrono::seconds{1});
+
+   co_await pair.right.async_close();
+   co_await left.async_close();
+}
+
+boost::asio::awaitable<void> yamux_cancel_wakes_pending_write_waiters() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto pair = make_stream_pair(executor);
+   auto options = fcl::yamux::options{.initial_window = 64, .max_frame_size = 64};
+   auto left = fcl::yamux::session{std::move(pair.left), fcl::yamux::side::initiator, options};
+
+   auto first = co_await left.async_open_stream();
+   (void)co_await pair.right.async_read();
+   auto second = co_await left.async_open_stream();
+   (void)co_await pair.right.async_read();
+
+   hold_writes(pair.right_state, true);
+   auto first_write = spawn_result<void>(executor, first.async_write(text_bytes("held")));
+   auto second_write = spawn_result<void>(executor, second.async_write(text_bytes("waiting")));
+   co_await wait_for_pending_writes(pair.right_state, 1);
+
+   left.cancel();
+
+   BOOST_CHECK_THROW((void)co_await take_result_for(first_write, std::chrono::seconds{1}),
+                     fcl::exceptions::base);
+   BOOST_CHECK_THROW((void)co_await take_result_for(second_write, std::chrono::seconds{1}),
+                     fcl::exceptions::base);
+   co_await pair.right.async_close();
 }
 
 boost::asio::awaitable<void> yamux_flow_control_waits_for_window_update() {
@@ -727,6 +910,16 @@ BOOST_AUTO_TEST_CASE(yamux_supports_open_accept_and_early_data) {
 BOOST_AUTO_TEST_CASE(yamux_keeps_concurrent_stream_payloads_isolated) {
    auto runtime = fcl::asio::runtime{};
    fcl::asio::blocking::run(runtime, yamux_concurrent_streams_do_not_cross_deliver());
+}
+
+BOOST_AUTO_TEST_CASE(yamux_serializes_concurrent_writes_without_starving_waiters) {
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, yamux_concurrent_writes_are_fifo_without_timer_spin());
+}
+
+BOOST_AUTO_TEST_CASE(yamux_cancel_unblocks_pending_write_waiters) {
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, yamux_cancel_wakes_pending_write_waiters());
 }
 
 BOOST_AUTO_TEST_CASE(yamux_applies_flow_control_with_window_updates) {

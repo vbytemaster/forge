@@ -677,6 +677,26 @@ void set_cancel(tcp_upgrade_deadline& deadline, std::function<void()> cancel) {
    }
 }
 
+void clear_cancel(tcp_upgrade_deadline& deadline) noexcept {
+   if (!deadline.cancel_current) {
+      return;
+   }
+   try {
+      *deadline.cancel_current = {};
+   } catch (...) {
+   }
+}
+
+struct cancel_cleanup {
+   tcp_upgrade_deadline* deadline = nullptr;
+
+   ~cancel_cleanup() {
+      if (deadline) {
+         clear_cancel(*deadline);
+      }
+   }
+};
+
 [[nodiscard]] bool has_timeout(const tcp_upgrade_deadline& deadline) noexcept {
    return deadline.timeout.count() > 0;
 }
@@ -684,6 +704,7 @@ void set_cancel(tcp_upgrade_deadline& deadline, std::function<void()> cancel) {
 boost::asio::awaitable<upgraded_session> finish_noise_outbound(fcl::p2p::stream stream, const node::options& options,
                                                                std::optional<peer_id> expected_peer,
                                                                tcp_upgrade_deadline deadline = {}) {
+   auto cleanup = cancel_cleanup{&deadline};
    set_cancel(deadline, [&stream] { stream.cancel(); });
    auto secure = co_await noise_initiator(std::move(stream), options,
                                           options.allow_insecure_test_mode ? std::nullopt : std::move(expected_peer));
@@ -700,6 +721,7 @@ boost::asio::awaitable<upgraded_session> finish_noise_outbound(fcl::p2p::stream 
 boost::asio::awaitable<upgraded_session> finish_noise_inbound(fcl::p2p::stream stream, const node::options& options,
                                                               std::optional<peer_id> expected_peer,
                                                               tcp_upgrade_deadline deadline = {}) {
+   auto cleanup = cancel_cleanup{&deadline};
    set_cancel(deadline, [&stream] { stream.cancel(); });
    auto secure =
        co_await noise_responder(std::move(stream), options,
@@ -718,6 +740,7 @@ boost::asio::awaitable<upgraded_session> finish_tls_outbound(fcl::tcp::connectio
                                                              const node::options& options,
                                                              std::optional<peer_id> expected_peer,
                                                              tcp_upgrade_deadline deadline = {}) {
+   auto cleanup = cancel_cleanup{&deadline};
    try {
       set_cancel(deadline, [&connection] { connection.cancel(); });
       auto tls = has_timeout(deadline)
@@ -747,6 +770,7 @@ boost::asio::awaitable<upgraded_session> finish_tls_inbound(fcl::tcp::connection
                                                             const node::options& options,
                                                             std::optional<peer_id> expected_peer,
                                                             tcp_upgrade_deadline deadline = {}) {
+   auto cleanup = cancel_cleanup{&deadline};
    try {
       set_cancel(deadline, [&connection] { connection.cancel(); });
       auto tls = has_timeout(deadline)
@@ -797,6 +821,7 @@ boost::asio::awaitable<upgraded_session> upgrade_outbound_tcp(fcl::tcp::connecti
                                                               const node::options& options,
                                                               std::optional<peer_id> expected_peer,
                                                               tcp_upgrade_deadline deadline) {
+   auto cleanup = cancel_cleanup{&deadline};
    set_cancel(deadline, [&connection] { connection.cancel(); });
    const auto protocols = std::array{
        protocol_id{.value = "/tls/1.0.0"},
@@ -820,6 +845,7 @@ boost::asio::awaitable<upgraded_session> upgrade_inbound_tcp(fcl::tcp::connectio
                                                              const node::options& options,
                                                              std::optional<peer_id> expected_peer,
                                                              tcp_upgrade_deadline deadline) {
+   auto cleanup = cancel_cleanup{&deadline};
    set_cancel(deadline, [&connection] { connection.cancel(); });
    const auto protocols = std::array{
        protocol_id{.value = "/tls/1.0.0"},

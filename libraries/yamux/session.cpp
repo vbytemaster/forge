@@ -152,6 +152,15 @@ struct session::impl : std::enable_shared_from_this<impl> {
       std::shared_ptr<boost::asio::steady_timer> window_timer;
    };
 
+   struct write_waiter {
+      explicit write_waiter(boost::asio::any_io_executor executor)
+          : timer(std::make_shared<boost::asio::steady_timer>(std::move(executor), far_future())) {}
+
+      std::shared_ptr<boost::asio::steady_timer> timer;
+      bool ready = false;
+      bool canceled = false;
+   };
+
    impl(transport::stream stream, side session_side, options session_options)
        : stream_(std::move(stream)), side_(session_side), options_(session_options) {
       validate_options();
@@ -171,7 +180,6 @@ struct session::impl : std::enable_shared_from_this<impl> {
          if (!executor_) {
             executor_ = executor;
             accept_timer_ = std::make_shared<boost::asio::steady_timer>(executor, far_future());
-            write_timer_ = std::make_shared<boost::asio::steady_timer>(executor, far_future());
          }
          if (!started_) {
             started_ = true;
@@ -519,9 +527,14 @@ struct session::impl : std::enable_shared_from_this<impl> {
       if (accept_timer_) {
          notify_waiters(accept_timer_);
       }
-      if (write_timer_) {
-         notify_waiters(write_timer_);
+      for (const auto& waiter : write_waiters_) {
+         waiter->ready = true;
+         waiter->canceled = true;
+         if (waiter->timer) {
+            waiter->timer->cancel();
+         }
       }
+      write_waiters_.clear();
       for (const auto& [_, state] : streams_) {
          if (state->read_timer) {
             notify_waiters(state->read_timer);
@@ -532,11 +545,9 @@ struct session::impl : std::enable_shared_from_this<impl> {
       }
    }
 
-   boost::asio::awaitable<void> write_frame(frame_type type, std::uint16_t flags, std::uint32_t stream_id,
-                                           std::uint32_t length, std::span<const std::uint8_t> payload = {},
-                                           bool allow_after_close = false) {
-      auto encoded = encode_frame(type, flags, stream_id, length, payload);
-
+   boost::asio::awaitable<void> acquire_write_slot(bool allow_after_close) {
+      auto executor = co_await boost::asio::this_coro::executor;
+      auto waiter = std::shared_ptr<write_waiter>{};
       auto error = boost::system::error_code{};
       while (true) {
          {
@@ -544,18 +555,38 @@ struct session::impl : std::enable_shared_from_this<impl> {
             if (!allow_after_close) {
                rethrow_terminal_locked();
             }
-            if (!write_busy_) {
-               write_busy_ = true;
-               break;
+            if (!waiter) {
+               if (!write_busy_) {
+                  write_busy_ = true;
+                  co_return;
+               }
+               waiter = std::make_shared<write_waiter>(executor);
+               write_waiters_.push_back(waiter);
             }
-            arm_wait(write_timer_);
+            if (waiter->ready) {
+               if (waiter->canceled) {
+                  if (!allow_after_close) {
+                     rethrow_terminal_locked();
+                  }
+                  FCL_THROW_EXCEPTION(exceptions::closed, "yamux write waiter canceled");
+               }
+               co_return;
+            }
          }
 
-         co_await write_timer_->async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+         co_await waiter->timer->async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
          if (error && error != boost::asio::error::operation_aborted) {
             throw boost::system::system_error{error};
          }
       }
+   }
+
+   boost::asio::awaitable<void> write_frame(frame_type type, std::uint16_t flags, std::uint32_t stream_id,
+                                           std::uint32_t length, std::span<const std::uint8_t> payload = {},
+                                           bool allow_after_close = false) {
+      auto encoded = encode_frame(type, flags, stream_id, length, payload);
+
+      co_await acquire_write_slot(allow_after_close);
 
       try {
          co_await stream_.async_write(encoded);
@@ -568,10 +599,19 @@ struct session::impl : std::enable_shared_from_this<impl> {
    }
 
    void finish_write() {
-      auto lock = std::scoped_lock{mutex_};
-      write_busy_ = false;
-      if (write_timer_) {
-         notify_waiters(write_timer_);
+      auto next = std::shared_ptr<write_waiter>{};
+      {
+         auto lock = std::scoped_lock{mutex_};
+         if (!write_waiters_.empty()) {
+            next = write_waiters_.front();
+            write_waiters_.pop_front();
+            next->ready = true;
+         } else {
+            write_busy_ = false;
+         }
+      }
+      if (next && next->timer) {
+         next->timer->cancel();
       }
    }
 
@@ -836,9 +876,9 @@ struct session::impl : std::enable_shared_from_this<impl> {
    mutable std::mutex mutex_;
    std::optional<boost::asio::any_io_executor> executor_;
    std::shared_ptr<boost::asio::steady_timer> accept_timer_;
-   std::shared_ptr<boost::asio::steady_timer> write_timer_;
    std::map<std::uint32_t, std::shared_ptr<stream_state>> streams_;
    std::deque<std::uint32_t> pending_accepts_;
+   std::deque<std::shared_ptr<write_waiter>> write_waiters_;
    std::size_t session_buffer_ = 0;
    std::uint32_t next_stream_id_ = 1;
    bool started_ = false;

@@ -95,6 +95,8 @@ void operation_deadline::arm(std::function<void()> cancel) {
 }
 
 void operation_deadline::cancel() noexcept {
+   auto expected = state_value::pending;
+   (void)state_->compare_exchange_strong(expected, state_value::completed, std::memory_order_acq_rel);
    if (!timer_) {
       return;
    }

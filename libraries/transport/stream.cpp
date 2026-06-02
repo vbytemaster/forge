@@ -59,7 +59,8 @@ boost::asio::awaitable<std::vector<std::uint8_t>> stream::async_read() {
 }
 
 boost::asio::awaitable<void> stream::async_write_frame(std::span<const std::uint8_t> bytes) {
-   co_await async_write(encode_frame(bytes));
+   auto encoded = encode_frame(bytes);
+   co_await async_write(encoded);
 }
 
 boost::asio::awaitable<std::vector<std::uint8_t>> stream::async_read_frame() {

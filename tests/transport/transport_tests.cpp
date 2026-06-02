@@ -335,6 +335,22 @@ BOOST_AUTO_TEST_CASE(transport_stream_write_owns_caller_buffer_across_await) {
    BOOST_CHECK(model->last_write_data != payload.data());
 }
 
+BOOST_AUTO_TEST_CASE(transport_stream_write_frame_owns_encoded_buffer_across_await) {
+   auto runtime = fcl::asio::runtime{};
+   auto model = std::make_shared<fake_stream>(44);
+   auto value = make_stream(model);
+   const auto payload = text_bytes("framed write payload");
+   const auto expected_write = fcl::transport::encode_frame(payload);
+
+   fcl::asio::blocking::run(runtime, value.async_write_frame(payload));
+
+   BOOST_REQUIRE_EQUAL(model->writes.size(), 1U);
+   BOOST_CHECK_EQUAL_COLLECTIONS(
+       model->writes.front().begin(), model->writes.front().end(), expected_write.begin(), expected_write.end());
+   BOOST_CHECK(model->last_write_data != payload.data());
+   BOOST_CHECK(model->last_write_data != expected_write.data());
+}
+
 BOOST_AUTO_TEST_CASE(transport_session_delegates_open_accept_close_cancel) {
    auto runtime = fcl::asio::runtime{};
    auto model = std::make_shared<fake_session>();

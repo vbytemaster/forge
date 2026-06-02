@@ -593,6 +593,36 @@ boost::asio::awaitable<void> yamux_configured_limits_are_behavioral() {
 
    {
       auto pair = make_stream_pair(executor);
+      auto right = fcl::yamux::session{std::move(pair.right), fcl::yamux::side::responder};
+      auto accept = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
+      co_await pair.left.async_write(frame(frame_type::window_update, syn, 1, 1));
+      auto response = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(response), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(response), ack);
+      BOOST_CHECK_EQUAL(stream_id_of(response), 1U);
+
+      auto inbound = co_await take_result(accept);
+      auto write = spawn_result<void>(executor, inbound.async_write(text_bytes("ab")));
+      auto first = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(first), frame_type::data);
+      BOOST_CHECK_EQUAL(stream_id_of(first), 1U);
+      BOOST_CHECK_EQUAL(length_of(first), 1U);
+
+      if (length_of(first) == 1U) {
+         BOOST_CHECK(!write->done);
+         co_await pair.left.async_write(frame(frame_type::window_update, 0, 1, 1));
+         auto second = co_await pair.left.async_read();
+         BOOST_CHECK_EQUAL(type_of(second), frame_type::data);
+         BOOST_CHECK_EQUAL(stream_id_of(second), 1U);
+         BOOST_CHECK_EQUAL(length_of(second), 1U);
+      }
+      co_await take_result_for(write, std::chrono::seconds{1});
+      co_await pair.left.async_close();
+      co_await right.async_close();
+   }
+
+   {
+      auto pair = make_stream_pair(executor);
       auto session_options = fcl::yamux::options{.initial_window = 1, .max_stream_window = 2, .max_frame_size = 8};
       auto left = fcl::yamux::session{std::move(pair.right), fcl::yamux::side::initiator, session_options};
       auto outbound = co_await left.async_open_stream();

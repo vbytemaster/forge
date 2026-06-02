@@ -724,9 +724,8 @@ struct session::impl : std::enable_shared_from_this<impl> {
       auto opened = std::shared_ptr<stream_state>{};
       if ((header.flags & syn) != 0U) {
          auto send_window = options_.initial_window;
-         if (header.length > 0) {
-            const auto available = options_.max_stream_window - send_window;
-            send_window += std::min(header.length, available);
+         if (header.length > 0U) {
+            send_window = std::min(header.length, options_.max_stream_window);
          }
          opened = co_await handle_stream_open(header, send_window);
          if (!opened) {

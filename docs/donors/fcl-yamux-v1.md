@@ -33,9 +33,10 @@ discovery, pubsub, TCP, STCP or QUIC mechanics.
 - One session read loop owns all reads from the underlying byte stream.
 - All writes are serialized through one frame write path.
 - Per-stream DATA writes are split by remote window and `options::max_frame_size`.
-- Both sides assume the initial stream window from the spec; a
-  `WINDOW_UPDATE|SYN` length is treated as an additive update, so Go-style
-  zero-length SYN opens still allow immediate response writes.
+- A non-zero `WINDOW_UPDATE|SYN` length is treated as the peer-advertised
+  initial receive credit. A zero-length SYN uses the local initial-window
+  compatibility fallback, so Go-style zero-length SYN opens still allow
+  immediate response writes.
 - Read-side DATA accounting sends WINDOW_UPDATE only after the consumer reads
   bytes from the substream.
 - `async_close()` sends GOAWAY where possible and closes the underlying stream;
@@ -51,7 +52,7 @@ discovery, pubsub, TCP, STCP or QUIC mechanics.
 | Early DATA before ACK | libp2p spec, Go Yamux behavior | `test_fcl_yamux yamux_supports_open_accept_and_early_data` |
 | Concurrent streams do not cross-deliver payloads | Rust muxer harness | `test_fcl_yamux yamux_keeps_concurrent_stream_payloads_isolated` |
 | Flow control waits for WINDOW_UPDATE | libp2p spec, Go/Rust Yamux | `test_fcl_yamux yamux_applies_flow_control_with_window_updates` |
-| Initial stream window is assumed even when `WINDOW_UPDATE|SYN` carries zero length | libp2p spec, Go Yamux behavior | `test_fcl_yamux yamux_rejects_limits_and_malformed_frames_with_typed_errors` |
+| Non-zero `WINDOW_UPDATE|SYN` sets initial send credit; zero-length SYN keeps compatibility fallback | libp2p spec, Go Yamux behavior | `test_fcl_yamux yamux_enforces_configured_runtime_limits`, `test_fcl_yamux yamux_rejects_limits_and_malformed_frames_with_typed_errors` |
 | Close flushes pending DATA; read after FIN fails typed | Rust compliance | `test_fcl_yamux yamux_close_flushes_and_read_after_close_is_rejected` |
 | Frame size split, stream buffer limit and malformed frame rejection | libp2p spec, Rust inbound buffer limit | `test_fcl_yamux yamux_rejects_limits_and_malformed_frames_with_typed_errors` |
 | Stream count, pending accept backlog, session buffer and max stream window limits | Go resource-manager-backed limits, Rust inbound backlog behavior | `test_fcl_yamux yamux_enforces_configured_runtime_limits` |

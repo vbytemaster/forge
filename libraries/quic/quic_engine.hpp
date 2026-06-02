@@ -138,6 +138,7 @@ class engine_stream : public std::enable_shared_from_this<engine_stream> {
    boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> bytes);
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read();
    boost::asio::awaitable<void> async_close();
+   void cancel();
 
  private:
    friend class engine_connection;

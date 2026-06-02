@@ -179,10 +179,14 @@ struct listener::impl final : transport::detail::stream_listener_concept {
    }
 
    boost::asio::awaitable<void> async_close() override {
+      close();
+      co_return;
+   }
+
+   void close() {
       close_requested.store(true, std::memory_order_release);
       auto ignored = boost::system::error_code{};
       acceptor.close(ignored);
-      co_return;
    }
 
    void cancel() override {
@@ -234,6 +238,12 @@ boost::asio::awaitable<void> listener::async_close() {
       co_return;
    }
    co_await impl_->async_close();
+}
+
+void listener::close() {
+   if (impl_) {
+      impl_->close();
+   }
 }
 
 void listener::cancel() {

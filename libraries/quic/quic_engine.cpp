@@ -1602,6 +1602,29 @@ boost::asio::awaitable<void> engine_stream::async_close() {
    }
 }
 
+void engine_stream::cancel() {
+   if (!impl_) {
+      return;
+   }
+   auto connection = impl_->connection.lock();
+   if (!connection) {
+      return;
+   }
+   auto stream = impl_;
+   asio::dispatch(connection->strand, [connection, stream] {
+      if (stream->reset || stream->closed) {
+         return;
+      }
+      stream->reset = true;
+      stream->outbound.clear();
+      stream->retained.clear();
+      wake(stream->read_waiters);
+      wake(stream->write_waiters);
+      connection->metrics.streams_reset.fetch_add(1, std::memory_order_relaxed);
+      connection->update_active_stream_metrics();
+   });
+}
+
 engine_connection::engine_connection(std::shared_ptr<impl> impl_value) : impl_(std::move(impl_value)) {}
 
 engine_connection::~engine_connection() = default;

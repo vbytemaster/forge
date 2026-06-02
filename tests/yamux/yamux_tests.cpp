@@ -295,6 +295,16 @@ class pipe_stream final : public fcl::transport::detail::stream_concept {
       co_return;
    }
 
+   void cancel() override {
+      {
+         auto lock = std::scoped_lock{inbound_->mutex, outbound_->mutex};
+         inbound_->closed = true;
+         outbound_->closed = true;
+      }
+      inbound_->read_timer.cancel();
+      outbound_->read_timer.cancel();
+   }
+
  private:
    std::int64_t id_ = 0;
    std::shared_ptr<pipe_state> inbound_;

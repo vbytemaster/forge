@@ -68,6 +68,13 @@ void validate_options(const options& value) {
                               .port = endpoint.port()};
 }
 
+void cancel_socket(asio_tcp::socket& socket) noexcept {
+   auto ignored = boost::system::error_code{};
+   socket.cancel(ignored);
+   socket.shutdown(asio_tcp::socket::shutdown_both, ignored);
+   socket.close(ignored);
+}
+
 class socket_stream final : public transport::detail::stream_concept {
  public:
    socket_stream(std::shared_ptr<asio_tcp::socket> socket, options tcp_options, std::int64_t id)
@@ -112,10 +119,14 @@ class socket_stream final : public transport::detail::stream_concept {
       if (!socket_) {
          co_return;
       }
-      auto ignored = boost::system::error_code{};
-      socket_->shutdown(asio_tcp::socket::shutdown_both, ignored);
-      socket_->close(ignored);
+      cancel_socket(*socket_);
       co_return;
+   }
+
+   void cancel() override {
+      if (socket_) {
+         cancel_socket(*socket_);
+      }
    }
 
  private:
@@ -211,10 +222,14 @@ struct connection::impl final {
       if (!socket) {
          co_return;
       }
-      auto ignored = boost::system::error_code{};
-      socket->shutdown(asio_tcp::socket::shutdown_both, ignored);
-      socket->close(ignored);
+      cancel();
       co_return;
+   }
+
+   void cancel() noexcept {
+      if (socket) {
+         cancel_socket(*socket);
+      }
    }
 
    [[nodiscard]] transport::stream_connection into_transport_stream() {
@@ -295,6 +310,12 @@ boost::asio::awaitable<void> connection::async_close() {
       co_return;
    }
    co_await impl_->async_close();
+}
+
+void connection::cancel() {
+   if (impl_) {
+      impl_->cancel();
+   }
 }
 
 transport::stream_connection connection::into_transport_stream() && {

@@ -70,11 +70,17 @@ class fake_stream final : public fcl::transport::detail::stream_concept {
       co_return;
    }
 
+   void cancel() override {
+      open = false;
+      ++cancel_count;
+   }
+
    std::deque<bytes> reads;
    std::vector<bytes> writes;
    const std::uint8_t* last_write_data = nullptr;
    std::uint64_t reads_started = 0;
    std::uint64_t close_count = 0;
+   std::uint64_t cancel_count = 0;
    bool open = true;
 
  private:
@@ -349,6 +355,17 @@ BOOST_AUTO_TEST_CASE(transport_stream_write_frame_owns_encoded_buffer_across_awa
        model->writes.front().begin(), model->writes.front().end(), expected_write.begin(), expected_write.end());
    BOOST_CHECK(model->last_write_data != payload.data());
    BOOST_CHECK(model->last_write_data != expected_write.data());
+}
+
+BOOST_AUTO_TEST_CASE(transport_stream_cancel_delegates_to_backend) {
+   auto model = std::make_shared<fake_stream>(45);
+   auto value = make_stream(model);
+
+   BOOST_TEST(value.valid());
+   value.cancel();
+
+   BOOST_TEST(!value.valid());
+   BOOST_CHECK_EQUAL(model->cancel_count, 1U);
 }
 
 BOOST_AUTO_TEST_CASE(transport_session_delegates_open_accept_close_cancel) {

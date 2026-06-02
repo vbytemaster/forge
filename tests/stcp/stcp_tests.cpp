@@ -523,6 +523,35 @@ boost::asio::awaitable<void> stcp_alpn_uses_client_preference() {
    co_await listener.async_close();
 }
 
+boost::asio::awaitable<void> stcp_connection_cancel_unblocks_pending_read() {
+   const auto material = make_tls_material();
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto listener = fcl::stcp::listener{executor, loopback(0), server_options(material)};
+   auto accept = spawn_result<fcl::stcp::connection>(executor, listener.async_accept_connection());
+   auto connector = fcl::stcp::connector{executor, client_options(material)};
+   auto client = co_await connector.async_connect_connection(listener.local_endpoint());
+   auto server = co_await take_result(accept);
+
+   auto timer = boost::asio::steady_timer{executor};
+   timer.expires_after(std::chrono::milliseconds{25});
+   boost::asio::co_spawn(
+       executor,
+       [&server, timer = std::move(timer)]() mutable -> boost::asio::awaitable<void> {
+          co_await timer.async_wait(boost::asio::use_awaitable);
+          server.cancel();
+       },
+       boost::asio::detached);
+
+   try {
+      (void)co_await server.async_read();
+      BOOST_FAIL("stcp read should be canceled");
+   } catch (const fcl::stcp::exceptions::canceled&) {
+   }
+
+   co_await client.async_close();
+   co_await listener.async_close();
+}
+
 boost::asio::awaitable<void> stcp_rejects_tls12_peer() {
    namespace asio = boost::asio;
    const auto material = make_tls_material();
@@ -583,6 +612,11 @@ BOOST_AUTO_TEST_CASE(stcp_verifier_receives_full_certificate_chain) {
 BOOST_AUTO_TEST_CASE(stcp_alpn_selects_client_preferred_supported_protocol) {
    auto runtime = fcl::asio::runtime{};
    fcl::asio::blocking::run(runtime, stcp_alpn_uses_client_preference());
+}
+
+BOOST_AUTO_TEST_CASE(stcp_cancel_unblocks_pending_read) {
+   auto runtime = fcl::asio::runtime{};
+   BOOST_CHECK(fcl::asio::blocking::run_for(runtime, stcp_connection_cancel_unblocks_pending_read(), std::chrono::seconds{2}));
 }
 
 BOOST_AUTO_TEST_CASE(stcp_requires_tls13_by_default) {

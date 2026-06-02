@@ -4,8 +4,10 @@ module;
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -16,6 +18,7 @@ module;
 #include <vector>
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
 
 module fcl.p2p.node;
 
@@ -42,6 +45,7 @@ import fcl.yamux.session;
 #include "libp2p_tls.hpp"
 #include "protobuf.hpp"
 #include "stream_upgrade.hpp"
+#include "tcp_stream_upgrade.hpp"
 
 namespace fcl::p2p {
 namespace {
@@ -385,6 +389,10 @@ class secure_io : public std::enable_shared_from_this<secure_io> {
       co_await stream_.async_close();
    }
 
+   void cancel() {
+      stream_.cancel();
+   }
+
  private:
    boost::asio::awaitable<std::vector<std::uint8_t>> read_exact(std::size_t size) {
       while (buffer_.size() < size) {
@@ -427,6 +435,12 @@ class secure_stream_concept final : public fcl::transport::detail::stream_concep
 
    boost::asio::awaitable<void> async_close() override {
       co_await secure_->async_close();
+   }
+
+   void cancel() override {
+      if (secure_) {
+         secure_->cancel();
+      }
    }
 
  private:
@@ -657,10 +671,23 @@ boost::asio::awaitable<void> negotiate_yamux(Connection& connection, bool outbou
    throw;
 }
 
+void set_cancel(tcp_upgrade_deadline& deadline, std::function<void()> cancel) {
+   if (deadline.cancel_current) {
+      *deadline.cancel_current = std::move(cancel);
+   }
+}
+
+[[nodiscard]] bool has_timeout(const tcp_upgrade_deadline& deadline) noexcept {
+   return deadline.timeout.count() > 0;
+}
+
 boost::asio::awaitable<upgraded_session> finish_noise_outbound(fcl::p2p::stream stream, const node::options& options,
-                                                               std::optional<peer_id> expected_peer) {
+                                                               std::optional<peer_id> expected_peer,
+                                                               tcp_upgrade_deadline deadline = {}) {
+   set_cancel(deadline, [&stream] { stream.cancel(); });
    auto secure = co_await noise_initiator(std::move(stream), options,
                                           options.allow_insecure_test_mode ? std::nullopt : std::move(expected_peer));
+   set_cancel(deadline, [secure = secure.secure] { secure->cancel(); });
    if (!secure.early_yamux) {
       (void)co_await protocol_negotiation::async_select(secure_transport_stream(secure.secure),
                                                         protocol_id{.value = "/yamux/1.0.0"});
@@ -671,10 +698,13 @@ boost::asio::awaitable<upgraded_session> finish_noise_outbound(fcl::p2p::stream 
 }
 
 boost::asio::awaitable<upgraded_session> finish_noise_inbound(fcl::p2p::stream stream, const node::options& options,
-                                                              std::optional<peer_id> expected_peer) {
+                                                              std::optional<peer_id> expected_peer,
+                                                              tcp_upgrade_deadline deadline = {}) {
+   set_cancel(deadline, [&stream] { stream.cancel(); });
    auto secure =
        co_await noise_responder(std::move(stream), options,
                                 options.allow_insecure_test_mode ? std::nullopt : std::move(expected_peer));
+   set_cancel(deadline, [secure = secure.secure] { secure->cancel(); });
    if (!secure.early_yamux) {
       (void)co_await protocol_negotiation::async_accept(secure_transport_stream(secure.secure),
                                                         {protocol_id{.value = "/yamux/1.0.0"}});
@@ -686,9 +716,17 @@ boost::asio::awaitable<upgraded_session> finish_noise_inbound(fcl::p2p::stream s
 
 boost::asio::awaitable<upgraded_session> finish_tls_outbound(fcl::tcp::connection connection,
                                                              const node::options& options,
-                                                             std::optional<peer_id> expected_peer) {
+                                                             std::optional<peer_id> expected_peer,
+                                                             tcp_upgrade_deadline deadline = {}) {
    try {
-      auto tls = co_await fcl::stcp::async_upgrade_client(std::move(connection), make_libp2p_tls_client_options(options));
+      set_cancel(deadline, [&connection] { connection.cancel(); });
+      auto tls = has_timeout(deadline)
+                     ? co_await fcl::stcp::async_upgrade_client(std::move(connection),
+                                                                make_libp2p_tls_client_options(options),
+                                                                deadline.timeout)
+                     : co_await fcl::stcp::async_upgrade_client(std::move(connection),
+                                                                make_libp2p_tls_client_options(options));
+      set_cancel(deadline, [&tls] { tls.cancel(); });
       const auto peer = verify_libp2p_tls_chain(tls.peer_certificate_chain(),
                                                 options.allow_insecure_test_mode ? std::nullopt : expected_peer);
       const auto selected_alpn = tls.selected_alpn();
@@ -707,9 +745,17 @@ boost::asio::awaitable<upgraded_session> finish_tls_outbound(fcl::tcp::connectio
 
 boost::asio::awaitable<upgraded_session> finish_tls_inbound(fcl::tcp::connection connection,
                                                             const node::options& options,
-                                                            std::optional<peer_id> expected_peer) {
+                                                            std::optional<peer_id> expected_peer,
+                                                            tcp_upgrade_deadline deadline = {}) {
    try {
-      auto tls = co_await fcl::stcp::async_upgrade_server(std::move(connection), make_libp2p_tls_server_options(options));
+      set_cancel(deadline, [&connection] { connection.cancel(); });
+      auto tls = has_timeout(deadline)
+                     ? co_await fcl::stcp::async_upgrade_server(std::move(connection),
+                                                                make_libp2p_tls_server_options(options),
+                                                                deadline.timeout)
+                     : co_await fcl::stcp::async_upgrade_server(std::move(connection),
+                                                                make_libp2p_tls_server_options(options));
+      set_cancel(deadline, [&tls] { tls.cancel(); });
       const auto peer = verify_libp2p_tls_chain(tls.peer_certificate_chain(),
                                                 options.allow_insecure_test_mode ? std::nullopt : expected_peer);
       const auto selected_alpn = tls.selected_alpn();
@@ -744,32 +790,48 @@ upgrade_inbound_stream(fcl::p2p::stream stream, const node::options& options, st
 
 boost::asio::awaitable<upgraded_session>
 upgrade_outbound_tcp(fcl::tcp::connection connection, const node::options& options, std::optional<peer_id> expected_peer) {
+   co_return co_await upgrade_outbound_tcp(std::move(connection), options, std::move(expected_peer), {});
+}
+
+boost::asio::awaitable<upgraded_session> upgrade_outbound_tcp(fcl::tcp::connection connection,
+                                                              const node::options& options,
+                                                              std::optional<peer_id> expected_peer,
+                                                              tcp_upgrade_deadline deadline) {
+   set_cancel(deadline, [&connection] { connection.cancel(); });
    const auto protocols = std::array{
        protocol_id{.value = "/tls/1.0.0"},
        protocol_id{.value = "/noise"},
    };
    const auto selected = co_await select_protocol(connection, protocols);
    if (selected.value == "/tls/1.0.0") {
-      co_return co_await finish_tls_outbound(std::move(connection), options, std::move(expected_peer));
+      co_return co_await finish_tls_outbound(std::move(connection), options, std::move(expected_peer), deadline);
    }
    auto stream = std::move(connection).into_transport_stream();
    co_return co_await finish_noise_outbound(fcl::p2p::stream{std::move(stream.stream)}, options,
-                                            std::move(expected_peer));
+                                            std::move(expected_peer), deadline);
 }
 
 boost::asio::awaitable<upgraded_session>
 upgrade_inbound_tcp(fcl::tcp::connection connection, const node::options& options, std::optional<peer_id> expected_peer) {
+   co_return co_await upgrade_inbound_tcp(std::move(connection), options, std::move(expected_peer), {});
+}
+
+boost::asio::awaitable<upgraded_session> upgrade_inbound_tcp(fcl::tcp::connection connection,
+                                                             const node::options& options,
+                                                             std::optional<peer_id> expected_peer,
+                                                             tcp_upgrade_deadline deadline) {
+   set_cancel(deadline, [&connection] { connection.cancel(); });
    const auto protocols = std::array{
        protocol_id{.value = "/tls/1.0.0"},
        protocol_id{.value = "/noise"},
    };
    const auto selected = co_await accept_protocol(connection, protocols);
    if (selected.value == "/tls/1.0.0") {
-      co_return co_await finish_tls_inbound(std::move(connection), options, std::move(expected_peer));
+      co_return co_await finish_tls_inbound(std::move(connection), options, std::move(expected_peer), deadline);
    }
    auto stream = std::move(connection).into_transport_stream();
    co_return co_await finish_noise_inbound(fcl::p2p::stream{std::move(stream.stream)}, options,
-                                           std::move(expected_peer));
+                                           std::move(expected_peer), deadline);
 }
 
 } // namespace fcl::p2p

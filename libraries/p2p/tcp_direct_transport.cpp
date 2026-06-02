@@ -2,11 +2,18 @@ module;
 
 #include <fcl/exceptions/macros.hpp>
 
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <utility>
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 module fcl.p2p.node;
 
@@ -24,6 +31,7 @@ import fcl.transport.stream;
 import fcl.yamux.session;
 
 #include "direct_transport.hpp"
+#include "operation_deadline.hpp"
 #include "stream_upgrade.hpp"
 #include "tcp_stream_upgrade.hpp"
 
@@ -72,8 +80,7 @@ namespace {
 class tcp_profile final {
  public:
    tcp_profile(fcl::asio::runtime& runtime_value, const node::options& options_value)
-       : runtime_(runtime_value), options_(options_value),
-         connector_(runtime_value.context().get_executor()) {}
+       : runtime_(runtime_value), options_(options_value) {}
 
    [[nodiscard]] bool supports(const fcl::p2p::endpoint& endpoint) const noexcept {
       return endpoint.is_direct_tcp();
@@ -104,7 +111,8 @@ class tcp_profile final {
 
    void stop() {
       if (listener_) {
-         listener_->cancel();
+         listener_->close();
+         listener_.reset();
       }
    }
 
@@ -113,11 +121,27 @@ class tcp_profile final {
       if (!endpoint.is_direct_tcp()) {
          FCL_THROW_EXCEPTION(exceptions::unsupported_protocol, "P2P endpoint is not a direct TCP endpoint");
       }
+      auto expected_peer = expected_peer_for(endpoint, options);
+      auto remote_transport = endpoint.transport;
+      auto connector = fcl::tcp::connector{runtime_.context().get_executor()};
+      auto cancel_current = std::make_shared<std::function<void()>>([&connector] { connector.cancel(); });
+      auto deadline = operation_deadline{runtime_.context(), options.timeout};
+      deadline.arm([cancel_current] {
+         if (*cancel_current) {
+            (*cancel_current)();
+         }
+      });
       try {
-         auto tcp = co_await connector_.async_connect_connection(endpoint.transport);
+         auto tcp = co_await connector.async_connect_connection(std::move(remote_transport));
+         *cancel_current = [&tcp] { tcp.cancel(); };
          const auto local_endpoint = p2p_endpoint_for(tcp.local_endpoint());
          const auto remote_endpoint = p2p_endpoint_for(tcp.remote_endpoint());
-         auto upgraded = co_await upgrade_outbound_tcp(std::move(tcp), options_, expected_peer_for(endpoint, options));
+         auto upgraded = co_await upgrade_outbound_tcp(
+             std::move(tcp), options_, std::move(expected_peer),
+             tcp_upgrade_deadline{.context = &runtime_.context(), .timeout = options.timeout, .cancel_current = cancel_current});
+         if (!deadline.finish()) {
+            throw_operation_timeout("P2P TCP direct connect");
+         }
          co_return connection{
              .peer = std::move(upgraded.peer),
              .session = std::move(*upgraded.session).as_transport(),
@@ -125,6 +149,9 @@ class tcp_profile final {
              .remote_endpoint = std::move(remote_endpoint),
          };
       } catch (const fcl::exceptions::base& error) {
+         if (deadline.timed_out()) {
+            throw_operation_timeout("P2P TCP direct connect");
+         }
          rethrow_tcp_as_p2p(error);
       }
    }
@@ -137,7 +164,29 @@ class tcp_profile final {
          auto tcp = co_await listener_->async_accept_connection();
          const auto local_endpoint = p2p_endpoint_for(tcp.local_endpoint());
          const auto remote_endpoint = p2p_endpoint_for(tcp.remote_endpoint());
-         auto upgraded = co_await upgrade_inbound_tcp(std::move(tcp), options_, std::nullopt);
+         auto cancel_current = std::make_shared<std::function<void()>>([&tcp] { tcp.cancel(); });
+         auto deadline = operation_deadline{runtime_.context(), node::connect_options{}.timeout};
+         deadline.arm([cancel_current] {
+            if (*cancel_current) {
+               (*cancel_current)();
+            }
+         });
+         auto upgraded = upgraded_session{};
+         try {
+            upgraded = co_await upgrade_inbound_tcp(
+                std::move(tcp), options_, std::nullopt,
+                tcp_upgrade_deadline{.context = &runtime_.context(),
+                                     .timeout = node::connect_options{}.timeout,
+                                     .cancel_current = cancel_current});
+            if (!deadline.finish()) {
+               throw_operation_timeout("P2P TCP direct accept");
+            }
+         } catch (const fcl::exceptions::base&) {
+            if (deadline.timed_out()) {
+               throw_operation_timeout("P2P TCP direct accept");
+            }
+            throw;
+         }
          co_return connection{
              .peer = std::move(upgraded.peer),
              .session = std::move(*upgraded.session).as_transport(),
@@ -152,7 +201,6 @@ class tcp_profile final {
  private:
    fcl::asio::runtime& runtime_;
    const node::options& options_;
-   fcl::tcp::connector connector_;
    std::unique_ptr<fcl::tcp::listener> listener_;
 };
 

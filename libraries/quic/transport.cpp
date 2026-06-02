@@ -47,6 +47,10 @@ class quic_stream_concept final : public fcl::transport::detail::stream_concept 
       co_await value_.async_close();
    }
 
+   void cancel() override {
+      value_.cancel();
+   }
+
  private:
    stream value_;
 };

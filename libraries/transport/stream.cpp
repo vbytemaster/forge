@@ -86,6 +86,12 @@ boost::asio::awaitable<void> stream::async_close() {
    co_await impl_->model->async_close();
 }
 
+void stream::cancel() {
+   if (impl_ && impl_->model) {
+      impl_->model->cancel();
+   }
+}
+
 stream detail::stream_access::make(std::shared_ptr<stream_concept> model) {
    return stream{std::move(model)};
 }

@@ -21,6 +21,7 @@ module;
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/ssl.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/system/error_code.hpp>
@@ -390,6 +391,46 @@ void configure_server_context(asio::ssl::context& context, const server_options&
    return std::string{reinterpret_cast<const char*>(data), length};
 }
 
+void validate_handshake_timeout(std::chrono::milliseconds timeout) {
+   if (timeout.count() <= 0) {
+      throw_invalid_options("stcp handshake timeout must be greater than zero");
+   }
+}
+
+void cancel_stream(native_stream& stream) noexcept {
+   auto ignored = boost::system::error_code{};
+   stream.lowest_layer().cancel(ignored);
+   stream.lowest_layer().shutdown(asio_tcp::socket::shutdown_both, ignored);
+   stream.lowest_layer().close(ignored);
+}
+
+boost::asio::awaitable<void> async_handshake(std::shared_ptr<native_stream> stream,
+                                             asio::ssl::stream_base::handshake_type type,
+                                             std::optional<std::chrono::milliseconds> timeout) {
+   auto timer = std::shared_ptr<asio::steady_timer>{};
+   if (timeout) {
+      validate_handshake_timeout(*timeout);
+      timer = std::make_shared<asio::steady_timer>(stream->lowest_layer().get_executor());
+      timer->expires_after(*timeout);
+      timer->async_wait([stream](const boost::system::error_code& error) {
+         if (!error) {
+            cancel_stream(*stream);
+         }
+      });
+   }
+
+   auto error = boost::system::error_code{};
+   co_await stream->async_handshake(type, boost::asio::redirect_error(boost::asio::use_awaitable, error));
+   if (timer) {
+      timer->cancel();
+   }
+   if (error) {
+      throw_handshake_failed(type == asio::ssl::stream_base::client ? "stcp client handshake failed"
+                                                                    : "stcp server handshake failed",
+                             error);
+   }
+}
+
 class stream_model final : public transport::detail::stream_concept {
  public:
    stream_model(std::shared_ptr<native_stream> stream, std::shared_ptr<asio::ssl::context> context,
@@ -435,10 +476,14 @@ class stream_model final : public transport::detail::stream_concept {
       if (!stream_) {
          co_return;
       }
-      auto ignored = boost::system::error_code{};
-      stream_->lowest_layer().shutdown(asio_tcp::socket::shutdown_both, ignored);
-      stream_->lowest_layer().close(ignored);
+      cancel_stream(*stream_);
       co_return;
+   }
+
+   void cancel() override {
+      if (stream_) {
+         cancel_stream(*stream_);
+      }
    }
 
  private:
@@ -527,10 +572,14 @@ struct connection::impl final {
       if (!stream) {
          co_return;
       }
-      auto ignored = boost::system::error_code{};
-      stream->lowest_layer().shutdown(asio_tcp::socket::shutdown_both, ignored);
-      stream->lowest_layer().close(ignored);
+      cancel();
       co_return;
+   }
+
+   void cancel() noexcept {
+      if (stream) {
+         cancel_stream(*stream);
+      }
    }
 
    [[nodiscard]] transport::stream_connection into_transport_stream() {
@@ -628,6 +677,12 @@ boost::asio::awaitable<void> connection::async_close() {
    co_await impl_->async_close();
 }
 
+void connection::cancel() {
+   if (impl_) {
+      impl_->cancel();
+   }
+}
+
 transport::stream_connection connection::into_transport_stream() && {
    if (!valid()) {
       FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
@@ -637,46 +692,65 @@ transport::stream_connection connection::into_transport_stream() && {
    return out;
 }
 
+boost::asio::awaitable<connection> async_upgrade_client(tcp::connection source, client_options options,
+                                                        std::optional<std::chrono::milliseconds> timeout);
+boost::asio::awaitable<connection> async_upgrade_server(tcp::connection source, server_options options,
+                                                        std::optional<std::chrono::milliseconds> timeout);
+
 boost::asio::awaitable<connection> async_upgrade_client(tcp::connection source, client_options options) {
+   co_return co_await async_upgrade_client(std::move(source), std::move(options), std::nullopt);
+}
+
+boost::asio::awaitable<connection> async_upgrade_client(tcp::connection source, client_options options,
+                                                        std::chrono::milliseconds timeout) {
+   co_return co_await async_upgrade_client(std::move(source), std::move(options), std::optional{timeout});
+}
+
+boost::asio::awaitable<connection> async_upgrade_client(tcp::connection source, client_options options,
+                                                        std::optional<std::chrono::milliseconds> timeout) {
    if (!source.valid()) {
       FCL_THROW_EXCEPTION(exceptions::closed, "invalid source tcp connection");
    }
    const auto remote = source.remote_endpoint();
    auto context = make_client_context(options);
-   auto stream = native_stream{std::move(source).release_socket(), *context};
-   configure_client_stream(stream, options, remote.host);
+   auto stream = std::make_shared<native_stream>(std::move(source).release_socket(), *context);
+   configure_client_stream(*stream, options, remote.host);
 
-   auto error = boost::system::error_code{};
-   co_await stream.async_handshake(asio::ssl::stream_base::client,
-                                   boost::asio::redirect_error(boost::asio::use_awaitable, error));
-   if (error) {
-      const auto verify_result = SSL_get_verify_result(stream.native_handle());
+   try {
+      co_await async_handshake(stream, asio::ssl::stream_base::client, timeout);
+   } catch (const exceptions::handshake_failed&) {
+      const auto verify_result = SSL_get_verify_result(stream->native_handle());
       if (options.security.verify_peer && verify_result != X509_V_OK) {
          FCL_THROW_EXCEPTION(exceptions::verification_failed, "stcp server certificate verification failed",
                              fcl::exceptions::ctx("reason", X509_verify_cert_error_string(verify_result)));
       }
-      throw_handshake_failed("stcp client handshake failed", error);
+      throw;
    }
    const auto expected_host = options.server_name.empty() ? remote.host : options.server_name;
-   verify_peer(stream, options.security, expected_host);
-   co_return connection{connection::native_token{}, std::move(stream), std::move(context), options.read_chunk_size};
+   verify_peer(*stream, options.security, expected_host);
+   co_return connection{connection::native_token{}, std::move(*stream), std::move(context), options.read_chunk_size};
 }
 
 boost::asio::awaitable<connection> async_upgrade_server(tcp::connection source, server_options options) {
+   co_return co_await async_upgrade_server(std::move(source), std::move(options), std::nullopt);
+}
+
+boost::asio::awaitable<connection> async_upgrade_server(tcp::connection source, server_options options,
+                                                        std::chrono::milliseconds timeout) {
+   co_return co_await async_upgrade_server(std::move(source), std::move(options), std::optional{timeout});
+}
+
+boost::asio::awaitable<connection> async_upgrade_server(tcp::connection source, server_options options,
+                                                        std::optional<std::chrono::milliseconds> timeout) {
    if (!source.valid()) {
       FCL_THROW_EXCEPTION(exceptions::closed, "invalid source tcp connection");
    }
    auto context = make_server_context(options);
    configure_server_context(*context, options);
-   auto stream = native_stream{std::move(source).release_socket(), *context};
-   auto error = boost::system::error_code{};
-   co_await stream.async_handshake(asio::ssl::stream_base::server,
-                                   boost::asio::redirect_error(boost::asio::use_awaitable, error));
-   if (error) {
-      throw_handshake_failed("stcp server handshake failed", error);
-   }
-   verify_peer(stream, options.security, {});
-   co_return connection{connection::native_token{}, std::move(stream), std::move(context), options.read_chunk_size};
+   auto stream = std::make_shared<native_stream>(std::move(source).release_socket(), *context);
+   co_await async_handshake(stream, asio::ssl::stream_base::server, timeout);
+   verify_peer(*stream, options.security, {});
+   co_return connection{connection::native_token{}, std::move(*stream), std::move(context), options.read_chunk_size};
 }
 
 } // namespace fcl::stcp

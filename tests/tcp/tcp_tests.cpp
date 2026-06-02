@@ -219,6 +219,47 @@ boost::asio::awaitable<void> close_unblocks_accept() {
    }
 }
 
+boost::asio::awaitable<void> close_releases_bound_port() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto listener = fcl::tcp::listener{executor, loopback(0)};
+   const auto local = listener.local_endpoint();
+
+   listener.close();
+   BOOST_CHECK(!listener.valid());
+
+   auto rebound = fcl::tcp::listener{executor, local};
+   BOOST_CHECK(rebound.valid());
+   co_await rebound.async_close();
+}
+
+boost::asio::awaitable<void> connection_cancel_unblocks_pending_read() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto listener = fcl::tcp::listener{executor, loopback(0)};
+   auto accept = boost::asio::co_spawn(executor, listener.async_accept_connection(), boost::asio::use_awaitable);
+   auto connector = fcl::tcp::connector{executor};
+   auto client = co_await connector.async_connect_connection(listener.local_endpoint());
+   auto server = co_await std::move(accept);
+
+   auto timer = boost::asio::steady_timer{executor};
+   timer.expires_after(std::chrono::milliseconds{25});
+   boost::asio::co_spawn(
+       executor,
+       [&server, timer = std::move(timer)]() mutable -> boost::asio::awaitable<void> {
+          co_await timer.async_wait(boost::asio::use_awaitable);
+          server.cancel();
+       },
+       boost::asio::detached);
+
+   try {
+      (void)co_await server.async_read();
+      BOOST_FAIL("read should be canceled");
+   } catch (const fcl::tcp::exceptions::canceled&) {
+   }
+
+   co_await client.async_close();
+   co_await listener.async_close();
+}
+
 boost::asio::awaitable<void> tcp_invalid_endpoint_checks() {
    auto executor = co_await boost::asio::this_coro::executor;
    auto connector = fcl::tcp::connector{executor};
@@ -265,6 +306,8 @@ BOOST_AUTO_TEST_CASE(tcp_accept_can_be_canceled_or_closed) {
    auto runtime = fcl::asio::runtime{};
    BOOST_CHECK(fcl::asio::blocking::run_for(runtime, cancel_unblocks_accept(), std::chrono::seconds{2}));
    BOOST_CHECK(fcl::asio::blocking::run_for(runtime, close_unblocks_accept(), std::chrono::seconds{2}));
+   fcl::asio::blocking::run(runtime, close_releases_bound_port());
+   BOOST_CHECK(fcl::asio::blocking::run_for(runtime, connection_cancel_unblocks_pending_read(), std::chrono::seconds{2}));
 }
 
 BOOST_AUTO_TEST_CASE(tcp_rejects_invalid_endpoints_and_refused_connects) {

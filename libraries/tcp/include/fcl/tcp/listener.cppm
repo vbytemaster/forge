@@ -31,6 +31,7 @@ class listener {
    boost::asio::awaitable<connection> async_accept_connection();
    boost::asio::awaitable<transport::stream_connection> async_accept();
    boost::asio::awaitable<void> async_close();
+   void close();
    void cancel();
 
    [[nodiscard]] transport::stream_listener as_transport() const;

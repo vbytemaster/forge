@@ -97,6 +97,12 @@ boost::asio::awaitable<void> stream::async_close() {
    co_await impl_->transport.async_close();
 }
 
+void stream::cancel() {
+   if (impl_) {
+      impl_->transport.cancel();
+   }
+}
+
 stream detail::stream_access::with_buffer(stream value, std::vector<std::uint8_t> buffered) {
    if (!value.impl_ || buffered.empty()) {
       return value;

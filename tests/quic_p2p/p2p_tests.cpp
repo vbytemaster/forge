@@ -24,6 +24,8 @@
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
@@ -71,6 +73,7 @@ import fcl.quic.transport;
 import fcl.transport.endpoint;
 import fcl.transport.frame;
 import fcl.transport.stream;
+import fcl.tcp.listener;
 import fcl.multiformats;
 
 #include "../../libraries/p2p/session_lifecycle.hpp"
@@ -667,6 +670,33 @@ endpoint listen_tcp(node& value, fcl::asio::runtime& runtime) {
    return *endpoint;
 }
 
+endpoint start_stalling_tcp_peer(fcl::asio::runtime& runtime, std::chrono::milliseconds hold = std::chrono::seconds{2}) {
+   namespace asio = boost::asio;
+   using asio_tcp = asio::ip::tcp;
+   auto acceptor =
+       std::make_shared<asio_tcp::acceptor>(runtime.context(), asio_tcp::endpoint{asio_tcp::v4(), 0});
+   auto socket = std::make_shared<asio_tcp::socket>(runtime.context());
+   const auto port = acceptor->local_endpoint().port();
+
+   asio::co_spawn(
+       runtime.context(),
+       [acceptor, socket, hold]() -> asio::awaitable<void> {
+          auto error = boost::system::error_code{};
+          co_await acceptor->async_accept(*socket, asio::redirect_error(asio::use_awaitable, error));
+          if (!error) {
+             auto timer = asio::steady_timer{co_await asio::this_coro::executor};
+             timer.expires_after(hold);
+             co_await timer.async_wait(asio::redirect_error(asio::use_awaitable, error));
+          }
+          auto ignored = boost::system::error_code{};
+          socket->close(ignored);
+          acceptor->close(ignored);
+       },
+       asio::detached);
+
+   return make_tcp_endpoint(port);
+}
+
 void wait_for_server(std::future<void>& future, std::chrono::milliseconds timeout, std::string_view label) {
    if (future.wait_for(timeout) != std::future_status::ready) {
       throw std::runtime_error{std::string{label} + " did not finish"};
@@ -751,6 +781,10 @@ class queued_transport_stream final : public fcl::transport::detail::stream_conc
    boost::asio::awaitable<void> async_close() override {
       closed = true;
       co_return;
+   }
+
+   void cancel() override {
+      closed = true;
    }
 
    std::deque<std::vector<std::uint8_t>> reads;
@@ -1143,6 +1177,48 @@ BOOST_AUTO_TEST_CASE(p2p_direct_tcp_rejects_tls_peer_mismatch) {
 
    fcl::asio::blocking::run(runtime, client.async_stop());
    fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_direct_tcp_upgrade_honors_attempt_timeout) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto client = node{runtime, options_for(peer(201))};
+   const auto stalled_endpoint = start_stalling_tcp_peer(runtime);
+
+   auto saw_timeout = false;
+   const auto completed = fcl::asio::blocking::run_for(
+       runtime,
+       [&]() -> boost::asio::awaitable<void> {
+          try {
+             (void)co_await client.async_connect(
+                 stalled_endpoint,
+                 node::connect_options{.expected_peer = peer(202),
+                                       .allow_relay = false,
+                                       .timeout = std::chrono::milliseconds{100}});
+             BOOST_FAIL("expected stalled TCP direct connect timeout");
+          } catch (const fcl::exceptions::base& error) {
+             BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
+             BOOST_TEST(static_cast<int>(*fcl::p2p::exceptions::code_of(error)) ==
+                        static_cast<int>(exceptions::code::timeout));
+             saw_timeout = true;
+          }
+       }(),
+       std::chrono::milliseconds{1'000});
+
+   BOOST_TEST(completed);
+   BOOST_TEST(saw_timeout);
+   fcl::asio::blocking::run(runtime, client.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_direct_tcp_stop_closes_listener_port) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto server = node{runtime, options_for(peer(203))};
+   const auto server_endpoint = listen_tcp(server, runtime);
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+
+   auto rebound = fcl::tcp::listener{runtime.context().get_executor(), server_endpoint.transport};
+   BOOST_TEST(rebound.valid());
+   fcl::asio::blocking::run(runtime, rebound.async_close());
 }
 
 BOOST_AUTO_TEST_CASE(quic_libp2p_profile_sets_required_alpn) {
@@ -2782,6 +2858,39 @@ BOOST_AUTO_TEST_CASE(p2p_path_manager_tries_next_direct_endpoint_after_attempt_t
                                                       .max_direct_endpoints = 2,
                                                   }));
    const auto payload = std::vector<std::uint8_t>{'d', 'i', 'r', 'e', 'c', 't'};
+   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+
+   BOOST_TEST(reply == payload, boost::test_tools::per_element());
+   BOOST_TEST(client.metrics().path_direct_attempts >= 2U);
+   BOOST_TEST(client.metrics().path_direct_opens >= 1U);
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_path_manager_tries_next_tcp_endpoint_after_upgrade_timeout) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server = node{runtime, options_for(peer(205))};
+   auto client = node{runtime, options_for(peer(206))};
+   register_echo(server);
+
+   const auto stalled_endpoint = start_stalling_tcp_peer(runtime);
+   const auto server_endpoint = listen_tcp(server, runtime);
+   client.peers().learn_endpoint(server.local_peer(), stalled_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic});
+   client.peers().learn_endpoint(server.local_peer(), server_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic});
+
+   auto stream = fcl::asio::blocking::run(
+       runtime, client.async_open_protocol_stream(server.local_peer(), builtins::echo,
+                                                  node::open_options{
+                                                      .allow_relay = false,
+                                                      .timeout = std::chrono::milliseconds{2'000},
+                                                      .direct_attempt_timeout = std::chrono::milliseconds{100},
+                                                      .max_direct_endpoints = 2,
+                                                  }));
+   const auto payload = std::vector<std::uint8_t>{'t', 'c', 'p', '-', 'd', 'e', 'a', 'd'};
    fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
    const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
 

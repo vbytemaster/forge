@@ -409,6 +409,13 @@ struct session::impl : std::enable_shared_from_this<impl> {
          }
       }
 
+      void cancel() override {
+         auto owner = owner_.lock();
+         if (owner) {
+            owner->reset_stream(stream_id_);
+         }
+      }
+
     private:
       std::weak_ptr<impl> owner_;
       std::uint32_t stream_id_ = 0;

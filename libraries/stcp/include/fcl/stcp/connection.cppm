@@ -1,6 +1,7 @@
 module;
 
 #include <cstdint>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <span>
@@ -42,12 +43,21 @@ class connection {
    boost::asio::awaitable<std::size_t> async_read_some(std::span<std::uint8_t> bytes);
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read();
    boost::asio::awaitable<void> async_close();
+   void cancel();
 
    [[nodiscard]] transport::stream_connection into_transport_stream() &&;
 
  private:
    friend boost::asio::awaitable<connection> async_upgrade_client(tcp::connection source, client_options options);
+   friend boost::asio::awaitable<connection> async_upgrade_client(tcp::connection source, client_options options,
+                                                                  std::chrono::milliseconds timeout);
+   friend boost::asio::awaitable<connection> async_upgrade_client(
+       tcp::connection source, client_options options, std::optional<std::chrono::milliseconds> timeout);
    friend boost::asio::awaitable<connection> async_upgrade_server(tcp::connection source, server_options options);
+   friend boost::asio::awaitable<connection> async_upgrade_server(tcp::connection source, server_options options,
+                                                                  std::chrono::milliseconds timeout);
+   friend boost::asio::awaitable<connection> async_upgrade_server(
+       tcp::connection source, server_options options, std::optional<std::chrono::milliseconds> timeout);
 
    using native_stream = boost::asio::ssl::stream<boost::asio::ip::tcp::socket>;
    struct native_token {};
@@ -60,6 +70,10 @@ class connection {
 };
 
 boost::asio::awaitable<connection> async_upgrade_client(tcp::connection source, client_options options);
+boost::asio::awaitable<connection> async_upgrade_client(tcp::connection source, client_options options,
+                                                        std::chrono::milliseconds timeout);
 boost::asio::awaitable<connection> async_upgrade_server(tcp::connection source, server_options options);
+boost::asio::awaitable<connection> async_upgrade_server(tcp::connection source, server_options options,
+                                                        std::chrono::milliseconds timeout);
 
 } // namespace fcl::stcp

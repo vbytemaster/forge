@@ -121,6 +121,12 @@ boost::asio::awaitable<void> stream::async_close() {
    co_return;
 }
 
+void stream::cancel() {
+   if (impl_ && impl_->engine) {
+      impl_->engine->cancel();
+   }
+}
+
 stream detail::stream_access::make(detail::stream_handle handle) {
    return stream{std::move(handle)};
 }

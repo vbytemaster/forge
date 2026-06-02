@@ -151,7 +151,7 @@ class quic_session_connector_concept final : public fcl::transport::detail::sess
        : connector_(runtime), options_(std::move(options)) {}
 
    [[nodiscard]] bool valid() const noexcept override {
-      return true;
+      return active_.load(std::memory_order_acquire);
    }
 
    boost::asio::awaitable<fcl::transport::session_connection>

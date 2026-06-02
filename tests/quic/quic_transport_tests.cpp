@@ -36,6 +36,7 @@ import fcl.quic.security;
 import fcl.quic.transport;
 import fcl.transport.connector;
 import fcl.transport.endpoint;
+import fcl.transport.exceptions;
 import fcl.transport.listener;
 import fcl.transport.registry;
 import fcl.transport.session;
@@ -291,6 +292,10 @@ void require_quic_code(const fcl::exceptions::base& error, fcl::quic::exceptions
    BOOST_TEST_REQUIRE(has_quic_code(error, expected));
 }
 
+void require_transport_code(const fcl::exceptions::base& error, fcl::transport::exceptions::code expected) {
+   BOOST_TEST_REQUIRE(fcl::transport::exceptions::is(error, expected));
+}
+
 boost::asio::awaitable<void> session_loopback_roundtrip(fcl::asio::runtime& runtime) {
    const auto material = make_tls_material();
    auto listener = fcl::quic::make_session_listener(runtime, loopback_quic(0), make_server_options(material));
@@ -433,12 +438,14 @@ boost::asio::awaitable<void> cancellation_unblocks_listener_and_rejects_connecto
    }
 
    auto connector = fcl::quic::make_session_connector(runtime, make_client_options(material));
+   BOOST_TEST(connector.valid());
    connector.cancel();
+   BOOST_TEST(!connector.valid());
    try {
       (void)co_await connector.async_connect(local);
       BOOST_FAIL("expected canceled connector to reject new connects");
    } catch (const fcl::exceptions::base& error) {
-      require_quic_code(error, fcl::quic::exceptions::code::canceled);
+      require_transport_code(error, fcl::transport::exceptions::code::closed);
    }
 }
 

@@ -55,7 +55,6 @@ add_compile_definitions(BOOST_UNORDERED_DISABLE_NEON)
 set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 find_package(
    Boost 1.90 REQUIRED CONFIG

@@ -1,3 +1,5 @@
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
 add_executable(
    test_fcl
    unit/main.cpp

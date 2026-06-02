@@ -344,6 +344,17 @@ add_custom_target(
    DEPENDS test_fcl_package_install
 )
 add_custom_target(
+   test_fcl_package_quic_component
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_quic_component
+      ${CMAKE_BINARY_DIR}/fcl-package-quic-component
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command fcl_package_quic_component
+   DEPENDS test_fcl_package_install
+)
+add_custom_target(
    test_fcl_package_all_missing_dependency
    COMMAND ${CMAKE_COMMAND}
       -DFCL_PACKAGE_TEST_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_all_missing_dependency
@@ -420,6 +431,17 @@ add_test(
       --test-command fcl_package_api_lightweight
 )
 set_tests_properties(test_fcl_package_api_lightweight PROPERTIES DEPENDS test_fcl_package_install)
+add_test(
+   NAME test_fcl_package_quic_component
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_quic_component
+      ${CMAKE_BINARY_DIR}/fcl-package-quic-component
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command fcl_package_quic_component
+)
+set_tests_properties(test_fcl_package_quic_component PROPERTIES DEPENDS test_fcl_package_install)
 add_test(
    NAME test_fcl_package_all_missing_dependency
    COMMAND ${CMAKE_COMMAND}

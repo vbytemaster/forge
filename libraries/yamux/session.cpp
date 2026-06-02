@@ -204,6 +204,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
       {
          auto lock = std::scoped_lock{mutex_};
          rethrow_terminal_locked();
+         reclaim_closed_streams_locked();
          if (streams_.size() >= options_.max_streams) {
             FCL_THROW_EXCEPTION(exceptions::resource_limit, "yamux maximum stream count reached");
          }
@@ -814,6 +815,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
       auto state = std::shared_ptr<stream_state>{};
       {
          auto lock = std::scoped_lock{mutex_};
+         reclaim_closed_streams_locked();
          if (streams_.contains(header.stream_id)) {
             FCL_THROW_EXCEPTION(exceptions::protocol_error, "yamux stream already exists");
          }
@@ -835,6 +837,36 @@ struct session::impl : std::enable_shared_from_this<impl> {
       }
       co_await write_frame(frame_type::window_update, ack, header.stream_id, options_.initial_window);
       co_return state;
+   }
+
+   [[nodiscard]] bool is_reclaimable_stream_locked(const stream_state& state) const noexcept {
+      if (state.reset) {
+         return true;
+      }
+      return state.local_fin && state.remote_fin && state.inbound.empty();
+   }
+
+   void reclaim_closed_streams_locked() {
+      for (auto it = streams_.begin(); it != streams_.end();) {
+         auto& state = *it->second;
+         if (!is_reclaimable_stream_locked(state)) {
+            ++it;
+            continue;
+         }
+         std::erase(pending_accepts_, it->first);
+         if (state.buffered > 0) {
+            session_buffer_ = state.buffered > session_buffer_ ? 0 : session_buffer_ - state.buffered;
+            state.buffered = 0;
+            state.inbound.clear();
+         }
+         if (state.read_timer) {
+            notify_waiters(state.read_timer);
+         }
+         if (state.window_timer) {
+            notify_waiters(state.window_timer);
+         }
+         it = streams_.erase(it);
+      }
    }
 
    boost::asio::awaitable<void> handle_ping(const frame_header& header) {

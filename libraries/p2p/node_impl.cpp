@@ -69,6 +69,7 @@ import fcl.yamux.exceptions;
 import fcl.yamux.session;
 
 #include "node_impl.hpp"
+#include "relay_accounting.hpp"
 #include "session_lifecycle.hpp"
 
 namespace fcl::p2p {
@@ -704,21 +705,10 @@ void node::impl::finish_relay(const peer_id& owner) {
 
 bool node::impl::add_relay_bytes(const peer_id& owner, std::uint64_t bytes) {
    auto lock = std::scoped_lock{mutex};
-   if (!resources.add_relay_bytes(bytes)) {
-      ++metrics_value.relay_rejections;
-      return false;
-   }
-   metrics_value.relay_bytes += bytes;
    auto reservation = inbound_relay_reservations.find(owner);
-   if (reservation == inbound_relay_reservations.end()) {
-      return !options.limits.relay.require_reservation;
-   }
-   if (reservation->second.bytes + bytes > reservation->second.max_bytes) {
-      ++metrics_value.relay_rejections;
-      return false;
-   }
-   reservation->second.bytes += bytes;
-   return true;
+   auto* reservation_state = reservation == inbound_relay_reservations.end() ? nullptr : &reservation->second;
+   return detail::add_relay_bytes(resources, metrics_value, reservation_state,
+                                  options.limits.relay.require_reservation, bytes);
 }
 
 void node::impl::record_path_open(path::kind kind) {

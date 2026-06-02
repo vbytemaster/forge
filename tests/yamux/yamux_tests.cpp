@@ -50,6 +50,7 @@ std::ostream& operator<<(std::ostream& out, frame_type value) {
 
 inline constexpr std::uint16_t syn = 0x01;
 inline constexpr std::uint16_t ack = 0x02;
+inline constexpr std::uint16_t fin = 0x04;
 inline constexpr std::uint16_t rst = 0x08;
 inline constexpr std::size_t header_size = 12;
 
@@ -849,6 +850,92 @@ boost::asio::awaitable<void> yamux_configured_limits_are_behavioral() {
    }
 }
 
+boost::asio::awaitable<void> yamux_reclaims_terminal_streams_before_enforcing_stream_cap() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   {
+      auto pair = make_stream_pair(executor);
+      auto right = fcl::yamux::session{std::move(pair.right), fcl::yamux::side::responder,
+                                       fcl::yamux::options{.max_streams = 1}};
+      auto accept_first = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
+      co_await pair.left.async_write(frame(frame_type::window_update, syn, 1, 256 * 1024));
+      auto first_response = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(first_response), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(first_response), ack);
+      BOOST_CHECK_EQUAL(stream_id_of(first_response), 1U);
+      auto first = co_await take_result(accept_first);
+
+      co_await pair.left.async_write(frame(frame_type::data, fin, 1, 0));
+      co_await first.async_close();
+      auto first_fin = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(first_fin), frame_type::data);
+      BOOST_CHECK_EQUAL(flags_of(first_fin), fin);
+      BOOST_CHECK_EQUAL(stream_id_of(first_fin), 1U);
+
+      auto accept_second = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
+      co_await pair.left.async_write(frame(frame_type::window_update, syn, 3, 256 * 1024));
+      auto second_response = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(second_response), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(second_response), ack);
+      BOOST_CHECK_EQUAL(stream_id_of(second_response), 3U);
+      auto second = co_await take_result_for(accept_second, std::chrono::seconds{1});
+      BOOST_CHECK_EQUAL(second.id(), 3);
+
+      co_await pair.left.async_close();
+      co_await right.async_close();
+   }
+
+   {
+      auto pair = make_stream_pair(executor);
+      auto right = fcl::yamux::session{std::move(pair.right), fcl::yamux::side::responder,
+                                       fcl::yamux::options{.max_streams = 1}};
+      auto accept_first = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
+      co_await pair.left.async_write(frame(frame_type::window_update, syn, 1, 256 * 1024));
+      auto first_response = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(first_response), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(first_response), ack);
+      BOOST_CHECK_EQUAL(stream_id_of(first_response), 1U);
+      auto first = co_await take_result(accept_first);
+      BOOST_CHECK_EQUAL(first.id(), 1);
+
+      co_await pair.left.async_write(frame(frame_type::data, rst, 1, 0));
+
+      auto accept_second = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
+      co_await pair.left.async_write(frame(frame_type::window_update, syn, 3, 256 * 1024));
+      auto second_response = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(second_response), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(second_response), ack);
+      BOOST_CHECK_EQUAL(stream_id_of(second_response), 3U);
+      auto second = co_await take_result_for(accept_second, std::chrono::seconds{1});
+      BOOST_CHECK_EQUAL(second.id(), 3);
+
+      co_await pair.left.async_close();
+      co_await right.async_close();
+   }
+
+   {
+      auto pair = make_stream_pair(executor);
+      auto right = fcl::yamux::session{std::move(pair.right), fcl::yamux::side::responder,
+                                       fcl::yamux::options{.max_streams = 1}};
+      auto accept_first = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
+      co_await pair.left.async_write(frame(frame_type::window_update, syn, 1, 256 * 1024));
+      auto first_response = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(first_response), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(first_response), ack);
+      BOOST_CHECK_EQUAL(stream_id_of(first_response), 1U);
+      auto first = co_await take_result(accept_first);
+      BOOST_CHECK_EQUAL(first.id(), 1);
+
+      co_await pair.left.async_write(frame(frame_type::window_update, syn, 3, 256 * 1024));
+      auto second_response = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(second_response), frame_type::data);
+      BOOST_CHECK_EQUAL(flags_of(second_response), rst);
+      BOOST_CHECK_EQUAL(stream_id_of(second_response), 3U);
+
+      co_await pair.left.async_close();
+      co_await right.async_close();
+   }
+}
+
 boost::asio::awaitable<void> yamux_control_frames_are_handled() {
    auto executor = co_await boost::asio::this_coro::executor;
    {
@@ -940,6 +1027,11 @@ BOOST_AUTO_TEST_CASE(yamux_rejects_limits_and_malformed_frames_with_typed_errors
 BOOST_AUTO_TEST_CASE(yamux_enforces_configured_runtime_limits) {
    auto runtime = fcl::asio::runtime{};
    fcl::asio::blocking::run(runtime, yamux_configured_limits_are_behavioral());
+}
+
+BOOST_AUTO_TEST_CASE(yamux_reclaims_terminal_streams_before_stream_cap) {
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, yamux_reclaims_terminal_streams_before_enforcing_stream_cap());
 }
 
 BOOST_AUTO_TEST_CASE(yamux_handles_ping_and_goaway_control_frames) {

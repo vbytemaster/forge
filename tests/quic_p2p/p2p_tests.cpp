@@ -77,6 +77,7 @@ import fcl.tcp.listener;
 import fcl.multiformats;
 
 #include "../../libraries/p2p/session_lifecycle.hpp"
+#include "../../libraries/p2p/relay_accounting.hpp"
 
 namespace fcl::p2p {
 namespace {
@@ -1615,6 +1616,53 @@ BOOST_AUTO_TEST_CASE(p2p_resource_manager_enforces_relay_stream_and_byte_limits)
    snapshot = manager.current();
    BOOST_TEST(snapshot.active_streams == 0U);
    BOOST_TEST(snapshot.active_relay_streams == 0U);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_relay_accounting_validates_reservation_before_global_charge) {
+   struct fake_resources {
+      std::uint64_t max_relay_bytes = 8;
+      std::uint64_t relay_bytes = 0;
+
+      bool add_relay_bytes(std::uint64_t bytes) noexcept {
+         if (bytes > max_relay_bytes || relay_bytes > max_relay_bytes - bytes) {
+            return false;
+         }
+         relay_bytes += bytes;
+         return true;
+      }
+   };
+   struct fake_metrics {
+      std::uint64_t relay_bytes = 0;
+      std::uint64_t relay_rejections = 0;
+   };
+   struct fake_reservation {
+      std::uint64_t max_bytes = 4;
+      std::uint64_t bytes = 0;
+   };
+
+   auto resources = fake_resources{};
+   auto metrics = fake_metrics{};
+   auto reservation = fake_reservation{};
+   BOOST_TEST(!detail::add_relay_bytes(resources, metrics, &reservation, true, 5));
+   BOOST_TEST(resources.relay_bytes == 0U);
+   BOOST_TEST(metrics.relay_bytes == 0U);
+   BOOST_TEST(metrics.relay_rejections == 1U);
+   BOOST_TEST(reservation.bytes == 0U);
+
+   BOOST_TEST(detail::add_relay_bytes(resources, metrics, &reservation, true, 2));
+   BOOST_TEST(detail::add_relay_bytes(resources, metrics, &reservation, true, 2));
+   BOOST_TEST(resources.relay_bytes == 4U);
+   BOOST_TEST(metrics.relay_bytes == 4U);
+   BOOST_TEST(reservation.bytes == 4U);
+   BOOST_TEST(!detail::add_relay_bytes(resources, metrics, &reservation, true, 1));
+   BOOST_TEST(resources.relay_bytes == 4U);
+   BOOST_TEST(metrics.relay_bytes == 4U);
+   BOOST_TEST(metrics.relay_rejections == 2U);
+
+   BOOST_TEST(!detail::add_relay_bytes(resources, metrics, static_cast<fake_reservation*>(nullptr), true, 1));
+   BOOST_TEST(resources.relay_bytes == 4U);
+   BOOST_TEST(metrics.relay_bytes == 4U);
+   BOOST_TEST(metrics.relay_rejections == 3U);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_resource_manager_enforces_peer_protocol_dial_and_reservation_scopes) {

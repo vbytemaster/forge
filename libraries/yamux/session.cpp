@@ -106,6 +106,10 @@ void append_u32(bytes& out, std::uint32_t value) {
    return out;
 }
 
+[[nodiscard]] bool exceeds_limit(std::size_t current, std::size_t addition, std::size_t limit) noexcept {
+   return current > limit || addition > limit - current;
+}
+
 [[nodiscard]] bool remote_opens_stream(side local_side, std::uint32_t stream_id) noexcept {
    const auto remote_is_initiator = local_side == side::responder;
    const auto id_is_odd = (stream_id % 2U) == 1U;
@@ -436,7 +440,8 @@ struct session::impl : std::enable_shared_from_this<impl> {
       }
       if (options_.initial_window == 0 || options_.max_stream_window < options_.initial_window ||
           options_.max_frame_size == 0 || options_.max_streams == 0 || options_.max_pending_accepts == 0 ||
-          options_.max_stream_buffer == 0 || options_.max_session_buffer == 0) {
+          options_.max_stream_buffer < options_.initial_window ||
+          options_.max_session_buffer < options_.initial_window) {
          FCL_THROW_EXCEPTION(exceptions::invalid_options, "invalid yamux options");
       }
       if (options_.max_frame_size > static_cast<std::size_t>((std::numeric_limits<std::uint32_t>::max)())) {
@@ -477,7 +482,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
    [[nodiscard]] bool stream_valid(std::uint32_t id) const noexcept {
       auto lock = std::scoped_lock{mutex_};
       const auto found = streams_.find(id);
-      return found != streams_.end() && !closed_ && !canceled_ && !found->second->reset;
+      return found != streams_.end() && !closed_ && !canceled_;
    }
 
    [[nodiscard]] transport::stream make_transport_stream(std::uint32_t id) {
@@ -622,8 +627,9 @@ struct session::impl : std::enable_shared_from_this<impl> {
       auto go_away = std::optional<std::uint32_t>{};
       try {
          auto buffer = bytes{};
+         auto consumed = std::size_t{0};
          while (true) {
-            const auto next = co_await read_frame(buffer);
+            const auto next = co_await read_frame(buffer, consumed);
             co_await handle_frame(next.first, next.second);
          }
       } catch (const exceptions::resource_limit&) {
@@ -650,8 +656,25 @@ struct session::impl : std::enable_shared_from_this<impl> {
       fail_session(terminal, std::move(message));
    }
 
-   boost::asio::awaitable<std::pair<frame_header, bytes>> read_frame(bytes& buffer) {
-      while (buffer.size() < header_size) {
+   static void compact_read_buffer(bytes& buffer, std::size_t& consumed) {
+      if (consumed == 0) {
+         return;
+      }
+      if (consumed >= buffer.size()) {
+         buffer.clear();
+         consumed = 0;
+         return;
+      }
+      auto compacted = bytes{};
+      compacted.reserve(buffer.size() - consumed);
+      compacted.insert(compacted.end(), buffer.begin() + static_cast<std::ptrdiff_t>(consumed), buffer.end());
+      buffer = std::move(compacted);
+      consumed = 0;
+   }
+
+   boost::asio::awaitable<std::pair<frame_header, bytes>> read_frame(bytes& buffer, std::size_t& consumed) {
+      while (buffer.size() - consumed < header_size) {
+         compact_read_buffer(buffer, consumed);
          auto chunk = co_await stream_.async_read();
          if (chunk.empty()) {
             continue;
@@ -659,7 +682,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
          buffer.insert(buffer.end(), chunk.begin(), chunk.end());
       }
 
-      auto view = std::span<const std::uint8_t>{buffer.data(), buffer.size()};
+      auto view = std::span<const std::uint8_t>{buffer.data() + consumed, buffer.size() - consumed};
       if (view[0] != version) {
          FCL_THROW_EXCEPTION(exceptions::protocol_error, "yamux frame version mismatch");
       }
@@ -682,7 +705,8 @@ struct session::impl : std::enable_shared_from_this<impl> {
          FCL_THROW_EXCEPTION(exceptions::resource_limit, "yamux frame exceeds maximum size");
       }
       const auto payload_size = header.type == frame_type::data ? static_cast<std::size_t>(header.length) : 0U;
-      while (buffer.size() < header_size + payload_size) {
+      while (buffer.size() - consumed < header_size + payload_size) {
+         compact_read_buffer(buffer, consumed);
          auto chunk = co_await stream_.async_read();
          if (chunk.empty()) {
             continue;
@@ -692,10 +716,15 @@ struct session::impl : std::enable_shared_from_this<impl> {
 
       auto payload = bytes{};
       if (payload_size > 0) {
-         payload.insert(payload.end(), buffer.begin() + static_cast<std::ptrdiff_t>(header_size),
-                        buffer.begin() + static_cast<std::ptrdiff_t>(header_size + payload_size));
+         const auto payload_begin = consumed + header_size;
+         const auto payload_end = payload_begin + payload_size;
+         payload.insert(payload.end(), buffer.begin() + static_cast<std::ptrdiff_t>(payload_begin),
+                        buffer.begin() + static_cast<std::ptrdiff_t>(payload_end));
       }
-      buffer.erase(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(header_size + payload_size));
+      consumed += header_size + payload_size;
+      if (consumed >= buffer.size() || consumed > 64 * 1024) {
+         compact_read_buffer(buffer, consumed);
+      }
       co_return std::pair{header, std::move(payload)};
    }
 
@@ -740,9 +769,9 @@ struct session::impl : std::enable_shared_from_this<impl> {
          auto lock = std::scoped_lock{mutex_};
          auto state = opened ? opened : get_stream_locked(header.stream_id);
          if (!payload.empty()) {
-            if (state->buffered + payload.size() > options_.max_stream_buffer ||
-                session_buffer_ + payload.size() > options_.max_session_buffer) {
-               state->reset = true;
+            if (exceeds_limit(state->buffered, payload.size(), options_.max_stream_buffer) ||
+                exceeds_limit(session_buffer_, payload.size(), options_.max_session_buffer)) {
+               reset_stream_locked(state);
                needs_reset = true;
             } else {
                state->inbound.push_back(payload);
@@ -760,7 +789,6 @@ struct session::impl : std::enable_shared_from_this<impl> {
 
       if (needs_reset) {
          co_await write_frame(frame_type::data, rst, header.stream_id, 0);
-         FCL_THROW_EXCEPTION(exceptions::resource_limit, "yamux stream buffer limit exceeded");
       }
    }
 
@@ -854,17 +882,8 @@ struct session::impl : std::enable_shared_from_this<impl> {
             continue;
          }
          std::erase(pending_accepts_, it->first);
-         if (state.buffered > 0) {
-            session_buffer_ = state.buffered > session_buffer_ ? 0 : session_buffer_ - state.buffered;
-            state.buffered = 0;
-            state.inbound.clear();
-         }
-         if (state.read_timer) {
-            notify_waiters(state.read_timer);
-         }
-         if (state.window_timer) {
-            notify_waiters(state.window_timer);
-         }
+         release_stream_buffers_locked(state);
+         notify_stream_waiters_locked(it->second);
          it = streams_.erase(it);
       }
    }
@@ -892,12 +911,30 @@ struct session::impl : std::enable_shared_from_this<impl> {
       if (found == streams_.end()) {
          return;
       }
-      found->second->reset = true;
-      if (found->second->read_timer) {
-         notify_waiters(found->second->read_timer);
+      reset_stream_locked(found->second);
+   }
+
+   void reset_stream_locked(const std::shared_ptr<stream_state>& state) {
+      state->reset = true;
+      release_stream_buffers_locked(*state);
+      notify_stream_waiters_locked(state);
+   }
+
+   void release_stream_buffers_locked(stream_state& state) {
+      if (state.buffered == 0) {
+         return;
       }
-      if (found->second->window_timer) {
-         notify_waiters(found->second->window_timer);
+      session_buffer_ = state.buffered > session_buffer_ ? 0 : session_buffer_ - state.buffered;
+      state.buffered = 0;
+      state.inbound.clear();
+   }
+
+   static void notify_stream_waiters_locked(const std::shared_ptr<stream_state>& state) {
+      if (state->read_timer) {
+         notify_waiters(state->read_timer);
+      }
+      if (state->window_timer) {
+         notify_waiters(state->window_timer);
       }
    }
 

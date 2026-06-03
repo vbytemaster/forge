@@ -107,6 +107,10 @@ inline constexpr std::size_t header_size = 12;
    return bytes{value.begin() + static_cast<std::ptrdiff_t>(header_size), value.end()};
 }
 
+void append_bytes(bytes& target, const bytes& source) {
+   target.insert(target.end(), source.begin(), source.end());
+}
+
 template <typename T>
 struct spawned_result {
    explicit spawned_result(boost::asio::any_io_executor executor)
@@ -230,6 +234,32 @@ boost::asio::awaitable<void> take_result_for(std::shared_ptr<spawned_result<void
    if (state->error) {
       std::rethrow_exception(state->error);
    }
+}
+
+boost::asio::awaitable<void> close_transport_for_test(fcl::transport::stream& stream) {
+   try {
+      co_await stream.async_close();
+   } catch (const fcl::transport::exceptions::closed&) {
+   }
+}
+
+boost::asio::awaitable<bytes> read_transport_for_test(fcl::transport::stream& stream, std::string_view label,
+                                                       std::chrono::milliseconds timeout = std::chrono::seconds{1}) {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto state = spawn_result<bytes>(executor, stream.async_read());
+   auto error = boost::system::error_code{};
+   if (!state->done) {
+      state->timer.expires_after(timeout);
+      co_await state->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+      if (error && error != boost::asio::error::operation_aborted) {
+         throw boost::system::system_error{error};
+      }
+   }
+   BOOST_REQUIRE_MESSAGE(state->done, "yamux operation timed out while waiting for " << label);
+   if (state->error) {
+      std::rethrow_exception(state->error);
+   }
+   co_return std::move(*state->value);
 }
 
 struct pending_write {
@@ -614,6 +644,39 @@ boost::asio::awaitable<void> yamux_limits_and_malformed_frames_are_typed() {
    auto executor = co_await boost::asio::this_coro::executor;
    {
       auto pair = make_stream_pair(executor);
+      BOOST_CHECK_THROW(
+          (fcl::yamux::session{
+              std::move(pair.right),
+              fcl::yamux::side::responder,
+              fcl::yamux::options{
+                  .initial_window = 8,
+                  .max_stream_window = 8,
+                  .max_stream_buffer = 7,
+              },
+          }),
+          fcl::yamux::exceptions::invalid_options);
+      co_await pair.left.async_close();
+   }
+
+   {
+      auto pair = make_stream_pair(executor);
+      BOOST_CHECK_THROW(
+          (fcl::yamux::session{
+              std::move(pair.right),
+              fcl::yamux::side::responder,
+              fcl::yamux::options{
+                  .initial_window = 8,
+                  .max_stream_window = 8,
+                  .max_stream_buffer = 8,
+                  .max_session_buffer = 7,
+              },
+          }),
+          fcl::yamux::exceptions::invalid_options);
+      co_await pair.left.async_close();
+   }
+
+   {
+      auto pair = make_stream_pair(executor);
       auto left = fcl::yamux::session{std::move(pair.left), fcl::yamux::side::initiator,
                                       fcl::yamux::options{.max_frame_size = 3}};
       auto right = fcl::yamux::session{std::move(pair.right), fcl::yamux::side::responder,
@@ -675,16 +738,27 @@ boost::asio::awaitable<void> yamux_limits_and_malformed_frames_are_typed() {
 
    {
       auto pair = make_stream_pair(executor);
-      auto left = fcl::yamux::session{std::move(pair.left), fcl::yamux::side::initiator};
       auto right = fcl::yamux::session{std::move(pair.right), fcl::yamux::side::responder,
-                                       fcl::yamux::options{.max_stream_buffer = 3}};
+                                       fcl::yamux::options{
+                                           .initial_window = 3,
+                                           .max_stream_window = 3,
+                                           .max_frame_size = 8,
+                                           .max_stream_buffer = 3,
+                                           .max_session_buffer = 8,
+                                       }};
       auto accept = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
-      auto outbound = co_await left.async_open_stream();
+      co_await pair.left.async_write(frame(frame_type::data, syn, 1, 4, text_bytes("four")));
+      auto ack_frame = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(ack_frame), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(ack_frame), ack);
+      BOOST_CHECK_EQUAL(stream_id_of(ack_frame), 1U);
+      auto reset_frame = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(reset_frame), frame_type::data);
+      BOOST_CHECK_EQUAL(flags_of(reset_frame), rst);
+      BOOST_CHECK_EQUAL(stream_id_of(reset_frame), 1U);
       auto inbound = co_await take_result(accept);
-      co_await outbound.async_write(text_bytes("four"));
       BOOST_CHECK_THROW((void)co_await inbound.async_read(), fcl::yamux::exceptions::stream_reset);
-      co_await left.async_close();
-      co_await right.async_close();
+      co_await close_transport_for_test(pair.left);
    }
 
    {
@@ -695,8 +769,7 @@ boost::asio::awaitable<void> yamux_limits_and_malformed_frames_are_typed() {
       auto accept = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
       co_await pair.left.async_write(malformed);
       BOOST_CHECK_THROW((void)co_await take_result(accept), fcl::yamux::exceptions::protocol_error);
-      co_await pair.left.async_close();
-      co_await right.async_close();
+      co_await close_transport_for_test(pair.left);
    }
 
    {
@@ -705,8 +778,7 @@ boost::asio::awaitable<void> yamux_limits_and_malformed_frames_are_typed() {
       auto accept = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
       co_await pair.left.async_write(frame(frame_type::data, 0, 0, 0));
       BOOST_CHECK_THROW((void)co_await take_result(accept), fcl::yamux::exceptions::protocol_error);
-      co_await pair.left.async_close();
-      co_await right.async_close();
+      co_await close_transport_for_test(pair.left);
    }
 
    {
@@ -716,9 +788,196 @@ boost::asio::awaitable<void> yamux_limits_and_malformed_frames_are_typed() {
       auto accept = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
       co_await pair.left.async_write(frame(frame_type::data, 0, 1, 4));
       BOOST_CHECK_THROW((void)co_await take_result(accept), fcl::yamux::exceptions::resource_limit);
-      co_await pair.left.async_close();
-      co_await right.async_close();
+      co_await close_transport_for_test(pair.left);
    }
+}
+
+boost::asio::awaitable<void> yamux_resource_overflow_resets_only_offending_stream() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   {
+      auto pair = make_stream_pair(executor);
+      auto right = fcl::yamux::session{
+          std::move(pair.right),
+          fcl::yamux::side::responder,
+          fcl::yamux::options{
+              .initial_window = 4,
+              .max_stream_window = 4,
+              .max_frame_size = 16,
+              .max_stream_buffer = 4,
+              .max_session_buffer = 16,
+          },
+      };
+      auto accept_first = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
+      co_await pair.left.async_write(frame(frame_type::data, syn, 1, 5, text_bytes("abcde")));
+      BOOST_TEST_CHECKPOINT("stream buffer overflow: waiting for ACK");
+      auto first_response = co_await read_transport_for_test(pair.left, "stream-buffer overflow ACK");
+      BOOST_CHECK_EQUAL(type_of(first_response), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(first_response), ack);
+      BOOST_CHECK_EQUAL(stream_id_of(first_response), 1U);
+      BOOST_TEST_CHECKPOINT("stream buffer overflow: waiting for RST");
+      auto first_reset = co_await read_transport_for_test(pair.left, "stream-buffer overflow RST");
+      BOOST_CHECK_EQUAL(type_of(first_reset), frame_type::data);
+      BOOST_CHECK_EQUAL(flags_of(first_reset), rst);
+      BOOST_CHECK_EQUAL(stream_id_of(first_reset), 1U);
+      auto first = co_await take_result(accept_first);
+      BOOST_CHECK_THROW((void)co_await first.async_read(), fcl::yamux::exceptions::stream_reset);
+
+      auto accept_second = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
+      const auto payload = text_bytes("ok");
+      co_await pair.left.async_write(frame(frame_type::data, syn, 3, static_cast<std::uint32_t>(payload.size()), payload));
+      BOOST_TEST_CHECKPOINT("stream buffer overflow: waiting for second stream ACK");
+      auto second_response = co_await read_transport_for_test(pair.left, "stream-buffer second ACK");
+      BOOST_CHECK_EQUAL(type_of(second_response), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(second_response), ack);
+      BOOST_CHECK_EQUAL(stream_id_of(second_response), 3U);
+      auto second = co_await take_result_for(accept_second, std::chrono::seconds{1});
+      auto received = co_await second.async_read();
+      BOOST_TEST(received == payload, boost::test_tools::per_element());
+
+      co_await close_transport_for_test(pair.left);
+   }
+
+   {
+      auto pair = make_stream_pair(executor);
+      auto right = fcl::yamux::session{
+          std::move(pair.right),
+          fcl::yamux::side::responder,
+          fcl::yamux::options{
+              .initial_window = 4,
+              .max_stream_window = 4,
+              .max_frame_size = 16,
+              .max_stream_buffer = 8,
+              .max_session_buffer = 4,
+          },
+      };
+      auto accept_first = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
+      co_await pair.left.async_write(frame(frame_type::data, syn, 1, 4, text_bytes("hold")));
+      BOOST_TEST_CHECKPOINT("session buffer overflow: waiting for first ACK");
+      auto first_response = co_await read_transport_for_test(pair.left, "session-buffer first ACK");
+      BOOST_CHECK_EQUAL(type_of(first_response), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(first_response), ack);
+      BOOST_CHECK_EQUAL(stream_id_of(first_response), 1U);
+      co_await pair.left.async_write(frame(frame_type::data, syn, 3, 1, text_bytes("x")));
+      BOOST_TEST_CHECKPOINT("session buffer overflow: waiting for second ACK");
+      auto second_response = co_await read_transport_for_test(pair.left, "session-buffer second ACK");
+      BOOST_CHECK_EQUAL(type_of(second_response), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(second_response), ack);
+      BOOST_CHECK_EQUAL(stream_id_of(second_response), 3U);
+      BOOST_TEST_CHECKPOINT("session buffer overflow: waiting for second RST");
+      auto second_reset = co_await read_transport_for_test(pair.left, "session-buffer second RST");
+      BOOST_CHECK_EQUAL(type_of(second_reset), frame_type::data);
+      BOOST_CHECK_EQUAL(flags_of(second_reset), rst);
+      BOOST_CHECK_EQUAL(stream_id_of(second_reset), 3U);
+
+      auto first = co_await take_result_for(accept_first, std::chrono::seconds{1});
+      auto second = co_await right.async_accept_stream();
+      BOOST_CHECK_EQUAL(first.id(), 1);
+      BOOST_CHECK_EQUAL(second.id(), 3);
+      BOOST_CHECK_THROW((void)co_await second.async_read(), fcl::yamux::exceptions::stream_reset);
+      auto received = co_await first.async_read();
+      BOOST_TEST(received == text_bytes("hold"), boost::test_tools::per_element());
+      auto first_window = co_await read_transport_for_test(pair.left, "session-buffer first WINDOW_UPDATE");
+      BOOST_CHECK_EQUAL(type_of(first_window), frame_type::window_update);
+      BOOST_CHECK_EQUAL(stream_id_of(first_window), 1U);
+      BOOST_CHECK_EQUAL(length_of(first_window), 4U);
+
+      auto accept_third = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
+      const auto payload = text_bytes("next");
+      co_await pair.left.async_write(frame(frame_type::data, syn, 5, static_cast<std::uint32_t>(payload.size()), payload));
+      BOOST_TEST_CHECKPOINT("session buffer overflow: waiting for third ACK");
+      auto third_response = co_await read_transport_for_test(pair.left, "session-buffer third ACK");
+      BOOST_CHECK_EQUAL(type_of(third_response), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(third_response), ack);
+      BOOST_CHECK_EQUAL(stream_id_of(third_response), 5U);
+      auto third = co_await take_result_for(accept_third, std::chrono::seconds{1});
+      auto third_received = co_await third.async_read();
+      BOOST_TEST(third_received == payload, boost::test_tools::per_element());
+
+      co_await close_transport_for_test(pair.left);
+   }
+}
+
+boost::asio::awaitable<void> yamux_parser_handles_partial_and_buffered_frames() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto pair = make_stream_pair(executor);
+   auto right = fcl::yamux::session{std::move(pair.right), fcl::yamux::side::responder};
+   auto accept_first = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
+
+   const auto first_payload = text_bytes("one");
+   const auto second_payload = text_bytes("two");
+   auto first_frame = frame(frame_type::data, syn, 1, static_cast<std::uint32_t>(first_payload.size()), first_payload);
+   auto second_frame = frame(frame_type::data, syn, 3, static_cast<std::uint32_t>(second_payload.size()), second_payload);
+   auto prefix = bytes{first_frame.begin(), first_frame.begin() + 5};
+   auto remainder = bytes{first_frame.begin() + 5, first_frame.end()};
+   append_bytes(remainder, second_frame);
+
+   co_await pair.left.async_write(prefix);
+   co_await pair.left.async_write(remainder);
+
+   auto first_ack = co_await read_transport_for_test(pair.left, "parser first ACK");
+   BOOST_CHECK_EQUAL(type_of(first_ack), frame_type::window_update);
+   BOOST_CHECK_EQUAL(flags_of(first_ack), ack);
+   BOOST_CHECK_EQUAL(stream_id_of(first_ack), 1U);
+   auto second_ack = co_await read_transport_for_test(pair.left, "parser second ACK");
+   BOOST_CHECK_EQUAL(type_of(second_ack), frame_type::window_update);
+   BOOST_CHECK_EQUAL(flags_of(second_ack), ack);
+   BOOST_CHECK_EQUAL(stream_id_of(second_ack), 3U);
+
+   auto first = co_await take_result_for(accept_first, std::chrono::seconds{1});
+   auto second = co_await right.async_accept_stream();
+   BOOST_CHECK_EQUAL(first.id(), 1);
+   BOOST_CHECK_EQUAL(second.id(), 3);
+   auto first_received = co_await first.async_read();
+   auto second_received = co_await second.async_read();
+   BOOST_TEST(first_received == first_payload, boost::test_tools::per_element());
+   BOOST_TEST(second_received == second_payload, boost::test_tools::per_element());
+
+   co_await pair.left.async_close();
+   co_await right.async_close();
+}
+
+boost::asio::awaitable<void> yamux_reset_reclaim_releases_buffer_budget_for_open_streams() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto pair = make_stream_pair(executor);
+   auto right = fcl::yamux::session{
+       std::move(pair.right),
+       fcl::yamux::side::responder,
+       fcl::yamux::options{
+           .initial_window = 4,
+           .max_stream_window = 4,
+           .max_frame_size = 16,
+           .max_streams = 2,
+           .max_pending_accepts = 2,
+           .max_stream_buffer = 4,
+           .max_session_buffer = 4,
+       },
+   };
+   auto accept_first = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
+   co_await pair.left.async_write(frame(frame_type::window_update, syn, 1, 4));
+   auto first_ack = co_await read_transport_for_test(pair.left, "reclaim first ACK");
+   BOOST_CHECK_EQUAL(type_of(first_ack), frame_type::window_update);
+   BOOST_CHECK_EQUAL(flags_of(first_ack), ack);
+   BOOST_CHECK_EQUAL(stream_id_of(first_ack), 1U);
+   co_await pair.left.async_write(frame(frame_type::window_update, syn, 3, 4));
+   auto second_ack = co_await read_transport_for_test(pair.left, "reclaim second ACK");
+   BOOST_CHECK_EQUAL(type_of(second_ack), frame_type::window_update);
+   BOOST_CHECK_EQUAL(flags_of(second_ack), ack);
+   BOOST_CHECK_EQUAL(stream_id_of(second_ack), 3U);
+   auto first = co_await take_result_for(accept_first, std::chrono::seconds{1});
+   auto second = co_await right.async_accept_stream();
+   BOOST_CHECK_EQUAL(first.id(), 1);
+   BOOST_CHECK_EQUAL(second.id(), 3);
+
+   co_await pair.left.async_write(frame(frame_type::data, 0, 1, 4, text_bytes("hold")));
+   co_await pair.left.async_write(frame(frame_type::data, rst, 1, 0));
+   BOOST_CHECK_THROW((void)co_await first.async_read(), fcl::yamux::exceptions::stream_reset);
+
+   const auto payload = text_bytes("pass");
+   co_await pair.left.async_write(frame(frame_type::data, 0, 3, static_cast<std::uint32_t>(payload.size()), payload));
+   auto received = co_await second.async_read();
+   BOOST_TEST(received == payload, boost::test_tools::per_element());
+
+   co_await close_transport_for_test(pair.left);
 }
 
 boost::asio::awaitable<void> yamux_configured_limits_are_behavioral() {
@@ -770,19 +1029,30 @@ boost::asio::awaitable<void> yamux_configured_limits_are_behavioral() {
 
    {
       auto pair = make_stream_pair(executor);
-      auto left = fcl::yamux::session{std::move(pair.left), fcl::yamux::side::initiator};
       auto right = fcl::yamux::session{
           std::move(pair.right),
           fcl::yamux::side::responder,
-          fcl::yamux::options{.max_stream_buffer = 8, .max_session_buffer = 3},
+          fcl::yamux::options{
+              .initial_window = 3,
+              .max_stream_window = 3,
+              .max_frame_size = 8,
+              .max_stream_buffer = 8,
+              .max_session_buffer = 3,
+          },
       };
       auto accept = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
-      auto outbound = co_await left.async_open_stream();
+      co_await pair.left.async_write(frame(frame_type::data, syn, 1, 4, text_bytes("four")));
+      auto ack_frame = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(ack_frame), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(ack_frame), ack);
+      BOOST_CHECK_EQUAL(stream_id_of(ack_frame), 1U);
+      auto reset_frame = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(reset_frame), frame_type::data);
+      BOOST_CHECK_EQUAL(flags_of(reset_frame), rst);
+      BOOST_CHECK_EQUAL(stream_id_of(reset_frame), 1U);
       auto inbound = co_await take_result(accept);
-      co_await outbound.async_write(text_bytes("four"));
       BOOST_CHECK_THROW((void)co_await inbound.async_read(), fcl::yamux::exceptions::stream_reset);
-      co_await left.async_close();
-      co_await right.async_close();
+      co_await close_transport_for_test(pair.left);
    }
 
    {
@@ -951,8 +1221,7 @@ boost::asio::awaitable<void> yamux_control_frames_are_handled() {
       BOOST_CHECK_EQUAL(response[9], 0x02U);
       BOOST_CHECK_EQUAL(response[10], 0x03U);
       BOOST_CHECK_EQUAL(response[11], 0x04U);
-      right.cancel();
-      co_await pair.left.async_close();
+   co_await pair.left.async_close();
       (void)accept;
    }
 
@@ -1022,6 +1291,21 @@ BOOST_AUTO_TEST_CASE(yamux_close_flushes_and_read_after_close_is_rejected) {
 BOOST_AUTO_TEST_CASE(yamux_rejects_limits_and_malformed_frames_with_typed_errors) {
    auto runtime = fcl::asio::runtime{};
    fcl::asio::blocking::run(runtime, yamux_limits_and_malformed_frames_are_typed());
+}
+
+BOOST_AUTO_TEST_CASE(yamux_resets_only_streams_that_exceed_buffers) {
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, yamux_resource_overflow_resets_only_offending_stream());
+}
+
+BOOST_AUTO_TEST_CASE(yamux_parser_preserves_partial_and_buffered_frames) {
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, yamux_parser_handles_partial_and_buffered_frames());
+}
+
+BOOST_AUTO_TEST_CASE(yamux_reset_reclaim_releases_buffer_budget) {
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, yamux_reset_reclaim_releases_buffer_budget_for_open_streams());
 }
 
 BOOST_AUTO_TEST_CASE(yamux_enforces_configured_runtime_limits) {

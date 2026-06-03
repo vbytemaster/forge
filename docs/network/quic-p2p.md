@@ -191,6 +191,116 @@ READMEs may link here, but must not define a second block order.
   rust-libp2p live scenarios cover Ping, Identify and a framed echo stream for
   both TCP security branches.
 - E.2b checkpoint: `/ws` and `/wss` remain parse/store only at multiaddr level.
+- E.2c is the mandatory cleanup gate before continuing P2P feature work:
+  tighten reusable Yamux resource semantics against libp2p donor behavior. This
+  block must reject invalid window/buffer option combinations up front, because
+  an implementation must not advertise an initial receive window it cannot
+  buffer under honest peer traffic.
+- E.2c must make stream-local resource abuse reset only the offending Yamux
+  stream where the donor behavior permits it. A stream buffer overflow must not
+  automatically fail the whole mux session; existing healthy streams must keep
+  working after the reset. True malformed frames, protocol violations and
+  session-level terminal errors still close the session with typed Yamux
+  exceptions.
+- E.2c should replace the hot `read_frame` erase-and-shift path with an
+  offset/ring-buffer style parser before bulk data paths depend on Yamux. This
+  is a performance hardening item, not a wire-format change.
+- E.2c should release terminal Yamux stream resources as early as safety allows.
+  Reset streams must release buffered bytes and wake waiters immediately, while
+  stream map entries may remain until a safe reclamation boundary so existing
+  handles can still report typed `stream_reset` instead of generic closed.
+- E.2c keeps Yamux internal timeout-free by design: deadlines are caller policy
+  and must be applied by P2P/API/transport users around operations. The cleanup
+  must verify that this remains an explicit contract, not an accidental missing
+  feature.
+- E.2c does not add P2P protocols, API bindings or WebSocket transport support.
+  It is a cleanup block for reusable `fcl_yamux` plus donor-derived regression
+  tests, and it must remain compatible with the already proven TCP Noise/TLS
+  and QUIC/P2P scenarios.
+- E.2c implementation files:
+  `libraries/yamux/session.cpp`,
+  `libraries/yamux/include/fcl/yamux/options.cppm`,
+  `tests/yamux/yamux_tests.cpp` and `docs/donors/fcl-yamux-v1.md`.
+  No `libraries/p2p`, API, QUIC, TCP or STCP runtime code should change unless
+  a regression test proves the reusable Yamux contract cannot be fixed in
+  `fcl_yamux` alone.
+- E.2c option invariants:
+  `validate_options()` must reject `initial_window == 0`,
+  `max_stream_window < initial_window`,
+  `max_stream_buffer < initial_window`,
+  `max_session_buffer < initial_window`, zero stream/backlog/buffer limits and
+  wire-impossible frame sizes. The important contract is that FCL never sends a
+  `WINDOW_UPDATE|SYN` receive credit larger than the amount it can accept from
+  one honest peer stream before application reads.
+- E.2c stream overflow behavior:
+  `handle_data(...)` must treat stream-buffer and attributable session-buffer
+  overflow as a stream-local reset. It should mark only that stream reset, clear
+  its buffered inbound data with correct `session_buffer_` accounting, wake
+  stream waiters, send `RST` for that stream and continue the session read loop.
+  Local users of the reset stream observe typed
+  `fcl::yamux::exceptions::stream_reset`; unrelated streams remain usable.
+- E.2c session-failure behavior:
+  malformed frame version/type/flags, stream zero misuse, invalid stream ID
+  parity, duplicate stream IDs, oversized DATA frames and GOAWAY/error paths
+  remain session-level failures with typed Yamux exceptions and GOAWAY where the
+  current implementation already sends it.
+- E.2c parser cleanup:
+  `read_frame(...)` should stop erasing consumed bytes from the front of the
+  receive buffer after every frame. Use an explicit consumed offset, compact
+  only when useful, or an equivalent ring-buffer style parser. Preserve partial
+  frame handling, multiple buffered frames and `max_frame_size` rejection.
+- E.2c reclamation cleanup:
+  extend the existing `is_reclaimable_stream_locked(...)` and
+  `reclaim_closed_streams_locked()` path so terminal streams are removed before
+  new stream cap checks, while reset handling eagerly clears inbound buffers,
+  subtracts bytes from `session_buffer_` and wakes read/window waiters. This
+  preserves typed reset delivery for existing handles and still releases memory
+  and budget promptly.
+- E.2c tests to add before implementation:
+  `test_fcl_yamux` must fail on invalid options where
+  `max_stream_buffer < initial_window` and
+  `max_session_buffer < initial_window`; it must prove a stream-buffer overflow
+  resets only the offending stream while a second stream still transfers bytes;
+  it must prove an attributable session-buffer overflow follows the same
+  stream-local policy; it must preserve malformed-frame session-failure tests;
+  it must cover the new parser with partial frames, multiple buffered frames and
+  trailing buffered bytes; and it must prove reclamation releases stream count
+  and buffer budget before another stream depends on those resources.
+- E.2c donor/doc update:
+  `docs/donors/fcl-yamux-v1.md` must map the new stream-local reset behavior,
+  invalid option invariants, parser buffering behavior and eager reclamation
+  tests to libp2p spec/go-libp2p/rust-libp2p donor expectations. If a donor
+  behavior is ambiguous, the doc must state the FCL policy and why it is
+  compatible.
+- E.2c static gates:
+
+  ```sh
+  rg -n "buffer\\.erase\\(buffer\\.begin\\(\\)" libraries/yamux/session.cpp
+  rg -n "FCL_THROW\\(|throw std::runtime_error|exceptions::raise\\(" \
+    libraries/yamux tests/yamux
+  rg -n "import fcl\\.(api|p2p|quic|tcp|stcp|multiformats|websocket)|fcl::(api|p2p|quic|tcp|stcp|multiformats|websocket)" \
+    libraries/yamux/include libraries/yamux --glob "*.cpp"
+  ```
+
+  All three searches should be empty after cleanup.
+- E.2c validation:
+
+  ```sh
+  cmake --build build/fcl-typed-exceptions-debug -j 1 \
+    --target fcl_yamux fcl_transport fcl_tcp fcl_stcp fcl_quic fcl_p2p fcl \
+             test_fcl_yamux test_fcl_quic_p2p test_fcl_libp2p_interop
+
+  ctest --test-dir build/fcl-typed-exceptions-debug --output-on-failure \
+    -R "^(test_fcl_yamux|test_fcl_quic_p2p|test_fcl_libp2p_donor_matrix)$" \
+    --timeout 900
+
+  FCL_ENABLE_LIBP2P_INTEROP=1 \
+  ctest --test-dir build/fcl-typed-exceptions-debug --output-on-failure \
+    -R "^test_fcl_libp2p_interop$" \
+    --timeout 1800
+
+  git diff --check
+  ```
 - E.3 is the next required block after the review checkpoint merges:
   multi-transport host support. A production node must listen on several direct
   transports at the same time, for example `/udp/.../quic-v1` and `/tcp/...`,

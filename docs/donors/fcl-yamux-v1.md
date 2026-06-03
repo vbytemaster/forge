@@ -43,6 +43,19 @@ discovery, pubsub, TCP, STCP or QUIC mechanics.
   `cancel()` wakes waiters deterministically.
 - Options are behavioral: windows, frame size, stream count and buffer limits all
   affect runtime behavior and have tests.
+- Window and buffer options are validated together: FCL rejects any configuration
+  that would advertise an initial receive window larger than the configured
+  per-stream or session receive buffer.
+- Stream-attributable receive-buffer abuse resets only the offending stream. The
+  session keeps demultiplexing, unrelated streams remain usable and local users
+  of the reset stream observe `fcl::yamux::exceptions::stream_reset`.
+- Malformed frames, stream-zero misuse, invalid stream ID parity, duplicate
+  stream IDs, oversized DATA and GOAWAY/error paths remain session-level
+  failures.
+- The frame parser keeps a consumed offset and bounded compaction instead of
+  erasing from the front of the receive buffer for every frame.
+- Yamux owns no internal deadline policy. Callers wrap operations in P2P/API or
+  transport-level deadlines when they need time bounds.
 
 ## Supported Behaviors And Tests
 
@@ -56,6 +69,11 @@ discovery, pubsub, TCP, STCP or QUIC mechanics.
 | Close flushes pending DATA; read after FIN fails typed | Rust compliance | `test_fcl_yamux yamux_close_flushes_and_read_after_close_is_rejected` |
 | Frame size split, stream buffer limit and malformed frame rejection | libp2p spec, Rust inbound buffer limit | `test_fcl_yamux yamux_rejects_limits_and_malformed_frames_with_typed_errors` |
 | Stream count, pending accept backlog, session buffer and max stream window limits | Go resource-manager-backed limits, Rust inbound backlog behavior | `test_fcl_yamux yamux_enforces_configured_runtime_limits` |
+| Invalid window/buffer option combinations rejected up front | Rust inbound buffer limits, FCL receive-credit invariant | `test_fcl_yamux yamux_rejects_limits_and_malformed_frames_with_typed_errors` |
+| Stream-local buffer overflow resets only the offending stream | Go testsuite reset behavior, Rust inbound buffer limit | `test_fcl_yamux yamux_resets_only_streams_that_exceed_buffers` |
+| Attributable session-buffer overflow resets the incoming offending stream | Go resource-manager-backed limits, Rust bounded receive buffers | `test_fcl_yamux yamux_resets_only_streams_that_exceed_buffers` |
+| Partial frames, multiple buffered frames and trailing buffered bytes parse without front erase | libp2p spec frame layout, Rust muxer harness buffering expectations | `test_fcl_yamux yamux_parser_preserves_partial_and_buffered_frames` |
+| Terminal stream reclamation releases stream-count and buffer budget while preserving typed reset for existing handles | Go reset behavior, Rust stream lifecycle and bounded buffers | `test_fcl_yamux yamux_reclaims_terminal_streams_before_stream_cap`, `test_fcl_yamux yamux_reset_reclaim_releases_buffer_budget` |
 | Stream zero misuse and oversized DATA rejection | libp2p spec | `test_fcl_yamux yamux_rejects_limits_and_malformed_frames_with_typed_errors` |
 | PING ACK and GOAWAY close | libp2p spec | `test_fcl_yamux yamux_handles_ping_and_goaway_control_frames` |
 | `transport::session` wrapper delegation | Rust muxer harness | `test_fcl_yamux yamux_exposes_transport_session_wrapper` |

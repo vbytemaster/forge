@@ -1495,6 +1495,67 @@ BOOST_AUTO_TEST_CASE(quic_stream_cancel_releases_queued_write_budget) {
    server.stop();
 }
 
+BOOST_AUTO_TEST_CASE(quic_peer_reset_releases_retained_write_budget) {
+   auto limits = transport_limits{.max_connections = 16, .max_streams_per_connection = 16, .max_queued_bytes = 8};
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server =
+       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("fcl-p2p/1", limits)};
+   auto proxy = std::make_shared<udp_fault_proxy>(
+       runtime.context(), server.local_endpoint(),
+       fault_proxy_rules{.server_to_client = fault_rule{.delay = std::chrono::milliseconds{250}}});
+   proxy->start();
+
+   auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
+   auto client = connector{runtime};
+   auto connection =
+       run_with_deadline(runtime, client.async_connect(proxy->local_endpoint(), loopback_client_options("fcl-p2p/1", limits)),
+                         std::chrono::milliseconds{10'000}, "queued-budget peer-reset connect");
+   auto server_connection =
+       get_with_deadline(accept_future, std::chrono::milliseconds{10'000}, "queued-budget peer-reset accept");
+
+   auto server_reset = boost::asio::co_spawn(
+       runtime.context(),
+       [server_connection = std::move(server_connection)]() mutable -> boost::asio::awaitable<void> {
+          auto inbound = co_await server_connection.async_accept_stream();
+          inbound.cancel();
+          auto executor = co_await boost::asio::this_coro::executor;
+          auto timer = boost::asio::steady_timer{executor};
+          timer.expires_after(std::chrono::milliseconds{100});
+          co_await timer.async_wait(boost::asio::use_awaitable);
+          co_await server_connection.async_close();
+       },
+       boost::asio::use_future);
+
+   auto stream = run_with_deadline(runtime, connection.async_open_stream(), std::chrono::milliseconds{5'000},
+                                   "queued-budget peer-reset open stream");
+   const auto payload = std::vector<std::uint8_t>{1, 2, 3, 4, 5, 6};
+   run_with_deadline(runtime, stream.async_write(payload), std::chrono::milliseconds{5'000},
+                     "queued-budget peer-reset write");
+   BOOST_TEST(connection.metrics().queued_bytes >= payload.size());
+
+   get_with_deadline(server_reset, std::chrono::milliseconds{10'000}, "queued-budget peer-reset server task");
+   run_with_deadline(runtime,
+                     []() -> boost::asio::awaitable<void> {
+                        auto executor = co_await boost::asio::this_coro::executor;
+                        auto timer = boost::asio::steady_timer{executor};
+                        timer.expires_after(std::chrono::milliseconds{350});
+                        co_await timer.async_wait(boost::asio::use_awaitable);
+                     }(),
+                     std::chrono::milliseconds{5'000}, "queued-budget peer-reset propagation");
+   BOOST_TEST(connection.metrics().queued_bytes == 0U);
+   BOOST_TEST(connection.metrics().streams_reset >= 1U);
+
+   auto replacement = run_with_deadline(runtime, connection.async_open_stream(), std::chrono::milliseconds{5'000},
+                                        "queued-budget peer-reset replacement open stream");
+   run_with_deadline(runtime, replacement.async_write(payload), std::chrono::milliseconds{5'000},
+                     "queued-budget peer-reset replacement write");
+
+   run_with_deadline(runtime, connection.async_close(), std::chrono::milliseconds{5'000},
+                     "queued-budget peer-reset connection close");
+   proxy->stop();
+   server.stop();
+}
+
 BOOST_AUTO_TEST_CASE(quic_loopback_rejects_inbound_packet_queue_overflow) {
    auto server_limits = transport_limits{
        .max_connections = 16,

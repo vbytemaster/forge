@@ -1325,13 +1325,15 @@ int stream_close_cb(ngtcp2_conn* conn, std::uint32_t, std::int64_t stream_id, st
 int stream_reset_cb(ngtcp2_conn* conn, std::int64_t stream_id, std::uint64_t, std::uint64_t, void* user_data, void*) {
    auto* connection = static_cast<engine_connection::impl*>(user_data);
    if (auto it = connection->streams.find(stream_id); it != connection->streams.end()) {
-      it->second->reset = true;
+      auto& stream = it->second;
+      connection->release_queued_stream_writes(stream);
+      stream->reset = true;
       if (ngtcp2_is_bidi_stream(stream_id) && ngtcp2_conn_is_local_stream(conn, stream_id) == 0) {
          ngtcp2_conn_extend_max_streams_bidi(conn, 1);
       }
       connection->metrics.streams_reset.fetch_add(1, std::memory_order_relaxed);
-      wake(it->second->read_waiters);
-      wake(it->second->write_waiters);
+      wake(stream->read_waiters);
+      wake(stream->write_waiters);
       connection->update_active_stream_metrics();
    }
    return 0;
@@ -1641,12 +1643,35 @@ void engine_stream::cancel() {
       if (stream->reset || stream->closed) {
          return;
       }
+      auto shutdown_result = 0;
+      auto should_drain = false;
+      if (connection->conn != nullptr && !connection->closing && !connection->canceled) {
+         shutdown_result = ngtcp2_conn_shutdown_stream(connection->conn, 0, stream->id, 0);
+         should_drain = shutdown_result == 0;
+      }
       connection->release_queued_stream_writes(stream);
       stream->reset = true;
       wake(stream->read_waiters);
       wake(stream->write_waiters);
       connection->metrics.streams_reset.fetch_add(1, std::memory_order_relaxed);
       connection->update_active_stream_metrics();
+      if (shutdown_result != 0) {
+         connection->fail_all();
+         return;
+      }
+      if (!should_drain) {
+         return;
+      }
+      asio::co_spawn(
+          connection->strand,
+          [connection]() -> asio::awaitable<void> {
+             try {
+                co_await connection->drain_send();
+             } catch (const engine_failure&) {
+                connection->fail_all();
+             }
+          },
+          asio::detached);
    });
 }
 

@@ -57,18 +57,14 @@ repos or storage backends build dependencies.
 
 ## Donor Test Adoption
 
-The donor repositories are acceptance sources, not decorative references:
+The canonical compatibility test rules live in
+[`docs/network/quic-p2p.md`](../network/quic-p2p.md). This donor note records
+which external projects provide accepted patterns and criteria:
 
 - `libp2p-specs`: normative protocol behavior and wire shapes.
 - `go-libp2p`: production behavior, interop test plans and edge cases.
 - `rust-libp2p`: independent implementation, interop tests, protocol smoke tests
   and stream/transport compliance tests.
-
-For each supported protocol, FCL must keep a traceability matrix with the spec
-source, donor tests inspected, FCL unit tests, FCL interop tests and unsupported
-gaps. Golden byte vectors should be copied or regenerated from specs/donor tests
-where possible. Live interop tests must cover FCL <-> go-libp2p and FCL <->
-rust-libp2p in both directions before the protocol is marked supported.
 
 ## FCL Mapping
 

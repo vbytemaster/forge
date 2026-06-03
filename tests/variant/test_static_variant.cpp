@@ -2,7 +2,7 @@
 #include <string>
 #include <variant>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.variant.static_variant;
 import fcl.variant;
 

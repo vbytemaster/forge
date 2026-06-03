@@ -532,14 +532,14 @@ plugin `A` started, the shell asks the runtime to shut down started plugins and
 records diagnostics.
 
 ```cpp
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 try {
    app.configure(document);
    fcl::asio::blocking::run(app.runtime(), app.startup());
 } FCL_CAPTURE_AND_RETHROW(
    "application startup failed",
-   fcl::error::ctx("component", "service"))
+   fcl::exceptions::ctx("component", "service"))
 ```
 
 The app should still call `request_stop()` and `shutdown()` from the outer

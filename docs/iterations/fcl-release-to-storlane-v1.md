@@ -8,7 +8,7 @@ integration. It does not change any downstream repository or submodule pointer.
 The focus is practical adoption:
 
 - production-shaped `fcl_app` examples;
-- richer `fcl_asio` and `fcl_exception` documentation;
+- richer `fcl_asio` and `fcl_exceptions` documentation;
 - synchronous logger v2 with structured records, sinks, redaction and stacktrace
   snapshots;
 - CMake install/export package;
@@ -24,7 +24,7 @@ Accepted:
 - source location, chrono timestamp, component/logger name and thread metadata;
 - explicit secret fields rendered as `<redacted>`;
 - automatic stacktrace snapshot for error logs when a backend is available;
-- exception-chain routing through `fcl::error::set_log_sink`.
+- exception-chain routing through `fcl::exceptions::set_log_sink`.
 
 Rejected:
 
@@ -73,13 +73,13 @@ Required before downstream integration:
 
 ```bash
 cmake --build build/fcl-release-hardening-debug -j 1 \
-  --target fcl test_fcl test_fcl_exception test_fcl_log test_fcl_raw test_fcl_json test_fcl_crypto \
+  --target fcl test_fcl test_fcl_exceptions test_fcl_log test_fcl_raw test_fcl_json test_fcl_crypto \
   test_fcl_asio test_fcl_app test_fcl_schema test_fcl_config test_fcl_yaml \
   test_fcl_program_options test_fcl_http_websocket test_fcl_quic_p2p test_fcl_tui \
   fcl_example_app_lifecycle fcl_example_exception_logging
 
 ctest --test-dir build/fcl-release-hardening-debug --output-on-failure \
-  -R "^(test_fcl|test_fcl_exception|test_fcl_log|test_fcl_raw|test_fcl_json|test_fcl_crypto|test_fcl_asio|test_fcl_app|test_fcl_schema|test_fcl_config|test_fcl_yaml|test_fcl_program_options|test_fcl_http_websocket|test_fcl_quic_p2p|test_fcl_tui|test_fcl_example_app_lifecycle|test_fcl_example_exception_logging|test_fcl_package_install|test_fcl_package_consumer)$" \
+  -R "^(test_fcl|test_fcl_exceptions|test_fcl_log|test_fcl_raw|test_fcl_json|test_fcl_crypto|test_fcl_asio|test_fcl_app|test_fcl_schema|test_fcl_config|test_fcl_yaml|test_fcl_program_options|test_fcl_http_websocket|test_fcl_quic_p2p|test_fcl_tui|test_fcl_example_app_lifecycle|test_fcl_example_exception_logging|test_fcl_package_install|test_fcl_package_consumer)$" \
   --timeout 360
 ```
 

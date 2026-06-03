@@ -69,7 +69,7 @@ std::string http_error_name(int code) {
    }
 }
 
-status http_status_for(const fcl::exception::base& error) {
+status http_status_for(const fcl::exceptions::base& error) {
    if (std::string_view{error.code().category().name()} == "fcl.http") {
       const auto value = error.code().value();
       if (value >= 400 && value <= 599) {
@@ -79,7 +79,7 @@ status http_status_for(const fcl::exception::base& error) {
    return status::internal_server_error;
 }
 
-fcl::api::error_payload http_error_payload(const fcl::exception::base& error) {
+fcl::api::error_payload http_error_payload(const fcl::exceptions::base& error) {
    if (std::string_view{error.code().category().name()} == "fcl.http") {
       return fcl::api::error_payload{
           .error = http_error_name(error.code().value()),
@@ -121,7 +121,7 @@ std::string render_error_payload(const fcl::api::error_payload& payload) {
    return output;
 }
 
-response make_exception_response(const request& request, const fcl::exception::base& error) {
+response make_exception_response(const request& request, const fcl::exceptions::base& error) {
    return make_text_response(request, http_status_for(error), render_error_payload(http_error_payload(error)),
                              "application/json");
 }
@@ -321,7 +321,7 @@ response router::handle(route_context& context) const {
          return make_text_response(context.request, status::upgrade_required, "websocket upgrade required");
       }
       return make_text_response(context.request, status::not_found, "not found");
-   } catch (const fcl::exception::base& error) {
+   } catch (const fcl::exceptions::base& error) {
       return make_exception_response(context.request, error);
    } catch (const std::exception&) {
       return make_text_response(context.request, status::internal_server_error,

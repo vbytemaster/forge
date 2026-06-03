@@ -1,7 +1,7 @@
 module;
 
 #include <boost/asio/awaitable.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <cerrno>
@@ -225,7 +225,7 @@ class api_builder {
             target = false;
          } else {
             FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API query boolean is invalid",
-                                fcl::exception::ctx("field", std::string{field}));
+                                fcl::exceptions::ctx("field", std::string{field}));
          }
       } else if constexpr (std::is_integral_v<clean>) {
          if constexpr (std::is_signed_v<clean>) {
@@ -236,7 +236,7 @@ class api_builder {
             if (ec != std::errc{} || ptr != last || parsed < std::numeric_limits<clean>::min() ||
                 parsed > std::numeric_limits<clean>::max()) {
                FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API query integer is invalid",
-                                   fcl::exception::ctx("field", std::string{field}));
+                                   fcl::exceptions::ctx("field", std::string{field}));
             }
             target = static_cast<clean>(parsed);
          } else {
@@ -246,7 +246,7 @@ class api_builder {
             const auto [ptr, ec] = std::from_chars(first, last, parsed);
             if (ec != std::errc{} || ptr != last || parsed > std::numeric_limits<clean>::max()) {
                FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API query integer is invalid",
-                                   fcl::exception::ctx("field", std::string{field}));
+                                   fcl::exceptions::ctx("field", std::string{field}));
             }
             target = static_cast<clean>(parsed);
          }
@@ -257,12 +257,12 @@ class api_builder {
          const auto parsed = std::strtold(copy.c_str(), &end);
          if (errno != 0 || end != copy.c_str() + copy.size()) {
             FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API query number is invalid",
-                                fcl::exception::ctx("field", std::string{field}));
+                                fcl::exceptions::ctx("field", std::string{field}));
          }
          target = static_cast<clean>(parsed);
       } else {
          FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API route field type is not supported",
-                             fcl::exception::ctx("field", std::string{field}));
+                             fcl::exceptions::ctx("field", std::string{field}));
       }
    }
 

@@ -55,9 +55,9 @@ its own public failure vocabulary.
 
 ```yaml
 p2p:
-  listen: ["quic://0.0.0.0:9443"]
-  bootstrap: ["quic://node-a.example:9443"]
-  advertised-endpoints: ["quic://node-b.example:9443"]
+  listen: ["/ip4/0.0.0.0/udp/9443/quic-v1"]
+  bootstrap: ["/dns4/node-a.example/udp/9443/quic-v1"]
+  advertised-endpoints: ["/dns4/node-b.example/udp/9443/quic-v1"]
   certificate-pem: "..."
   private-key-pem: "..."
   api-codec: fcl.raw
@@ -125,7 +125,7 @@ For raw product protocols, publish a protocol route instead of an API binding:
 ```cpp
 p2p->publish_protocol(
    {.value = "/product/blob-transfer/1"},
-   [](fcl::p2p::incoming_protocol_stream incoming) -> boost::asio::awaitable<void> {
+   [](fcl::p2p::node::incoming_protocol_stream incoming) -> boost::asio::awaitable<void> {
       auto bytes = co_await incoming.stream.async_read_frame();
       co_await handle_blob_frame(incoming.session.remote_peer, std::move(bytes));
    });
@@ -189,7 +189,7 @@ product protocol or `fcl_api` request/response contract.
   directly when the node is owned by `p2p_node`; publish a route contribution.
 - Do not let product plugins override codec, inflight limits or bootstrap policy
   that the node plugin owns from config.
-- Do not expose `fcl::p2p::open_options`, relay peer selection or hole-punch
+- Do not expose `fcl::p2p::node::open_options`, relay peer selection or hole-punch
   calls to ordinary product plugins. Use semantic `p2p_node::send_options`.
 - Do not create one P2P node per product protocol inside the same application.
   One owner plugin should mount multiple bindings/routes.

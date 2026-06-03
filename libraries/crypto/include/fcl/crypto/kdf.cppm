@@ -1,12 +1,30 @@
 module;
 
+#include <fcl/exceptions/macros.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 
 export module fcl.crypto.kdf;
 
+export import fcl.exceptions;
 import fcl.crypto.types;
+
+export namespace fcl::crypto::kdf::exceptions {
+
+enum class code : std::uint16_t {
+   invalid_key = 1,
+   invalid_options = 2,
+   backend_error = 3,
+};
+
+FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.kdf")
+
+using invalid_key = fcl::exceptions::coded_exception<code, code::invalid_key>;
+using invalid_options = fcl::exceptions::coded_exception<code, code::invalid_options>;
+using backend_error = fcl::exceptions::coded_exception<code, code::backend_error>;
+
+} // namespace fcl::crypto::kdf::exceptions
 
 export namespace fcl::crypto {
 

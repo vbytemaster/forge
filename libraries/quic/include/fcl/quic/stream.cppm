@@ -33,6 +33,7 @@ class stream {
    boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> bytes);
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read();
    boost::asio::awaitable<void> async_close();
+   void cancel();
 
  private:
    friend struct detail::stream_access;

@@ -2,7 +2,7 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/describe.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -19,9 +19,8 @@ import fcl.app.plugin;
 import fcl.app.plugin_context;
 import fcl.app.plugin_registry;
 import fcl.config.component;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.p2p;
-import fcl.quic.endpoint;
 import fcl.schema;
 
 export namespace fcl::plugins {
@@ -81,16 +80,16 @@ class p2p_node::exceptions {
       invalid_delivery_policy = 10,
    };
 
-   using plugin_not_initialized = fcl::exception::coded_exception<code, code::plugin_not_initialized>;
-   using route_conflict = fcl::exception::coded_exception<code, code::route_conflict>;
-   using outbox_required = fcl::exception::coded_exception<code, code::outbox_required>;
-   using outbox_unavailable = fcl::exception::coded_exception<code, code::outbox_unavailable>;
-   using delivery_queue_full = fcl::exception::coded_exception<code, code::delivery_queue_full>;
-   using delivery_expired = fcl::exception::coded_exception<code, code::delivery_expired>;
-   using delivery_cancelled = fcl::exception::coded_exception<code, code::delivery_cancelled>;
-   using relay_policy_denied = fcl::exception::coded_exception<code, code::relay_policy_denied>;
-   using no_delivery_path = fcl::exception::coded_exception<code, code::no_delivery_path>;
-   using invalid_delivery_policy = fcl::exception::coded_exception<code, code::invalid_delivery_policy>;
+   using plugin_not_initialized = fcl::exceptions::coded_exception<code, code::plugin_not_initialized>;
+   using route_conflict = fcl::exceptions::coded_exception<code, code::route_conflict>;
+   using outbox_required = fcl::exceptions::coded_exception<code, code::outbox_required>;
+   using outbox_unavailable = fcl::exceptions::coded_exception<code, code::outbox_unavailable>;
+   using delivery_queue_full = fcl::exceptions::coded_exception<code, code::delivery_queue_full>;
+   using delivery_expired = fcl::exceptions::coded_exception<code, code::delivery_expired>;
+   using delivery_cancelled = fcl::exceptions::coded_exception<code, code::delivery_cancelled>;
+   using relay_policy_denied = fcl::exceptions::coded_exception<code, code::relay_policy_denied>;
+   using no_delivery_path = fcl::exceptions::coded_exception<code, code::no_delivery_path>;
+   using invalid_delivery_policy = fcl::exceptions::coded_exception<code, code::invalid_delivery_policy>;
 };
 
 FCL_DECLARE_EXCEPTION_CATEGORY(p2p_node::exceptions::code, "fcl.plugins.p2p_node")
@@ -212,12 +211,12 @@ class p2p_node::api {
    [[nodiscard]] static fcl::api::descriptor describe();
 
    [[nodiscard]] virtual fcl::p2p::peer_id local_peer() const = 0;
-   [[nodiscard]] virtual std::optional<fcl::quic::endpoint> local_endpoint() const = 0;
-   [[nodiscard]] virtual fcl::p2p::node_metrics metrics() const = 0;
-   [[nodiscard]] virtual std::vector<fcl::p2p::peer_record> peers() const = 0;
+   [[nodiscard]] virtual std::optional<fcl::p2p::endpoint> local_endpoint() const = 0;
+   [[nodiscard]] virtual fcl::p2p::node::metrics_snapshot metrics() const = 0;
+   [[nodiscard]] virtual std::vector<fcl::p2p::peer_store::record> peers() const = 0;
 
    virtual void publish_api(fcl::api::binding_plan plan, fcl::p2p::protocol_id protocol) = 0;
-   virtual void publish_protocol(fcl::p2p::protocol_id protocol, fcl::p2p::protocol_handler handler) = 0;
+   virtual void publish_protocol(fcl::p2p::protocol_id protocol, fcl::p2p::node::protocol_handler handler) = 0;
 
    boost::asio::awaitable<delivery> send_async(fcl::p2p::peer_id peer, fcl::p2p::message message);
    virtual boost::asio::awaitable<delivery> send_async(fcl::p2p::peer_id peer, fcl::p2p::message message,
@@ -300,12 +299,13 @@ export template <> struct fcl::schema::rules<fcl::plugins::p2p_node::config> {
       auto schema = fcl::schema::object<fcl::plugins::p2p_node::config>();
       schema.field<&fcl::plugins::p2p_node::config::listen>("listen")
          .default_value(std::vector<std::string>{})
-         .description("QUIC listen endpoints, for example quic://0.0.0.0:9443");
+         .description("Listen endpoints, for example /ip4/0.0.0.0/udp/9443/quic-v1 or quic://0.0.0.0:9443");
       schema.field<&fcl::plugins::p2p_node::config::bootstrap>("bootstrap")
          .default_value(std::vector<std::string>{})
-         .description("Bootstrap peer endpoints to connect on startup");
+         .description("Bootstrap peer endpoints, preferably libp2p address text with /quic-v1");
       schema.field<&fcl::plugins::p2p_node::config::advertised_endpoints>("advertised-endpoints")
-         .default_value(std::vector<std::string>{});
+         .default_value(std::vector<std::string>{})
+         .description("Endpoints advertised to peers, preferably libp2p address text with /quic-v1");
       schema.field<&fcl::plugins::p2p_node::config::peer_id>("peer-id").default_value("");
       schema.field<&fcl::plugins::p2p_node::config::certificate_pem>("certificate-pem").default_value("");
       schema.field<&fcl::plugins::p2p_node::config::private_key_pem>("private-key-pem").default_value("").secret();

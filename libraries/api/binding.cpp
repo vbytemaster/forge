@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <boost/asio/awaitable.hpp>
 
@@ -75,11 +75,11 @@ void validate_interceptors(const std::vector<interceptor_step>& interceptors) {
       }
       if (!step.handler) {
          FCL_THROW_EXCEPTION(exceptions::protocol_error, "API interceptor handler must not be empty",
-                             fcl::exception::ctx("interceptor", step.id));
+                             fcl::exceptions::ctx("interceptor", step.id));
       }
       if (!ids.insert(step.id).second) {
          FCL_THROW_EXCEPTION(exceptions::protocol_error, "duplicate API interceptor id",
-                             fcl::exception::ctx("interceptor", step.id));
+                             fcl::exceptions::ctx("interceptor", step.id));
       }
    }
 }
@@ -125,11 +125,11 @@ void call_runtime::observe(const frame& value) {
    if (value.kind == frame_kind::request) {
       if (active_.contains(id)) {
          FCL_THROW_EXCEPTION(exceptions::protocol_error, "duplicate active API call_id",
-                             fcl::exception::ctx("call_id", id));
+                             fcl::exceptions::ctx("call_id", id));
       }
       if (active_.size() >= options_.max_inflight) {
          FCL_THROW_EXCEPTION(exceptions::resource_exhausted, "API max inflight calls exceeded",
-                             fcl::exception::ctx("max_inflight", options_.max_inflight));
+                             fcl::exceptions::ctx("max_inflight", options_.max_inflight));
       }
       active_.emplace(id, active_call{.started_at = std::chrono::steady_clock::now()});
       return;
@@ -138,14 +138,14 @@ void call_runtime::observe(const frame& value) {
    const auto active = active_.find(id);
    if (active == active_.end()) {
       FCL_THROW_EXCEPTION(exceptions::protocol_error, "API frame references unknown call_id",
-                          fcl::exception::ctx("call_id", id));
+                          fcl::exceptions::ctx("call_id", id));
    }
 
    if (options_.deadline.count() > 0 &&
        std::chrono::steady_clock::now() - active->second.started_at > options_.deadline) {
       active_.erase(active);
       FCL_THROW_EXCEPTION(exceptions::deadline_exceeded, "API call deadline exceeded",
-                          fcl::exception::ctx("call_id", id));
+                          fcl::exceptions::ctx("call_id", id));
    }
 
    if (terminal(value.kind)) {

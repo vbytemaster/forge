@@ -1,5 +1,6 @@
 export module fcl.variant;
 
+export import fcl.variant.exceptions;
 export import fcl.variant.value;
 export import fcl.variant.conversion;
 export import fcl.variant.containers;

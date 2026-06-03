@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <cstring>
 #include <exception>
 #include <memory>
@@ -14,25 +14,25 @@ import fcl.core.utility;
 import fcl.crypto.hex;
 import fcl.crypto.sha256;
 import fcl.crypto.sha512;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.variant;
 
 #include "_digest_common.hpp"
 #include "_evp_digest.hpp"
 
-namespace fcl {
+namespace fcl::crypto {
 
 ripemd160::ripemd160() {
    memset(_hash, 0, sizeof(_hash));
 }
 ripemd160::ripemd160(const std::string& hex_str) {
-   auto bytes_written = fcl::from_hex(hex_str, (char*)_hash, sizeof(_hash));
+   auto bytes_written = fcl::crypto::from_hex(hex_str, (char*)_hash, sizeof(_hash));
    if (bytes_written < sizeof(_hash))
       memset((char*)_hash + bytes_written, 0, (sizeof(_hash) - bytes_written));
 }
 
 std::string ripemd160::str() const {
-   return fcl::to_hex((char*)_hash, sizeof(_hash));
+   return fcl::crypto::to_hex((char*)_hash, sizeof(_hash));
 }
 ripemd160::operator std::string() const {
    return str();
@@ -51,10 +51,10 @@ ripemd160::encoder::encoder() : my(std::make_unique<impl>()) {
    reset();
 }
 
-ripemd160 ripemd160::hash(const fcl::sha512& h) {
+ripemd160 ripemd160::hash(const fcl::crypto::sha512& h) {
    return hash((const char*)&h, sizeof(h));
 }
-ripemd160 ripemd160::hash(const fcl::sha256& h) {
+ripemd160 ripemd160::hash(const fcl::crypto::sha256& h) {
    return hash((const char*)&h, sizeof(h));
 }
 ripemd160 ripemd160::hash(const char* d, uint32_t dlen) {
@@ -119,4 +119,4 @@ void from_variant(const variant& v, ripemd160& bi) {
       memset(bi.data(), char(0), sizeof(bi));
 }
 
-} // namespace fcl
+} // namespace fcl::crypto

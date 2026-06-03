@@ -25,7 +25,7 @@ import fcl.config.document;
 import fcl.config.value;
 import fcl.p2p;
 import fcl.plugins;
-import fcl.quic.errors;
+import fcl.quic.exceptions;
 import fcl.schema;
 
 namespace {
@@ -262,7 +262,7 @@ class route_publisher_plugin final : public fcl::app::plugin {
       p2p->publish_api(std::move(plan), fcl::p2p::protocol_id{.value = "/fcl/api/node-test/1"});
       p2p->publish_protocol(
          fcl::p2p::protocol_id{.value = "/product/blob-transfer/1"},
-         [](fcl::p2p::incoming_protocol_stream) -> boost::asio::awaitable<void> {
+         [](fcl::p2p::node::incoming_protocol_stream) -> boost::asio::awaitable<void> {
             co_return;
          });
       log_->entries.push_back("routes.published");
@@ -296,7 +296,7 @@ class duplicate_route_plugin final : public fcl::app::plugin {
    boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
       auto p2p = context.apis().get<fcl::plugins::p2p_node::api>(
          {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
-      auto handler = [](fcl::p2p::incoming_protocol_stream) -> boost::asio::awaitable<void> {
+      auto handler = [](fcl::p2p::node::incoming_protocol_stream) -> boost::asio::awaitable<void> {
          co_return;
       };
       p2p->publish_protocol(fcl::p2p::protocol_id{.value = "/product/duplicate/1"}, handler);
@@ -838,7 +838,7 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_rejects_invalid_typed_config_before_startup
       auto config = test_p2p_config();
       config.set("p2p.listen", fcl::config::value::array_type{fcl::config::value{"127.0.0.1:0"}});
       auto app = p2p_only_application{};
-      BOOST_CHECK_THROW(app.configure(config), fcl::quic::quic_error);
+      BOOST_CHECK_THROW(app.configure(config), fcl::exceptions::base);
    }
 
    {

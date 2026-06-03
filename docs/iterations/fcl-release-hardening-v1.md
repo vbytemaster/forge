@@ -34,7 +34,7 @@ cmake -S . -B build/fcl-release-hardening-debug -G Ninja \
   -DCMAKE_OSX_SYSROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
 
 cmake --build build/fcl-release-hardening-debug -j 1 \
-  --target fcl test_fcl test_fcl_exception test_fcl_raw test_fcl_json test_fcl_crypto \
+  --target fcl test_fcl test_fcl_exceptions test_fcl_raw test_fcl_json test_fcl_crypto \
   test_fcl_asio test_fcl_app test_fcl_schema test_fcl_config test_fcl_yaml \
   test_fcl_program_options test_fcl_http_websocket test_fcl_quic_p2p test_fcl_tui
 ```
@@ -44,7 +44,7 @@ Required tests:
 ```sh
 ctest --test-dir build/fcl-release-hardening-debug \
   --output-on-failure \
-  -R "^(test_fcl|test_fcl_exception|test_fcl_raw|test_fcl_json|test_fcl_crypto|test_fcl_asio|test_fcl_app|test_fcl_schema|test_fcl_config|test_fcl_yaml|test_fcl_program_options|test_fcl_http_websocket|test_fcl_quic_p2p|test_fcl_tui)$" \
+  -R "^(test_fcl|test_fcl_exceptions|test_fcl_raw|test_fcl_json|test_fcl_crypto|test_fcl_asio|test_fcl_app|test_fcl_schema|test_fcl_config|test_fcl_yaml|test_fcl_program_options|test_fcl_http_websocket|test_fcl_quic_p2p|test_fcl_tui)$" \
   --timeout 360
 ```
 

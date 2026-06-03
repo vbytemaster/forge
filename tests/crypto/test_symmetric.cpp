@@ -1,17 +1,18 @@
 #include <boost/test/unit_test.hpp>
 #include <boost/describe.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 import fcl.crypto.aes;
 import fcl.crypto.kdf;
 import fcl.crypto.random;
 import fcl.crypto.types;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.raw.raw;
 
 struct encrypted_record {
@@ -108,8 +109,9 @@ BOOST_AUTO_TEST_CASE(aes256_gcm_rejects_bad_tag) try {
       });
    };
 
-   BOOST_CHECK_EXCEPTION(decrypt_with_bad_tag(), fcl::crypto::error, [](const fcl::crypto::error& error) {
-      return error.kind() == fcl::crypto::error_kind::authentication_failed;
+   BOOST_CHECK_EXCEPTION(decrypt_with_bad_tag(), fcl::crypto::aes::exceptions::authentication_failed,
+                         [](const fcl::crypto::aes::exceptions::authentication_failed& error) {
+      return error.code().category().name() == std::string_view{"fcl.crypto.aes"};
    });
 }
 FCL_LOG_AND_RETHROW();

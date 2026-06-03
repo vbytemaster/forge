@@ -15,7 +15,7 @@ target_include_directories(fcl_http PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
    fcl_http PUBLIC
-      fcl_exception
+      fcl_exceptions
       fcl_api
       fcl_asio
       fcl_websocket

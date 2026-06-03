@@ -12,6 +12,7 @@ module;
 
 export module fcl.asio.task_scheduler;
 
+export import fcl.asio.exceptions;
 import fcl.asio.runtime;
 
 export namespace fcl::asio {

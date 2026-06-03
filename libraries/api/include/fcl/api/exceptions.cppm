@@ -1,11 +1,12 @@
 module;
 
+#include <boost/describe.hpp>
 #include <cstdint>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 export module fcl.api.exceptions;
 
-export import fcl.exception.exception;
+export import fcl.exceptions;
 
 export namespace fcl::api::exceptions {
 
@@ -22,13 +23,16 @@ enum class code : std::uint16_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.api")
 
-using method_not_found = fcl::exception::coded_exception<code, code::method_not_found>;
-using incompatible_version = fcl::exception::coded_exception<code, code::incompatible_version>;
-using codec_failed = fcl::exception::coded_exception<code, code::codec_failed>;
-using deadline_exceeded = fcl::exception::coded_exception<code, code::deadline_exceeded>;
-using cancelled = fcl::exception::coded_exception<code, code::cancelled>;
-using remote_internal = fcl::exception::coded_exception<code, code::remote_internal>;
-using protocol_error = fcl::exception::coded_exception<code, code::protocol_error>;
-using resource_exhausted = fcl::exception::coded_exception<code, code::resource_exhausted>;
+using method_not_found = fcl::exceptions::coded_exception<code, code::method_not_found>;
+using incompatible_version = fcl::exceptions::coded_exception<code, code::incompatible_version>;
+using codec_failed = fcl::exceptions::coded_exception<code, code::codec_failed>;
+using deadline_exceeded = fcl::exceptions::coded_exception<code, code::deadline_exceeded>;
+using cancelled = fcl::exceptions::coded_exception<code, code::cancelled>;
+using remote_internal = fcl::exceptions::coded_exception<code, code::remote_internal>;
+using protocol_error = fcl::exceptions::coded_exception<code, code::protocol_error>;
+using resource_exhausted = fcl::exceptions::coded_exception<code, code::resource_exhausted>;
+
+BOOST_DESCRIBE_ENUM(code, method_not_found, incompatible_version, codec_failed, deadline_exceeded, cancelled,
+                    remote_internal, protocol_error, resource_exhausted)
 
 } // namespace fcl::api::exceptions

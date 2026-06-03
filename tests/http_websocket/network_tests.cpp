@@ -1,6 +1,6 @@
 #include <boost/test/unit_test.hpp>
 #include <boost/describe.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -57,7 +57,7 @@ enum class code : std::uint8_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "test.http.cache")
 
-using chunk_not_found = fcl::exception::coded_exception<code, code::chunk_not_found>;
+using chunk_not_found = fcl::exceptions::coded_exception<code, code::chunk_not_found>;
 
 } // namespace api_errors
 

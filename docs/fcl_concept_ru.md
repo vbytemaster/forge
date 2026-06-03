@@ -421,7 +421,7 @@ auto value = fcl::json::read<T>(json_text).value;
 
 Для FCL нужен похожий по удобству механизм, но основанный на `std::exception`, `std::source_location`, structured context и typed error categories.
 
-Статус: foundation реализован. В FCL v1 единственный собственный тип ошибки — `fcl::error::context_error`, который наследуется от `std::runtime_error` и нужен только для структурированного контекста, redaction и nested exception chain.
+Статус: foundation реализован. В FCL v1 единственный собственный тип ошибки — `fcl::exceptions::context_error`, который наследуется от `std::runtime_error` и нужен только для структурированного контекста, redaction и nested exception chain.
 
 ### 7.2 Целевые свойства
 
@@ -441,8 +441,8 @@ auto value = fcl::json::read<T>(json_text).value;
 try {
    co_await node.async_start();
 } FCL_CAPTURE_AND_RETHROW("starting p2p node",
-   fcl::error::ctx("peer", peer_id),
-   fcl::error::ctx("endpoint", endpoint)
+   fcl::exceptions::ctx("peer", peer_id),
+   fcl::exceptions::ctx("endpoint", endpoint)
 )
 ```
 
@@ -453,7 +453,7 @@ try {
    do_work();
 } catch (...) {
    std::throw_with_nested(
-      fcl::error::context_error{
+      fcl::exceptions::context_error{
          "failed to start node",
          fcl::source_location::current(),
          {{"peer", peer_id}}
@@ -494,7 +494,7 @@ fcl::ctx("token", value, fcl::sensitive)
 
 ```cpp
 import fcl.crypto.sha256;
-import fcl.crypto.private_key;
+import fcl.crypto.asymmetric;
 ```
 
 Crypto namespace lives under `fcl::crypto`; старый FC source namespace больше не является целью после structural split.

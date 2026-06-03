@@ -1,8 +1,8 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <bls12-381/bls12-381.hpp>
-import fcl.exception.exception;
+import fcl.exceptions;
 
 using namespace std;
 using namespace bls12_381;

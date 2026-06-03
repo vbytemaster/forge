@@ -11,7 +11,7 @@ module;
 
 export module fcl.quic.security;
 
-import fcl.quic.errors;
+import fcl.quic.exceptions;
 
 export namespace fcl::quic {
 

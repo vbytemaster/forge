@@ -1,4 +1,4 @@
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <memory>
 #include <stdexcept>
@@ -6,7 +6,7 @@
 #include <string_view>
 #include <vector>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.log.log_message;
 import fcl.log.logger;
 import fcl.log.record;

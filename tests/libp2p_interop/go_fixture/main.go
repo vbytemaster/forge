@@ -1,0 +1,865 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	cid "github.com/ipfs/go-cid"
+	libp2p "github.com/libp2p/go-libp2p"
+	kad "github.com/libp2p/go-libp2p-kad-dht"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
+	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/libp2p/go-libp2p/p2p/muxer/yamux"
+	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
+	relayv2 "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
+	"github.com/libp2p/go-libp2p/p2p/protocol/holepunch"
+	"github.com/libp2p/go-libp2p/p2p/protocol/identify"
+	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
+	"github.com/libp2p/go-libp2p/p2p/security/noise"
+	sectls "github.com/libp2p/go-libp2p/p2p/security/tls"
+	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
+	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	ma "github.com/multiformats/go-multiaddr"
+	mh "github.com/multiformats/go-multihash"
+)
+
+const echoProtocol = protocol.ID("/fcl/interop/relay-echo/1")
+const pubsubTopic = "fcl.pubsub.interop"
+const pubsubPayload = "fcl-gossipsub-live"
+
+type options struct {
+	command     string
+	scenario    string
+	peerID      string
+	addr        string
+	relayAddr   string
+	relayPeerID string
+	readyFile   string
+	stopFile    string
+	resultFile  string
+	seedFile    string
+	payload     string
+	transport   string
+	expected    int
+}
+
+func parseArgs() (options, error) {
+	if len(os.Args) < 2 {
+		return options{}, fmt.Errorf("missing command")
+	}
+	out := options{command: os.Args[1]}
+	for i := 2; i < len(os.Args); i++ {
+		key := os.Args[i]
+		if i+1 >= len(os.Args) {
+			return options{}, fmt.Errorf("missing value for %s", key)
+		}
+		value := os.Args[i+1]
+		i++
+		switch key {
+		case "--scenario":
+			out.scenario = value
+		case "--peer-id":
+			out.peerID = value
+		case "--addr":
+			out.addr = value
+		case "--relay-addr":
+			out.relayAddr = value
+		case "--relay-peer-id":
+			out.relayPeerID = value
+		case "--ready-file":
+			out.readyFile = value
+		case "--stop-file":
+			out.stopFile = value
+		case "--result-file":
+			out.resultFile = value
+		case "--seed-file":
+			out.seedFile = value
+		case "--payload":
+			out.payload = value
+		case "--transport":
+			out.transport = value
+		case "--expected-messages":
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				return options{}, err
+			}
+			out.expected = n
+		case "--store-dir", "--features":
+			// Accepted for CLI parity with the FCL fixture.
+		default:
+			return options{}, fmt.Errorf("unknown argument %s", key)
+		}
+	}
+	if out.payload == "" {
+		out.payload = pubsubPayload
+	}
+	if out.transport == "" {
+		out.transport = "quic"
+	}
+	if out.expected == 0 {
+		out.expected = 1
+	}
+	return out, nil
+}
+
+func writeJSON(path string, value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+func writeFrame(w io.Writer, payload []byte) error {
+	var prefix [binary.MaxVarintLen64]byte
+	size := binary.PutUvarint(prefix[:], uint64(len(payload)))
+	if _, err := w.Write(prefix[:size]); err != nil {
+		return err
+	}
+	_, err := w.Write(payload)
+	return err
+}
+
+func readFrame(r *bufio.Reader) ([]byte, error) {
+	size, err := binary.ReadUvarint(r)
+	if err != nil {
+		return nil, err
+	}
+	if size == 0 || size > 16*1024 {
+		return nil, fmt.Errorf("invalid frame size %d", size)
+	}
+	payload := make([]byte, size)
+	if _, err := io.ReadFull(r, payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+func installEchoHandler(h host.Host) {
+	h.SetStreamHandler(echoProtocol, func(s network.Stream) {
+		defer s.Close()
+		payload, err := readFrame(bufio.NewReader(s))
+		if err != nil {
+			_ = s.Reset()
+			return
+		}
+		if err := writeFrame(s, payload); err != nil {
+			_ = s.Reset()
+		}
+	})
+}
+
+type fixtureHost struct {
+	host.Host
+	holePunch *holepunch.Service
+	kad       *kad.IpfsDHT
+	pubsub    *pubsub.PubSub
+}
+
+func (h *fixtureHost) Close() error {
+	if h.kad != nil {
+		_ = h.kad.Close()
+	}
+	if h.holePunch != nil {
+		_ = h.holePunch.Close()
+	}
+	return h.Host.Close()
+}
+
+func newHost(transport string) (*fixtureHost, error) {
+	options := []libp2p.Option{
+		libp2p.NoTransports,
+		libp2p.ForceReachabilityPublic(),
+		libp2p.EnableAutoNATv2(),
+		libp2p.EnableRelay(),
+	}
+	switch transport {
+	case "quic", "":
+		options = append(options,
+			libp2p.Transport(quic.NewTransport),
+			libp2p.ListenAddrStrings("/ip4/127.0.0.1/udp/0/quic-v1"),
+		)
+	case "tcp":
+		options = append(options,
+			libp2p.Transport(tcp.NewTCPTransport),
+			libp2p.Security(noise.ID, noise.New),
+			libp2p.Muxer(yamux.ID, yamux.DefaultTransport),
+			libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"),
+		)
+	case "tcp-tls":
+		options = append(options,
+			libp2p.Transport(tcp.NewTCPTransport),
+			libp2p.Security(sectls.ID, sectls.New),
+			libp2p.Muxer(yamux.ID, yamux.DefaultTransport),
+			libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"),
+		)
+	default:
+		return nil, fmt.Errorf("unsupported transport %s", transport)
+	}
+	h, err := libp2p.New(options...)
+	if err != nil {
+		return nil, err
+	}
+	installEchoHandler(h)
+	if _, err := relayv2.New(h); err != nil {
+		h.Close()
+		return nil, err
+	}
+	dht, err := kad.New(context.Background(), h, kad.Mode(kad.ModeServer), kad.DisableAutoRefresh())
+	if err != nil {
+		h.Close()
+		return nil, err
+	}
+	pubsubRouter, err := pubsub.NewGossipSub(
+		context.Background(),
+		h,
+		pubsub.WithGossipSubProtocols(
+			[]protocol.ID{pubsub.GossipSubID_v11, pubsub.GossipSubID_v10},
+			pubsub.GossipSubDefaultFeatures,
+		),
+	)
+	if err != nil {
+		h.Close()
+		return nil, err
+	}
+	type idServiceHost interface {
+		IDService() identify.IDService
+	}
+	identityHost, ok := h.(idServiceHost)
+	if !ok {
+		h.Close()
+		return nil, fmt.Errorf("host does not expose identify service")
+	}
+	holePunchService, err := holepunch.NewService(h, identityHost.IDService(), h.Addrs)
+	if err != nil {
+		h.Close()
+		return nil, err
+	}
+	return &fixtureHost{Host: h, holePunch: holePunchService, kad: dht, pubsub: pubsubRouter}, nil
+}
+
+func providerCID() (cid.Cid, error) {
+	hash, err := mh.Sum([]byte("fcl-libp2p-dht-provider"), mh.SHA2_256, -1)
+	if err != nil {
+		return cid.Undef, err
+	}
+	return cid.NewCidV1(cid.Raw, hash), nil
+}
+
+func addDHTPeer(h *fixtureHost, info *peer.AddrInfo) {
+	h.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
+	_, _ = h.kad.RoutingTable().TryAddPeer(info.ID, true, false)
+}
+
+func waitPubSubPeer(ctx context.Context, ps *pubsub.PubSub, topic string, peerID peer.ID) bool {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		for _, current := range ps.ListPeers(topic) {
+			if current == peerID {
+				return true
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
+func installPubSubListener(h *fixtureHost, resultFile string) error {
+	if resultFile == "" {
+		return fmt.Errorf("missing result file for gossipsub listener")
+	}
+	sub, err := h.pubsub.Subscribe(pubsubTopic, pubsub.WithBufferSize(8))
+	if err != nil {
+		return err
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		msg, err := sub.Next(ctx)
+		if err != nil {
+			_ = writeJSON(resultFile, map[string]any{
+				"implementation": "go",
+				"scenario":       "gossipsub_publish",
+				"status":         "error",
+				"error":          err.Error(),
+			})
+			return
+		}
+		status := "ok"
+		if string(msg.Data) != pubsubPayload {
+			status = "mismatch"
+		}
+		_ = writeJSON(resultFile, map[string]any{
+			"implementation":     "go",
+			"scenario":           "gossipsub_publish",
+			"status":             status,
+			"topic":              pubsubTopic,
+			"payload":            string(msg.Data),
+			"propagation_source": msg.ReceivedFrom.String(),
+			"source":             msg.GetFrom().String(),
+		})
+	}()
+	return nil
+}
+
+type pubsubStressState struct {
+	mu         sync.Mutex
+	payloads   map[string]struct{}
+	duplicates int
+}
+
+func installPubSubStressListener(h *fixtureHost) (*pubsubStressState, error) {
+	sub, err := h.pubsub.Subscribe(pubsubTopic, pubsub.WithBufferSize(64))
+	if err != nil {
+		return nil, err
+	}
+	state := &pubsubStressState{payloads: make(map[string]struct{})}
+	go func() {
+		for {
+			msg, err := sub.Next(context.Background())
+			if err != nil {
+				return
+			}
+			payload := string(msg.Data)
+			state.mu.Lock()
+			if _, ok := state.payloads[payload]; ok {
+				state.duplicates++
+			}
+			state.payloads[payload] = struct{}{}
+			state.mu.Unlock()
+		}
+	}()
+	return state, nil
+}
+
+func connectSeedPeers(ctx context.Context, h host.Host, seedFile string) error {
+	data, err := os.ReadFile(seedFile)
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		addr, err := ma.NewMultiaddr(line)
+		if err != nil {
+			continue
+		}
+		info, err := peer.AddrInfoFromP2pAddr(addr)
+		if err != nil || info.ID == h.ID() {
+			continue
+		}
+		if err := h.Connect(ctx, *info); err != nil {
+			continue
+		}
+	}
+	return nil
+}
+
+func writePubSubStressResult(opts options, state *pubsubStressState) error {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	payloads := make([]string, 0, len(state.payloads))
+	for payload := range state.payloads {
+		payloads = append(payloads, payload)
+	}
+	status := "ok"
+	if len(payloads) < opts.expected || state.duplicates != 0 {
+		status = "mismatch"
+	}
+	return writeJSON(opts.resultFile, map[string]any{
+		"implementation": "go",
+		"scenario":       "gossipsub_mixed_mesh_stress",
+		"status":         status,
+		"received":       len(payloads),
+		"expected":       opts.expected,
+		"duplicates":     state.duplicates,
+		"payloads":       payloads,
+	})
+}
+
+func listen(opts options) error {
+	h, err := newHost(opts.transport)
+	if err != nil {
+		return err
+	}
+	defer h.Close()
+	var stress *pubsubStressState
+	if opts.scenario == "gossipsub_publish" {
+		if err := installPubSubListener(h, opts.resultFile); err != nil {
+			return err
+		}
+	} else if opts.scenario == "gossipsub_mixed_mesh_stress" {
+		stress, err = installPubSubStressListener(h)
+		if err != nil {
+			return err
+		}
+	}
+
+	out := make([]string, 0, len(h.Addrs()))
+	for _, addr := range h.Addrs() {
+		out = append(out, addr.String()+"/p2p/"+h.ID().String())
+	}
+	protocols := make([]string, 0, len(h.Mux().Protocols()))
+	for _, protocolID := range h.Mux().Protocols() {
+		protocols = append(protocols, string(protocolID))
+	}
+	if err := writeJSON(opts.readyFile, map[string]any{
+		"implementation": "go",
+		"role":           "listener",
+		"peer_id":        h.ID().String(),
+		"listen_addrs":   out,
+		"protocols":      protocols,
+		"transport":      opts.transport,
+		"status":         "ready",
+	}); err != nil {
+		return err
+	}
+	seeded := false
+	for {
+		if !seeded && opts.scenario == "gossipsub_mixed_mesh_stress" && opts.seedFile != "" {
+			if _, err := os.Stat(opts.seedFile); err == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				_ = connectSeedPeers(ctx, h, opts.seedFile)
+				cancel()
+				seeded = true
+			}
+		}
+		if _, err := os.Stat(opts.stopFile); err == nil {
+			if stress != nil {
+				return writePubSubStressResult(opts, stress)
+			}
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func destination(opts options) error {
+	h, err := newHost(opts.transport)
+	if err != nil {
+		return err
+	}
+	defer h.Close()
+
+	relayAddr, err := ma.NewMultiaddr(opts.relayAddr)
+	if err != nil {
+		return err
+	}
+	relayInfo, err := peer.AddrInfoFromP2pAddr(relayAddr)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := h.Connect(ctx, *relayInfo); err != nil {
+		return fmt.Errorf("connect relay failed: %w", err)
+	}
+	reservation, err := relayclient.Reserve(ctx, h, *relayInfo)
+	if err != nil {
+		return fmt.Errorf("reserve relay failed: %w", err)
+	}
+	listenAddrs := make([]string, 0, len(h.Addrs()))
+	for _, addr := range h.Addrs() {
+		listenAddrs = append(listenAddrs, addr.String()+"/p2p/"+h.ID().String())
+	}
+	relayAddrs := make([]string, 0, len(reservation.Addrs))
+	for _, addr := range reservation.Addrs {
+		relayAddrs = append(relayAddrs, addr.String())
+	}
+	voucherPayloadBytes := 0
+	voucherRelay := ""
+	voucherPeer := ""
+	voucherExpiration := int64(0)
+	if reservation.Voucher != nil {
+		if payload, err := reservation.Voucher.MarshalRecord(); err == nil {
+			voucherPayloadBytes = len(payload)
+		}
+		voucherRelay = reservation.Voucher.Relay.String()
+		voucherPeer = reservation.Voucher.Peer.String()
+		voucherExpiration = reservation.Voucher.Expiration.Unix()
+	}
+	if err := writeJSON(opts.readyFile, map[string]any{
+		"implementation":         "go",
+		"role":                   "destination",
+		"peer_id":                h.ID().String(),
+		"listen_addrs":           listenAddrs,
+		"relay_addrs":            relayAddrs,
+		"relay_peer_id":          relayInfo.ID.String(),
+		"native_relay_transport": true,
+		"voucher":                reservation.Voucher != nil,
+		"voucher_payload_bytes":  voucherPayloadBytes,
+		"voucher_relay":          voucherRelay,
+		"voucher_peer":           voucherPeer,
+		"voucher_expiration":     voucherExpiration,
+		"status":                 "ready",
+	}); err != nil {
+		return err
+	}
+	for {
+		if _, err := os.Stat(opts.stopFile); err == nil {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func openRequiredProtocol(ctx context.Context, h host.Host, peer peer.ID, id protocol.ID) (int, error) {
+	stream, err := h.NewStream(ctx, peer, id)
+	if err != nil {
+		return 0, err
+	}
+	defer stream.Close()
+	if id == protocol.ID("/ipfs/id/1.0.0") {
+		payload, err := io.ReadAll(stream)
+		if err != nil {
+			return 0, err
+		}
+		if len(payload) == 0 {
+			return 0, fmt.Errorf("%s returned empty payload", id)
+		}
+		return len(payload), nil
+	}
+	return 0, nil
+}
+
+func openEchoProtocol(ctx context.Context, h host.Host, peer peer.ID, payload []byte) (int, error) {
+	stream, err := h.NewStream(ctx, peer, echoProtocol)
+	if err != nil {
+		return 0, err
+	}
+	defer stream.Close()
+	if err := writeFrame(stream, payload); err != nil {
+		_ = stream.Reset()
+		return 0, err
+	}
+	echoed, err := readFrame(bufio.NewReader(stream))
+	if err != nil {
+		_ = stream.Reset()
+		return 0, err
+	}
+	if string(echoed) != string(payload) {
+		return 0, fmt.Errorf("echo mismatch: %q", string(echoed))
+	}
+	return len(echoed), nil
+}
+
+func connectionState(h host.Host, peer peer.ID) map[string]string {
+	for _, conn := range h.Network().ConnsToPeer(peer) {
+		state := conn.ConnState()
+		return map[string]string{
+			"negotiated_security": string(state.Security),
+			"negotiated_muxer":    string(state.StreamMultiplexer),
+			"transport":           state.Transport,
+		}
+	}
+	return map[string]string{}
+}
+
+func expectUnsupportedProtocol(ctx context.Context, h host.Host, peer peer.ID, id protocol.ID) (string, error) {
+	stream, err := h.NewStream(ctx, peer, id)
+	if err == nil {
+		stream.Close()
+		return "", fmt.Errorf("%s unexpectedly opened", id)
+	}
+	text := err.Error()
+	if strings.Contains(text, "deadline exceeded") || strings.Contains(text, "context canceled") {
+		return "", fmt.Errorf("%s failed without protocol rejection proof: %w", id, err)
+	}
+	return text, nil
+}
+
+func dial(opts options) error {
+	h, err := newHost(opts.transport)
+	if err != nil {
+		return err
+	}
+	defer h.Close()
+
+	addr, err := ma.NewMultiaddr(opts.addr)
+	if err != nil {
+		return err
+	}
+	info, err := peer.AddrInfoFromP2pAddr(addr)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	if err := h.Connect(ctx, *info); err != nil {
+		return fmt.Errorf("connect failed: %w", err)
+	}
+	addDHTPeer(h, info)
+
+	result := map[string]any{
+		"implementation": "go",
+		"role":           "dialer",
+		"scenario":       opts.scenario,
+		"local_peer_id":  h.ID().String(),
+		"status":         "ok",
+	}
+	for key, value := range connectionState(h, info.ID) {
+		result[key] = value
+	}
+	switch opts.scenario {
+	case "ping":
+		pingService := ping.NewPingService(h)
+		ch := pingService.Ping(ctx, info.ID)
+		select {
+		case pong := <-ch:
+			if pong.Error != nil {
+				return fmt.Errorf("ping failed: %w", pong.Error)
+			}
+			result["rtt_ms"] = pong.RTT.Milliseconds()
+		case <-ctx.Done():
+			return fmt.Errorf("ping timed out: %w", ctx.Err())
+		}
+	case "identify":
+		size, err := openRequiredProtocol(ctx, h, info.ID, protocol.ID("/ipfs/id/1.0.0"))
+		if err != nil {
+			return err
+		}
+		result["payload_bytes"] = size
+	case "echo":
+		size, err := openEchoProtocol(ctx, h, info.ID, []byte(opts.payload))
+		if err != nil {
+			return err
+		}
+		result["protocol"] = string(echoProtocol)
+		result["payload_bytes"] = size
+		result["echo_ok"] = true
+	case "autonatv2":
+		if _, err = openRequiredProtocol(ctx, h, info.ID, protocol.ID("/libp2p/autonat/2/dial-request")); err != nil {
+			return err
+		}
+		result["opened"] = true
+	case "relay_reserve":
+		reservation, err := relayclient.Reserve(ctx, h, *info)
+		if err != nil {
+			return err
+		}
+		addrs := make([]string, 0, len(reservation.Addrs))
+		for _, addr := range reservation.Addrs {
+			addrs = append(addrs, addr.String())
+		}
+		result["reservation_addrs"] = addrs
+		result["limit_duration_ms"] = reservation.LimitDuration.Milliseconds()
+		result["limit_data"] = reservation.LimitData
+		result["voucher"] = reservation.Voucher != nil
+	case "dcutr":
+		if _, err = openRequiredProtocol(ctx, h, info.ID, protocol.ID("/libp2p/dcutr")); err != nil {
+			return err
+		}
+		result["opened"] = true
+	case "dht_find_peer":
+		found, err := h.kad.FindPeer(ctx, info.ID)
+		if err != nil {
+			return fmt.Errorf("dht FindPeer failed: %w", err)
+		}
+		if found.ID != info.ID {
+			return fmt.Errorf("dht FindPeer returned %s, expected %s", found.ID, info.ID)
+		}
+		result["found_peer"] = found.ID.String()
+		result["addr_count"] = len(found.Addrs)
+	case "dht_provide_find_provider":
+		key, err := providerCID()
+		if err != nil {
+			return err
+		}
+		if err := h.kad.Provide(ctx, key, true); err != nil {
+			return fmt.Errorf("dht Provide failed: %w", err)
+		}
+		providers := h.kad.FindProvidersAsync(ctx, key, 10)
+		count := 0
+		foundLocal := false
+		for provider := range providers {
+			count++
+			if provider.ID == h.ID() {
+				foundLocal = true
+				break
+			}
+		}
+		if !foundLocal {
+			return fmt.Errorf("dht FindProviders did not return local provider")
+		}
+		result["provider_count"] = count
+	case "gossipsub_publish", "gossipsub_mixed_mesh_stress":
+		if _, err := h.pubsub.Subscribe(pubsubTopic, pubsub.WithBufferSize(8)); err != nil {
+			return err
+		}
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer waitCancel()
+		meshPeer := waitPubSubPeer(waitCtx, h.pubsub, pubsubTopic, info.ID)
+		if err := h.pubsub.Publish(pubsubTopic, []byte(opts.payload)); err != nil {
+			return fmt.Errorf("gossipsub publish failed: %w", err)
+		}
+		time.Sleep(2 * time.Second)
+		result["topic"] = pubsubTopic
+		result["payload"] = opts.payload
+		result["payload_bytes"] = len(opts.payload)
+		result["mesh_peer"] = meshPeer
+	case "unknown_protocol":
+		expected, err := expectUnsupportedProtocol(ctx, h, info.ID, protocol.ID("/fcl/interop/unknown/1"))
+		if err != nil {
+			return err
+		}
+		result["expected_error"] = expected
+	default:
+		return fmt.Errorf("unknown scenario %s", opts.scenario)
+	}
+	return writeJSON(opts.resultFile, result)
+}
+
+func relayedAddr(relayAddr string, target peer.ID) (ma.Multiaddr, error) {
+	base, err := ma.NewMultiaddr(relayAddr)
+	if err != nil {
+		return nil, err
+	}
+	circuit, err := ma.NewMultiaddr("/p2p-circuit/p2p/" + target.String())
+	if err != nil {
+		return nil, err
+	}
+	return base.Encapsulate(circuit), nil
+}
+
+func waitDirectConnection(ctx context.Context, h host.Host, target peer.ID) bool {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		for _, conn := range h.Network().ConnsToPeer(target) {
+			if !strings.Contains(conn.RemoteMultiaddr().String(), "p2p-circuit") {
+				return true
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
+func dialRelay(opts options) error {
+	h, err := newHost(opts.transport)
+	if err != nil {
+		return err
+	}
+	defer h.Close()
+
+	targetPeer, err := peer.Decode(opts.peerID)
+	if err != nil {
+		return err
+	}
+	relayPeer, err := peer.Decode(opts.relayPeerID)
+	if err != nil {
+		return err
+	}
+	relayAddr, err := ma.NewMultiaddr(opts.relayAddr)
+	if err != nil {
+		return err
+	}
+	relayInfo, err := peer.AddrInfoFromP2pAddr(relayAddr)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := h.Connect(ctx, *relayInfo); err != nil {
+		return fmt.Errorf("connect relay failed: %w", err)
+	}
+	destinationAddr, err := relayedAddr(opts.relayAddr, targetPeer)
+	if err != nil {
+		return err
+	}
+	targetInfo, err := peer.AddrInfoFromP2pAddr(destinationAddr)
+	if err != nil {
+		return err
+	}
+	if err := h.Connect(ctx, *targetInfo); err != nil {
+		return fmt.Errorf("connect relayed destination failed: %w", err)
+	}
+
+	result := map[string]any{
+		"implementation": "go",
+		"role":           "relay_dialer",
+		"scenario":       opts.scenario,
+		"local_peer_id":  h.ID().String(),
+		"relay_peer":     relayPeer.String(),
+		"target_peer":    targetPeer.String(),
+		"relayed_addr":   destinationAddr.String(),
+		"status":         "ok",
+	}
+	stream, err := h.NewStream(network.WithAllowLimitedConn(ctx, "relay-echo"), targetPeer, echoProtocol)
+	if err != nil {
+		return fmt.Errorf("open relayed echo failed: %w", err)
+	}
+	payload := []byte("relay-echo")
+	if err := writeFrame(stream, payload); err != nil {
+		_ = stream.Reset()
+		return err
+	}
+	echoed, err := readFrame(bufio.NewReader(stream))
+	if err != nil {
+		_ = stream.Reset()
+		return err
+	}
+	_ = stream.Close()
+	if string(echoed) != string(payload) {
+		return fmt.Errorf("relay echo mismatch: %q", string(echoed))
+	}
+	result["relay_echo"] = true
+	if opts.scenario == "dcutr_relay_topology" {
+		if h.holePunch == nil {
+			return fmt.Errorf("hole punch service is unavailable")
+		}
+		if err := h.holePunch.DirectConnect(targetPeer); err != nil {
+			return fmt.Errorf("DCUtR direct connect failed: %w", err)
+		}
+		result["direct_upgrade"] = waitDirectConnection(ctx, h, targetPeer)
+		if !result["direct_upgrade"].(bool) {
+			return fmt.Errorf("DCUtR did not produce a direct connection")
+		}
+	}
+	return writeJSON(opts.resultFile, result)
+}
+
+func main() {
+	opts, err := parseArgs()
+	if err == nil {
+		switch opts.command {
+		case "listen":
+			err = listen(opts)
+		case "destination":
+			err = destination(opts)
+		case "dial":
+			err = dial(opts)
+		case "dial-relay":
+			err = dialRelay(opts)
+		default:
+			err = fmt.Errorf("unknown command %s", opts.command)
+		}
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+}

@@ -85,17 +85,6 @@ enum class status : std::uint16_t {
    internal = 500,
 };
 
-enum class error_kind : std::uint8_t {
-   api = 1,
-   invalid_request = 2,
-   codec = 3,
-   compatibility = 4,
-   timeout = 5,
-   cancelled = 6,
-   transport = 7,
-   internal = 8,
-};
-
 struct error_identity {
    std::string category;
    std::uint32_t code = 0;
@@ -131,7 +120,6 @@ BOOST_DESCRIBE_ENUM(frame_kind, request, response, error, cancel, stream_item, s
 BOOST_DESCRIBE_ENUM(method_kind, unary, server_stream, client_stream, bidirectional_stream)
 BOOST_DESCRIBE_ENUM(status, ok, invalid_argument, unauthenticated, permission_denied, not_found, conflict,
                     failed_precondition, resource_exhausted, deadline_exceeded, unavailable, internal)
-BOOST_DESCRIBE_ENUM(error_kind, api, invalid_request, codec, compatibility, timeout, cancelled, transport, internal)
 BOOST_DESCRIBE_STRUCT(api_id, (), (value))
 BOOST_DESCRIBE_STRUCT(api_version, (), (major, revision))
 BOOST_DESCRIBE_STRUCT(api_ref, (), (id, major, min_revision))

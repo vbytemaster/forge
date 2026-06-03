@@ -7,7 +7,6 @@ module;
 #include <iomanip>
 #include <limits>
 #include <sstream>
-#include <stdexcept>
 #include <string_view>
 #include <vector>
 
@@ -17,6 +16,7 @@ module fcl.variant.value;
 
 import fcl.core.string;
 import fcl.core.utf8;
+import fcl.variant.exceptions;
 
 namespace {
 
@@ -362,7 +362,7 @@ void variant::visit(const visitor& v) const {
       v.handle(**reinterpret_cast<const const_blob_ptr*>(this));
       return;
    default:
-      throw std::runtime_error("Invalid Type / Corrupted Memory");
+      throw fcl::variant_exceptions::invalid_type{"Invalid Type / Corrupted Memory"};
    }
 }
 
@@ -636,7 +636,7 @@ size_t variant::estimated_size() const {
    case blob_type:
       return sizeof(blob) + get_blob().data.size() + sizeof(*this);
    default:
-      throw std::runtime_error("Invalid Type / Corrupted Memory");
+      throw fcl::variant_exceptions::invalid_type{"Invalid Type / Corrupted Memory"};
    }
 }
 
@@ -795,7 +795,7 @@ void from_variant(const variant& var, std::vector<char>& vo) {
    if (vo.size()) {
       size_t r = variant_from_hex(str, vo.data(), vo.size());
       if (r != vo.size())
-         throw std::runtime_error("hex decode length mismatch");
+         throw fcl::variant_exceptions::decode_error{"hex decode length mismatch"};
    }
 }
 
@@ -882,7 +882,7 @@ bool operator<(const variant& a, const variant& b) {
       return a.as_int64() < b.as_int64();
    if (a.is_uint64() || b.is_uint64())
       return a.as_uint64() < b.as_uint64();
-   throw std::runtime_error("Invalid operation");
+   throw fcl::variant_exceptions::invalid_operation{"Invalid operation"};
 }
 
 bool operator>(const variant& a, const variant& b) {
@@ -894,7 +894,7 @@ bool operator>(const variant& a, const variant& b) {
       return a.as_int64() > b.as_int64();
    if (a.is_uint64() || b.is_uint64())
       return a.as_uint64() > b.as_uint64();
-   throw std::runtime_error("Invalid operation");
+   throw fcl::variant_exceptions::invalid_operation{"Invalid operation"};
 }
 
 bool operator<=(const variant& a, const variant& b) {
@@ -906,7 +906,7 @@ bool operator<=(const variant& a, const variant& b) {
       return a.as_int64() <= b.as_int64();
    if (a.is_uint64() || b.is_uint64())
       return a.as_uint64() <= b.as_uint64();
-   throw std::runtime_error("Invalid operation");
+   throw fcl::variant_exceptions::invalid_operation{"Invalid operation"};
 }
 
 variant operator+(const variant& a, const variant& b) {
@@ -934,7 +934,7 @@ variant operator+(const variant& a, const variant& b) {
       return a.as_int64() + b.as_int64();
    if (a.is_uint64() || b.is_uint64())
       return a.as_uint64() + b.as_uint64();
-   throw std::runtime_error("invalid variant addition");
+   throw fcl::variant_exceptions::invalid_operation{"invalid variant addition"};
 }
 
 variant operator-(const variant& a, const variant& b) {
@@ -962,7 +962,7 @@ variant operator-(const variant& a, const variant& b) {
       return a.as_int64() - b.as_int64();
    if (a.is_uint64() || b.is_uint64())
       return a.as_uint64() - b.as_uint64();
-   throw std::runtime_error("invalid variant subtraction");
+   throw fcl::variant_exceptions::invalid_operation{"invalid variant subtraction"};
 }
 variant operator*(const variant& a, const variant& b) {
    if (a.is_double() || b.is_double())
@@ -987,7 +987,7 @@ variant operator*(const variant& a, const variant& b) {
       }
       return result;
    }
-   throw std::runtime_error("invalid variant multiplication");
+   throw fcl::variant_exceptions::invalid_operation{"invalid variant multiplication"};
 }
 variant operator/(const variant& a, const variant& b) {
    if (a.is_double() || b.is_double())
@@ -1012,6 +1012,6 @@ variant operator/(const variant& a, const variant& b) {
       }
       return result;
    }
-   throw std::runtime_error("invalid variant division");
+   throw fcl::variant_exceptions::invalid_operation{"invalid variant division"};
 }
 } // namespace fcl

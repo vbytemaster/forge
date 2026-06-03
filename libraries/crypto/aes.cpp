@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exceptions/macros.hpp>
+
 #include <openssl/evp.h>
 
 #include <algorithm>
@@ -22,39 +24,42 @@ using ctx_ptr = std::unique_ptr<EVP_CIPHER_CTX, decltype(&EVP_CIPHER_CTX_free)>;
 [[nodiscard]] ctx_ptr make_context() {
    auto context = ctx_ptr{EVP_CIPHER_CTX_new(), EVP_CIPHER_CTX_free};
    if (!context) {
-      throw error{error_kind::backend_error, "failed to allocate AES context"};
+      FCL_THROW_EXCEPTION(aes::exceptions::backend_error, "failed to allocate AES context");
    }
    return context;
 }
 
 [[nodiscard]] int checked_update_size(std::size_t size, const char* label) {
    if (size > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-      throw error{error_kind::invalid_options, std::string(label) + " is too large"};
+      FCL_THROW_EXCEPTION(aes::exceptions::invalid_options, std::string(label) + " is too large");
    }
    return static_cast<int>(size);
 }
 
-void require_size(std::size_t size, std::size_t expected, const char* message, error_kind kind) {
+void require_size(std::size_t size, std::size_t expected, const char* message, aes::exceptions::code kind) {
    if (size != expected) {
-      throw error{kind, message};
+      FCL_THROW_CODE(kind, message);
    }
 }
 
 void require_gcm_nonce(std::span<const std::uint8_t> nonce) {
-   require_size(nonce.size(), aes_gcm_nonce_size, "AES-256-GCM requires 12-byte nonce", error_kind::invalid_nonce);
+   require_size(nonce.size(), aes_gcm_nonce_size, "AES-256-GCM requires 12-byte nonce",
+                aes::exceptions::code::invalid_nonce);
 }
 
 void require_gcm_tag(std::span<const std::uint8_t> tag) {
-   require_size(tag.size(), aes_gcm_tag_size, "AES-256-GCM requires 16-byte tag", error_kind::invalid_tag);
+   require_size(tag.size(), aes_gcm_tag_size, "AES-256-GCM requires 16-byte tag",
+                aes::exceptions::code::invalid_tag);
 }
 
 void require_cbc_iv(std::span<const std::uint8_t> iv) {
-   require_size(iv.size(), aes_cbc_iv_size, "AES-256-CBC requires 16-byte IV", error_kind::invalid_nonce);
+   require_size(iv.size(), aes_cbc_iv_size, "AES-256-CBC requires 16-byte IV",
+                aes::exceptions::code::invalid_nonce);
 }
 
 void require_sink(const aes_byte_sink& sink) {
    if (!sink) {
-      throw error{error_kind::invalid_options, "AES streaming requires output sink"};
+      FCL_THROW_EXCEPTION(aes::exceptions::invalid_options, "AES streaming requires output sink");
    }
 }
 
@@ -84,7 +89,7 @@ struct aes256_gcm_decoder::impl {
 };
 
 aes256_key make_aes256_key(std::span<const std::uint8_t> input) {
-   require_size(input.size(), aes256_key_size, "AES-256 key requires 32 bytes", error_kind::invalid_key);
+   require_size(input.size(), aes256_key_size, "AES-256 key requires 32 bytes", aes::exceptions::code::invalid_key);
 
    auto key = aes256_key{};
    std::copy(input.begin(), input.end(), key.bytes.begin());
@@ -110,11 +115,11 @@ aes256_gcm_encoder::aes256_gcm_encoder(aes256_gcm_encoder_options options) : _im
        EVP_CIPHER_CTX_ctrl(_impl->context.get(), EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(_impl->nonce.size()),
                            nullptr) != 1 ||
        EVP_EncryptInit_ex(_impl->context.get(), nullptr, nullptr, options.key.bytes.data(), _impl->nonce.data()) != 1) {
-      throw error{error_kind::backend_error, "failed to initialize AES-GCM encryption"};
+      FCL_THROW_EXCEPTION(aes::exceptions::backend_error, "failed to initialize AES-GCM encryption");
    }
    if (!_impl->aad.empty() && EVP_EncryptUpdate(_impl->context.get(), nullptr, &out_size, _impl->aad.data(),
                                                 checked_update_size(_impl->aad.size(), "AES-GCM AAD")) != 1) {
-      throw error{error_kind::backend_error, "failed to apply AES-GCM AAD"};
+      FCL_THROW_EXCEPTION(aes::exceptions::backend_error, "failed to apply AES-GCM AAD");
    }
 }
 
@@ -128,7 +133,7 @@ void aes256_gcm_encoder::write(const char* data, std::size_t size) {
 
 void aes256_gcm_encoder::write(std::span<const std::uint8_t> data) {
    if (_impl->finalized) {
-      throw error{error_kind::invalid_options, "cannot write to finalized AES-GCM encoder"};
+      FCL_THROW_EXCEPTION(aes::exceptions::invalid_options, "cannot write to finalized AES-GCM encoder");
    }
    if (data.empty()) {
       return;
@@ -138,27 +143,27 @@ void aes256_gcm_encoder::write(std::span<const std::uint8_t> data) {
    auto out_size = int{};
    if (EVP_EncryptUpdate(_impl->context.get(), out.data(), &out_size, data.data(),
                          checked_update_size(data.size(), "AES-GCM plaintext")) != 1) {
-      throw error{error_kind::backend_error, "failed to encrypt AES-GCM payload"};
+      FCL_THROW_EXCEPTION(aes::exceptions::backend_error, "failed to encrypt AES-GCM payload");
    }
    emit_chunk(_impl->sink, out, out_size);
 }
 
 aes256_gcm_authentication aes256_gcm_encoder::finalize() {
    if (_impl->finalized) {
-      throw error{error_kind::invalid_options, "AES-GCM encoder already finalized"};
+      FCL_THROW_EXCEPTION(aes::exceptions::invalid_options, "AES-GCM encoder already finalized");
    }
    _impl->finalized = true;
 
    auto out = bytes(aes_gcm_tag_size);
    auto out_size = int{};
    if (EVP_EncryptFinal_ex(_impl->context.get(), out.data(), &out_size) != 1) {
-      throw error{error_kind::backend_error, "failed to finalize AES-GCM encryption"};
+      FCL_THROW_EXCEPTION(aes::exceptions::backend_error, "failed to finalize AES-GCM encryption");
    }
    emit_chunk(_impl->sink, out, out_size);
 
    auto tag = bytes(aes_gcm_tag_size);
    if (EVP_CIPHER_CTX_ctrl(_impl->context.get(), EVP_CTRL_GCM_GET_TAG, static_cast<int>(tag.size()), tag.data()) != 1) {
-      throw error{error_kind::backend_error, "failed to read AES-GCM tag"};
+      FCL_THROW_EXCEPTION(aes::exceptions::backend_error, "failed to read AES-GCM tag");
    }
 
    return aes256_gcm_authentication{
@@ -182,11 +187,11 @@ aes256_gcm_decoder::aes256_gcm_decoder(aes256_gcm_decoder_options options) : _im
        EVP_CIPHER_CTX_ctrl(_impl->context.get(), EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(_impl->nonce.size()),
                            nullptr) != 1 ||
        EVP_DecryptInit_ex(_impl->context.get(), nullptr, nullptr, options.key.bytes.data(), _impl->nonce.data()) != 1) {
-      throw error{error_kind::backend_error, "failed to initialize AES-GCM decryption"};
+      FCL_THROW_EXCEPTION(aes::exceptions::backend_error, "failed to initialize AES-GCM decryption");
    }
    if (!_impl->aad.empty() && EVP_DecryptUpdate(_impl->context.get(), nullptr, &out_size, _impl->aad.data(),
                                                 checked_update_size(_impl->aad.size(), "AES-GCM AAD")) != 1) {
-      throw error{error_kind::backend_error, "failed to apply AES-GCM AAD"};
+      FCL_THROW_EXCEPTION(aes::exceptions::backend_error, "failed to apply AES-GCM AAD");
    }
 }
 
@@ -200,7 +205,7 @@ void aes256_gcm_decoder::write(const char* data, std::size_t size) {
 
 void aes256_gcm_decoder::write(std::span<const std::uint8_t> data) {
    if (_impl->finalized) {
-      throw error{error_kind::invalid_options, "cannot write to finalized AES-GCM decoder"};
+      FCL_THROW_EXCEPTION(aes::exceptions::invalid_options, "cannot write to finalized AES-GCM decoder");
    }
    if (data.empty()) {
       return;
@@ -210,14 +215,14 @@ void aes256_gcm_decoder::write(std::span<const std::uint8_t> data) {
    auto out_size = int{};
    if (EVP_DecryptUpdate(_impl->context.get(), out.data(), &out_size, data.data(),
                          checked_update_size(data.size(), "AES-GCM ciphertext")) != 1) {
-      throw error{error_kind::backend_error, "failed to decrypt AES-GCM payload"};
+      FCL_THROW_EXCEPTION(aes::exceptions::backend_error, "failed to decrypt AES-GCM payload");
    }
    emit_chunk(_impl->sink, out, out_size);
 }
 
 void aes256_gcm_decoder::finalize() {
    if (_impl->finalized) {
-      throw error{error_kind::invalid_options, "AES-GCM decoder already finalized"};
+      FCL_THROW_EXCEPTION(aes::exceptions::invalid_options, "AES-GCM decoder already finalized");
    }
    _impl->finalized = true;
 
@@ -226,7 +231,7 @@ void aes256_gcm_decoder::finalize() {
    if (EVP_CIPHER_CTX_ctrl(_impl->context.get(), EVP_CTRL_GCM_SET_TAG, static_cast<int>(_impl->tag.size()),
                            _impl->tag.data()) != 1 ||
        EVP_DecryptFinal_ex(_impl->context.get(), out.data(), &out_size) != 1) {
-      throw error{error_kind::authentication_failed, "AES-GCM authentication failed"};
+      FCL_THROW_EXCEPTION(aes::exceptions::authentication_failed, "AES-GCM authentication failed");
    }
    emit_chunk(_impl->sink, out, out_size);
 }
@@ -281,16 +286,16 @@ aes256_cbc_ciphertext encrypt_aes256_cbc(const aes256_cbc_encrypt_request& reque
 
    if (EVP_EncryptInit_ex(context.get(), EVP_aes_256_cbc(), nullptr, request.key.bytes.data(), request.iv.data()) !=
        1) {
-      throw error{error_kind::backend_error, "failed to initialize AES-CBC encryption"};
+      FCL_THROW_EXCEPTION(aes::exceptions::backend_error, "failed to initialize AES-CBC encryption");
    }
    if (!request.plaintext.empty() &&
        EVP_EncryptUpdate(context.get(), out.data(), &out_size, request.plaintext.data(),
                          checked_update_size(request.plaintext.size(), "AES-CBC plaintext")) != 1) {
-      throw error{error_kind::backend_error, "failed to encrypt AES-CBC payload"};
+      FCL_THROW_EXCEPTION(aes::exceptions::backend_error, "failed to encrypt AES-CBC payload");
    }
    total_size = out_size;
    if (EVP_EncryptFinal_ex(context.get(), out.data() + total_size, &out_size) != 1) {
-      throw error{error_kind::backend_error, "failed to finalize AES-CBC encryption"};
+      FCL_THROW_EXCEPTION(aes::exceptions::backend_error, "failed to finalize AES-CBC encryption");
    }
    total_size += out_size;
    out.resize(static_cast<std::size_t>(total_size));
@@ -311,16 +316,16 @@ bytes decrypt_aes256_cbc(const aes256_cbc_decrypt_request& request) {
 
    if (EVP_DecryptInit_ex(context.get(), EVP_aes_256_cbc(), nullptr, request.key.bytes.data(),
                           request.encrypted.iv.data()) != 1) {
-      throw error{error_kind::backend_error, "failed to initialize AES-CBC decryption"};
+      FCL_THROW_EXCEPTION(aes::exceptions::backend_error, "failed to initialize AES-CBC decryption");
    }
    if (!request.encrypted.ciphertext.empty() &&
        EVP_DecryptUpdate(context.get(), out.data(), &out_size, request.encrypted.ciphertext.data(),
                          checked_update_size(request.encrypted.ciphertext.size(), "AES-CBC ciphertext")) != 1) {
-      throw error{error_kind::backend_error, "failed to decrypt AES-CBC payload"};
+      FCL_THROW_EXCEPTION(aes::exceptions::backend_error, "failed to decrypt AES-CBC payload");
    }
    total_size = out_size;
    if (EVP_DecryptFinal_ex(context.get(), out.data() + total_size, &out_size) != 1) {
-      throw error{error_kind::authentication_failed, "AES-CBC decryption failed"};
+      FCL_THROW_EXCEPTION(aes::exceptions::authentication_failed, "AES-CBC decryption failed");
    }
    total_size += out_size;
    out.resize(static_cast<std::size_t>(total_size));

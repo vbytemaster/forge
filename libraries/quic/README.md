@@ -4,6 +4,22 @@
 It exposes endpoints, security options, listeners, connectors, connections and
 framed streams without defining application protocols.
 
+## Transport Alignment Checkpoint
+
+`fcl_quic` is a native `fcl_transport` session transport. The
+`fcl.quic.transport` module exposes:
+
+- `quic::as_transport_stream(...)` and `quic::as_transport_session(...)` for
+  adapting existing QUIC objects.
+- `quic::make_session_connector(...)` and
+  `quic::make_session_listener(...)` for direct `transport::session` usage.
+- `quic::register_session(...)` for `transport::registry` integration.
+- `quic::to_transport_limits(...)` and `quic::from_transport_limits(...)` for
+  explicit limit mapping.
+
+QUIC is already a multiplexed session transport. TCP and STCP remain
+byte-stream transports; they become sessions only after a muxer such as Yamux.
+
 ## When To Use
 
 - Need multiplexed, TLS-backed streams over UDP.
@@ -21,7 +37,7 @@ framed streams without defining application protocols.
 - `fcl.quic.endpoint`, `fcl.quic.options`, `fcl.quic.security`.
 - `fcl.quic.listener`, `fcl.quic.connector`, `fcl.quic.connection`.
 - `fcl.quic.stream`, `fcl.quic.framed_stream`.
-- `fcl.quic.runtime`, `fcl.quic.metrics`, `fcl.quic.errors`.
+- `fcl.quic.runtime`, `fcl.quic.metrics`, `fcl.quic.exceptions`.
 - `fcl.quic` — aggregate import.
 
 Target: `fcl_quic`.
@@ -204,7 +220,7 @@ become product defaults.
 - Do not define product API envelopes in QUIC handlers. Use `fcl.quic.api` and
   `fcl::api::frame` for typed API calls over QUIC streams.
 - Do not swallow handler exceptions in detached stream tasks; convert expected
-  failures into typed `fcl_exception` values or API error frames.
+  failures into typed `fcl_exceptions` values or API error frames.
 - Do not treat `.deadline(...)` or `.max_concurrent_calls(...)` as documentation
   only; API frames are checked by the call runtime before product code runs.
 - Do not put ALPN, certificate or listener lifecycle options into

@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <cstring>
 #include <exception>
 #include <memory>
@@ -12,25 +12,25 @@ module fcl.crypto.sha1;
 
 import fcl.core.utility;
 import fcl.crypto.hex;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.variant;
 
 #include "_digest_common.hpp"
 #include "_evp_digest.hpp"
 
-namespace fcl {
+namespace fcl::crypto {
 
 sha1::sha1() {
    memset(_hash, 0, sizeof(_hash));
 }
 sha1::sha1(const std::string& hex_str) {
-   auto bytes_written = fcl::from_hex(hex_str, (char*)_hash, sizeof(_hash));
+   auto bytes_written = fcl::crypto::from_hex(hex_str, (char*)_hash, sizeof(_hash));
    if (bytes_written < sizeof(_hash))
       memset((char*)_hash + bytes_written, 0, (sizeof(_hash) - bytes_written));
 }
 
 std::string sha1::str() const {
-   return fcl::to_hex((char*)_hash, sizeof(_hash));
+   return fcl::crypto::to_hex((char*)_hash, sizeof(_hash));
 }
 sha1::operator std::string() const {
    return str();
@@ -114,4 +114,4 @@ void from_variant(const variant& v, sha1& bi) {
       memset(bi.data(), char(0), sizeof(bi));
 }
 
-} // namespace fcl
+} // namespace fcl::crypto

@@ -1,7 +1,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/describe.hpp>
 #include <boost/test/unit_test.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <cstdint>
 #include <chrono>
@@ -27,7 +27,7 @@ enum class code : std::uint8_t {
 
 FCL_DECLARE_EXCEPTION_CATEGORY(code, "test.cache")
 
-using chunk_not_found = fcl::exception::coded_exception<code, code::chunk_not_found>;
+using chunk_not_found = fcl::exceptions::coded_exception<code, code::chunk_not_found>;
 
 } // namespace cache_errors
 
@@ -473,12 +473,10 @@ BOOST_AUTO_TEST_CASE(descriptor_declared_exception_maps_to_error_payload) {
 
    try {
       FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found",
-                          fcl::exception::ctx("ref", "bafk..."));
-   } catch (const fcl::exception::base& error) {
-      const auto* declared = fcl::api::find_error(*method, error);
-      const auto payload = fcl::api::make_error_payload(error, declared);
+                          fcl::exceptions::ctx("ref", "bafk..."));
+   } catch (const fcl::exceptions::base& error) {
+      const auto payload = fcl::api::project_error(*method, error);
 
-      BOOST_REQUIRE(declared != nullptr);
       BOOST_TEST(payload.error == "chunk_not_found");
       BOOST_TEST(payload.message == "chunk not found");
       BOOST_TEST(payload.identity.category == "test.cache");
@@ -490,15 +488,15 @@ BOOST_AUTO_TEST_CASE(descriptor_declared_exception_maps_to_error_payload) {
 }
 
 BOOST_AUTO_TEST_CASE(contract_rejects_empty_api_id) {
-   BOOST_CHECK_THROW(build_empty_id_descriptor(), fcl::api::api_error);
+   BOOST_CHECK_THROW(build_empty_id_descriptor(), fcl::api::exceptions::protocol_error);
 }
 
 BOOST_AUTO_TEST_CASE(contract_rejects_zero_major_version) {
-   BOOST_CHECK_THROW(build_zero_major_descriptor(), fcl::api::api_error);
+   BOOST_CHECK_THROW(build_zero_major_descriptor(), fcl::api::exceptions::protocol_error);
 }
 
 BOOST_AUTO_TEST_CASE(contract_rejects_duplicate_method_name) {
-   BOOST_CHECK_THROW(build_duplicate_method_descriptor(), fcl::api::api_error);
+   BOOST_CHECK_THROW(build_duplicate_method_descriptor(), fcl::api::exceptions::protocol_error);
 }
 
 BOOST_AUTO_TEST_CASE(local_registry_view_returns_typed_handle) {
@@ -546,19 +544,19 @@ BOOST_AUTO_TEST_CASE(registry_dispatch_invokes_typed_method_over_raw_frame) {
 class throwing_cache_impl final : public cache_api {
  public:
    boost::asio::awaitable<protocol::chunk> read(protocol::read_chunk) override {
-      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exception::ctx("ref", "abc"));
+      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exceptions::ctx("ref", "abc"));
    }
 
    boost::asio::awaitable<std::vector<protocol::chunk>> watch(protocol::read_chunk) override {
-      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exception::ctx("ref", "abc"));
+      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exceptions::ctx("ref", "abc"));
    }
 
    boost::asio::awaitable<protocol::chunk> upload(std::vector<protocol::read_chunk>) override {
-      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exception::ctx("ref", "abc"));
+      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exceptions::ctx("ref", "abc"));
    }
 
    boost::asio::awaitable<std::vector<protocol::chunk>> sync(std::vector<protocol::read_chunk>) override {
-      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exception::ctx("ref", "abc"));
+      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exceptions::ctx("ref", "abc"));
    }
 };
 
@@ -599,7 +597,7 @@ BOOST_AUTO_TEST_CASE(remote_declared_exception_restores_typed_exception) {
        .identity = {.category = "test.cache", .code = 1},
    };
 
-   BOOST_CHECK_THROW(fcl::api::throw_remote_error(payload, method), cache_errors::chunk_not_found);
+   BOOST_CHECK_THROW(fcl::api::raise_remote_error(payload, method), cache_errors::chunk_not_found);
 }
 
 BOOST_AUTO_TEST_CASE(remote_unknown_exception_preserves_identity_in_generic_error) {
@@ -612,7 +610,7 @@ BOOST_AUTO_TEST_CASE(remote_unknown_exception_preserves_identity_in_generic_erro
    };
 
    try {
-      fcl::api::throw_remote_error(payload);
+      fcl::api::raise_remote_error(payload);
    } catch (const fcl::api::exceptions::remote_internal& error) {
       BOOST_TEST(error.code().category().name() == std::string{"fcl.api"});
       BOOST_TEST(error.message() == "remote failed");

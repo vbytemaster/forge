@@ -8,13 +8,14 @@ module;
 export module fcl.crypto.ripemd160;
 
 import fcl.crypto.packhash;
+export import fcl.crypto.digest;
 import fcl.raw.raw;
 import fcl.core.type_name;
 import fcl.variant;
 import fcl.crypto.sha256;
 import fcl.crypto.sha512;
 
-export namespace fcl {
+export namespace fcl::crypto {
 
 class ripemd160 : public add_packhash_to_hash<ripemd160> {
  public:
@@ -29,8 +30,8 @@ class ripemd160 : public add_packhash_to_hash<ripemd160> {
       return 160 / 8;
    }
 
-   static ripemd160 hash(const fcl::sha512& h);
-   static ripemd160 hash(const fcl::sha256& h);
+   static ripemd160 hash(const fcl::crypto::sha512& h);
+   static ripemd160 hash(const fcl::crypto::sha256& h);
    static ripemd160 hash(const char* d, uint32_t dlen);
    static ripemd160 hash(const std::string&);
 
@@ -81,17 +82,17 @@ void from_variant(const variant& v, ripemd160& bi);
 typedef ripemd160 uint160_t;
 typedef ripemd160 uint160;
 
-template <> struct get_typename<uint160_t> {
+} // namespace fcl::crypto
+
+export template <> struct fcl::get_typename<fcl::crypto::uint160_t> {
    static const char* name() {
       return "uint160_t";
    }
 };
 
-} // namespace fcl
-
 export namespace std {
-template <> struct hash<fcl::ripemd160> {
-   size_t operator()(const fcl::ripemd160& s) const {
+template <> struct hash<fcl::crypto::ripemd160> {
+   size_t operator()(const fcl::crypto::ripemd160& s) const {
       return *((size_t*)&s);
    }
 };

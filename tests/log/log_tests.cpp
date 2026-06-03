@@ -1,5 +1,5 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <fcl/log/macros.hpp>
 
 #include <filesystem>
@@ -11,7 +11,7 @@
 #include <string_view>
 #include <vector>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.log.log_message;
 import fcl.log.logger;
 import fcl.log.record;
@@ -95,7 +95,7 @@ BOOST_AUTO_TEST_CASE(exception_chain_can_be_routed_to_logger) {
    auto sink = std::make_shared<capture_sink>();
    logger.add_sink(sink);
 
-   fcl::error::set_log_sink([&](std::string_view message) {
+   fcl::exceptions::set_log_sink([&](std::string_view message) {
       logger.error("exception captured", {fcl::log_ctx("chain", message), fcl::log_secret("token", "hidden")});
    });
 
@@ -103,7 +103,7 @@ BOOST_AUTO_TEST_CASE(exception_chain_can_be_routed_to_logger) {
       try {
          throw std::runtime_error{"inner"};
       }
-      FCL_CAPTURE_AND_LOG("outer", fcl::error::ctx("phase", "startup"), fcl::error::secret("password", "secret"))
+      FCL_CAPTURE_AND_LOG("outer", fcl::exceptions::ctx("phase", "startup"), fcl::exceptions::secret("password", "secret"))
    } catch (...) {
       BOOST_FAIL("FCL_CAPTURE_AND_LOG must not rethrow");
    }
@@ -116,7 +116,7 @@ BOOST_AUTO_TEST_CASE(exception_chain_can_be_routed_to_logger) {
    BOOST_TEST(record.fields.front().value.find("secret") == std::string::npos);
    BOOST_TEST(record.fields.back().value == "<redacted>");
 
-   fcl::error::set_log_sink({});
+   fcl::exceptions::set_log_sink({});
 }
 
 BOOST_AUTO_TEST_SUITE_END()

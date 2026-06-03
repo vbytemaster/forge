@@ -19,6 +19,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(FCL_ENABLE_MODULES "Build FCL public module interfaces when supported" ON)
 option(FCL_ENABLE_VENDOR_TESTS "Build donor dependency tests and benchmarks" OFF)
 option(FCL_ENABLE_TUI "Build FCL Notcurses-backed terminal UI library when notcurses-core is available" ON)
+option(FCL_ENABLE_LIBP2P_INTEROP "Run live go-libp2p/rust-libp2p interoperability tests" OFF)
+option(FCL_ENABLE_ROCKSDB "Build RocksDB-backed optional FCL features when RocksDB is available" ON)
+
+set(FCL_LIBP2P_DONORS_ROOT "" CACHE PATH "Path to workspace donors directory containing go-libp2p, rust-libp2p and libp2p-specs")
+if(NOT FCL_LIBP2P_DONORS_ROOT)
+   set(_fcl_default_donors_root "/Users/vladimirtarnakin/.openclaw/workspace/Projects/Storlane/donors")
+   if(EXISTS "${_fcl_default_donors_root}")
+      set(FCL_LIBP2P_DONORS_ROOT "${_fcl_default_donors_root}" CACHE PATH "Path to workspace donors directory containing go-libp2p, rust-libp2p and libp2p-specs" FORCE)
+   endif()
+endif()
 
 if(FCL_ENABLE_MODULES AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
    message(FATAL_ERROR "FCL_ENABLE_MODULES=ON requires module-capable Homebrew LLVM clang++; AppleClang is not a supported FCL module toolchain")
@@ -69,6 +79,18 @@ endif()
 
 find_package(OpenSSL 3 REQUIRED COMPONENTS SSL Crypto)
 find_package(Ngtcp2 REQUIRED)
+set(FCL_HAS_ROCKSDB OFF)
+if(FCL_ENABLE_ROCKSDB)
+   find_package(RocksDB QUIET)
+   if(TARGET RocksDB::rocksdb)
+      set(FCL_HAS_ROCKSDB ON)
+      message(STATUS "FCL RocksDB backend: RocksDB::rocksdb")
+   else()
+      message(STATUS "Skipping FCL RocksDB-backed features: RocksDB not found")
+   endif()
+else()
+   message(STATUS "FCL RocksDB-backed features: disabled")
+endif()
 find_package(glaze 7.5 CONFIG REQUIRED)
 if(TARGET glaze::glaze)
    message(STATUS "FCL codec backend: glaze::glaze")
@@ -175,7 +197,7 @@ set_target_properties(
 set(
    FCL_SOURCE_INCLUDE_DIRS
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/core/include"
-   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/exception/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/exceptions/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/reflect/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/schema/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/variant/include"
@@ -188,10 +210,15 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/api/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/log/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/crypto/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/multiformats/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/asio/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/http/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/websocket/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/transport/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/tcp/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/yamux/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/quic/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/stcp/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/p2p/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/app/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/plugins/include"
@@ -215,6 +242,10 @@ function(fcl_target_modules target lib)
    if(NOT _fcl_target_module_files)
       message(FATAL_ERROR "No public FCL module interfaces found for ${target} in ${CMAKE_CURRENT_SOURCE_DIR}/include/fcl/${lib}")
    endif()
+
+   foreach(_fcl_disabled_module IN LISTS FCL_${lib}_DISABLED_MODULES)
+      list(FILTER _fcl_target_module_files EXCLUDE REGEX "/${_fcl_disabled_module}\\.cppm$")
+   endforeach()
 
    target_sources(
       ${target}
@@ -289,7 +320,7 @@ endif()
 
 
 add_subdirectory(libraries/core)
-add_subdirectory(libraries/exception)
+add_subdirectory(libraries/exceptions)
 add_subdirectory(libraries/reflect)
 add_subdirectory(libraries/schema)
 add_subdirectory(libraries/variant)
@@ -302,9 +333,14 @@ add_subdirectory(libraries/env)
 add_subdirectory(libraries/api)
 add_subdirectory(libraries/log)
 add_subdirectory(libraries/crypto)
+add_subdirectory(libraries/multiformats)
 add_subdirectory(libraries/asio)
 add_subdirectory(libraries/http)
 add_subdirectory(libraries/websocket)
+add_subdirectory(libraries/transport)
+add_subdirectory(libraries/tcp)
+add_subdirectory(libraries/stcp)
+add_subdirectory(libraries/yamux)
 add_subdirectory(libraries/quic)
 add_subdirectory(libraries/p2p)
 add_subdirectory(libraries/app)
@@ -316,7 +352,7 @@ endif()
 set(
    FCL_LEAF_TARGETS
    fcl_core
-   fcl_exception
+   fcl_exceptions
    fcl_reflect
    fcl_schema
    fcl_variant
@@ -329,9 +365,14 @@ set(
    fcl_api
    fcl_log
    fcl_crypto
+   fcl_multiformats
    fcl_asio
    fcl_http
    fcl_websocket
+   fcl_transport
+   fcl_tcp
+   fcl_stcp
+   fcl_yamux
    fcl_quic
    fcl_p2p
    fcl_app
@@ -352,7 +393,6 @@ target_link_libraries(
 )
 
 if(DEFINED BUILD_TESTING AND BUILD_TESTING)
-   add_subdirectory(examples)
    add_subdirectory(tests)
 endif()
 
@@ -375,7 +415,7 @@ install(
 
 install(
    DIRECTORY libraries/core/include/fcl
-             libraries/exception/include/fcl
+             libraries/exceptions/include/fcl
              libraries/reflect/include/fcl
              libraries/schema/include/fcl
              libraries/variant/include/fcl
@@ -388,10 +428,15 @@ install(
              libraries/api/include/fcl
              libraries/log/include/fcl
              libraries/crypto/include/fcl
+             libraries/multiformats/include/fcl
              libraries/asio/include/fcl
              libraries/http/include/fcl
              libraries/websocket/include/fcl
+             libraries/transport/include/fcl
+             libraries/tcp/include/fcl
+             libraries/yamux/include/fcl
              libraries/quic/include/fcl
+             libraries/stcp/include/fcl
              libraries/p2p/include/fcl
              libraries/app/include/fcl
              libraries/plugins/include/fcl

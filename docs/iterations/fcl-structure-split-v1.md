@@ -23,7 +23,7 @@ Third-party source and submodules live only under root `vendor/`.
 ## Domain Targets
 
 - `fcl_core`: scalar helpers, time value types, string, utf8, bit/byte helpers and small utility helpers.
-- `fcl_exception`: exception and capture helpers.
+- `fcl_exceptions`: exception and capture helpers.
 - `fcl_reflect`: reflection helper utilities.
 - `fcl_variant`: variant, variant object, static variant, dynamic bitset.
 - `fcl_raw`: raw pack/unpack, raw datastream and varint compatibility helpers.

@@ -1,7 +1,9 @@
 # QUIC + P2P
 
-`fcl_quic` and `fcl_p2p` form the FCL peer data-plane foundation. QUIC is the
-secure transport. P2P is the peer/session/protocol-stream layer above it.
+`fcl_quic`, `fcl_transport` and `fcl_p2p` form the FCL peer data-plane
+foundation. QUIC is one concrete transport. `fcl_transport` is the reusable
+stream/session substrate. P2P is the peer/session/protocol-stream layer above
+transport-shaped connections.
 
 Local guides:
 
@@ -19,27 +21,31 @@ concerns need reusable FCL primitives without embedding any product protocol.
 
 ```text
 fcl_asio::runtime
-  -> fcl_quic
-      -> endpoint/listener/connector
-      -> connection/stream/framed_stream
+  -> fcl_multiformats
+      -> multiaddr
+  -> fcl_transport
+      -> endpoint/stream/session/frame contracts
+  -> fcl_tcp / fcl_stcp / fcl_yamux / fcl_quic
+      -> concrete transport implementations and adapters
   -> fcl_p2p
       -> peer identity
-      -> session/control messages
+      -> security upgrade, mux selection and protocol negotiation
       -> protocol streams
       -> peer store/path manager/relay
 ```
 
-QUIC knows endpoints and transport security. P2P knows peers and protocol
-streams. Application protocols live above P2P and define their own messages,
-durability and authorization.
+Concrete network libraries know sockets, TLS, QUIC engines and muxing mechanics.
+`fcl_transport` exposes the common byte-stream/session contracts. P2P knows
+peers, libp2p security semantics and protocol streams. Application protocols
+live above P2P and define their own messages, durability and authorization.
 
 ## QUIC Responsibilities
 
 - UDP socket/timer integration with Asio.
-- ngtcp2 packet engine and OpenSSL 3.0+ TLS backend.
+- ngtcp2 QUIC engine and OpenSSL 3.0+ TLS backend.
 - ALPN, certificate verification, pinned fingerprints and mTLS checks.
 - Framed stream codec and transport limits.
-- Backpressure for streams, queued bytes and inbound packet queues.
+- Backpressure for streams, queued bytes and inbound datagram queues.
 
 QUIC does not own peer discovery, relay policy or application protocol naming.
 
@@ -54,8 +60,8 @@ QUIC does not own peer discovery, relay policy or application protocol naming.
 - Path scoring/backoff across direct and relay candidates.
 
 P2P does not promise exactly-once delivery, durable storage or product
-authorization. Global discovery is not implemented yet, but it is a
-network-level direction for `fcl_p2p`, not a plugin-level workaround.
+authorization. DHT/rendezvous discovery belongs in `fcl_p2p`; product plugins
+must not replace it with parallel discovery loops.
 
 For application/plugin composition, `fcl::plugins::p2p_node` is the production
 transport owner above `fcl_p2p`. It applies config, starts the node, mounts
@@ -69,57 +75,175 @@ or run ad hoc retry loops against raw `fcl::p2p::node`.
 stack. Compatibility means protocol compatibility (`протокольная
 совместимость`): when FCL declares support for a libp2p protocol, an FCL node
 must be able to talk to go-libp2p and rust-libp2p nodes using the same wire
-format, handshake, peer identity, protocol negotiation and message rules.
+formats, handshake, Peer ID, Identify, Ping, QUIC profile and later supported
+protocol rules.
 
-This does not mean copying Go/Rust runtime architecture or leaking libp2p's
-public vocabulary into FCL. FCL public APIs should keep Boost-style network
-terms such as `endpoint`, `resolver`, `listener`, `connector`, `session`,
-`stream` and `protocol_id`. Terms such as `multiaddr` describe the libp2p
-wire/text address format; FCL can expose a typed endpoint model that reads and
-writes that format without making `multiaddr` the public API style.
+This does not mean copying Go/Rust runtime architecture or leaking their public
+API shape into FCL. FCL public APIs should keep C++/Boost-style network terms
+such as `endpoint`, `resolver`, `listener`, `connector`, `session`, `stream`
+and `protocol_id`. `multiaddr` is still a first-class FCL multiformats concept
+because it is the libp2p address contract; `p2p::endpoint` is a typed P2P view
+over a multiaddr, not a parallel source of truth.
 
-Production network mechanics belong in `fcl_p2p`:
+Production network mechanics belong in `fcl_p2p`, not in plugin-local
+workarounds: identity, keys, endpoint/address encoding, protocol negotiation,
+Identify, Ping, peer/path store, relay, AutoNAT, DHT and pubsub. The
+`fcl::plugins::p2p_node` plugin only maps config into the node, owns application
+lifecycle, mounts route/API contributions and exposes safe application APIs.
+Product extensions must not build parallel network-discovery, relay or gossip loops.
 
-- A typed endpoint/address model for direct, observed and relayed paths, with
-  libp2p multiaddress read/write support.
-- Peer ID and key encoding compatible with libp2p. Ed25519, Secp256k1, ECDSA
-  and RSA are all part of the compatibility baseline.
-- Protocol negotiation compatible with libp2p multistream-select.
-- Identify and Identify Push compatible with libp2p peer and capability
-  advertisement: peer id, public key, supported protocols, addresses,
-  agent/version and limits.
-- Ping compatible with libp2p interop test plans.
-- Persistent peer/path store for endpoints, relay candidates, protocol support,
-  signed peer records, scores, backoff and expiry. The store is interface-based;
-  RocksDB is the default production backend.
-- AutoNAT-style reachability service, not just one-off probes.
-- Circuit Relay style relay manager with reservation, TTL, renewal, limits and
-  accounting.
-- AutoRelay-style relay discovery, reservation selection and advertised relayed
-  addresses.
-- DCUtR-style direct connection upgrade through relay and hardened hole-punch
-  orchestration.
-- DHT/rendezvous discovery and pubsub/gossip as later network services.
-- Network limits, backpressure, metrics and deterministic shutdown for all of
-  the above.
+Ed25519, Secp256k1, ECDSA and RSA are all mandatory compatibility key families.
+RSA is required for IPFS/mainline DHT compatibility. Secp256k1 and ECDSA are
+required for blockchain-like networks built on top of FCL and plugins.
 
-Implementation should start from the foundation in this order:
+`fcl.crypto.base58` must be cleaned up before multiformats code depends on it:
+new APIs use `std::span<const std::uint8_t>` and `std::vector<std::uint8_t>`,
+while old `char` / `std::vector<char>` overloads remain compatibility wrappers.
+Multiformats code should use byte-native APIs without scattered casts.
 
-```text
-multiformats + byte-friendly base58
-  -> Peer ID + key encoding
-  -> endpoint/address compatibility
-  -> QUIC libp2p profile
-  -> multistream-select
-  -> Ping
-  -> Identify / Identify Push
-  -> persistent peer/path store
-  -> AutoNAT / reachability
-  -> Circuit Relay / AutoRelay
-  -> DCUtR hardening
-  -> DHT / rendezvous
-  -> pubsub / gossip
-```
+## Implementation Blocks
+
+This section is the canonical roadmap for the network/P2P blocks. Library
+READMEs may link here, but must not define a second block order.
+
+### Block A: Roadmap Rebase + Checkpoint
+
+- The work order changes: transport substrate work goes before continuing P2P
+  protocol expansion.
+- The previous conclusion "Yamux is private to P2P" is superseded. Yamux is a
+  reusable muxer because it is needed by libp2p TCP, STCP/API stacks and future
+  stream-session transports.
+- Current order: `multiaddr -> fcl_transport -> tcp/stcp/yamux/quic -> p2p
+  rebase -> p2p completion -> fcl.api.transport`.
+- Existing P2P achievements remain valid checkpoints: QUIC, Ping, Identify,
+  Relay v2, AutoNAT/DCUtR, DHT/Rendezvous component layer and GossipSub v1
+  proof are not discarded. They must be preserved while the substrate is
+  cleaned up.
+
+### Block B: First-Class Multiaddr
+
+- `fcl_multiformats` owns a first-class `multiaddr` concept: `component`,
+  `protocol_code`, `encapsulate`, `decapsulate`, text roundtrip and binary
+  roundtrip.
+- Supported address components for this block: `ip4`, `ip6`, `dns`, `dns4`,
+  `dns6`, `tcp`, `udp/quic-v1`, `ws`, `wss`, `p2p` and `p2p-circuit`.
+- `/ws` and `/wss` are parse/store only. Dial/listen rejects them with a typed
+  P2P error until a real browser/proxy requirement exists.
+- `p2p::endpoint` becomes a typed view over `multiaddr`, not the source of
+  truth for address encoding.
+
+### Block C: `fcl_transport` Foundation
+
+- `fcl_transport` owns only low-level reusable contracts: `stream`, `session`,
+  `frame`, `limits` and `exceptions`.
+- Add Asio-style `stream_connector`, `stream_listener`, `session_connector`,
+  `session_listener` and transport registry primitives.
+- `fcl_transport` must not import or model `fcl_api`, `fcl_p2p`, concrete
+  QUIC/TCP types, TLS policy, Yamux policy, Peer ID, Relay, DHT, Rendezvous or
+  GossipSub.
+- Builders are allowed only as composition helpers over real owner-shaped
+  connector/listener/session implementations. They must not hide the
+  implementation or expose decorative options.
+
+### Block D: Reusable Network Layers
+
+- D.1 `fcl_tcp`: Boost.Asio TCP adapted to `transport::stream`.
+- D.2 TCP upgrade surface: `tcp::connection` owns the native socket until an
+  upper layer either turns it into `transport::stream` or releases it for a
+  TLS/security upgrade.
+- D.3 `fcl_stcp`: TCP+TLS mechanics adapted to secure `transport::stream`.
+  This layer owns certificates, trust stores, fingerprint checks, ALPN and TLS
+  handshakes, but not P2P Peer ID verification, libp2p protocol choice or
+  multistream decisions.
+- D.4 `fcl_yamux`: reusable muxer from `transport::stream` to
+  `transport::session`, donor-derived from go-libp2p and rust-libp2p Yamux.
+- D.5 `fcl_quic`: QUIC adapted to native `transport::session`.
+- Current checkpoint: `fcl_quic` exposes `quic::as_transport_stream(...)`,
+  `quic::as_transport_session(...)`, native
+  `transport::session_connector/session_listener` construction and
+  `transport::registry` registration for `/quic-v1` endpoints.
+- WebSocket transport is not implemented in this block. Product
+  `fcl_websocket` remains an application WebSocket API, not a libp2p transport
+  claim.
+
+### Block E: P2P Rebase
+
+- `fcl_p2p` uses first-class multiaddr, the transport registry and reusable
+  network layers.
+- QUIC path: `/udp/.../quic-v1 -> fcl_quic -> transport::session`.
+- TCP path: `/tcp/... -> fcl_tcp -> libp2p security upgrade -> fcl_yamux ->
+  transport::session`.
+- E.1 checkpoint: QUIC is hidden behind a private P2P direct profile. The
+  profile may inspect native QUIC certificates before erasing the connection to
+  `transport::session`, because Peer ID verification is P2P semantics.
+- E.1 checkpoint: relay and DCUtR use reusable `fcl_yamux`; the old private
+  P2P Yamux runtime is removed.
+- E.1 checkpoint: `/tcp`, `/ws` and `/wss` endpoints became parseable. E.2a
+  supersedes the `/tcp` part by wiring direct TCP; `/ws` and `/wss` still return
+  typed unsupported from P2P dial/listen.
+- E.2a checkpoint: direct `/tcp/...` now uses the libp2p TCP stack shape:
+  `fcl_tcp -> multistream-select -> Noise -> fcl_yamux -> transport::session`.
+  FCL, go-libp2p and rust-libp2p live scenarios cover Ping, Identify and a
+  framed echo stream in both FCL directions.
+- E.2b checkpoint: direct TCP now prefers the libp2p TLS security branch:
+  `fcl_tcp -> multistream-select -> /tls/1.0.0 -> fcl_stcp -> fcl_yamux ->
+  transport::session`. Noise remains a supported fallback. FCL, go-libp2p and
+  rust-libp2p live scenarios cover Ping, Identify and a framed echo stream for
+  both TCP security branches.
+- E.2b checkpoint: `/ws` and `/wss` remain parse/store only at multiaddr level.
+- E.3 is the next required block after the review checkpoint merges:
+  multi-transport host support. A production node must listen on several direct
+  transports at the same time, for example `/udp/.../quic-v1` and `/tcp/...`,
+  and must advertise all selected addresses through Identify, peer exchange,
+  DHT and rendezvous. This is critical for network reachability: otherwise FCL
+  supports QUIC and TCP as protocols but still risks splitting the network into
+  transport-specific islands.
+- E.3 must replace the single active direct listener with per-profile listeners,
+  add `node::local_endpoints()` while keeping `local_endpoint()` as a
+  compatibility convenience, and make `async_listen(...)` safe to call for
+  multiple endpoints.
+- E.3 must make direct path selection transport-aware: QUIC, TCP+TLS,
+  TCP+Noise and relay/circuit candidates are selected from the same peer-store
+  record using per-endpoint score, backoff, freshness and policy. The dialer
+  must not just try the first direct endpoint.
+- E.3 must harden Identify address hygiene: preserve canonical multiaddrs,
+  attach `/p2p/<peer>` suffixes consistently, separate listen/advertised/observed
+  addresses, reject stale or malformed addresses, and avoid polluting peer store
+  state with unverified transport addresses.
+- P2P owns Peer ID, Identify, libp2p Noise/TLS payload semantics,
+  multistream-select, Relay, DCUtR, DHT, Rendezvous and GossipSub.
+- P2P does not own generic TCP, STCP or Yamux runtime.
+
+### Block F: P2P Completion
+
+- F.1 Global AutoRelay discovery: relay candidates must come from peer store,
+  Identify, DHT and rendezvous discovery, not from manual configuration luck.
+  The node must maintain reservation lifecycle, candidate freshness, backoff and
+  relay trust policy inside `fcl_p2p`.
+- F.2 DHT/Rendezvous hardening for larger networks: iterative DHT many-peer
+  topology, refresh/republish, stale record cleanup, rendezvous registration
+  refresh/expiry and discovery-backed relay candidates.
+- F.3 Connection manager and resource policy: protected peers, max
+  inbound/outbound connections, pruning, reconnect/backoff, per-peer abuse
+  accounting and transport-aware limits. Mixed QUIC/TCP networks must not become
+  a denial-of-service amplifier.
+- F.4 Donor-doc cleanup and support-claim audit: every supported behavior must
+  keep spec-derived tests, donor-derived tests and live FCL <-> Go/Rust
+  artifacts.
+- Do not claim WebSocket transport support.
+- `p2p_node` and focused friend plugins come after core behavior is proven.
+  Plugins configure and expose the shared node; they do not implement network
+  algorithms.
+
+### Block G: Future API Over Transport
+
+- Add `fcl.api.transport` only after the transport/P2P core stabilizes.
+- Reuse `transport::stream` and `transport::session` for API frame serving.
+- This layer owns frame read/write, codec checks, grouped streams, max inflight,
+  deadlines and shared error projection.
+- `fcl.quic.api`, `fcl.p2p.api` and future `stcp.api` become thin wrappers or
+  policy adapters over `fcl.api.transport`.
+- HTTP remains a separate request/response binding.
 
 AutoNAT, AutoRelay, DHT and pubsub algorithms must live in `fcl_p2p`.
 `fcl::plugins::p2p_node` configures and runs the shared node, then exposes the
@@ -129,12 +253,17 @@ the gap above the network layer.
 
 ## Donor Test Adoption
 
-libp2p specs, go-libp2p and rust-libp2p are not just inspiration; they are the
-compatibility contract for protocols FCL claims to support. FCL should not copy
-Go/Rust runtime code, but it must adopt their protocol criteria, golden vectors,
-failure cases and interop scenarios.
+libp2p specs are the contract for wire behavior. go-libp2p and rust-libp2p
+tests are donor criteria, not optional inspiration. FCL should not copy Go/Rust
+runtime code, but it must adopt their golden vectors, scenarios, failure cases
+and acceptance criteria.
 
-For each supported libp2p protocol, keep a traceability matrix:
+Use go-libp2p, rust-libp2p and libp2p specs as donor architecture and test
+criteria. Copy layering and compatibility expectations, not Go/Rust public API
+shape. Builder style is allowed only over normal owner-shaped implementations,
+never as a hidden implementation or decorative options bag.
+
+For each supported libp2p protocol, create a traceability matrix:
 
 | Protocol | Spec source | Donor tests inspected | FCL unit tests | FCL interop tests | Unsupported gaps |
 | --- | --- | --- | --- | --- | --- |
@@ -144,8 +273,8 @@ For each supported libp2p protocol, keep a traceability matrix:
 
 Test layers:
 
-- `golden`: byte-level vectors for varint, multicodec, multihash, multibase,
-  Peer ID, signed records and Identify messages.
+- `golden`: golden vectors for varint, multicodec, multihash, multibase, Peer
+  ID, signed records and Identify messages.
 - `component`: FCL-to-FCL tests for endpoint parsing, negotiation, Ping,
   Identify and peer/path store behavior.
 - `interop`: FCL client/server against go-libp2p and rust-libp2p in both
@@ -156,13 +285,14 @@ Test layers:
   peers, backpressure and peerstore recovery.
 
 If the libp2p ecosystem already has an acceptance criterion, the FCL test must
-reference that criterion. A test that is only "similar to libp2p" is not enough
-to mark a protocol as supported.
+reference that criterion. A test that is only "similar to libp2p" is not enough.
+A protocol cannot be marked supported until it has spec-derived, donor-derived
+and required interop coverage.
 
 ## Integration Example
 
 ```cpp
-auto options = fcl::p2p::node_options{
+auto options = fcl::p2p::node::options{
    .certificate_pem = certificate_pem,
    .private_key_pem = private_key_pem,
 };
@@ -170,15 +300,15 @@ auto options = fcl::p2p::node_options{
 auto node = fcl::p2p::node{runtime, options};
 node.register_protocol_handler(
    fcl::p2p::protocol_id{.value = "/example/1"},
-   [](fcl::p2p::incoming_protocol_stream incoming) -> boost::asio::awaitable<void> {
+   [](fcl::p2p::node::incoming_protocol_stream incoming) -> boost::asio::awaitable<void> {
       std::vector<std::uint8_t> frame = co_await incoming.stream.async_read_frame();
       co_await incoming.stream.async_write_frame(frame);
    });
 
 boost::asio::awaitable<void> connect_example(fcl::p2p::node& node) {
-   co_await node.async_listen(fcl::quic::parse_endpoint("127.0.0.1:9443"));
-   fcl::p2p::session_info session = co_await node.async_connect(remote_endpoint, {.expected_peer = remote_peer});
-   fcl::quic::framed_stream stream = co_await node.async_open_protocol_stream(
+   co_await node.async_listen(fcl::p2p::parse_endpoint("/ip4/127.0.0.1/udp/9443/quic-v1"));
+   fcl::p2p::node::session_info session = co_await node.async_connect(remote_endpoint, {.expected_peer = remote_peer});
+   fcl::p2p::stream stream = co_await node.async_open_protocol_stream(
       session.remote_peer,
       fcl::p2p::protocol_id{.value = "/example/1"});
    use_stream(std::move(stream));
@@ -221,8 +351,23 @@ Accepted:
 - Circuit Relay style explicit reservation.
 - AutoNAT/AutoRelay as network services, not product/plugin loops.
 - DCUtR-style hole punching as a bounded attempt, not magic connectivity.
-- Kademlia DHT and rendezvous as future discovery donors.
-- GossipSub as a future pubsub/gossip donor.
+- Kademlia DHT and rendezvous as discovery donors; component proof and live
+  FCL <-> go-libp2p/rust-libp2p artifacts are tracked in
+  `docs/donors/fcl-p2p-dht-rendezvous-v1.md`.
+- GossipSub v1.1 with v1.0 fallback as a pubsub/gossip donor; proof and
+  hardening artifacts are tracked in `docs/donors/fcl-p2p-gossipsub-v1.md`.
+- Transport abstraction before further discovery/path hardening, so DHT,
+  rendezvous, Identify, AutoRelay and path scoring are not built twice around
+  QUIC-only endpoint state.
+- `fcl_transport` as a reusable byte-stream/session substrate, not an API/RPC
+  framework. A future `fcl.api.transport` layer should sit above it and stop
+  QUIC/P2P/TCP API bindings from duplicating API frame serve-loop logic.
+- TCP + Noise/TLS + Yamux direct path is accepted as the TCP compatibility
+  baseline; proof is tracked in
+  `docs/donors/fcl-p2p-tcp-noise-yamux-v1.md` and
+  `docs/donors/fcl-p2p-tcp-tls-yamux-v1.md`.
+- FCL multi-hop relay only as a future extension above the compatible one-hop
+  Relay v2 baseline, never as a replacement for libp2p Relay v2 semantics.
 - Syncthing/libtorrent-style path scoring/backoff.
 - Transactional outbox style durable retry as an application/plugin-level
   pattern, not a storage dependency inside `fcl_p2p`.
@@ -242,3 +387,9 @@ Rejected:
 `test_fcl_quic_p2p` covers QUIC handshake, frame codec, ALPN and mTLS failures,
 pinned fingerprints, direct protocol streams, peer exchange, relay, reachability,
 hole punching, malformed envelopes and production option checks.
+
+Validation note, 2026-06-02: during the P2P identity signature hardening review
+checkpoint, one `ctest` run caught a transient `test_fcl_quic_p2p` segfault.
+The follow-up full binary run (`test_fcl_quic_p2p`, 110 cases) and repeated
+`ctest` gate passed. Treat any recurrence in CI as a Block E/F hardening flake
+blocker and debug it from artifacts before broadening P2P scope.

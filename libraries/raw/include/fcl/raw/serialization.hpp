@@ -23,7 +23,7 @@
    namespace fcl::raw {                                                                                                \
    ext template void pack<fcl::datastream<std::size_t>, type>(fcl::datastream<std::size_t> & stream,                   \
                                                               const type& value);                                      \
-   ext template void pack<fcl::sha256::encoder, type>(fcl::sha256::encoder & stream, const type& value);               \
+   ext template void pack<fcl::crypto::sha256::encoder, type>(fcl::crypto::sha256::encoder & stream, const type& value);               \
    ext template void pack<fcl::datastream<char*>, type>(fcl::datastream<char*> & stream, const type& value);           \
    ext template void unpack<fcl::datastream<const char*>, type>(fcl::datastream<const char*> & stream, type& value);   \
    }

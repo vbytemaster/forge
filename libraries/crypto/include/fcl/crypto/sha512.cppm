@@ -2,15 +2,17 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 
 export module fcl.crypto.sha512;
 
 import fcl.core.string;
+export import fcl.crypto.digest;
 import fcl.crypto.packhash;
 import fcl.variant;
 
-export namespace fcl {
+export namespace fcl::crypto {
 
 class sha512 : public add_packhash_to_hash<sha512> {
  public:
@@ -26,7 +28,12 @@ class sha512 : public add_packhash_to_hash<sha512> {
       return 512 / 8;
    }
 
+   std::span<const uint8_t> to_uint8_span() const {
+      return {reinterpret_cast<const uint8_t*>(data()), reinterpret_cast<const uint8_t*>(data()) + data_size()};
+   }
+
    static sha512 hash(const char* d, uint32_t dlen);
+   static sha512 hash(std::span<const std::uint8_t> data);
    static sha512 hash(const std::string&);
 
    template <typename T> static sha512 hash(const T& t) {
@@ -39,6 +46,7 @@ class sha512 : public add_packhash_to_hash<sha512> {
       ~encoder();
 
       void write(const char* d, uint32_t dlen);
+      void write(std::span<const std::uint8_t> data);
       void put(char c) {
          write(&c, 1);
       }
@@ -70,9 +78,9 @@ class sha512 : public add_packhash_to_hash<sha512> {
    uint64_t _hash[8];
 };
 
-typedef fcl::sha512 uint512;
+typedef fcl::crypto::sha512 uint512;
 
 void to_variant(const sha512& bi, variant& v);
 void from_variant(const variant& v, sha512& bi);
 
-} // namespace fcl
+} // namespace fcl::crypto

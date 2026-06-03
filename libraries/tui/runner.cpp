@@ -4,7 +4,6 @@ module;
 #include <cstdio>
 #include <ctime>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -12,6 +11,7 @@ module;
 
 module fcl.tui.runner;
 
+import fcl.tui.exceptions;
 import fcl.tui.render;
 import fcl.tui.types;
 
@@ -25,7 +25,7 @@ class notcurses_session {
       options.flags = NCOPTION_SUPPRESS_BANNERS | NCOPTION_DRAIN_INPUT;
       nc_ = notcurses_core_init(&options, nullptr);
       if (nc_ == nullptr) {
-         throw std::runtime_error{"notcurses core initialization failed"};
+         throw exceptions::initialization_failed{"notcurses core initialization failed"};
       }
    }
 

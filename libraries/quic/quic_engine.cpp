@@ -32,6 +32,7 @@
 #include <deque>
 #include <exception>
 #include <iomanip>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -642,6 +643,35 @@ struct engine_connection::impl {
       metrics.queued_bytes.store(0, std::memory_order_relaxed);
    }
 
+   void release_queued_stream_writes(const std::shared_ptr<engine_stream::impl>& stream) {
+      auto released = std::size_t{0};
+      for (auto& write : stream->outbound) {
+         if (released <= (std::numeric_limits<std::size_t>::max)() - write.data.size()) {
+            released += write.data.size();
+         } else {
+            released = (std::numeric_limits<std::size_t>::max)();
+         }
+         wake(write.waiters);
+      }
+      for (const auto& write : stream->retained) {
+         if (released <= (std::numeric_limits<std::size_t>::max)() - write.data.size()) {
+            released += write.data.size();
+         } else {
+            released = (std::numeric_limits<std::size_t>::max)();
+         }
+      }
+      if (released > 0) {
+         const auto queued_bytes = metrics.queued_bytes.load(std::memory_order_relaxed);
+         if (queued_bytes >= released) {
+            metrics.queued_bytes.store(queued_bytes - released, std::memory_order_relaxed);
+         } else {
+            metrics.queued_bytes.store(0, std::memory_order_relaxed);
+         }
+      }
+      stream->outbound.clear();
+      stream->retained.clear();
+   }
+
    void wake_and_clear_streams(bool reset_streams) {
       for (auto& [_, stream] : streams) {
          if (reset_streams) {
@@ -651,11 +681,7 @@ struct engine_connection::impl {
          }
          wake(stream->read_waiters);
          wake(stream->write_waiters);
-         for (auto& write : stream->outbound) {
-            wake(write.waiters);
-         }
-         stream->outbound.clear();
-         stream->retained.clear();
+         release_queued_stream_writes(stream);
       }
       update_active_stream_metrics();
    }
@@ -1615,9 +1641,8 @@ void engine_stream::cancel() {
       if (stream->reset || stream->closed) {
          return;
       }
+      connection->release_queued_stream_writes(stream);
       stream->reset = true;
-      stream->outbound.clear();
-      stream->retained.clear();
       wake(stream->read_waiters);
       wake(stream->write_waiters);
       connection->metrics.streams_reset.fetch_add(1, std::memory_order_relaxed);

@@ -18,6 +18,8 @@ import fcl.transport.exceptions;
 namespace fcl::transport {
 namespace {
 
+constexpr auto compact_threshold = std::size_t{65'536};
+
 void compact_buffer(std::vector<std::uint8_t>& buffer, std::size_t& consumed) {
    if (consumed == 0) {
       return;
@@ -129,7 +131,7 @@ boost::asio::awaitable<chunk> stream::async_read_frame_chunk() {
          }
          auto payload = chunk{decoded.payload};
          impl_->consumed += decoded.consumed;
-         if (impl_->consumed >= impl_->buffer.size() || impl_->consumed > 64 * 1024) {
+         if (impl_->consumed >= impl_->buffer.size() || impl_->consumed > compact_threshold) {
             compact_buffer(impl_->buffer, impl_->consumed);
          }
          co_return payload;

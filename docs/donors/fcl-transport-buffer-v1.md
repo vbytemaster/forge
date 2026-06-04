@@ -41,6 +41,12 @@ it does not own TCP, TLS, QUIC, Yamux, P2P, API or content semantics.
   compaction instead of erasing from the front of the receive buffer.
 - TCP and STCP read directly into `chunk_builder` storage. QUIC and Yamux move
   their existing owned read buffers into `chunk` values where safe.
+- `fcl::p2p::stream` re-exports the transport buffer layer and adds chunk
+  read/write methods as wrappers over the underlying `transport::stream`.
+  Existing vector methods remain compatibility conveniences.
+- P2P stream pre-read buffering uses the same consumed-offset parsing rule for
+  framed reads, so negotiation bytes and trailing framed payloads do not require
+  front erasing.
 
 ## Supported Behaviors And Tests
 
@@ -54,6 +60,9 @@ it does not own TCP, TLS, QUIC, Yamux, P2P, API or content semantics.
 | STCP chunk and framed chunk path | Boost.Asio SSL stream mechanics | `test_fcl_stcp stcp_loopback_roundtrip_and_transport_stream` |
 | QUIC transport session chunk path | FCL QUIC transport session adapter | `test_fcl_quic loopback_session_connector_listener_transfer_frames` |
 | Yamux muxed stream chunk path | libp2p Yamux buffer/resource donor behavior | `test_fcl_yamux yamux_supports_open_accept_and_early_data` |
+| P2P stream chunk wrapper path | Additive transport buffer API, FCL P2P pre-read negotiation needs | `test_fcl_quic_p2p p2p_stream_delegates_chunk_read_write_and_preserves_framed_trailing_bytes` |
+| P2P framed pre-read buffer keeps trailing bytes | Beast/FCL consumed-offset parser rule | `test_fcl_quic_p2p p2p_stream_with_buffer_preserves_prefetched_framed_chunks` |
+| Relay pumps avoid vector roundtrip when forwarding bytes | Asio buffer lifetime ownership and transport chunk semantics | Existing relay component tests plus chunk forwarding in `node::impl::relay_pump_loop` |
 
 ## Non-Goals
 

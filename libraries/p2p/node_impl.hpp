@@ -24,9 +24,8 @@ void validate_operation_timeout(std::chrono::milliseconds timeout, std::string_v
 [[nodiscard]] std::chrono::milliseconds remaining_timeout(std::chrono::steady_clock::time_point started,
                                                           std::chrono::milliseconds timeout,
                                                           std::string_view operation);
-[[nodiscard]] std::chrono::milliseconds attempt_timeout(std::chrono::milliseconds remaining,
-                                                        std::chrono::milliseconds configured,
-                                                        std::string_view operation);
+[[nodiscard]] std::chrono::milliseconds
+attempt_timeout(std::chrono::milliseconds remaining, std::chrono::milliseconds configured, std::string_view operation);
 [[noreturn]] void throw_operation_timeout(std::string_view operation);
 void validate(const node::options& options);
 
@@ -35,6 +34,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
       node::session_info info;
       fcl::transport::session connection;
       std::optional<fcl::p2p::endpoint> direct_endpoint;
+      std::optional<fcl::p2p::endpoint> remote_endpoint;
       bool closed = false;
    };
 
@@ -85,14 +85,15 @@ struct node::impl : std::enable_shared_from_this<impl> {
    std::size_t active_ping_streams = 0;
    bool stopped = false;
 
-
    [[nodiscard]] std::vector<fcl::p2p::endpoint> local_endpoints_for_control() const;
 
-   void learn_from_message(const peer_exchange_message& message);
+   void learn_from_message(const peer_exchange_message& message,
+                           std::optional<fcl::p2p::endpoint> remote_endpoint = std::nullopt);
 
    [[nodiscard]] identify::document local_identify_document() const;
 
-   void learn_from_identify(const peer_id& peer, const identify::document& document);
+   void learn_from_identify(const peer_id& peer, const identify::document& document,
+                            std::optional<fcl::p2p::endpoint> remote_endpoint = std::nullopt);
 
    void remember_session(std::shared_ptr<session_state> session);
 
@@ -210,10 +211,10 @@ struct node::impl : std::enable_shared_from_this<impl> {
        std::size_t max_direct_endpoints = node::connect_options{}.max_direct_endpoints,
        std::chrono::milliseconds direct_attempt_timeout = node::connect_options{}.direct_attempt_timeout);
 
-   boost::asio::awaitable<fcl::p2p::stream> open_protocol_direct(
-       const peer_id& peer, const protocol_id& protocol, std::chrono::milliseconds timeout,
-       std::size_t max_direct_endpoints = node::open_options{}.max_direct_endpoints,
-       std::chrono::milliseconds direct_attempt_timeout = node::open_options{}.direct_attempt_timeout);
+   boost::asio::awaitable<fcl::p2p::stream>
+   open_protocol_direct(const peer_id& peer, const protocol_id& protocol, std::chrono::milliseconds timeout,
+                        std::size_t max_direct_endpoints = node::open_options{}.max_direct_endpoints,
+                        std::chrono::milliseconds direct_attempt_timeout = node::open_options{}.direct_attempt_timeout);
 
    boost::asio::awaitable<relay::reservation::info>
    request_relay_reservation(const peer_id& relay_peer, relay::reservation::options reservation_options,
@@ -232,7 +233,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
 
    void launch_accept_loop(fcl::p2p::endpoint local_endpoint);
 
-   boost::asio::awaitable<void> handle_inbound_connection(fcl::transport::session connection, peer_id remote);
+   boost::asio::awaitable<void> handle_inbound_connection(direct::connection connection);
 
    void launch_session_accept_loop(std::shared_ptr<session_state> session);
 
@@ -270,9 +271,9 @@ struct node::impl : std::enable_shared_from_this<impl> {
 
    boost::asio::awaitable<bool> wait_for_direct_session(const peer_id& peer, std::chrono::milliseconds timeout);
 
-   boost::asio::awaitable<hole_punch::status>
-   run_dcutr_initiator(const peer_id& peer, std::shared_ptr<fcl::yamux::session> yamux,
-                       std::chrono::milliseconds timeout);
+   boost::asio::awaitable<hole_punch::status> run_dcutr_initiator(const peer_id& peer,
+                                                                  std::shared_ptr<fcl::yamux::session> yamux,
+                                                                  std::chrono::milliseconds timeout);
 
    boost::asio::awaitable<hole_punch::status>
    serve_relayed_streams_until_hole_punch(peer_id peer, std::optional<peer_id> relay_peer,

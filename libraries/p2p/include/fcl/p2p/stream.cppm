@@ -9,6 +9,7 @@ module;
 
 export module fcl.p2p.stream;
 
+export import fcl.transport.buffer;
 import fcl.transport.stream;
 
 export namespace fcl::p2p {
@@ -34,9 +35,13 @@ class stream {
    [[nodiscard]] std::int64_t id() const noexcept;
 
    boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> bytes);
+   boost::asio::awaitable<void> async_write(fcl::transport::chunk bytes);
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read();
+   boost::asio::awaitable<fcl::transport::chunk> async_read_chunk();
    boost::asio::awaitable<void> async_write_frame(std::span<const std::uint8_t> bytes);
+   boost::asio::awaitable<void> async_write_frame(fcl::transport::chunk bytes);
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read_frame();
+   boost::asio::awaitable<fcl::transport::chunk> async_read_frame_chunk();
    boost::asio::awaitable<void> async_close();
    void cancel();
 

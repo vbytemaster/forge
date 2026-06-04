@@ -32,6 +32,10 @@ Out of scope:
 | Transport composition | `donors/rust-libp2p/libp2p/src/builder.rs` | The host/swarm composes TCP, QUIC, DNS and optional relay transports above concrete transport implementations. |
 | Relay composition | `donors/rust-libp2p/libp2p/src/builder/phase/relay.rs` | Relay is composed as a relay path over authenticated multiplexed transport, not as a direct transport profile. |
 | Address semantics | `donors/libp2p-specs/addressing/README.md` | Exchanged peer addresses carry network address plus peer identity; relayed addresses use `/p2p-circuit` semantics. |
+| Identify address hygiene | `donors/go-libp2p/p2p/protocol/identify/id.go`, `donors/libp2p-specs/identify/README.md` | Learned listen addresses are filtered using authenticated connection context; observed addresses stay separate from listen addresses. |
+| Routing-record routability | `donors/libp2p-specs/RFC/0003-routing-records.md` | Third-party distributed peer addresses should be public-routable unless an explicit local/private context is known. |
+| Dial ranking groups | `donors/go-libp2p/p2p/net/swarm/dial_ranker.go` | Direct public/private and relay candidates are classified before dialing; relay is delayed/selected above raw direct transport execution. |
+| Observed address ownership | `donors/go-libp2p/p2p/host/observedaddrs/manager.go` | Observed addresses are host reachability input, not blindly learned peer listen records. |
 
 ## FCL Coverage
 
@@ -43,6 +47,9 @@ Out of scope:
 | Identify advertises every active direct endpoint with `/p2p/<local-peer>` | `test_fcl_quic_p2p p2p_node_listens_on_quic_and_tcp_and_identify_advertises_both` | Supported for active direct listeners and configured advertised endpoints. |
 | Peer exchange preserves multiple endpoints without duplicates | `test_fcl_quic_p2p p2p_peer_exchange_preserves_multiple_direct_endpoints_without_duplicates` | Supported; peer exchange now uses negotiated protocol streams. |
 | Mismatched learned endpoint peer suffix is rejected | `test_fcl_quic_p2p p2p_identify_push_rejects_mismatched_endpoint_peer_suffix` | Supported for Identify and peer exchange learning. |
+| Equivalent advertised endpoints are canonicalized and deduplicated | `test_fcl_quic_p2p p2p_local_endpoints_collapse_canonical_equivalent_advertised_endpoints` | Supported for configured advertised endpoints after local peer suffix normalization. |
+| Third-party peer exchange filters non-routable direct endpoints | `test_fcl_quic_p2p p2p_peer_exchange_filters_non_routable_third_party_endpoints` | Public IP, DNS and relay candidates are learnable from third parties; loopback, link-local, private and localhost DNS are rejected. |
+| Authenticated loopback connections may learn loopback listen addresses | Existing local Identify/multi-listen component coverage uses loopback connections and keeps local advertised endpoints learnable | Supported for local component/private-network scenarios; private addresses are not globally banned. |
 | Stop closes all direct listeners | `test_fcl_quic_p2p p2p_stop_closes_all_direct_listeners` | Supported for active QUIC/TCP direct listeners. |
 | WebSocket remains unsupported | `test_fcl_quic_p2p p2p_websocket_multiaddr_is_parseable_but_not_dialable` | Parse/store only, no dial/listen support. |
 | Path selector skips backed-off endpoints before falling back | Existing timeout/backoff path-manager tests plus `path_selector::rank_direct` coverage through direct open paths | Supported for direct QUIC/TCP endpoint records; relay remains separate. |

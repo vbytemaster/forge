@@ -26,8 +26,18 @@ struct frame_decode_result {
    std::size_t consumed = 0;
 };
 
+struct frame_view_decode_result {
+   frame_decode_status status = frame_decode_status::need_more_data;
+   std::span<const std::uint8_t> payload;
+   std::size_t consumed = 0;
+};
+
 [[nodiscard]] std::vector<std::uint8_t> encode_frame(std::span<const std::uint8_t> payload,
                                                      frame_options options = {});
+void encode_frame_to(std::vector<std::uint8_t>& out, std::span<const std::uint8_t> payload,
+                     frame_options options = {});
 [[nodiscard]] frame_decode_result decode_frame(std::span<const std::uint8_t> bytes, frame_options options = {});
+[[nodiscard]] frame_view_decode_result decode_frame_view(std::span<const std::uint8_t> bytes,
+                                                         frame_options options = {});
 
 } // namespace fcl::transport

@@ -27,6 +27,7 @@
 import fcl.asio.blocking;
 import fcl.asio.runtime;
 import fcl.exceptions;
+import fcl.transport.buffer;
 import fcl.transport.exceptions;
 import fcl.transport.stream;
 import fcl.yamux.exceptions;
@@ -477,6 +478,20 @@ boost::asio::awaitable<void> yamux_open_accept_and_early_data() {
    BOOST_CHECK_EQUAL(inbound.id(), 1);
    auto received = co_await inbound.async_read();
    BOOST_CHECK_EQUAL_COLLECTIONS(received.begin(), received.end(), payload.begin(), payload.end());
+
+   const auto chunk_payload = text_bytes("chunk response");
+   co_await inbound.async_write(fcl::transport::chunk{chunk_payload});
+   auto received_chunk = co_await outbound.async_read_chunk();
+   const auto received_chunk_bytes = received_chunk.to_vector();
+   BOOST_CHECK_EQUAL_COLLECTIONS(
+       received_chunk_bytes.begin(), received_chunk_bytes.end(), chunk_payload.begin(), chunk_payload.end());
+
+   const auto framed_chunk = text_bytes("framed chunk over yamux");
+   co_await outbound.async_write_frame(fcl::transport::chunk{framed_chunk});
+   auto received_frame_chunk = co_await inbound.async_read_frame_chunk();
+   const auto received_frame_chunk_bytes = received_frame_chunk.to_vector();
+   BOOST_CHECK_EQUAL_COLLECTIONS(received_frame_chunk_bytes.begin(), received_frame_chunk_bytes.end(),
+                                 framed_chunk.begin(), framed_chunk.end());
 
    co_await initiator.async_close();
    co_await responder.async_close();

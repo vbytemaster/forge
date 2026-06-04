@@ -407,12 +407,28 @@ struct session::impl : std::enable_shared_from_this<impl> {
          co_await owner->write_stream(stream_id_, std::move(owned));
       }
 
+      boost::asio::awaitable<void> async_write_chunk(transport::chunk value) override {
+         auto owner = owner_.lock();
+         if (!owner) {
+            FCL_THROW_EXCEPTION(exceptions::closed, "yamux session expired");
+         }
+         co_await owner->write_stream(stream_id_, std::move(value).into_vector());
+      }
+
       boost::asio::awaitable<bytes> async_read() override {
          auto owner = owner_.lock();
          if (!owner) {
             FCL_THROW_EXCEPTION(exceptions::closed, "yamux session expired");
          }
          co_return co_await owner->read_stream(stream_id_);
+      }
+
+      boost::asio::awaitable<transport::chunk> async_read_chunk() override {
+         auto owner = owner_.lock();
+         if (!owner) {
+            FCL_THROW_EXCEPTION(exceptions::closed, "yamux session expired");
+         }
+         co_return transport::chunk{co_await owner->read_stream(stream_id_)};
       }
 
       boost::asio::awaitable<void> async_close() override {

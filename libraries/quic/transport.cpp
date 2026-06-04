@@ -39,8 +39,16 @@ class quic_stream_concept final : public fcl::transport::detail::stream_concept 
       co_await value_.async_write(bytes);
    }
 
+   boost::asio::awaitable<void> async_write_chunk(fcl::transport::chunk bytes) override {
+      co_await value_.async_write(bytes.bytes());
+   }
+
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read() override {
       co_return co_await value_.async_read();
+   }
+
+   boost::asio::awaitable<fcl::transport::chunk> async_read_chunk() override {
+      co_return fcl::transport::chunk{co_await value_.async_read()};
    }
 
    boost::asio::awaitable<void> async_close() override {

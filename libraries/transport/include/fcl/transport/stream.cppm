@@ -9,6 +9,7 @@ module;
 
 export module fcl.transport.stream;
 
+export import fcl.transport.buffer;
 export import fcl.transport.frame;
 
 export namespace fcl::transport {
@@ -33,9 +34,13 @@ class stream {
    [[nodiscard]] std::int64_t id() const noexcept;
 
    boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> bytes);
+   boost::asio::awaitable<void> async_write(chunk bytes);
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read();
+   boost::asio::awaitable<chunk> async_read_chunk();
    boost::asio::awaitable<void> async_write_frame(std::span<const std::uint8_t> bytes);
+   boost::asio::awaitable<void> async_write_frame(chunk bytes);
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read_frame();
+   boost::asio::awaitable<chunk> async_read_frame_chunk();
    boost::asio::awaitable<void> async_close();
    void cancel();
 
@@ -58,7 +63,9 @@ class stream_concept {
    [[nodiscard]] virtual std::int64_t id() const noexcept = 0;
 
    virtual boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> bytes) = 0;
+   virtual boost::asio::awaitable<void> async_write_chunk(chunk bytes);
    virtual boost::asio::awaitable<std::vector<std::uint8_t>> async_read() = 0;
+   virtual boost::asio::awaitable<chunk> async_read_chunk();
    virtual boost::asio::awaitable<void> async_close() = 0;
    virtual void cancel() = 0;
 };

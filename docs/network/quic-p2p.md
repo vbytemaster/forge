@@ -301,33 +301,33 @@ READMEs may link here, but must not define a second block order.
 
   git diff --check
   ```
-- E.2d is the transport buffer API compatibility guardrail before E.3. It is a
-  documentation checkpoint, not a runtime/API implementation block. The goal is
-  to keep the next P2P work from baking bulk data-plane assumptions into the
-  current vector-shaped stream API before `fcl.api.transport`, `contentd` and
-  high-throughput content paths are designed.
-- E.2d records the current contract: `fcl_transport::stream` is intentionally
-  safe and convenient for control-plane protocols, P2P protocol messages and
-  ordinary framed traffic, but its read path returns owned
-  `std::vector<std::uint8_t>` chunks. That shape is acceptable for the current
-  P2P scope, but it is not the final performance contract for bulk content or
-  API data-plane transfers.
-- E.2d records the compatibility risk: changing `async_read()` or
-  `async_read_frame()` return types later would be a high-impact breaking
-  change across `fcl_transport`, concrete TCP/STCP/QUIC adapters, `fcl_yamux`,
-  `fcl_p2p` and future API bindings. The existing vector API must therefore
-  remain the stable convenience path.
-- E.2d sets the future rule: zero-copy, buffer-pool or borrowed-buffer support
-  must be additive. A future fast path may add transport-owned buffer/chunk
-  abstractions, pooled reads, safe lifetime-aware writes, frame parsing without
-  hot-path front erase/copy, Yamux DATA copy audits and alloc-count/throughput
-  benchmarks, but it must not replace the existing convenience API.
-- E.2d also sets a scope guard for the next blocks: E.3 and F may continue
-  multi-listen, path selection, Identify hygiene, AutoRelay, DHT/Rendezvous and
-  connection-policy work, but they must not introduce product bulk-transfer APIs
-  that only work through the vector path. Before `fcl.api.transport` or
-  `contentd` bulk transfer is implemented, this buffer fast-path block must be
-  reopened as a real low-level design/implementation task.
+- E.2d implements the transport buffer API compatibility guardrail before the
+  next P2P completion work. `fcl_transport::stream` keeps
+  `async_read()`/`async_read_frame()` as stable vector-returning convenience
+  APIs, and adds an additive `fcl.transport.buffer` fast path for serious
+  stream consumers.
+- E.2d adds transport-owned `chunk`, `chunk_builder` and `buffer_pool`
+  primitives. Chunks carry safe shared byte ownership, builders provide writable
+  storage before commit and the pool reuses storage within explicit cached
+  buffer/byte limits instead of hiding unbounded queues.
+- E.2d adds chunk-oriented stream operations:
+  `async_read_chunk()`, `async_read_frame_chunk()`, `async_write(chunk)` and
+  `async_write_frame(chunk)`. Existing vector methods delegate through the new
+  path where safe, so current P2P/API consumers do not need an immediate
+  migration.
+- E.2d adds frame fast-path helpers: `decode_frame_view(...)` returns a payload
+  span plus consumed bytes without allocating a payload vector, and
+  `stream::async_read_frame_chunk()` uses consumed-offset buffering with bounded
+  compaction instead of front-erasing the receive buffer.
+- E.2d integrates the fast path with TCP, STCP, QUIC and Yamux transport
+  adapters. TCP/STCP read into pooled builders; QUIC/Yamux wrap or move already
+  owned stream data into chunks without adding P2P/API semantics to
+  `fcl_transport`.
+- E.2d is not the final content data-plane implementation. It does not claim
+  kernel zero-copy, file-backed chunks, `sendfile`, content addressing or
+  `contentd` bulk-transfer readiness. Before `fcl.api.transport` or content
+  bulk workloads ship, a separate benchmark/throughput block must audit
+  remaining copies, allocation counts and large-chunk behavior.
 - E.3 checkpoint: host-level multi-transport orchestration lives in private
   `fcl_p2p` host/node helpers, not in a new public multi-transport library and
   not inside the direct transport layer. A production node can listen on several

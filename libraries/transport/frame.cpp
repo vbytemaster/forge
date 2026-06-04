@@ -30,18 +30,21 @@ void write_u32_be(std::vector<std::uint8_t>& out, std::uint32_t value) {
 } // namespace
 
 std::vector<std::uint8_t> encode_frame(std::span<const std::uint8_t> payload, frame_options options) {
-   if (payload.size() > options.max_size) {
-      FCL_THROW_EXCEPTION(exceptions::frame_too_large, "transport frame payload exceeds max_size");
-   }
-
    auto out = std::vector<std::uint8_t>{};
    out.reserve(header_size + payload.size());
-   write_u32_be(out, static_cast<std::uint32_t>(payload.size()));
-   out.insert(out.end(), payload.begin(), payload.end());
+   encode_frame_to(out, payload, options);
    return out;
 }
 
-frame_decode_result decode_frame(std::span<const std::uint8_t> bytes, frame_options options) {
+void encode_frame_to(std::vector<std::uint8_t>& out, std::span<const std::uint8_t> payload, frame_options options) {
+   if (payload.size() > options.max_size) {
+      FCL_THROW_EXCEPTION(exceptions::frame_too_large, "transport frame payload exceeds max_size");
+   }
+   write_u32_be(out, static_cast<std::uint32_t>(payload.size()));
+   out.insert(out.end(), payload.begin(), payload.end());
+}
+
+frame_view_decode_result decode_frame_view(std::span<const std::uint8_t> bytes, frame_options options) {
    if (bytes.size() < header_size) {
       return {.status = frame_decode_status::need_more_data};
    }
@@ -51,14 +54,23 @@ frame_decode_result decode_frame(std::span<const std::uint8_t> bytes, frame_opti
       FCL_THROW_EXCEPTION(exceptions::frame_too_large, "transport frame payload exceeds max_size");
    }
 
-   const auto total = header_size + static_cast<std::size_t>(size);
-   if (bytes.size() < total) {
+   if (static_cast<std::size_t>(size) > bytes.size() - header_size) {
       return {.status = frame_decode_status::need_more_data};
    }
 
-   auto payload = std::vector<std::uint8_t>{bytes.begin() + static_cast<std::ptrdiff_t>(header_size),
-                                            bytes.begin() + static_cast<std::ptrdiff_t>(total)};
-   return {.status = frame_decode_status::complete, .payload = std::move(payload), .consumed = total};
+   const auto total = header_size + static_cast<std::size_t>(size);
+   return {.status = frame_decode_status::complete,
+           .payload = {bytes.data() + header_size, static_cast<std::size_t>(size)},
+           .consumed = total};
+}
+
+frame_decode_result decode_frame(std::span<const std::uint8_t> bytes, frame_options options) {
+   const auto decoded = decode_frame_view(bytes, options);
+   if (decoded.status == frame_decode_status::need_more_data) {
+      return {.status = frame_decode_status::need_more_data};
+   }
+   auto payload = std::vector<std::uint8_t>{decoded.payload.begin(), decoded.payload.end()};
+   return {.status = frame_decode_status::complete, .payload = std::move(payload), .consumed = decoded.consumed};
 }
 
 } // namespace fcl::transport

@@ -115,6 +115,21 @@ class socket_stream final : public transport::detail::stream_concept {
       co_return out;
    }
 
+   boost::asio::awaitable<transport::chunk> async_read_chunk() override {
+      if (!valid()) {
+         FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp stream");
+      }
+      auto builder = pool_.acquire(options_.read_chunk_size);
+      auto writable = builder.writable();
+      auto error = boost::system::error_code{};
+      const auto size = co_await socket_->async_read_some(boost::asio::buffer(writable),
+                                                          boost::asio::redirect_error(boost::asio::use_awaitable, error));
+      if (error) {
+         throw_read_write_error(error);
+      }
+      co_return builder.commit(size);
+   }
+
    boost::asio::awaitable<void> async_close() override {
       if (!socket_) {
          co_return;
@@ -132,6 +147,7 @@ class socket_stream final : public transport::detail::stream_concept {
  private:
    std::shared_ptr<asio_tcp::socket> socket_;
    options options_;
+   transport::buffer_pool pool_;
    std::int64_t id_ = -1;
 };
 

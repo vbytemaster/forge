@@ -87,6 +87,7 @@ namespace asio = boost::asio;
       return exceptions::code::canceled;
    case transport_kind::frame_too_large:
    case transport_kind::protocol_error:
+   case transport_kind::invalid_buffer:
       return exceptions::code::codec_error;
    case transport_kind::unsupported_protocol:
       return exceptions::code::unsupported_protocol;

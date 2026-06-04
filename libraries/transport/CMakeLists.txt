@@ -1,5 +1,6 @@
 add_library(
    fcl_transport STATIC
+   buffer.cpp
    connector.cpp
    endpoint.cpp
    frame.cpp

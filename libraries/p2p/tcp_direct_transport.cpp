@@ -2,14 +2,19 @@ module;
 
 #include <fcl/exceptions/macros.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
+#include <ranges>
+#include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
@@ -40,6 +45,11 @@ namespace {
 
 [[nodiscard]] fcl::p2p::endpoint p2p_endpoint_for(fcl::transport::endpoint value) {
    return fcl::p2p::endpoint{.transport = std::move(value)};
+}
+
+[[nodiscard]] std::string listener_key(fcl::p2p::endpoint value) {
+   value.peer.reset();
+   return value.to_string();
 }
 
 [[nodiscard]] exceptions::code map_tcp_error(fcl::tcp::exceptions::code kind) noexcept {
@@ -92,6 +102,11 @@ struct cancel_current_scope {
 };
 
 class tcp_profile final {
+   struct listener_entry {
+      std::unique_ptr<fcl::tcp::listener> value;
+      bool active = true;
+   };
+
  public:
    tcp_profile(fcl::asio::runtime& runtime_value, const node::options& options_value)
        : runtime_(runtime_value), options_(options_value) {}
@@ -101,32 +116,52 @@ class tcp_profile final {
    }
 
    [[nodiscard]] bool listening() const noexcept {
-      return listener_ != nullptr && listener_->valid();
+      return std::ranges::any_of(listeners_, [](const auto& item) {
+         return item.second.active;
+      });
    }
 
-   [[nodiscard]] std::optional<fcl::p2p::endpoint> local_endpoint() const {
-      if (!listening()) {
-         return std::nullopt;
+   [[nodiscard]] std::vector<fcl::p2p::endpoint> local_endpoints() const {
+      auto out = std::vector<fcl::p2p::endpoint>{};
+      out.reserve(listeners_.size());
+      for (const auto& [_, listener] : listeners_) {
+         if (listener.active && listener.value->valid()) {
+            out.push_back(p2p_endpoint_for(listener.value->local_endpoint()));
+         }
       }
-      return p2p_endpoint_for(listener_->local_endpoint());
+      return out;
    }
 
-   void listen(fcl::p2p::endpoint endpoint) {
+   fcl::p2p::endpoint listen(fcl::p2p::endpoint endpoint) {
       if (!endpoint.is_direct_tcp()) {
          FCL_THROW_EXCEPTION(exceptions::unsupported_protocol, "P2P endpoint is not a direct TCP endpoint");
       }
+      if (endpoint.transport.port != 0) {
+         auto found = listeners_.find(listener_key(endpoint));
+         if (found != listeners_.end() && found->second.active) {
+            FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P TCP direct listener endpoint is already active");
+         }
+      }
       try {
-         listener_ =
+         auto listener =
              std::make_unique<fcl::tcp::listener>(runtime_.context().get_executor(), endpoint.transport);
+         auto local = p2p_endpoint_for(listener->local_endpoint());
+         const auto key = listener_key(local);
+         auto found = listeners_.find(key);
+         if (found != listeners_.end() && found->second.active) {
+            FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P TCP direct listener endpoint is already active");
+         }
+         listeners_[key] = listener_entry{.value = std::move(listener), .active = true};
+         return local;
       } catch (const fcl::exceptions::base& error) {
          rethrow_tcp_as_p2p(error);
       }
    }
 
    void stop() {
-      if (listener_) {
-         listener_->close();
-         listener_.reset();
+      for (auto& [_, listener] : listeners_) {
+         listener.active = false;
+         listener.value->close();
       }
    }
 
@@ -171,12 +206,13 @@ class tcp_profile final {
       }
    }
 
-   boost::asio::awaitable<connection> async_accept() {
-      if (!listening()) {
+   boost::asio::awaitable<connection> async_accept(fcl::p2p::endpoint endpoint) {
+      auto found = listeners_.find(listener_key(std::move(endpoint)));
+      if (found == listeners_.end() || !found->second.active || !found->second.value->valid()) {
          FCL_THROW_EXCEPTION(exceptions::closed, "P2P TCP direct listener is not active");
       }
       try {
-         auto tcp = co_await listener_->async_accept_connection();
+         auto tcp = co_await found->second.value->async_accept_connection();
          const auto local_endpoint = p2p_endpoint_for(tcp.local_endpoint());
          const auto remote_endpoint = p2p_endpoint_for(tcp.remote_endpoint());
          auto cancel_current = std::make_shared<std::function<void()>>([&tcp] { tcp.cancel(); });
@@ -217,7 +253,7 @@ class tcp_profile final {
  private:
    fcl::asio::runtime& runtime_;
    const node::options& options_;
-   std::unique_ptr<fcl::tcp::listener> listener_;
+   std::map<std::string, listener_entry> listeners_;
 };
 
 } // namespace
@@ -227,14 +263,14 @@ void register_tcp_profile(registry& value, fcl::asio::runtime& runtime, const no
    value.add(profile{
        .supports = [owned](const fcl::p2p::endpoint& endpoint) { return owned->supports(endpoint); },
        .listening = [owned] { return owned->listening(); },
-       .local_endpoint = [owned] { return owned->local_endpoint(); },
-       .listen = [owned](fcl::p2p::endpoint endpoint) { owned->listen(std::move(endpoint)); },
+       .local_endpoints = [owned] { return owned->local_endpoints(); },
+       .listen = [owned](fcl::p2p::endpoint endpoint) { return owned->listen(std::move(endpoint)); },
        .stop = [owned] { owned->stop(); },
        .async_connect =
            [owned](fcl::p2p::endpoint endpoint, const node::connect_options& options) {
               return owned->async_connect(std::move(endpoint), options);
            },
-       .async_accept = [owned] { return owned->async_accept(); },
+       .async_accept = [owned](fcl::p2p::endpoint endpoint) { return owned->async_accept(std::move(endpoint)); },
    });
 }
 

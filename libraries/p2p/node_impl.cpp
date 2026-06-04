@@ -316,17 +316,9 @@ node::impl::impl(fcl::asio::runtime& runtime_value, node::options options_value)
                                      : make_peer_id_from_certificate_pem(options.certificate_pem)),
       direct_registry(runtime_value, options), store(peer_store::options{.backend = make_peer_store_backend(options)}) {}
 
-[[nodiscard]] std::optional<fcl::p2p::endpoint> node::impl::local_endpoint_for_control() const {
+std::vector<fcl::p2p::endpoint> node::impl::local_endpoints_for_control() const {
    auto lock = std::scoped_lock{mutex};
-   if (auto endpoint = direct_registry.local_endpoint()) {
-      auto out = *endpoint;
-      out.peer = local;
-      return out;
-   }
-   if (!options.advertised_endpoints.empty()) {
-      return options.advertised_endpoints.front();
-   }
-   return std::nullopt;
+   return host_addresses::merge_advertised(options.advertised_endpoints, direct_registry.local_endpoints(), local);
 }
 
 void node::impl::learn_from_message(const peer_exchange_message& message) {
@@ -338,27 +330,19 @@ void node::impl::learn_from_message(const peer_exchange_message& message) {
    }
    for (const auto& endpoint : message.endpoints) {
       if (valid_peer_id(endpoint.peer)) {
-         store.learn_endpoint(endpoint.peer, endpoint.endpoint, endpoint.capabilities);
+         if (auto learned = host_addresses::learned(endpoint.endpoint, endpoint.peer)) {
+            store.learn_endpoint(endpoint.peer, *learned, endpoint.capabilities);
+         }
       }
    }
 }
 
 [[nodiscard]] identify::document node::impl::local_identify_document() const {
-   auto endpoints = std::vector<fcl::p2p::endpoint>{};
-   endpoints.reserve(options.advertised_endpoints.size() + 1);
-   for (const auto& endpoint : options.advertised_endpoints) {
-      auto out = endpoint;
-      out.peer = local;
-      endpoints.push_back(std::move(out));
-   }
-   if (auto endpoint = local_endpoint_for_control()) {
-      endpoints.push_back(*endpoint);
-   }
    return identify::document{
        .protocol_version = options.protocol_version,
        .agent_version = options.agent_version,
        .public_key = options.public_key,
-       .listen_endpoints = std::move(endpoints),
+       .listen_endpoints = local_endpoints_for_control(),
        .protocols = supported_protocols(),
    };
 }
@@ -372,12 +356,16 @@ void node::impl::learn_from_identify(const peer_id& peer, const identify::docume
    record.signed_peer_record = document.signed_peer_record;
    record.observed_endpoint = document.observed_endpoint ? document.observed_endpoint : record.observed_endpoint;
    for (const auto& endpoint : document.listen_endpoints) {
+      auto learned = host_addresses::learned(endpoint, peer);
+      if (!learned) {
+         continue;
+      }
       const auto exists = std::ranges::any_of(record.endpoints, [&](const peer_store::endpoint_record& current) {
-         return current.endpoint.to_string() == endpoint.to_string();
+         return current.endpoint.to_string() == learned->to_string();
       });
       if (!exists) {
          record.endpoints.push_back(peer_store::endpoint_record{
-             .endpoint = endpoint,
+             .endpoint = *learned,
              .kind = path::kind::direct,
          });
       }
@@ -446,6 +434,9 @@ void node::impl::forget_session(const std::shared_ptr<node::impl::session_state>
                                        builtins::dcutr};
    if (options.capabilities.has(capabilities::relay) || options.capabilities.has(capabilities::relay_reservation)) {
       out.push_back(builtins::relay_hop);
+   }
+   if (options.capabilities.has(capabilities::peer_exchange)) {
+      out.push_back(builtins::peer_exchange);
    }
    if (options.capabilities.has(capabilities::dht) && options.limits.dht.operating_mode == dht::mode::server) {
       out.push_back(builtins::kad_dht);
@@ -999,7 +990,7 @@ void node::impl::launch_pubsub_heartbeat() {
                 if (self->stopped) {
                    co_return;
                 }
-             }
+            }
              co_await self->pubsub_heartbeat_once();
              timer.expires_after(self->options.limits.pubsub.limits.heartbeat_interval);
              ec = {};
@@ -1145,27 +1136,8 @@ boost::asio::awaitable<std::shared_ptr<node::impl::session_state>> node::impl::e
    if (max_direct_endpoints == 0) {
       FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P max direct endpoints must be positive");
    }
-   auto endpoints = record->endpoints;
    const auto now = std::chrono::system_clock::now();
-   auto preferred = std::vector<peer_store::endpoint_record>{};
-   for (const auto& endpoint : endpoints) {
-      if (endpoint.kind != path::kind::direct || endpoint.relay_peer) {
-         continue;
-      }
-      if (endpoint.backoff_until != std::chrono::system_clock::time_point{} && endpoint.backoff_until > now) {
-         continue;
-      }
-      preferred.push_back(endpoint);
-   }
-   if (preferred.empty()) {
-      for (const auto& endpoint : endpoints) {
-         if (endpoint.kind == path::kind::direct && !endpoint.relay_peer) {
-            preferred.push_back(endpoint);
-         }
-      }
-   }
-   std::stable_sort(preferred.begin(), preferred.end(),
-                    [](const auto& left, const auto& right) { return left.score > right.score; });
+   auto preferred = path_selector::rank_direct(*record, now);
 
    const auto started = std::chrono::steady_clock::now();
    auto last_kind = std::optional<exceptions::code>{};
@@ -1398,7 +1370,9 @@ boost::asio::awaitable<fcl::p2p::stream> node::impl::open_protocol_via_relay(con
 boost::asio::awaitable<void> node::impl::request_peer_exchange(const peer_id& peer) {
    auto session = co_await ensure_direct_session(peer);
    try {
-      auto stream = fcl::p2p::stream{co_await session->connection.async_open_stream()};
+      auto stream =
+          co_await protocol_negotiation::async_select(fcl::p2p::stream{co_await session->connection.async_open_stream()},
+                                                      builtins::peer_exchange);
       co_await peer_exchange_codec::async_write(stream,
                                                 peer_exchange_message{
                                                     .kind = peer_exchange_message::type::peer_exchange_request,
@@ -1411,16 +1385,17 @@ boost::asio::awaitable<void> node::impl::request_peer_exchange(const peer_id& pe
       }
       learn_from_message(response);
       increment_peer_exchange();
+      co_await stream.async_close();
    } catch (const fcl::exceptions::base& error) {
       rethrow_transport_as_p2p(error);
    }
 }
 
-void node::impl::launch_accept_loop() {
+void node::impl::launch_accept_loop(fcl::p2p::endpoint local_endpoint) {
    auto self = shared_from_this();
    asio::co_spawn(
        runtime.context(),
-       [self]() -> asio::awaitable<void> {
+       [self, local_endpoint = std::move(local_endpoint)]() -> asio::awaitable<void> {
          while (true) {
             {
                auto lock = std::scoped_lock{self->mutex};
@@ -1429,25 +1404,32 @@ void node::impl::launch_accept_loop() {
                }
             }
             try {
-               auto connection = co_await self->direct_registry.async_accept();
+               auto connection = co_await self->direct_registry.async_accept(local_endpoint);
                asio::co_spawn(
                    self->runtime.context(),
                    [self, connection = std::move(connection)]() mutable -> asio::awaitable<void> {
-                       co_await self->handle_inbound_connection(std::move(connection.session), connection.peer);
-                    },
-                    asio::detached);
-             } catch (const std::exception&) {
-                auto lock = std::scoped_lock{self->mutex};
-                if (self->stopped) {
-                   co_return;
-                }
-                ++self->metrics_value.handshakes_failed;
-             } catch (...) {
-                auto lock = std::scoped_lock{self->mutex};
-                if (self->stopped) {
-                   co_return;
-                }
-                ++self->metrics_value.handshakes_failed;
+                      co_await self->handle_inbound_connection(std::move(connection.session), connection.peer);
+                   },
+                   asio::detached);
+            } catch (const fcl::exceptions::base& error) {
+               auto lock = std::scoped_lock{self->mutex};
+               if (self->stopped || exceptions::is(error, exceptions::code::closed) ||
+                   exceptions::is(error, exceptions::code::canceled)) {
+                  co_return;
+               }
+               ++self->metrics_value.handshakes_failed;
+            } catch (const std::exception&) {
+               auto lock = std::scoped_lock{self->mutex};
+               if (self->stopped) {
+                  co_return;
+               }
+               ++self->metrics_value.handshakes_failed;
+            } catch (...) {
+               auto lock = std::scoped_lock{self->mutex};
+               if (self->stopped) {
+                  co_return;
+               }
+               ++self->metrics_value.handshakes_failed;
              }
           }
        },
@@ -1521,6 +1503,14 @@ boost::asio::awaitable<void> node::impl::handle_incoming_stream(std::shared_ptr<
       }
       if (negotiated.protocol == builtins::identify_push) {
          co_await handle_identify_push(session, std::move(negotiated.stream));
+         co_return;
+      }
+      if (negotiated.protocol == builtins::peer_exchange) {
+         auto request = co_await peer_exchange_codec::async_read(negotiated.stream, codec_for(options));
+         if (request.kind != peer_exchange_message::type::peer_exchange_request) {
+            FCL_THROW_EXCEPTION(exceptions::protocol_error, "P2P peer exchange expected request");
+         }
+         co_await handle_peer_exchange(std::move(negotiated.stream), request.request_id);
          co_return;
       }
       if (negotiated.protocol == builtins::autonat_v2_dial_request) {
@@ -1888,10 +1878,7 @@ boost::asio::awaitable<void> node::impl::handle_relay_hop(std::shared_ptr<node::
          }));
          co_return;
       }
-      auto endpoints = std::vector<endpoint>{};
-      if (auto current = local_endpoint_for_control()) {
-         endpoints.push_back(*current);
-      }
+      auto endpoints = local_endpoints_for_control();
       const auto expires_at = std::chrono::duration_cast<std::chrono::seconds>(
           std::chrono::system_clock::now().time_since_epoch() + options.limits.relay.reservation_ttl);
       auto voucher = std::optional<signed_envelope>{};
@@ -2007,10 +1994,7 @@ boost::asio::awaitable<void> node::impl::handle_dcutr(std::shared_ptr<node::impl
    if (request.kind != hole_punch::message::message_kind::connect) {
       FCL_THROW_EXCEPTION(exceptions::protocol_error, "DCUtR expected CONNECT");
    }
-   auto observed = std::vector<endpoint>{};
-   if (auto endpoint = local_endpoint_for_control()) {
-      observed.push_back(*endpoint);
-   }
+   auto observed = local_endpoints_for_control();
    co_await stream.async_write(hole_punch::codec::encode(hole_punch::message{
        .kind = hole_punch::message::message_kind::connect,
        .observed_endpoints = std::move(observed),
@@ -2467,10 +2451,7 @@ boost::asio::awaitable<bool> node::impl::wait_for_direct_session(const peer_id& 
 boost::asio::awaitable<hole_punch::status>
 node::impl::run_dcutr_initiator(const peer_id& peer, std::shared_ptr<fcl::yamux::session> yamux,
                                 std::chrono::milliseconds timeout) {
-   auto observed = std::vector<endpoint>{};
-   if (auto local_endpoint = local_endpoint_for_control()) {
-      observed.push_back(*local_endpoint);
-   }
+   auto observed = local_endpoints_for_control();
    if (observed.empty()) {
       record_hole_punch_result(hole_punch::status::failed);
       co_return hole_punch::status::failed;
@@ -2622,9 +2603,22 @@ node::impl::serve_relayed_streams_until_hole_punch(peer_id peer, std::optional<p
 
 boost::asio::awaitable<void> node::impl::handle_peer_exchange(fcl::p2p::stream stream, std::uint64_t request_id) {
    auto endpoints = std::vector<peer_exchange_message::endpoint_record>{};
+   for (const auto& endpoint : local_endpoints_for_control()) {
+      endpoints.push_back(peer_exchange_message::endpoint_record{
+          .peer = local,
+          .endpoint = endpoint,
+          .capabilities = options.capabilities,
+      });
+      if (endpoints.size() >= options.limits.max_peer_exchange_records) {
+         break;
+      }
+   }
    const auto snapshot = store.snapshot();
    for (const auto& record : snapshot) {
       for (const auto& endpoint : record.endpoints) {
+         if (endpoints.size() >= options.limits.max_peer_exchange_records) {
+            break;
+         }
          endpoints.push_back(peer_exchange_message::endpoint_record{
              .peer = record.peer,
              .endpoint = endpoint.endpoint,
@@ -2647,6 +2641,7 @@ boost::asio::awaitable<void> node::impl::handle_peer_exchange(fcl::p2p::stream s
                                                  .endpoints = std::move(endpoints),
                                              },
                                              codec_for(options));
+   co_await stream.async_close();
 }
 
 void node::impl::launch_relay_pumps(peer_id owner, fcl::p2p::stream left, fcl::p2p::stream right) {
@@ -2767,10 +2762,7 @@ boost::asio::awaitable<hole_punch::status> node::impl::attempt_hole_punch(peer_i
    if (!relay_peer) {
       FCL_THROW_EXCEPTION(exceptions::relay_not_available, "P2P hole punching requires a relay peer");
    }
-   auto observed = std::vector<endpoint>{};
-   if (auto local_endpoint = local_endpoint_for_control()) {
-      observed.push_back(*local_endpoint);
-   }
+   auto observed = local_endpoints_for_control();
    if (observed.empty()) {
       record_hole_punch_result(hole_punch::status::failed);
       co_return hole_punch::status::failed;

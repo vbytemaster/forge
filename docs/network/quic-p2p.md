@@ -301,25 +301,60 @@ READMEs may link here, but must not define a second block order.
 
   git diff --check
   ```
-- E.3 is the next required block after the review checkpoint merges:
-  multi-transport host support. A production node must listen on several direct
-  transports at the same time, for example `/udp/.../quic-v1` and `/tcp/...`,
-  and must advertise all selected addresses through Identify, peer exchange,
-  DHT and rendezvous. This is critical for network reachability: otherwise FCL
-  supports QUIC and TCP as protocols but still risks splitting the network into
-  transport-specific islands.
-- E.3 must replace the single active direct listener with per-profile listeners,
-  add `node::local_endpoints()` while keeping `local_endpoint()` as a
-  compatibility convenience, and make `async_listen(...)` safe to call for
-  multiple endpoints.
-- E.3 must make direct path selection transport-aware: QUIC, TCP+TLS,
-  TCP+Noise and relay/circuit candidates are selected from the same peer-store
-  record using per-endpoint score, backoff, freshness and policy. The dialer
-  must not just try the first direct endpoint.
-- E.3 must harden Identify address hygiene: preserve canonical multiaddrs,
-  attach `/p2p/<peer>` suffixes consistently, separate listen/advertised/observed
-  addresses, reject stale or malformed addresses, and avoid polluting peer store
-  state with unverified transport addresses.
+- E.2d is the transport buffer API compatibility guardrail before E.3. It is a
+  documentation checkpoint, not a runtime/API implementation block. The goal is
+  to keep the next P2P work from baking bulk data-plane assumptions into the
+  current vector-shaped stream API before `fcl.api.transport`, `contentd` and
+  high-throughput content paths are designed.
+- E.2d records the current contract: `fcl_transport::stream` is intentionally
+  safe and convenient for control-plane protocols, P2P protocol messages and
+  ordinary framed traffic, but its read path returns owned
+  `std::vector<std::uint8_t>` chunks. That shape is acceptable for the current
+  P2P scope, but it is not the final performance contract for bulk content or
+  API data-plane transfers.
+- E.2d records the compatibility risk: changing `async_read()` or
+  `async_read_frame()` return types later would be a high-impact breaking
+  change across `fcl_transport`, concrete TCP/STCP/QUIC adapters, `fcl_yamux`,
+  `fcl_p2p` and future API bindings. The existing vector API must therefore
+  remain the stable convenience path.
+- E.2d sets the future rule: zero-copy, buffer-pool or borrowed-buffer support
+  must be additive. A future fast path may add transport-owned buffer/chunk
+  abstractions, pooled reads, safe lifetime-aware writes, frame parsing without
+  hot-path front erase/copy, Yamux DATA copy audits and alloc-count/throughput
+  benchmarks, but it must not replace the existing convenience API.
+- E.2d also sets a scope guard for the next blocks: E.3 and F may continue
+  multi-listen, path selection, Identify hygiene, AutoRelay, DHT/Rendezvous and
+  connection-policy work, but they must not introduce product bulk-transfer APIs
+  that only work through the vector path. Before `fcl.api.transport` or
+  `contentd` bulk transfer is implemented, this buffer fast-path block must be
+  reopened as a real low-level design/implementation task.
+- E.3 checkpoint: host-level multi-transport orchestration lives in private
+  `fcl_p2p` host/node helpers, not in a new public multi-transport library and
+  not inside the direct transport layer. A production node can listen on several
+  direct transports at the same time, for example `/udp/.../quic-v1` and
+  `/tcp/...`, and advertises the selected address set through Identify and peer
+  exchange. DHT/rendezvous publication must use the same canonical host address
+  source when their larger-network hardening resumes.
+- E.3 replaces the single active direct listener with per-profile listeners,
+  adds `node::local_endpoints()` and keeps `local_endpoint()` as a first-endpoint
+  compatibility convenience. `async_listen(...)` is intentionally multi-call for
+  supported direct endpoints.
+- E.3 keeps `fcl::p2p::direct` direct-only: QUIC/TCP direct profiles, direct
+  listen/connect/accept and no Identify, DHT, Relay, peer exchange, address
+  advertisement or path scoring ownership. Relay/circuit paths stay above direct
+  and are selected by host/node orchestration.
+- E.3 path selection is transport-aware for direct candidates: QUIC and TCP
+  endpoint records are filtered by support/freshness/backoff and then ordered by
+  endpoint score. Backoff is per endpoint, so one bad TCP or QUIC address does
+  not poison the whole peer.
+- E.3 hardens address hygiene: advertised direct endpoints carry
+  `/p2p/<local-peer>`, learned endpoint suffixes must match the verified remote
+  peer, observed addresses remain separate from listen/advertised records, and
+  duplicate canonical endpoints are collapsed before they enter protocol
+  documents or peer-store records.
+- E.3 also fixes peer exchange layering: FCL peer exchange is now selected with
+  `multistream-select` like the other negotiated P2P protocol streams, rather
+  than writing a private codec directly onto an unnegotiated session stream.
 - P2P owns Peer ID, Identify, libp2p Noise/TLS payload semantics,
   multistream-select, Relay, DCUtR, DHT, Rendezvous and GossipSub.
 - P2P does not own generic TCP, STCP or Yamux runtime.

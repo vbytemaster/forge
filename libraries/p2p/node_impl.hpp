@@ -1,7 +1,9 @@
 #pragma once
 
 #include "direct_transport.hpp"
+#include "host_addresses.hpp"
 #include "operation_deadline.hpp"
+#include "path_selector.hpp"
 #include "peer_exchange_codec.hpp"
 #include "relay_transport.hpp"
 
@@ -84,7 +86,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
    bool stopped = false;
 
 
-   [[nodiscard]] std::optional<fcl::p2p::endpoint> local_endpoint_for_control() const;
+   [[nodiscard]] std::vector<fcl::p2p::endpoint> local_endpoints_for_control() const;
 
    void learn_from_message(const peer_exchange_message& message);
 
@@ -228,7 +230,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
 
    boost::asio::awaitable<void> request_peer_exchange(const peer_id& peer);
 
-   void launch_accept_loop();
+   void launch_accept_loop(fcl::p2p::endpoint local_endpoint);
 
    boost::asio::awaitable<void> handle_inbound_connection(fcl::transport::session connection, peer_id remote);
 

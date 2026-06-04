@@ -82,12 +82,15 @@ const peer_id& node::local_peer() const noexcept {
 }
 
 std::optional<fcl::p2p::endpoint> node::local_endpoint() const {
-   auto lock = std::scoped_lock{impl_->mutex};
-   auto endpoint = impl_->direct_registry.local_endpoint();
-   if (!endpoint) {
+   auto endpoints = local_endpoints();
+   if (endpoints.empty()) {
       return std::nullopt;
    }
-   return endpoint;
+   return endpoints.front();
+}
+
+std::vector<fcl::p2p::endpoint> node::local_endpoints() const {
+   return impl_->local_endpoints_for_control();
 }
 
 node::metrics_snapshot node::metrics() const {
@@ -124,17 +127,15 @@ void node::register_protocol_handler(protocol_id protocol, node::protocol_handle
 
 boost::asio::awaitable<void> node::async_listen(fcl::p2p::endpoint endpoint) {
    auto self = impl_;
+   auto local_endpoint = fcl::p2p::endpoint{};
    {
       auto lock = std::scoped_lock{self->mutex};
       if (self->stopped) {
          FCL_THROW_EXCEPTION(exceptions::closed, "P2P node is stopped");
       }
-      if (self->direct_registry.listening()) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P node is already listening");
-      }
-      self->direct_registry.listen(std::move(endpoint));
+      local_endpoint = self->direct_registry.listen(std::move(endpoint));
    }
-   self->launch_accept_loop();
+   self->launch_accept_loop(std::move(local_endpoint));
    self->launch_pubsub_heartbeat();
    co_return;
 }
@@ -158,10 +159,7 @@ boost::asio::awaitable<void> node::async_request_peer_exchange(peer_id peer) {
 
 boost::asio::awaitable<reachability::state> node::async_probe_reachability(peer_id observer) {
    auto self = impl_;
-   auto endpoints = std::vector<endpoint>{};
-   if (auto endpoint = self->local_endpoint_for_control()) {
-      endpoints.push_back(*endpoint);
-   }
+   auto endpoints = self->local_endpoints_for_control();
    if (endpoints.empty()) {
       co_return reachability::state::private_network;
    }
@@ -320,10 +318,7 @@ boost::asio::awaitable<dht::query_result> node::async_find_peer(peer_id peer) {
 
 boost::asio::awaitable<void> node::async_provide(dht::key key) {
    auto self = impl_;
-   auto endpoints = std::vector<endpoint>{};
-   if (auto local_endpoint = self->local_endpoint_for_control()) {
-      endpoints.push_back(*local_endpoint);
-   }
+   auto endpoints = self->local_endpoints_for_control();
    auto provider = dht::peer{.id = self->local, .endpoints = endpoints, .connection = dht::connection_type::connected};
    self->store.upsert_provider(peer_store::provider_record{
        .key = key,

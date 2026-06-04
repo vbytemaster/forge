@@ -671,6 +671,20 @@ endpoint listen_tcp(node& value, fcl::asio::runtime& runtime) {
    return *endpoint;
 }
 
+[[nodiscard]] bool contains_protocol(const std::vector<endpoint>& endpoints, endpoint::protocol_kind protocol) {
+   return std::ranges::any_of(endpoints, [protocol](const endpoint& value) {
+      return value.transport.protocol == protocol;
+   });
+}
+
+[[nodiscard]] endpoint require_endpoint_for(const std::vector<endpoint>& endpoints, endpoint::protocol_kind protocol) {
+   auto found = std::ranges::find_if(endpoints, [protocol](const endpoint& value) {
+      return value.transport.protocol == protocol;
+   });
+   BOOST_REQUIRE(found != endpoints.end());
+   return *found;
+}
+
 endpoint start_stalling_tcp_peer(fcl::asio::runtime& runtime, std::chrono::milliseconds hold = std::chrono::seconds{2}) {
    namespace asio = boost::asio;
    using asio_tcp = asio::ip::tcp;
@@ -1121,6 +1135,120 @@ BOOST_AUTO_TEST_CASE(p2p_websocket_multiaddr_is_parseable_but_not_dialable) {
                     static_cast<int>(exceptions::code::unsupported_protocol));
       }
    }
+}
+
+BOOST_AUTO_TEST_CASE(p2p_node_listens_on_quic_and_tcp_and_identify_advertises_both) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server = node{runtime, options_for(peer(210))};
+   auto client = node{runtime, options_for(peer(211))};
+
+   fcl::asio::blocking::run(runtime, server.async_listen(make_quic_endpoint(0)));
+   fcl::asio::blocking::run(runtime, server.async_listen(make_tcp_endpoint(0)));
+
+   const auto local = server.local_endpoints();
+   BOOST_REQUIRE_EQUAL(local.size(), 2U);
+   BOOST_TEST(contains_protocol(local, endpoint::protocol_kind::quic_v1));
+   BOOST_TEST(contains_protocol(local, endpoint::protocol_kind::tcp));
+   for (const auto& item : local) {
+      BOOST_REQUIRE(item.peer.has_value());
+      BOOST_TEST(item.peer->value == server.local_peer().value);
+   }
+   BOOST_REQUIRE(server.local_endpoint().has_value());
+
+   const auto quic = require_endpoint_for(local, endpoint::protocol_kind::quic_v1);
+   (void)fcl::asio::blocking::run(
+       runtime, client.async_connect(quic, node::connect_options{.expected_peer = server.local_peer()}));
+
+   auto stream =
+       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::identify));
+   const auto payload = fcl::asio::blocking::run(runtime, read_length_delimited(stream));
+   const auto doc = identify::decode(payload);
+   BOOST_TEST(contains_protocol(doc.listen_endpoints, endpoint::protocol_kind::quic_v1));
+   BOOST_TEST(contains_protocol(doc.listen_endpoints, endpoint::protocol_kind::tcp));
+   for (const auto& item : doc.listen_endpoints) {
+      BOOST_REQUIRE(item.peer.has_value());
+      BOOST_TEST(item.peer->value == server.local_peer().value);
+   }
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_duplicate_direct_listen_rejects_typed) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto value = node{runtime, options_for(peer(212))};
+
+   fcl::asio::blocking::run(runtime, value.async_listen(make_tcp_endpoint(0)));
+   const auto local = require_endpoint_for(value.local_endpoints(), endpoint::protocol_kind::tcp);
+
+   try {
+      fcl::asio::blocking::run(runtime, value.async_listen(local));
+      BOOST_FAIL("expected duplicate listen rejection");
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
+      BOOST_TEST(static_cast<int>(*fcl::p2p::exceptions::code_of(error)) ==
+                 static_cast<int>(exceptions::code::invalid_options));
+   }
+
+   fcl::asio::blocking::run(runtime, value.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_peer_exchange_preserves_multiple_direct_endpoints_without_duplicates) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   const auto server_identity = make_test_certificate_identity("peer-exchange-multi-server");
+   const auto client_identity = make_test_certificate_identity("peer-exchange-multi-client");
+   auto server = node{runtime, options_for(server_identity)};
+   auto client = node{runtime, options_for(client_identity)};
+
+   fcl::asio::blocking::run(runtime, server.async_listen(make_quic_endpoint(0)));
+   fcl::asio::blocking::run(runtime, server.async_listen(make_tcp_endpoint(0)));
+   const auto advertised = server.local_endpoints();
+   BOOST_REQUIRE_EQUAL(advertised.size(), 2U);
+
+   const auto quic = require_endpoint_for(advertised, endpoint::protocol_kind::quic_v1);
+   client.peers().learn_endpoint(server.local_peer(), quic,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::peer_exchange});
+   fcl::asio::blocking::run(runtime, client.async_request_peer_exchange(server.local_peer()));
+   fcl::asio::blocking::run(runtime, client.async_request_peer_exchange(server.local_peer()));
+
+   const auto learned = client.peers().find(server.local_peer());
+   BOOST_REQUIRE(learned);
+   auto learned_endpoints = std::vector<endpoint>{};
+   learned_endpoints.reserve(learned->endpoints.size());
+   for (const auto& item : learned->endpoints) {
+      learned_endpoints.push_back(item.endpoint);
+   }
+   BOOST_TEST(contains_protocol(learned_endpoints, endpoint::protocol_kind::quic_v1));
+   BOOST_TEST(contains_protocol(learned_endpoints, endpoint::protocol_kind::tcp));
+   auto seen = std::set<std::string>{};
+   for (const auto& item : learned->endpoints) {
+      BOOST_REQUIRE(item.endpoint.peer.has_value());
+      BOOST_TEST(item.endpoint.peer->to_bytes() == server.local_peer().to_bytes(), boost::test_tools::per_element());
+      BOOST_TEST(seen.insert(item.endpoint.to_string()).second);
+   }
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_stop_closes_all_direct_listeners) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server = node{runtime, options_for(peer(216))};
+   fcl::asio::blocking::run(runtime, server.async_listen(make_quic_endpoint(0)));
+   fcl::asio::blocking::run(runtime, server.async_listen(make_tcp_endpoint(0)));
+   const auto local = server.local_endpoints();
+   const auto quic = require_endpoint_for(local, endpoint::protocol_kind::quic_v1);
+   const auto tcp = require_endpoint_for(local, endpoint::protocol_kind::tcp);
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+
+   auto rebound = node{runtime, options_for(peer(217))};
+   fcl::asio::blocking::run(runtime, rebound.async_listen(quic));
+   auto tcp_rebound = fcl::tcp::listener{runtime.context().get_executor(), tcp.transport};
+   BOOST_TEST(tcp_rebound.valid());
+
+   fcl::asio::blocking::run(runtime, tcp_rebound.async_close());
+   fcl::asio::blocking::run(runtime, rebound.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_direct_tcp_nodes_prefer_tls_yamux_and_echo_frames) {
@@ -2776,8 +2904,10 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_ten_node_mesh_delivers_multiple_publishes_onc
 
 BOOST_AUTO_TEST_CASE(p2p_identify_push_updates_peer_store) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
-   auto server = node{runtime, options_for(peer(77))};
-   auto client = node{runtime, options_for(peer(78))};
+   const auto server_identity = make_test_certificate_identity("identify-push-update-server");
+   const auto client_identity = make_test_certificate_identity("identify-push-update-client");
+   auto server = node{runtime, options_for(server_identity)};
+   auto client = node{runtime, options_for(client_identity)};
 
    const auto server_endpoint = listen(server, runtime);
    (void)fcl::asio::blocking::run(
@@ -2796,10 +2926,48 @@ BOOST_AUTO_TEST_CASE(p2p_identify_push_updates_peer_store) {
    fcl::asio::blocking::run(runtime, stream.async_close());
    wait_on_runtime(runtime, std::chrono::milliseconds{100}, "identify push propagation");
 
-   const auto snapshot = server.peers().snapshot();
-   BOOST_TEST(std::ranges::any_of(snapshot, [](const peer_store::record& record) {
-      return record.protocol_version == "/fcl/push-test/1" &&
-             std::ranges::any_of(record.protocols, [](const protocol_id& protocol) { return protocol == builtins::ping; });
+   const auto found = server.peers().find(client.local_peer());
+   BOOST_REQUIRE(found);
+   BOOST_TEST(found->protocol_version == "/fcl/push-test/1");
+   BOOST_TEST(std::ranges::any_of(found->protocols, [](const protocol_id& protocol) { return protocol == builtins::ping; }));
+   BOOST_REQUIRE_EQUAL(found->endpoints.size(), 1U);
+   BOOST_TEST(found->endpoints.front().endpoint.peer->to_bytes() == client.local_peer().to_bytes(),
+              boost::test_tools::per_element());
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_identify_push_rejects_mismatched_endpoint_peer_suffix) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   const auto server_identity = make_test_certificate_identity("identify-push-mismatch-server");
+   const auto client_identity = make_test_certificate_identity("identify-push-mismatch-client");
+   auto server = node{runtime, options_for(server_identity)};
+   auto client = node{runtime, options_for(client_identity)};
+
+   const auto server_endpoint = listen(server, runtime);
+   (void)fcl::asio::blocking::run(
+       runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
+
+   const auto bad_endpoint =
+       parse_endpoint("/ip4/127.0.0.1/udp/4107/quic-v1/p2p/" + peer(215).to_string());
+   auto stream =
+       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::identify_push));
+   auto pushed = identify::document{
+       .protocol_version = "/fcl/push-bad-peer/1",
+       .agent_version = "fcl-push-bad-peer/1",
+       .listen_endpoints = std::vector<endpoint>{bad_endpoint},
+       .protocols = std::vector<protocol_id>{builtins::ping},
+   };
+   fcl::asio::blocking::run(runtime, stream.async_write(wrap_length_delimited(identify::encode(pushed))));
+   fcl::asio::blocking::run(runtime, stream.async_close());
+   wait_on_runtime(runtime, std::chrono::milliseconds{100}, "identify push mismatch propagation");
+
+   const auto found = server.peers().find(client.local_peer());
+   BOOST_REQUIRE(found);
+   BOOST_TEST(found->protocol_version == "/fcl/push-bad-peer/1");
+   BOOST_TEST(std::ranges::none_of(found->endpoints, [&](const peer_store::endpoint_record& record) {
+      return record.endpoint.to_string() == bad_endpoint.to_string();
    }));
 
    fcl::asio::blocking::run(runtime, client.async_stop());
@@ -2809,14 +2977,15 @@ BOOST_AUTO_TEST_CASE(p2p_identify_push_updates_peer_store) {
 #if FCL_HAS_ROCKSDB
 BOOST_AUTO_TEST_CASE(p2p_identify_push_persists_rocksdb_peer_record) {
    auto temp = temp_store_dir{"identify-push-rocksdb"};
-   const auto client_id = peer(178);
+   const auto server_identity = make_test_certificate_identity("identify-push-rocksdb-server");
+   const auto client_identity = make_test_certificate_identity("identify-push-rocksdb-client");
 
    {
       auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
-      auto server_options = options_for(peer(177));
+      auto server_options = options_for(server_identity);
       server_options.peer_store_path = temp.path();
       auto server = node{runtime, std::move(server_options)};
-      auto client = node{runtime, options_for(client_id)};
+      auto client = node{runtime, options_for(client_identity)};
 
       const auto server_endpoint = listen(server, runtime);
       (void)fcl::asio::blocking::run(
@@ -2833,6 +3002,11 @@ BOOST_AUTO_TEST_CASE(p2p_identify_push_persists_rocksdb_peer_record) {
           .protocols = std::vector<protocol_id>{builtins::ping, builtins::identify},
           .signed_peer_record = std::vector<std::uint8_t>{6, 5, 4},
       };
+      const auto decoded = identify::decode(identify::encode(pushed));
+      BOOST_REQUIRE_EQUAL(decoded.listen_endpoints.size(), 1U);
+      BOOST_REQUIRE(decoded.listen_endpoints.front().peer.has_value());
+      BOOST_TEST(decoded.listen_endpoints.front().peer->to_bytes() == client.local_peer().to_bytes(),
+                 boost::test_tools::per_element());
       fcl::asio::blocking::run(runtime, stream.async_write(wrap_length_delimited(identify::encode(pushed))));
       fcl::asio::blocking::run(runtime, stream.async_close());
       wait_on_runtime(runtime, std::chrono::milliseconds{100}, "identify push persistence");
@@ -2849,6 +3023,7 @@ BOOST_AUTO_TEST_CASE(p2p_identify_push_persists_rocksdb_peer_record) {
       return value.protocol_version == "/fcl/push-persist/1";
    });
    BOOST_REQUIRE(found != snapshot.end());
+   BOOST_TEST(found->peer.to_bytes() == client_identity.peer.to_bytes(), boost::test_tools::per_element());
    BOOST_TEST(found->agent_version == "fcl-push-persist/1");
    BOOST_TEST(found->public_key == std::vector<std::uint8_t>({9, 8, 7}), boost::test_tools::per_element());
    BOOST_TEST(found->signed_peer_record == std::vector<std::uint8_t>({6, 5, 4}), boost::test_tools::per_element());

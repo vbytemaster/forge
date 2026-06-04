@@ -44,6 +44,7 @@ inline const protocol_id echo{.value = "/fcl/p2p/echo/1"};
 inline const protocol_id ping{.value = "/ipfs/ping/1.0.0"};
 inline const protocol_id identify{.value = "/ipfs/id/1.0.0"};
 inline const protocol_id identify_push{.value = "/ipfs/id/push/1.0.0"};
+inline const protocol_id peer_exchange{.value = "/fcl/p2p/peer-exchange/1"};
 inline const protocol_id autonat_v1{.value = "/libp2p/autonat/1.0.0"};
 inline const protocol_id autonat_v2_dial_request{.value = "/libp2p/autonat/2/dial-request"};
 inline const protocol_id autonat_v2_dial_back{.value = "/libp2p/autonat/2/dial-back"};

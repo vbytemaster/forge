@@ -125,6 +125,9 @@ auto endpoint = fcl::p2p::parse_endpoint(
    "/ip4/127.0.0.1/udp/4001/quic-v1/p2p/12D3KooW...");
 
 co_await node.async_listen(endpoint);
+
+co_await node.async_listen(fcl::p2p::parse_endpoint("/ip4/127.0.0.1/tcp/4001"));
+std::vector<fcl::p2p::endpoint> advertised = node.local_endpoints();
 ```
 
 QUIC and TCP+TLS/Noise+Yamux are currently registered direct transports. TCP
@@ -132,6 +135,10 @@ prefers libp2p TLS (`/tls/1.0.0`) and keeps Noise as fallback. `/ws` and `/wss`
 multiaddrs are parseable but direct dial/listen returns typed unsupported until
 a dedicated compatibility block wires a production transport. Future transports
 must use the same private direct profile boundary.
+
+`local_endpoints()` is the full canonical listen/advertise set and each endpoint
+includes `/p2p/<local-peer>`. `local_endpoint()` remains a first-endpoint
+compatibility convenience for older single-listen consumers.
 
 ### Peer Store Backends
 

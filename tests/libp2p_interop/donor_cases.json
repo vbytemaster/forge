@@ -233,6 +233,42 @@
       "known_gap": "WebSocket paths remain outside this scope"
     },
     {
+      "id": "p2p.host_multi_transport_orchestration",
+      "protocol": "P2P Host",
+      "source": "donors/libp2p-specs/addressing/README.md",
+      "donor": "go-libp2p default/listen transport registration tests and rust-libp2p SwarmBuilder transport/relay composition",
+      "donor_file": [
+        "donors/go-libp2p/defaults.go",
+        "donors/go-libp2p/libp2p_test.go",
+        "donors/rust-libp2p/libp2p/src/builder.rs",
+        "donors/rust-libp2p/libp2p/src/builder/phase/relay.rs",
+        "donors/libp2p-specs/addressing/README.md"
+      ],
+      "donor_case": [
+        "multiple listen transports",
+        "transport registration controls listen support",
+        "host-level transport composition",
+        "relay path composed above direct transport",
+        "network address plus peer identity"
+      ],
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "test_fcl_quic_p2p p2p_node_listens_on_quic_and_tcp_and_identify_advertises_both",
+        "test_fcl_quic_p2p p2p_duplicate_direct_listen_rejects_typed",
+        "test_fcl_quic_p2p p2p_peer_exchange_preserves_multiple_direct_endpoints_without_duplicates",
+        "test_fcl_quic_p2p p2p_identify_push_rejects_mismatched_endpoint_peer_suffix",
+        "test_fcl_quic_p2p p2p_stop_closes_all_direct_listeners",
+        "test_fcl_quic_p2p p2p_websocket_multiaddr_is_parseable_but_not_dialable"
+      ],
+      "fcl_live_scenario": [
+        "test_fcl_libp2p_interop identify scenarios record advertised addresses",
+        "test_fcl_libp2p_interop tcp/tcp-tls scenarios prove advertised TCP is dialable",
+        "test_fcl_libp2p_interop relay scenarios keep relay path separate from direct"
+      ],
+      "known_gap": "DHT/rendezvous larger-network publication hardening remains Block F; WebSocket transport remains unsupported"
+    },
+    {
       "id": "interop.live_dcutr_relay_topology",
       "protocol": "DCUtR",
       "source": "donors/libp2p-specs/relay/DCUtR.md",

@@ -19,6 +19,8 @@ add_library(
    peer_store.cpp
    direct_transport.cpp
    direct_transport.hpp
+   host_addresses.cpp
+   host_addresses.hpp
    quic_direct_transport.cpp
    tcp_direct_transport.cpp
    libp2p_tls.cpp
@@ -28,6 +30,8 @@ add_library(
    node_impl.hpp
    operation_deadline.cpp
    operation_deadline.hpp
+   path_selector.cpp
+   path_selector.hpp
    peer_exchange_codec.cpp
    peer_exchange_codec.hpp
    relay_transport.cpp

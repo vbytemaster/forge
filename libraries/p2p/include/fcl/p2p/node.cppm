@@ -160,6 +160,7 @@ class node {
 
    [[nodiscard]] const peer_id& local_peer() const noexcept;
    [[nodiscard]] std::optional<fcl::p2p::endpoint> local_endpoint() const;
+   [[nodiscard]] std::vector<fcl::p2p::endpoint> local_endpoints() const;
    [[nodiscard]] metrics_snapshot metrics() const;
    [[nodiscard]] peer_store& peers() noexcept;
    [[nodiscard]] const peer_store& peers() const noexcept;

@@ -92,6 +92,12 @@ struct relay {
       bool service_enabled = false;
       bool client_enabled = true;
       bool public_relay_allowed = false;
+      bool auto_discovery_enabled = true;
+      std::size_t target_reservations = 2;
+      std::chrono::milliseconds refresh_margin{15'000};
+      std::size_t max_candidates_per_refresh = 20;
+      std::size_t max_parallel_reservations = 2;
+      std::chrono::milliseconds candidate_backoff{3'600'000};
    };
 
    struct hop_message {

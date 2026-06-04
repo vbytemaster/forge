@@ -34,6 +34,8 @@ add_library(
    path_selector.hpp
    peer_exchange_codec.cpp
    peer_exchange_codec.hpp
+   relay_discovery.cpp
+   relay_discovery.hpp
    relay_transport.cpp
    relay_transport.hpp
    session_lifecycle.hpp

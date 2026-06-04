@@ -93,6 +93,22 @@
       ]
     },
     {
+      "id": "autorelay.discovery_reservation_lifecycle",
+      "protocol": "AutoRelay",
+      "source": "donors/libp2p-specs/relay/circuit-v2.md",
+      "donor": "go-libp2p p2p/host/autorelay relay_finder and rust-libp2p relay priv_client reservation lifecycle",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_autorelay_refresh_reserves_peer_store_candidate",
+        "p2p_autorelay_refresh_backs_off_failed_candidate_and_tries_next",
+        "p2p_autorelay_refresh_accepts_dht_and_rendezvous_sourced_candidates",
+        "p2p_autorelay_refresh_respects_candidate_and_target_limits",
+        "p2p_relay_fallback_refreshes_candidate_without_explicit_relay_peer"
+      ],
+      "known_gap": "Iterative DHT/Rendezvous scale refresh and stale-record hardening remains Block F.2"
+    },
+    {
       "id": "dcutr.connect_sync_attempt",
       "protocol": "DCUtR",
       "source": "donors/libp2p-specs/relay/DCUtR.md",

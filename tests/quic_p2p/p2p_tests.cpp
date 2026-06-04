@@ -2216,6 +2216,214 @@ BOOST_AUTO_TEST_CASE(p2p_relay_reservation_persists_candidate) {
    fcl::asio::blocking::run(runtime, relay_node.async_stop());
 }
 
+BOOST_AUTO_TEST_CASE(p2p_autorelay_refresh_reserves_peer_store_candidate) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto relay_node =
+       node{runtime, options_for(peer(104), capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                                                   capabilities::relay_reservation})};
+   auto client_options =
+       options_for(peer(105), capability_set{.bits = capabilities::direct_quic | capabilities::relay_reservation});
+   client_options.relay_policy.target_reservations = 1;
+   client_options.relay_policy.max_candidates_per_refresh = 2;
+   client_options.relay_policy.max_parallel_reservations = 1;
+   auto client = node{runtime, std::move(client_options)};
+
+   const auto relay_endpoint = listen(relay_node, runtime);
+   client.peers().learn_endpoint(
+       relay_node.local_peer(), relay_endpoint,
+       capability_set{.bits = capabilities::direct_quic | capabilities::relay | capabilities::relay_reservation});
+
+   const auto reservations = fcl::asio::blocking::run(runtime, client.async_refresh_relay_candidates());
+   BOOST_REQUIRE_EQUAL(reservations.size(), 1U);
+   BOOST_TEST(reservations.front().relay_peer.to_string() == relay_node.local_peer().to_string());
+
+   const auto stored = client.peers().find(relay_node.local_peer());
+   BOOST_REQUIRE(stored.has_value());
+   BOOST_REQUIRE_EQUAL(stored->relay_reservations.size(), 1U);
+   BOOST_TEST(stored->relay_reservations.front().relay.to_string() == relay_node.local_peer().to_string());
+   BOOST_TEST(client.metrics().relay_discovery_refreshes == 1U);
+   BOOST_TEST(client.metrics().relay_discovery_attempts == 1U);
+   BOOST_TEST(client.metrics().relay_discovery_successes == 1U);
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, relay_node.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_autorelay_refresh_backs_off_failed_candidate_and_tries_next) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto bad_options =
+       options_for(peer(106), capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                                     capabilities::relay_reservation});
+   bad_options.relay_policy.service_enabled = false;
+   auto bad_relay = node{runtime, std::move(bad_options)};
+   auto good_relay =
+       node{runtime, options_for(peer(107), capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                                                   capabilities::relay_reservation})};
+   auto client_options =
+       options_for(peer(108), capability_set{.bits = capabilities::direct_quic | capabilities::relay_reservation});
+   client_options.relay_policy.target_reservations = 1;
+   client_options.relay_policy.max_candidates_per_refresh = 2;
+   client_options.relay_policy.max_parallel_reservations = 1;
+   client_options.relay_policy.candidate_backoff = std::chrono::seconds{30};
+   auto client = node{runtime, std::move(client_options)};
+
+   const auto bad_endpoint = listen(bad_relay, runtime);
+   const auto good_endpoint = listen(good_relay, runtime);
+   client.peers().learn_endpoint(
+       bad_relay.local_peer(), bad_endpoint,
+       capability_set{.bits = capabilities::direct_quic | capabilities::relay | capabilities::relay_reservation});
+   client.peers().learn_endpoint(
+       good_relay.local_peer(), good_endpoint,
+       capability_set{.bits = capabilities::direct_quic | capabilities::relay | capabilities::relay_reservation});
+   auto bad_record = client.peers().find(bad_relay.local_peer()).value();
+   bad_record.score = 100.0;
+   client.peers().upsert(std::move(bad_record));
+
+   const auto reservations = fcl::asio::blocking::run(runtime, client.async_refresh_relay_candidates());
+   BOOST_REQUIRE_EQUAL(reservations.size(), 1U);
+   BOOST_TEST(reservations.front().relay_peer.to_string() == good_relay.local_peer().to_string());
+   BOOST_TEST(client.metrics().relay_discovery_attempts == 2U);
+   BOOST_TEST(client.metrics().relay_discovery_failures == 1U);
+   BOOST_TEST(client.metrics().relay_discovery_successes == 1U);
+
+   const auto failed = client.peers().find(bad_relay.local_peer());
+   BOOST_REQUIRE(failed.has_value());
+   BOOST_TEST(failed->discovery_backoff_until > std::chrono::system_clock::now());
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, good_relay.async_stop());
+   fcl::asio::blocking::run(runtime, bad_relay.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_autorelay_refresh_accepts_dht_and_rendezvous_sourced_candidates) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto dht_relay =
+       node{runtime, options_for(peer(116), capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                                                   capabilities::relay_reservation})};
+   auto rendezvous_relay =
+       node{runtime, options_for(peer(117), capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                                                   capabilities::relay_reservation})};
+   auto client_options =
+       options_for(peer(120), capability_set{.bits = capabilities::direct_quic | capabilities::relay_reservation});
+   client_options.relay_policy.target_reservations = 2;
+   client_options.relay_policy.max_candidates_per_refresh = 2;
+   client_options.relay_policy.max_parallel_reservations = 1;
+   auto client = node{runtime, std::move(client_options)};
+
+   const auto dht_endpoint = listen(dht_relay, runtime);
+   const auto rendezvous_endpoint = listen(rendezvous_relay, runtime);
+   client.peers().upsert(peer_store::record{
+       .peer = dht_relay.local_peer(),
+       .capabilities = capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                              capabilities::relay_reservation},
+       .discovered_by = discovery::source::dht,
+       .endpoints = std::vector<peer_store::endpoint_record>{peer_store::endpoint_record{.endpoint = dht_endpoint}},
+       .discovery_expires_at = std::chrono::system_clock::now() + std::chrono::minutes{5},
+   });
+   client.peers().upsert(peer_store::record{
+       .peer = rendezvous_relay.local_peer(),
+       .capabilities = capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                              capabilities::relay_reservation},
+       .discovered_by = discovery::source::rendezvous,
+       .endpoints =
+           std::vector<peer_store::endpoint_record>{peer_store::endpoint_record{.endpoint = rendezvous_endpoint}},
+       .discovery_expires_at = std::chrono::system_clock::now() + std::chrono::minutes{5},
+   });
+
+   const auto reservations = fcl::asio::blocking::run(runtime, client.async_refresh_relay_candidates());
+   BOOST_REQUIRE_EQUAL(reservations.size(), 2U);
+   BOOST_TEST(client.metrics().relay_discovery_attempts == 2U);
+   BOOST_TEST(client.metrics().relay_discovery_successes == 2U);
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, rendezvous_relay.async_stop());
+   fcl::asio::blocking::run(runtime, dht_relay.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_autorelay_refresh_respects_candidate_and_target_limits) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto first =
+       node{runtime, options_for(peer(113), capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                                                   capabilities::relay_reservation})};
+   auto second =
+       node{runtime, options_for(peer(114), capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                                                   capabilities::relay_reservation})};
+   auto client_options =
+       options_for(peer(115), capability_set{.bits = capabilities::direct_quic | capabilities::relay_reservation});
+   client_options.relay_policy.target_reservations = 1;
+   client_options.relay_policy.max_candidates_per_refresh = 1;
+   client_options.relay_policy.max_parallel_reservations = 1;
+   auto client = node{runtime, std::move(client_options)};
+
+   const auto first_endpoint = listen(first, runtime);
+   const auto second_endpoint = listen(second, runtime);
+   client.peers().learn_endpoint(
+       first.local_peer(), first_endpoint,
+       capability_set{.bits = capabilities::direct_quic | capabilities::relay | capabilities::relay_reservation});
+   client.peers().learn_endpoint(
+       second.local_peer(), second_endpoint,
+       capability_set{.bits = capabilities::direct_quic | capabilities::relay | capabilities::relay_reservation});
+
+   const auto reservations = fcl::asio::blocking::run(runtime, client.async_refresh_relay_candidates());
+   BOOST_REQUIRE_EQUAL(reservations.size(), 1U);
+   BOOST_TEST(client.metrics().relay_discovery_attempts == 1U);
+   BOOST_TEST(client.metrics().relay_discovery_successes == 1U);
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, second.async_stop());
+   fcl::asio::blocking::run(runtime, first.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_relay_fallback_refreshes_candidate_without_explicit_relay_peer) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   const auto relay_identity = make_test_certificate_identity("autorelay-fallback-relay");
+   const auto source_identity = make_test_certificate_identity("autorelay-fallback-source");
+   const auto target_identity = make_test_certificate_identity("autorelay-fallback-target");
+   auto relay_node = node{
+       runtime, options_for(relay_identity, capability_set{.bits = capabilities::direct_quic | capabilities::relay |
+                                                                   capabilities::relay_reservation})};
+   auto source_options =
+       options_for(source_identity, capability_set{.bits = capabilities::direct_quic | capabilities::relay_reservation});
+   source_options.relay_policy.target_reservations = 1;
+   source_options.relay_policy.max_candidates_per_refresh = 2;
+   source_options.relay_policy.max_parallel_reservations = 1;
+   auto source = node{runtime, std::move(source_options)};
+   auto target = node{runtime, options_for(target_identity, capability_set{.bits = capabilities::direct_quic |
+                                                                                   capabilities::relay_reservation})};
+   register_echo(target);
+
+   const auto relay_endpoint = listen(relay_node, runtime);
+   (void)listen(target, runtime);
+   source.peers().learn_endpoint(
+       relay_node.local_peer(), relay_endpoint,
+       capability_set{.bits = capabilities::direct_quic | capabilities::relay | capabilities::relay_reservation});
+   target.peers().learn_endpoint(
+       relay_node.local_peer(), relay_endpoint,
+       capability_set{.bits = capabilities::direct_quic | capabilities::relay | capabilities::relay_reservation});
+   (void)fcl::asio::blocking::run(runtime, target.async_reserve_relay(relay_node.local_peer()));
+
+   auto stream = fcl::asio::blocking::run(
+       runtime, source.async_open_protocol_stream(target.local_peer(), builtins::echo,
+                                                  node::open_options{
+                                                      .allow_relay = true,
+                                                      .direct_attempt_timeout = std::chrono::milliseconds{100},
+                                                      .relay_attempt_timeout = std::chrono::milliseconds{2'000},
+                                                      .allow_hole_punch = false,
+                                                  }));
+   const auto payload = std::vector<std::uint8_t>{'a', 'u', 't', 'o'};
+   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+
+   BOOST_TEST(reply == payload, boost::test_tools::per_element());
+   BOOST_TEST(source.metrics().relay_discovery_refreshes >= 1U);
+   BOOST_TEST(source.metrics().relay_discovery_successes >= 1U);
+   BOOST_TEST(source.metrics().path_relay_opens >= 1U);
+
+   fcl::asio::blocking::run(runtime, target.async_stop());
+   fcl::asio::blocking::run(runtime, source.async_stop());
+   fcl::asio::blocking::run(runtime, relay_node.async_stop());
+}
+
 BOOST_AUTO_TEST_CASE(p2p_relay_policy_options_are_behavioral) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
    auto relay_options = options_for(peer(110), capability_set{.bits = capabilities::direct_quic | capabilities::relay |

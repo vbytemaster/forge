@@ -361,10 +361,15 @@ READMEs may link here, but must not define a second block order.
 
 ### Block F: P2P Completion
 
-- F.1 Global AutoRelay discovery: relay candidates must come from peer store,
-  Identify, DHT and rendezvous discovery, not from manual configuration luck.
-  The node must maintain reservation lifecycle, candidate freshness, backoff and
-  relay trust policy inside `fcl_p2p`.
+- F.1 implemented checkpoint: production AutoRelay discovery lives in private
+  `fcl_p2p` host/node orchestration. `node::async_refresh_relay_candidates()`
+  and the background maintenance path use the same candidate collector over
+  peer store, Identify/peer-exchange records, DHT-learned peers and
+  Rendezvous-learned peers. The node maintains fresh outbound relay
+  reservations, prunes expired records, backs off failed relay candidates and
+  uses bounded refresh before relay fallback returns `relay_not_available`.
+  Manual `relay_peer` remains an explicit override. Relay discovery is not owned
+  by `direct`, plugins or product loops.
 - F.2 DHT/Rendezvous hardening for larger networks: iterative DHT many-peer
   topology, refresh/republish, stale record cleanup, rendezvous registration
   refresh/expiry and discovery-backed relay candidates.

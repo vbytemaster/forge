@@ -5,6 +5,7 @@
 #include "operation_deadline.hpp"
 #include "path_selector.hpp"
 #include "peer_exchange_codec.hpp"
+#include "relay_discovery.hpp"
 #include "relay_transport.hpp"
 
 namespace fcl::p2p {
@@ -65,6 +66,10 @@ struct node::impl : std::enable_shared_from_this<impl> {
       bool heartbeat_started = false;
    };
 
+   struct relay_discovery_state {
+      bool maintenance_started = false;
+   };
+
    impl(fcl::asio::runtime& runtime_value, node::options options_value);
    fcl::asio::runtime& runtime;
    node::options options;
@@ -81,6 +86,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
    std::uint64_t next_reservation_id = 1;
    resource_manager resources{options.limits.resources};
    pubsub_state pubsub_value;
+   relay_discovery_state relay_discovery_value;
    node::metrics_snapshot metrics_value;
    std::size_t active_ping_streams = 0;
    bool stopped = false;
@@ -130,6 +136,12 @@ struct node::impl : std::enable_shared_from_this<impl> {
    void cleanup_expired_relay_reservations_locked();
 
    [[nodiscard]] bool has_outbound_relay_reservation(const peer_id& relay_peer);
+
+   [[nodiscard]] bool has_fresh_outbound_relay_reservation(const peer_id& relay_peer,
+                                                           std::chrono::milliseconds refresh_margin);
+
+   [[nodiscard]] std::vector<peer_id> fresh_outbound_relay_candidates(std::size_t limit,
+                                                                      std::chrono::milliseconds refresh_margin);
 
    bool remember_outbound_relay_reservation(relay_reservation_state reservation);
 
@@ -221,6 +233,11 @@ struct node::impl : std::enable_shared_from_this<impl> {
                              std::chrono::milliseconds timeout);
 
    boost::asio::awaitable<void> ensure_relay_reservation(const peer_id& relay_peer, std::chrono::milliseconds timeout);
+
+   boost::asio::awaitable<std::vector<relay::reservation::info>>
+   refresh_relay_candidates(std::optional<peer_id> target, std::chrono::milliseconds timeout);
+
+   void launch_relay_discovery_maintenance();
 
    boost::asio::awaitable<std::shared_ptr<fcl::yamux::session>>
    open_relay_yamux(const peer_id& peer, const peer_id& relay_peer, std::chrono::milliseconds timeout);

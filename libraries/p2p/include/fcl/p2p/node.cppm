@@ -122,6 +122,10 @@ class node {
       std::uint64_t relay_reservations = 0;
       std::uint64_t relay_reservation_rejections = 0;
       std::uint64_t relay_reservation_expirations = 0;
+      std::uint64_t relay_discovery_refreshes = 0;
+      std::uint64_t relay_discovery_attempts = 0;
+      std::uint64_t relay_discovery_successes = 0;
+      std::uint64_t relay_discovery_failures = 0;
       std::uint64_t relay_bytes = 0;
       std::uint64_t hole_punch_attempts = 0;
       std::uint64_t hole_punch_successes = 0;
@@ -174,6 +178,7 @@ class node {
    boost::asio::awaitable<relay::reservation::info> async_reserve_relay(peer_id relay_peer);
    boost::asio::awaitable<relay::reservation::info> async_reserve_relay(peer_id relay_peer,
                                                                         relay::reservation::options options);
+   boost::asio::awaitable<std::vector<relay::reservation::info>> async_refresh_relay_candidates();
    boost::asio::awaitable<void> async_cancel_relay(peer_id relay_peer);
    boost::asio::awaitable<dht::query_result> async_find_peer(peer_id peer);
    boost::asio::awaitable<void> async_provide(dht::key key);

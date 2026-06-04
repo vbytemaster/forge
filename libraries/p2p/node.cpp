@@ -137,6 +137,7 @@ boost::asio::awaitable<void> node::async_listen(fcl::p2p::endpoint endpoint) {
    }
    self->launch_accept_loop(std::move(local_endpoint));
    self->launch_pubsub_heartbeat();
+   self->launch_relay_discovery_maintenance();
    co_return;
 }
 
@@ -257,6 +258,11 @@ boost::asio::awaitable<relay::reservation::info> node::async_reserve_relay(peer_
                                                                            relay::reservation::options options) {
    auto self = impl_;
    co_return co_await self->request_relay_reservation(relay_peer, options, node::connect_options{}.timeout);
+}
+
+boost::asio::awaitable<std::vector<relay::reservation::info>> node::async_refresh_relay_candidates() {
+   auto self = impl_;
+   co_return co_await self->refresh_relay_candidates(std::nullopt, self->options.limits.discovery.query_timeout);
 }
 
 boost::asio::awaitable<void> node::async_cancel_relay(peer_id relay_peer) {
@@ -618,25 +624,19 @@ boost::asio::awaitable<fcl::p2p::stream> node::async_open_protocol_stream(peer_i
    if (effective.relay_peer) {
       relay_candidates.push_back(*effective.relay_peer);
    } else if (effective.allow_relay || effective.allow_hole_punch) {
-      const auto snapshot = self->store.snapshot();
-      auto relay_records = std::vector<peer_store::record>{};
-      for (const auto& record : snapshot) {
-         if (record.peer == peer) {
-            continue;
+      relay_candidates =
+          self->fresh_outbound_relay_candidates(effective.max_relay_candidates, self->options.relay_policy.refresh_margin);
+      if (relay_candidates.empty() && self->options.relay_policy.auto_discovery_enabled) {
+         const auto remaining = remaining_timeout(started, effective.timeout, "P2P AutoRelay refresh");
+         const auto refresh_timeout = attempt_timeout(remaining, effective.relay_attempt_timeout, "P2P AutoRelay refresh");
+         try {
+            (void)co_await self->refresh_relay_candidates(peer, refresh_timeout);
+            relay_candidates = self->fresh_outbound_relay_candidates(effective.max_relay_candidates,
+                                                                     self->options.relay_policy.refresh_margin);
+         } catch (const fcl::exceptions::base& error) {
+            last_kind = p2p_code(error);
+            last_message = error.what();
          }
-         if (!record.capabilities.has(capabilities::relay) ||
-             !record.capabilities.has(capabilities::relay_reservation)) {
-            continue;
-         }
-         relay_records.push_back(record);
-      }
-      std::stable_sort(relay_records.begin(), relay_records.end(),
-                       [](const auto& left, const auto& right) { return left.score > right.score; });
-      for (const auto& record : relay_records) {
-         if (relay_candidates.size() >= effective.max_relay_candidates) {
-            break;
-         }
-         relay_candidates.push_back(record.peer);
       }
    }
 

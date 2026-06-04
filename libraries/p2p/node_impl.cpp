@@ -27,6 +27,7 @@ module;
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
@@ -293,6 +294,11 @@ void validate(const node::options& options) {
    }
    if (options.path_policy.max_direct_endpoints == 0 || options.path_policy.max_relay_candidates == 0) {
       FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P path policy limits must be positive");
+   }
+   if (options.relay_policy.target_reservations == 0 || options.relay_policy.refresh_margin.count() <= 0 ||
+       options.relay_policy.max_candidates_per_refresh == 0 ||
+       options.relay_policy.max_parallel_reservations == 0 || options.relay_policy.candidate_backoff.count() <= 0) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P AutoRelay policy limits must be positive");
    }
 }
 
@@ -575,6 +581,49 @@ void node::impl::cleanup_expired_relay_reservations_locked() {
    auto lock = std::scoped_lock{mutex};
    cleanup_expired_relay_reservations_locked();
    return outbound_relay_reservations.contains(relay_peer);
+}
+
+[[nodiscard]] bool node::impl::has_fresh_outbound_relay_reservation(const peer_id& relay_peer,
+                                                                    std::chrono::milliseconds refresh_margin) {
+   auto lock = std::scoped_lock{mutex};
+   cleanup_expired_relay_reservations_locked();
+   const auto it = outbound_relay_reservations.find(relay_peer);
+   if (it == outbound_relay_reservations.end()) {
+      return false;
+   }
+   return it->second.expires_at > std::chrono::steady_clock::now() + refresh_margin;
+}
+
+[[nodiscard]] std::vector<peer_id>
+node::impl::fresh_outbound_relay_candidates(std::size_t limit, std::chrono::milliseconds refresh_margin) {
+   auto out = std::vector<peer_id>{};
+   if (limit == 0) {
+      return out;
+   }
+   auto lock = std::scoped_lock{mutex};
+   cleanup_expired_relay_reservations_locked();
+   auto scored = std::vector<std::pair<double, peer_id>>{};
+   scored.reserve(outbound_relay_reservations.size());
+   for (const auto& [relay_peer, reservation] : outbound_relay_reservations) {
+      if (reservation.expires_at <= std::chrono::steady_clock::now() + refresh_margin) {
+         continue;
+      }
+      const auto record = store.find(relay_peer);
+      scored.push_back({record ? record->score : 0.0, relay_peer});
+   }
+   std::stable_sort(scored.begin(), scored.end(), [](const auto& left, const auto& right) {
+      if (left.first != right.first) {
+         return left.first > right.first;
+      }
+      return left.second.to_string() < right.second.to_string();
+   });
+   for (const auto& [_, relay_peer] : scored) {
+      if (out.size() >= limit) {
+         break;
+      }
+      out.push_back(relay_peer);
+   }
+   return out;
 }
 
 bool node::impl::remember_outbound_relay_reservation(node::impl::relay_reservation_state reservation) {
@@ -1319,6 +1368,130 @@ boost::asio::awaitable<void> node::impl::ensure_relay_reservation(const peer_id&
                                                 .max_queued_bytes = options.limits.relay.max_queued_bytes,
                                             },
                                             timeout);
+}
+
+boost::asio::awaitable<std::vector<relay::reservation::info>>
+node::impl::refresh_relay_candidates(std::optional<peer_id> target, std::chrono::milliseconds timeout) {
+   validate_operation_timeout(timeout, "P2P AutoRelay refresh timeout");
+   if (!options.relay_policy.client_enabled) {
+      FCL_THROW_EXCEPTION(exceptions::relay_not_available, "P2P relay client policy is disabled");
+   }
+   if (!options.relay_policy.auto_discovery_enabled) {
+      co_return std::vector<relay::reservation::info>{};
+   }
+
+   {
+      auto lock = std::scoped_lock{mutex};
+      if (stopped) {
+         FCL_THROW_EXCEPTION(exceptions::closed, "P2P node is stopped");
+      }
+      ++metrics_value.relay_discovery_refreshes;
+   }
+
+   const auto system_now = std::chrono::system_clock::now();
+   relay_discovery::prune_expired_reservations(store, system_now);
+
+   const auto target_reservations = options.relay_policy.target_reservations;
+   auto fresh_count = fresh_outbound_relay_candidates(target_reservations, options.relay_policy.refresh_margin).size();
+   if (fresh_count >= target_reservations) {
+      co_return std::vector<relay::reservation::info>{};
+   }
+
+   const auto snapshot = store.snapshot();
+   auto candidates = relay_discovery::select_candidates(
+       snapshot,
+       relay_discovery::request{
+           .local = local,
+           .target = target.value_or(peer_id{}),
+           .now = system_now,
+           .limit = options.relay_policy.max_candidates_per_refresh,
+       });
+   auto out = std::vector<relay::reservation::info>{};
+   out.reserve(std::min(candidates.size(), target_reservations - fresh_count));
+
+   const auto started = std::chrono::steady_clock::now();
+   auto attempts_in_batch = std::size_t{0};
+   for (const auto& candidate : candidates) {
+      if (fresh_count + out.size() >= target_reservations) {
+         break;
+      }
+      if (attempts_in_batch >= options.relay_policy.max_parallel_reservations) {
+         co_await asio::post(runtime.context(), asio::use_awaitable);
+         attempts_in_batch = 0;
+      }
+      if (has_fresh_outbound_relay_reservation(candidate.peer, options.relay_policy.refresh_margin)) {
+         ++fresh_count;
+         continue;
+      }
+      ++attempts_in_batch;
+      {
+         auto lock = std::scoped_lock{mutex};
+         ++metrics_value.relay_discovery_attempts;
+      }
+      try {
+         const auto remaining = remaining_timeout(started, timeout, "P2P AutoRelay refresh");
+         auto info = co_await request_relay_reservation(
+             candidate.peer,
+             relay::reservation::options{
+                 .ttl = options.limits.relay.reservation_ttl,
+                 .max_streams = options.limits.relay.max_streams_per_reservation,
+                 .max_bytes = options.limits.relay.max_relay_bytes,
+                 .max_queued_bytes = options.limits.relay.max_queued_bytes,
+             },
+             remaining);
+         store.mark_success(candidate.peer, path::kind::relay, std::chrono::milliseconds{0});
+         {
+            auto lock = std::scoped_lock{mutex};
+            ++metrics_value.relay_discovery_successes;
+         }
+         out.push_back(std::move(info));
+      } catch (const fcl::exceptions::base&) {
+         relay_discovery::backoff_candidate(store, candidate.peer,
+                                            std::chrono::system_clock::now() + options.relay_policy.candidate_backoff);
+         {
+            auto lock = std::scoped_lock{mutex};
+            ++metrics_value.relay_discovery_failures;
+         }
+      }
+   }
+   co_return out;
+}
+
+void node::impl::launch_relay_discovery_maintenance() {
+   if (!options.relay_policy.client_enabled || !options.relay_policy.auto_discovery_enabled) {
+      return;
+   }
+   {
+      auto lock = std::scoped_lock{mutex};
+      if (relay_discovery_value.maintenance_started) {
+         return;
+      }
+      relay_discovery_value.maintenance_started = true;
+   }
+   auto self = shared_from_this();
+   asio::co_spawn(
+       runtime.context(),
+       [self]() -> asio::awaitable<void> {
+          auto timer = asio::steady_timer{co_await asio::this_coro::executor};
+          while (true) {
+             timer.expires_after(self->options.limits.discovery.refresh_interval);
+             auto ec = boost::system::error_code{};
+             co_await timer.async_wait(asio::redirect_error(asio::use_awaitable, ec));
+             {
+                auto lock = std::scoped_lock{self->mutex};
+                if (self->stopped) {
+                   co_return;
+                }
+             }
+             try {
+                (void)co_await self->refresh_relay_candidates(std::nullopt, self->options.limits.discovery.query_timeout);
+             } catch (const fcl::exceptions::base&) {
+                auto lock = std::scoped_lock{self->mutex};
+                ++self->metrics_value.relay_discovery_failures;
+             }
+          }
+       },
+       asio::detached);
 }
 
 boost::asio::awaitable<std::shared_ptr<fcl::yamux::session>>

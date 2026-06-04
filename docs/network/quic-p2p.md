@@ -370,9 +370,21 @@ READMEs may link here, but must not define a second block order.
   uses bounded refresh before relay fallback returns `relay_not_available`.
   Manual `relay_peer` remains an explicit override. Relay discovery is not owned
   by `direct`, plugins or product loops.
-- F.2 DHT/Rendezvous hardening for larger networks: iterative DHT many-peer
-  topology, refresh/republish, stale record cleanup, rendezvous registration
-  refresh/expiry and discovery-backed relay candidates.
+- F.2 implemented checkpoint: DHT/Rendezvous discovery lifecycle is hardened in
+  private `fcl_p2p` algorithms, not transport/direct/plugins. `dht_query`
+  performs bounded iterative Kademlia-style lookup with queried/failed sets,
+  XOR-distance closer-peer merging, typed timeout/cancel behavior and stale
+  routing/provider pruning through `peer_store`. `node::async_find_peer(...)`,
+  `async_find_providers(...)` and `async_provide(...)` use the iterative path;
+  `ADD_PROVIDER` remains libp2p-compatible fire-and-close and validates that
+  the provider peer matches the authenticated stream peer. Rendezvous
+  registration refresh replaces same peer/namespace records, discover uses
+  cookie continuation and namespace scoping, signed PeerRecords are strictly
+  validated before learning endpoints, and `node::async_refresh_discovery()`
+  feeds fresh DHT/Rendezvous relay-capable peers into the existing AutoRelay
+  reservation owner. Live many-peer donor topology artifacts remain limited by
+  fixture support and are tracked as donor-matrix gaps, not unsupported runtime
+  behavior.
 - F.3 Connection manager and resource policy: protected peers, max
   inbound/outbound connections, pruning, reconnect/backoff, per-peer abuse
   accounting and transport-aware limits. Mixed QUIC/TCP networks must not become

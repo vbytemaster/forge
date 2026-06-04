@@ -70,6 +70,10 @@ struct node::impl : std::enable_shared_from_this<impl> {
       bool maintenance_started = false;
    };
 
+   struct discovery_state {
+      std::map<std::pair<peer_id, std::string>, std::vector<std::uint8_t>> rendezvous_cookies;
+   };
+
    impl(fcl::asio::runtime& runtime_value, node::options options_value);
    fcl::asio::runtime& runtime;
    node::options options;
@@ -87,6 +91,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
    resource_manager resources{options.limits.resources};
    pubsub_state pubsub_value;
    relay_discovery_state relay_discovery_value;
+   discovery_state discovery_value;
    node::metrics_snapshot metrics_value;
    std::size_t active_ping_streams = 0;
    bool stopped = false;

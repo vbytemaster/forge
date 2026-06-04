@@ -70,6 +70,7 @@ import fcl.yamux.exceptions;
 import fcl.yamux.session;
 
 #include "node_impl.hpp"
+#include "protocol_capabilities.hpp"
 #include "relay_accounting.hpp"
 #include "session_lifecycle.hpp"
 
@@ -366,6 +367,7 @@ void node::impl::learn_from_identify(const peer_id& peer, const identify::docume
    record.agent_version = document.agent_version;
    record.public_key = document.public_key;
    record.protocols = document.protocols;
+   record.capabilities.bits |= capabilities_for(document.protocols).bits;
    record.signed_peer_record = document.signed_peer_record;
    record.observed_endpoint = document.observed_endpoint ? document.observed_endpoint : record.observed_endpoint;
    const auto context = host_addresses::learning_context{

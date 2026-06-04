@@ -32,6 +32,7 @@ struct discovery {
       std::chrono::milliseconds refresh_interval{600'000};
       std::size_t max_parallel_queries = 10;
       std::size_t max_results = 20;
+      std::vector<std::string> rendezvous_namespaces{"fcl.discovery"};
    };
 
    struct result {

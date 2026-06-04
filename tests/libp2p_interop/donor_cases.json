@@ -104,9 +104,9 @@
         "p2p_autorelay_refresh_backs_off_failed_candidate_and_tries_next",
         "p2p_autorelay_refresh_accepts_dht_and_rendezvous_sourced_candidates",
         "p2p_autorelay_refresh_respects_candidate_and_target_limits",
-        "p2p_relay_fallback_refreshes_candidate_without_explicit_relay_peer"
-      ],
-      "known_gap": "Iterative DHT/Rendezvous scale refresh and stale-record hardening remains Block F.2"
+        "p2p_relay_fallback_refreshes_candidate_without_explicit_relay_peer",
+        "p2p_discovery_refresh_learns_dht_and_rendezvous_relay_candidates_for_autorelay"
+      ]
     },
     {
       "id": "dcutr.connect_sync_attempt",
@@ -282,7 +282,7 @@
         "test_fcl_libp2p_interop tcp/tcp-tls scenarios prove advertised TCP is dialable",
         "test_fcl_libp2p_interop relay scenarios keep relay path separate from direct"
       ],
-      "known_gap": "DHT/rendezvous larger-network publication hardening remains Block F; WebSocket transport remains unsupported"
+      "known_gap": "WebSocket transport remains unsupported"
     },
     {
       "id": "interop.live_dcutr_relay_topology",
@@ -325,6 +325,19 @@
       ]
     },
     {
+      "id": "dht.iterative_lookup_and_provider_publication",
+      "protocol": "Kademlia DHT",
+      "source": "donors/libp2p-specs/kad-dht/README.md",
+      "donor": "go-libp2p-kad-dht query/provider behaviour and rust-libp2p kad query pool acceptance criteria",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_dht_iterative_lookup_walks_many_peer_topology",
+        "p2p_dht_iterative_provider_lookup_and_provide_reach_closest_peers"
+      ],
+      "known_gap": "Live many-peer DHT topology artifacts remain limited by current fixture support"
+    },
+    {
       "id": "rendezvous.register_discover_ttl_cookie",
       "protocol": "Rendezvous",
       "source": "donors/libp2p-specs/rendezvous/README.md",
@@ -336,6 +349,19 @@
         "p2p_rendezvous_node_registers_and_discovers_over_negotiated_stream",
         "p2p_peer_store_rocksdb_persists_discovery_dht_and_rendezvous_state"
       ]
+    },
+    {
+      "id": "rendezvous.refresh_cookie_and_discovery_feed",
+      "protocol": "Rendezvous",
+      "source": "donors/libp2p-specs/rendezvous/README.md",
+      "donor": "rust-libp2p rendezvous refresh, signed PeerRecord and cookie continuation behaviour",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_rendezvous_refresh_replaces_registration_and_cookie_discovers_new_records",
+        "p2p_discovery_refresh_learns_dht_and_rendezvous_relay_candidates_for_autorelay"
+      ],
+      "known_gap": "Go rendezvous remains a wire-level future scenario because no official go-libp2p rendezvous behaviour donor is present"
     },
     {
       "id": "interop.live_dht_peer_provider_lookup",

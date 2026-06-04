@@ -249,6 +249,27 @@ std::vector<std::uint8_t> make_signed_rendezvous_peer_record(const test_identity
        .encode();
 }
 
+std::vector<std::uint8_t> make_signed_rendezvous_peer_record(const test_certificate_identity& identity,
+                                                             std::vector<endpoint> endpoints = {},
+                                                             std::uint64_t sequence = 1) {
+   const auto private_key = fcl::crypto::pem::read_private_key(identity.private_key_pem);
+   const auto key = public_key{
+       .type = public_key::type::rsa,
+       .data = fcl::crypto::der::write_public_key(private_key.get_public_key()),
+   };
+   if (endpoints.empty()) {
+      endpoints.push_back(parse_endpoint("/ip4/127.0.0.1/udp/4401/quic-v1/p2p/" + identity.peer.to_string()));
+   }
+   return rendezvous::codec::seal_peer_record(
+              rendezvous::peer_record{
+                  .peer = identity.peer,
+                  .endpoints = std::move(endpoints),
+                  .sequence = sequence,
+              },
+              key, private_key)
+       .encode();
+}
+
 test_certificate_identity make_test_certificate_identity(std::string_view common_name) {
    auto key_context =
        std::unique_ptr<EVP_PKEY_CTX, evp_pkey_ctx_deleter>{EVP_PKEY_CTX_new_from_name(nullptr, "RSA", nullptr)};
@@ -2887,6 +2908,147 @@ BOOST_AUTO_TEST_CASE(p2p_dht_node_finds_peer_and_provider_over_negotiated_stream
    fcl::asio::blocking::run(runtime, server.async_stop());
 }
 
+BOOST_AUTO_TEST_CASE(p2p_dht_iterative_lookup_walks_many_peer_topology) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   const auto seed_identity = make_test_certificate_identity("dht-seed");
+   const auto hop_identity = make_test_certificate_identity("dht-hop");
+   const auto client_identity = make_test_certificate_identity("dht-client");
+   auto seed_options =
+       options_for(seed_identity, capability_set{.bits = capabilities::direct_quic | capabilities::dht});
+   seed_options.limits.dht.operating_mode = dht::mode::server;
+   auto hop_options =
+       options_for(hop_identity, capability_set{.bits = capabilities::direct_quic | capabilities::dht});
+   hop_options.limits.dht.operating_mode = dht::mode::server;
+   auto client_options =
+       options_for(client_identity, capability_set{.bits = capabilities::direct_quic | capabilities::dht});
+   client_options.limits.dht.alpha = 1;
+
+   auto seed = node{runtime, std::move(seed_options)};
+   auto hop = node{runtime, std::move(hop_options)};
+   auto client = node{runtime, std::move(client_options)};
+   const auto seed_endpoint = listen(seed, runtime);
+   const auto hop_endpoint = listen(hop, runtime);
+   client.peers().learn_endpoint(seed.local_peer(), seed_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::dht});
+
+   const auto target = peer(127);
+   const auto target_endpoint = parse_endpoint("/ip4/127.0.0.1/udp/4127/quic-v1/p2p/" + target.to_string());
+   seed.peers().upsert_routing_peer(
+       dht::peer{
+           .id = hop.local_peer(),
+           .endpoints = std::vector<endpoint>{hop_endpoint},
+           .connection = dht::connection_type::can_connect,
+       },
+       discovery::source::dht, std::chrono::system_clock::now() + std::chrono::hours{1});
+   hop.peers().upsert_routing_peer(
+       dht::peer{
+           .id = target,
+           .endpoints = std::vector<endpoint>{target_endpoint},
+           .connection = dht::connection_type::can_connect,
+       },
+       discovery::source::dht, std::chrono::system_clock::now() + std::chrono::hours{1});
+
+   const auto found = fcl::asio::blocking::run(runtime, client.async_find_peer(target));
+   BOOST_TEST(found.complete);
+   BOOST_TEST(std::ranges::any_of(found.closest_peers, [&](const dht::peer& value) {
+      return value.id == target && !value.endpoints.empty() &&
+             value.endpoints.front().to_string() == target_endpoint.to_string();
+   }));
+   BOOST_TEST(seed.metrics().dht_queries >= 1U);
+   BOOST_TEST(hop.metrics().dht_queries >= 1U);
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, hop.async_stop());
+   fcl::asio::blocking::run(runtime, seed.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_dht_iterative_provider_lookup_and_provide_reach_closest_peers) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   const auto seed_identity = make_test_certificate_identity("dht-provider-seed");
+   const auto hop_identity = make_test_certificate_identity("dht-provider-hop");
+   const auto client_identity = make_test_certificate_identity("dht-provider-client");
+   auto seed_options =
+       options_for(seed_identity, capability_set{.bits = capabilities::direct_quic | capabilities::dht});
+   seed_options.limits.dht.operating_mode = dht::mode::server;
+   auto hop_options =
+       options_for(hop_identity, capability_set{.bits = capabilities::direct_quic | capabilities::dht});
+   hop_options.limits.dht.operating_mode = dht::mode::server;
+   auto client_options =
+       options_for(client_identity, capability_set{.bits = capabilities::direct_quic | capabilities::dht});
+   client_options.limits.dht.alpha = 1;
+
+   auto seed = node{runtime, std::move(seed_options)};
+   auto hop = node{runtime, std::move(hop_options)};
+   auto client = node{runtime, std::move(client_options)};
+   const auto seed_endpoint = listen(seed, runtime);
+   const auto hop_endpoint = listen(hop, runtime);
+   client.peers().learn_endpoint(seed.local_peer(), seed_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::dht});
+   seed.peers().upsert_routing_peer(
+       dht::peer{
+           .id = hop.local_peer(),
+           .endpoints = std::vector<endpoint>{hop_endpoint},
+           .connection = dht::connection_type::can_connect,
+       },
+       discovery::source::dht, std::chrono::system_clock::now() + std::chrono::hours{1});
+
+   const auto key = make_dht_key(std::vector<std::uint8_t>{'f', 'c', 'l', '-', 'd', 'h', 't', '-', 'm', 'u', 'l', 't',
+                                                           'i', '-', 'h', 'o', 'p'});
+   const auto provider = peer(131);
+   const auto provider_endpoint = parse_endpoint("/ip4/127.0.0.1/udp/4131/quic-v1/p2p/" + provider.to_string());
+   hop.peers().upsert_provider(peer_store::provider_record{
+       .key = key,
+       .provider =
+           dht::peer{
+               .id = provider,
+               .endpoints = std::vector<endpoint>{provider_endpoint},
+               .connection = dht::connection_type::connected,
+           },
+       .expires_at = std::chrono::system_clock::now() + std::chrono::hours{1},
+   });
+   const auto expired_provider = peer(132);
+   const auto expired_provider_endpoint =
+       parse_endpoint("/ip4/127.0.0.1/udp/4132/quic-v1/p2p/" + expired_provider.to_string());
+   hop.peers().upsert_provider(peer_store::provider_record{
+       .key = key,
+       .provider =
+           dht::peer{
+               .id = expired_provider,
+               .endpoints = std::vector<endpoint>{expired_provider_endpoint},
+               .connection = dht::connection_type::connected,
+           },
+       .expires_at = std::chrono::system_clock::now() - std::chrono::seconds{1},
+   });
+
+   const auto providers = fcl::asio::blocking::run(runtime, client.async_find_providers(key));
+   BOOST_TEST(std::ranges::any_of(providers, [&](const dht::peer& value) {
+      return value.id == provider && !value.endpoints.empty() &&
+             value.endpoints.front().to_string() == provider_endpoint.to_string();
+   }));
+   BOOST_TEST(!std::ranges::any_of(providers, [&](const dht::peer& value) {
+      return value.id == expired_provider;
+   }));
+
+   const auto publish_key =
+       make_dht_key(std::vector<std::uint8_t>{'f', 'c', 'l', '-', 'd', 'h', 't', '-', 'r', 'e', 'p', 'u', 'b'});
+   fcl::asio::blocking::run(runtime, client.async_provide(publish_key));
+   auto provider_stored = false;
+   for (auto attempt = 0U; attempt < 20U && !provider_stored; ++attempt) {
+      const auto stored = hop.peers().find_providers(publish_key);
+      provider_stored = std::ranges::any_of(stored, [&](const peer_store::provider_record& value) {
+         return value.provider.id == client.local_peer();
+      });
+      if (!provider_stored) {
+         wait_on_runtime(runtime, std::chrono::milliseconds{50}, "DHT provide propagation");
+      }
+   }
+   BOOST_TEST(provider_stored);
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, hop.async_stop());
+   fcl::asio::blocking::run(runtime, seed.async_stop());
+}
+
 BOOST_AUTO_TEST_CASE(p2p_rendezvous_node_registers_and_discovers_over_negotiated_stream) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
    auto server_options =
@@ -2926,6 +3088,136 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_node_registers_and_discovers_over_negotiated
 
    fcl::asio::blocking::run(runtime, client.async_stop());
    fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_rendezvous_refresh_replaces_registration_and_cookie_discovers_new_records) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server_options =
+       options_for(peer(132), capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
+   server_options.limits.rendezvous.operating_role = rendezvous::role::server;
+   auto identity = make_test_certificate_identity("rendezvous-refresh-client");
+   auto client_options =
+       options_for(identity, capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
+
+   auto server = node{runtime, std::move(server_options)};
+   auto client = node{runtime, std::move(client_options)};
+   const auto server_endpoint = listen(server, runtime);
+   client.peers().learn_endpoint(server.local_peer(), server_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
+
+   const auto first_endpoint = parse_endpoint("/ip4/127.0.0.1/udp/4133/quic-v1/p2p/" + client.local_peer().to_string());
+   const auto second_endpoint = parse_endpoint("/ip4/127.0.0.1/udp/4134/quic-v1/p2p/" + client.local_peer().to_string());
+   const auto first_record = make_signed_rendezvous_peer_record(identity, std::vector<endpoint>{first_endpoint}, 1);
+   const auto second_record = make_signed_rendezvous_peer_record(identity, std::vector<endpoint>{second_endpoint}, 2);
+
+   auto first = fcl::asio::blocking::run(
+       runtime, client.async_rendezvous_register(server.local_peer(), rendezvous::register_request{
+                                                                          .namespace_name = "fcl.discovery",
+                                                                          .signed_peer_record = first_record,
+                                                                          .ttl = std::chrono::seconds{7'200},
+                                                                      }));
+   BOOST_TEST(static_cast<int>(first.status_value) == static_cast<int>(rendezvous::status::ok));
+
+   const auto after_first = fcl::asio::blocking::run(
+       runtime, client.async_rendezvous_discover(server.local_peer(), rendezvous::discover_request{
+                                                                          .namespace_name = "fcl.discovery",
+                                                                          .limit = 10,
+                                                                      }));
+   BOOST_REQUIRE_EQUAL(after_first.registrations.size(), 1U);
+   const auto cookie = after_first.cookie;
+
+   auto second = fcl::asio::blocking::run(
+       runtime, client.async_rendezvous_register(server.local_peer(), rendezvous::register_request{
+                                                                          .namespace_name = "fcl.discovery",
+                                                                          .signed_peer_record = second_record,
+                                                                          .ttl = std::chrono::seconds{7'200},
+                                                                      }));
+   BOOST_TEST(static_cast<int>(second.status_value) == static_cast<int>(rendezvous::status::ok));
+
+   const auto after_cookie = fcl::asio::blocking::run(
+       runtime, client.async_rendezvous_discover(server.local_peer(), rendezvous::discover_request{
+                                                                          .namespace_name = "fcl.discovery",
+                                                                          .limit = 10,
+                                                                          .cookie = cookie,
+                                                                      }));
+   BOOST_REQUIRE_EQUAL(after_cookie.registrations.size(), 1U);
+   BOOST_TEST(after_cookie.registrations.front().peer.to_string() == client.local_peer().to_string());
+   BOOST_REQUIRE_EQUAL(after_cookie.registrations.front().endpoints.size(), 1U);
+   BOOST_TEST(after_cookie.registrations.front().endpoints.front().to_string() == second_endpoint.to_string());
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_discovery_refresh_learns_dht_and_rendezvous_relay_candidates_for_autorelay) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto relay_identity = make_test_certificate_identity("discovery-refresh-relay");
+   auto dht_options = options_for(peer(133), capability_set{.bits = capabilities::direct_quic | capabilities::dht});
+   dht_options.limits.dht.operating_mode = dht::mode::server;
+   auto rendezvous_options =
+       options_for(peer(134), capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
+   rendezvous_options.limits.rendezvous.operating_role = rendezvous::role::server;
+   auto relay_options = options_for(relay_identity, capability_set{.bits = capabilities::direct_quic |
+                                                                            capabilities::relay |
+                                                                            capabilities::relay_reservation});
+   auto client_options = options_for(peer(135), capability_set{.bits = capabilities::direct_quic |
+                                                               capabilities::dht | capabilities::rendezvous |
+                                                               capabilities::relay_reservation});
+   client_options.relay_policy.auto_discovery_enabled = true;
+   client_options.relay_policy.target_reservations = 1;
+   client_options.relay_policy.max_candidates_per_refresh = 4;
+   client_options.limits.discovery.max_results = 4;
+
+   auto dht_server = node{runtime, std::move(dht_options)};
+   auto rendezvous_server = node{runtime, std::move(rendezvous_options)};
+   auto relay = node{runtime, std::move(relay_options)};
+   auto client = node{runtime, std::move(client_options)};
+
+   const auto dht_endpoint = listen(dht_server, runtime);
+   const auto rendezvous_endpoint = listen(rendezvous_server, runtime);
+   const auto relay_endpoint = listen(relay, runtime);
+
+   dht_server.peers().upsert_routing_peer(
+       dht::peer{
+           .id = relay.local_peer(),
+           .endpoints = std::vector<endpoint>{relay_endpoint},
+           .connection = dht::connection_type::can_connect,
+       },
+       discovery::source::dht, std::chrono::system_clock::now() + std::chrono::hours{1});
+   relay.peers().learn_endpoint(rendezvous_server.local_peer(), rendezvous_endpoint,
+                                capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
+   const auto relay_record =
+       make_signed_rendezvous_peer_record(relay_identity, std::vector<endpoint>{relay_endpoint}, 1);
+   auto registered = fcl::asio::blocking::run(
+       runtime, relay.async_rendezvous_register(rendezvous_server.local_peer(), rendezvous::register_request{
+                                                                                  .namespace_name = "fcl.discovery",
+                                                                                  .signed_peer_record = relay_record,
+                                                                                  .ttl = std::chrono::seconds{7'200},
+                                                                              }));
+   BOOST_TEST(static_cast<int>(registered.status_value) == static_cast<int>(rendezvous::status::ok));
+
+   client.peers().learn_endpoint(dht_server.local_peer(), dht_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::dht});
+   client.peers().learn_endpoint(rendezvous_server.local_peer(), rendezvous_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
+
+   const auto discovered = fcl::asio::blocking::run(runtime, client.async_refresh_discovery());
+   BOOST_TEST(std::ranges::any_of(discovered, [&](const discovery::result& value) {
+      return value.peer == relay.local_peer();
+   }));
+   const auto learned = client.peers().find(relay.local_peer());
+   BOOST_REQUIRE(learned.has_value());
+   BOOST_TEST(learned->capabilities.has(capabilities::relay));
+   BOOST_TEST(learned->capabilities.has(capabilities::relay_reservation));
+
+   const auto reservations = fcl::asio::blocking::run(runtime, client.async_refresh_relay_candidates());
+   BOOST_REQUIRE_EQUAL(reservations.size(), 1U);
+   BOOST_TEST(reservations.front().relay_peer.to_string() == relay.local_peer().to_string());
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, relay.async_stop());
+   fcl::asio::blocking::run(runtime, rendezvous_server.async_stop());
+   fcl::asio::blocking::run(runtime, dht_server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_gossipsub_nodes_deliver_signed_publish_over_negotiated_stream) {

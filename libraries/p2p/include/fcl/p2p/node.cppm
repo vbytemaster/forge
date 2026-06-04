@@ -179,6 +179,7 @@ class node {
    boost::asio::awaitable<relay::reservation::info> async_reserve_relay(peer_id relay_peer,
                                                                         relay::reservation::options options);
    boost::asio::awaitable<std::vector<relay::reservation::info>> async_refresh_relay_candidates();
+   boost::asio::awaitable<std::vector<discovery::result>> async_refresh_discovery();
    boost::asio::awaitable<void> async_cancel_relay(peer_id relay_peer);
    boost::asio::awaitable<dht::query_result> async_find_peer(peer_id peer);
    boost::asio::awaitable<void> async_provide(dht::key key);

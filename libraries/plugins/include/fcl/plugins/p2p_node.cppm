@@ -5,16 +5,17 @@ module;
 #include <fcl/exceptions/macros.hpp>
 
 #include <chrono>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 export module fcl.plugins.p2p_node;
 
 import fcl.api;
+import fcl.api.transport;
 import fcl.app.plugin;
 import fcl.app.plugin_context;
 import fcl.app.plugin_registry;
@@ -28,19 +29,11 @@ export namespace fcl::plugins {
 class p2p_node final : public fcl::app::plugin {
  public:
    struct config;
-   struct delivery_id;
-   struct send_options;
-   struct broadcast_options;
-   struct delivery_result;
-   struct delivery_snapshot;
-   struct outbox_record;
-   enum class delivery_reliability : std::uint8_t;
+   struct info;
+   struct remote_options;
    enum class path_policy : std::uint8_t;
-   enum class delivery_state : std::uint8_t;
    class exceptions;
-   class delivery;
    class api;
-   class outbox_store;
 
    p2p_node();
    ~p2p_node() override;
@@ -70,26 +63,12 @@ class p2p_node::exceptions {
    enum class code : std::uint16_t {
       plugin_not_initialized = 1,
       route_conflict = 2,
-      outbox_required = 3,
-      outbox_unavailable = 4,
-      delivery_queue_full = 5,
-      delivery_expired = 6,
-      delivery_cancelled = 7,
-      relay_policy_denied = 8,
-      no_delivery_path = 9,
-      invalid_delivery_policy = 10,
+      invalid_config = 3,
    };
 
    using plugin_not_initialized = fcl::exceptions::coded_exception<code, code::plugin_not_initialized>;
    using route_conflict = fcl::exceptions::coded_exception<code, code::route_conflict>;
-   using outbox_required = fcl::exceptions::coded_exception<code, code::outbox_required>;
-   using outbox_unavailable = fcl::exceptions::coded_exception<code, code::outbox_unavailable>;
-   using delivery_queue_full = fcl::exceptions::coded_exception<code, code::delivery_queue_full>;
-   using delivery_expired = fcl::exceptions::coded_exception<code, code::delivery_expired>;
-   using delivery_cancelled = fcl::exceptions::coded_exception<code, code::delivery_cancelled>;
-   using relay_policy_denied = fcl::exceptions::coded_exception<code, code::relay_policy_denied>;
-   using no_delivery_path = fcl::exceptions::coded_exception<code, code::no_delivery_path>;
-   using invalid_delivery_policy = fcl::exceptions::coded_exception<code, code::invalid_delivery_policy>;
+   using invalid_config = fcl::exceptions::coded_exception<code, code::invalid_config>;
 };
 
 FCL_DECLARE_EXCEPTION_CATEGORY(p2p_node::exceptions::code, "fcl.plugins.p2p_node")
@@ -102,19 +81,12 @@ struct p2p_node::config {
    std::string certificate_pem;
    std::string private_key_pem;
    std::string api_codec = "fcl.raw";
+   std::uint64_t api_deadline_ms = 0;
+   std::uint64_t api_max_frame_size = 16 * 1024 * 1024;
    std::uint64_t max_inflight_per_peer = 64;
    std::uint64_t max_sessions = 1024;
    std::uint64_t max_protocol_handlers = 1024;
    bool allow_insecure_test_mode = false;
-   std::string delivery_outbox_mode = "memory";
-   std::uint64_t delivery_queue_limit = 4096;
-   std::uint64_t delivery_worker_batch = 64;
-   std::string retry_reliability = "bounded-retry";
-   std::uint64_t retry_max_attempts = 3;
-   std::uint64_t retry_deadline_ms = 60'000;
-   std::uint64_t retry_initial_backoff_ms = 250;
-   std::uint64_t retry_max_backoff_ms = 30'000;
-   bool retry_jitter = true;
    std::string path_policy = "direct-preferred";
    std::string relay_trust = "known-only";
    bool relay_client_enabled = true;
@@ -122,86 +94,22 @@ struct p2p_node::config {
    bool relay_public_allowed = false;
    std::uint64_t relay_reservation_ttl_ms = 60'000;
    std::uint64_t relay_max_candidates = 4;
-   std::uint64_t maintenance_peer_exchange_interval_ms = 30'000;
-   std::uint64_t maintenance_reachability_interval_ms = 60'000;
 };
 
-struct p2p_node::delivery_id {
-   std::uint64_t value = 0;
-
-   [[nodiscard]] friend bool operator==(const delivery_id&, const delivery_id&) = default;
+struct p2p_node::info {
+   fcl::p2p::peer_id local_peer;
+   std::vector<fcl::p2p::endpoint> local_endpoints;
+   bool started = false;
 };
 
-enum class p2p_node::delivery_reliability : std::uint8_t {
-   best_effort = 1,
-   bounded_retry = 2,
-   durable_retry = 3,
+struct p2p_node::remote_options {
+   std::chrono::milliseconds open_deadline{10'000};
 };
 
 enum class p2p_node::path_policy : std::uint8_t {
    direct_only = 1,
    direct_preferred = 2,
    relay_only = 3,
-};
-
-enum class p2p_node::delivery_state : std::uint8_t {
-   queued = 1,
-   in_flight = 2,
-   delivered = 3,
-   failed = 4,
-   expired = 5,
-   cancelled = 6,
-};
-
-struct p2p_node::send_options {
-   delivery_reliability reliability = delivery_reliability::bounded_retry;
-   path_policy path = path_policy::direct_preferred;
-   std::chrono::milliseconds deadline{60'000};
-   std::chrono::milliseconds initial_backoff{250};
-   std::chrono::milliseconds max_backoff{30'000};
-   std::uint32_t max_attempts = 3;
-   int priority = 0;
-   bool allow_public_relay = false;
-   bool jitter = true;
-};
-
-struct p2p_node::broadcast_options {
-   std::vector<fcl::p2p::peer_id> peers;
-   send_options send{};
-};
-
-struct p2p_node::delivery_result {
-   delivery_id id;
-   fcl::p2p::peer_id peer;
-   fcl::p2p::protocol_id protocol;
-   delivery_state state = delivery_state::queued;
-   std::uint32_t attempts = 0;
-   std::string error;
-   fcl::api::error_identity error_identity;
-};
-
-struct p2p_node::delivery_snapshot {
-   delivery_id id;
-   fcl::p2p::peer_id peer;
-   fcl::p2p::protocol_id protocol;
-   delivery_state state = delivery_state::queued;
-   std::uint32_t attempts = 0;
-   std::string error;
-   fcl::api::error_identity error_identity;
-};
-
-struct p2p_node::outbox_record {
-   delivery_id id;
-   fcl::p2p::peer_id peer;
-   fcl::p2p::message message;
-   send_options options;
-   delivery_state state = delivery_state::queued;
-   std::uint32_t attempts = 0;
-   std::chrono::steady_clock::time_point created_at = std::chrono::steady_clock::now();
-   std::chrono::steady_clock::time_point deadline_at = std::chrono::steady_clock::now() + std::chrono::milliseconds{60'000};
-   std::chrono::steady_clock::time_point next_attempt_at = std::chrono::steady_clock::now();
-   std::string last_error;
-   fcl::api::error_identity last_error_identity;
 };
 
 class p2p_node::api {
@@ -212,104 +120,57 @@ class p2p_node::api {
 
    [[nodiscard]] virtual fcl::p2p::peer_id local_peer() const = 0;
    [[nodiscard]] virtual std::optional<fcl::p2p::endpoint> local_endpoint() const = 0;
-   [[nodiscard]] virtual fcl::p2p::node::metrics_snapshot metrics() const = 0;
-   [[nodiscard]] virtual std::vector<fcl::p2p::peer_store::record> peers() const = 0;
+   [[nodiscard]] virtual std::vector<fcl::p2p::endpoint> local_endpoints() const = 0;
+   [[nodiscard]] virtual info network_info() const = 0;
 
    virtual void publish_api(fcl::api::binding_plan plan, fcl::p2p::protocol_id protocol) = 0;
    virtual void publish_protocol(fcl::p2p::protocol_id protocol, fcl::p2p::node::protocol_handler handler) = 0;
 
-   boost::asio::awaitable<delivery> send_async(fcl::p2p::peer_id peer, fcl::p2p::message message);
-   virtual boost::asio::awaitable<delivery> send_async(fcl::p2p::peer_id peer, fcl::p2p::message message,
-                                                       send_options options) = 0;
+   virtual boost::asio::awaitable<fcl::api::transport::remote>
+   remote(fcl::p2p::peer_id peer, fcl::p2p::protocol_id protocol, fcl::api::descriptor descriptor,
+          remote_options options = {}) = 0;
 
-   boost::asio::awaitable<delivery_result> send(fcl::p2p::peer_id peer, fcl::p2p::message message);
-   boost::asio::awaitable<delivery_result> send(fcl::p2p::peer_id peer, fcl::p2p::message message,
-                                                send_options options);
-
-   boost::asio::awaitable<std::vector<delivery>> broadcast_async(fcl::p2p::message message);
-   virtual boost::asio::awaitable<std::vector<delivery>>
-   broadcast_async(fcl::p2p::message message, broadcast_options options) = 0;
-   boost::asio::awaitable<std::vector<delivery_result>> broadcast(fcl::p2p::message message);
-   boost::asio::awaitable<std::vector<delivery_result>> broadcast(fcl::p2p::message message,
-                                                                  broadcast_options options);
-
-   [[nodiscard]] virtual auto delivery(delivery_id id) const -> p2p_node::delivery = 0;
-   virtual boost::asio::awaitable<void> cancel(delivery_id id) = 0;
+   template <typename Interface>
+   boost::asio::awaitable<fcl::api::transport::remote>
+   remote(fcl::p2p::peer_id peer, fcl::p2p::protocol_id protocol, remote_options options = {}) {
+      co_return co_await remote(std::move(peer), std::move(protocol), Interface::describe(), options);
+   }
 
  private:
    friend class p2p_node;
    class impl;
 };
 
-class p2p_node::delivery {
- public:
-   delivery();
-   ~delivery();
-
-   delivery(const delivery&) = default;
-   delivery& operator=(const delivery&) = default;
-   delivery(delivery&&) noexcept = default;
-   delivery& operator=(delivery&&) noexcept = default;
-
-   [[nodiscard]] delivery_id id() const noexcept;
-   boost::asio::awaitable<std::optional<delivery_snapshot>> snapshot() const;
-   boost::asio::awaitable<delivery_result> result() const;
-   boost::asio::awaitable<void> cancel();
-
- private:
-   friend class p2p_node::api::impl;
-   class impl;
-
-   explicit delivery(std::shared_ptr<impl> impl);
-
-   std::shared_ptr<impl> impl_;
-};
-
-class p2p_node::outbox_store {
- public:
-   virtual ~outbox_store() = default;
-
-   [[nodiscard]] static fcl::api::descriptor describe();
-
-   virtual boost::asio::awaitable<delivery_id> enqueue(outbox_record record) = 0;
-   virtual boost::asio::awaitable<std::vector<outbox_record>>
-   claim_due(std::size_t limit, std::chrono::steady_clock::time_point now) = 0;
-   virtual boost::asio::awaitable<void> mark_attempt(outbox_record record) = 0;
-   virtual boost::asio::awaitable<void> release(outbox_record record) = 0;
-   virtual boost::asio::awaitable<void> mark_delivered(delivery_result result) = 0;
-   virtual boost::asio::awaitable<void> mark_failed(delivery_result result) = 0;
-   virtual boost::asio::awaitable<std::optional<delivery_snapshot>> get(delivery_id id) const = 0;
-   virtual boost::asio::awaitable<void> cancel(delivery_id id) = 0;
-   virtual boost::asio::awaitable<std::optional<std::chrono::steady_clock::time_point>> next_due() const = 0;
-};
-
 } // namespace fcl::plugins
 
 BOOST_DESCRIBE_STRUCT(fcl::plugins::p2p_node::config, (),
                       (listen, bootstrap, advertised_endpoints, peer_id, certificate_pem, private_key_pem, api_codec,
-                       max_inflight_per_peer, max_sessions, max_protocol_handlers, allow_insecure_test_mode,
-                       delivery_outbox_mode, delivery_queue_limit, delivery_worker_batch, retry_reliability,
-                       retry_max_attempts, retry_deadline_ms, retry_initial_backoff_ms, retry_max_backoff_ms,
-                       retry_jitter, path_policy, relay_trust, relay_client_enabled, relay_server_enabled,
-                       relay_public_allowed, relay_reservation_ttl_ms, relay_max_candidates,
-                       maintenance_peer_exchange_interval_ms, maintenance_reachability_interval_ms))
+                       api_deadline_ms, api_max_frame_size, max_inflight_per_peer, max_sessions,
+                       max_protocol_handlers, allow_insecure_test_mode, path_policy, relay_trust, relay_client_enabled,
+                       relay_server_enabled, relay_public_allowed, relay_reservation_ttl_ms, relay_max_candidates))
 
 export template <> struct fcl::schema::rules<fcl::plugins::p2p_node::config> {
    [[nodiscard]] static fcl::schema::object_schema<fcl::plugins::p2p_node::config> define() {
       auto schema = fcl::schema::object<fcl::plugins::p2p_node::config>();
       schema.field<&fcl::plugins::p2p_node::config::listen>("listen")
          .default_value(std::vector<std::string>{})
-         .description("Listen endpoints, for example /ip4/0.0.0.0/udp/9443/quic-v1 or quic://0.0.0.0:9443");
+         .description("Listen endpoints, for example /ip4/0.0.0.0/udp/9443/quic-v1 or /ip4/0.0.0.0/tcp/4001");
       schema.field<&fcl::plugins::p2p_node::config::bootstrap>("bootstrap")
          .default_value(std::vector<std::string>{})
-         .description("Bootstrap peer endpoints, preferably libp2p address text with /quic-v1");
+         .description("Bootstrap peer endpoints as libp2p multiaddr text");
       schema.field<&fcl::plugins::p2p_node::config::advertised_endpoints>("advertised-endpoints")
          .default_value(std::vector<std::string>{})
-         .description("Endpoints advertised to peers, preferably libp2p address text with /quic-v1");
+         .description("Endpoints advertised to peers as libp2p multiaddr text");
       schema.field<&fcl::plugins::p2p_node::config::peer_id>("peer-id").default_value("");
       schema.field<&fcl::plugins::p2p_node::config::certificate_pem>("certificate-pem").default_value("");
       schema.field<&fcl::plugins::p2p_node::config::private_key_pem>("private-key-pem").default_value("").secret();
       schema.field<&fcl::plugins::p2p_node::config::api_codec>("api-codec").default_value("fcl.raw");
+      schema.field<&fcl::plugins::p2p_node::config::api_deadline_ms>("api.deadline-ms")
+         .default_value(std::uint64_t{0})
+         .range(0, 86'400'000);
+      schema.field<&fcl::plugins::p2p_node::config::api_max_frame_size>("api.max-frame-size")
+         .default_value(std::uint64_t{16 * 1024 * 1024})
+         .range(1, 1024 * 1024 * 1024);
       schema.field<&fcl::plugins::p2p_node::config::max_inflight_per_peer>("max-inflight-per-peer")
          .default_value(std::uint64_t{64})
          .range(1, 1'000'000);
@@ -321,34 +182,10 @@ export template <> struct fcl::schema::rules<fcl::plugins::p2p_node::config> {
          .range(1, 1'000'000);
       schema.field<&fcl::plugins::p2p_node::config::allow_insecure_test_mode>("allow-insecure-test-mode")
          .default_value(false)
-         .description("Test-only mode for local development without mTLS material");
-      schema.field<&fcl::plugins::p2p_node::config::delivery_outbox_mode>("delivery.outbox-mode")
-         .default_value("memory")
-         .description("Delivery outbox mode: memory, external-optional or external-required");
-      schema.field<&fcl::plugins::p2p_node::config::delivery_queue_limit>("delivery.queue-limit")
-         .default_value(std::uint64_t{4096})
-         .range(1, 1'000'000);
-      schema.field<&fcl::plugins::p2p_node::config::delivery_worker_batch>("delivery.worker-batch")
-         .default_value(std::uint64_t{64})
-         .range(1, 10'000);
-      schema.field<&fcl::plugins::p2p_node::config::retry_reliability>("retry.reliability")
-         .default_value("bounded-retry");
-      schema.field<&fcl::plugins::p2p_node::config::retry_max_attempts>("retry.max-attempts")
-         .default_value(std::uint64_t{3})
-         .range(1, 1'000'000);
-      schema.field<&fcl::plugins::p2p_node::config::retry_deadline_ms>("retry.deadline-ms")
-         .default_value(std::uint64_t{60'000})
-         .range(1, 86'400'000);
-      schema.field<&fcl::plugins::p2p_node::config::retry_initial_backoff_ms>("retry.initial-backoff-ms")
-         .default_value(std::uint64_t{250})
-         .range(1, 86'400'000);
-      schema.field<&fcl::plugins::p2p_node::config::retry_max_backoff_ms>("retry.max-backoff-ms")
-         .default_value(std::uint64_t{30'000})
-         .range(1, 86'400'000);
-      schema.field<&fcl::plugins::p2p_node::config::retry_jitter>("retry.jitter").default_value(true);
+         .description("Test-only mode for local development without production identity material");
       schema.field<&fcl::plugins::p2p_node::config::path_policy>("path.policy")
          .default_value("direct-preferred")
-         .description("Default delivery path policy: direct-only or direct-preferred");
+         .description("Default host path policy: direct-only, direct-preferred or relay-only");
       schema.field<&fcl::plugins::p2p_node::config::relay_trust>("relay.trust")
          .default_value("known-only")
          .description("Relay trust policy: known-only or public-allowed");
@@ -364,14 +201,6 @@ export template <> struct fcl::schema::rules<fcl::plugins::p2p_node::config> {
       schema.field<&fcl::plugins::p2p_node::config::relay_max_candidates>("relay.max-candidates")
          .default_value(std::uint64_t{4})
          .range(1, 10'000);
-      schema.field<&fcl::plugins::p2p_node::config::maintenance_peer_exchange_interval_ms>(
-         "maintenance.peer-exchange-interval-ms")
-         .default_value(std::uint64_t{30'000})
-         .range(1, 86'400'000);
-      schema.field<&fcl::plugins::p2p_node::config::maintenance_reachability_interval_ms>(
-         "maintenance.reachability-interval-ms")
-         .default_value(std::uint64_t{60'000})
-         .range(1, 86'400'000);
       return schema;
    }
 };

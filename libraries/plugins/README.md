@@ -8,8 +8,8 @@ small typed APIs for product plugins to contribute behavior safely.
 
 - An application wants one shared infrastructure component, such as a P2P node,
   instead of every plugin constructing its own runtime.
-- Product plugins need to mount routes, publish typed API protocols or send
-  messages without owning transport lifecycle.
+- Product plugins need to mount routes, publish typed API protocols or open
+  typed remote APIs without owning transport lifecycle.
 - Tests need the same composition shape as production.
 
 ## When Not To Use
@@ -26,7 +26,8 @@ small typed APIs for product plugins to contribute behavior safely.
 
 Target: `fcl_plugins`.
 
-Dependencies: `fcl_app`, `fcl_api`, `fcl_p2p`, `fcl_config`, `fcl_asio`.
+Dependencies: `fcl_app`, `fcl_api`, `fcl_api_transport`, `fcl_p2p`,
+`fcl_config`, `fcl_asio`.
 
 ## P2P Node Plugin
 
@@ -44,11 +45,11 @@ does not change: `p2p_node` enables and configures the shared FCL node. It must
 not reimplement Identify, Ping, relay discovery, DHT, pubsub or interop logic in
 plugin-local loops.
 
-G.2 will clean the public `p2p_node` contract into a narrow host facade:
-`local_peer`, `local_endpoints`, `network_info`, `publish_api`,
-`remote<T>(...)` and advanced `publish_protocol`. The current delivery/outbox,
-broadcast and raw peer-metrics surface is legacy pre-G.2 scope and must not be
-treated as the target API for new product plugins.
+G.2 narrows the public `p2p_node` contract to a host facade: `local_peer`,
+`local_endpoint`, `local_endpoints`, `network_info`, `publish_api`,
+`remote<T>(...)` and advanced `publish_protocol`. Durable message queues,
+application fan-out and read-only network diagnostics belong to focused future
+plugins or product services, not to this host facade.
 
 `fcl::plugins::p2p_node::config` is the public config contract. Config section
 `p2p` owns transport bootstrap and policy:
@@ -66,6 +67,9 @@ p2p:
   certificate-pem: "..."
   private-key-pem: "..."
   api-codec: fcl.raw
+  api:
+    deadline-ms: 5000
+    max-frame-size: 16777216
   max-inflight-per-peer: 64
   path:
     policy: direct-preferred
@@ -130,12 +134,25 @@ peer opens that `protocol_id`. If the raw protocol needs an ACK or response, the
 handler writes it to the incoming stream. Use `fcl_api` over P2P when you want
 standard request/response/error handling instead of manual ACK frames.
 
-Outbound product APIs should normally use the typed `remote<T>(...)` helper that
-G.2 adds over `fcl.p2p.api` and `fcl.api.transport`. Raw one-shot protocol sends
-are an advanced escape hatch for protocols that intentionally own their own
-wire format and acknowledgement. Durable retry, outbox storage and
-application-level broadcast are planned as separate focused plugins or product
-services, not as part of the target `p2p_node` contract.
+Outbound product APIs should normally use the typed `remote<T>(...)` helper over
+`fcl.p2p.api` and `fcl.api.transport`:
+
+```cpp
+auto cache = co_await p2p->remote<cache_api>(
+   peer,
+   {.value = "/fcl/api/cache/1"},
+   fcl::plugins::p2p_node::remote_options{.open_deadline = 5s});
+
+auto reply = co_await cache.call<read_request, read_response>(
+   {.id = {"cache"}, .major = 1, .min_revision = 8},
+   "read",
+   request);
+```
+
+Raw product protocols remain an advanced escape hatch for protocols that
+intentionally own their own wire format and acknowledgement. Durable retry,
+store-backed queues and application-level fan-out are planned as separate
+focused plugins or product services, not as part of `p2p_node`.
 
 ## Risks And Anti-Patterns
 
@@ -144,13 +161,14 @@ services, not as part of the target `p2p_node` contract.
 - Do not let product plugins override codec, inflight limits or bootstrap policy
   that the node plugin owns from config.
 - Do not expose `fcl::p2p::node::open_options`, relay peer selection or hole-punch
-  calls to ordinary product plugins. Use semantic `p2p_node::send_options`.
+  calls to ordinary product plugins. Use typed `remote<T>(...)` or a focused
+  future plugin facade.
 - Do not create one P2P node per product protocol inside the same application.
   One owner plugin should mount multiple bindings/routes.
 - Do not use `p2p_node` as product authorization. It only owns transport
   lifecycle and route/API contribution points.
-- Do not attach durable delivery, outbox persistence or product broadcast
-  semantics to `p2p_node`. If needed, those belong to a future focused
+- Do not attach durable delivery persistence or product fan-out semantics to
+  `p2p_node`. If needed, those belong to a future focused
   `p2p_delivery` plugin or a product service.
 - Keep AutoNAT, AutoRelay, DHT, rendezvous, pubsub/gossip and relay discovery in
   `fcl_p2p`. `p2p_node` stays lifecycle/config/composition glue over the shared
@@ -163,6 +181,5 @@ services, not as part of the target `p2p_node` contract.
 
 `test_fcl_plugins` covers publishing the safe local P2P node API, contributing
 typed API and raw protocol routes before startup, deterministic duplicate
-protocol rejection and plugin exceptions. Pre-G.2 delivery/outbox tests are
-legacy coverage until the cleanup removes that surface or moves it into a
-focused delivery plugin.
+protocol rejection, multi-listen endpoint reporting, typed remote API calls and
+plugin exceptions.

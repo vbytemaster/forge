@@ -96,8 +96,8 @@ which external projects provide accepted patterns and criteria:
   errors.
 - `fcl::plugins::p2p_node` owns application lifecycle, mounted route/API
   contributions, config-to-node mapping, local endpoint reporting and typed
-  remote API access. Delivery/outbox/broadcast/raw peer metrics are legacy
-  pre-G.2 surface and should move out of the target contract.
+  remote API access. Durable queues, application fan-out and raw peer metrics
+  are outside the target contract.
 - `p2p_api_catalog`, `p2p_diagnostics`, `p2p_pubsub` and optional
   `p2p_delivery` are focused friend-plugin directions. They compose through
   `p2p_node` and `fcl_p2p` instead of reimplementing network behaviours.

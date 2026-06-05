@@ -10,6 +10,7 @@ target_link_libraries(
    fcl_plugins PUBLIC
       fcl_app
       fcl_api
+      fcl_api_transport
       fcl_p2p
       fcl_config
       fcl_asio

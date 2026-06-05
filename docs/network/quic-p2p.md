@@ -65,11 +65,10 @@ must not replace it with parallel discovery loops.
 
 For application/plugin composition, `fcl::plugins::p2p_node` is the production
 host facade above `fcl_p2p`. It applies config, starts the node and mounts
-protocol/API contributions. G.2 narrows the target API further around typed
-remote access and local network information; durable delivery, broadcast and
-outbox storage move to focused plugins or product layers. Product plugins
-should not create a second node or run ad hoc retry loops against raw
-`fcl::p2p::node`.
+protocol/API contributions. G.2 narrows the API around typed remote access and
+local network information. Durable queues, application fan-out and read-only
+diagnostics move to focused plugins or product layers. Product plugins should
+not create a second node or run ad hoc retry loops against raw `fcl::p2p::node`.
 
 ## Production P2P Direction
 
@@ -442,12 +441,11 @@ READMEs may link here, but must not define a second block order.
   `fcl.api.transport`, because WebSocket is message-oriented and not a
   `transport::stream`.
 - HTTP remains a separate request/response binding.
-- G.2 planned checkpoint: `fcl::plugins::p2p_node` becomes a narrow host facade
+- G.2 implemented checkpoint: `fcl::plugins::p2p_node` is a narrow host facade
   over `fcl_p2p`. It owns lifecycle, config-to-node mapping, local endpoint
-  reporting, protocol/API route mounting and typed remote API access. It must
-  stop treating delivery/outbox/broadcast/raw peer metrics as part of its
-  long-term public contract; those concerns move to focused plugins or product
-  layers.
+  reporting, protocol/API route mounting and typed remote API access. Durable
+  queues, application fan-out and raw network diagnostics are outside this host
+  facade and move to focused plugins or product layers.
 - G.3 planned checkpoint: `p2p_api_catalog` is a separate plugin for API
   descriptor discovery. It records which peers advertise API protocol ids,
   descriptors, versions, codecs and limits. Identify continues to advertise
@@ -462,8 +460,8 @@ READMEs may link here, but must not define a second block order.
   application plugins. It is not a durable queue and does not replace
   `fcl_p2p` GossipSub mesh/scoring/heartbeat mechanics.
 - G.6 optional future checkpoint: `p2p_delivery` may become a separate durable
-  async-delivery plugin if a product needs store-backed retry. It is not part of
-  `p2p_node`, does not promise exactly-once delivery and does not own product
+  async plugin if a product needs store-backed retry. It is separate from the
+  host facade, does not promise exactly-once semantics and does not own product
   acknowledgement semantics.
 - IPFS/Boxo content, provider, exchange, retrieval and pinning donors inform
   future product/content/storage layers. They are not `fcl_plugins` or
@@ -552,7 +550,7 @@ message validation, durable semantics and authorization above FCL.
 - Non-positive timeouts are rejected early.
 - `async_connect(...)` establishes a direct session to a concrete endpoint.
   Direct -> hole punch -> relay fallback happens when opening a protocol stream,
-  and the plugin turns that engine behavior into delivery policy.
+  while host plugins expose typed remote APIs over the selected stream.
 
 ## Security Boundary
 

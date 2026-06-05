@@ -31,8 +31,10 @@ diagnostic context.
 - `fcl.api.error_projection` — error payload projection and remote typed-error restore.
 - `fcl.api.handle` — typed local/remote handle wrapper.
 - `fcl.api.registry` — registry, installer, view and local frame dispatch.
-- `fcl.api.binding` — connection, session, binding plan, call runtime and
-  protocol-neutral interceptors.
+- `fcl.api.binding` — binding plan, call runtime and protocol-neutral
+  interceptors.
+- `fcl.api.dispatcher` — shared API frame dispatcher for stream-oriented
+  bindings.
 - `fcl.api` — aggregate import.
 - `fcl.api.exceptions` — core typed exceptions such as `method_not_found`,
   `incompatible_version` and `remote_internal`.
@@ -132,20 +134,21 @@ return fcl::api::contract<cache>({.id = {"cache.bulk"}, .version = {1, 0}})
    .build();
 ```
 
-## Future API Over Transport
+## API Over Transport
 
-`fcl.api.transport` is the planned reusable binding for API-over-stream
-transports. It will sit above `fcl_api` and `fcl_transport`, use
-`fcl::transport::stream` / `fcl::transport::session`, and own the shared frame
-read/write loop, codec checks, grouped stream handling, max-inflight limits,
-deadlines and error projection.
+`fcl.api.transport` is the reusable binding for API-over-stream transports. It
+sits above `fcl_api` and `fcl_transport`, uses `fcl::transport::stream` /
+`fcl::transport::session`, and owns the shared frame read/write loop, codec
+checks, grouped stream handling, max-inflight limits, deadlines and error
+projection.
 
 This layer must not move into `fcl_transport`: transport stays a low-level
-byte-stream/session contract and must not import `fcl.api`. Once implemented,
-`fcl.quic.api`, `fcl.p2p.api` and future TCP API bindings should become thin
-adapters or policy wrappers over `fcl.api.transport`. HTTP remains a separate
-binding because it is request/response oriented rather than a long-lived
-bidirectional stream.
+byte-stream/session contract and must not import `fcl.api`. `fcl.quic.api` and
+`fcl.p2p.api` are thin adapters or policy wrappers over `fcl.api.transport`.
+WebSocket shares `fcl::api::frame_dispatcher`, but not `fcl.api.transport`,
+because it is message-oriented rather than a `transport::stream`. HTTP remains a
+separate binding because it is request/response oriented rather than a
+long-lived bidirectional stream.
 
 The network/P2P implementation order is tracked only in
 [`docs/network/quic-p2p.md`](../../docs/network/quic-p2p.md); this README only

@@ -193,6 +193,14 @@ target_link_libraries(test_fcl_api fcl Boost::included_unit_test_framework)
 add_test(NAME test_fcl_api COMMAND test_fcl_api WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
+   test_fcl_api_transport
+   unit/main.cpp
+   api/api_transport_tests.cpp
+)
+target_link_libraries(test_fcl_api_transport fcl Boost::included_unit_test_framework)
+add_test(NAME test_fcl_api_transport COMMAND test_fcl_api_transport WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(
    test_fcl_http_websocket
    unit/main.cpp
    http_websocket/network_tests.cpp

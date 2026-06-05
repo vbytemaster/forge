@@ -1,0 +1,369 @@
+module;
+
+#include <fcl/exceptions/macros.hpp>
+
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <exception>
+#include <memory>
+#include <optional>
+#include <span>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/redirect_error.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/this_coro.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/system/error_code.hpp>
+
+module fcl.api.transport.client;
+
+import fcl.raw.raw;
+import fcl.transport.exceptions;
+import fcl.transport.frame;
+
+namespace fcl::api::transport {
+namespace {
+
+constexpr auto compact_threshold = std::size_t{65'536};
+
+void compact_buffer(std::vector<std::uint8_t>& buffer, std::size_t& consumed) {
+   if (consumed == 0) {
+      return;
+   }
+   if (consumed >= buffer.size()) {
+      buffer.clear();
+      consumed = 0;
+      return;
+   }
+   auto compacted = std::vector<std::uint8_t>{};
+   compacted.reserve(buffer.size() - consumed);
+   compacted.insert(compacted.end(), buffer.begin() + static_cast<std::ptrdiff_t>(consumed), buffer.end());
+   buffer = std::move(compacted);
+   consumed = 0;
+}
+
+[[nodiscard]] std::span<const std::uint8_t> available_bytes(const std::vector<std::uint8_t>& buffer,
+                                                            std::size_t consumed) noexcept {
+   if (consumed >= buffer.size()) {
+      return {};
+   }
+   return {buffer.data() + consumed, buffer.size() - consumed};
+}
+
+boost::asio::awaitable<fcl::transport::chunk> read_transport_frame(fcl::transport::stream& stream,
+                                                                   std::vector<std::uint8_t>& buffer,
+                                                                   std::size_t& consumed,
+                                                                   std::uint32_t max_frame_size) {
+   while (true) {
+      const auto decoded = fcl::transport::decode_frame_view(available_bytes(buffer, consumed),
+                                                             fcl::transport::frame_options{.max_size = max_frame_size});
+      if (decoded.status == fcl::transport::frame_decode_status::complete) {
+         const auto payload = fcl::transport::chunk{decoded.payload};
+         consumed += decoded.consumed;
+         if (consumed >= buffer.size() || consumed > compact_threshold) {
+            compact_buffer(buffer, consumed);
+         }
+         co_return payload;
+      }
+
+      compact_buffer(buffer, consumed);
+      auto next = co_await stream.async_read_chunk();
+      auto view = next.bytes();
+      buffer.insert(buffer.end(), view.begin(), view.end());
+   }
+}
+
+boost::asio::awaitable<void> write_transport_frame(fcl::transport::stream& stream, std::span<const std::uint8_t> payload,
+                                                  std::uint32_t max_frame_size) {
+   auto encoded = std::vector<std::uint8_t>{};
+   fcl::transport::encode_frame_to(encoded, payload, fcl::transport::frame_options{.max_size = max_frame_size});
+   co_await stream.async_write(fcl::transport::chunk{std::move(encoded)});
+}
+
+[[nodiscard]] std::exception_ptr make_cancelled_error(const char* message) {
+   try {
+      FCL_THROW_EXCEPTION(exceptions::cancelled, message);
+   } catch (...) {
+      return std::current_exception();
+   }
+}
+
+[[nodiscard]] std::chrono::milliseconds effective_deadline(call_options request_options, options client_options) {
+   if (request_options.deadline.count() > 0) {
+      return request_options.deadline;
+   }
+   return client_options.deadline;
+}
+
+} // namespace
+
+struct client::impl : std::enable_shared_from_this<client::impl> {
+   struct pending_call {
+      explicit pending_call(boost::asio::any_io_executor executor) : timer(std::move(executor)) {
+         timer.expires_at(boost::asio::steady_timer::time_point::max());
+      }
+
+      boost::asio::steady_timer timer;
+      std::optional<frame> response;
+      std::exception_ptr error;
+      bool done = false;
+   };
+
+   struct write_waiter {
+      explicit write_waiter(boost::asio::any_io_executor executor) : timer(std::move(executor)) {
+         timer.expires_at(boost::asio::steady_timer::time_point::max());
+      }
+
+      boost::asio::steady_timer timer;
+      std::exception_ptr error;
+      bool ready = false;
+   };
+
+   fcl::transport::stream stream;
+   options settings;
+   std::vector<std::uint8_t> read_buffer;
+   std::size_t consumed = 0;
+   std::uint64_t next_id = 1;
+   std::unordered_map<std::uint64_t, std::shared_ptr<pending_call>> pending;
+   std::deque<std::shared_ptr<write_waiter>> write_waiters;
+   std::exception_ptr failure;
+   bool reader_started = false;
+   bool write_busy = false;
+   bool canceled = false;
+
+   void fail_all(std::exception_ptr error) {
+      if (!error) {
+         return;
+      }
+      if (!failure) {
+         failure = error;
+      }
+      for (auto& [_, pending_value] : pending) {
+         pending_value->error = error;
+         pending_value->done = true;
+         pending_value->timer.cancel();
+      }
+      pending.clear();
+      while (!write_waiters.empty()) {
+         auto waiter = std::move(write_waiters.front());
+         write_waiters.pop_front();
+         waiter->error = error;
+         waiter->ready = true;
+         waiter->timer.cancel();
+      }
+      write_busy = false;
+   }
+
+   void complete_pending(frame response) {
+      if (response.kind != frame_kind::response && response.kind != frame_kind::error &&
+          response.kind != frame_kind::stream_item && response.kind != frame_kind::stream_end) {
+         FCL_THROW_EXCEPTION(exceptions::protocol_error, "API transport received non-response frame",
+                             fcl::exceptions::ctx("call_id", response.id.value));
+      }
+      if (response.codec != settings.codec) {
+         FCL_THROW_EXCEPTION(exceptions::codec_failed, "API transport response codec is not accepted",
+                             fcl::exceptions::ctx("codec", response.codec.value));
+      }
+      auto found = pending.find(response.id.value);
+      if (found == pending.end()) {
+         FCL_THROW_EXCEPTION(exceptions::protocol_error, "API transport received unknown call_id",
+                             fcl::exceptions::ctx("call_id", response.id.value));
+      }
+      auto pending_value = std::move(found->second);
+      pending.erase(found);
+      pending_value->response.emplace(std::move(response));
+      pending_value->done = true;
+      pending_value->timer.cancel();
+   }
+
+   boost::asio::awaitable<void> run_reader() {
+      try {
+         while (!canceled) {
+            auto payload = co_await read_transport_frame(stream, read_buffer, consumed, settings.max_frame_size);
+            complete_pending(fcl::raw::unpack<frame>(payload.to_vector()));
+            if (pending.empty()) {
+               reader_started = false;
+               co_return;
+            }
+         }
+      } catch (...) {
+         reader_started = false;
+         fail_all(std::current_exception());
+         if (!canceled) {
+            stream.cancel();
+         }
+      }
+   }
+
+   void start_reader(boost::asio::any_io_executor executor) {
+      if (reader_started) {
+         return;
+      }
+      reader_started = true;
+      boost::asio::co_spawn(
+          std::move(executor),
+          [self = shared_from_this()]() mutable -> boost::asio::awaitable<void> {
+             co_await self->run_reader();
+          },
+          boost::asio::detached);
+   }
+
+   boost::asio::awaitable<void> acquire_write() {
+      if (failure) {
+         std::rethrow_exception(failure);
+      }
+      if (!write_busy) {
+         write_busy = true;
+         co_return;
+      }
+
+      const auto executor = co_await boost::asio::this_coro::executor;
+      auto waiter = std::make_shared<write_waiter>(executor);
+      write_waiters.push_back(waiter);
+      while (!waiter->ready) {
+         auto error = boost::system::error_code{};
+         co_await waiter->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+      }
+      if (waiter->error) {
+         std::rethrow_exception(waiter->error);
+      }
+   }
+
+   void release_write() {
+      if (write_waiters.empty()) {
+         write_busy = false;
+         return;
+      }
+      auto waiter = std::move(write_waiters.front());
+      write_waiters.pop_front();
+      waiter->ready = true;
+      waiter->timer.cancel();
+   }
+};
+
+client::client() = default;
+
+client::client(fcl::transport::stream stream, options value) : impl_(std::make_shared<impl>()) {
+   impl_->stream = std::move(stream);
+   impl_->settings = std::move(value);
+}
+
+client::~client() = default;
+client::client(client&&) noexcept = default;
+client& client::operator=(client&&) noexcept = default;
+
+bool client::valid() const noexcept {
+   return impl_ && !impl_->canceled && !impl_->failure && impl_->stream.valid();
+}
+
+const options& client::settings() const noexcept {
+   static const auto defaults = options{};
+   return impl_ ? impl_->settings : defaults;
+}
+
+boost::asio::awaitable<frame> client::async_call(frame request, call_options value) {
+   if (!valid()) {
+      FCL_THROW_EXCEPTION(exceptions::cancelled, "API transport client is closed");
+   }
+   auto self = impl_;
+   const auto executor = co_await boost::asio::this_coro::executor;
+   if (self->pending.size() >= self->settings.max_inflight) {
+      FCL_THROW_EXCEPTION(exceptions::resource_exhausted, "API transport max inflight calls exceeded",
+                          fcl::exceptions::ctx("max_inflight", self->settings.max_inflight));
+   }
+   if (value.id.value != 0) {
+      request.id = value.id;
+   } else if (request.id.value == 0) {
+      request.id.value = self->next_id++;
+   }
+   if (!value.meta.empty()) {
+      request.meta = std::move(value.meta);
+   }
+   request.codec = self->settings.codec;
+
+   if (self->pending.contains(request.id.value)) {
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "duplicate active API transport call",
+                          fcl::exceptions::ctx("call_id", request.id.value));
+   }
+   auto pending = std::make_shared<impl::pending_call>(executor);
+   const auto deadline = effective_deadline(value, self->settings);
+   if (deadline.count() > 0) {
+      pending->timer.expires_after(deadline);
+   }
+   self->pending.emplace(request.id.value, pending);
+   self->start_reader(executor);
+
+   auto remove_pending = [&] {
+      if (auto found = self->pending.find(request.id.value); found != self->pending.end() && found->second == pending) {
+         self->pending.erase(found);
+      }
+   };
+   auto encoded = fcl::api::bytes{};
+   fcl::raw::pack(encoded, request);
+
+   try {
+      co_await self->acquire_write();
+      try {
+         co_await write_transport_frame(self->stream, encoded, self->settings.max_frame_size);
+      } catch (...) {
+         self->release_write();
+         throw;
+      }
+      self->release_write();
+   } catch (...) {
+      remove_pending();
+      throw;
+   }
+
+   while (!pending->done) {
+      auto error = boost::system::error_code{};
+      co_await pending->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+      if (!pending->done && !error) {
+         remove_pending();
+         auto timeout = std::exception_ptr{};
+         try {
+            FCL_THROW_EXCEPTION(exceptions::deadline_exceeded, "API transport call deadline exceeded",
+                                fcl::exceptions::ctx("call_id", request.id.value));
+         } catch (...) {
+            timeout = std::current_exception();
+         }
+         self->fail_all(timeout);
+         self->stream.cancel();
+         std::rethrow_exception(timeout);
+      }
+   }
+   if (pending->error) {
+      std::rethrow_exception(pending->error);
+   }
+   co_return std::move(*pending->response);
+}
+
+boost::asio::awaitable<void> client::async_close() {
+   auto self = impl_;
+   if (!self) {
+      co_return;
+   }
+   self->canceled = true;
+   self->fail_all(make_cancelled_error("API transport client is closed"));
+   co_await self->stream.async_close();
+}
+
+void client::cancel() {
+   auto self = impl_;
+   if (!self) {
+      return;
+   }
+   self->canceled = true;
+   self->fail_all(make_cancelled_error("API transport client is cancelled"));
+   self->stream.cancel();
+}
+
+} // namespace fcl::api::transport

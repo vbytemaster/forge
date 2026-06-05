@@ -18,28 +18,6 @@ export import fcl.api.registry;
 
 export namespace fcl::api {
 
-class connection {
- public:
-   virtual ~connection() = default;
-   virtual boost::asio::awaitable<frame> call(frame request) = 0;
-};
-
-class session {
- public:
-   explicit session(view apis) : apis_(std::move(apis)) {}
-
-   [[nodiscard]] const view& apis() const noexcept {
-      return apis_;
-   }
-
-   [[nodiscard]] const view& view() const noexcept {
-      return apis_;
-   }
-
- private:
-   fcl::api::view apis_;
-};
-
 enum class interceptor_phase : std::uint8_t {
    observe = 1,
    authorize = 2,

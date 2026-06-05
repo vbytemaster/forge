@@ -820,8 +820,8 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_listens_from_config_and_exposes_local_endpo
       {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
    const auto endpoint = p2p->local_endpoint();
    BOOST_REQUIRE(endpoint.has_value());
-   BOOST_CHECK_EQUAL(endpoint->host, "127.0.0.1");
-   BOOST_CHECK_NE(endpoint->port, 0);
+   BOOST_CHECK_EQUAL(endpoint->transport.host, "127.0.0.1");
+   BOOST_CHECK_NE(endpoint->transport.port, 0);
 
    fcl::asio::blocking::run(app.runtime(), app.shutdown());
 }

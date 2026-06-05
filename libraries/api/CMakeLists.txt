@@ -1,6 +1,7 @@
 add_library(
    fcl_api STATIC
    binding.cpp
+   dispatcher.cpp
    descriptor.cpp
    error_projection.cpp
    registry.cpp

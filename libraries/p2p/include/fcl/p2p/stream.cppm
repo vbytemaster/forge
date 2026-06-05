@@ -44,6 +44,7 @@ class stream {
    boost::asio::awaitable<fcl::transport::chunk> async_read_frame_chunk();
    boost::asio::awaitable<void> async_close();
    void cancel();
+   [[nodiscard]] fcl::transport::stream into_transport_stream() &&;
 
  private:
    friend struct detail::stream_access;

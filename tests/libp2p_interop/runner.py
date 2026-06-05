@@ -69,12 +69,14 @@ def tail_text(path: Path, limit: int = 20) -> str:
 
 
 class Listener:
-    def __init__(self, process: subprocess.Popen, ready: dict, stop_file: Path, log_file: Path, log_handle):
+    def __init__(self, process: subprocess.Popen, ready: dict, stop_file: Path, log_file: Path, log_handle,
+                 command: list[str]):
         self.process = process
         self.ready = ready
         self.stop_file = stop_file
         self.log_file = log_file
         self.log_handle = log_handle
+        self.command = command
 
     def close(self) -> None:
         try:
@@ -88,6 +90,60 @@ class Listener:
                 self.process.kill()
         finally:
             self.log_handle.close()
+
+
+def command_attempt(command: list[str], log_file: Path, scenario: str, attempt_id: int, kind: str,
+                    timeout: float) -> dict:
+    return {
+        "kind": kind,
+        "scenario_id": scenario,
+        "attempt_id": attempt_id,
+        "command": command,
+        "log_file": str(log_file),
+        "timeout_seconds": timeout,
+    }
+
+
+def run_command_with_attempts(command: list[str], log_file: Path, scenario: str, kind: str, timeout: float) -> list[dict]:
+    attempts: list[dict] = []
+    for attempt_id in (1, 2):
+        attempt = command_attempt(command, log_file, scenario, attempt_id, kind, timeout)
+        attempts.append(attempt)
+        with log_file.open("w") as log:
+            process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+            attempt["pid"] = process.pid
+            try:
+                exit_code = process.wait(timeout=timeout)
+                attempt["exit_code"] = exit_code
+                attempt["log_tail"] = tail_text(log_file)
+                if exit_code == 0:
+                    return attempts
+                attempt["failure_class"] = "process_exit"
+                raise RuntimeError(
+                    f"{kind} exited with {exit_code}; log={log_file}; tail={attempt['log_tail']}"
+                )
+            except subprocess.TimeoutExpired as error:
+                attempt["timeout_class"] = "fixture_timeout"
+                attempt["log_tail"] = tail_text(log_file)
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except Exception:
+                    process.kill()
+                    process.wait(timeout=5)
+                attempt["exit_code"] = process.returncode
+                if attempt_id == 1:
+                    continue
+                raise RuntimeError(
+                    f"{kind} timed out after {error.timeout}s; log={log_file}; tail={attempt['log_tail']}"
+                )
+    return attempts
+
+
+def attach_attempts(result: dict, attempts: list[dict]) -> dict:
+    result["attempts"] = attempts
+    result["flaky_attempts"] = max(0, len(attempts) - 1)
+    return result
 
 
 def start_listener(binary: Path, implementation: str, work: Path, scenario: Optional[str] = None,
@@ -128,7 +184,7 @@ def start_listener(binary: Path, implementation: str, work: Path, scenario: Opti
         process.wait(timeout=5)
         log.close()
         raise RuntimeError(f"{implementation} listener did not become ready: {error}; log={log_file}; tail={tail_text(log_file)}")
-    return Listener(process, ready, stop_file, log_file, log)
+    return Listener(process, ready, stop_file, log_file, log, command)
 
 
 def start_destination(binary: Path, implementation: str, relay_addr: str, relay_peer_id: str, work: Path) -> Listener:
@@ -159,7 +215,7 @@ def start_destination(binary: Path, implementation: str, relay_addr: str, relay_
         process.wait(timeout=5)
         log.close()
         raise RuntimeError(f"{implementation} destination did not become ready: {error}; log={log_file}; tail={tail_text(log_file)}")
-    return Listener(process, ready, stop_file, log_file, log)
+    return Listener(process, ready, stop_file, log_file, log, command)
 
 
 def run_dial(binary: Path, implementation: str, scenario: str, peer_id: str, addr: str, work: Path,
@@ -187,16 +243,13 @@ def run_dial(binary: Path, implementation: str, scenario: str, peer_id: str, add
     if payload is not None:
         command.extend(["--payload", payload])
     try:
-        with log_file.open("w") as log:
-            subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=DIAL_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired as error:
-        raise RuntimeError(f"dial timed out after {error.timeout}s; log={log_file}; tail={tail_text(log_file)}")
-    except subprocess.CalledProcessError as error:
-        detail = f"dial exited with {error.returncode}; log={log_file}; tail={tail_text(log_file)}"
+        attempts = run_command_with_attempts(command, log_file, scenario, "dial", DIAL_TIMEOUT_SECONDS)
+    except RuntimeError as error:
+        detail = str(error)
         if result_file.exists():
             detail += f"; result={result_file.read_text(errors='replace')}"
         raise RuntimeError(detail)
-    return json.loads(result_file.read_text())
+    return attach_attempts(json.loads(result_file.read_text()), attempts)
 
 
 def run_pubsub_mixed_mesh_stress(binaries: dict[str, Path], root: Path) -> dict:
@@ -312,16 +365,13 @@ def run_relay_dial(binary: Path, implementation: str, scenario: str, target_peer
         str(store_dir),
     ]
     try:
-        with log_file.open("w") as log:
-            subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=60)
-    except subprocess.TimeoutExpired as error:
-        raise RuntimeError(f"relay dial timed out after {error.timeout}s; log={log_file}; tail={tail_text(log_file)}")
-    except subprocess.CalledProcessError as error:
-        detail = f"relay dial exited with {error.returncode}; log={log_file}; tail={tail_text(log_file)}"
+        attempts = run_command_with_attempts(command, log_file, scenario, "relay_dial", 60)
+    except RuntimeError as error:
+        detail = str(error)
         if result_file.exists():
             detail += f"; result={result_file.read_text(errors='replace')}"
         raise RuntimeError(detail)
-    return json.loads(result_file.read_text())
+    return attach_attempts(json.loads(result_file.read_text()), attempts)
 
 
 def prepare_go_fixture(source_dir: Path, build_dir: Path, donors_root: Path) -> Path:
@@ -393,7 +443,16 @@ def run_pair_with_transport(dialer_binary: Path, dialer: str, listener_binary: P
             "scenario": scenario,
             "transport": transport,
             "addr": addr,
+            "selected_addresses": {
+                "dial": addr,
+                "listen": server.ready.get("listen_addrs", []),
+            },
             "peer_id": peer_id,
+            "listener_process": {
+                "pid": server.process.pid,
+                "command": server.command,
+                "log_file": str(server.log_file),
+            },
             "result": result,
             "listener_result": delivered,
         }
@@ -424,19 +483,16 @@ def run_topology(binary: Path, implementation: str, scenario: str, root: Path) -
         str(work / "stores"),
     ]
     try:
-        with log_file.open("w") as log:
-            subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=60)
-    except subprocess.TimeoutExpired as error:
-        raise RuntimeError(f"topology timed out after {error.timeout}s; log={log_file}; tail={tail_text(log_file)}")
-    except subprocess.CalledProcessError as error:
-        detail = f"topology exited with {error.returncode}; log={log_file}; tail={tail_text(log_file)}"
+        attempts = run_command_with_attempts(command, log_file, scenario, "topology", 60)
+    except RuntimeError as error:
+        detail = str(error)
         if result_file.exists():
             detail += f"; result={result_file.read_text(errors='replace')}"
         raise RuntimeError(detail)
     return {
         "implementation": implementation,
         "scenario": scenario,
-        "result": json.loads(result_file.read_text()),
+        "result": attach_attempts(json.loads(result_file.read_text()), attempts),
     }
 
 

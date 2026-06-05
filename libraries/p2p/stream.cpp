@@ -168,6 +168,17 @@ void stream::cancel() {
    }
 }
 
+fcl::transport::stream stream::into_transport_stream() && {
+   if (!impl_) {
+      FCL_THROW_EXCEPTION(exceptions::closed, "invalid P2P stream");
+   }
+   compact_buffer(impl_->buffer, impl_->consumed);
+   auto transport = std::move(impl_->transport);
+   auto buffered = std::move(impl_->buffer);
+   impl_.reset();
+   return fcl::transport::detail::stream_access::with_buffer(std::move(transport), std::move(buffered));
+}
+
 stream detail::stream_access::with_buffer(stream value, std::vector<std::uint8_t> buffered) {
    if (!value.impl_ || buffered.empty()) {
       return value;

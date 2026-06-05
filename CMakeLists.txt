@@ -208,6 +208,7 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/program_options/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/env/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/api/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/api_transport/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/log/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/crypto/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/multiformats/include"
@@ -331,6 +332,7 @@ add_subdirectory(libraries/yaml)
 add_subdirectory(libraries/program_options)
 add_subdirectory(libraries/env)
 add_subdirectory(libraries/api)
+add_subdirectory(libraries/api_transport)
 add_subdirectory(libraries/log)
 add_subdirectory(libraries/crypto)
 add_subdirectory(libraries/multiformats)
@@ -363,6 +365,7 @@ set(
    fcl_program_options
    fcl_env
    fcl_api
+   fcl_api_transport
    fcl_log
    fcl_crypto
    fcl_multiformats
@@ -426,6 +429,7 @@ install(
              libraries/program_options/include/fcl
              libraries/env/include/fcl
              libraries/api/include/fcl
+             libraries/api_transport/include/fcl
              libraries/log/include/fcl
              libraries/crypto/include/fcl
              libraries/multiformats/include/fcl

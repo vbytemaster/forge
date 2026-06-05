@@ -415,14 +415,30 @@ READMEs may link here, but must not define a second block order.
   Plugins configure and expose the shared node; they do not implement network
   algorithms.
 
-### Block G: Future API Over Transport
+### Block G: API Transport Foundation
 
-- Add `fcl.api.transport` only after the transport/P2P core stabilizes.
-- Reuse `transport::stream` and `transport::session` for API frame serving.
-- This layer owns frame read/write, codec checks, grouped streams, max inflight,
-  deadlines and shared error projection.
-- `fcl.quic.api`, `fcl.p2p.api` and future `stcp.api` become thin wrappers or
-  policy adapters over `fcl.api.transport`.
+- G.0 implemented checkpoint: live libp2p interop artifacts record scenario id,
+  attempt id, fixture command, pid, selected/listen addresses, negotiated
+  transport/security/muxer, exit code, timeout class and log tail where a
+  fixture command is involved. Runner retry is limited to one fixture-timeout
+  retry; protocol, security, identity and negotiation failures are not retried
+  or hidden as flakes.
+- G.1 implemented checkpoint: `fcl_api` is the transport-neutral contract layer.
+  It owns descriptors, registry/view, frame vocabulary, `frame_dispatcher`,
+  codec validation, grouped stream state, max-inflight/deadline checks and
+  shared error projection. It must not import `fcl_transport`, QUIC, P2P, HTTP,
+  WebSocket, plugins or product layers.
+- G.1 implemented checkpoint: `fcl_api_transport` is the API-over-transport
+  binding. It owns API frames over `transport::stream` and
+  `transport::session`, a concurrent client read loop with pending call map,
+  serialized writes, `serve_stream(...)`, `serve_session(...)`, bounded
+  concurrency, close/cancel wakeups and typed transport API exceptions.
+- `fcl.quic.api` and `fcl.p2p.api` are policy adapters over
+  `fcl.api.transport`. QUIC policy stays in `fcl_quic`; P2P policy stays in
+  `fcl_p2p` as protocol id, known-peer checks and discovery scope.
+- `fcl.websocket.api` shares `fcl::api::frame_dispatcher`, but does not import
+  `fcl.api.transport`, because WebSocket is message-oriented and not a
+  `transport::stream`.
 - HTTP remains a separate request/response binding.
 
 AutoNAT, AutoRelay, DHT and pubsub algorithms must live in `fcl_p2p`.

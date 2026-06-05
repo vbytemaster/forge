@@ -7,3 +7,4 @@ export import fcl.api.error_projection;
 export import fcl.api.handle;
 export import fcl.api.registry;
 export import fcl.api.binding;
+export import fcl.api.dispatcher;

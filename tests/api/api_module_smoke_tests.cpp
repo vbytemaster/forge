@@ -25,7 +25,6 @@ BOOST_AUTO_TEST_CASE(leaf_modules_can_be_imported_without_aggregate) {
    auto installer = fcl::api::installer{registry};
    auto view = fcl::api::view{registry};
    auto plan = std::move(fcl::api::binding().serve(registry)).build();
-   auto session = fcl::api::session{view};
    const auto frame = fcl::api::frame{
        .kind = fcl::api::frame_kind::cancel,
        .api = requested,
@@ -35,7 +34,7 @@ BOOST_AUTO_TEST_CASE(leaf_modules_can_be_imported_without_aggregate) {
    static_cast<void>(installer);
    BOOST_TEST(fcl::api::compatible(available, requested));
    BOOST_TEST(plan.local == &registry);
-   BOOST_TEST(&session.view() == &session.apis());
+   BOOST_TEST(&view.registry_ref() == &registry);
    BOOST_CHECK(frame.kind == fcl::api::frame_kind::cancel);
 }
 

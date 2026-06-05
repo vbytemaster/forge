@@ -75,8 +75,8 @@ router.websocket("/events", [](std::shared_ptr<fcl::websocket::connection> conne
 `fcl.websocket.api` uses `fcl::api::frame` because WebSocket is
 message-oriented and bidirectional. The binding is continuous: every inbound
 WebSocket message is decoded as an API frame, checked against the configured
-codec and frame-size limit, dispatched through `fcl::api::call_runtime`, then
-replied with a response/error frame.
+codec and frame-size limit, dispatched through `fcl::api::frame_dispatcher`,
+then replied with a response/error frame.
 
 ```cpp
 import fcl.api;
@@ -103,10 +103,11 @@ router.websocket("/api", [binding](fcl::websocket::connection::ptr connection) m
 });
 ```
 
-`fcl.websocket.api` owns API-level behavior only: frame codec checks,
-max-frame-size rejection, max-inflight call tracking and protocol-neutral API
-interceptors from the binding plan. HTTP upgrade routes, TLS verification and
-product reconnect policy stay with the transport owner.
+`fcl.websocket.api` owns API-level WebSocket binding behavior only:
+max-frame-size rejection and handoff to the shared `frame_dispatcher`. It does
+not use `fcl.api.transport`, because WebSocket messages are not
+`transport::stream` chunks. HTTP upgrade routes, TLS verification and product
+reconnect policy stay with the transport owner.
 
 ### Send, Ping And Close
 

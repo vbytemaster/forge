@@ -37,7 +37,7 @@ Deferred in E.2a:
 | --- | --- | --- |
 | FCL TCP listener/dialer establishes direct P2P session through Noise and Yamux | `test_fcl_libp2p_interop tcp ping/identify/echo FCL <-> Go/Rust` | FCL listener <-> Go/Rust dialer `tcp ping`, `tcp identify`, `tcp echo`; Go/Rust listener <-> FCL dialer same scenarios |
 | Peer mismatch is rejected as typed P2P failure | `test_fcl_quic_p2p p2p_direct_tcp_rejects_tls_peer_mismatch` covers the TCP direct path verification contract; Noise fallback is covered by live TCP fixtures | Component-level mismatch and live valid identities |
-| WebSocket paths remain outside the support claim | `test_fcl_quic_p2p p2p_websocket_multiaddr_is_parseable_but_not_dialable` | No live scenario |
+| `/ws` and `/wss` are parse/store only | `test_fcl_quic_p2p p2p_websocket_multiaddr_is_parseable_but_not_dialable` | No live dial/listen scenario |
 | Relay/DCUtR continue to use reusable Yamux without changing wire behavior | Existing relay/DCUtR component and live interop scenarios | Existing Relay v2, relayed stream and DCUtR live matrix |
 
 ## Notes

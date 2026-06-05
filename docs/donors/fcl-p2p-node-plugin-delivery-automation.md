@@ -32,10 +32,10 @@ repos or storage backends build dependencies.
   boundary.
 - libp2p DCUtR/AutoNAT/AutoRelay direction: direct path first, reachability
   probes, bounded hole-punch attempts and relay fallback selected by policy.
-- libp2p Kademlia DHT and rendezvous: future peer discovery donors once address,
-  identify and reachability foundations are stable.
-- libp2p GossipSub: future pubsub/gossip donor for mesh-style topic broadcast,
-  with validation and peer scoring.
+- libp2p Kademlia DHT and rendezvous: peer discovery donor proof now lives in
+  `fcl-p2p-dht-rendezvous-v1.md`; plugin delivery remains above that core.
+- libp2p GossipSub: pubsub/gossip donor proof now lives in
+  `fcl-p2p-gossipsub-v1.md`; product delivery policy remains above that core.
 - Syncthing/libtorrent style peer/path scoring: remember endpoint success,
   latency, backoff and failures; prefer higher-quality known candidates.
 - Transactional outbox pattern: durable retry is an injected store contract.

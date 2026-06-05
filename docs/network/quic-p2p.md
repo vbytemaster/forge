@@ -213,7 +213,8 @@ READMEs may link here, but must not define a second block order.
   and must be applied by P2P/API/transport users around operations. The cleanup
   must verify that this remains an explicit contract, not an accidental missing
   feature.
-- E.2c does not add P2P protocols, API bindings or WebSocket transport support.
+- E.2c does not add P2P protocols, API bindings or `/ws`/`/wss`
+  dial/listen paths.
   It is a cleanup block for reusable `fcl_yamux` plus donor-derived regression
   tests, and it must remain compatible with the already proven TCP Noise/TLS
   and QUIC/P2P scenarios.
@@ -402,10 +403,14 @@ READMEs may link here, but must not define a second block order.
   not poison unrelated peers or transports. Protected peers survive pruning, but
   protection does not bypass hard admission when no unprotected session can be
   freed. Mixed QUIC/TCP networks must not become a denial-of-service amplifier.
-- F.4 Donor-doc cleanup and support-claim audit: every supported behavior must
-  keep spec-derived tests, donor-derived tests and live FCL <-> Go/Rust
-  artifacts.
-- Do not claim WebSocket transport support.
+- F.4 implemented checkpoint: donor docs and
+  `tests/libp2p_interop/donor_cases.json` are the support-claim audit surface.
+  Block F is closed only for behavior that maps to a libp2p spec/donor source,
+  an FCL component test, the donor matrix and a live Go/Rust artifact where the
+  fixture can exercise that behavior. Component-only proofs and fixture gaps stay
+  explicit as `known_gap`; they are not treated as live compatibility claims.
+- `/ws` and `/wss` remain multiaddr parse/store only. There is no P2P
+  dial/listen path for browser/proxy transports in Block F.
 - `p2p_node` and focused friend plugins come after core behavior is proven.
   Plugins configure and expose the shared node; they do not implement network
   algorithms.
@@ -541,8 +546,8 @@ Accepted:
   baseline; proof is tracked in
   `docs/donors/fcl-p2p-tcp-noise-yamux-v1.md` and
   `docs/donors/fcl-p2p-tcp-tls-yamux-v1.md`.
-- FCL multi-hop relay only as a future extension above the compatible one-hop
-  Relay v2 baseline, never as a replacement for libp2p Relay v2 semantics.
+- Chained relay paths are a future extension above the compatible one-hop Relay
+  v2 baseline, never a replacement for libp2p Relay v2 semantics.
 - Syncthing/libtorrent-style path scoring/backoff.
 - Transactional outbox style durable retry as an application/plugin-level
   pattern, not a storage dependency inside `fcl_p2p`.

@@ -37,13 +37,18 @@ plugins can contribute protocol handlers and API bindings before startup.
 AutoNAT, AutoRelay, DHT, rendezvous, pubsub/gossip, relay-only path support,
 endpoint/address compatibility, peer discovery and libp2p protocol mechanics
 belong to `fcl_p2p`. `p2p_node` is not a private P2P network stack; it only maps
-config into the shared node, mounts route/API contributions, exposes safe
-send/broadcast/delivery handles and integrates the optional outbox.
+config into the shared node and mounts route/API contributions.
 
 The long-term network profile is libp2p-compatible, but the plugin boundary
 does not change: `p2p_node` enables and configures the shared FCL node. It must
 not reimplement Identify, Ping, relay discovery, DHT, pubsub or interop logic in
 plugin-local loops.
+
+G.2 will clean the public `p2p_node` contract into a narrow host facade:
+`local_peer`, `local_endpoints`, `network_info`, `publish_api`,
+`remote<T>(...)` and advanced `publish_protocol`. The current delivery/outbox,
+broadcast and raw peer-metrics surface is legacy pre-G.2 scope and must not be
+treated as the target API for new product plugins.
 
 `fcl::plugins::p2p_node::config` is the public config contract. Config section
 `p2p` owns transport bootstrap and policy:
@@ -62,17 +67,6 @@ p2p:
   private-key-pem: "..."
   api-codec: fcl.raw
   max-inflight-per-peer: 64
-  delivery:
-    outbox-mode: memory
-    queue-limit: 4096
-    worker-batch: 64
-  retry:
-    reliability: bounded-retry
-    max-attempts: 3
-    deadline-ms: 60000
-    initial-backoff-ms: 250
-    max-backoff-ms: 30000
-    jitter: true
   path:
     policy: direct-preferred
   relay:
@@ -136,52 +130,12 @@ peer opens that `protocol_id`. If the raw protocol needs an ACK or response, the
 handler writes it to the incoming stream. Use `fcl_api` over P2P when you want
 standard request/response/error handling instead of manual ACK frames.
 
-For outbound product messages, use `fcl::p2p::message`:
-
-```cpp
-auto message = fcl::p2p::message{
-   fcl::p2p::protocol_id{.value = "/product/cache/announce/1"},
-   protocol::announce_chunk{.ref = ref}};
-
-auto result = co_await p2p->send(remote_peer, std::move(message));
-if (result.state != fcl::plugins::p2p_node::delivery_state::delivered) {
-   handle_delivery_failure(result.error);
-}
-```
-
-`send()` waits for a terminal transport-level result. `send_async()` accepts the
-delivery into the plugin-managed outbox and returns a coroutine-friendly handle:
-
-```cpp
-auto delivery = co_await p2p->send_async(
-   remote_peer,
-   std::move(message),
-   {.reliability = fcl::plugins::p2p_node::delivery_reliability::durable_retry});
-
-auto snapshot = co_await delivery.snapshot();
-auto result = co_await delivery.result();
-```
-
-For restart-safe retry, provide an external outbox store through the application
-API registry. The outbox contract still uses queue terms because it is a storage
-backend; ordinary product plugins should work with `delivery` handles:
-
-```cpp
-builder.provide([outbox](fcl::app::application_context& context) {
-   context.apis().install<fcl::plugins::p2p_node::outbox_store>(
-      fcl::plugins::p2p_node::outbox_store::describe(),
-      outbox);
-});
-```
-
-The built-in outbox is in-memory. Products that need restart-safe delivery
-provide their own `p2p_node::outbox_store`; `fcl_plugins` never depends on a
-database or product storage layer.
-
-`p2p_node` retries retryable path failures, uses direct -> hole punch -> relay
-when policy allows it, and reports the final delivery state. Raw messages are
-confirmed at transport write level. Business-level acknowledgement belongs in a
-product protocol or `fcl_api` request/response contract.
+Outbound product APIs should normally use the typed `remote<T>(...)` helper that
+G.2 adds over `fcl.p2p.api` and `fcl.api.transport`. Raw one-shot protocol sends
+are an advanced escape hatch for protocols that intentionally own their own
+wire format and acknowledgement. Durable retry, outbox storage and
+application-level broadcast are planned as separate focused plugins or product
+services, not as part of the target `p2p_node` contract.
 
 ## Risks And Anti-Patterns
 
@@ -195,20 +149,20 @@ product protocol or `fcl_api` request/response contract.
   One owner plugin should mount multiple bindings/routes.
 - Do not use `p2p_node` as product authorization. It only owns transport
   lifecycle and route/API contribution points.
-- Do not treat the outbox as exactly-once delivery. It provides bounded retry
-  and optional durable at-least-once attempts; product protocols own
-  idempotency and business acknowledgements.
+- Do not attach durable delivery, outbox persistence or product broadcast
+  semantics to `p2p_node`. If needed, those belong to a future focused
+  `p2p_delivery` plugin or a product service.
 - Keep AutoNAT, AutoRelay, DHT, rendezvous, pubsub/gossip and relay discovery in
   `fcl_p2p`. `p2p_node` stays lifecycle/config/composition glue over the shared
   network node.
-- Do not turn `p2p_node` into a superplugin. Future helpers such as diagnostics,
-  discovery policy, relay service, pubsub gateway or interop harness should be
-  focused friend plugins that compose through the safe APIs exposed by
-  `p2p_node`.
+- Keep the host facade narrow. Future helpers such as `p2p_api_catalog`,
+  `p2p_diagnostics`, `p2p_pubsub` and optional `p2p_delivery` should be focused
+  friend plugins that compose through the safe APIs exposed by `p2p_node`.
 
 ## Tests
 
 `test_fcl_plugins` covers publishing the safe local P2P node API, contributing
 typed API and raw protocol routes before startup, deterministic duplicate
-protocol rejection, delivery config defaults, plugin exceptions, pluggable
-outbox usage and bounded retry failure projection.
+protocol rejection and plugin exceptions. Pre-G.2 delivery/outbox tests are
+legacy coverage until the cleanup removes that surface or moves it into a
+focused delivery plugin.

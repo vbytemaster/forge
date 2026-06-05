@@ -64,10 +64,12 @@ authorization. DHT/rendezvous discovery belongs in `fcl_p2p`; product plugins
 must not replace it with parallel discovery loops.
 
 For application/plugin composition, `fcl::plugins::p2p_node` is the production
-transport owner above `fcl_p2p`. It applies config, starts the node, mounts
-protocol/API contributions, exposes safe send/broadcast APIs and integrates an
-optional pluggable outbox store. Product plugins should not create a second node
-or run ad hoc retry loops against raw `fcl::p2p::node`.
+host facade above `fcl_p2p`. It applies config, starts the node and mounts
+protocol/API contributions. G.2 narrows the target API further around typed
+remote access and local network information; durable delivery, broadcast and
+outbox storage move to focused plugins or product layers. Product plugins
+should not create a second node or run ad hoc retry loops against raw
+`fcl::p2p::node`.
 
 ## Production P2P Direction
 
@@ -440,6 +442,32 @@ READMEs may link here, but must not define a second block order.
   `fcl.api.transport`, because WebSocket is message-oriented and not a
   `transport::stream`.
 - HTTP remains a separate request/response binding.
+- G.2 planned checkpoint: `fcl::plugins::p2p_node` becomes a narrow host facade
+  over `fcl_p2p`. It owns lifecycle, config-to-node mapping, local endpoint
+  reporting, protocol/API route mounting and typed remote API access. It must
+  stop treating delivery/outbox/broadcast/raw peer metrics as part of its
+  long-term public contract; those concerns move to focused plugins or product
+  layers.
+- G.3 planned checkpoint: `p2p_api_catalog` is a separate plugin for API
+  descriptor discovery. It records which peers advertise API protocol ids,
+  descriptors, versions, codecs and limits. Identify continues to advertise
+  protocol ids; the catalog adds typed API metadata above P2P instead of
+  expanding core Identify semantics.
+- G.4 planned checkpoint: `p2p_diagnostics` is a read-only plugin for
+  peer/path/session/relay/DHT/Rendezvous/pubsub/connection-manager health. It
+  exposes operator visibility and test artifacts, not product authorization,
+  routing policy or retry decisions.
+- G.5 planned checkpoint: `p2p_pubsub` is a plugin facade over core GossipSub.
+  It offers typed topic publish/subscribe, bounded handlers and topic policy for
+  application plugins. It is not a durable queue and does not replace
+  `fcl_p2p` GossipSub mesh/scoring/heartbeat mechanics.
+- G.6 optional future checkpoint: `p2p_delivery` may become a separate durable
+  async-delivery plugin if a product needs store-backed retry. It is not part of
+  `p2p_node`, does not promise exactly-once delivery and does not own product
+  acknowledgement semantics.
+- IPFS/Boxo content, provider, exchange, retrieval and pinning donors inform
+  future product/content/storage layers. They are not `fcl_plugins` or
+  `fcl_p2p` support claims.
 
 AutoNAT, AutoRelay, DHT and pubsub algorithms must live in `fcl_p2p`.
 `fcl::plugins::p2p_node` configures and runs the shared node, then exposes the

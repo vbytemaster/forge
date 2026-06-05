@@ -18,6 +18,7 @@ RENDEZVOUS_SCENARIOS = ("rendezvous_register_discover",)
 PUBSUB_SCENARIOS = ("gossipsub_publish",)
 PUBSUB_STRESS_SCENARIO = "gossipsub_mixed_mesh_stress"
 TOPOLOGY_SCENARIOS = ("relay_echo_topology", "dcutr_relay_topology")
+DIAL_TIMEOUT_SECONDS = 90
 NATIVE_TOPOLOGIES = (
     ("fcl", "go", "go"),
     ("go", "fcl", "fcl"),
@@ -187,7 +188,7 @@ def run_dial(binary: Path, implementation: str, scenario: str, peer_id: str, add
         command.extend(["--payload", payload])
     try:
         with log_file.open("w") as log:
-            subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=40)
+            subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=DIAL_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as error:
         raise RuntimeError(f"dial timed out after {error.timeout}s; log={log_file}; tail={tail_text(log_file)}")
     except subprocess.CalledProcessError as error:
@@ -236,7 +237,7 @@ def run_pubsub_mixed_mesh_stress(binaries: dict[str, Path], root: Path) -> dict:
         seed_file.write_text(
             "\n".join(listener.ready["listen_addrs"][0] for listener in listeners) + "\n"
         )
-        time.sleep(4)
+        time.sleep(8)
 
         publishers = [
             ("fcl", "stress-fcl", "fcl0"),

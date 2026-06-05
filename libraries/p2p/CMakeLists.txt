@@ -13,6 +13,8 @@ add_library(
    reachability.cpp
    relay.cpp
    hole_punch.cpp
+   connection_manager.cpp
+   connection_manager.hpp
    resource_manager.cpp
    stream.cpp
    negotiation.cpp

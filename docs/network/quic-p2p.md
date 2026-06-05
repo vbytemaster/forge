@@ -385,10 +385,23 @@ READMEs may link here, but must not define a second block order.
   reservation owner. Live many-peer donor topology artifacts remain limited by
   fixture support and are tracked as donor-matrix gaps, not unsupported runtime
   behavior.
-- F.3 Connection manager and resource policy: protected peers, max
-  inbound/outbound connections, pruning, reconnect/backoff, per-peer abuse
-  accounting and transport-aware limits. Mixed QUIC/TCP networks must not become
-  a denial-of-service amplifier.
+- F.3 implemented checkpoint: connection manager and resource policy live in
+  private `fcl_p2p` host/node orchestration around `session_state`, not in
+  `direct`, transport libraries, plugins or product loops. `resource_manager`
+  counts pending/established inbound/outbound session scopes and denials;
+  `connection_manager` owns admission decisions, protected peer tags,
+  low/high-watermark pruning, stale-safe removal and deterministic stop cleanup.
+  Public operator/test control is additive: `protect_peer`, `unprotect_peer`
+  and `is_peer_protected`.
+- F.3 backoff is endpoint-local and policy-backed:
+  `dial_backoff_base + dial_backoff_step * failures^2`, capped by
+  `dial_backoff_max`. A failed TCP or QUIC endpoint must not poison other
+  direct endpoints or fresh relay paths for the same peer.
+- F.3 abuse accounting is peer-local. A peer that crosses the malformed-message
+  threshold closes only the offending session, updates metrics/backoff and does
+  not poison unrelated peers or transports. Protected peers survive pruning, but
+  protection does not bypass hard admission when no unprotected session can be
+  freed. Mixed QUIC/TCP networks must not become a denial-of-service amplifier.
 - F.4 Donor-doc cleanup and support-claim audit: every supported behavior must
   keep spec-derived tests, donor-derived tests and live FCL <-> Go/Rust
   artifacts.

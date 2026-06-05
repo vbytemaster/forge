@@ -226,6 +226,16 @@ attempt_timeout(std::chrono::milliseconds remaining, std::chrono::milliseconds c
    FCL_THROW_EXCEPTION(exceptions::timeout, std::string{operation} + " timed out");
 }
 
+resource_manager::limits resource_limits_for(const node::limits& limits) {
+   auto value = limits.resources;
+   value.max_pending_inbound_sessions = limits.max_pending_inbound_sessions;
+   value.max_pending_outbound_sessions = limits.max_pending_outbound_sessions;
+   value.max_inbound_sessions = limits.max_inbound_sessions;
+   value.max_outbound_sessions = limits.max_outbound_sessions;
+   value.max_sessions_per_peer = limits.max_sessions_per_peer;
+   return value;
+}
+
 void validate(const node::options& options) {
    if (!options.allow_insecure_test_mode && (options.certificate_pem.empty() || options.private_key_pem.empty())) {
       FCL_THROW_EXCEPTION(exceptions::invalid_options, "production P2P node requires mTLS certificate and private key");
@@ -249,7 +259,15 @@ void validate(const node::options& options) {
    if (options.peer_store_path && options.peer_store_path->empty()) {
       FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P peer store path must not be empty");
    }
-   if (options.limits.max_sessions == 0 || options.limits.max_protocol_handlers == 0 ||
+   if (options.limits.max_sessions == 0 || options.limits.max_pending_inbound_sessions == 0 ||
+       options.limits.max_pending_outbound_sessions == 0 || options.limits.max_inbound_sessions == 0 ||
+       options.limits.max_outbound_sessions == 0 || options.limits.max_sessions_per_peer == 0 ||
+       options.limits.session_low_watermark == 0 || options.limits.session_low_watermark > options.limits.max_sessions ||
+       options.limits.session_grace_period.count() < 0 || options.limits.session_prune_silence.count() <= 0 ||
+       options.limits.dial_backoff_base.count() <= 0 || options.limits.dial_backoff_step.count() <= 0 ||
+       options.limits.dial_backoff_max.count() <= 0 ||
+       options.limits.dial_backoff_base > options.limits.dial_backoff_max ||
+       options.limits.max_protocol_handlers == 0 ||
        options.limits.max_peer_exchange_message_size == 0 || options.limits.max_peer_exchange_records == 0 ||
        options.limits.max_peer_exchange_queue == 0 || options.limits.relay.max_active_relays == 0 ||
        options.limits.relay.max_reservations == 0 || options.limits.relay.max_streams_per_reservation == 0 ||
@@ -392,23 +410,68 @@ void node::impl::learn_from_identify(const peer_id& peer, const identify::docume
    store.upsert(std::move(record));
 }
 
-void node::impl::remember_session(std::shared_ptr<node::impl::session_state> session) {
+std::vector<std::shared_ptr<node::impl::session_state>>
+node::impl::remember_session(std::shared_ptr<node::impl::session_state> session, connection_manager::direction direction) {
    auto lock = std::scoped_lock{mutex};
-   if (sessions.size() >= options.limits.max_sessions && !sessions.contains(session->info.remote_peer)) {
-      ++metrics_value.backpressure_rejections;
-      FCL_THROW_EXCEPTION(exceptions::backpressure_rejected, "P2P max sessions reached");
+   session->direction = direction;
+   if (session->id == 0) {
+      session->id = next_session_id++;
    }
-   sessions[session->info.remote_peer] = std::move(session);
+   const auto now = std::chrono::steady_clock::now();
+   auto admission = connections.remember(
+       connection_manager::session_record{
+           .id = session->id,
+           .peer = session->info.remote_peer,
+           .direction = direction,
+           .opened_at = now,
+           .last_used_at = now,
+       },
+       resources, now);
+   auto pruned = std::vector<std::shared_ptr<session_state>>{};
+   for (const auto id : admission.pruned) {
+      auto found = sessions.find(id);
+      if (found == sessions.end()) {
+         continue;
+      }
+      found->second->closed = true;
+      pruned.push_back(found->second);
+      const auto peer = found->second->info.remote_peer;
+      sessions.erase(found);
+      pubsub_value.outbound_streams.erase(peer);
+   }
+   if (!admission.accepted) {
+      metrics_value.active_sessions = sessions.size();
+      ++metrics_value.backpressure_rejections;
+      ++metrics_value.connection_rejections;
+      metrics_value.sessions_pruned += pruned.size();
+      metrics_value.sessions_closed += pruned.size();
+      FCL_THROW_EXCEPTION(exceptions::backpressure_rejected,
+                          admission.reason.empty() ? "P2P session admission rejected" : admission.reason);
+   }
+   sessions[session->id] = std::move(session);
    metrics_value.active_sessions = sessions.size();
+   metrics_value.sessions_pruned += pruned.size();
+   metrics_value.sessions_closed += pruned.size();
    ++metrics_value.sessions_opened;
    ++metrics_value.handshakes_completed;
+   return pruned;
 }
 
 void node::impl::forget_session(const peer_id& peer) {
    auto lock = std::scoped_lock{mutex};
-   if (sessions.erase(peer) != 0) {
+   auto removed = std::size_t{0};
+   for (auto it = sessions.begin(); it != sessions.end();) {
+      if (it->second->info.remote_peer != peer) {
+         ++it;
+         continue;
+      }
+      connections.forget(it->second->id, resources);
+      it = sessions.erase(it);
+      ++removed;
+   }
+   if (removed != 0) {
       metrics_value.active_sessions = sessions.size();
-      ++metrics_value.sessions_closed;
+      metrics_value.sessions_closed += removed;
    }
    pubsub_value.outbound_streams.erase(peer);
 }
@@ -418,6 +481,7 @@ void node::impl::forget_session(const std::shared_ptr<node::impl::session_state>
    if (!detail::erase_current_session(sessions, session)) {
       return;
    }
+   connections.forget(session->id, resources);
    metrics_value.active_sessions = sessions.size();
    ++metrics_value.sessions_closed;
    pubsub_value.outbound_streams.erase(session->info.remote_peer);
@@ -425,11 +489,16 @@ void node::impl::forget_session(const std::shared_ptr<node::impl::session_state>
 
 [[nodiscard]] std::shared_ptr<node::impl::session_state> node::impl::session_for(const peer_id& peer) const {
    auto lock = std::scoped_lock{mutex};
-   const auto it = sessions.find(peer);
-   if (it == sessions.end()) {
-      return {};
+   auto selected = std::shared_ptr<session_state>{};
+   for (const auto& [_, session] : sessions) {
+      if (session->info.remote_peer == peer && !session->closed) {
+         selected = session;
+      }
    }
-   return it->second;
+   if (selected) {
+      connections.touch(selected->id, std::chrono::steady_clock::now());
+   }
+   return selected;
 }
 
 [[nodiscard]] std::optional<node::protocol_handler> node::impl::handler_for(const protocol_id& protocol) const {
@@ -796,6 +865,34 @@ void node::impl::record_direct_failure(const peer_id& peer) {
    ++metrics_value.direct_failures;
 }
 
+std::chrono::system_clock::time_point node::impl::endpoint_backoff_until(const peer_id& peer,
+                                                                        const fcl::p2p::endpoint& endpoint,
+                                                                        path::kind kind) const {
+   auto failures = std::uint64_t{1};
+   if (auto record = store.find(peer)) {
+      const auto endpoint_string = endpoint.to_string();
+      for (const auto& current : record->endpoints) {
+         if (current.kind == kind && current.endpoint.to_string() == endpoint_string) {
+            failures = current.failures + 1;
+            break;
+         }
+      }
+   }
+   const auto base = options.limits.dial_backoff_base;
+   const auto step = options.limits.dial_backoff_step;
+   const auto cap = options.limits.dial_backoff_max;
+   const auto cap_count = cap.count() > base.count() ? cap.count() - base.count() : 0;
+   const auto step_count = step.count();
+   const auto max_square = cap_count > 0 && step_count > 0 ? static_cast<std::uint64_t>(cap_count / step_count)
+                                                           : std::uint64_t{0};
+   const auto square = failures > std::numeric_limits<std::uint64_t>::max() / failures
+                           ? std::numeric_limits<std::uint64_t>::max()
+                           : failures * failures;
+   const auto extra = std::chrono::milliseconds{
+       static_cast<std::chrono::milliseconds::rep>(std::min(square, max_square) * step_count)};
+   return std::chrono::system_clock::now() + std::min(base + extra, cap);
+}
+
 void node::impl::record_relay_failure() {
    auto lock = std::scoped_lock{mutex};
    ++metrics_value.relay_failures;
@@ -842,10 +939,40 @@ void node::impl::increment_pubsub_duplicate() {
 }
 
 void node::impl::increment_pubsub_invalid(const peer_id& peer) {
-   auto lock = std::scoped_lock{mutex};
-   ++metrics_value.pubsub_invalid_messages;
-   pubsub_value.scores[peer].invalid_messages += 1;
-   pubsub_value.scores[peer].value -= 1.0;
+   auto offender = std::shared_ptr<session_state>{};
+   auto endpoint = std::optional<fcl::p2p::endpoint>{};
+   {
+      auto lock = std::scoped_lock{mutex};
+      ++metrics_value.pubsub_invalid_messages;
+      pubsub_value.scores[peer].invalid_messages += 1;
+      pubsub_value.scores[peer].value -= 1.0;
+      if (!resources.record_malformed(resource_manager::scope{.peer = peer, .protocol = builtins::meshsub_v11})) {
+         ++metrics_value.connection_rejections;
+         auto found = sessions.end();
+         for (auto it = sessions.begin(); it != sessions.end(); ++it) {
+            if (it->second->info.remote_peer == peer && !it->second->closed) {
+               found = it;
+            }
+         }
+         if (found != sessions.end()) {
+            offender = found->second;
+            endpoint = offender->direct_endpoint;
+            offender->closed = true;
+            connections.forget(offender->id, resources);
+            sessions.erase(found);
+            pubsub_value.outbound_streams.erase(peer);
+            metrics_value.active_sessions = sessions.size();
+            ++metrics_value.sessions_closed;
+         }
+      }
+   }
+   if (offender) {
+      if (endpoint) {
+         store.mark_endpoint_failure(peer, *endpoint, path::kind::direct,
+                                     endpoint_backoff_until(peer, *endpoint, path::kind::direct));
+      }
+      offender->connection.cancel();
+   }
 }
 
 void node::impl::increment_pubsub_control() {
@@ -912,8 +1039,8 @@ std::vector<peer_id> node::impl::pubsub_candidate_peers(const std::string& topic
             out.push_back(peer);
          }
       }
-      for (const auto& [peer, session] : sessions) {
-         (void)session;
+      for (const auto& [_, session] : sessions) {
+         const auto& peer = session->info.remote_peer;
          if ((!except || peer != *except) && std::ranges::find(out, peer) == out.end()) {
             out.push_back(peer);
          }
@@ -1074,7 +1201,9 @@ boost::asio::awaitable<void> node::impl::pubsub_heartbeat_once() {
       for (const auto& [topic_value, _] : pubsub_value.handlers) {
          auto& mesh = pubsub_value.mesh[topic_value];
          for (auto it = mesh.begin(); it != mesh.end();) {
-            const auto has_session = sessions.contains(*it);
+            const auto has_session = std::ranges::any_of(sessions, [&](const auto& item) {
+               return item.second->info.remote_peer == *it && !item.second->closed;
+            });
             const auto topics = pubsub_value.peer_topics.find(*it);
             const auto subscribed = topics != pubsub_value.peer_topics.end() && topics->second.contains(topic_value);
             if (!has_session && !subscribed) {
@@ -1092,10 +1221,11 @@ boost::asio::awaitable<void> node::impl::pubsub_heartbeat_once() {
                grafts[peer].push_back(pubsub::control::graft{.subject = pubsub::topic{.value = topic_value}});
             }
          }
-         for (const auto& [peer, _session] : sessions) {
+         for (const auto& [_, session] : sessions) {
             if (mesh.size() >= mesh_target) {
                break;
             }
+            const auto& peer = session->info.remote_peer;
             if (!mesh.contains(peer)) {
                mesh.insert(peer);
                grafts[peer].push_back(pubsub::control::graft{.subject = pubsub::topic{.value = topic_value}});
@@ -1159,9 +1289,25 @@ boost::asio::awaitable<std::shared_ptr<node::impl::session_state>>
 node::impl::connect_direct(fcl::p2p::endpoint endpoint, node::connect_options connect_options_value) {
    validate_operation_timeout(connect_options_value.timeout, "P2P connect timeout");
    auto endpoint_copy = endpoint;
+   {
+      auto lock = std::scoped_lock{mutex};
+      if (!resources.try_acquire_pending_session(resource_manager::session_direction::outbound)) {
+         ++metrics_value.backpressure_rejections;
+         ++metrics_value.connection_rejections;
+         FCL_THROW_EXCEPTION(exceptions::backpressure_rejected, "P2P pending outbound session limit reached");
+      }
+   }
+   auto pending = true;
    try {
       auto started = std::chrono::steady_clock::now();
       auto result = co_await direct_registry.async_connect(std::move(endpoint), connect_options_value);
+      {
+         auto lock = std::scoped_lock{mutex};
+         if (pending) {
+            resources.release_pending_session(resource_manager::session_direction::outbound);
+            pending = false;
+         }
+      }
       store.mark_endpoint_success(
           result.peer, endpoint_copy, path::kind::direct,
           std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started));
@@ -1173,11 +1319,18 @@ node::impl::connect_direct(fcl::p2p::endpoint endpoint, node::connect_options co
           .direct_endpoint = endpoint_copy,
           .remote_endpoint = result.remote_endpoint,
       });
-      remember_session(session);
+      auto pruned = remember_session(session, connection_manager::direction::outbound);
+      for (auto& stale : pruned) {
+         stale->connection.cancel();
+      }
       launch_session_accept_loop(session);
       co_await announce_pubsub_subscriptions(result.peer);
       co_return session;
    } catch (const fcl::exceptions::base& error) {
+      if (pending) {
+         auto lock = std::scoped_lock{mutex};
+         resources.release_pending_session(resource_manager::session_direction::outbound);
+      }
       FCL_THROW_CODE(p2p_code(error), error.what());
    }
 }
@@ -1214,7 +1367,7 @@ node::impl::ensure_direct_session(const peer_id& peer, std::chrono::milliseconds
          last_kind = p2p_code(error);
          last_message = error.what();
          store.mark_endpoint_failure(peer, endpoint, path::kind::direct,
-                                     std::chrono::system_clock::now() + std::chrono::seconds{5});
+                                     endpoint_backoff_until(peer, endpoint, path::kind::direct));
          record_direct_failure(peer);
       }
    }
@@ -1252,7 +1405,7 @@ node::impl::open_protocol_direct(const peer_id& peer, const protocol_id& protoco
             forget_session(session);
             if (session->direct_endpoint) {
                store.mark_endpoint_failure(peer, *session->direct_endpoint, path::kind::direct,
-                                           std::chrono::system_clock::now() + std::chrono::seconds{5});
+                                           endpoint_backoff_until(peer, *session->direct_endpoint, path::kind::direct));
             }
             record_direct_failure(peer);
             last_kind = exceptions::code::timeout;
@@ -1268,7 +1421,7 @@ node::impl::open_protocol_direct(const peer_id& peer, const protocol_id& protoco
          forget_session(session);
          if (session->direct_endpoint) {
             store.mark_endpoint_failure(peer, *session->direct_endpoint, path::kind::direct,
-                                        std::chrono::system_clock::now() + std::chrono::seconds{5});
+                                        endpoint_backoff_until(peer, *session->direct_endpoint, path::kind::direct));
          }
          record_direct_failure(peer);
          last_kind = p2p_code(error);
@@ -1585,8 +1738,30 @@ void node::impl::launch_accept_loop(fcl::p2p::endpoint local_endpoint) {
                    co_return;
                 }
              }
+             auto pending_accept = false;
              try {
+                auto admitted = false;
+                {
+                   auto lock = std::scoped_lock{self->mutex};
+                   admitted = self->resources.try_acquire_pending_session(resource_manager::session_direction::inbound);
+                   if (!admitted) {
+                      ++self->metrics_value.backpressure_rejections;
+                      ++self->metrics_value.connection_rejections;
+                   }
+                }
+                if (!admitted) {
+                   auto timer = asio::steady_timer{self->runtime.context()};
+                   timer.expires_after(std::chrono::milliseconds{10});
+                   co_await timer.async_wait(asio::use_awaitable);
+                   continue;
+                }
+                pending_accept = true;
                 auto connection = co_await self->direct_registry.async_accept(local_endpoint);
+                {
+                   auto lock = std::scoped_lock{self->mutex};
+                   self->resources.release_pending_session(resource_manager::session_direction::inbound);
+                   pending_accept = false;
+                }
                 asio::co_spawn(
                     self->runtime.context(),
                     [self, connection = std::move(connection)]() mutable -> asio::awaitable<void> {
@@ -1595,6 +1770,9 @@ void node::impl::launch_accept_loop(fcl::p2p::endpoint local_endpoint) {
                     asio::detached);
              } catch (const fcl::exceptions::base& error) {
                 auto lock = std::scoped_lock{self->mutex};
+                if (pending_accept) {
+                   self->resources.release_pending_session(resource_manager::session_direction::inbound);
+                }
                 if (self->stopped || exceptions::is(error, exceptions::code::closed) ||
                     exceptions::is(error, exceptions::code::canceled)) {
                    co_return;
@@ -1602,12 +1780,18 @@ void node::impl::launch_accept_loop(fcl::p2p::endpoint local_endpoint) {
                 ++self->metrics_value.handshakes_failed;
              } catch (const std::exception&) {
                 auto lock = std::scoped_lock{self->mutex};
+                if (pending_accept) {
+                   self->resources.release_pending_session(resource_manager::session_direction::inbound);
+                }
                 if (self->stopped) {
                    co_return;
                 }
                 ++self->metrics_value.handshakes_failed;
              } catch (...) {
                 auto lock = std::scoped_lock{self->mutex};
+                if (pending_accept) {
+                   self->resources.release_pending_session(resource_manager::session_direction::inbound);
+                }
                 if (self->stopped) {
                    co_return;
                 }
@@ -1629,7 +1813,10 @@ boost::asio::awaitable<void> node::impl::handle_inbound_connection(direct::conne
           .direct_endpoint = connection.local_endpoint,
           .remote_endpoint = connection.remote_endpoint,
       });
-      remember_session(session);
+      auto pruned = remember_session(session, connection_manager::direction::inbound);
+      for (auto& stale : pruned) {
+         stale->connection.cancel();
+      }
       launch_session_accept_loop(session);
       co_await announce_pubsub_subscriptions(remote);
    } catch (const std::exception&) {

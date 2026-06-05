@@ -20,6 +20,7 @@ resource_manager::snapshot resource_manager::current() const noexcept {
    auto out = snapshot_;
    out.active_peer_scopes = streams_by_peer_.size();
    out.active_protocol_scopes = streams_by_protocol_.size();
+   out.active_session_peer_scopes = sessions_by_peer_.size();
    out.dial_attempt_scopes = dial_attempts_by_peer_.size();
    out.malformed_scopes = malformed_by_peer_.size();
    return out;
@@ -122,6 +123,65 @@ void resource_manager::release_relay_reservation(const scope& value) noexcept {
          --it->second;
       } else {
          relay_reservations_by_peer_.erase(it);
+      }
+   }
+}
+
+bool resource_manager::try_acquire_pending_session(session_direction direction) noexcept {
+   auto& current = direction == session_direction::inbound ? snapshot_.pending_inbound_sessions
+                                                           : snapshot_.pending_outbound_sessions;
+   const auto limit = direction == session_direction::inbound ? limits_.max_pending_inbound_sessions
+                                                              : limits_.max_pending_outbound_sessions;
+   if (current >= limit) {
+      return deny();
+   }
+   ++current;
+   return true;
+}
+
+void resource_manager::release_pending_session(session_direction direction) noexcept {
+   auto& current = direction == session_direction::inbound ? snapshot_.pending_inbound_sessions
+                                                           : snapshot_.pending_outbound_sessions;
+   if (current > 0) {
+      --current;
+   }
+}
+
+bool resource_manager::try_acquire_session(const session_scope& value) noexcept {
+   if (empty(value.peer)) {
+      return deny();
+   }
+   const auto peer_sessions = sessions_by_peer_[value.peer];
+   const auto inbound = value.direction == session_direction::inbound;
+   const auto total = snapshot_.active_inbound_sessions + snapshot_.active_outbound_sessions;
+   if (total >= limits_.max_inbound_sessions + limits_.max_outbound_sessions ||
+       peer_sessions >= limits_.max_sessions_per_peer ||
+       (inbound && snapshot_.active_inbound_sessions >= limits_.max_inbound_sessions) ||
+       (!inbound && snapshot_.active_outbound_sessions >= limits_.max_outbound_sessions)) {
+      return deny();
+   }
+   ++sessions_by_peer_[value.peer];
+   if (inbound) {
+      ++snapshot_.active_inbound_sessions;
+   } else {
+      ++snapshot_.active_outbound_sessions;
+   }
+   return true;
+}
+
+void resource_manager::release_session(const session_scope& value) noexcept {
+   if (value.direction == session_direction::inbound) {
+      if (snapshot_.active_inbound_sessions > 0) {
+         --snapshot_.active_inbound_sessions;
+      }
+   } else if (snapshot_.active_outbound_sessions > 0) {
+      --snapshot_.active_outbound_sessions;
+   }
+   if (auto it = sessions_by_peer_.find(value.peer); it != sessions_by_peer_.end()) {
+      if (it->second > 1) {
+         --it->second;
+      } else {
+         sessions_by_peer_.erase(it);
       }
    }
 }

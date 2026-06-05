@@ -1,0 +1,69 @@
+#pragma once
+
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <map>
+#include <optional>
+#include <set>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace fcl::p2p {
+
+class connection_manager {
+ public:
+   enum class direction { inbound, outbound };
+
+   struct policy {
+      std::size_t max_sessions = 1024;
+      std::size_t low_watermark = 1024;
+      std::chrono::milliseconds grace_period{60'000};
+      std::chrono::milliseconds prune_silence{10'000};
+   };
+
+   struct session_record {
+      std::uint64_t id = 0;
+      peer_id peer;
+      direction direction = direction::outbound;
+      std::chrono::steady_clock::time_point opened_at{};
+      std::chrono::steady_clock::time_point last_used_at{};
+   };
+
+   struct admission {
+      bool accepted = false;
+      std::vector<std::uint64_t> pruned;
+      std::string reason;
+   };
+
+   explicit connection_manager(policy value);
+
+   [[nodiscard]] const policy& configured_policy() const noexcept;
+   void protect(const peer_id& peer, std::string tag);
+   [[nodiscard]] bool unprotect(const peer_id& peer, std::string_view tag);
+   [[nodiscard]] bool is_protected(const peer_id& peer) const;
+   [[nodiscard]] admission remember(session_record record, resource_manager& resources,
+                                    std::chrono::steady_clock::time_point now);
+   void forget(std::uint64_t id, resource_manager& resources);
+   void forget_peer(const peer_id& peer, resource_manager& resources);
+   void touch(std::uint64_t id, std::chrono::steady_clock::time_point now);
+   void clear(resource_manager& resources);
+   [[nodiscard]] std::size_t size() const noexcept;
+
+ private:
+   [[nodiscard]] bool prune_one(resource_manager& resources, std::vector<std::uint64_t>& pruned,
+                                std::chrono::steady_clock::time_point now);
+   void release_record(const session_record& record, resource_manager& resources);
+   void erase_record(std::uint64_t id);
+
+   policy policy_;
+   std::map<peer_id, std::set<std::string>> protected_;
+   std::map<std::uint64_t, session_record> sessions_;
+   std::map<peer_id, std::set<std::uint64_t>> sessions_by_peer_;
+   std::optional<std::chrono::steady_clock::time_point> last_prune_;
+};
+
+[[nodiscard]] connection_manager::policy connection_policy_for(const node::limits& limits);
+
+} // namespace fcl::p2p

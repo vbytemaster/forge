@@ -5,10 +5,10 @@
 
 namespace fcl::p2p::detail {
 
-template <typename Peer, typename Session>
-bool erase_current_session(std::map<Peer, std::shared_ptr<Session>>& sessions,
+template <typename Id, typename Session>
+bool erase_current_session(std::map<Id, std::shared_ptr<Session>>& sessions,
                            const std::shared_ptr<Session>& session) {
-   const auto it = sessions.find(session->info.remote_peer);
+   const auto it = sessions.find(session->id);
    if (it == sessions.end() || it->second != session) {
       return false;
    }

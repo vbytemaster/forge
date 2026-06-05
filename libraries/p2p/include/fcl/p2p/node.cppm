@@ -37,6 +37,17 @@ class node {
  public:
    struct limits {
       std::size_t max_sessions = 1024;
+      std::size_t max_pending_inbound_sessions = 1024;
+      std::size_t max_pending_outbound_sessions = 1024;
+      std::size_t max_inbound_sessions = 1024;
+      std::size_t max_outbound_sessions = 1024;
+      std::size_t max_sessions_per_peer = 4;
+      std::size_t session_low_watermark = 1024;
+      std::chrono::milliseconds session_grace_period{60'000};
+      std::chrono::milliseconds session_prune_silence{10'000};
+      std::chrono::milliseconds dial_backoff_base{5'000};
+      std::chrono::milliseconds dial_backoff_step{1'000};
+      std::chrono::milliseconds dial_backoff_max{300'000};
       std::size_t max_protocol_handlers = 1024;
       std::size_t max_peer_exchange_message_size = 4 * 1024 * 1024;
       std::size_t max_peer_exchange_records = 1024;
@@ -108,6 +119,8 @@ class node {
    struct metrics_snapshot {
       std::uint64_t sessions_opened = 0;
       std::uint64_t sessions_closed = 0;
+      std::uint64_t sessions_pruned = 0;
+      std::uint64_t connection_rejections = 0;
       std::uint64_t handshakes_completed = 0;
       std::uint64_t handshakes_failed = 0;
       std::uint64_t protocol_streams_opened = 0;
@@ -168,6 +181,10 @@ class node {
    [[nodiscard]] metrics_snapshot metrics() const;
    [[nodiscard]] peer_store& peers() noexcept;
    [[nodiscard]] const peer_store& peers() const noexcept;
+
+   void protect_peer(peer_id peer, std::string tag = "manual");
+   [[nodiscard]] bool unprotect_peer(peer_id peer, std::string tag = "manual");
+   [[nodiscard]] bool is_peer_protected(const peer_id& peer) const;
 
    void register_protocol_handler(protocol_id protocol, protocol_handler handler);
    boost::asio::awaitable<void> async_listen(fcl::p2p::endpoint endpoint);

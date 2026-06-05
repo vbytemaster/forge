@@ -1556,23 +1556,23 @@ BOOST_AUTO_TEST_CASE(p2p_stream_with_buffer_preserves_prefetched_framed_chunks) 
 
 BOOST_AUTO_TEST_CASE(p2p_session_lifecycle_ignores_stale_replaced_session) {
    struct tracked_session {
+      std::uint64_t id = 0;
       node::session_info info;
    };
 
    const auto remote = peer(2);
-   auto sessions = std::map<peer_id, std::shared_ptr<tracked_session>>{};
-   auto stale = std::make_shared<tracked_session>(node::session_info{.remote_peer = remote});
-   auto current = std::make_shared<tracked_session>(node::session_info{.remote_peer = remote});
+   auto sessions = std::map<std::uint64_t, std::shared_ptr<tracked_session>>{};
+   auto stale = std::make_shared<tracked_session>(tracked_session{.id = 1, .info = {.remote_peer = remote}});
+   auto current = std::make_shared<tracked_session>(tracked_session{.id = 2, .info = {.remote_peer = remote}});
 
-   sessions[remote] = stale;
-   sessions[remote] = current;
+   sessions[current->id] = current;
 
    BOOST_TEST(!detail::erase_current_session(sessions, stale));
-   BOOST_REQUIRE(sessions.contains(remote));
-   BOOST_TEST(sessions.at(remote).get() == current.get());
+   BOOST_REQUIRE(sessions.contains(current->id));
+   BOOST_TEST(sessions.at(current->id).get() == current.get());
 
    BOOST_TEST(detail::erase_current_session(sessions, current));
-   BOOST_TEST(!sessions.contains(remote));
+   BOOST_TEST(!sessions.contains(current->id));
 }
 
 BOOST_AUTO_TEST_CASE(quic_transport_adapter_preserves_endpoint_kind_and_authority) {
@@ -1984,6 +1984,339 @@ BOOST_AUTO_TEST_CASE(p2p_resource_manager_enforces_peer_protocol_dial_and_reserv
 
    const auto snapshot = manager.current();
    BOOST_TEST(snapshot.denied >= 4U);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_resource_manager_enforces_connection_session_scopes) {
+   auto manager = resource_manager{resource_manager::limits{
+       .max_pending_inbound_sessions = 1,
+       .max_pending_outbound_sessions = 1,
+       .max_inbound_sessions = 1,
+       .max_outbound_sessions = 1,
+       .max_sessions_per_peer = 1,
+   }};
+   const auto inbound = resource_manager::session_scope{
+       .peer = peer(231),
+       .direction = resource_manager::session_direction::inbound,
+   };
+   const auto outbound = resource_manager::session_scope{
+       .peer = peer(232),
+       .direction = resource_manager::session_direction::outbound,
+   };
+
+   BOOST_TEST(manager.try_acquire_pending_session(resource_manager::session_direction::inbound));
+   BOOST_TEST(!manager.try_acquire_pending_session(resource_manager::session_direction::inbound));
+   manager.release_pending_session(resource_manager::session_direction::inbound);
+   BOOST_TEST(manager.try_acquire_pending_session(resource_manager::session_direction::outbound));
+   BOOST_TEST(!manager.try_acquire_pending_session(resource_manager::session_direction::outbound));
+   manager.release_pending_session(resource_manager::session_direction::outbound);
+
+   BOOST_TEST(manager.try_acquire_session(inbound));
+   BOOST_TEST(!manager.try_acquire_session(inbound));
+   BOOST_TEST(manager.try_acquire_session(outbound));
+   manager.release_session(inbound);
+   manager.release_session(outbound);
+
+   const auto snapshot = manager.current();
+   BOOST_TEST(snapshot.active_inbound_sessions == 0U);
+   BOOST_TEST(snapshot.active_outbound_sessions == 0U);
+   BOOST_TEST(snapshot.pending_inbound_sessions == 0U);
+   BOOST_TEST(snapshot.pending_outbound_sessions == 0U);
+   BOOST_TEST(snapshot.denied >= 3U);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_node_peer_protection_api_is_tagged_and_additive) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto value = node{runtime, options_for(peer(233))};
+   const auto protected_peer = peer(234);
+
+   BOOST_TEST(!value.is_peer_protected(protected_peer));
+   value.protect_peer(protected_peer, "bootstrap");
+   BOOST_TEST(value.is_peer_protected(protected_peer));
+   BOOST_TEST(value.unprotect_peer(protected_peer, "other"));
+   BOOST_TEST(value.is_peer_protected(protected_peer));
+   BOOST_TEST(!value.unprotect_peer(protected_peer, "bootstrap"));
+   BOOST_TEST(!value.is_peer_protected(protected_peer));
+
+   fcl::asio::blocking::run(runtime, value.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_connection_manager_prunes_unprotected_sessions_and_keeps_protected_peer) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto client_options = options_for(peer(235));
+   client_options.limits.max_sessions = 2;
+   client_options.limits.max_outbound_sessions = 2;
+   client_options.limits.session_low_watermark = 1;
+   client_options.limits.session_grace_period = std::chrono::milliseconds{0};
+   client_options.limits.session_prune_silence = std::chrono::milliseconds{1};
+
+   auto first = node{runtime, options_for(peer(236))};
+   auto second = node{runtime, options_for(peer(237))};
+   auto third = node{runtime, options_for(peer(238))};
+   auto client = node{runtime, std::move(client_options)};
+   register_echo(first);
+   register_echo(second);
+   register_echo(third);
+
+   const auto first_endpoint = listen(first, runtime);
+   const auto second_endpoint = listen(second, runtime);
+   const auto third_endpoint = listen(third, runtime);
+   (void)fcl::asio::blocking::run(
+       runtime, client.async_connect(first_endpoint, node::connect_options{.expected_peer = first.local_peer()}));
+   client.protect_peer(first.local_peer(), "bootstrap");
+   (void)fcl::asio::blocking::run(
+       runtime, client.async_connect(second_endpoint, node::connect_options{.expected_peer = second.local_peer()}));
+   (void)fcl::asio::blocking::run(
+       runtime, client.async_connect(third_endpoint, node::connect_options{.expected_peer = third.local_peer()}));
+
+   auto metrics = client.metrics();
+   BOOST_TEST(metrics.active_sessions == 2U);
+   BOOST_TEST(metrics.sessions_pruned >= 1U);
+   BOOST_TEST(client.is_peer_protected(first.local_peer()));
+
+   auto stream =
+       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(first.local_peer(), builtins::echo,
+                                                                           node::open_options{.allow_relay = false}));
+   const auto payload = std::vector<std::uint8_t>{'p', 'r', 'o', 't', 'e', 'c', 't'};
+   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   BOOST_TEST(reply == payload, boost::test_tools::per_element());
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, third.async_stop());
+   fcl::asio::blocking::run(runtime, second.async_stop());
+   fcl::asio::blocking::run(runtime, first.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_connection_manager_prunes_batch_to_low_watermark) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 6}};
+   auto client_options = options_for(peer(60));
+   client_options.limits.max_sessions = 4;
+   client_options.limits.max_outbound_sessions = 4;
+   client_options.limits.session_low_watermark = 1;
+   client_options.limits.session_grace_period = std::chrono::milliseconds{0};
+   client_options.limits.session_prune_silence = std::chrono::milliseconds{60'000};
+
+   auto first = node{runtime, options_for(peer(61))};
+   auto second = node{runtime, options_for(peer(62))};
+   auto third = node{runtime, options_for(peer(63))};
+   auto fourth = node{runtime, options_for(peer(64))};
+   auto fifth = node{runtime, options_for(peer(65))};
+   auto client = node{runtime, std::move(client_options)};
+   register_echo(fifth);
+
+   const auto first_endpoint = listen(first, runtime);
+   const auto second_endpoint = listen(second, runtime);
+   const auto third_endpoint = listen(third, runtime);
+   const auto fourth_endpoint = listen(fourth, runtime);
+   const auto fifth_endpoint = listen(fifth, runtime);
+   (void)fcl::asio::blocking::run(
+       runtime, client.async_connect(first_endpoint, node::connect_options{.expected_peer = first.local_peer()}));
+   (void)fcl::asio::blocking::run(
+       runtime, client.async_connect(second_endpoint, node::connect_options{.expected_peer = second.local_peer()}));
+   (void)fcl::asio::blocking::run(
+       runtime, client.async_connect(third_endpoint, node::connect_options{.expected_peer = third.local_peer()}));
+   (void)fcl::asio::blocking::run(
+       runtime, client.async_connect(fourth_endpoint, node::connect_options{.expected_peer = fourth.local_peer()}));
+   (void)fcl::asio::blocking::run(
+       runtime, client.async_connect(fifth_endpoint, node::connect_options{.expected_peer = fifth.local_peer()}));
+
+   auto metrics = client.metrics();
+   BOOST_TEST(metrics.active_sessions == 2U);
+   BOOST_TEST(metrics.sessions_pruned >= 3U);
+
+   auto stream =
+       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(fifth.local_peer(), builtins::echo,
+                                                                           node::open_options{.allow_relay = false}));
+   const auto payload = std::vector<std::uint8_t>{'b', 'a', 't', 'c', 'h'};
+   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   BOOST_TEST(reply == payload, boost::test_tools::per_element());
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, fifth.async_stop());
+   fcl::asio::blocking::run(runtime, fourth.async_stop());
+   fcl::asio::blocking::run(runtime, third.async_stop());
+   fcl::asio::blocking::run(runtime, second.async_stop());
+   fcl::asio::blocking::run(runtime, first.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_connection_manager_rejects_when_all_sessions_are_protected) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto client_options = options_for(peer(239));
+   client_options.limits.max_sessions = 2;
+   client_options.limits.max_outbound_sessions = 2;
+   client_options.limits.session_low_watermark = 1;
+   client_options.limits.session_grace_period = std::chrono::milliseconds{0};
+   client_options.limits.session_prune_silence = std::chrono::milliseconds{1};
+
+   auto first = node{runtime, options_for(peer(240))};
+   auto second = node{runtime, options_for(peer(241))};
+   auto third = node{runtime, options_for(peer(242))};
+   auto client = node{runtime, std::move(client_options)};
+
+   const auto first_endpoint = listen(first, runtime);
+   const auto second_endpoint = listen(second, runtime);
+   const auto third_endpoint = listen(third, runtime);
+   (void)fcl::asio::blocking::run(
+       runtime, client.async_connect(first_endpoint, node::connect_options{.expected_peer = first.local_peer()}));
+   client.protect_peer(first.local_peer(), "bootstrap");
+   (void)fcl::asio::blocking::run(
+       runtime, client.async_connect(second_endpoint, node::connect_options{.expected_peer = second.local_peer()}));
+   client.protect_peer(second.local_peer(), "bootstrap");
+
+   try {
+      (void)fcl::asio::blocking::run(
+          runtime, client.async_connect(third_endpoint, node::connect_options{.expected_peer = third.local_peer()}));
+      BOOST_FAIL("expected all-protected session limit rejection");
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+                 static_cast<int>(exceptions::code::backpressure_rejected));
+   }
+   const auto metrics = client.metrics();
+   BOOST_TEST(metrics.active_sessions == 2U);
+   BOOST_TEST(metrics.connection_rejections >= 1U);
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, third.async_stop());
+   fcl::asio::blocking::run(runtime, second.async_stop());
+   fcl::asio::blocking::run(runtime, first.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_connection_manager_enforces_outbound_session_limit) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto client_options = options_for(peer(243));
+   client_options.limits.max_sessions = 4;
+   client_options.limits.max_outbound_sessions = 1;
+   client_options.limits.session_low_watermark = 4;
+   auto first = node{runtime, options_for(peer(244))};
+   auto second = node{runtime, options_for(peer(245))};
+   auto client = node{runtime, std::move(client_options)};
+   register_echo(first);
+
+   const auto first_endpoint = listen(first, runtime);
+   const auto second_endpoint = listen(second, runtime);
+   (void)fcl::asio::blocking::run(
+       runtime, client.async_connect(first_endpoint, node::connect_options{.expected_peer = first.local_peer()}));
+   try {
+      (void)fcl::asio::blocking::run(
+          runtime, client.async_connect(second_endpoint, node::connect_options{.expected_peer = second.local_peer()}));
+      BOOST_FAIL("expected outbound session limit rejection");
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+                 static_cast<int>(exceptions::code::backpressure_rejected));
+   }
+
+   auto stream =
+       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(first.local_peer(), builtins::echo,
+                                                                           node::open_options{.allow_relay = false}));
+   const auto payload = std::vector<std::uint8_t>{'l', 'i', 'm', 'i', 't'};
+   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   BOOST_TEST(reply == payload, boost::test_tools::per_element());
+   BOOST_TEST(client.metrics().connection_rejections >= 1U);
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, second.async_stop());
+   fcl::asio::blocking::run(runtime, first.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_connection_manager_allows_bounded_parallel_sessions_per_peer) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto client_options = options_for(peer(250));
+   client_options.limits.max_sessions = 4;
+   client_options.limits.max_outbound_sessions = 4;
+   client_options.limits.max_sessions_per_peer = 2;
+   client_options.limits.session_low_watermark = 4;
+   auto server = node{runtime, options_for(peer(251))};
+   auto client = node{runtime, std::move(client_options)};
+   register_echo(server);
+
+   const auto endpoint = listen(server, runtime);
+   (void)fcl::asio::blocking::run(
+       runtime, client.async_connect(endpoint, node::connect_options{.expected_peer = server.local_peer()}));
+   (void)fcl::asio::blocking::run(
+       runtime, client.async_connect(endpoint, node::connect_options{.expected_peer = server.local_peer()}));
+   BOOST_TEST(client.metrics().active_sessions == 2U);
+
+   auto stream =
+       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::echo,
+                                                                           node::open_options{.allow_relay = false}));
+   const auto payload = std::vector<std::uint8_t>{'p', 'a', 'r', 'a', 'l', 'l', 'e', 'l'};
+   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   BOOST_TEST(reply == payload, boost::test_tools::per_element());
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_connection_manager_enforces_sessions_per_peer_limit) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto client_options = options_for(peer(252));
+   client_options.limits.max_sessions = 4;
+   client_options.limits.max_outbound_sessions = 4;
+   client_options.limits.max_sessions_per_peer = 1;
+   client_options.limits.session_low_watermark = 4;
+   auto server = node{runtime, options_for(peer(253))};
+   auto client = node{runtime, std::move(client_options)};
+
+   const auto endpoint = listen(server, runtime);
+   (void)fcl::asio::blocking::run(
+       runtime, client.async_connect(endpoint, node::connect_options{.expected_peer = server.local_peer()}));
+   try {
+      (void)fcl::asio::blocking::run(
+          runtime, client.async_connect(endpoint, node::connect_options{.expected_peer = server.local_peer()}));
+      BOOST_FAIL("expected per-peer session limit rejection");
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+                 static_cast<int>(exceptions::code::backpressure_rejected));
+   }
+   BOOST_TEST(client.metrics().active_sessions == 1U);
+   BOOST_TEST(client.metrics().connection_rejections >= 1U);
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_connection_manager_rejects_pending_outbound_limit_without_killing_first_attempt) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto client_options = options_for(peer(246));
+   client_options.limits.max_pending_outbound_sessions = 1;
+   auto client = node{runtime, std::move(client_options)};
+   const auto stalled_endpoint = start_stalling_tcp_peer(runtime, std::chrono::milliseconds{500});
+
+   auto first = boost::asio::co_spawn(
+       runtime.context(),
+       client.async_connect(stalled_endpoint,
+                            node::connect_options{
+                                .expected_peer = peer(247),
+                                .allow_relay = false,
+                                .timeout = std::chrono::milliseconds{500},
+                            }),
+       boost::asio::use_future);
+   wait_on_runtime(runtime, std::chrono::milliseconds{50}, "pending outbound admission");
+
+   try {
+      (void)fcl::asio::blocking::run(
+          runtime, client.async_connect(stalled_endpoint,
+                                       node::connect_options{
+                                           .expected_peer = peer(247),
+                                           .allow_relay = false,
+                                           .timeout = std::chrono::milliseconds{100},
+                                       }));
+      BOOST_FAIL("expected pending outbound session limit rejection");
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+                 static_cast<int>(exceptions::code::backpressure_rejected));
+   }
+
+   try {
+      (void)first.get();
+   } catch (const fcl::exceptions::base&) {
+   }
+   BOOST_TEST(client.metrics().connection_rejections >= 1U);
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_libp2p_relay_hop_codec_matches_spec_shape) {
@@ -3370,6 +3703,70 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_control_spam_is_penalized_without_stopping_no
    fcl::asio::blocking::run(runtime, server.async_stop());
 }
 
+BOOST_AUTO_TEST_CASE(p2p_abusive_peer_crossing_malformed_threshold_closes_only_offender_session) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto server_options = pubsub_options_for();
+   server_options.limits.resources.max_malformed_messages_per_peer = 1;
+   server_options.limits.max_sessions = 2;
+   server_options.limits.max_inbound_sessions = 2;
+   server_options.limits.session_low_watermark = 2;
+   server_options.limits.pubsub.limits.max_ihave_per_peer = 1;
+   auto bad_options = pubsub_options_for();
+   bad_options.explicit_peer_id = peer(248);
+   auto good_options = pubsub_options_for();
+   good_options.explicit_peer_id = peer(249);
+
+   auto server = node{runtime, std::move(server_options)};
+   auto bad = node{runtime, std::move(bad_options)};
+   auto good = node{runtime, std::move(good_options)};
+   register_echo(server);
+
+   const auto server_endpoint = listen(server, runtime);
+   bad.peers().learn_endpoint(server.local_peer(), server_endpoint,
+                              capability_set{.bits = capabilities::direct_quic | capabilities::pubsub});
+   good.peers().learn_endpoint(server.local_peer(), server_endpoint,
+                               capability_set{.bits = capabilities::direct_quic | capabilities::pubsub});
+   (void)fcl::asio::blocking::run(
+       runtime, bad.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
+   (void)fcl::asio::blocking::run(
+       runtime, good.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
+
+   const auto id = std::vector<std::uint8_t>{'i', 'd'};
+   auto spam = pubsub::rpc{
+       .control_value =
+           pubsub::control{
+               .have =
+                   std::vector<pubsub::control::ihave>{
+                       pubsub::control::ihave{.subject = pubsub::topic{.value = "fcl.abuse"},
+                                              .message_ids = std::vector<std::vector<std::uint8_t>>{id}},
+                       pubsub::control::ihave{.subject = pubsub::topic{.value = "fcl.abuse"},
+                                              .message_ids = std::vector<std::vector<std::uint8_t>>{id}}},
+           },
+   };
+   for (auto index = 0; index != 2; ++index) {
+      auto stream =
+          fcl::asio::blocking::run(runtime, bad.async_open_protocol_stream(server.local_peer(), builtins::meshsub_v11));
+      fcl::asio::blocking::run(runtime, stream.async_write(pubsub::codec::encode(spam)));
+      wait_on_runtime(runtime, std::chrono::milliseconds{150}, "gossipsub abuse accounting");
+   }
+
+   BOOST_TEST(server.metrics().pubsub_invalid_messages >= 2U);
+   BOOST_TEST(server.metrics().sessions_closed >= 1U);
+   BOOST_TEST(server.metrics().connection_rejections >= 1U);
+
+   auto stream =
+       fcl::asio::blocking::run(runtime, good.async_open_protocol_stream(server.local_peer(), builtins::echo,
+                                                                         node::open_options{.allow_relay = false}));
+   const auto payload = std::vector<std::uint8_t>{'g', 'o', 'o', 'd'};
+   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   BOOST_TEST(reply == payload, boost::test_tools::per_element());
+
+   fcl::asio::blocking::run(runtime, good.async_stop());
+   fcl::asio::blocking::run(runtime, bad.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
 BOOST_AUTO_TEST_CASE(p2p_gossipsub_outbound_byte_limit_rejects_publish_without_stopping_node) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
    auto publisher_options = pubsub_options_for();
@@ -3731,6 +4128,20 @@ BOOST_AUTO_TEST_CASE(p2p_path_manager_tries_next_direct_endpoint_after_attempt_t
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
    BOOST_TEST(client.metrics().path_direct_attempts >= 2U);
    BOOST_TEST(client.metrics().path_direct_opens >= 1U);
+   auto record = client.peers().find(server.local_peer());
+   BOOST_REQUIRE(record.has_value());
+   auto failed = std::ranges::find_if(record->endpoints, [&](const peer_store::endpoint_record& current) {
+      return current.endpoint.to_string() == make_quic_endpoint(9).to_string();
+   });
+   auto succeeded = std::ranges::find_if(record->endpoints, [&](const peer_store::endpoint_record& current) {
+      return current.endpoint.to_string() == server_endpoint.to_string();
+   });
+   BOOST_REQUIRE(failed != record->endpoints.end());
+   BOOST_REQUIRE(succeeded != record->endpoints.end());
+   BOOST_TEST(failed->failures >= 1U);
+   BOOST_TEST(failed->backoff_until > std::chrono::system_clock::now());
+   BOOST_TEST(succeeded->successes >= 1U);
+   BOOST_TEST(succeeded->backoff_until == std::chrono::system_clock::time_point{});
 
    fcl::asio::blocking::run(runtime, client.async_stop());
    fcl::asio::blocking::run(runtime, server.async_stop());

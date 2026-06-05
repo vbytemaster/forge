@@ -137,6 +137,27 @@
       ]
     },
     {
+      "id": "connection_manager.host_session_policy",
+      "protocol": "Connection Manager",
+      "source": "go-libp2p connmgr/resource-manager/swarm dial backoff and rust-libp2p connection-limits",
+      "donor": "go-libp2p low/high watermark pruning, protected peers, resource scopes, endpoint dial backoff and rust-libp2p swarm connection events",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_resource_manager_enforces_connection_session_scopes",
+        "p2p_node_peer_protection_api_is_tagged_and_additive",
+        "p2p_connection_manager_prunes_unprotected_sessions_and_keeps_protected_peer",
+        "p2p_connection_manager_rejects_when_all_sessions_are_protected",
+        "p2p_connection_manager_enforces_outbound_session_limit",
+        "p2p_connection_manager_allows_bounded_parallel_sessions_per_peer",
+        "p2p_connection_manager_enforces_sessions_per_peer_limit",
+        "p2p_connection_manager_rejects_pending_outbound_limit_without_killing_first_attempt",
+        "p2p_path_manager_tries_next_direct_endpoint_after_attempt_timeout",
+        "p2p_abusive_peer_crossing_malformed_threshold_closes_only_offender_session"
+      ],
+      "known_gap": "Live donor fixtures do not expose all pruning/protection knobs; component tests cover host policy and live interop remains the compatibility gate."
+    },
+    {
       "id": "interop.live_ping_identify_autonat_relay",
       "protocol": "Interop",
       "source": "go-libp2p and rust-libp2p live fixtures",

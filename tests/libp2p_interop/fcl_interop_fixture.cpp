@@ -615,7 +615,11 @@ int listen_mode(const std::map<std::string, std::string>& args) {
              << " handshakes_completed=" << metrics.handshakes_completed
              << " handshakes_failed=" << metrics.handshakes_failed
              << " protocol_streams_accepted=" << metrics.protocol_streams_accepted
-             << " protocol_rejections=" << metrics.protocol_rejections << "\n";
+             << " protocol_rejections=" << metrics.protocol_rejections
+             << " pubsub_received=" << metrics.pubsub_messages_received
+             << " pubsub_delivered=" << metrics.pubsub_messages_delivered
+             << " pubsub_invalid=" << metrics.pubsub_invalid_messages
+             << " pubsub_duplicates=" << metrics.pubsub_duplicates << "\n";
    if (stress_state) {
       auto lock = std::scoped_lock{stress_state->mutex};
       write_pubsub_stress_result(required(args, "result-file"), "fcl", *stress_state,

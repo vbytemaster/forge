@@ -709,14 +709,25 @@ func dial(opts options) error {
 		waitCtx, waitCancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer waitCancel()
 		meshPeer := waitPubSubPeer(waitCtx, h.pubsub, pubsubTopic, info.ID)
-		if err := h.pubsub.Publish(pubsubTopic, []byte(opts.payload)); err != nil {
-			return fmt.Errorf("gossipsub publish failed: %w", err)
+		if meshPeer {
+			time.Sleep(500 * time.Millisecond)
 		}
-		time.Sleep(2 * time.Second)
+		publishAttempts := 1
+		if opts.scenario == "gossipsub_publish" {
+			publishAttempts = 4
+		}
+		for attempt := 0; attempt < publishAttempts; attempt++ {
+			if err := h.pubsub.Publish(pubsubTopic, []byte(opts.payload)); err != nil {
+				return fmt.Errorf("gossipsub publish failed: %w", err)
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		time.Sleep(1 * time.Second)
 		result["topic"] = pubsubTopic
 		result["payload"] = opts.payload
 		result["payload_bytes"] = len(opts.payload)
 		result["mesh_peer"] = meshPeer
+		result["publish_attempts"] = publishAttempts
 	case "unknown_protocol":
 		expected, err := expectUnsupportedProtocol(ctx, h, info.ID, protocol.ID("/fcl/interop/unknown/1"))
 		if err != nil {

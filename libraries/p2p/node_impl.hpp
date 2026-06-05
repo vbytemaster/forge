@@ -1,5 +1,6 @@
 #pragma once
 
+#include "connection_manager.hpp"
 #include "direct_transport.hpp"
 #include "host_addresses.hpp"
 #include "operation_deadline.hpp"
@@ -28,14 +29,17 @@ void validate_operation_timeout(std::chrono::milliseconds timeout, std::string_v
 [[nodiscard]] std::chrono::milliseconds
 attempt_timeout(std::chrono::milliseconds remaining, std::chrono::milliseconds configured, std::string_view operation);
 [[noreturn]] void throw_operation_timeout(std::string_view operation);
+[[nodiscard]] resource_manager::limits resource_limits_for(const node::limits& limits);
 void validate(const node::options& options);
 
 struct node::impl : std::enable_shared_from_this<impl> {
    struct session_state {
+      std::uint64_t id = 0;
       node::session_info info;
       fcl::transport::session connection;
       std::optional<fcl::p2p::endpoint> direct_endpoint;
       std::optional<fcl::p2p::endpoint> remote_endpoint;
+      connection_manager::direction direction = connection_manager::direction::outbound;
       bool closed = false;
    };
 
@@ -82,13 +86,15 @@ struct node::impl : std::enable_shared_from_this<impl> {
 
    mutable std::mutex mutex;
    peer_store store;
+   mutable connection_manager connections{connection_policy_for(options.limits)};
    std::map<protocol_id, node::protocol_handler> handlers;
-   std::map<peer_id, std::shared_ptr<session_state>> sessions;
+   std::map<std::uint64_t, std::shared_ptr<session_state>> sessions;
    std::map<peer_id, relay_reservation_state> inbound_relay_reservations;
    std::map<peer_id, relay_reservation_state> outbound_relay_reservations;
    std::map<peer_id, std::uint64_t> pending_autonat_v2_nonces;
    std::uint64_t next_reservation_id = 1;
-   resource_manager resources{options.limits.resources};
+   std::uint64_t next_session_id = 1;
+   resource_manager resources{resource_limits_for(options.limits)};
    pubsub_state pubsub_value;
    relay_discovery_state relay_discovery_value;
    discovery_state discovery_value;
@@ -106,7 +112,8 @@ struct node::impl : std::enable_shared_from_this<impl> {
    void learn_from_identify(const peer_id& peer, const identify::document& document,
                             std::optional<fcl::p2p::endpoint> remote_endpoint = std::nullopt);
 
-   void remember_session(std::shared_ptr<session_state> session);
+   [[nodiscard]] std::vector<std::shared_ptr<session_state>>
+   remember_session(std::shared_ptr<session_state> session, connection_manager::direction direction);
 
    void forget_session(const peer_id& peer);
 
@@ -172,6 +179,10 @@ struct node::impl : std::enable_shared_from_this<impl> {
    void record_hole_punch_result(hole_punch::status status);
 
    void record_direct_failure(const peer_id& peer);
+
+   [[nodiscard]] std::chrono::system_clock::time_point endpoint_backoff_until(const peer_id& peer,
+                                                                              const fcl::p2p::endpoint& endpoint,
+                                                                              path::kind kind) const;
 
    void record_relay_failure();
 

@@ -249,6 +249,21 @@ const peer_store& node::peers() const noexcept {
    return impl_->store;
 }
 
+void node::protect_peer(peer_id peer, std::string tag) {
+   auto lock = std::scoped_lock{impl_->mutex};
+   impl_->connections.protect(peer, std::move(tag));
+}
+
+bool node::unprotect_peer(peer_id peer, std::string tag) {
+   auto lock = std::scoped_lock{impl_->mutex};
+   return impl_->connections.unprotect(peer, tag);
+}
+
+bool node::is_peer_protected(const peer_id& peer) const {
+   auto lock = std::scoped_lock{impl_->mutex};
+   return impl_->connections.is_protected(peer);
+}
+
 void node::register_protocol_handler(protocol_id protocol, node::protocol_handler handler) {
    if (protocol.value.empty() || !handler) {
       FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P protocol handler requires protocol id and handler");
@@ -1009,6 +1024,7 @@ boost::asio::awaitable<void> node::async_stop() {
          session->closed = true;
          sessions.push_back(session);
       }
+      self->connections.clear(self->resources);
       self->sessions.clear();
       self->inbound_relay_reservations.clear();
       self->outbound_relay_reservations.clear();
@@ -1040,6 +1056,7 @@ void node::stop() {
          session->closed = true;
          session->connection.cancel();
       }
+      impl_->connections.clear(impl_->resources);
       impl_->sessions.clear();
       impl_->inbound_relay_reservations.clear();
       impl_->outbound_relay_reservations.clear();

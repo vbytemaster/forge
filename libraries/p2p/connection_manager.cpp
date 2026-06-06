@@ -187,6 +187,26 @@ void connection_manager::clear(resource_manager& resources) {
    sessions_by_peer_.clear();
 }
 
+connection_manager::snapshot connection_manager::current(std::size_t max_sessions) const {
+   auto out = snapshot{
+      .active_sessions = sessions_.size(),
+   };
+   out.protected_peers.reserve(protected_.size());
+   for (const auto& [peer, tags] : protected_) {
+      if (!tags.empty()) {
+         out.protected_peers.push_back(peer);
+      }
+   }
+   out.sessions.reserve(std::min(max_sessions, sessions_.size()));
+   for (const auto& [_, record] : sessions_) {
+      if (out.sessions.size() >= max_sessions) {
+         break;
+      }
+      out.sessions.push_back(record);
+   }
+   return out;
+}
+
 std::size_t connection_manager::size() const noexcept {
    return sessions_.size();
 }

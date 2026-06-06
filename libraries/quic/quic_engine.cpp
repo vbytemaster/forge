@@ -576,6 +576,7 @@ struct engine_connection::impl {
    std::deque<std::shared_ptr<engine_stream::impl>> accepted_streams;
    std::vector<std::weak_ptr<asio::steady_timer>> handshake_waiters;
    std::vector<std::weak_ptr<asio::steady_timer>> accept_stream_waiters;
+   std::vector<std::weak_ptr<asio::steady_timer>> receive_loop_waiters;
    std::function<void()> handshake_completed_hook;
    std::function<void(std::shared_ptr<impl>)> closed_hook;
    std::function<void(const ngtcp2_cid&)> local_connection_id_issued_hook;
@@ -591,6 +592,7 @@ struct engine_connection::impl {
    bool canceled = false;
    bool closed_hook_called = false;
    bool receive_loop_started = false;
+   bool receive_loop_active = false;
    bool drain_active = false;
    bool drain_requested = false;
    bool udp_send_active = false;
@@ -695,6 +697,21 @@ struct engine_connection::impl {
          if (auto shared = self.lock()) {
             closed_hook(std::move(shared));
          }
+      }
+   }
+
+   void finish_client_receive_loop() {
+      receive_loop_active = false;
+      wake(receive_loop_waiters);
+   }
+
+   boost::asio::awaitable<void> wait_client_receive_loop_idle() {
+      while (receive_loop_active) {
+         auto timer = std::make_shared<asio::steady_timer>(strand);
+         timer->expires_after(std::chrono::minutes{10});
+         receive_loop_waiters.emplace_back(timer);
+         boost::system::error_code ec;
+         co_await timer->async_wait(asio::redirect_error(asio::use_awaitable, ec));
       }
    }
 
@@ -1161,23 +1178,39 @@ struct engine_connection::impl {
       if (!self) {
          return;
       }
+      receive_loop_active = true;
       asio::co_spawn(
           strand,
           [self]() -> asio::awaitable<void> {
-             while (!self->closing && !self->canceled) {
-                auto packet = std::vector<std::uint8_t>(65536);
-                auto from = udp::endpoint{};
-                boost::system::error_code ec;
-                const auto nread = co_await self->socket->async_receive_from(
-                    asio::buffer(packet), from, asio::redirect_error(asio::use_awaitable, ec));
-                if (ec) {
-                   if (ec != asio::error::operation_aborted && !self->closing) {
-                      self->fail_all();
-                   }
-                   co_return;
+             struct receive_loop_guard {
+                std::shared_ptr<engine_connection::impl> value;
+
+                ~receive_loop_guard() {
+                   value->finish_client_receive_loop();
                 }
-                packet.resize(nread);
-                co_await self->handle_packet(std::move(packet), std::move(from));
+             } guard{self};
+
+             try {
+                while (!self->closing && !self->canceled) {
+                   auto packet = std::vector<std::uint8_t>(65536);
+                   auto from = udp::endpoint{};
+                   boost::system::error_code ec;
+                   const auto nread = co_await self->socket->async_receive_from(
+                       asio::buffer(packet), from, asio::redirect_error(asio::use_awaitable, ec));
+                   if (ec) {
+                      if (ec != asio::error::operation_aborted && !self->closing) {
+                         self->fail_all();
+                      }
+                      co_return;
+                   }
+                   packet.resize(nread);
+                   co_await self->handle_packet(std::move(packet), std::move(from));
+                }
+             } catch (...) {
+                if (!self->closing && !self->canceled) {
+                   self->fail_all();
+                }
+                co_return;
              }
           },
           asio::detached);
@@ -1759,10 +1792,12 @@ boost::asio::awaitable<void> engine_connection::async_close() {
    }
    co_await asio::dispatch(impl_->strand, asio::use_awaitable);
    if (impl_->closing) {
+      co_await impl_->wait_client_receive_loop_idle();
       co_return;
    }
    impl_->metrics.connections_closed.fetch_add(1, std::memory_order_relaxed);
    impl_->close_transport(!impl_->server_side);
+   co_await impl_->wait_client_receive_loop_idle();
 }
 
 void engine_connection::cancel() {

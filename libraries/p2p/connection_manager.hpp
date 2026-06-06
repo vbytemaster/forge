@@ -37,6 +37,12 @@ class connection_manager {
       std::string reason;
    };
 
+   struct snapshot {
+      std::size_t active_sessions = 0;
+      std::vector<peer_id> protected_peers;
+      std::vector<session_record> sessions;
+   };
+
    explicit connection_manager(policy value);
 
    [[nodiscard]] const policy& configured_policy() const noexcept;
@@ -49,6 +55,7 @@ class connection_manager {
    void forget_peer(const peer_id& peer, resource_manager& resources);
    void touch(std::uint64_t id, std::chrono::steady_clock::time_point now);
    void clear(resource_manager& resources);
+   [[nodiscard]] snapshot current(std::size_t max_sessions) const;
    [[nodiscard]] std::size_t size() const noexcept;
 
  private:

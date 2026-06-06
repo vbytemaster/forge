@@ -5,6 +5,7 @@ export import fcl.p2p.identity;
 export import fcl.p2p.endpoint;
 export import fcl.p2p.envelope;
 export import fcl.p2p.identify;
+export import fcl.p2p.diagnostics;
 export import fcl.p2p.discovery;
 export import fcl.p2p.dht;
 export import fcl.p2p.rendezvous;

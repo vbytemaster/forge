@@ -103,6 +103,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
    bool stopped = false;
 
    [[nodiscard]] std::vector<fcl::p2p::endpoint> local_endpoints_for_control() const;
+   [[nodiscard]] std::vector<fcl::p2p::endpoint> local_endpoints_for_control_locked() const;
 
    void learn_from_message(const peer_exchange_message& message,
                            std::optional<fcl::p2p::endpoint> remote_endpoint = std::nullopt);

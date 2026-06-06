@@ -42,9 +42,14 @@ or storage backends build dependencies.
   latency, backoff and failures; prefer higher-quality known candidates.
 - Kubo `CoreAPI` style facade: consumers use narrow API surfaces backed by a
   node instead of constructing or mutating the node directly.
+- Kubo diagnostics/read-only service split: operator visibility is exposed as
+  focused queries over node state, not as mutable host ownership.
 - Rust libp2p `SwarmBuilder` style composition: transports, security upgrades,
   muxers, relay client and behaviours are composed declaratively; application
   plugins do not run ad hoc protocol loops.
+- Rust libp2p swarm and Go libp2p peerstore/connmgr/resource-manager style
+  visibility: peer, connection, resource and protocol state can be projected for
+  diagnostics while the host keeps ownership of mutation and policy.
 - Go libp2p host services: DHT, Identify, AutoNAT, AutoRelay, relay service,
   connection limits and resource policy are host/network behaviours, not
   product plugin code.
@@ -106,6 +111,19 @@ which external projects provide accepted patterns and criteria:
   FCL-specific API metadata above P2P. It sends a stable serializable
   projection, not raw runtime `fcl::api::descriptor`, and does not claim
   Go/Rust libp2p resolver interoperability.
+- `p2p_diagnostics` follows the host/service split: `fcl_p2p` owns immutable
+  diagnostics snapshots of peer store, sessions, resources, relay reservations,
+  connection protection and pubsub state; the plugin exposes capped in-process
+  projections for operators and tests. It is not a remote diagnostics protocol
+  and does not add Go/Rust libp2p wire interop claims.
 - Product protocols own idempotency, authorization and business-level
   acknowledgement. Raw `p2p::message` delivery means the frame was written to
   the selected protocol stream.
+
+## Diagnostics FCL Tests
+
+- `test_fcl_quic_p2p p2p_diagnostics_snapshot_reports_live_network_state_without_mutation`
+- `test_fcl_quic_p2p p2p_diagnostics_snapshot_caps_are_deterministic`
+- `test_fcl_plugins p2p_diagnostics_plugin_config_is_described_from_public_schema`
+- `test_fcl_plugins p2p_diagnostics_api_rejects_facade_calls_before_initialize`
+- `test_fcl_plugins p2p_diagnostics_plugin_reports_live_p2p_node_state`

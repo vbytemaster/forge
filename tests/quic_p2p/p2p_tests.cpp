@@ -52,6 +52,7 @@ import fcl.p2p.discovery;
 import fcl.p2p.endpoint;
 import fcl.p2p.envelope;
 import fcl.p2p.exceptions;
+import fcl.p2p.diagnostics;
 import fcl.p2p.hole_punch;
 import fcl.p2p.identify;
 import fcl.p2p.identity;
@@ -2036,6 +2037,78 @@ BOOST_AUTO_TEST_CASE(p2p_node_peer_protection_api_is_tagged_and_additive) {
    BOOST_TEST(value.is_peer_protected(protected_peer));
    BOOST_TEST(!value.unprotect_peer(protected_peer, "bootstrap"));
    BOOST_TEST(!value.is_peer_protected(protected_peer));
+
+   fcl::asio::blocking::run(runtime, value.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_diagnostics_snapshot_reports_live_network_state_without_mutation) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto server = node{runtime, options_for(peer(250), capability_set{.bits = capabilities::direct_quic |
+                                                                             capabilities::peer_exchange |
+                                                                             capabilities::pubsub})};
+   auto client_options = options_for(peer(251), capability_set{.bits = capabilities::direct_quic |
+                                                                       capabilities::peer_exchange |
+                                                                       capabilities::pubsub |
+                                                                       capabilities::relay_reservation});
+   client_options.peer_store_backend = peer_store::make_memory_backend();
+   auto client = node{runtime, std::move(client_options)};
+   register_echo(server);
+
+   const auto server_endpoint = listen(server, runtime);
+   (void)listen(client, runtime);
+   client.peers().learn_endpoint(server.local_peer(), server_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::peer_exchange |
+                                                        capabilities::pubsub | capabilities::relay |
+                                                        capabilities::relay_reservation});
+   (void)fcl::asio::blocking::run(
+      runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
+   client.protect_peer(server.local_peer(), "diagnostics-test");
+   client.peers().mark_endpoint_failure(server.local_peer(), server_endpoint, path::kind::direct,
+                                        std::chrono::system_clock::now() + std::chrono::seconds{30});
+
+   const auto before = client.metrics();
+   const auto before_pubsub = client.pubsub_snapshot();
+   const auto snapshot = client.diagnostics(diagnostics::options{});
+   const auto after = client.metrics();
+
+   BOOST_TEST(snapshot.network.local_peer.to_string() == client.local_peer().to_string());
+   BOOST_TEST(!snapshot.network.local_endpoints.empty());
+   BOOST_TEST(snapshot.metrics.active_sessions == before.active_sessions);
+   BOOST_TEST(snapshot.metrics.active_sessions == after.active_sessions);
+   BOOST_TEST(snapshot.resources.active_outbound_sessions >= 1U);
+   BOOST_TEST(snapshot.pubsub.topics == before_pubsub.topics);
+   BOOST_REQUIRE_EQUAL(snapshot.peers.size(), 1U);
+   BOOST_TEST(snapshot.peers.front().peer.to_string() == server.local_peer().to_string());
+   BOOST_TEST(snapshot.peers.front().protected_peer);
+   BOOST_REQUIRE(!snapshot.peers.front().endpoints.empty());
+   BOOST_TEST(snapshot.peers.front().endpoints.front().failures >= 1U);
+   BOOST_REQUIRE_EQUAL(snapshot.sessions.size(), 1U);
+   BOOST_TEST(snapshot.sessions.front().remote_peer.to_string() == server.local_peer().to_string());
+   BOOST_TEST(snapshot.sessions.front().protected_peer);
+   BOOST_TEST(static_cast<int>(snapshot.sessions.front().direction) ==
+              static_cast<int>(diagnostics::session_direction::outbound));
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_diagnostics_snapshot_caps_are_deterministic) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto value = node{runtime, options_for(peer(252))};
+   value.peers().learn_endpoint(peer(253), make_quic_endpoint(4001), capability_set{.bits = capabilities::direct_quic});
+   value.peers().learn_endpoint(peer(254), make_tcp_endpoint(4002), capability_set{.bits = capabilities::peer_exchange});
+
+   const auto snapshot = value.diagnostics(diagnostics::options{
+      .max_peers = 1,
+      .max_sessions = 0,
+      .max_endpoints_per_peer = 1,
+      .max_protocols_per_peer = 1,
+      .max_relay_reservations_per_peer = 1,
+   });
+
+   BOOST_REQUIRE_EQUAL(snapshot.peers.size(), 1U);
+   BOOST_TEST(snapshot.sessions.empty());
+   BOOST_REQUIRE_EQUAL(snapshot.peers.front().endpoints.size(), 1U);
 
    fcl::asio::blocking::run(runtime, value.async_stop());
 }

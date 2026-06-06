@@ -34,6 +34,7 @@ class p2p_node final : public fcl::app::plugin {
    enum class path_policy : std::uint8_t;
    class exceptions;
    class api;
+   class diagnostics_source;
 
    p2p_node();
    ~p2p_node() override;
@@ -143,6 +144,20 @@ class p2p_node::api {
    class impl;
 };
 
+class p2p_node::diagnostics_source {
+ public:
+   virtual ~diagnostics_source() = default;
+
+   [[nodiscard]] static fcl::api::descriptor describe();
+
+   [[nodiscard]] virtual fcl::p2p::diagnostics::snapshot
+   snapshot(fcl::p2p::diagnostics::options options = {}) const = 0;
+
+ private:
+   friend class p2p_node;
+   class impl;
+};
+
 } // namespace fcl::plugins
 
 BOOST_DESCRIBE_STRUCT(fcl::plugins::p2p_node::config, (),
@@ -184,7 +199,7 @@ export template <> struct fcl::schema::rules<fcl::plugins::p2p_node::config> {
          .range(1, 1'000'000);
       schema.field<&fcl::plugins::p2p_node::config::allow_insecure_test_mode>("allow-insecure-test-mode")
          .default_value(false)
-         .description("Test-only mode for local development without production identity material");
+         .description("Test-only mode for local development without deployment identity material");
       schema.field<&fcl::plugins::p2p_node::config::path_policy>("path.policy")
          .default_value("direct-preferred")
          .description("Default host path policy: direct-only, direct-preferred or relay-only");

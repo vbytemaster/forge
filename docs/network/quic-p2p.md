@@ -456,10 +456,12 @@ READMEs may link here, but must not define a second block order.
   metadata above P2P instead of expanding core Identify semantics. Its network
   metadata protocol `/fcl/api/resolver/1` is FCL-specific and does not extend
   Go/Rust libp2p support claims.
-- G.4 planned checkpoint: `p2p_diagnostics` is a read-only plugin for
-  peer/path/session/relay/DHT/Rendezvous/pubsub/connection-manager health. It
-  exposes operator visibility and test artifacts, not product authorization,
-  routing policy or retry decisions.
+- G.4 implemented checkpoint: `p2p_diagnostics` is a read-only in-process
+  plugin for peer/path/session/relay/DHT/Rendezvous/pubsub/connection-manager
+  health. `fcl_p2p` owns immutable diagnostics snapshots; the plugin exposes
+  capped operator/test projections through `fcl_app`. It does not add a network
+  diagnostics protocol, product authorization, remediation, routing policy or
+  retry decisions.
 - G.5 planned checkpoint: `p2p_pubsub` is a plugin facade over core GossipSub.
   It offers typed topic publish/subscribe, bounded handlers and topic policy for
   application plugins. It is not a durable queue and does not replace

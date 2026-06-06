@@ -196,6 +196,22 @@
       "known_gap": "`/fcl/api/resolver/1` is an FCL-specific metadata protocol; no Go/Rust libp2p resolver interop claim is made."
     },
     {
+      "id": "plugin.p2p_diagnostics_snapshot",
+      "protocol": "FCL P2P Diagnostics",
+      "source": "docs/donors/fcl-p2p-node-plugin-delivery-automation.md",
+      "donor": "Kubo CoreAPI/service facade split, Go libp2p peerstore/connmgr/resource-manager visibility and rust-libp2p swarm state projection patterns",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "test_fcl_quic_p2p p2p_diagnostics_snapshot_reports_live_network_state_without_mutation",
+        "test_fcl_quic_p2p p2p_diagnostics_snapshot_caps_are_deterministic",
+        "test_fcl_plugins p2p_diagnostics_plugin_config_is_described_from_public_schema",
+        "test_fcl_plugins p2p_diagnostics_api_rejects_facade_calls_before_initialize",
+        "test_fcl_plugins p2p_diagnostics_plugin_reports_live_p2p_node_state"
+      ],
+      "known_gap": "`p2p_diagnostics` is an FCL in-process operator/test API over local snapshots; no Go/Rust libp2p wire interop claim is made."
+    },
+    {
       "id": "interop.live_ping_identify_autonat_relay",
       "protocol": "Interop",
       "source": "go-libp2p and rust-libp2p live fixtures",

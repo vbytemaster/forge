@@ -340,6 +340,10 @@ node::impl::impl(fcl::asio::runtime& runtime_value, node::options options_value)
 
 std::vector<fcl::p2p::endpoint> node::impl::local_endpoints_for_control() const {
    auto lock = std::scoped_lock{mutex};
+   return local_endpoints_for_control_locked();
+}
+
+std::vector<fcl::p2p::endpoint> node::impl::local_endpoints_for_control_locked() const {
    return host_addresses::merge_advertised(options.advertised_endpoints, direct_registry.local_endpoints(), local);
 }
 
@@ -1761,6 +1765,10 @@ void node::impl::launch_accept_loop(fcl::p2p::endpoint local_endpoint) {
                    auto lock = std::scoped_lock{self->mutex};
                    self->resources.release_pending_session(resource_manager::session_direction::inbound);
                    pending_accept = false;
+                   if (self->stopped) {
+                      connection.session.cancel();
+                      co_return;
+                   }
                 }
                 asio::co_spawn(
                     self->runtime.context(),
@@ -1804,6 +1812,13 @@ void node::impl::launch_accept_loop(fcl::p2p::endpoint local_endpoint) {
 
 boost::asio::awaitable<void> node::impl::handle_inbound_connection(direct::connection connection) {
    try {
+      {
+         auto lock = std::scoped_lock{mutex};
+         if (stopped) {
+            connection.session.cancel();
+            co_return;
+         }
+      }
       auto remote = connection.peer;
       auto session = std::make_shared<session_state>(session_state{
           .info = node::session_info{.remote_peer = remote,

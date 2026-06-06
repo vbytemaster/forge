@@ -41,6 +41,7 @@ import fcl.crypto.hmac;
 import fcl.crypto.pem;
 import fcl.crypto.asymmetric;
 import fcl.p2p.dht;
+import fcl.p2p.diagnostics;
 import fcl.p2p.discovery;
 import fcl.p2p.endpoint;
 import fcl.p2p.envelope;
@@ -147,6 +148,117 @@ void append_result(std::vector<discovery::result>& out, const peer_store::record
    });
 }
 
+[[nodiscard]] std::chrono::milliseconds elapsed_since(std::chrono::steady_clock::time_point now,
+                                                       std::chrono::steady_clock::time_point started) {
+   if (started == std::chrono::steady_clock::time_point{} || now <= started) {
+      return std::chrono::milliseconds{0};
+   }
+   return std::chrono::duration_cast<std::chrono::milliseconds>(now - started);
+}
+
+[[nodiscard]] diagnostics::session_direction diagnostics_direction(connection_manager::direction value) noexcept {
+   return value == connection_manager::direction::inbound ? diagnostics::session_direction::inbound
+                                                          : diagnostics::session_direction::outbound;
+}
+
+[[nodiscard]] std::vector<diagnostics::endpoint_record>
+diagnostics_endpoints(std::span<const peer_store::endpoint_record> records, std::size_t limit) {
+   auto out = std::vector<diagnostics::endpoint_record>{};
+   out.reserve(std::min(records.size(), limit));
+   for (const auto& record : records) {
+      if (out.size() >= limit) {
+         break;
+      }
+      out.push_back(diagnostics::endpoint_record{
+          .endpoint = record.endpoint,
+          .kind = record.kind,
+          .relay_peer = record.relay_peer,
+          .successes = record.successes,
+          .failures = record.failures,
+          .last_latency = record.last_latency,
+          .backoff_until = record.backoff_until,
+          .score = record.score,
+      });
+   }
+   return out;
+}
+
+[[nodiscard]] std::vector<diagnostics::relay_reservation>
+diagnostics_relays(std::span<const peer_store::relay_record> records, std::size_t limit, std::size_t endpoint_limit) {
+   auto out = std::vector<diagnostics::relay_reservation>{};
+   out.reserve(std::min(records.size(), limit));
+   for (const auto& record : records) {
+      if (out.size() >= limit) {
+         break;
+      }
+      auto endpoints = record.endpoints;
+      if (endpoints.size() > endpoint_limit) {
+         endpoints.resize(endpoint_limit);
+      }
+      out.push_back(diagnostics::relay_reservation{
+          .relay = record.relay,
+          .reservation_id = record.reservation_id,
+          .expires_at = record.expires_at,
+          .endpoints = std::move(endpoints),
+          .successes = record.successes,
+          .failures = record.failures,
+          .last_latency = record.last_latency,
+          .score = record.score,
+      });
+   }
+   return out;
+}
+
+[[nodiscard]] diagnostics::peer diagnostics_peer(const peer_store::record& record, const diagnostics::options& options,
+                                                 bool protected_peer) {
+   auto protocols = record.protocols;
+   if (protocols.size() > options.max_protocols_per_peer) {
+      protocols.resize(options.max_protocols_per_peer);
+   }
+   return diagnostics::peer{
+       .peer = record.peer,
+       .capabilities = record.capabilities,
+       .discovered_by = record.discovered_by,
+       .protocol_version = record.protocol_version,
+       .agent_version = record.agent_version,
+       .protocols = std::move(protocols),
+       .endpoints = diagnostics_endpoints(record.endpoints, options.max_endpoints_per_peer),
+       .relay_reservations =
+           diagnostics_relays(record.relay_reservations, options.max_relay_reservations_per_peer,
+                              options.max_endpoints_per_peer),
+       .reachability = record.reachability,
+       .observed_endpoint = record.observed_endpoint,
+       .reachability_expires_at = record.reachability_expires_at,
+       .discovered_at = record.discovered_at,
+       .discovery_expires_at = record.discovery_expires_at,
+       .discovery_backoff_until = record.discovery_backoff_until,
+       .successes = record.successes,
+       .failures = record.failures,
+       .last_latency = record.last_latency,
+       .score = record.score,
+       .protected_peer = protected_peer,
+   };
+}
+
+[[nodiscard]] pubsub::snapshot diagnostics_pubsub(const auto& impl) {
+   auto mesh_edges = std::size_t{};
+   for (const auto& [_, peers] : impl.pubsub_value.mesh) {
+      mesh_edges += peers.size();
+   }
+   return pubsub::snapshot{
+       .topics = impl.pubsub_value.handlers.size(),
+       .peers = impl.pubsub_value.peer_topics.size(),
+       .mesh_edges = mesh_edges,
+       .cached_messages = impl.pubsub_value.cache.size(),
+       .messages_published = impl.metrics_value.pubsub_messages_published,
+       .messages_received = impl.metrics_value.pubsub_messages_received,
+       .messages_delivered = impl.metrics_value.pubsub_messages_delivered,
+       .duplicates = impl.metrics_value.pubsub_duplicates,
+       .invalid_messages = impl.metrics_value.pubsub_invalid_messages,
+       .control_messages = impl.metrics_value.pubsub_control_messages,
+   };
+}
+
 boost::asio::awaitable<std::optional<identify::document>>
 identify_peer(auto self, const peer_id& peer, discovery::source source, std::chrono::milliseconds timeout) {
    try {
@@ -238,6 +350,64 @@ node::metrics_snapshot node::metrics() const {
    out.active_sessions = impl_->sessions.size();
    out.active_relay_reservations = impl_->inbound_relay_reservations.size();
    out.stopped = impl_->stopped;
+   return out;
+}
+
+fcl::p2p::diagnostics::snapshot node::diagnostics(fcl::p2p::diagnostics::options options) const {
+   auto lock = std::scoped_lock{impl_->mutex};
+   auto out = fcl::p2p::diagnostics::snapshot{};
+   out.network = fcl::p2p::diagnostics::network_state{
+      .local_peer = impl_->local,
+      .local_endpoints = impl_->local_endpoints_for_control_locked(),
+      .stopped = impl_->stopped,
+   };
+   out.metrics = impl_->metrics_value;
+   out.metrics.active_sessions = impl_->sessions.size();
+   out.metrics.active_relay_reservations = impl_->inbound_relay_reservations.size();
+   out.metrics.stopped = impl_->stopped;
+   out.resources = impl_->resources.current();
+   out.pubsub = diagnostics_pubsub(*impl_);
+
+   auto connection_snapshot = impl_->connections.current(options.max_sessions);
+   out.connections = fcl::p2p::diagnostics::connection_state{
+      .active_sessions = connection_snapshot.active_sessions,
+      .protected_peers = std::move(connection_snapshot.protected_peers),
+   };
+
+   const auto now = std::chrono::steady_clock::now();
+   out.sessions.reserve(connection_snapshot.sessions.size());
+   for (const auto& record : connection_snapshot.sessions) {
+      const auto found = impl_->sessions.find(record.id);
+      if (found == impl_->sessions.end()) {
+         continue;
+      }
+      const auto& session = *found->second;
+      out.sessions.push_back(fcl::p2p::diagnostics::session{
+          .id = session.id,
+          .remote_peer = session.info.remote_peer,
+          .capabilities = session.info.capabilities,
+          .path = session.info.path,
+          .relay_peer = session.info.relay_peer,
+          .direct_endpoint = session.direct_endpoint,
+          .remote_endpoint = session.remote_endpoint,
+          .direction = diagnostics_direction(record.direction),
+          .age = elapsed_since(now, record.opened_at),
+          .idle = elapsed_since(now, record.last_used_at),
+          .closed = session.closed,
+          .protected_peer = impl_->connections.is_protected(session.info.remote_peer),
+      });
+   }
+
+   if (options.max_peers > 0) {
+      const auto records = impl_->store.snapshot();
+      out.peers.reserve(std::min(options.max_peers, records.size()));
+      for (const auto& record : records) {
+         if (out.peers.size() >= options.max_peers) {
+            break;
+         }
+         out.peers.push_back(diagnostics_peer(record, options, impl_->connections.is_protected(record.peer)));
+      }
+   }
    return out;
 }
 

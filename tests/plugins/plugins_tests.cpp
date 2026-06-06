@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <variant>
 #include <vector>
 
@@ -115,6 +116,56 @@ class node_test_api_impl final : public node_test_api {
    }
 };
 
+class scripted_resolver_api {
+ public:
+   virtual ~scripted_resolver_api() = default;
+   virtual boost::asio::awaitable<fcl::plugins::p2p_api_resolver::response>
+   query(fcl::plugins::p2p_api_resolver::query request) = 0;
+
+   static fcl::api::descriptor describe() {
+      return fcl::api::contract<scripted_resolver_api>(
+                {.id = {"fcl.plugins.p2p_api_resolver.protocol"}, .version = {.major = 1, .revision = 0}})
+         .method<&scripted_resolver_api::query, fcl::plugins::p2p_api_resolver::query,
+                 fcl::plugins::p2p_api_resolver::response>("query")
+         .build();
+   }
+};
+
+struct scripted_resolver_state {
+   std::vector<fcl::plugins::p2p_api_resolver::response> responses;
+   std::size_t calls = 0;
+};
+
+class scripted_resolver_api_impl final : public scripted_resolver_api {
+ public:
+   explicit scripted_resolver_api_impl(std::shared_ptr<scripted_resolver_state> state) : state_{std::move(state)} {}
+
+   boost::asio::awaitable<fcl::plugins::p2p_api_resolver::response>
+   query(fcl::plugins::p2p_api_resolver::query) override {
+      const auto index = std::min(state_->calls, state_->responses.size() - 1);
+      ++state_->calls;
+      co_return state_->responses[index];
+   }
+
+ private:
+   std::shared_ptr<scripted_resolver_state> state_;
+};
+
+[[nodiscard]] fcl::plugins::p2p_api_resolver::entry resolver_test_entry(std::string protocol) {
+   return fcl::plugins::p2p_api_resolver::entry{
+      .id = {.value = "node.test"},
+      .version = {.major = 1, .revision = 0},
+      .protocol = std::move(protocol),
+      .codec = {.value = "fcl.raw"},
+      .max_inflight = 64,
+      .max_frame_size = 16 * 1024 * 1024,
+      .methods = {fcl::plugins::p2p_api_resolver::method{
+         .name = "ping",
+         .kind = fcl::api::method_kind::unary,
+      }},
+   };
+}
+
 class route_publisher_plugin final : public fcl::app::plugin {
  public:
    explicit route_publisher_plugin(plugin_log& log) : log_{&log} {}
@@ -189,6 +240,129 @@ class duplicate_route_plugin final : public fcl::app::plugin {
    }
 };
 
+class resolver_route_publisher_plugin final : public fcl::app::plugin {
+ public:
+   [[nodiscard]] fcl::app::plugin_id id() const override {
+      return fcl::app::plugin_id{.value = "resolver-route-publisher"};
+   }
+
+   [[nodiscard]] std::string version() const override {
+      return "1";
+   }
+
+   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+      auto resolver = context.apis().get<fcl::plugins::p2p_api_resolver::api>(
+         {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+
+      auto plan = fcl::api::binding()
+                     .serve(context.apis())
+                     .export_api<node_test_api>({.id = {"node.test"}, .major = 1, .min_revision = 0})
+                     .build();
+      resolver->publish_api(std::move(plan), fcl::p2p::protocol_id{.value = "/fcl/api/node-test/1"});
+      co_return;
+   }
+
+   boost::asio::awaitable<void> startup() override {
+      co_return;
+   }
+
+   boost::asio::awaitable<void> shutdown() override {
+      co_return;
+   }
+};
+
+class duplicate_resolver_route_plugin final : public fcl::app::plugin {
+ public:
+   [[nodiscard]] fcl::app::plugin_id id() const override {
+      return fcl::app::plugin_id{.value = "duplicate-resolver-route"};
+   }
+
+   [[nodiscard]] std::string version() const override {
+      return "1";
+   }
+
+   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+      auto resolver = context.apis().get<fcl::plugins::p2p_api_resolver::api>(
+         {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+      auto plan = fcl::api::binding()
+                     .serve(context.apis())
+                     .export_api<node_test_api>({.id = {"node.test"}, .major = 1, .min_revision = 0})
+                     .build();
+      resolver->publish_api(plan, fcl::p2p::protocol_id{.value = "/fcl/api/node-test/1"});
+      resolver->publish_api(std::move(plan), fcl::p2p::protocol_id{.value = "/fcl/api/node-test-duplicate/1"});
+      co_return;
+   }
+
+   boost::asio::awaitable<void> startup() override {
+      co_return;
+   }
+
+   boost::asio::awaitable<void> shutdown() override {
+      co_return;
+   }
+};
+
+class resolver_protocol_conflict_plugin final : public fcl::app::plugin {
+ public:
+   [[nodiscard]] fcl::app::plugin_id id() const override {
+      return fcl::app::plugin_id{.value = "resolver-protocol-conflict"};
+   }
+
+   [[nodiscard]] std::string version() const override {
+      return "1";
+   }
+
+   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+      auto p2p = context.apis().get<fcl::plugins::p2p_node::api>(
+         {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+      p2p->publish_protocol(
+         fcl::p2p::protocol_id{.value = "/fcl/api/resolver/1"},
+         [](fcl::p2p::node::incoming_protocol_stream) -> boost::asio::awaitable<void> {
+            co_return;
+         });
+      co_return;
+   }
+
+   boost::asio::awaitable<void> startup() override {
+      co_return;
+   }
+
+   boost::asio::awaitable<void> shutdown() override {
+      co_return;
+   }
+};
+
+class scripted_resolver_plugin final : public fcl::app::plugin {
+ public:
+   [[nodiscard]] fcl::app::plugin_id id() const override {
+      return fcl::app::plugin_id{.value = "scripted-resolver"};
+   }
+
+   [[nodiscard]] std::string version() const override {
+      return "1";
+   }
+
+   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+      auto p2p = context.apis().get<fcl::plugins::p2p_node::api>(
+         {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+      auto plan = fcl::api::binding()
+                     .serve(context.apis())
+                     .export_api<scripted_resolver_api>(
+                        {.id = {"fcl.plugins.p2p_api_resolver.protocol"}, .major = 1, .min_revision = 0})
+                     .build();
+      p2p->publish_api(std::move(plan), fcl::p2p::protocol_id{.value = "/fcl/api/resolver/1"});
+      co_return;
+   }
+
+   boost::asio::awaitable<void> startup() override {
+      co_return;
+   }
+
+   boost::asio::awaitable<void> shutdown() override {
+      co_return;
+   }
+};
+
 class p2p_plugin_application final : public fcl::app::application_shell {
  public:
    explicit p2p_plugin_application(plugin_log& log) : log_{&log} {}
@@ -233,6 +407,95 @@ class p2p_only_application final : public fcl::app::application_shell {
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
       registry.register_plugin(fcl::plugins::p2p_node::descriptor());
    }
+};
+
+class resolver_plugin_application final : public fcl::app::application_shell {
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p_api_resolver::descriptor());
+      registry.register_plugin(fcl::app::plugin_descriptor{
+         .id = fcl::app::plugin_id{.value = "resolver-route-publisher"},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.p2p_api_resolver"}},
+         .factory = [] {
+            return std::make_unique<resolver_route_publisher_plugin>();
+         },
+      });
+   }
+
+   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+      context.apis().install<node_test_api>(node_test_api::describe(), std::make_shared<node_test_api_impl>());
+      co_return;
+   }
+};
+
+class resolver_only_application final : public fcl::app::application_shell {
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p_api_resolver::descriptor());
+   }
+};
+
+class duplicate_resolver_plugin_application final : public fcl::app::application_shell {
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p_api_resolver::descriptor());
+      registry.register_plugin(fcl::app::plugin_descriptor{
+         .id = fcl::app::plugin_id{.value = "duplicate-resolver-route"},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.p2p_api_resolver"}},
+         .factory = [] {
+            return std::make_unique<duplicate_resolver_route_plugin>();
+         },
+      });
+   }
+
+   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+      context.apis().install<node_test_api>(node_test_api::describe(), std::make_shared<node_test_api_impl>());
+      co_return;
+   }
+};
+
+class resolver_protocol_conflict_application final : public fcl::app::application_shell {
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
+      registry.register_plugin(fcl::app::plugin_descriptor{
+         .id = fcl::app::plugin_id{.value = "resolver-protocol-conflict"},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.p2p_node"}},
+         .factory = [] {
+            return std::make_unique<resolver_protocol_conflict_plugin>();
+         },
+      });
+      registry.register_plugin(fcl::plugins::p2p_api_resolver::descriptor());
+   }
+};
+
+class scripted_resolver_application final : public fcl::app::application_shell {
+ public:
+   explicit scripted_resolver_application(std::shared_ptr<scripted_resolver_state> state) : state_{std::move(state)} {}
+
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
+      registry.register_plugin(fcl::app::plugin_descriptor{
+         .id = fcl::app::plugin_id{.value = "scripted-resolver"},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.p2p_node"}},
+         .factory = [] {
+            return std::make_unique<scripted_resolver_plugin>();
+         },
+      });
+   }
+
+   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+      context.apis().install<scripted_resolver_api>(scripted_resolver_api::describe(),
+                                                    std::make_shared<scripted_resolver_api_impl>(state_));
+      co_return;
+   }
+
+ private:
+   std::shared_ptr<scripted_resolver_state> state_;
 };
 
 [[nodiscard]] const fcl::config::field_descriptor& require_field(const fcl::config::component_descriptor& descriptor,
@@ -451,4 +714,260 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_rejects_invalid_typed_config_before_startup
       auto app = p2p_only_application{};
       BOOST_CHECK_NO_THROW(app.configure(config));
    }
+}
+
+BOOST_AUTO_TEST_CASE(p2p_api_resolver_plugin_config_is_described_from_public_schema) {
+   auto plugin = fcl::plugins::p2p_api_resolver{};
+   const auto descriptor = plugin.describe_config();
+   BOOST_REQUIRE(descriptor.has_value());
+   BOOST_TEST(descriptor->section == "p2p-api-resolver");
+
+   const auto& protocol = require_field(*descriptor, "protocol-id");
+   BOOST_TEST(protocol.has_default);
+   BOOST_TEST(std::get<std::string>(protocol.default_value.storage) == "/fcl/api/resolver/1");
+
+   const auto& cache_ttl = require_field(*descriptor, "cache-ttl-ms");
+   BOOST_TEST(cache_ttl.has_default);
+   BOOST_TEST(std::get<std::uint64_t>(cache_ttl.default_value.storage) > 0U);
+
+   const auto& max_peers = require_field(*descriptor, "max-cached-peers");
+   BOOST_TEST(max_peers.has_default);
+   BOOST_TEST(std::get<std::uint64_t>(max_peers.default_value.storage) > 0U);
+
+   const auto& max_apis = require_field(*descriptor, "max-apis-per-peer");
+   BOOST_TEST(max_apis.has_default);
+   BOOST_TEST(std::get<std::uint64_t>(max_apis.default_value.storage) > 0U);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_api_resolver_rejects_facade_calls_before_initialize) {
+   auto runtime = fcl::asio::runtime{};
+   auto plugin = fcl::plugins::p2p_api_resolver{};
+   auto apis = fcl::api::registry{};
+   auto provider = fcl::api::installer{apis};
+   fcl::asio::blocking::run(runtime, plugin.provide(provider));
+
+   auto resolver = apis.get<fcl::plugins::p2p_api_resolver::api>(
+      {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+
+   auto plan = fcl::api::binding().serve(apis).build();
+   BOOST_CHECK_THROW(resolver->publish_api(std::move(plan), fcl::p2p::protocol_id{.value = "/fcl/api/node-test/1"}),
+                     fcl::plugins::p2p_api_resolver::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW((void)resolver->local_apis(),
+                     fcl::plugins::p2p_api_resolver::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, resolver->peer_apis(test_peer(40))),
+                     fcl::plugins::p2p_api_resolver::exceptions::plugin_not_initialized);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_api_resolver_rejects_invalid_typed_config_before_startup) {
+   {
+      auto config = test_p2p_config(test_peer(45));
+      config.set("p2p-api-resolver.protocol-id", std::string{"fcl/api/resolver/1"});
+      auto app = resolver_only_application{};
+      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p_api_resolver::exceptions::invalid_config);
+   }
+
+   {
+      auto config = test_p2p_config(test_peer(46));
+      config.set("p2p-api-resolver.max-cached-peers", std::uint64_t{0});
+      auto app = resolver_only_application{};
+      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p_api_resolver::exceptions::invalid_config);
+   }
+}
+
+BOOST_AUTO_TEST_CASE(p2p_api_resolver_publishes_metadata_and_delegates_route_mounting) {
+   auto app = resolver_plugin_application{};
+   app.configure(test_p2p_config(test_peer(50)));
+   fcl::asio::blocking::run(app.runtime(), app.initialize());
+
+   auto resolver = app.apis().get<fcl::plugins::p2p_api_resolver::api>(
+      {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+   const auto entries = resolver->local_apis();
+   BOOST_REQUIRE_EQUAL(entries.size(), 1U);
+   BOOST_TEST(entries.front().id.value == "node.test");
+   BOOST_TEST(entries.front().version.major == 1U);
+   BOOST_TEST(entries.front().version.revision == 0U);
+   BOOST_TEST(entries.front().protocol == "/fcl/api/node-test/1");
+   BOOST_TEST(entries.front().codec.value == "fcl.raw");
+   BOOST_REQUIRE_EQUAL(entries.front().methods.size(), 1U);
+   BOOST_TEST(entries.front().methods.front().name == "ping");
+   BOOST_TEST(static_cast<int>(entries.front().methods.front().kind) ==
+              static_cast<int>(fcl::api::method_kind::unary));
+
+   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_api_resolver_rejects_duplicate_api_and_resolver_protocol_conflict) {
+   {
+      auto app = duplicate_resolver_plugin_application{};
+      app.configure(test_p2p_config(test_peer(60)));
+      BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.initialize()),
+                        fcl::plugins::p2p_api_resolver::exceptions::duplicate_api);
+   }
+
+   {
+      auto app = resolver_protocol_conflict_application{};
+      app.configure(test_p2p_config(test_peer(61)));
+      BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.initialize()),
+                        fcl::plugins::p2p_api_resolver::exceptions::duplicate_api);
+   }
+}
+
+BOOST_AUTO_TEST_CASE(p2p_api_resolver_resolves_remote_api_and_opens_typed_remote) {
+   const auto server_peer = test_peer(70);
+   auto server_config = test_p2p_config(server_peer);
+   server_config.set("p2p.listen", fcl::config::value::array_type{
+                                      fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
+
+   auto server = resolver_plugin_application{};
+   server.configure(server_config);
+   fcl::asio::blocking::run(server.runtime(), server.startup());
+
+   auto server_p2p = server.apis().get<fcl::plugins::p2p_node::api>(
+      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   const auto server_endpoint = server_p2p->local_endpoint();
+   BOOST_REQUIRE(server_endpoint.has_value());
+
+   auto client_config = test_p2p_config(test_peer(71));
+   client_config.set("p2p.bootstrap",
+                     fcl::config::value::array_type{fcl::config::value{server_endpoint->to_string()}});
+   auto client = resolver_only_application{};
+   client.configure(client_config);
+   fcl::asio::blocking::run(client.runtime(), client.startup());
+
+   auto resolver = client.apis().get<fcl::plugins::p2p_api_resolver::api>(
+      {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+   const auto remote_entries = fcl::asio::blocking::run(client.runtime(), resolver->peer_apis(server_peer));
+   BOOST_REQUIRE_EQUAL(remote_entries.size(), 1U);
+   BOOST_TEST(remote_entries.front().protocol == "/fcl/api/node-test/1");
+
+   auto resolved = fcl::asio::blocking::run(
+      client.runtime(), resolver->resolve(server_peer, {.id = {"node.test"}, .major = 1, .min_revision = 0}));
+   BOOST_TEST(resolved.api.protocol == "/fcl/api/node-test/1");
+
+   auto remote = fcl::asio::blocking::run(client.runtime(), resolver->remote<node_test_api>(server_peer));
+   const auto response = fcl::asio::blocking::run(
+      client.runtime(),
+      remote.call<int, int>({.id = {"node.test"}, .major = 1, .min_revision = 0}, "ping", 41));
+   BOOST_TEST(response == 42);
+
+   fcl::asio::blocking::run(client.runtime(), client.shutdown());
+   fcl::asio::blocking::run(server.runtime(), server.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_api_resolver_enforces_version_compatibility) {
+   const auto server_peer = test_peer(80);
+   auto server_config = test_p2p_config(server_peer);
+   server_config.set("p2p.listen", fcl::config::value::array_type{
+                                      fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
+
+   auto server = resolver_plugin_application{};
+   server.configure(server_config);
+   fcl::asio::blocking::run(server.runtime(), server.startup());
+
+   auto server_p2p = server.apis().get<fcl::plugins::p2p_node::api>(
+      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   const auto server_endpoint = server_p2p->local_endpoint();
+   BOOST_REQUIRE(server_endpoint.has_value());
+
+   auto client_config = test_p2p_config(test_peer(81));
+   client_config.set("p2p.bootstrap",
+                     fcl::config::value::array_type{fcl::config::value{server_endpoint->to_string()}});
+   auto client = resolver_only_application{};
+   client.configure(client_config);
+   fcl::asio::blocking::run(client.runtime(), client.startup());
+
+   auto resolver = client.apis().get<fcl::plugins::p2p_api_resolver::api>(
+      {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+   BOOST_CHECK_NO_THROW(fcl::asio::blocking::run(
+      client.runtime(), resolver->resolve(server_peer, {.id = {"node.test"}, .major = 1, .min_revision = 0})));
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(
+                        client.runtime(),
+                        resolver->resolve(server_peer, {.id = {"node.test"}, .major = 1, .min_revision = 10})),
+                     fcl::plugins::p2p_api_resolver::exceptions::incompatible_api);
+
+   fcl::asio::blocking::run(client.runtime(), client.shutdown());
+   fcl::asio::blocking::run(server.runtime(), server.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_api_resolver_rejects_malformed_remote_metadata_without_caching_it) {
+   const auto server_peer = test_peer(85);
+   auto bad = resolver_test_entry("/fcl/api/node-test/1");
+   auto duplicate = fcl::plugins::p2p_api_resolver::response{.apis = {bad, bad}};
+   auto good = fcl::plugins::p2p_api_resolver::response{
+      .apis = {resolver_test_entry("/fcl/api/node-test/1")},
+   };
+   auto state = std::make_shared<scripted_resolver_state>(
+      scripted_resolver_state{.responses = {std::move(duplicate), std::move(good)}});
+
+   auto server_config = test_p2p_config(server_peer);
+   server_config.set("p2p.listen", fcl::config::value::array_type{
+                                      fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
+
+   auto server = scripted_resolver_application{state};
+   server.configure(server_config);
+   fcl::asio::blocking::run(server.runtime(), server.startup());
+
+   auto server_p2p = server.apis().get<fcl::plugins::p2p_node::api>(
+      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   const auto server_endpoint = server_p2p->local_endpoint();
+   BOOST_REQUIRE(server_endpoint.has_value());
+
+   auto client_config = test_p2p_config(test_peer(86));
+   client_config.set("p2p.bootstrap",
+                     fcl::config::value::array_type{fcl::config::value{server_endpoint->to_string()}});
+   auto client = resolver_only_application{};
+   client.configure(client_config);
+   fcl::asio::blocking::run(client.runtime(), client.startup());
+
+   auto resolver = client.apis().get<fcl::plugins::p2p_api_resolver::api>(
+      {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(client.runtime(), resolver->peer_apis(server_peer)),
+                     fcl::plugins::p2p_api_resolver::exceptions::protocol_error);
+   const auto entries = fcl::asio::blocking::run(client.runtime(), resolver->peer_apis(server_peer));
+   BOOST_REQUIRE_EQUAL(entries.size(), 1U);
+   BOOST_TEST(state->calls == 2U);
+
+   fcl::asio::blocking::run(client.runtime(), client.shutdown());
+   fcl::asio::blocking::run(server.runtime(), server.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_api_resolver_cache_ttl_and_force_refresh_are_behavioral) {
+   const auto server_peer = test_peer(90);
+   auto server_config = test_p2p_config(server_peer);
+   server_config.set("p2p.listen", fcl::config::value::array_type{
+                                      fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
+
+   auto server = resolver_plugin_application{};
+   server.configure(server_config);
+   fcl::asio::blocking::run(server.runtime(), server.startup());
+
+   auto server_p2p = server.apis().get<fcl::plugins::p2p_node::api>(
+      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   const auto server_endpoint = server_p2p->local_endpoint();
+   BOOST_REQUIRE(server_endpoint.has_value());
+
+   auto client_config = test_p2p_config(test_peer(91));
+   client_config.set("p2p.bootstrap",
+                     fcl::config::value::array_type{fcl::config::value{server_endpoint->to_string()}});
+   client_config.set("p2p-api-resolver.cache-ttl-ms", std::uint64_t{200});
+   auto client = resolver_only_application{};
+   client.configure(client_config);
+   fcl::asio::blocking::run(client.runtime(), client.startup());
+
+   auto resolver = client.apis().get<fcl::plugins::p2p_api_resolver::api>(
+      {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+   BOOST_REQUIRE_EQUAL(fcl::asio::blocking::run(client.runtime(), resolver->peer_apis(server_peer)).size(), 1U);
+
+   fcl::asio::blocking::run(server.runtime(), server.shutdown());
+   BOOST_REQUIRE_EQUAL(fcl::asio::blocking::run(client.runtime(), resolver->peer_apis(server_peer)).size(), 1U);
+
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(client.runtime(),
+                                              resolver->peer_apis(server_peer, {.force_refresh = true})),
+                     fcl::exceptions::base);
+
+   std::this_thread::sleep_for(std::chrono::milliseconds{250});
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(client.runtime(), resolver->peer_apis(server_peer)),
+                     fcl::exceptions::base);
+
+   fcl::asio::blocking::run(client.runtime(), client.shutdown());
 }

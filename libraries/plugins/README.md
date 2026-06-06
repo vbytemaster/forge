@@ -22,6 +22,7 @@ small typed APIs for product plugins to contribute behavior safely.
 ## Public Modules
 
 - `fcl.plugins.p2p_node` — ready P2P node plugin and safe local API.
+- `fcl.plugins.p2p_api_resolver` — API-over-P2P metadata resolver plugin.
 - `fcl.plugins` — aggregate import.
 
 Target: `fcl_plugins`.
@@ -88,8 +89,7 @@ provide certificate and private key material.
 Register the infrastructure plugin through its owner type:
 
 ```cpp
-auto builder = fcl::app::application_builder{};
-builder.plugin(fcl::plugins::p2p_node::descriptor());
+registry.register_plugin(fcl::plugins::p2p_node::descriptor());
 ```
 
 ```cpp
@@ -154,6 +154,65 @@ intentionally own their own wire format and acknowledgement. Durable retry,
 store-backed queues and application-level fan-out are planned as separate
 focused plugins or product services, not as part of `p2p_node`.
 
+## P2P API Resolver Plugin
+
+`p2p_api_resolver` is the focused discovery layer for API-over-P2P metadata. A
+product plugin publishes a discoverable API through the resolver; the resolver
+delegates the actual route mount to `p2p_node`, records a bounded serializable
+projection of the API descriptor and serves that projection over the private
+FCL protocol `/fcl/api/resolver/1`.
+
+The resolver does not own P2P discovery, authorization, DHT, rendezvous, relay
+policy or product routing decisions. Peer identity comes from the authenticated
+P2P session. Resolver payloads are metadata only and cannot claim or override
+the remote peer id.
+
+```yaml
+p2p-api-resolver:
+  protocol-id: /fcl/api/resolver/1
+  cache-ttl-ms: 60000
+  query-deadline-ms: 5000
+  open-deadline-ms: 10000
+  max-cached-peers: 4096
+  max-apis-per-peer: 1024
+  max-methods-per-api: 256
+  max-errors-per-method: 64
+```
+
+Publish a discoverable API from a product plugin:
+
+```cpp
+auto resolver = context.apis().get<fcl::plugins::p2p_api_resolver::api>(
+   {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1});
+
+auto plan = fcl::api::binding()
+   .serve(context.apis())
+   .export_api<cache_api>({.id = {"cache"}, .major = 1, .min_revision = 8})
+   .build();
+
+resolver->publish_api(std::move(plan), {.value = "/fcl/api/cache/1"});
+```
+
+Open a compatible remote API without hardcoding that product protocol id:
+
+```cpp
+auto cache = co_await resolver->remote<cache_api>(
+   peer,
+   fcl::plugins::p2p_api_resolver::resolve_options{
+      .open_deadline = 5s,
+   });
+
+auto reply = co_await cache.call<read_request, read_response>(
+   {.id = {"cache"}, .major = 1, .min_revision = 8},
+   "read",
+   request);
+```
+
+The wire response is not raw `fcl::api::descriptor`: descriptors contain local
+runtime function/type metadata. The resolver sends only the stable projection:
+API id/version, protocol id string, codec, limits, method names/kinds and error
+identities.
+
 ## Risks And Anti-Patterns
 
 - Do not let product plugins call `node.register_protocol_handler(...)`
@@ -173,7 +232,7 @@ focused plugins or product services, not as part of `p2p_node`.
 - Keep AutoNAT, AutoRelay, DHT, rendezvous, pubsub/gossip and relay discovery in
   `fcl_p2p`. `p2p_node` stays lifecycle/config/composition glue over the shared
   network node.
-- Keep the host facade narrow. Future helpers such as `p2p_api_catalog`,
+- Keep the host facade narrow. Focused helpers such as `p2p_api_resolver`,
   `p2p_diagnostics`, `p2p_pubsub` and optional `p2p_delivery` should be focused
   friend plugins that compose through the safe APIs exposed by `p2p_node`.
 
@@ -182,4 +241,6 @@ focused plugins or product services, not as part of `p2p_node`.
 `test_fcl_plugins` covers publishing the safe local P2P node API, contributing
 typed API and raw protocol routes before startup, deterministic duplicate
 protocol rejection, multi-listen endpoint reporting, typed remote API calls and
-plugin exceptions.
+plugin exceptions. It also covers resolver publication, duplicate API
+rejection, compatible remote resolution, malformed metadata rejection, cache TTL
+and forced refresh behavior.

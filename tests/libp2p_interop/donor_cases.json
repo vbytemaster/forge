@@ -181,6 +181,21 @@
       "known_gap": "Live donor fixtures do not expose all pruning/protection knobs; component tests cover host policy and live interop remains the compatibility gate."
     },
     {
+      "id": "plugin.p2p_api_resolver_metadata",
+      "protocol": "FCL P2P API Resolver",
+      "source": "docs/donors/fcl-p2p-api-resolver-v1.md",
+      "donor": "libp2p Identify protocol-listing, Kubo CoreAPI facade pattern, Boxo service separation and rust-libp2p behaviour composition",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "test_fcl_plugins p2p_api_resolver_plugin_config_is_described_from_public_schema",
+        "test_fcl_plugins p2p_api_resolver_publishes_metadata_and_delegates_route_mounting",
+        "test_fcl_plugins p2p_api_resolver_resolves_remote_api_and_opens_typed_remote",
+        "test_fcl_plugins p2p_api_resolver_rejects_malformed_remote_metadata_without_caching_it"
+      ],
+      "known_gap": "`/fcl/api/resolver/1` is an FCL-specific metadata protocol; no Go/Rust libp2p resolver interop claim is made."
+    },
+    {
       "id": "interop.live_ping_identify_autonat_relay",
       "protocol": "Interop",
       "source": "go-libp2p and rust-libp2p live fixtures",

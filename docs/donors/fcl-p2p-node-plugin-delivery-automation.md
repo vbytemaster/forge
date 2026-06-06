@@ -98,9 +98,14 @@ which external projects provide accepted patterns and criteria:
   contributions, config-to-node mapping, local endpoint reporting and typed
   remote API access. Durable queues, application fan-out and raw peer metrics
   are outside the target contract.
-- `p2p_api_catalog`, `p2p_diagnostics`, `p2p_pubsub` and optional
+- `p2p_api_resolver`, `p2p_diagnostics`, `p2p_pubsub` and optional
   `p2p_delivery` are focused friend-plugin directions. They compose through
   `p2p_node` and `fcl_p2p` instead of reimplementing network behaviours.
+- `p2p_api_resolver` follows the libp2p Identify/protocol-listing split:
+  Identify says which protocol ids a peer supports, while the resolver provides
+  FCL-specific API metadata above P2P. It sends a stable serializable
+  projection, not raw runtime `fcl::api::descriptor`, and does not claim
+  Go/Rust libp2p resolver interoperability.
 - Product protocols own idempotency, authorization and business-level
   acknowledgement. Raw `p2p::message` delivery means the frame was written to
   the selected protocol stream.

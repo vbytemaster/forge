@@ -446,11 +446,16 @@ READMEs may link here, but must not define a second block order.
   reporting, protocol/API route mounting and typed remote API access. Durable
   queues, application fan-out and raw network diagnostics are outside this host
   facade and move to focused plugins or product layers.
-- G.3 planned checkpoint: `p2p_api_catalog` is a separate plugin for API
-  descriptor discovery. It records which peers advertise API protocol ids,
-  descriptors, versions, codecs and limits. Identify continues to advertise
-  protocol ids; the catalog adds typed API metadata above P2P instead of
-  expanding core Identify semantics.
+- G.3 implemented checkpoint: `p2p_api_resolver` is a separate plugin for
+  API-over-P2P metadata discovery and compatible remote opening. Product
+  plugins publish discoverable APIs through the resolver; it mounts the actual
+  API route through `p2p_node`, stores a serializable descriptor projection
+  (API id/version, protocol id string, codec, limits, methods and errors), and
+  lets clients resolve a compatible API without hardcoded product protocol ids.
+  Identify continues to advertise protocol ids; the resolver adds typed FCL API
+  metadata above P2P instead of expanding core Identify semantics. Its network
+  metadata protocol `/fcl/api/resolver/1` is FCL-specific and does not extend
+  Go/Rust libp2p support claims.
 - G.4 planned checkpoint: `p2p_diagnostics` is a read-only plugin for
   peer/path/session/relay/DHT/Rendezvous/pubsub/connection-manager health. It
   exposes operator visibility and test artifacts, not product authorization,

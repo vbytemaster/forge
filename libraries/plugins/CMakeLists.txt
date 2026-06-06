@@ -1,5 +1,6 @@
 add_library(
    fcl_plugins STATIC
+   p2p_api_resolver.cpp
    p2p_node.cpp
 )
 fcl_target_modules(fcl_plugins plugins)

@@ -229,13 +229,18 @@ class p2p_node::api::impl final : public p2p_node::api {
    }
 
    void publish_api(fcl::api::binding_plan plan, fcl::p2p::protocol_id protocol) override {
+      publish_api(std::move(plan), std::move(protocol), impl_->api_options);
+   }
+
+   void publish_api(fcl::api::binding_plan plan, fcl::p2p::protocol_id protocol,
+                    fcl::api::transport::options options) override {
       auto binding = fcl::p2p::api()
                         .use(std::move(plan))
                         .protocol_id(protocol)
-                        .codec(impl_->api_options.codec)
-                        .max_inflight_per_peer(impl_->api_options.max_inflight)
-                        .deadline(impl_->api_options.deadline)
-                        .max_frame_size(impl_->api_options.max_frame_size)
+                        .codec(options.codec)
+                        .max_inflight_per_peer(options.max_inflight)
+                        .deadline(options.deadline)
+                        .max_frame_size(options.max_frame_size)
                         .build();
       impl_->add_route(binding.protocol(), binding.handler());
    }

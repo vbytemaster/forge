@@ -124,6 +124,8 @@ class p2p_node::api {
    [[nodiscard]] virtual info network_info() const = 0;
 
    virtual void publish_api(fcl::api::binding_plan plan, fcl::p2p::protocol_id protocol) = 0;
+   virtual void publish_api(fcl::api::binding_plan plan, fcl::p2p::protocol_id protocol,
+                            fcl::api::transport::options options) = 0;
    virtual void publish_protocol(fcl::p2p::protocol_id protocol, fcl::p2p::node::protocol_handler handler) = 0;
 
    virtual boost::asio::awaitable<fcl::api::transport::remote>

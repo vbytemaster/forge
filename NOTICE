@@ -1,0 +1,11 @@
+FCL
+
+Copyright (c) 2026 Vladimir Tarnakin.
+
+FCL is an independently developed C++23 foundation library created and
+maintained by Vladimir Tarnakin.
+
+Licensed under the Apache License, Version 2.0.
+
+Canonical upstream:
+https://github.com/vbytemaster/storlane-fc

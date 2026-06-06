@@ -468,6 +468,15 @@ install(
 )
 
 install(
+   FILES
+      "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+      "${CMAKE_CURRENT_SOURCE_DIR}/NOTICE"
+   DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/FCL"
+   COMPONENT dev
+   EXCLUDE_FROM_ALL
+)
+
+install(
    EXPORT FCLTargets
    FILE FCLTargets.cmake
    NAMESPACE FCL::

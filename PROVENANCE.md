@@ -24,9 +24,9 @@ continuity:
 - `libraries/crypto`: selected FC/EOS-compatible primitives, encodings, digest
   wrappers, key/signature compatibility helpers, and BLS/BN/secp256k1 adapter
   code where file history traces to the initial import or vendored code.
-- `libraries/log`: selected logger/message/config code tracing to FC logging.
-- `libraries/json`: selected JSON codec behavior tracing to FC JSON code, even
-  where the backend and public API were later hardened.
+- `libraries/log`: selected legacy logger, log message, log context, appender,
+  and config code tracing to FC logging. Newer structured record/sink support,
+  `std::source_location` APIs, and other hardened additions are FCL-original.
 
 FCL modifications and original additions around these portions are distributed
 under Apache-2.0. Upstream MIT attribution and license compatibility notices
@@ -42,6 +42,7 @@ this audit:
 - `libraries/config`
 - `libraries/program_options`
 - `libraries/yaml`
+- current Glaze-backed `libraries/json`
 - current Boost.Describe-based `libraries/reflect`
 - `libraries/asio`, `libraries/env`, `libraries/exceptions`, `libraries/http`,
   `libraries/schema`, `libraries/transport`, `libraries/websocket`

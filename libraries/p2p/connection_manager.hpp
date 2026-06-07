@@ -60,7 +60,10 @@ class connection_manager {
 
  private:
    [[nodiscard]] bool prune_one(resource_manager& resources, std::vector<std::uint64_t>& pruned,
-                                std::chrono::steady_clock::time_point now);
+                                std::chrono::steady_clock::time_point now,
+                                std::optional<direction> required_direction = std::nullopt);
+   [[nodiscard]] std::size_t count_peer_sessions(const peer_id& peer) const;
+   [[nodiscard]] std::size_t count_direction_sessions(direction value) const;
    void release_record(const session_record& record, resource_manager& resources);
    void erase_record(std::uint64_t id);
 

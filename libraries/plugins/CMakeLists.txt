@@ -1,6 +1,7 @@
 add_library(
    fcl_plugins STATIC
    p2p_diagnostics.cpp
+   p2p_pubsub.cpp
    p2p_api_resolver.cpp
    p2p_node.cpp
 )

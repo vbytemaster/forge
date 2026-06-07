@@ -38,6 +38,10 @@ or storage backends build dependencies.
 - libp2p GossipSub: pubsub/gossip donor proof now lives in
   `fcl-p2p-gossipsub-v1.md`; product topic APIs should consume a focused plugin
   facade instead of raw core internals.
+- Go libp2p `Topic`, `Subscription` and topic validator surfaces, plus Rust
+  libp2p `Behaviour` events and validation mode: application code receives a
+  narrow topic facade while the network behaviour owns mesh, scoring, heartbeat
+  and wire compatibility.
 - Syncthing/libtorrent style peer/path scoring: remember endpoint success,
   latency, backoff and failures; prefer higher-quality known candidates.
 - Kubo `CoreAPI` style facade: consumers use narrow API surfaces backed by a
@@ -116,6 +120,12 @@ which external projects provide accepted patterns and criteria:
   connection protection and pubsub state; the plugin exposes capped in-process
   projections for operators and tests. It is not a remote diagnostics protocol
   and does not add Go/Rust libp2p wire interop claims.
+- `p2p_pubsub` follows the libp2p topic/subscription facade split:
+  `fcl_p2p` owns GossipSub wire behaviour, mesh, scoring, heartbeat and protocol
+  negotiation; the plugin owns only in-process raw/typed publish/subscribe,
+  bounded local handler multiplexing, topic policy and local counters. It is not
+  durable delivery, exactly-once semantics, product authorization or a new
+  Go/Rust wire interop claim.
 - Product protocols own idempotency, authorization and business-level
   acknowledgement. Raw `p2p::message` delivery means the frame was written to
   the selected protocol stream.
@@ -127,3 +137,12 @@ which external projects provide accepted patterns and criteria:
 - `test_fcl_plugins p2p_diagnostics_plugin_config_is_described_from_public_schema`
 - `test_fcl_plugins p2p_diagnostics_api_rejects_facade_calls_before_initialize`
 - `test_fcl_plugins p2p_diagnostics_plugin_reports_live_p2p_node_state`
+
+## PubSub Plugin FCL Tests
+
+- `test_fcl_plugins p2p_pubsub_plugin_config_is_described_from_public_schema`
+- `test_fcl_plugins p2p_pubsub_api_rejects_facade_calls_before_initialize`
+- `test_fcl_plugins p2p_pubsub_plugin_rejects_invalid_typed_config_before_startup`
+- `test_fcl_plugins p2p_pubsub_plugin_requests_core_pubsub_capability_before_startup`
+- `test_fcl_plugins p2p_pubsub_plugin_publishes_and_subscribes_raw_and_typed_messages`
+- `test_fcl_plugins p2p_pubsub_plugin_enforces_topic_policy_and_handler_bounds`

@@ -35,6 +35,7 @@ class p2p_node final : public fcl::app::plugin {
    class exceptions;
    class api;
    class diagnostics_source;
+   class pubsub_source;
 
    p2p_node();
    ~p2p_node() override;
@@ -156,6 +157,27 @@ class p2p_node::diagnostics_source {
 
    [[nodiscard]] virtual fcl::p2p::diagnostics::snapshot
    snapshot(fcl::p2p::diagnostics::options options = {}) const = 0;
+
+ private:
+   friend class p2p_node;
+   class impl;
+};
+
+class p2p_node::pubsub_source {
+ public:
+   virtual ~pubsub_source() = default;
+
+   [[nodiscard]] static fcl::api::descriptor describe();
+
+   virtual void enable(fcl::p2p::pubsub::options options) = 0;
+   [[nodiscard]] virtual fcl::p2p::peer_id local_peer() const = 0;
+   virtual boost::asio::awaitable<fcl::p2p::pubsub::message>
+   async_publish_message(fcl::p2p::pubsub::topic subject, std::vector<std::uint8_t> data,
+                         fcl::p2p::pubsub::publish_options options) = 0;
+   virtual boost::asio::awaitable<fcl::p2p::pubsub::subscription>
+   async_join_topic(fcl::p2p::pubsub::topic subject, fcl::p2p::pubsub::handler handler) = 0;
+   virtual boost::asio::awaitable<void> async_leave_topic(fcl::p2p::pubsub::topic subject) = 0;
+   [[nodiscard]] virtual fcl::p2p::pubsub::snapshot snapshot() const = 0;
 
  private:
    friend class p2p_node;

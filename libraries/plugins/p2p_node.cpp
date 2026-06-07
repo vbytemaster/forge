@@ -153,11 +153,28 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
    std::vector<fcl::p2p::endpoint> listen;
    std::vector<fcl::p2p::endpoint> bootstrap;
    std::vector<std::pair<fcl::p2p::protocol_id, fcl::p2p::node::protocol_handler>> routes;
+   fcl::p2p::pubsub::options pubsub_options{};
    fcl::p2p::node* raw = nullptr;
    std::unique_ptr<fcl::p2p::node> node;
    fcl::asio::runtime* runtime = nullptr;
+   bool pubsub_requested = false;
    bool started = false;
    bool stopping = false;
+
+   [[nodiscard]] fcl::p2p::node& ensure_node() {
+      if (!runtime) {
+         FCL_THROW_EXCEPTION(p2p_node::exceptions::plugin_not_initialized, "P2P node plugin is not initialized");
+      }
+      if (!node) {
+         if (pubsub_requested) {
+            options.capabilities.add(fcl::p2p::capabilities::pubsub);
+            options.limits.pubsub = pubsub_options;
+         }
+         node = std::make_unique<fcl::p2p::node>(*runtime, options);
+         raw = node.get();
+      }
+      return *node;
+   }
 
    [[nodiscard]] fcl::p2p::node& require_node() {
       if (!node) {
@@ -314,6 +331,52 @@ fcl::api::descriptor p2p_node::diagnostics_source::describe() {
       .build();
 }
 
+class p2p_node::pubsub_source::impl final : public p2p_node::pubsub_source {
+ public:
+   explicit impl(std::shared_ptr<p2p_node::impl> impl) : impl_{std::move(impl)} {}
+
+   void enable(fcl::p2p::pubsub::options options) override {
+      if (impl_->started || impl_->node) {
+         FCL_THROW_EXCEPTION(p2p_node::exceptions::route_conflict,
+                             "P2P PubSub capability must be requested before startup");
+      }
+      impl_->pubsub_options = std::move(options);
+      impl_->pubsub_requested = true;
+   }
+
+   fcl::p2p::peer_id local_peer() const override {
+      return impl_->require_node().local_peer();
+   }
+
+   boost::asio::awaitable<fcl::p2p::pubsub::message>
+   async_publish_message(fcl::p2p::pubsub::topic subject, std::vector<std::uint8_t> data,
+                         fcl::p2p::pubsub::publish_options options) override {
+      co_return co_await impl_->require_node().async_publish(std::move(subject), std::move(data), options);
+   }
+
+   boost::asio::awaitable<fcl::p2p::pubsub::subscription>
+   async_join_topic(fcl::p2p::pubsub::topic subject, fcl::p2p::pubsub::handler handler) override {
+      co_return co_await impl_->require_node().async_subscribe(std::move(subject), std::move(handler));
+   }
+
+   boost::asio::awaitable<void> async_leave_topic(fcl::p2p::pubsub::topic subject) override {
+      co_await impl_->require_node().async_unsubscribe(std::move(subject));
+   }
+
+   fcl::p2p::pubsub::snapshot snapshot() const override {
+      return impl_->require_node().pubsub_snapshot();
+   }
+
+ private:
+   std::shared_ptr<p2p_node::impl> impl_;
+};
+
+fcl::api::descriptor p2p_node::pubsub_source::describe() {
+   return fcl::api::contract<p2p_node::pubsub_source>(
+             {.id = {"fcl.plugins.p2p_node.pubsub_source"}, .version = {.major = 1, .revision = 0}})
+      .build();
+}
+
 p2p_node::p2p_node() : impl_{std::make_shared<impl>()} {}
 p2p_node::~p2p_node() = default;
 
@@ -382,19 +445,19 @@ boost::asio::awaitable<void> p2p_node::provide(fcl::api::provider& provider) {
    provider.install<p2p_node::api>(p2p_node::api::describe(), std::make_shared<p2p_node::api::impl>(impl_));
    provider.install<p2p_node::diagnostics_source>(p2p_node::diagnostics_source::describe(),
                                                   std::make_shared<p2p_node::diagnostics_source::impl>(impl_));
+   provider.install<p2p_node::pubsub_source>(p2p_node::pubsub_source::describe(),
+                                             std::make_shared<p2p_node::pubsub_source::impl>(impl_));
    co_return;
 }
 
 boost::asio::awaitable<void> p2p_node::initialize(fcl::app::plugin_context& context) {
    impl_->runtime = &context.scheduler().runtime_context();
    impl_->stopping = false;
-   impl_->node = std::make_unique<fcl::p2p::node>(context.scheduler().runtime_context(), impl_->options);
-   impl_->raw = impl_->node.get();
    co_return;
 }
 
 boost::asio::awaitable<void> p2p_node::startup() {
-   auto& node = impl_->require_node();
+   auto& node = impl_->ensure_node();
    for (auto& route : impl_->routes) {
       node.register_protocol_handler(route.first, route.second);
    }

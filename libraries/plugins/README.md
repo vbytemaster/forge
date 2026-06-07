@@ -24,6 +24,7 @@ small typed APIs for application plugins to contribute behavior safely.
 - `fcl.plugins.p2p_node` — ready P2P node plugin and safe local API.
 - `fcl.plugins.p2p_api_resolver` — API-over-P2P metadata resolver plugin.
 - `fcl.plugins.p2p_diagnostics` — read-only P2P host diagnostics plugin.
+- `fcl.plugins.p2p_pubsub` — in-process facade over core GossipSub.
 - `fcl.plugins` — aggregate import.
 
 Target: `fcl_plugins`.
@@ -247,6 +248,47 @@ auto peer = diagnostics->peer(remote_peer);
 Snapshot limits are deterministic truncation controls for operator and test
 surfaces. They are not resource-management policy and do not change the running
 node.
+
+## P2P PubSub Plugin
+
+`p2p_pubsub` is the focused application facade over core `fcl_p2p` GossipSub.
+It lets plugins publish and subscribe to topics without owning mesh, scoring,
+heartbeat, protocol negotiation or wire compatibility. Those mechanics remain
+inside `fcl_p2p`.
+
+The plugin supports raw byte messages, typed `fcl.raw` payload helpers, bounded
+local handler fan-out, deterministic subscription ids, handler deadlines,
+topic allow/deny policy and a local snapshot. It is not a durable queue, not an
+exactly-once delivery system and not a product authorization layer.
+
+```yaml
+p2p-pubsub:
+  max-topics: 1024
+  max-handlers-per-topic: 64
+  max-active-handlers: 4096
+  max-message-size: 1048576
+  handler-deadline-ms: 5000
+  allowed-topics: []
+  denied-topics: []
+  sign-publishes: true
+```
+
+```cpp
+auto pubsub = context.apis().get<fcl::plugins::p2p_pubsub::api>(
+   {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1});
+
+auto subscription = co_await pubsub->subscribe<cache_event>(
+   {.value = "storlane.cache.events"},
+   [](fcl::plugins::p2p_pubsub::typed_message<cache_event> message)
+      -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+      co_await handle_cache_event(message.source, message.value);
+      co_return fcl::p2p::pubsub::validation_result::accept;
+   });
+
+co_await pubsub->publish(
+   {.value = "storlane.cache.events"},
+   cache_event{.key = "abc", .revision = 42});
+```
 
 ## Risks And Anti-Patterns
 

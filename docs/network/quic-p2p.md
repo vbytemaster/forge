@@ -462,9 +462,11 @@ READMEs may link here, but must not define a second block order.
   capped operator/test projections through `fcl_app`. It does not add a network
   diagnostics protocol, product authorization, remediation, routing policy or
   retry decisions.
-- G.5 planned checkpoint: `p2p_pubsub` is a plugin facade over core GossipSub.
-  It offers typed topic publish/subscribe, bounded handlers and topic policy for
-  application plugins. It is not a durable queue and does not replace
+- G.5 implemented checkpoint: `p2p_pubsub` is an in-process plugin facade over
+  core GossipSub. It offers raw and typed topic publish/subscribe, bounded
+  local handlers, handler deadlines, topic allow/deny policy, deterministic
+  subscriptions and capped plugin snapshots for application plugins. It is not a
+  durable queue, delivery system, authorization layer or replacement for
   `fcl_p2p` GossipSub mesh/scoring/heartbeat mechanics.
 - G.6 optional future checkpoint: `p2p_delivery` may become a separate durable
   async plugin if a product needs store-backed retry. It is separate from the

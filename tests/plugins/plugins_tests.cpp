@@ -1,10 +1,15 @@
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/this_coro.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/describe.hpp>
 #include <boost/test/unit_test.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -22,7 +27,16 @@ import fcl.config.document;
 import fcl.config.value;
 import fcl.p2p;
 import fcl.plugins;
+import fcl.raw.raw;
 import fcl.schema;
+
+struct pubsub_payload {
+   std::string text;
+   std::uint32_t value = 0;
+
+   bool operator==(const pubsub_payload&) const = default;
+};
+BOOST_DESCRIBE_STRUCT(pubsub_payload, (), (text, value))
 
 namespace {
 
@@ -115,6 +129,80 @@ class node_test_api_impl final : public node_test_api {
       co_return request + 1;
    }
 };
+
+struct received_pubsub_messages {
+   mutable std::mutex mutex;
+   std::vector<fcl::plugins::p2p_pubsub::message> raw;
+   std::vector<fcl::plugins::p2p_pubsub::typed_message<pubsub_payload>> typed;
+   std::size_t accepted = 0;
+   std::size_t rejected = 0;
+   std::size_t ignored = 0;
+
+   void push(fcl::plugins::p2p_pubsub::message value, fcl::p2p::pubsub::validation_result result) {
+      auto lock = std::scoped_lock{mutex};
+      raw.push_back(std::move(value));
+      switch (result) {
+      case fcl::p2p::pubsub::validation_result::accept:
+         ++accepted;
+         break;
+      case fcl::p2p::pubsub::validation_result::reject:
+         ++rejected;
+         break;
+      case fcl::p2p::pubsub::validation_result::ignore:
+         ++ignored;
+         break;
+      }
+   }
+
+   void push(fcl::plugins::p2p_pubsub::typed_message<pubsub_payload> value) {
+      auto lock = std::scoped_lock{mutex};
+      typed.push_back(std::move(value));
+   }
+
+   [[nodiscard]] std::size_t raw_size() const {
+      auto lock = std::scoped_lock{mutex};
+      return raw.size();
+   }
+
+   [[nodiscard]] std::size_t typed_size() const {
+      auto lock = std::scoped_lock{mutex};
+      return typed.size();
+   }
+};
+
+bool wait_for_count(const received_pubsub_messages& messages, std::size_t raw, std::size_t typed = 0,
+                    std::chrono::milliseconds timeout = std::chrono::seconds{5}) {
+   const auto deadline = std::chrono::steady_clock::now() + timeout;
+   while (std::chrono::steady_clock::now() < deadline) {
+      if (messages.raw_size() >= raw && messages.typed_size() >= typed) {
+         return true;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds{25});
+   }
+   return messages.raw_size() >= raw && messages.typed_size() >= typed;
+}
+
+template <typename Predicate>
+bool wait_for_pubsub_snapshot(const fcl::plugins::p2p_pubsub::api& pubsub, Predicate predicate,
+                              std::chrono::milliseconds timeout) {
+   const auto deadline = std::chrono::steady_clock::now() + timeout;
+   while (std::chrono::steady_clock::now() < deadline) {
+      if (predicate(pubsub.snapshot())) {
+         return true;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds{25});
+   }
+   return predicate(pubsub.snapshot());
+}
+
+bool wait_for_pubsub_peer(const fcl::plugins::p2p_pubsub::api& pubsub, std::chrono::milliseconds timeout) {
+   return wait_for_pubsub_snapshot(
+      pubsub,
+      [](const fcl::plugins::p2p_pubsub::snapshot& snapshot) {
+         return snapshot.core.peers > 0;
+      },
+      timeout);
+}
 
 class scripted_resolver_api {
  public:
@@ -454,6 +542,14 @@ class diagnostics_application final : public fcl::app::application_shell {
    }
 };
 
+class pubsub_application final : public fcl::app::application_shell {
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p_pubsub::descriptor());
+   }
+};
+
 class resolver_plugin_application final : public fcl::app::application_shell {
  protected:
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
@@ -588,8 +684,22 @@ concept has_peers = requires(T& value) {
    value.peers();
 };
 
+template <typename T>
+concept has_pubsub_publish = requires(T& value) {
+   value.publish(fcl::p2p::pubsub::topic{.value = "topic"}, std::vector<std::uint8_t>{},
+                 fcl::plugins::p2p_pubsub::publish_options{});
+};
+
+template <typename T>
+concept has_pubsub_subscribe = requires(T& value, fcl::plugins::p2p_pubsub::handler handler) {
+   value.subscribe(fcl::p2p::pubsub::topic{.value = "topic"}, std::move(handler),
+                   fcl::plugins::p2p_pubsub::subscribe_options{});
+};
+
 static_assert(!has_metrics<fcl::plugins::p2p_node::api>);
 static_assert(!has_peers<fcl::plugins::p2p_node::api>);
+static_assert(!has_pubsub_publish<fcl::plugins::p2p_node::api>);
+static_assert(!has_pubsub_subscribe<fcl::plugins::p2p_node::api>);
 
 } // namespace
 
@@ -879,6 +989,333 @@ BOOST_AUTO_TEST_CASE(p2p_diagnostics_plugin_reports_live_p2p_node_state) {
 
    fcl::asio::blocking::run(client.runtime(), client.shutdown());
    fcl::asio::blocking::run(server.runtime(), server.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_config_is_described_from_public_schema) {
+   auto plugin = fcl::plugins::p2p_pubsub{};
+   const auto descriptor = plugin.describe_config();
+   BOOST_REQUIRE(descriptor.has_value());
+   BOOST_TEST(descriptor->section == "p2p-pubsub");
+
+   BOOST_TEST(require_field(*descriptor, "max-topics").has_default);
+   BOOST_TEST(require_field(*descriptor, "max-handlers-per-topic").has_default);
+   BOOST_TEST(require_field(*descriptor, "max-active-handlers").has_default);
+   BOOST_TEST(require_field(*descriptor, "max-message-size").has_default);
+   BOOST_TEST(require_field(*descriptor, "handler-deadline-ms").has_default);
+   BOOST_TEST(require_field(*descriptor, "allowed-topics").has_default);
+   BOOST_TEST(require_field(*descriptor, "denied-topics").has_default);
+   BOOST_TEST(require_field(*descriptor, "sign-publishes").has_default);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_pubsub_api_rejects_facade_calls_before_initialize) {
+   auto runtime = fcl::asio::runtime{};
+   auto plugin = fcl::plugins::p2p_pubsub{};
+   auto apis = fcl::api::registry{};
+   auto provider = fcl::api::installer{apis};
+   fcl::asio::blocking::run(runtime, plugin.provide(provider));
+
+   auto pubsub = apis.get<fcl::plugins::p2p_pubsub::api>(
+      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
+
+   BOOST_CHECK_THROW((void)pubsub->snapshot(), fcl::plugins::p2p_pubsub::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW((void)pubsub->subscriptions(), fcl::plugins::p2p_pubsub::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(
+                        runtime, pubsub->publish(fcl::p2p::pubsub::topic{.value = "fcl.before-init"}, {1, 2, 3})),
+                     fcl::plugins::p2p_pubsub::exceptions::plugin_not_initialized);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_rejects_invalid_typed_config_before_startup) {
+   {
+      auto config = test_p2p_config();
+      config.set("p2p-pubsub.max-topics", std::uint64_t{0});
+      auto app = pubsub_application{};
+      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p_pubsub::exceptions::invalid_config);
+   }
+   {
+      auto config = test_p2p_config();
+      config.set("p2p-pubsub.handler-deadline-ms", std::uint64_t{0});
+      auto app = pubsub_application{};
+      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p_pubsub::exceptions::invalid_config);
+   }
+}
+
+BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_requests_core_pubsub_capability_before_startup) {
+   auto config = test_p2p_config(test_peer(94));
+   config.set("p2p.listen", fcl::config::value::array_type{
+                                fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
+   config.set("p2p-pubsub.sign-publishes", false);
+
+   auto app = pubsub_application{};
+   app.configure(config);
+   fcl::asio::blocking::run(app.runtime(), app.startup());
+
+   auto pubsub = app.apis().get<fcl::plugins::p2p_pubsub::api>(
+      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
+   auto subscription = fcl::asio::blocking::run(
+      app.runtime(),
+      pubsub->subscribe(
+         fcl::p2p::pubsub::topic{.value = "fcl.local"},
+         [](fcl::plugins::p2p_pubsub::message) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+            co_return fcl::p2p::pubsub::validation_result::accept;
+         }));
+
+   BOOST_TEST(subscription.id != 0U);
+   BOOST_TEST(pubsub->snapshot().core.topics == 1U);
+   BOOST_TEST(pubsub->subscriptions().size() == 1U);
+
+   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_publishes_and_subscribes_raw_and_typed_messages) {
+   const auto subscriber_peer = test_peer(95);
+   auto subscriber_config = test_p2p_config(subscriber_peer);
+   subscriber_config.set("p2p.listen", fcl::config::value::array_type{
+                                           fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
+   subscriber_config.set("p2p-pubsub.sign-publishes", false);
+
+   auto subscriber = pubsub_application{};
+   subscriber.configure(subscriber_config);
+   fcl::asio::blocking::run(subscriber.runtime(), subscriber.startup());
+
+   auto subscriber_p2p = subscriber.apis().get<fcl::plugins::p2p_node::api>(
+      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   const auto subscriber_endpoint = subscriber_p2p->local_endpoint();
+   BOOST_REQUIRE(subscriber_endpoint.has_value());
+
+   const auto publisher_peer = test_peer(96);
+   auto publisher_config = test_p2p_config(publisher_peer);
+   publisher_config.set("p2p.bootstrap",
+                        fcl::config::value::array_type{fcl::config::value{subscriber_endpoint->to_string()}});
+   publisher_config.set("p2p-pubsub.sign-publishes", false);
+
+   auto publisher = pubsub_application{};
+   publisher.configure(publisher_config);
+   fcl::asio::blocking::run(publisher.runtime(), publisher.startup());
+
+   auto received = std::make_shared<received_pubsub_messages>();
+   auto subscriber_pubsub = subscriber.apis().get<fcl::plugins::p2p_pubsub::api>(
+      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
+   auto publisher_pubsub = publisher.apis().get<fcl::plugins::p2p_pubsub::api>(
+      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
+
+   const auto raw_topic = fcl::p2p::pubsub::topic{.value = "fcl.plugins.raw"};
+   const auto typed_topic = fcl::p2p::pubsub::topic{.value = "fcl.plugins.typed"};
+   auto first = fcl::asio::blocking::run(
+      subscriber.runtime(),
+      subscriber_pubsub->subscribe(
+         raw_topic, [received](fcl::plugins::p2p_pubsub::message message) mutable
+                       -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+            received->push(std::move(message), fcl::p2p::pubsub::validation_result::accept);
+            co_return fcl::p2p::pubsub::validation_result::accept;
+         }));
+   auto second = fcl::asio::blocking::run(
+      subscriber.runtime(),
+      subscriber_pubsub->subscribe(
+         raw_topic, [received](fcl::plugins::p2p_pubsub::message message) mutable
+                       -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+            received->push(std::move(message), fcl::p2p::pubsub::validation_result::accept);
+            co_return fcl::p2p::pubsub::validation_result::accept;
+         }));
+   (void)fcl::asio::blocking::run(
+      subscriber.runtime(),
+      subscriber_pubsub->subscribe<pubsub_payload>(
+         typed_topic, [received](fcl::plugins::p2p_pubsub::typed_message<pubsub_payload> message) mutable
+                         -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+            received->push(std::move(message));
+            co_return fcl::p2p::pubsub::validation_result::accept;
+         }));
+
+   BOOST_TEST(first.subject.value == raw_topic.value);
+   BOOST_TEST(second.id != first.id);
+   BOOST_REQUIRE_MESSAGE(wait_for_pubsub_peer(*publisher_pubsub.shared(), std::chrono::seconds{5}),
+                         "publisher did not learn a remote PubSub topic subscription");
+
+   (void)fcl::asio::blocking::run(
+      publisher.runtime(), publisher_pubsub->publish(raw_topic, std::vector<std::uint8_t>{1, 2, 3, 4}));
+   (void)fcl::asio::blocking::run(
+      publisher.runtime(), publisher_pubsub->publish(typed_topic, pubsub_payload{.text = "hello", .value = 7}));
+
+   if (!wait_for_count(*received, 2, 1)) {
+      const auto publisher_snapshot = publisher_pubsub->snapshot();
+      const auto subscriber_snapshot = subscriber_pubsub->snapshot();
+      BOOST_FAIL("pubsub plugin delivery did not finish; raw="
+                 << received->raw_size() << " typed=" << received->typed_size()
+                 << " publisher_core_peers=" << publisher_snapshot.core.peers
+                 << " publisher_published=" << publisher_snapshot.core.messages_published
+                 << " subscriber_core_received=" << subscriber_snapshot.core.messages_received
+                 << " subscriber_core_delivered=" << subscriber_snapshot.core.messages_delivered
+                 << " subscriber_core_invalid=" << subscriber_snapshot.core.invalid_messages
+                 << " subscriber_plugin_delivered=" << subscriber_snapshot.messages_delivered
+                 << " subscriber_plugin_failures=" << subscriber_snapshot.handler_failures
+                 << " subscriber_plugin_dropped=" << subscriber_snapshot.messages_dropped);
+   }
+   {
+      auto lock = std::scoped_lock{received->mutex};
+      BOOST_TEST(received->raw.size() == 2U);
+      BOOST_TEST(fcl::p2p::valid_peer_id(received->raw.front().source));
+      BOOST_TEST(received->raw.front().data == (std::vector<std::uint8_t>{1, 2, 3, 4}),
+                 boost::test_tools::per_element());
+      BOOST_TEST(received->typed.front().source.to_string() == received->raw.front().source.to_string());
+      BOOST_TEST(received->typed.front().value.text == "hello");
+      BOOST_TEST(received->typed.front().value.value == 7U);
+   }
+
+   fcl::asio::blocking::run(subscriber.runtime(), subscriber_pubsub->unsubscribe(first));
+   BOOST_TEST(subscriber_pubsub->subscriptions().size() == 2U);
+   fcl::asio::blocking::run(subscriber.runtime(), subscriber_pubsub->unsubscribe(second));
+   BOOST_TEST(subscriber_pubsub->subscriptions().size() == 1U);
+
+   fcl::asio::blocking::run(publisher.runtime(), publisher.shutdown());
+   fcl::asio::blocking::run(subscriber.runtime(), subscriber.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_aggregates_handler_results_and_deadlines) {
+   const auto subscriber_peer = test_peer(98);
+   auto subscriber_config = test_p2p_config(subscriber_peer);
+   subscriber_config.set("p2p.listen", fcl::config::value::array_type{
+                                           fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
+   subscriber_config.set("p2p-pubsub.sign-publishes", false);
+
+   auto subscriber = pubsub_application{};
+   subscriber.configure(subscriber_config);
+   fcl::asio::blocking::run(subscriber.runtime(), subscriber.startup());
+
+   auto subscriber_p2p = subscriber.apis().get<fcl::plugins::p2p_node::api>(
+      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   const auto subscriber_endpoint = subscriber_p2p->local_endpoint();
+   BOOST_REQUIRE(subscriber_endpoint.has_value());
+
+   auto publisher_config = test_p2p_config(test_peer(99));
+   publisher_config.set("p2p.bootstrap",
+                        fcl::config::value::array_type{fcl::config::value{subscriber_endpoint->to_string()}});
+   publisher_config.set("p2p-pubsub.sign-publishes", false);
+
+   auto publisher = pubsub_application{};
+   publisher.configure(publisher_config);
+   fcl::asio::blocking::run(publisher.runtime(), publisher.startup());
+
+   auto received = std::make_shared<received_pubsub_messages>();
+   auto subscriber_pubsub = subscriber.apis().get<fcl::plugins::p2p_pubsub::api>(
+      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
+   auto publisher_pubsub = publisher.apis().get<fcl::plugins::p2p_pubsub::api>(
+      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
+
+   const auto aggregate_topic = fcl::p2p::pubsub::topic{.value = "fcl.plugins.aggregate"};
+   const auto timeout_topic = fcl::p2p::pubsub::topic{.value = "fcl.plugins.timeout"};
+   (void)fcl::asio::blocking::run(
+      subscriber.runtime(),
+      subscriber_pubsub->subscribe(
+         aggregate_topic, [received](fcl::plugins::p2p_pubsub::message message) mutable
+                             -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+            received->push(std::move(message), fcl::p2p::pubsub::validation_result::ignore);
+            co_return fcl::p2p::pubsub::validation_result::ignore;
+         }));
+   (void)fcl::asio::blocking::run(
+      subscriber.runtime(),
+      subscriber_pubsub->subscribe(
+         aggregate_topic, [](fcl::plugins::p2p_pubsub::message)
+                             -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+            throw fcl::plugins::p2p_pubsub::exceptions::handler_limit{"test handler failure"};
+         }));
+   (void)fcl::asio::blocking::run(
+      subscriber.runtime(),
+      subscriber_pubsub->subscribe(
+         aggregate_topic, [received](fcl::plugins::p2p_pubsub::message message) mutable
+                             -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+            received->push(std::move(message), fcl::p2p::pubsub::validation_result::accept);
+            co_return fcl::p2p::pubsub::validation_result::accept;
+         }));
+   (void)fcl::asio::blocking::run(
+      subscriber.runtime(),
+      subscriber_pubsub->subscribe(
+         aggregate_topic, [received](fcl::plugins::p2p_pubsub::message message) mutable
+                             -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+            received->push(std::move(message), fcl::p2p::pubsub::validation_result::reject);
+            co_return fcl::p2p::pubsub::validation_result::reject;
+         }));
+   (void)fcl::asio::blocking::run(
+      subscriber.runtime(),
+      subscriber_pubsub->subscribe(
+         timeout_topic,
+         [](fcl::plugins::p2p_pubsub::message) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+            auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+            timer.expires_after(std::chrono::milliseconds{100});
+            co_await timer.async_wait(boost::asio::use_awaitable);
+            co_return fcl::p2p::pubsub::validation_result::accept;
+         },
+         fcl::plugins::p2p_pubsub::subscribe_options{.handler_deadline = std::chrono::milliseconds{10}}));
+
+   BOOST_REQUIRE_MESSAGE(wait_for_pubsub_peer(*publisher_pubsub.shared(), std::chrono::seconds{5}),
+                         "publisher did not learn a remote PubSub topic subscription");
+
+   (void)fcl::asio::blocking::run(
+      publisher.runtime(), publisher_pubsub->publish(aggregate_topic, std::vector<std::uint8_t>{9}));
+   BOOST_REQUIRE_MESSAGE(
+      wait_for_pubsub_snapshot(
+         *subscriber_pubsub.shared(),
+         [](const fcl::plugins::p2p_pubsub::snapshot& snapshot) {
+            return snapshot.messages_rejected >= 1 && snapshot.handler_failures >= 1;
+         },
+         std::chrono::seconds{5}),
+      "PubSub handler aggregation did not finish");
+   {
+      auto lock = std::scoped_lock{received->mutex};
+      BOOST_TEST(received->ignored == 1U);
+      BOOST_TEST(received->accepted == 1U);
+      BOOST_TEST(received->rejected == 1U);
+   }
+
+   (void)fcl::asio::blocking::run(
+      publisher.runtime(), publisher_pubsub->publish(timeout_topic, std::vector<std::uint8_t>{10}));
+   BOOST_REQUIRE_MESSAGE(
+      wait_for_pubsub_snapshot(
+         *subscriber_pubsub.shared(),
+         [](const fcl::plugins::p2p_pubsub::snapshot& snapshot) {
+            return snapshot.messages_ignored >= 1 && snapshot.handler_failures >= 2;
+         },
+         std::chrono::seconds{5}),
+      "PubSub handler timeout did not finish");
+   BOOST_TEST(subscriber_pubsub->snapshot().active_handlers == 0U);
+
+   fcl::asio::blocking::run(publisher.runtime(), publisher.shutdown());
+   fcl::asio::blocking::run(subscriber.runtime(), subscriber.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_enforces_topic_policy_and_handler_bounds) {
+   auto config = test_p2p_config(test_peer(97));
+   config.set("p2p-pubsub.sign-publishes", false);
+   config.set("p2p-pubsub.max-handlers-per-topic", std::uint64_t{1});
+   config.set("p2p-pubsub.max-message-size", std::uint64_t{4});
+   config.set("p2p-pubsub.allowed-topics",
+              fcl::config::value::array_type{fcl::config::value{"fcl.allowed"}});
+   config.set("p2p-pubsub.denied-topics", fcl::config::value::array_type{fcl::config::value{"fcl.denied"}});
+
+   auto app = pubsub_application{};
+   app.configure(config);
+   fcl::asio::blocking::run(app.runtime(), app.startup());
+
+   auto pubsub = app.apis().get<fcl::plugins::p2p_pubsub::api>(
+      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
+   auto handler = [](fcl::plugins::p2p_pubsub::message) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+      co_return fcl::p2p::pubsub::validation_result::ignore;
+   };
+
+   auto subscription = fcl::asio::blocking::run(
+      app.runtime(), pubsub->subscribe(fcl::p2p::pubsub::topic{.value = "fcl.allowed"}, handler));
+   BOOST_TEST(subscription.id != 0U);
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(),
+                                              pubsub->subscribe(fcl::p2p::pubsub::topic{.value = "fcl.allowed"},
+                                                                handler)),
+                     fcl::plugins::p2p_pubsub::exceptions::handler_limit);
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(),
+                                              pubsub->publish(fcl::p2p::pubsub::topic{.value = "fcl.denied"}, {1})),
+                     fcl::plugins::p2p_pubsub::exceptions::topic_not_allowed);
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(),
+                                              pubsub->publish(fcl::p2p::pubsub::topic{.value = "fcl.allowed"},
+                                                              {1, 2, 3, 4, 5})),
+                     fcl::plugins::p2p_pubsub::exceptions::message_too_large);
+
+   fcl::asio::blocking::run(app.runtime(), app.shutdown());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_api_resolver_plugin_config_is_described_from_public_schema) {

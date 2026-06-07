@@ -2,6 +2,7 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/describe.hpp>
+#include <fcl/api/api_macros.hpp>
 #include <fcl/exceptions/macros.hpp>
 
 #include <chrono>
@@ -144,11 +145,9 @@ struct p2p_pubsub::snapshot {
    fcl::p2p::pubsub::snapshot core;
 };
 
-class p2p_pubsub::api {
+class p2p_pubsub::api : public fcl::api::contract<p2p_pubsub::api> {
  public:
    virtual ~api() = default;
-
-   [[nodiscard]] static fcl::api::descriptor describe();
 
    virtual boost::asio::awaitable<message> publish(fcl::p2p::pubsub::topic subject, std::vector<std::uint8_t> data,
                                                    publish_options options = {}) = 0;
@@ -191,6 +190,10 @@ class p2p_pubsub::api {
 };
 
 } // namespace fcl::plugins
+
+export {
+FCL_API(::fcl::plugins::p2p_pubsub::api, FCL_API_CONTRACT("fcl.plugins.p2p_pubsub", 1, 0))
+}
 
 BOOST_DESCRIBE_STRUCT(fcl::plugins::p2p_pubsub::config, (),
                       (max_topics, max_handlers_per_topic, max_active_handlers, max_message_size, handler_deadline_ms,

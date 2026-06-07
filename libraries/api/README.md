@@ -44,22 +44,17 @@ Target: `fcl_api`.
 ## Local Contract
 
 ```cpp
-class cache {
+#include <fcl/api/api_macros.hpp>
+
+class cache : public fcl::api::contract<cache> {
  public:
    virtual ~cache() = default;
 
    virtual boost::asio::awaitable<models::chunk>
    read(protocol::read_chunk request) = 0;
-
-   static fcl::api::descriptor describe() {
-      return fcl::api::contract<cache>({.id = {"cache"}, .version = {1, 8}})
-         .method<&cache::read, protocol::read_chunk, models::chunk>("read")
-         .error<cache_errors::chunk_not_found>(
-            "chunk_not_found",
-            {.status_code = fcl::api::status::not_found, .retryable = false})
-         .build();
-   }
 };
+
+FCL_API(cache, FCL_API_CONTRACT("cache", 1, 8), FCL_API_METHOD(read))
 ```
 
 Product DTO serialization stays beside the DTO owner:
@@ -74,9 +69,7 @@ FCL_DECLARE_SERIALIZATION(protocol::read_chunk)
 ```cpp
 boost::asio::awaitable<void>
 application::on_provide(fcl::app::application_context& context) {
-   context.apis().install<cache>(
-      cache::describe(),
-      std::make_shared<rocks_cache>());
+   context.apis().install<cache>(std::make_shared<rocks_cache>());
    co_return;
 }
 
@@ -116,7 +109,7 @@ Frame lifecycle is checked by `fcl::api::call_runtime`:
 Descriptor method kinds are explicit:
 
 ```cpp
-return fcl::api::contract<cache>({.id = {"cache.events"}, .version = {1, 0}})
+return fcl::api::define<cache>({.id = {"cache.events"}, .version = {1, 0}})
    .server_stream<&cache::watch, protocol::watch_chunks, models::chunk>("watch")
    .build();
 ```
@@ -128,7 +121,7 @@ returns a single `response` or `error`. A bidirectional stream follows the same
 input shape and returns `stream_item...stream_end` or `error`.
 
 ```cpp
-return fcl::api::contract<cache>({.id = {"cache.bulk"}, .version = {1, 0}})
+return fcl::api::define<cache>({.id = {"cache.bulk"}, .version = {1, 0}})
    .client_stream<&cache::upload, protocol::write_chunk, protocol::write_receipt>("upload")
    .bidirectional_stream<&cache::sync, protocol::write_chunk, protocol::sync_event>("sync")
    .build();
@@ -187,7 +180,7 @@ Typed FCL exceptions are projected to one shared DTO:
   "message": "chunk not found",
   "retryable": false,
   "identity": {
-    "category": "storlane.cache",
+    "category": "cache",
     "code": 1
   }
 }

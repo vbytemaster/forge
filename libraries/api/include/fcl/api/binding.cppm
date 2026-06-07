@@ -101,6 +101,7 @@ class binding_builder {
    binding_builder& serve(const view& apis);
 
    template <typename Interface> binding_builder& export_api(api_ref api) {
+      static_assert(remote_interface<Interface>, "Interface must opt in to fcl::api::surface::remote");
       auto descriptor = Interface::describe();
       descriptor.id = std::move(api.id);
       descriptor.version.major = api.major;
@@ -110,7 +111,7 @@ class binding_builder {
    }
 
    template <typename Interface> binding_builder& require_peer_api(api_ref api) {
-      static_cast<void>(typeid(Interface));
+      static_assert(remote_interface<Interface>, "Interface must opt in to fcl::api::surface::remote");
       plan_.peer_requirements.push_back(std::move(api));
       return *this;
    }

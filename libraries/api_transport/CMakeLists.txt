@@ -1,6 +1,7 @@
 add_library(
    fcl_api_transport STATIC
    client.cpp
+   connection.cpp
    server.cpp
 )
 fcl_target_modules(fcl_api_transport api_transport)

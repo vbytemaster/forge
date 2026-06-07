@@ -1,0 +1,101 @@
+#pragma once
+
+#include <boost/preprocessor/control/if.hpp>
+#include <boost/preprocessor/seq/for_each.hpp>
+#include <boost/preprocessor/stringize.hpp>
+#include <boost/preprocessor/tuple/elem.hpp>
+#include <boost/preprocessor/variadic/to_seq.hpp>
+
+#include <memory>
+#include <utility>
+
+#define FCL_API_CONTRACT(ID, MAJOR, REVISION) (ID, MAJOR, REVISION)
+
+#define FCL_API_METHOD(NAME) (NAME, 0, 0, "")
+#define FCL_API_METHOD_SINCE(NAME, REVISION) (NAME, REVISION, 0, "")
+#define FCL_API_METHOD_DEPRECATED(NAME, REASON) (NAME, 0, 1, REASON)
+#define FCL_API_METHOD_DEPRECATED_SINCE(NAME, REVISION, REASON) (NAME, REVISION, 1, REASON)
+
+#if defined(__clang__)
+#define FCL_API_DETAIL_DIAGNOSTIC_PUSH _Pragma("clang diagnostic push") _Pragma("clang diagnostic ignored \"-Wdeprecated-declarations\"")
+#define FCL_API_DETAIL_DIAGNOSTIC_POP _Pragma("clang diagnostic pop")
+#elif defined(__GNUC__)
+#define FCL_API_DETAIL_DIAGNOSTIC_PUSH _Pragma("GCC diagnostic push") _Pragma("GCC diagnostic ignored \"-Wdeprecated-declarations\"")
+#define FCL_API_DETAIL_DIAGNOSTIC_POP _Pragma("GCC diagnostic pop")
+#else
+#define FCL_API_DETAIL_DIAGNOSTIC_PUSH
+#define FCL_API_DETAIL_DIAGNOSTIC_POP
+#endif
+
+#define FCL_API_DETAIL_METHOD_NAME(METHOD) BOOST_PP_TUPLE_ELEM(4, 0, METHOD)
+#define FCL_API_DETAIL_METHOD_SINCE(METHOD) BOOST_PP_TUPLE_ELEM(4, 1, METHOD)
+#define FCL_API_DETAIL_METHOD_DEPRECATED(METHOD) BOOST_PP_TUPLE_ELEM(4, 2, METHOD)
+#define FCL_API_DETAIL_METHOD_REASON(METHOD) BOOST_PP_TUPLE_ELEM(4, 3, METHOD)
+
+#define FCL_API_DETAIL_DESCRIPTOR_METHODS(INTERFACE, ...)                                                          \
+   __VA_OPT__(BOOST_PP_SEQ_FOR_EACH(FCL_API_DETAIL_DESCRIPTOR_METHOD, INTERFACE,                                  \
+                                    BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__)))
+
+#define FCL_API_DETAIL_PROXY_METHODS(INTERFACE, ...)                                                               \
+   __VA_OPT__(BOOST_PP_SEQ_FOR_EACH(FCL_API_DETAIL_PROXY_METHOD, INTERFACE, BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__)))
+
+#define FCL_API_DETAIL_DESCRIPTOR_METHOD(r, INTERFACE, METHOD)                                                     \
+   {                                                                                                               \
+      auto method = builder.template method<&INTERFACE::FCL_API_DETAIL_METHOD_NAME(METHOD)>(                       \
+         BOOST_PP_STRINGIZE(FCL_API_DETAIL_METHOD_NAME(METHOD)));                                                  \
+      method.since_revision(FCL_API_DETAIL_METHOD_SINCE(METHOD));                                                  \
+      BOOST_PP_IF(FCL_API_DETAIL_METHOD_DEPRECATED(METHOD),                                                        \
+                  method.deprecated(FCL_API_DETAIL_METHOD_REASON(METHOD));, )                                      \
+   }
+
+#define FCL_API_DETAIL_PROXY_METHOD(r, INTERFACE, METHOD)                                                          \
+   boost::asio::awaitable<                                                                                         \
+      ::fcl::api::method_response_t<&INTERFACE::FCL_API_DETAIL_METHOD_NAME(METHOD)>>                               \
+   FCL_API_DETAIL_METHOD_NAME(METHOD)(                                                                             \
+      ::fcl::api::method_request_t<&INTERFACE::FCL_API_DETAIL_METHOD_NAME(METHOD)> request) override {             \
+      co_return co_await this->invoker_->template call<                                                            \
+         ::fcl::api::method_request_t<&INTERFACE::FCL_API_DETAIL_METHOD_NAME(METHOD)>,                             \
+         ::fcl::api::method_response_t<&INTERFACE::FCL_API_DETAIL_METHOD_NAME(METHOD)>>(                           \
+            ::fcl::api::api_traits<INTERFACE>::describe(), ::fcl::api::api_traits<INTERFACE>::ref(),               \
+            BOOST_PP_STRINGIZE(FCL_API_DETAIL_METHOD_NAME(METHOD)), std::move(request));                           \
+   }
+
+#define FCL_API(INTERFACE, CONTRACT, ...)                                                                          \
+   FCL_API_DETAIL_DIAGNOSTIC_PUSH                                                                                  \
+   namespace fcl::api {                                                                                            \
+   template <> struct api_traits<INTERFACE> {                                                                      \
+      static api_id id() {                                                                                         \
+         return api_id{.value = BOOST_PP_TUPLE_ELEM(3, 0, CONTRACT)};                                              \
+      }                                                                                                            \
+      static api_version version() {                                                                               \
+         return api_version{.major = BOOST_PP_TUPLE_ELEM(3, 1, CONTRACT),                                         \
+                            .revision = BOOST_PP_TUPLE_ELEM(3, 2, CONTRACT)};                                     \
+      }                                                                                                            \
+      static api_ref ref(std::uint16_t min_revision = version().revision) {                                        \
+         const auto value = version();                                                                             \
+         return api_ref{.id = id(), .major = value.major, .min_revision = min_revision};                           \
+      }                                                                                                            \
+      static descriptor describe() {                                                                               \
+         auto builder = ::fcl::api::define<INTERFACE>(                                                             \
+            descriptor{.id = id(), .version = version(), .interface_type = typeid(INTERFACE)});                    \
+         FCL_API_DETAIL_DESCRIPTOR_METHODS(INTERFACE, __VA_ARGS__)                                                 \
+         return builder.build();                                                                                   \
+      }                                                                                                            \
+   };                                                                                                              \
+   namespace detail {                                                                                             \
+   template <> class proxy_impl<INTERFACE, true> : public INTERFACE {                                              \
+    public:                                                                                                        \
+      explicit proxy_impl(std::shared_ptr<remote_invoker> invoker) : invoker_(std::move(invoker)) {}               \
+      FCL_API_DETAIL_PROXY_METHODS(INTERFACE, __VA_ARGS__)                                                         \
+    private:                                                                                                       \
+      std::shared_ptr<remote_invoker> invoker_;                                                                    \
+   };                                                                                                              \
+   }                                                                                                               \
+   template <> class proxy<INTERFACE> final                                                                         \
+       : public detail::proxy_impl<INTERFACE, remote_interface<INTERFACE>> {                                       \
+    public:                                                                                                        \
+      explicit proxy(std::shared_ptr<remote_invoker> invoker)                                                      \
+          : detail::proxy_impl<INTERFACE, remote_interface<INTERFACE>>(std::move(invoker)) {}                      \
+   };                                                                                                              \
+   }                                                                                                               \
+   FCL_API_DETAIL_DIAGNOSTIC_POP

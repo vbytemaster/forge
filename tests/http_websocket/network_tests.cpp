@@ -42,7 +42,7 @@ import fcl.websocket.connection;
 import fcl.websocket.exceptions;
 
 namespace fcl::http {
-namespace {
+namespace test_api {
 
 namespace asio = boost::asio;
 namespace beast = boost::beast;
@@ -75,24 +75,66 @@ BOOST_DESCRIBE_STRUCT(api_read_chunk, (), ())
 BOOST_DESCRIBE_STRUCT(api_routed_read_chunk, (), (ref, offset, limit))
 BOOST_DESCRIBE_STRUCT(api_chunk, (), (bytes))
 
-class api_cache {
+class api_cache : public fcl::api::contract<api_cache, fcl::api::surface::local | fcl::api::surface::remote> {
  public:
    virtual ~api_cache() = default;
 
    virtual boost::asio::awaitable<api_chunk> read(api_read_chunk request) = 0;
    virtual boost::asio::awaitable<api_chunk> routed_read(api_routed_read_chunk request) = 0;
    virtual boost::asio::awaitable<api_chunk> write(api_chunk request) = 0;
+};
 
-   static fcl::api::descriptor describe() {
-      return fcl::api::contract<api_cache>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
-          .method<&api_cache::read, api_read_chunk, api_chunk>("read")
-          .error<api_errors::chunk_not_found>("chunk_not_found",
-                                              {.status_code = fcl::api::status::not_found, .retryable = false})
-          .method<&api_cache::routed_read, api_routed_read_chunk, api_chunk>("routed_read")
-          .method<&api_cache::write, api_chunk, api_chunk>("write")
+} // namespace test_api
+} // namespace fcl::http
+
+namespace fcl::api {
+
+template <> struct api_traits<::fcl::http::test_api::api_cache> {
+   static api_id id() {
+      return api_id{.value = "cache"};
+   }
+
+   static api_version version() {
+      return api_version{.major = 1, .revision = 8};
+   }
+
+   static api_ref ref(std::uint16_t min_revision = version().revision) {
+      const auto value = version();
+      return api_ref{.id = id(), .major = value.major, .min_revision = min_revision};
+   }
+
+   static descriptor describe() {
+      using api_cache = ::fcl::http::test_api::api_cache;
+      return define<api_cache>(descriptor{.id = id(), .version = version(), .interface_type = typeid(api_cache)})
+          .method<&api_cache::read, ::fcl::http::test_api::api_read_chunk, ::fcl::http::test_api::api_chunk>("read")
+          .error<::fcl::http::test_api::api_errors::chunk_not_found>(
+             "chunk_not_found", {.status_code = status::not_found, .retryable = false})
+          .method<&api_cache::routed_read, ::fcl::http::test_api::api_routed_read_chunk,
+                  ::fcl::http::test_api::api_chunk>("routed_read")
+          .method<&api_cache::write, ::fcl::http::test_api::api_chunk, ::fcl::http::test_api::api_chunk>("write")
           .build();
    }
 };
+
+} // namespace fcl::api
+
+namespace fcl::http {
+namespace {
+
+namespace asio = boost::asio;
+namespace beast = boost::beast;
+namespace beast_websocket = boost::beast::websocket;
+using tcp = asio::ip::tcp;
+
+namespace api_errors = test_api::api_errors;
+using test_api::api_cache;
+using test_api::api_chunk;
+using test_api::api_read_chunk;
+using test_api::api_routed_read_chunk;
+
+[[nodiscard]] fcl::api::descriptor api_cache_descriptor() {
+   return api_cache::describe();
+}
 
 class throwing_api_cache final : public api_cache {
  public:
@@ -409,7 +451,7 @@ BOOST_AUTO_TEST_CASE(router_rejects_duplicate_routes_before_serving) {
 BOOST_AUTO_TEST_CASE(http_api_binding_maps_custom_exception_to_native_status) {
    auto runtime = fcl::asio::runtime{};
    auto apis = fcl::api::registry{};
-   apis.install<api_cache>(api_cache::describe(), std::make_shared<throwing_api_cache>());
+   apis.install<api_cache>(api_cache_descriptor(), std::make_shared<throwing_api_cache>());
 
    auto router = fcl::http::router{};
    auto plan_builder = fcl::api::binding();
@@ -436,7 +478,7 @@ BOOST_AUTO_TEST_CASE(http_api_binding_maps_custom_exception_to_native_status) {
 BOOST_AUTO_TEST_CASE(http_api_binding_populates_get_request_from_route_and_query) {
    auto runtime = fcl::asio::runtime{};
    auto apis = fcl::api::registry{};
-   apis.install<api_cache>(api_cache::describe(), std::make_shared<routed_api_cache>());
+   apis.install<api_cache>(api_cache_descriptor(), std::make_shared<routed_api_cache>());
 
    auto router = fcl::http::router{};
    auto binding = fcl::http::api()
@@ -461,7 +503,7 @@ BOOST_AUTO_TEST_CASE(http_api_binding_populates_get_request_from_route_and_query
 BOOST_AUTO_TEST_CASE(http_api_binding_escapes_json_error_fields) {
    auto runtime = fcl::asio::runtime{};
    auto apis = fcl::api::registry{};
-   apis.install<api_cache>(api_cache::describe(), std::make_shared<escaping_api_cache>());
+   apis.install<api_cache>(api_cache_descriptor(), std::make_shared<escaping_api_cache>());
 
    auto router = fcl::http::router{};
    auto binding =
@@ -486,7 +528,7 @@ BOOST_AUTO_TEST_CASE(http_api_binding_escapes_json_error_fields) {
 BOOST_AUTO_TEST_CASE(http_api_binding_passes_put_body_to_typed_api) {
    auto runtime = fcl::asio::runtime{};
    auto apis = fcl::api::registry{};
-   apis.install<api_cache>(api_cache::describe(), std::make_shared<throwing_api_cache>());
+   apis.install<api_cache>(api_cache_descriptor(), std::make_shared<throwing_api_cache>());
 
    auto router = fcl::http::router{};
    auto binding = fcl::http::api()
@@ -550,7 +592,7 @@ BOOST_AUTO_TEST_CASE(middleware_runs_in_order_and_can_short_circuit) {
 BOOST_AUTO_TEST_CASE(http_api_binding_mounts_ordered_middleware_contributions) {
    auto runtime = fcl::asio::runtime{};
    auto apis = fcl::api::registry{};
-   apis.install<api_cache>(api_cache::describe(), std::make_shared<throwing_api_cache>());
+   apis.install<api_cache>(api_cache_descriptor(), std::make_shared<throwing_api_cache>());
 
    auto trace = std::make_shared<std::string>();
    auto plan = fcl::api::binding().serve(apis).build();

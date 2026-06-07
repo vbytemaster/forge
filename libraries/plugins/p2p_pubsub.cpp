@@ -423,12 +423,6 @@ class p2p_pubsub::api::impl final : public p2p_pubsub::api {
    std::shared_ptr<p2p_pubsub::impl> impl_;
 };
 
-fcl::api::descriptor p2p_pubsub::api::describe() {
-   return fcl::api::contract<p2p_pubsub::api>(
-             {.id = {"fcl.plugins.p2p_pubsub"}, .version = {.major = 1, .revision = 0}})
-      .build();
-}
-
 p2p_pubsub::p2p_pubsub() : impl_{std::make_shared<impl>()} {}
 p2p_pubsub::~p2p_pubsub() = default;
 
@@ -452,7 +446,7 @@ boost::asio::awaitable<void> p2p_pubsub::configure(fcl::config::component_view v
 }
 
 boost::asio::awaitable<void> p2p_pubsub::provide(fcl::api::provider& provider) {
-   provider.install<p2p_pubsub::api>(p2p_pubsub::api::describe(), std::make_shared<p2p_pubsub::api::impl>(impl_));
+   provider.install<p2p_pubsub::api>(std::make_shared<p2p_pubsub::api::impl>(impl_));
    co_return;
 }
 

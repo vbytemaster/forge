@@ -1,5 +1,6 @@
 module;
 
+#include <fcl/api/api_macros.hpp>
 #include <fcl/exceptions/macros.hpp>
 
 #include <boost/asio/awaitable.hpp>
@@ -31,6 +32,24 @@ import fcl.config.decode;
 import fcl.exceptions;
 import fcl.p2p;
 import fcl.plugins.p2p_node;
+
+namespace fcl::plugins {
+
+namespace detail {
+
+class resolver_protocol
+    : public fcl::api::contract<resolver_protocol, fcl::api::surface::local | fcl::api::surface::remote> {
+ public:
+   virtual ~resolver_protocol() = default;
+   virtual boost::asio::awaitable<p2p_api_resolver::response> query(p2p_api_resolver::query request) = 0;
+};
+
+} // namespace detail
+
+} // namespace fcl::plugins
+
+FCL_API(::fcl::plugins::detail::resolver_protocol,
+        FCL_API_CONTRACT("fcl.plugins.p2p_api_resolver.protocol", 1, 0), FCL_API_METHOD(query))
 
 namespace fcl::plugins {
 namespace {
@@ -211,19 +230,6 @@ select_compatible(const std::vector<p2p_api_resolver::entry>& entries, const fcl
    return selected;
 }
 
-class resolver_protocol {
- public:
-   virtual ~resolver_protocol() = default;
-   virtual boost::asio::awaitable<p2p_api_resolver::response> query(p2p_api_resolver::query request) = 0;
-
-   [[nodiscard]] static fcl::api::descriptor describe() {
-      return fcl::api::contract<resolver_protocol>(
-                {.id = {resolver_api_id}, .version = {.major = 1, .revision = 0}})
-         .method<&resolver_protocol::query, p2p_api_resolver::query, p2p_api_resolver::response>("query")
-         .build();
-   }
-};
-
 } // namespace
 
 struct p2p_api_resolver::impl : public std::enable_shared_from_this<p2p_api_resolver::impl> {
@@ -377,7 +383,7 @@ struct p2p_api_resolver::impl : public std::enable_shared_from_this<p2p_api_reso
    }
 };
 
-class p2p_api_resolver::protocol_impl final : public resolver_protocol {
+class p2p_api_resolver::protocol_impl final : public detail::resolver_protocol {
  public:
    explicit protocol_impl(std::shared_ptr<p2p_api_resolver::impl> impl) : impl_{std::move(impl)} {}
 
@@ -408,11 +414,11 @@ class p2p_api_resolver::api::impl final : public p2p_api_resolver::api {
          co_return *cached;
       }
 
-      auto remote = co_await impl_->p2p->remote<resolver_protocol>(
-         peer, impl_->protocol, fcl::plugins::p2p_node::remote_options{.open_deadline = impl_->open_deadline(options)});
-      auto result = co_await remote.call<query, response>(
-         {.id = {resolver_api_id}, .major = 1, .min_revision = 0}, "query", query{},
-         fcl::api::transport::call_options{.deadline = impl_->query_deadline(options)});
+      auto remote = co_await impl_->p2p->remote<detail::resolver_protocol>(
+         peer, impl_->protocol,
+         fcl::plugins::p2p_node::remote_options{.open_deadline = impl_->open_deadline(options),
+                                                .deadline = impl_->query_deadline(options)});
+      auto result = co_await remote->query(query{});
       validate_response(result.apis, impl_->settings);
       auto entries = std::move(result.apis);
       impl_->store_peer(peer, entries);
@@ -436,30 +442,25 @@ class p2p_api_resolver::api::impl final : public p2p_api_resolver::api {
                           fcl::exceptions::ctx("api", api.id.value));
    }
 
-   boost::asio::awaitable<fcl::api::transport::remote>
-   remote(fcl::p2p::peer_id peer, fcl::api::api_ref api, fcl::api::descriptor descriptor,
-          resolve_options options) override {
+   boost::asio::awaitable<fcl::api::transport::connection>
+   open_resolved_connection(fcl::p2p::peer_id peer, fcl::api::api_ref api, fcl::api::descriptor descriptor,
+                            resolve_options options) override {
       auto selected = co_await resolve(peer, api, options);
       validate_descriptor_compatible(descriptor, selected.api);
       auto protocol = fcl::p2p::protocol_id{.value = selected.api.protocol};
-      co_return co_await impl_->p2p->remote(std::move(peer), std::move(protocol), std::move(descriptor),
-                                            fcl::plugins::p2p_node::remote_options{
-                                               .open_deadline = impl_->open_deadline(options),
-                                               .codec = selected.api.codec,
-                                               .max_inflight = static_cast<std::size_t>(selected.api.max_inflight),
-                                               .max_frame_size = static_cast<std::uint32_t>(selected.api.max_frame_size),
-                                            });
+      co_return co_await impl_->p2p->open_api_connection(
+         std::move(peer), std::move(protocol),
+         fcl::plugins::p2p_node::remote_options{
+            .open_deadline = impl_->open_deadline(options),
+            .codec = selected.api.codec,
+            .max_inflight = static_cast<std::size_t>(selected.api.max_inflight),
+            .max_frame_size = static_cast<std::uint32_t>(selected.api.max_frame_size),
+         });
    }
 
  private:
    std::shared_ptr<p2p_api_resolver::impl> impl_;
 };
-
-fcl::api::descriptor p2p_api_resolver::api::describe() {
-   return fcl::api::contract<p2p_api_resolver::api>(
-             {.id = {"fcl.plugins.p2p_api_resolver"}, .version = {.major = 1, .revision = 0}})
-      .build();
-}
 
 p2p_api_resolver::p2p_api_resolver() : impl_{std::make_shared<impl>()} {}
 p2p_api_resolver::~p2p_api_resolver() = default;
@@ -489,8 +490,7 @@ boost::asio::awaitable<void> p2p_api_resolver::configure(fcl::config::component_
 }
 
 boost::asio::awaitable<void> p2p_api_resolver::provide(fcl::api::provider& provider) {
-   provider.install<p2p_api_resolver::api>(p2p_api_resolver::api::describe(),
-                                           std::make_shared<p2p_api_resolver::api::impl>(impl_));
+   provider.install<p2p_api_resolver::api>(std::make_shared<p2p_api_resolver::api::impl>(impl_));
    co_return;
 }
 
@@ -498,11 +498,10 @@ boost::asio::awaitable<void> p2p_api_resolver::initialize(fcl::app::plugin_conte
    impl_->p2p = context.apis().get<fcl::plugins::p2p_node::api>(
       {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0}).operator->();
    impl_->protocol_registry.clear();
-   impl_->protocol_registry.install<resolver_protocol>(resolver_protocol::describe(),
-                                                       std::make_shared<protocol_impl>(impl_));
+   impl_->protocol_registry.install<detail::resolver_protocol>(std::make_shared<protocol_impl>(impl_));
    auto plan = fcl::api::binding()
                   .serve(impl_->protocol_registry)
-                  .export_api<resolver_protocol>({.id = {resolver_api_id}, .major = 1, .min_revision = 0})
+                  .export_api<detail::resolver_protocol>({.id = {resolver_api_id}, .major = 1, .min_revision = 0})
                   .build();
    try {
       impl_->p2p->publish_api(std::move(plan), impl_->protocol, impl_->resolver_transport);

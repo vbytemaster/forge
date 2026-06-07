@@ -294,24 +294,16 @@ class p2p_node::api::impl final : public p2p_node::api {
       impl_->add_route(binding.protocol(), binding.handler());
    }
 
-   boost::asio::awaitable<fcl::api::transport::remote>
-   remote(fcl::p2p::peer_id peer, fcl::p2p::protocol_id protocol, fcl::api::descriptor descriptor,
-          remote_options options) override {
+   boost::asio::awaitable<fcl::api::transport::connection>
+   open_api_connection(fcl::p2p::peer_id peer, fcl::p2p::protocol_id protocol, remote_options options) override {
       auto stream = co_await impl_->require_node().async_open_protocol_stream(std::move(peer), std::move(protocol),
                                                                                impl_->open_options_for(options));
-      auto client = fcl::api::transport::client{std::move(stream).into_transport_stream(),
-                                                impl_->api_options_for(options)};
-      co_return fcl::api::transport::remote{std::move(client), std::move(descriptor)};
+      co_return fcl::api::transport::connection{std::move(stream).into_transport_stream(), impl_->api_options_for(options)};
    }
 
  private:
    std::shared_ptr<p2p_node::impl> impl_;
 };
-
-fcl::api::descriptor p2p_node::api::describe() {
-   return fcl::api::contract<p2p_node::api>({.id = {"fcl.plugins.p2p_node"}, .version = {.major = 1, .revision = 0}})
-      .build();
-}
 
 class p2p_node::diagnostics_source::impl final : public p2p_node::diagnostics_source {
  public:
@@ -324,12 +316,6 @@ class p2p_node::diagnostics_source::impl final : public p2p_node::diagnostics_so
  private:
    std::shared_ptr<p2p_node::impl> impl_;
 };
-
-fcl::api::descriptor p2p_node::diagnostics_source::describe() {
-   return fcl::api::contract<p2p_node::diagnostics_source>(
-             {.id = {"fcl.plugins.p2p_node.diagnostics_source"}, .version = {.major = 1, .revision = 0}})
-      .build();
-}
 
 class p2p_node::pubsub_source::impl final : public p2p_node::pubsub_source {
  public:
@@ -370,12 +356,6 @@ class p2p_node::pubsub_source::impl final : public p2p_node::pubsub_source {
  private:
    std::shared_ptr<p2p_node::impl> impl_;
 };
-
-fcl::api::descriptor p2p_node::pubsub_source::describe() {
-   return fcl::api::contract<p2p_node::pubsub_source>(
-             {.id = {"fcl.plugins.p2p_node.pubsub_source"}, .version = {.major = 1, .revision = 0}})
-      .build();
-}
 
 p2p_node::p2p_node() : impl_{std::make_shared<impl>()} {}
 p2p_node::~p2p_node() = default;
@@ -442,11 +422,9 @@ boost::asio::awaitable<void> p2p_node::configure(fcl::config::component_view vie
 }
 
 boost::asio::awaitable<void> p2p_node::provide(fcl::api::provider& provider) {
-   provider.install<p2p_node::api>(p2p_node::api::describe(), std::make_shared<p2p_node::api::impl>(impl_));
-   provider.install<p2p_node::diagnostics_source>(p2p_node::diagnostics_source::describe(),
-                                                  std::make_shared<p2p_node::diagnostics_source::impl>(impl_));
-   provider.install<p2p_node::pubsub_source>(p2p_node::pubsub_source::describe(),
-                                             std::make_shared<p2p_node::pubsub_source::impl>(impl_));
+   provider.install<p2p_node::api>(std::make_shared<p2p_node::api::impl>(impl_));
+   provider.install<p2p_node::diagnostics_source>(std::make_shared<p2p_node::diagnostics_source::impl>(impl_));
+   provider.install<p2p_node::pubsub_source>(std::make_shared<p2p_node::pubsub_source::impl>(impl_));
    co_return;
 }
 

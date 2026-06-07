@@ -4,6 +4,7 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/describe.hpp>
+#include <fcl/api/api_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -29,22 +30,24 @@ import fcl.asio.task_scheduler;
 import fcl.config;
 import fcl.schema;
 
-namespace {
+namespace app_test_contract {
 
-struct lifecycle_log {
-   std::vector<std::string> entries;
-};
-
-class sample_api {
+class sample_api : public fcl::api::contract<sample_api> {
  public:
    virtual ~sample_api() = default;
    virtual boost::asio::awaitable<int> value(int input) = 0;
+};
 
-   static fcl::api::descriptor describe() {
-      return fcl::api::contract<sample_api>({.id = {"sample"}, .version = {.major = 1, .revision = 0}})
-          .method<&sample_api::value, int, int>("value")
-          .build();
-   }
+} // namespace app_test_contract
+
+FCL_API(::app_test_contract::sample_api, FCL_API_CONTRACT("sample", 1, 0), FCL_API_METHOD(value))
+
+namespace {
+
+using app_test_contract::sample_api;
+
+struct lifecycle_log {
+   std::vector<std::string> entries;
 };
 
 class sample_api_impl final : public sample_api {

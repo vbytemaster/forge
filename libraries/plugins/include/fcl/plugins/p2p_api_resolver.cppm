@@ -2,6 +2,7 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/describe.hpp>
+#include <fcl/api/api_macros.hpp>
 #include <fcl/exceptions/macros.hpp>
 
 #include <chrono>
@@ -155,11 +156,9 @@ struct p2p_api_resolver::response {
    bool operator==(const response&) const = default;
 };
 
-class p2p_api_resolver::api {
+class p2p_api_resolver::api : public fcl::api::contract<p2p_api_resolver::api> {
  public:
    virtual ~api() = default;
-
-   [[nodiscard]] static fcl::api::descriptor describe();
 
    virtual void publish_api(fcl::api::binding_plan plan, fcl::p2p::protocol_id protocol,
                             publish_options options = {}) = 0;
@@ -168,23 +167,24 @@ class p2p_api_resolver::api {
                                                                 resolve_options options = {}) = 0;
    virtual boost::asio::awaitable<resolution> resolve(fcl::p2p::peer_id peer, fcl::api::api_ref api,
                                                       resolve_options options = {}) = 0;
-   virtual boost::asio::awaitable<fcl::api::transport::remote>
-   remote(fcl::p2p::peer_id peer, fcl::api::api_ref api, fcl::api::descriptor descriptor,
-          resolve_options options = {}) = 0;
-
    template <typename Interface>
-   boost::asio::awaitable<fcl::api::transport::remote> remote(fcl::p2p::peer_id peer,
-                                                              resolve_options options = {}) {
+   boost::asio::awaitable<fcl::api::handle<Interface>> remote(fcl::p2p::peer_id peer, resolve_options options = {}) {
       auto descriptor = Interface::describe();
       auto requested = fcl::api::api_ref{.id = descriptor.id,
                                          .major = descriptor.version.major,
                                          .min_revision = descriptor.version.revision};
-      co_return co_await remote(std::move(peer), std::move(requested), std::move(descriptor), options);
+      auto connection =
+         co_await open_resolved_connection(std::move(peer), std::move(requested), std::move(descriptor), options);
+      co_return co_await connection.template get_remote_api<Interface>();
    }
 
  private:
    friend class p2p_api_resolver;
    class impl;
+
+   virtual boost::asio::awaitable<fcl::api::transport::connection>
+   open_resolved_connection(fcl::p2p::peer_id peer, fcl::api::api_ref api, fcl::api::descriptor descriptor,
+                            resolve_options options) = 0;
 };
 
 BOOST_DESCRIBE_STRUCT(p2p_api_resolver::config, (),
@@ -198,6 +198,10 @@ BOOST_DESCRIBE_STRUCT(p2p_api_resolver::query, (), (apis))
 BOOST_DESCRIBE_STRUCT(p2p_api_resolver::response, (), (apis))
 
 } // namespace fcl::plugins
+
+export {
+FCL_API(::fcl::plugins::p2p_api_resolver::api, FCL_API_CONTRACT("fcl.plugins.p2p_api_resolver", 1, 0))
+}
 
 export template <> struct fcl::schema::rules<fcl::plugins::p2p_api_resolver::config> {
    [[nodiscard]] static fcl::schema::object_schema<fcl::plugins::p2p_api_resolver::config> define() {

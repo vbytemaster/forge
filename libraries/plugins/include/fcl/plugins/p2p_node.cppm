@@ -2,6 +2,7 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/describe.hpp>
+#include <fcl/api/api_macros.hpp>
 #include <fcl/exceptions/macros.hpp>
 
 #include <chrono>
@@ -118,11 +119,9 @@ enum class p2p_node::path_policy : std::uint8_t {
    relay_only = 3,
 };
 
-class p2p_node::api {
+class p2p_node::api : public fcl::api::contract<p2p_node::api> {
  public:
    virtual ~api() = default;
-
-   [[nodiscard]] static fcl::api::descriptor describe();
 
    [[nodiscard]] virtual fcl::p2p::peer_id local_peer() const = 0;
    [[nodiscard]] virtual std::optional<fcl::p2p::endpoint> local_endpoint() const = 0;
@@ -134,14 +133,14 @@ class p2p_node::api {
                             fcl::api::transport::options options) = 0;
    virtual void publish_protocol(fcl::p2p::protocol_id protocol, fcl::p2p::node::protocol_handler handler) = 0;
 
-   virtual boost::asio::awaitable<fcl::api::transport::remote>
-   remote(fcl::p2p::peer_id peer, fcl::p2p::protocol_id protocol, fcl::api::descriptor descriptor,
-          remote_options options = {}) = 0;
+   virtual boost::asio::awaitable<fcl::api::transport::connection>
+   open_api_connection(fcl::p2p::peer_id peer, fcl::p2p::protocol_id protocol, remote_options options = {}) = 0;
 
    template <typename Interface>
-   boost::asio::awaitable<fcl::api::transport::remote>
+   boost::asio::awaitable<fcl::api::handle<Interface>>
    remote(fcl::p2p::peer_id peer, fcl::p2p::protocol_id protocol, remote_options options = {}) {
-      co_return co_await remote(std::move(peer), std::move(protocol), Interface::describe(), options);
+      auto connection = co_await open_api_connection(std::move(peer), std::move(protocol), options);
+      co_return co_await connection.template get_remote_api<Interface>();
    }
 
  private:
@@ -149,11 +148,9 @@ class p2p_node::api {
    class impl;
 };
 
-class p2p_node::diagnostics_source {
+class p2p_node::diagnostics_source : public fcl::api::contract<p2p_node::diagnostics_source> {
  public:
    virtual ~diagnostics_source() = default;
-
-   [[nodiscard]] static fcl::api::descriptor describe();
 
    [[nodiscard]] virtual fcl::p2p::diagnostics::snapshot
    snapshot(fcl::p2p::diagnostics::options options = {}) const = 0;
@@ -163,11 +160,9 @@ class p2p_node::diagnostics_source {
    class impl;
 };
 
-class p2p_node::pubsub_source {
+class p2p_node::pubsub_source : public fcl::api::contract<p2p_node::pubsub_source> {
  public:
    virtual ~pubsub_source() = default;
-
-   [[nodiscard]] static fcl::api::descriptor describe();
 
    virtual void enable(fcl::p2p::pubsub::options options) = 0;
    [[nodiscard]] virtual fcl::p2p::peer_id local_peer() const = 0;
@@ -185,6 +180,14 @@ class p2p_node::pubsub_source {
 };
 
 } // namespace fcl::plugins
+
+export {
+FCL_API(::fcl::plugins::p2p_node::api, FCL_API_CONTRACT("fcl.plugins.p2p_node", 1, 0))
+FCL_API(::fcl::plugins::p2p_node::diagnostics_source,
+        FCL_API_CONTRACT("fcl.plugins.p2p_node.diagnostics_source", 1, 0))
+FCL_API(::fcl::plugins::p2p_node::pubsub_source,
+        FCL_API_CONTRACT("fcl.plugins.p2p_node.pubsub_source", 1, 0))
+}
 
 BOOST_DESCRIBE_STRUCT(fcl::plugins::p2p_node::config, (),
                       (listen, bootstrap, advertised_endpoints, peer_id, certificate_pem, private_key_pem, api_codec,

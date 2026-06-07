@@ -1,6 +1,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/describe.hpp>
 #include <boost/test/unit_test.hpp>
+#include <fcl/api/api_macros.hpp>
 #include <fcl/exceptions/macros.hpp>
 
 #include <cstdint>
@@ -37,6 +38,10 @@ struct read_chunk {
    std::string ref;
 };
 
+struct read_old_request {
+   std::string ref;
+};
+
 struct chunk {
    std::string bytes;
 };
@@ -44,6 +49,7 @@ struct chunk {
 } // namespace protocol
 
 BOOST_DESCRIBE_STRUCT(protocol::read_chunk, (), (ref))
+BOOST_DESCRIBE_STRUCT(protocol::read_old_request, (), (ref))
 BOOST_DESCRIBE_STRUCT(protocol::chunk, (), (bytes))
 
 namespace protocol {
@@ -54,6 +60,16 @@ template <typename Stream> Stream& operator<<(Stream& stream, const read_chunk& 
 }
 
 template <typename Stream> Stream& operator>>(Stream& stream, read_chunk& value) {
+   fcl::raw::unpack(stream, value.ref);
+   return stream;
+}
+
+template <typename Stream> Stream& operator<<(Stream& stream, const read_old_request& value) {
+   fcl::raw::pack(stream, value.ref);
+   return stream;
+}
+
+template <typename Stream> Stream& operator>>(Stream& stream, read_old_request& value) {
    fcl::raw::unpack(stream, value.ref);
    return stream;
 }
@@ -77,27 +93,59 @@ fcl::api::bytes pack_api_payload(const T& value) {
    return out;
 }
 
-class cache_api {
+class cache_api
+    : public fcl::api::contract<cache_api, fcl::api::surface::local | fcl::api::surface::remote> {
  public:
    virtual ~cache_api() = default;
 
    virtual boost::asio::awaitable<protocol::chunk> read(protocol::read_chunk request) = 0;
+   virtual boost::asio::awaitable<protocol::chunk> read_old(protocol::read_old_request request) = 0;
    virtual boost::asio::awaitable<std::vector<protocol::chunk>> watch(protocol::read_chunk request) = 0;
    virtual boost::asio::awaitable<protocol::chunk> upload(std::vector<protocol::read_chunk> requests) = 0;
    virtual boost::asio::awaitable<std::vector<protocol::chunk>> sync(std::vector<protocol::read_chunk> requests) = 0;
-
-   static fcl::api::descriptor describe() {
-      return fcl::api::contract<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
-          .method<&cache_api::read, protocol::read_chunk, protocol::chunk>("read")
-          .error<cache_errors::chunk_not_found>("chunk_not_found",
-                                                {.status_code = fcl::api::status::not_found, .retryable = false})
-          .build();
-   }
 };
+
+FCL_API(cache_api, FCL_API_CONTRACT("cache", 1, 8), FCL_API_METHOD(read),
+        FCL_API_METHOD_DEPRECATED(read_old, "use read"), FCL_API_METHOD_SINCE(watch, 2),
+        FCL_API_METHOD_SINCE(upload, 3), FCL_API_METHOD_SINCE(sync, 4))
+
+class local_only_api : public fcl::api::contract<local_only_api> {
+ public:
+   virtual ~local_only_api() = default;
+
+   [[nodiscard]] virtual std::string name() const = 0;
+};
+
+FCL_API(local_only_api, FCL_API_CONTRACT("local.only", 1, 0))
+
+class remote_only_api : public fcl::api::contract<remote_only_api, fcl::api::surface::remote> {
+ public:
+   virtual ~remote_only_api() = default;
+
+   virtual boost::asio::awaitable<protocol::chunk> read(protocol::read_chunk request) = 0;
+};
+
+FCL_API(remote_only_api, FCL_API_CONTRACT("remote.only", 1, 0), FCL_API_METHOD(read))
+
+static_assert(fcl::api::interface<cache_api>);
+static_assert(fcl::api::local_interface<cache_api>);
+static_assert(fcl::api::remote_interface<cache_api>);
+static_assert(fcl::api::supports_surface<cache_api, fcl::api::surface::local>);
+static_assert(fcl::api::supports_surface<cache_api, fcl::api::surface::remote>);
+static_assert(fcl::api::interface<local_only_api>);
+static_assert(fcl::api::local_interface<local_only_api>);
+static_assert(!fcl::api::remote_interface<local_only_api>);
+static_assert(fcl::api::interface<remote_only_api>);
+static_assert(!fcl::api::local_interface<remote_only_api>);
+static_assert(fcl::api::remote_interface<remote_only_api>);
 
 class cache_impl final : public cache_api {
  public:
    boost::asio::awaitable<protocol::chunk> read(protocol::read_chunk request) override {
+      co_return protocol::chunk{.bytes = std::move(request.ref)};
+   }
+
+   boost::asio::awaitable<protocol::chunk> read_old(protocol::read_old_request request) override {
       co_return protocol::chunk{.bytes = std::move(request.ref)};
    }
 
@@ -130,17 +178,25 @@ class cache_impl final : public cache_api {
 };
 
 void build_empty_id_descriptor() {
-   (void)fcl::api::contract<cache_api>({.id = {""}, .version = {.major = 1, .revision = 0}}).build();
+   (void)fcl::api::define<cache_api>({.id = {""}, .version = {.major = 1, .revision = 0}}).build();
 }
 
 void build_zero_major_descriptor() {
-   (void)fcl::api::contract<cache_api>({.id = {"cache"}, .version = {.major = 0, .revision = 0}}).build();
+   (void)fcl::api::define<cache_api>({.id = {"cache"}, .version = {.major = 0, .revision = 0}}).build();
 }
 
 void build_duplicate_method_descriptor() {
-   (void)fcl::api::contract<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 0}})
+   (void)fcl::api::define<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 0}})
        .method<&cache_api::read, protocol::read_chunk, protocol::chunk>("read")
        .method<&cache_api::read, protocol::read_chunk, protocol::chunk>("read")
+       .build();
+}
+
+fcl::api::descriptor cache_descriptor_with_declared_errors() {
+   return fcl::api::define<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
+       .method<&cache_api::read>("read")
+       .error<cache_errors::chunk_not_found>("chunk_not_found",
+                                             {.status_code = fcl::api::status::not_found, .retryable = false})
        .build();
 }
 
@@ -191,7 +247,7 @@ BOOST_AUTO_TEST_CASE(frame_raw_roundtrip) {
 }
 
 BOOST_AUTO_TEST_CASE(method_descriptor_records_stream_method_kind) {
-   auto descriptor = fcl::api::contract<cache_api>({.id = {"cache.streams"}, .version = {.major = 1, .revision = 0}})
+   auto descriptor = fcl::api::define<cache_api>({.id = {"cache.streams"}, .version = {.major = 1, .revision = 0}})
                          .server_stream<&cache_api::watch, protocol::read_chunk, protocol::chunk>("watch")
                          .build();
 
@@ -200,8 +256,69 @@ BOOST_AUTO_TEST_CASE(method_descriptor_records_stream_method_kind) {
    BOOST_CHECK(method->kind == fcl::api::method_kind::server_stream);
 }
 
+class recording_invoker final : public fcl::api::remote_invoker {
+ public:
+   boost::asio::awaitable<fcl::api::response> async_call(fcl::api::request value) override {
+      last = std::move(value);
+      co_return fcl::api::response{
+          .api = last.api,
+          .method = last.method,
+          .codec = last.codec,
+          .body = fcl::api::pack_body(protocol::chunk{.bytes = "remote:" + fcl::api::unpack_body<protocol::read_chunk>(last.body).ref}),
+      };
+   }
+
+   fcl::api::request last;
+};
+
+BOOST_AUTO_TEST_CASE(generated_api_descriptor_records_contract_and_method_metadata) {
+   const auto descriptor = cache_api::describe();
+
+   BOOST_TEST(descriptor.id.value == "cache");
+   BOOST_TEST(descriptor.version.major == 1U);
+   BOOST_TEST(descriptor.version.revision == 8U);
+   BOOST_TEST(cache_api::ref().id.value == "cache");
+   BOOST_TEST(cache_api::ref().major == 1U);
+   BOOST_TEST(cache_api::ref().min_revision == 8U);
+
+   const auto* read = fcl::api::find_method(descriptor, "read");
+   const auto* read_old = fcl::api::find_method(descriptor, "read_old");
+   const auto* watch = fcl::api::find_method(descriptor, "watch");
+   BOOST_REQUIRE(read != nullptr);
+   BOOST_REQUIRE(read_old != nullptr);
+   BOOST_REQUIRE(watch != nullptr);
+   BOOST_TEST(read->since_revision == 0U);
+   BOOST_TEST(!read->deprecated);
+   BOOST_TEST(read_old->deprecated);
+   BOOST_TEST(read_old->deprecation_reason == "use read");
+   BOOST_TEST(watch->since_revision == 2U);
+}
+
+BOOST_AUTO_TEST_CASE(generated_proxy_invokes_remote_through_typed_handle) {
+   auto runtime = fcl::asio::runtime{};
+   auto invoker = std::make_shared<recording_invoker>();
+   auto handle = fcl::api::handle<cache_api>{std::make_shared<fcl::api::proxy<cache_api>>(invoker)};
+
+   const auto response = fcl::asio::blocking::run(runtime, handle->read({.ref = "abc"}));
+
+   BOOST_TEST(response.bytes == "remote:abc");
+   BOOST_TEST(invoker->last.api.id.value == "cache");
+   BOOST_TEST(invoker->last.api.major == 1U);
+   BOOST_TEST(invoker->last.api.min_revision == 8U);
+   BOOST_TEST(invoker->last.method == "read");
+   BOOST_TEST(invoker->last.codec.value == "fcl.raw");
+}
+
+BOOST_AUTO_TEST_CASE(api_body_decode_rejects_trailing_bytes) {
+   auto body = fcl::api::pack_body(protocol::read_chunk{.ref = "abc"});
+   body.push_back(0xff);
+
+   BOOST_CHECK_THROW(static_cast<void>(fcl::api::unpack_body<protocol::read_chunk>(body)),
+                     fcl::api::exceptions::protocol_error);
+}
+
 BOOST_AUTO_TEST_CASE(method_descriptor_records_client_and_bidirectional_stream_kinds) {
-   auto descriptor = fcl::api::contract<cache_api>({.id = {"cache.streams"}, .version = {.major = 1, .revision = 0}})
+   auto descriptor = fcl::api::define<cache_api>({.id = {"cache.streams"}, .version = {.major = 1, .revision = 0}})
                          .client_stream<&cache_api::upload, protocol::read_chunk, protocol::chunk>("upload")
                          .bidirectional_stream<&cache_api::sync, protocol::read_chunk, protocol::chunk>("sync")
                          .build();
@@ -312,7 +429,7 @@ BOOST_AUTO_TEST_CASE(binding_plan_runs_interceptors_in_deterministic_order) {
 BOOST_AUTO_TEST_CASE(binding_plan_dispatches_server_stream_as_item_and_end_frames) {
    auto runtime = fcl::asio::runtime{};
    auto registry = fcl::api::registry{};
-   auto descriptor = fcl::api::contract<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
+   auto descriptor = fcl::api::define<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
                          .server_stream<&cache_api::watch, protocol::read_chunk, protocol::chunk>("watch")
                          .build();
    registry.install<cache_api>(std::move(descriptor), std::make_shared<cache_impl>());
@@ -340,7 +457,7 @@ BOOST_AUTO_TEST_CASE(binding_plan_dispatches_server_stream_as_item_and_end_frame
 BOOST_AUTO_TEST_CASE(binding_plan_dispatches_client_stream_as_item_sequence_and_single_response) {
    auto runtime = fcl::asio::runtime{};
    auto registry = fcl::api::registry{};
-   auto descriptor = fcl::api::contract<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
+   auto descriptor = fcl::api::define<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
                          .client_stream<&cache_api::upload, protocol::read_chunk, protocol::chunk>("upload")
                          .build();
    registry.install<cache_api>(std::move(descriptor), std::make_shared<cache_impl>());
@@ -372,7 +489,7 @@ BOOST_AUTO_TEST_CASE(binding_plan_dispatches_client_stream_as_item_sequence_and_
 BOOST_AUTO_TEST_CASE(binding_plan_dispatch_stream_honors_preobserved_runtime_deadline) {
    auto runtime = fcl::asio::runtime{};
    auto registry = fcl::api::registry{};
-   auto descriptor = fcl::api::contract<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
+   auto descriptor = fcl::api::define<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
                          .client_stream<&cache_api::upload, protocol::read_chunk, protocol::chunk>("upload")
                          .build();
    registry.install<cache_api>(std::move(descriptor), std::make_shared<cache_impl>());
@@ -403,7 +520,7 @@ BOOST_AUTO_TEST_CASE(binding_plan_dispatch_stream_honors_preobserved_runtime_dea
 BOOST_AUTO_TEST_CASE(binding_plan_dispatches_bidirectional_stream_as_item_and_end_frames) {
    auto runtime = fcl::asio::runtime{};
    auto registry = fcl::api::registry{};
-   auto descriptor = fcl::api::contract<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
+   auto descriptor = fcl::api::define<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
                          .bidirectional_stream<&cache_api::sync, protocol::read_chunk, protocol::chunk>("sync")
                          .build();
    registry.install<cache_api>(std::move(descriptor), std::make_shared<cache_impl>());
@@ -467,7 +584,7 @@ BOOST_AUTO_TEST_CASE(binding_plan_exports_are_enforced_when_declared) {
 }
 
 BOOST_AUTO_TEST_CASE(descriptor_declared_exception_maps_to_error_payload) {
-   const auto descriptor = cache_api::describe();
+   const auto descriptor = cache_descriptor_with_declared_errors();
    const auto* method = fcl::api::find_method(descriptor, "read");
    BOOST_REQUIRE(method != nullptr);
 
@@ -547,6 +664,10 @@ class throwing_cache_impl final : public cache_api {
       FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exceptions::ctx("ref", "abc"));
    }
 
+   boost::asio::awaitable<protocol::chunk> read_old(protocol::read_old_request) override {
+      FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exceptions::ctx("ref", "abc"));
+   }
+
    boost::asio::awaitable<std::vector<protocol::chunk>> watch(protocol::read_chunk) override {
       FCL_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", fcl::exceptions::ctx("ref", "abc"));
    }
@@ -563,7 +684,7 @@ class throwing_cache_impl final : public cache_api {
 BOOST_AUTO_TEST_CASE(registry_dispatch_maps_declared_exception_to_error_frame) {
    auto runtime = fcl::asio::runtime{};
    auto registry = fcl::api::registry{};
-   registry.install<cache_api>(cache_api::describe(), std::make_shared<throwing_cache_impl>());
+   registry.install<cache_api>(cache_descriptor_with_declared_errors(), std::make_shared<throwing_cache_impl>());
 
    const auto request = fcl::api::frame{
        .kind = fcl::api::frame_kind::request,
@@ -585,7 +706,7 @@ BOOST_AUTO_TEST_CASE(registry_dispatch_maps_declared_exception_to_error_frame) {
 }
 
 BOOST_AUTO_TEST_CASE(remote_declared_exception_restores_typed_exception) {
-   const auto descriptor = cache_api::describe();
+   const auto descriptor = cache_descriptor_with_declared_errors();
    const auto* method = fcl::api::find_method(descriptor, "read");
    BOOST_REQUIRE(method != nullptr);
 

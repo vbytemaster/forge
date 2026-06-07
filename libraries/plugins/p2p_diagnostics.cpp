@@ -146,12 +146,6 @@ class p2p_diagnostics::api::impl final : public p2p_diagnostics::api {
    std::shared_ptr<p2p_diagnostics::impl> impl_;
 };
 
-fcl::api::descriptor p2p_diagnostics::api::describe() {
-   return fcl::api::contract<p2p_diagnostics::api>(
-             {.id = {"fcl.plugins.p2p_diagnostics"}, .version = {.major = 1, .revision = 0}})
-      .build();
-}
-
 p2p_diagnostics::p2p_diagnostics() : impl_{std::make_shared<impl>()} {}
 p2p_diagnostics::~p2p_diagnostics() = default;
 
@@ -175,8 +169,7 @@ boost::asio::awaitable<void> p2p_diagnostics::configure(fcl::config::component_v
 }
 
 boost::asio::awaitable<void> p2p_diagnostics::provide(fcl::api::provider& provider) {
-   provider.install<p2p_diagnostics::api>(p2p_diagnostics::api::describe(),
-                                          std::make_shared<p2p_diagnostics::api::impl>(impl_));
+   provider.install<p2p_diagnostics::api>(std::make_shared<p2p_diagnostics::api::impl>(impl_));
    co_return;
 }
 

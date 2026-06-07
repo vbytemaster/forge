@@ -463,20 +463,18 @@ a read-only API view. This keeps lifecycle in `fcl_app` and contract/version/err
 semantics in `fcl_api`.
 
 ```cpp
-class cache {
+#include <fcl/api/api_macros.hpp>
+
+class cache : public fcl::api::contract<cache> {
  public:
    virtual ~cache() = default;
    virtual boost::asio::awaitable<models::chunk> read(protocol::read_chunk request) = 0;
-
-   static fcl::api::descriptor describe() {
-      return fcl::api::contract<cache>({.id = {"cache"}, .version = {1, 8}})
-         .method<&cache::read, protocol::read_chunk, models::chunk>("read")
-         .build();
-   }
 };
 
+FCL_API(cache, FCL_API_CONTRACT("cache", 1, 8), FCL_API_METHOD(read))
+
 boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
-   context.apis().install<cache>(cache::describe(), std::make_shared<rocks_cache>());
+   context.apis().install<cache>(std::make_shared<rocks_cache>());
    co_return;
 }
 

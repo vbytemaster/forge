@@ -1,6 +1,7 @@
 module;
 
 #include <boost/describe.hpp>
+#include <fcl/api/api_macros.hpp>
 #include <fcl/exceptions/macros.hpp>
 
 #include <cstdint>
@@ -85,11 +86,9 @@ struct p2p_diagnostics::filter {
    std::uint64_t limit = 0;
 };
 
-class p2p_diagnostics::api {
+class p2p_diagnostics::api : public fcl::api::contract<p2p_diagnostics::api> {
  public:
    virtual ~api() = default;
-
-   [[nodiscard]] static fcl::api::descriptor describe();
 
    [[nodiscard]] virtual fcl::p2p::diagnostics::snapshot snapshot() const = 0;
    [[nodiscard]] virtual fcl::p2p::diagnostics::snapshot
@@ -106,6 +105,10 @@ class p2p_diagnostics::api {
 };
 
 } // namespace fcl::plugins
+
+export {
+FCL_API(::fcl::plugins::p2p_diagnostics::api, FCL_API_CONTRACT("fcl.plugins.p2p_diagnostics", 1, 0))
+}
 
 BOOST_DESCRIBE_STRUCT(fcl::plugins::p2p_diagnostics::config, (),
                       (max_peers, max_sessions, max_endpoints_per_peer, max_protocols_per_peer,

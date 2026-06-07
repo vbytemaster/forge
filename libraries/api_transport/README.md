@@ -21,15 +21,29 @@ plugins or product policy.
 ```cpp
 import fcl.api;
 import fcl.api.transport;
+#include <fcl/api/api_macros.hpp>
 
-class cache_impl final : public storlane::cache_api::cache {
+class cache
+   : public fcl::api::contract<
+        cache,
+        fcl::api::surface::local | fcl::api::surface::remote> {
+ public:
+   virtual ~cache() = default;
+
+   virtual boost::asio::awaitable<chunk>
+   read(read_chunk request) = 0;
+};
+
+FCL_API(cache, FCL_API_CONTRACT("cache", 1, 0), FCL_API_METHOD(read))
+
+class cache_impl final : public cache {
  public:
    explicit cache_impl(local_branch& branch) : branch_{branch} {}
 
-   boost::asio::awaitable<storlane::cache_api::chunk>
-   read(storlane::cache_api::read_chunk request) override {
+   boost::asio::awaitable<chunk>
+   read(read_chunk request) override {
       auto bytes = co_await branch_.read_bytes(request.ref, request.offset, request.limit);
-      co_return storlane::cache_api::chunk{.bytes = std::move(bytes)};
+      co_return chunk{.bytes = std::move(bytes)};
    }
 
  private:
@@ -39,9 +53,7 @@ class cache_impl final : public storlane::cache_api::cache {
 boost::asio::awaitable<void>
 serve_cache(fcl::transport::stream stream, local_branch& branch) {
    auto apis = fcl::api::registry{};
-   apis.install<storlane::cache_api::cache>(
-      storlane::cache_api::cache::describe(),
-      std::make_shared<cache_impl>(branch));
+   apis.install<cache>(std::make_shared<cache_impl>(branch));
 
    auto plan = fcl::api::binding().serve(apis).build();
 
@@ -63,27 +75,9 @@ serve_cache(fcl::transport::stream stream, local_branch& branch) {
 import fcl.api;
 import fcl.api.transport;
 
-class remote_cache final : public storlane::cache_api::cache {
- public:
-   explicit remote_cache(fcl::api::transport::remote api) : api_{std::move(api)} {}
-
-   boost::asio::awaitable<storlane::cache_api::chunk>
-   read(storlane::cache_api::read_chunk request) override {
-      co_return co_await api_.call<
-         storlane::cache_api::read_chunk,
-         storlane::cache_api::chunk>(
-            {.id = {"storlane.cache"}, .major = 1, .min_revision = 0},
-            "read",
-            std::move(request));
-   }
-
- private:
-   fcl::api::transport::remote api_;
-};
-
-boost::asio::awaitable<storlane::cache_api::chunk>
+boost::asio::awaitable<chunk>
 read_remote(fcl::transport::stream stream, std::string ref) {
-   auto client = fcl::api::transport::client{
+   auto connection = fcl::api::transport::connection{
       std::move(stream),
       fcl::api::transport::options{
          .codec = {.value = "fcl.raw"},
@@ -91,10 +85,9 @@ read_remote(fcl::transport::stream stream, std::string ref) {
          .deadline = std::chrono::seconds{5},
       }};
 
-   auto cache = remote_cache{
-      fcl::api::transport::remote{std::move(client), storlane::cache_api::cache::describe()}};
+   auto api = co_await connection.get_remote_api<cache>();
 
-   co_return co_await cache.read({
+   co_return co_await api->read({
       .ref = std::move(ref),
       .offset = 0,
       .limit = 64 * 1024,

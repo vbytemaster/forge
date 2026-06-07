@@ -1,4 +1,5 @@
 #include <boost/test/unit_test.hpp>
+#include <fcl/api/api_macros.hpp>
 #include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
@@ -33,11 +34,7 @@ import fcl.transport.exceptions;
 import fcl.transport.session;
 import fcl.transport.stream;
 
-namespace {
-
-using bytes = std::vector<std::uint8_t>;
-
-namespace protocol {
+namespace api_transport_typed {
 
 struct read_chunk {
    std::string ref;
@@ -67,7 +64,22 @@ template <typename Stream> Stream& operator>>(Stream& stream, chunk& value) {
    return stream;
 }
 
-} // namespace protocol
+class cache_api
+    : public fcl::api::contract<cache_api, fcl::api::surface::local | fcl::api::surface::remote> {
+ public:
+   virtual ~cache_api() = default;
+   virtual boost::asio::awaitable<chunk> read(read_chunk request) = 0;
+};
+
+} // namespace api_transport_typed
+
+FCL_API(::api_transport_typed::cache_api, FCL_API_CONTRACT("cache", 1, 0), FCL_API_METHOD(read))
+
+namespace {
+
+using bytes = std::vector<std::uint8_t>;
+namespace protocol = api_transport_typed;
+using cache_api = api_transport_typed::cache_api;
 
 template <typename T>
 [[nodiscard]] fcl::api::bytes pack_payload(const T& value) {
@@ -75,18 +87,6 @@ template <typename T>
    fcl::raw::pack(out, value);
    return out;
 }
-
-class cache_api {
- public:
-   virtual ~cache_api() = default;
-   virtual boost::asio::awaitable<protocol::chunk> read(protocol::read_chunk request) = 0;
-
-   static fcl::api::descriptor describe() {
-      return fcl::api::contract<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 0}})
-          .method<&cache_api::read, protocol::read_chunk, protocol::chunk>("read")
-          .build();
-   }
-};
 
 class cache_impl final : public cache_api {
  public:
@@ -518,7 +518,7 @@ BOOST_AUTO_TEST_CASE(api_transport_client_cancel_unblocks_pending_call) {
    fcl::asio::blocking::run(runtime, scenario());
 }
 
-BOOST_AUTO_TEST_CASE(api_transport_remote_packs_and_unpacks_typed_payloads) {
+BOOST_AUTO_TEST_CASE(api_transport_connection_returns_typed_remote_handle) {
    auto runtime = fcl::asio::runtime{};
    auto model = std::make_shared<fake_stream>();
    model->reads.push_back(pack_api_frame(fcl::api::frame{
@@ -527,21 +527,22 @@ BOOST_AUTO_TEST_CASE(api_transport_remote_packs_and_unpacks_typed_payloads) {
        .api = {.id = {"cache"}, .major = 1, .min_revision = 0},
        .method = "read",
        .codec = {.value = "fcl.raw"},
-       .payload = pack_payload(protocol::chunk{.bytes = "typed:ok"}),
+       .payload = fcl::api::pack_body(api_transport_typed::chunk{.bytes = "typed:ok"}),
    }));
 
-   auto remote = fcl::api::transport::remote{
-       fcl::api::transport::client{make_stream(model), fcl::api::transport::options{}}, cache_api::describe()};
+   auto scenario = [model]() -> boost::asio::awaitable<void> {
+      auto connection = fcl::api::transport::connection{make_stream(model), fcl::api::transport::options{}};
+      auto cache = co_await connection.get_remote_api<api_transport_typed::cache_api>();
+      const auto response = co_await cache->read(api_transport_typed::read_chunk{.ref = "typed"});
 
-   const auto response = fcl::asio::blocking::run(
-       runtime, remote.call<protocol::read_chunk, protocol::chunk>({.id = {"cache"}, .major = 1, .min_revision = 0},
-                                                                   "read", protocol::read_chunk{.ref = "typed"}));
+      BOOST_TEST(response.bytes == "typed:ok");
+   };
 
-   BOOST_TEST(response.bytes == "typed:ok");
+   fcl::asio::blocking::run(runtime, scenario());
    BOOST_REQUIRE_EQUAL(model->writes.size(), 1U);
    const auto request = unpack_written_frame(model->writes.front());
    BOOST_TEST(request.method == "read");
-   BOOST_TEST(fcl::raw::unpack<protocol::read_chunk>(request.payload).ref == "typed");
+   BOOST_TEST(fcl::api::unpack_body<api_transport_typed::read_chunk>(request.payload).ref == "typed");
 }
 
 BOOST_AUTO_TEST_CASE(api_transport_serve_stream_dispatches_requests) {

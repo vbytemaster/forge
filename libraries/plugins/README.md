@@ -145,10 +145,7 @@ auto cache = co_await p2p->remote<cache_api>(
    {.value = "/fcl/api/cache/1"},
    fcl::plugins::p2p_node::remote_options{.open_deadline = 5s});
 
-auto reply = co_await cache.call<read_request, read_response>(
-   {.id = {"cache"}, .major = 1, .min_revision = 8},
-   "read",
-   request);
+auto reply = co_await cache->read(request);
 ```
 
 Raw application protocols remain an advanced escape hatch for protocols that
@@ -204,10 +201,7 @@ auto cache = co_await resolver->remote<cache_api>(
       .open_deadline = 5s,
    });
 
-auto reply = co_await cache.call<read_request, read_response>(
-   {.id = {"cache"}, .major = 1, .min_revision = 8},
-   "read",
-   request);
+auto reply = co_await cache->read(request);
 ```
 
 The wire response is not raw `fcl::api::descriptor`: descriptors contain local
@@ -238,13 +232,16 @@ struct apply_receipt {
    std::string evidence;
 };
 
-class operation_api {
+class operation_api
+   : public fcl::api::contract<
+        operation_api,
+        fcl::api::surface::local | fcl::api::surface::remote> {
  public:
    virtual ~operation_api() = default;
    virtual boost::asio::awaitable<apply_receipt> apply(apply_request request) = 0;
-
-   static fcl::api::descriptor describe();
 };
+
+FCL_API(operation_api, FCL_API_CONTRACT("operation", 1, 0), FCL_API_METHOD(apply))
 ```
 
 Server plugins publish this API through `p2p_api_resolver`; client plugins open

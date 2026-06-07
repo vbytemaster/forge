@@ -4,6 +4,7 @@
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/describe.hpp>
 #include <boost/test/unit_test.hpp>
+#include <fcl/api/api_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -59,7 +60,42 @@ struct operation_receipt {
 };
 BOOST_DESCRIBE_STRUCT(operation_receipt, (), (request_id, accepted, applied_revision, authority, evidence))
 
+namespace plugin_test_contract {
+
+class node_test_api
+    : public fcl::api::contract<node_test_api, fcl::api::surface::local | fcl::api::surface::remote> {
+ public:
+   virtual ~node_test_api() = default;
+   virtual boost::asio::awaitable<int> ping(int request) = 0;
+};
+
+class receipt_test_api
+    : public fcl::api::contract<receipt_test_api, fcl::api::surface::local | fcl::api::surface::remote> {
+ public:
+   virtual ~receipt_test_api() = default;
+   virtual boost::asio::awaitable<operation_receipt> apply(operation_request request) = 0;
+};
+
+class scripted_resolver_api
+    : public fcl::api::contract<scripted_resolver_api, fcl::api::surface::local | fcl::api::surface::remote> {
+ public:
+   virtual ~scripted_resolver_api() = default;
+   virtual boost::asio::awaitable<fcl::plugins::p2p_api_resolver::response>
+   query(fcl::plugins::p2p_api_resolver::query request) = 0;
+};
+
+} // namespace plugin_test_contract
+
+FCL_API(::plugin_test_contract::node_test_api, FCL_API_CONTRACT("node.test", 1, 0), FCL_API_METHOD(ping))
+FCL_API(::plugin_test_contract::receipt_test_api, FCL_API_CONTRACT("receipt.test", 1, 0), FCL_API_METHOD(apply))
+FCL_API(::plugin_test_contract::scripted_resolver_api,
+        FCL_API_CONTRACT("fcl.plugins.p2p_api_resolver.protocol", 1, 0), FCL_API_METHOD(query))
+
 namespace {
+
+using plugin_test_contract::node_test_api;
+using plugin_test_contract::receipt_test_api;
+using plugin_test_contract::scripted_resolver_api;
 
 struct plugin_log {
    std::vector<std::string> entries;
@@ -132,35 +168,10 @@ std::string_view test_private_key() {
    return document;
 }
 
-class node_test_api {
- public:
-   virtual ~node_test_api() = default;
-   virtual boost::asio::awaitable<int> ping(int request) = 0;
-
-   static fcl::api::descriptor describe() {
-      return fcl::api::contract<node_test_api>({.id = {"node.test"}, .version = {.major = 1, .revision = 0}})
-         .method<&node_test_api::ping, int, int>("ping")
-         .build();
-   }
-};
-
 class node_test_api_impl final : public node_test_api {
  public:
    boost::asio::awaitable<int> ping(int request) override {
       co_return request + 1;
-   }
-};
-
-class receipt_test_api {
- public:
-   virtual ~receipt_test_api() = default;
-   virtual boost::asio::awaitable<operation_receipt> apply(operation_request request) = 0;
-
-   static fcl::api::descriptor describe() {
-      return fcl::api::contract<receipt_test_api>(
-                {.id = {"receipt.test"}, .version = {.major = 1, .revision = 0}})
-         .method<&receipt_test_api::apply, operation_request, operation_receipt>("apply")
-         .build();
    }
 };
 
@@ -269,21 +280,6 @@ bool wait_for_pubsub_peer(const fcl::plugins::p2p_pubsub::api& pubsub, std::chro
       },
       timeout);
 }
-
-class scripted_resolver_api {
- public:
-   virtual ~scripted_resolver_api() = default;
-   virtual boost::asio::awaitable<fcl::plugins::p2p_api_resolver::response>
-   query(fcl::plugins::p2p_api_resolver::query request) = 0;
-
-   static fcl::api::descriptor describe() {
-      return fcl::api::contract<scripted_resolver_api>(
-                {.id = {"fcl.plugins.p2p_api_resolver.protocol"}, .version = {.major = 1, .revision = 0}})
-         .method<&scripted_resolver_api::query, fcl::plugins::p2p_api_resolver::query,
-                 fcl::plugins::p2p_api_resolver::response>("query")
-         .build();
-   }
-};
 
 struct scripted_resolver_state {
    std::vector<fcl::plugins::p2p_api_resolver::response> responses;
@@ -980,9 +976,7 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_opens_remote_api_over_p2p_stream) {
       client.runtime(),
       client_p2p->remote<node_test_api>(server_p2p->local_peer(),
                                         fcl::p2p::protocol_id{.value = "/fcl/api/node-test/1"}));
-   const auto response = fcl::asio::blocking::run(
-      client.runtime(),
-      remote.call<int, int>({.id = {"node.test"}, .major = 1, .min_revision = 0}, "ping", 41));
+   const auto response = fcl::asio::blocking::run(client.runtime(), remote->ping(41));
    BOOST_TEST(response == 42);
 
    fcl::asio::blocking::run(client.runtime(), client.shutdown());
@@ -1094,9 +1088,7 @@ BOOST_AUTO_TEST_CASE(p2p_diagnostics_plugin_reports_live_p2p_node_state) {
       client.runtime(),
       client_p2p->remote<node_test_api>(server_p2p->local_peer(),
                                         fcl::p2p::protocol_id{.value = "/fcl/api/node-test/1"}));
-   const auto response = fcl::asio::blocking::run(
-      client.runtime(),
-      remote.call<int, int>({.id = {"node.test"}, .major = 1, .min_revision = 0}, "ping", 10));
+   const auto response = fcl::asio::blocking::run(client.runtime(), remote->ping(10));
    BOOST_TEST(response == 11);
 
    const auto snapshot = diagnostics->snapshot();
@@ -1571,9 +1563,7 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_resolves_remote_api_and_opens_typed_remote
    BOOST_TEST(resolved.api.protocol == "/fcl/api/node-test/1");
 
    auto remote = fcl::asio::blocking::run(client.runtime(), resolver->remote<node_test_api>(server_peer));
-   const auto response = fcl::asio::blocking::run(
-      client.runtime(),
-      remote.call<int, int>({.id = {"node.test"}, .major = 1, .min_revision = 0}, "ping", 41));
+   const auto response = fcl::asio::blocking::run(client.runtime(), remote->ping(41));
    BOOST_TEST(response == 42);
 
    fcl::asio::blocking::run(client.runtime(), client.shutdown());
@@ -1611,9 +1601,7 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_remote_honors_advertised_transport_options
    BOOST_TEST(remote_entries.front().max_frame_size == 512U * 1024U);
 
    auto remote = fcl::asio::blocking::run(client.runtime(), resolver->remote<node_test_api>(server_peer));
-   const auto response = fcl::asio::blocking::run(
-      client.runtime(),
-      remote.call<int, int>({.id = {"node.test"}, .major = 1, .min_revision = 0}, "ping", 41));
+   const auto response = fcl::asio::blocking::run(client.runtime(), remote->ping(41));
    BOOST_TEST(response == 42);
 
    fcl::asio::blocking::run(client.runtime(), client.shutdown());
@@ -1653,20 +1641,14 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_supports_receipt_based_product_api) {
    const auto request =
       operation_request{.request_id = "request-1", .subject = "neutral-operation", .revision = 7};
 
-   const auto first = fcl::asio::blocking::run(
-      client.runtime(),
-      remote.call<operation_request, operation_receipt>(
-         {.id = {"receipt.test"}, .major = 1, .min_revision = 0}, "apply", request));
+   const auto first = fcl::asio::blocking::run(client.runtime(), remote->apply(request));
    BOOST_TEST(first.accepted);
    BOOST_TEST(first.request_id == request.request_id);
    BOOST_TEST(first.applied_revision == 1U);
    BOOST_TEST(first.authority == "receipt-test");
    BOOST_TEST(first.evidence == "neutral-operation:7:1");
 
-   const auto repeated = fcl::asio::blocking::run(
-      client.runtime(),
-      remote.call<operation_request, operation_receipt>(
-         {.id = {"receipt.test"}, .major = 1, .min_revision = 0}, "apply", request));
+   const auto repeated = fcl::asio::blocking::run(client.runtime(), remote->apply(request));
    BOOST_TEST(repeated.request_id == first.request_id);
    BOOST_TEST(repeated.accepted == first.accepted);
    BOOST_TEST(repeated.applied_revision == first.applied_revision);

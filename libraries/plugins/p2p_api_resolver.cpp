@@ -9,6 +9,7 @@ module;
 #include <cstdint>
 #include <exception>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -132,6 +133,11 @@ void validate_entry(const p2p_api_resolver::entry& value, const p2p_api_resolver
    }
    if (value.codec.value.empty() || value.max_inflight == 0 || value.max_frame_size == 0) {
       FCL_THROW_EXCEPTION(p2p_api_resolver::exceptions::protocol_error, "resolver API entry limits are invalid",
+                          fcl::exceptions::ctx("source", source), fcl::exceptions::ctx("api", value.id.value));
+   }
+   if (value.max_frame_size > (std::numeric_limits<std::uint32_t>::max)()) {
+      FCL_THROW_EXCEPTION(p2p_api_resolver::exceptions::protocol_error,
+                          "resolver API max frame size exceeds transport limit",
                           fcl::exceptions::ctx("source", source), fcl::exceptions::ctx("api", value.id.value));
    }
    if (value.methods.size() > limits.max_methods_per_api) {
@@ -439,6 +445,9 @@ class p2p_api_resolver::api::impl final : public p2p_api_resolver::api {
       co_return co_await impl_->p2p->remote(std::move(peer), std::move(protocol), std::move(descriptor),
                                             fcl::plugins::p2p_node::remote_options{
                                                .open_deadline = impl_->open_deadline(options),
+                                               .codec = selected.api.codec,
+                                               .max_inflight = static_cast<std::size_t>(selected.api.max_inflight),
+                                               .max_frame_size = static_cast<std::uint32_t>(selected.api.max_frame_size),
                                             });
    }
 

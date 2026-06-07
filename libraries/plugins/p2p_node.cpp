@@ -202,6 +202,33 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
          .allow_hole_punch = policy.relay_client_enabled && policy.path.allow_hole_punch,
       };
    }
+
+   [[nodiscard]] fcl::api::transport::options api_options_for(const remote_options& value) const {
+      auto out = api_options;
+      if (value.codec.has_value()) {
+         if (value.codec->value.empty()) {
+            FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_config, "P2P remote API codec override is invalid");
+         }
+         out.codec = *value.codec;
+      }
+      if (value.max_inflight.has_value()) {
+         if (*value.max_inflight == 0) {
+            FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_config, "P2P remote API max inflight override is invalid");
+         }
+         out.max_inflight = *value.max_inflight;
+      }
+      if (value.deadline.has_value()) {
+         out.deadline = *value.deadline;
+      }
+      if (value.max_frame_size.has_value()) {
+         if (*value.max_frame_size == 0) {
+            FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_config,
+                                "P2P remote API max frame size override is invalid");
+         }
+         out.max_frame_size = *value.max_frame_size;
+      }
+      return out;
+   }
 };
 
 class p2p_node::api::impl final : public p2p_node::api {
@@ -255,7 +282,8 @@ class p2p_node::api::impl final : public p2p_node::api {
           remote_options options) override {
       auto stream = co_await impl_->require_node().async_open_protocol_stream(std::move(peer), std::move(protocol),
                                                                                impl_->open_options_for(options));
-      auto client = fcl::api::transport::client{std::move(stream).into_transport_stream(), impl_->api_options};
+      auto client = fcl::api::transport::client{std::move(stream).into_transport_stream(),
+                                                impl_->api_options_for(options)};
       co_return fcl::api::transport::remote{std::move(client), std::move(descriptor)};
    }
 

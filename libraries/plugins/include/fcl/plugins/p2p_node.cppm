@@ -105,6 +105,10 @@ struct p2p_node::info {
 
 struct p2p_node::remote_options {
    std::chrono::milliseconds open_deadline{10'000};
+   std::optional<fcl::api::codec_id> codec;
+   std::optional<std::size_t> max_inflight;
+   std::optional<std::chrono::milliseconds> deadline;
+   std::optional<std::uint32_t> max_frame_size;
 };
 
 enum class p2p_node::path_policy : std::uint8_t {

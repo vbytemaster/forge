@@ -1,10 +1,13 @@
 #include <boost/test/unit_test.hpp>
 #include <fcl/exceptions/macros.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <exception>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -90,6 +93,59 @@ class cache_impl final : public cache_api {
    boost::asio::awaitable<protocol::chunk> read(protocol::read_chunk request) override {
       co_return protocol::chunk{.bytes = request.ref + ":ok"};
    }
+};
+
+struct gated_state {
+   std::mutex mutex;
+   std::size_t active = 0;
+   std::size_t max_active = 0;
+   std::size_t first_started = 0;
+   std::size_t second_started = 0;
+   bool release_first = false;
+};
+
+class gated_cache_impl final : public cache_api {
+ public:
+   explicit gated_cache_impl(std::shared_ptr<gated_state> value) : state_(std::move(value)) {}
+
+   boost::asio::awaitable<protocol::chunk> read(protocol::read_chunk request) override {
+      const auto executor = co_await boost::asio::this_coro::executor;
+      auto timer = boost::asio::steady_timer{executor};
+
+      {
+         auto lock = std::scoped_lock{state_->mutex};
+         ++state_->active;
+         state_->max_active = std::max(state_->max_active, state_->active);
+         if (request.ref == "first") {
+            ++state_->first_started;
+         } else if (request.ref == "second") {
+            ++state_->second_started;
+         }
+      }
+
+      if (request.ref == "first") {
+         while (true) {
+            {
+               auto lock = std::scoped_lock{state_->mutex};
+               if (state_->release_first) {
+                  break;
+               }
+            }
+            timer.expires_after(std::chrono::milliseconds{1});
+            co_await timer.async_wait(boost::asio::use_awaitable);
+         }
+      }
+
+      {
+         auto lock = std::scoped_lock{state_->mutex};
+         --state_->active;
+      }
+
+      co_return protocol::chunk{.bytes = request.ref + ":ok"};
+   }
+
+ private:
+   std::shared_ptr<gated_state> state_;
 };
 
 class fake_stream final : public fcl::transport::detail::stream_concept {
@@ -257,6 +313,56 @@ struct call_state {
    std::exception_ptr error;
    bool done = false;
 };
+
+struct service_state {
+   explicit service_state(boost::asio::any_io_executor executor_value) : timer(std::move(executor_value)) {
+      timer.expires_at(boost::asio::steady_timer::time_point::max());
+   }
+
+   boost::asio::steady_timer timer;
+   std::exception_ptr error;
+   bool done = false;
+};
+
+std::shared_ptr<service_state> start_service(boost::asio::any_io_executor executor,
+                                             boost::asio::awaitable<void> operation) {
+   auto state = std::make_shared<service_state>(executor);
+   boost::asio::co_spawn(
+       executor,
+       [operation = std::move(operation), state]() mutable -> boost::asio::awaitable<void> {
+          try {
+             co_await std::move(operation);
+          } catch (...) {
+             state->error = std::current_exception();
+          }
+          state->done = true;
+          state->timer.cancel();
+       },
+       boost::asio::detached);
+   return state;
+}
+
+boost::asio::awaitable<void> wait_service(std::shared_ptr<service_state> state) {
+   while (!state->done) {
+      auto error = boost::system::error_code{};
+      co_await state->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+   }
+   if (state->error) {
+      std::rethrow_exception(state->error);
+   }
+}
+
+template <typename Predicate>
+boost::asio::awaitable<void> wait_until(Predicate predicate, std::chrono::milliseconds timeout) {
+   const auto executor = co_await boost::asio::this_coro::executor;
+   auto timer = boost::asio::steady_timer{executor};
+   const auto deadline = std::chrono::steady_clock::now() + timeout;
+   while (!predicate()) {
+      BOOST_REQUIRE_MESSAGE(std::chrono::steady_clock::now() < deadline, "timed out waiting for async condition");
+      timer.expires_after(std::chrono::milliseconds{1});
+      co_await timer.async_wait(boost::asio::use_awaitable);
+   }
+}
 
 std::shared_ptr<call_state> start_call(fcl::api::transport::client& client, boost::asio::any_io_executor executor,
                                        fcl::api::frame request) {
@@ -473,6 +579,67 @@ BOOST_AUTO_TEST_CASE(api_transport_serve_session_accepts_streams) {
    BOOST_REQUIRE_EQUAL(stream_model->writes.size(), 1U);
    BOOST_TEST(fcl::raw::unpack<protocol::chunk>(unpack_written_frame(stream_model->writes.front()).payload).bytes ==
               "session:ok");
+}
+
+BOOST_AUTO_TEST_CASE(api_transport_serve_session_serializes_admission_on_multi_worker_runtime) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+
+   auto scenario = []() -> boost::asio::awaitable<void> {
+      const auto executor = co_await boost::asio::this_coro::executor;
+      auto state = std::make_shared<gated_state>();
+      auto first = std::make_shared<fake_stream>();
+      first->reads.push_back(pack_api_frame(read_request(21, "first")));
+      auto second = std::make_shared<fake_stream>();
+      second->reads.push_back(pack_api_frame(read_request(22, "second")));
+      auto session_model = std::make_shared<fake_session>();
+      session_model->accepted.push_back(make_stream(first));
+      session_model->accepted.push_back(make_stream(second));
+
+      auto registry = fcl::api::registry{};
+      registry.install<cache_api>(cache_api::describe(), std::make_shared<gated_cache_impl>(state));
+      auto plan = fcl::api::binding().serve(registry).build();
+      auto service =
+          start_service(executor, fcl::api::transport::serve_session(
+                                      make_session(session_model), std::move(plan),
+                                      fcl::api::transport::session_options{.max_concurrent_streams = 1}));
+
+      co_await wait_until(
+          [state] {
+             auto lock = std::scoped_lock{state->mutex};
+             return state->first_started == 1;
+          },
+          std::chrono::milliseconds{250});
+
+      auto timer = boost::asio::steady_timer{executor};
+      timer.expires_after(std::chrono::milliseconds{25});
+      co_await timer.async_wait(boost::asio::use_awaitable);
+
+      {
+         auto lock = std::scoped_lock{state->mutex};
+         BOOST_TEST(state->second_started == 0U);
+         BOOST_TEST(state->max_active == 1U);
+      }
+
+      {
+         auto lock = std::scoped_lock{state->mutex};
+         state->release_first = true;
+      }
+
+      co_await wait_service(std::move(service));
+
+      BOOST_REQUIRE_EQUAL(first->writes.size(), 1U);
+      BOOST_REQUIRE_EQUAL(second->writes.size(), 1U);
+      BOOST_TEST(fcl::raw::unpack<protocol::chunk>(unpack_written_frame(first->writes.front()).payload).bytes ==
+                 "first:ok");
+      BOOST_TEST(fcl::raw::unpack<protocol::chunk>(unpack_written_frame(second->writes.front()).payload).bytes ==
+                 "second:ok");
+      {
+         auto lock = std::scoped_lock{state->mutex};
+         BOOST_TEST(state->max_active == 1U);
+      }
+   };
+
+   fcl::asio::blocking::run(runtime, scenario());
 }
 
 BOOST_AUTO_TEST_CASE(api_transport_rejects_codec_mismatch_as_typed_error) {

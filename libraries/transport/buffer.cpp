@@ -53,7 +53,8 @@ struct buffer_pool_state {
          return;
       }
       auto lock = std::scoped_lock{mutex};
-      if (cached.size() >= options.max_cached_buffers || capacity > options.max_cached_bytes - cached_bytes) {
+      if (capacity > options.max_cached_buffer_capacity || cached.size() >= options.max_cached_buffers ||
+          cached_bytes >= options.max_cached_bytes || capacity > options.max_cached_bytes - cached_bytes) {
          return;
       }
       value.clear();

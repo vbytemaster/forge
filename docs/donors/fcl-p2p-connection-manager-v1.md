@@ -30,6 +30,10 @@ kept, pruned or rejected.
   listen/connect/accept and no pruning/path scoring/relay discovery ownership.
 - `resource_manager` counts scopes and denials; `connection_manager` decides
   which session records are admitted or pruned.
+- `resource_manager` and `connection_manager` are owner-confined under
+  `node::impl` synchronization. They are not standalone thread-safe objects;
+  the shared FCL thread safety model is recorded in
+  `docs/runtime/thread-safety.md`.
 - Protected peers survive pruning, but protection is not a bypass for hard
   admission if no unprotected session can be freed.
 - Backoff is endpoint-local. A failed TCP address must not poison QUIC or relay
@@ -42,6 +46,7 @@ kept, pruned or rejected.
 | Case | Status | Proof |
 |---|---|---|
 | Pending and established session scopes | Ported | `p2p_resource_manager_enforces_connection_session_scopes`, `p2p_connection_manager_rejects_pending_outbound_limit_without_killing_first_attempt` |
+| Denied stream scopes do not create stale peer/protocol counters and relay denial counts once | Ported | `p2p_resource_manager_enforces_peer_protocol_dial_and_reservation_scopes`, `p2p_resource_manager_enforces_relay_stream_and_byte_limits` |
 | Protected peer API is tag-based | Ported | `p2p_node_peer_protection_api_is_tagged_and_additive` |
 | Low/high watermark pruning preserves protected peers | Ported | `p2p_connection_manager_prunes_unprotected_sessions_and_keeps_protected_peer` |
 | All-protected hard-cap rejection | Ported | `p2p_connection_manager_rejects_when_all_sessions_are_protected` |

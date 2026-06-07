@@ -436,7 +436,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
       void cancel() override {
          auto owner = owner_.lock();
          if (owner) {
-            owner->reset_stream(stream_id_);
+            owner->cancel_stream(stream_id_);
          }
       }
 
@@ -493,7 +493,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
    [[nodiscard]] bool stream_valid(std::uint32_t id) const noexcept {
       auto lock = std::scoped_lock{mutex_};
       const auto found = streams_.find(id);
-      return found != streams_.end() && !closed_ && !canceled_;
+      return found != streams_.end() && !closed_ && !canceled_ && !found->second->reset;
    }
 
    [[nodiscard]] transport::stream make_transport_stream(std::uint32_t id) {
@@ -610,7 +610,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
       } catch (...) {
          finish_write();
          fail_session(exceptions::code::closed, "yamux underlying stream write failed");
-         throw;
+         FCL_THROW_EXCEPTION(exceptions::closed, "yamux underlying stream write failed");
       }
       finish_write();
    }
@@ -923,6 +923,29 @@ struct session::impl : std::enable_shared_from_this<impl> {
          return;
       }
       reset_stream_locked(found->second);
+   }
+
+   void cancel_stream(std::uint32_t id) {
+      reset_stream(id);
+      auto executor = std::optional<boost::asio::any_io_executor>{};
+      {
+         auto lock = std::scoped_lock{mutex_};
+         executor = executor_;
+      }
+      if (!executor) {
+         return;
+      }
+
+      auto self = shared_from_this();
+      boost::asio::co_spawn(
+          *executor,
+          [self, id]() -> boost::asio::awaitable<void> {
+             try {
+                co_await self->write_frame(frame_type::data, rst, id, 0, {}, true);
+             } catch (...) {
+             }
+          },
+          boost::asio::detached);
    }
 
    void reset_stream_locked(const std::shared_ptr<stream_state>& state) {

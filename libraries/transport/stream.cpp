@@ -75,7 +75,7 @@ boost::asio::awaitable<void> stream::async_write(std::span<const std::uint8_t> b
 }
 
 boost::asio::awaitable<void> stream::async_write(chunk bytes) {
-   if (!valid()) {
+   if (!impl_ || !impl_->model) {
       FCL_THROW_EXCEPTION(exceptions::closed, "invalid transport stream");
    }
    co_await impl_->model->async_write_chunk(std::move(bytes));
@@ -87,7 +87,7 @@ boost::asio::awaitable<std::vector<std::uint8_t>> stream::async_read() {
 }
 
 boost::asio::awaitable<chunk> stream::async_read_chunk() {
-   if (!valid()) {
+   if (!impl_ || !impl_->model) {
       FCL_THROW_EXCEPTION(exceptions::closed, "invalid transport stream");
    }
    if (!available_bytes(impl_->buffer, impl_->consumed).empty()) {
@@ -115,7 +115,7 @@ boost::asio::awaitable<std::vector<std::uint8_t>> stream::async_read_frame() {
 }
 
 boost::asio::awaitable<chunk> stream::async_read_frame_chunk() {
-   if (!valid()) {
+   if (!impl_ || !impl_->model) {
       FCL_THROW_EXCEPTION(exceptions::closed, "invalid transport stream");
    }
    while (true) {
@@ -147,7 +147,7 @@ boost::asio::awaitable<chunk> stream::async_read_frame_chunk() {
 }
 
 boost::asio::awaitable<void> stream::async_close() {
-   if (!valid()) {
+   if (!impl_ || !impl_->model) {
       co_return;
    }
    co_await impl_->model->async_close();

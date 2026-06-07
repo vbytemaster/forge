@@ -34,6 +34,9 @@ it does not own TCP, TLS, QUIC, Yamux, P2P, API or content semantics.
   `fcl::transport::exceptions::invalid_buffer`.
 - `buffer_pool` is bounded by cached buffer count and cached byte capacity.
   Excess returned storage is dropped instead of creating hidden unbounded queues.
+  Its mutex makes the pool internally synchronized for acquire/release/stats;
+  the exact thread-safety model is recorded in
+  `docs/runtime/thread-safety.md`.
 - `decode_frame_view(...)` exposes a span into caller-owned bytes and does not
   allocate a payload vector. The old `decode_frame(...)` copies through the view
   for compatibility.

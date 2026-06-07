@@ -43,6 +43,9 @@ that can work both in process and over transports.
 - Treat builder options as contractual behavior. If a binding exposes codec,
   max inflight, deadline, peer policy, frame size or route middleware, it must
   enforce that option and have a test.
+- API transport session admission is strand-owned, not atomic-only: stream slot
+  reservation, release and drain wakeups must be serialized together. See
+  `docs/runtime/thread-safety.md`.
 - Keep transport owner plugins boring and narrow: they centralize node/server
   lifecycle and route mounting, while product plugins contribute handlers or
   typed API bindings through a safe local API.

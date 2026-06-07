@@ -4,15 +4,18 @@ module;
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <span>
 #include <utility>
 #include <vector>
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/dispatch.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/strand.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/system/error_code.hpp>
@@ -120,56 +123,86 @@ boost::asio::awaitable<void> serve_session(fcl::transport::session session, bind
    }
 
    struct state {
-      explicit state(boost::asio::any_io_executor executor) : changed(std::move(executor)) {
-         changed.expires_at(boost::asio::steady_timer::time_point::max());
+      explicit state(boost::asio::any_io_executor executor)
+          : strand(boost::asio::make_strand(std::move(executor))), wake(strand) {
+         wake.expires_at(boost::asio::steady_timer::time_point::max());
       }
 
-      boost::asio::steady_timer changed;
-      std::size_t active = 0;
+      boost::asio::strand<boost::asio::any_io_executor> strand;
+      boost::asio::steady_timer wake;
+      std::size_t slots = 0;
    };
 
    const auto executor = co_await boost::asio::this_coro::executor;
    auto shared = std::make_shared<state>(executor);
-   auto wait_for_slot = [shared, max = value.max_concurrent_streams]() -> boost::asio::awaitable<void> {
-      while (shared->active >= max) {
-         shared->changed.expires_at(boost::asio::steady_timer::time_point::max());
+   auto reserve_slot = [shared, max = value.max_concurrent_streams]() -> boost::asio::awaitable<void> {
+      co_await boost::asio::dispatch(shared->strand, boost::asio::use_awaitable);
+      while (shared->slots >= max) {
+         shared->wake.expires_at(boost::asio::steady_timer::time_point::max());
          auto error = boost::system::error_code{};
-         co_await shared->changed.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+         co_await shared->wake.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
       }
+      ++shared->slots;
+   };
+   auto release_slot = [shared]() -> boost::asio::awaitable<void> {
+      co_await boost::asio::dispatch(shared->strand, boost::asio::use_awaitable);
+      if (shared->slots > 0) {
+         --shared->slots;
+      }
+      shared->wake.cancel();
    };
    auto wait_for_drain = [shared]() -> boost::asio::awaitable<void> {
-      while (shared->active > 0) {
-         shared->changed.expires_at(boost::asio::steady_timer::time_point::max());
+      co_await boost::asio::dispatch(shared->strand, boost::asio::use_awaitable);
+      while (shared->slots > 0) {
+         shared->wake.expires_at(boost::asio::steady_timer::time_point::max());
          auto error = boost::system::error_code{};
-         co_await shared->changed.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+         co_await shared->wake.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
       }
    };
 
    auto accepting = true;
    while (accepting) {
+      auto reserved = false;
+      auto release_reserved = false;
+      auto pending_error = std::exception_ptr{};
       try {
-         co_await wait_for_slot();
+         co_await reserve_slot();
+         reserved = true;
          auto stream = co_await session.async_accept_stream();
-         ++shared->active;
          boost::asio::co_spawn(
              executor,
-             [shared, stream = std::move(stream), plan, stream_options = value.stream]() mutable
+             [release_slot, stream = std::move(stream), plan, stream_options = value.stream]() mutable
              -> boost::asio::awaitable<void> {
                 try {
                    co_await serve_stream(std::move(stream), std::move(plan), stream_options);
                 } catch (const fcl::exceptions::base&) {
                    // A bad API stream closes that stream; the session accept loop owns admission.
+                } catch (...) {
+                   // Detached stream failures must still release their reserved admission slot.
                 }
-                --shared->active;
-                shared->changed.cancel();
+                co_await release_slot();
              },
              boost::asio::detached);
       } catch (const fcl::exceptions::base& error) {
+         if (reserved) {
+            release_reserved = true;
+         }
          if (is_clean_close(error)) {
             accepting = false;
-            continue;
+         } else {
+            pending_error = std::current_exception();
          }
-         throw;
+      } catch (...) {
+         if (reserved) {
+            release_reserved = true;
+         }
+         pending_error = std::current_exception();
+      }
+      if (release_reserved) {
+         co_await release_slot();
+      }
+      if (pending_error) {
+         std::rethrow_exception(pending_error);
       }
    }
    co_await wait_for_drain();

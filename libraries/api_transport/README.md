@@ -107,4 +107,8 @@ read_remote(fcl::transport::stream stream, std::string ref) {
 - The vector API remains the stable convenience path for typed DTO payloads.
 - Large product data-plane policy stays above this layer; this binding only
   moves API frames over an already established stream/session.
+- `serve_session(...)` owns admission through a Boost.Asio strand, so accepted
+  stream slots and drain wakeups stay ordered on multi-worker runtimes. The
+  full thread safety model is documented in
+  [docs/runtime/thread-safety.md](../../docs/runtime/thread-safety.md).
 - Do not add Peer ID, relay, discovery, HTTP routing or plugin lifecycle here.

@@ -611,6 +611,53 @@ boost::asio::awaitable<void> yamux_cancel_wakes_pending_write_waiters() {
    co_await pair.right.async_close();
 }
 
+boost::asio::awaitable<void> yamux_reset_streams_are_invalid_and_cancel_reaches_peer() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   {
+      auto pair = make_stream_pair(executor);
+      auto right = fcl::yamux::session{std::move(pair.right), fcl::yamux::side::responder};
+      auto accept = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
+      co_await pair.left.async_write(frame(frame_type::window_update, syn, 1, 256 * 1024));
+      auto ack_frame = co_await read_transport_for_test(pair.left, "remote RST setup ACK");
+      BOOST_CHECK_EQUAL(type_of(ack_frame), frame_type::window_update);
+      BOOST_CHECK_EQUAL(flags_of(ack_frame), ack);
+      auto inbound = co_await take_result_for(accept, std::chrono::seconds{1});
+
+      co_await pair.left.async_write(frame(frame_type::data, rst, 1, 0));
+      auto read = spawn_result<bytes>(executor, inbound.async_read());
+      BOOST_CHECK_THROW((void)co_await take_result_for(read, std::chrono::seconds{1}),
+                        fcl::yamux::exceptions::stream_reset);
+      BOOST_TEST(!inbound.valid());
+      co_await close_transport_for_test(pair.left);
+   }
+
+   {
+      auto pair = make_stream_pair(executor);
+      auto left = fcl::yamux::session{std::move(pair.left), fcl::yamux::side::initiator};
+      auto right = fcl::yamux::session{std::move(pair.right), fcl::yamux::side::responder};
+      auto accept = spawn_result<fcl::transport::stream>(executor, right.async_accept_stream());
+      auto outbound = co_await left.async_open_stream();
+      auto inbound = co_await take_result_for(accept, std::chrono::seconds{1});
+
+      auto read = spawn_result<bytes>(executor, inbound.async_read());
+      outbound.cancel();
+      BOOST_CHECK_THROW((void)co_await take_result_for(read, std::chrono::seconds{1}),
+                        fcl::yamux::exceptions::stream_reset);
+      BOOST_TEST(!inbound.valid());
+      co_await left.async_close();
+      co_await right.async_close();
+   }
+}
+
+boost::asio::awaitable<void> yamux_normalizes_underlying_write_failure() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto pair = make_stream_pair(executor);
+   auto left = fcl::yamux::session{std::move(pair.left), fcl::yamux::side::initiator};
+   pair.right.cancel();
+
+   BOOST_CHECK_THROW((void)co_await left.async_open_stream(), fcl::yamux::exceptions::closed);
+}
+
 boost::asio::awaitable<void> yamux_flow_control_waits_for_window_update() {
    auto executor = co_await boost::asio::this_coro::executor;
    auto pair = make_stream_pair(executor);
@@ -1291,6 +1338,16 @@ BOOST_AUTO_TEST_CASE(yamux_serializes_concurrent_writes_without_starving_waiters
 BOOST_AUTO_TEST_CASE(yamux_cancel_unblocks_pending_write_waiters) {
    auto runtime = fcl::asio::runtime{};
    fcl::asio::blocking::run(runtime, yamux_cancel_wakes_pending_write_waiters());
+}
+
+BOOST_AUTO_TEST_CASE(yamux_reset_invalidates_stream_and_cancel_sends_rst) {
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, yamux_reset_streams_are_invalid_and_cancel_reaches_peer());
+}
+
+BOOST_AUTO_TEST_CASE(yamux_write_failure_throws_typed_yamux_closed) {
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, yamux_normalizes_underlying_write_failure());
 }
 
 BOOST_AUTO_TEST_CASE(yamux_applies_flow_control_with_window_updates) {

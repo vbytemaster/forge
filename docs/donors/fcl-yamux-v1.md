@@ -32,6 +32,9 @@ discovery, pubsub, TCP, STCP or QUIC mechanics.
 - `async_accept_stream()` returns inbound streams from a bounded pending backlog.
 - One session read loop owns all reads from the underlying byte stream.
 - All writes are serialized through one frame write path.
+- Session state is internally synchronized and frame writes are FIFO
+  serialized; the project-wide thread safety categories are recorded in
+  `docs/runtime/thread-safety.md`.
 - Per-stream DATA writes are split by remote window and `options::max_frame_size`.
 - A non-zero `WINDOW_UPDATE|SYN` length is treated as the peer-advertised
   initial receive credit. A zero-length SYN uses the local initial-window
@@ -41,6 +44,9 @@ discovery, pubsub, TCP, STCP or QUIC mechanics.
   bytes from the substream.
 - `async_close()` sends GOAWAY where possible and closes the underlying stream;
   `cancel()` wakes waiters deterministically.
+- Substream `cancel()` is abortive: it marks the local stream reset and sends a
+  best-effort peer-visible `RST`. Graceful substream close remains
+  `async_close()`.
 - Options are behavioral: windows, frame size, stream count and buffer limits all
   affect runtime behavior and have tests.
 - Window and buffer options are validated together: FCL rejects any configuration
@@ -74,6 +80,8 @@ discovery, pubsub, TCP, STCP or QUIC mechanics.
 | Attributable session-buffer overflow resets the incoming offending stream | Go resource-manager-backed limits, Rust bounded receive buffers | `test_fcl_yamux yamux_resets_only_streams_that_exceed_buffers` |
 | Partial frames, multiple buffered frames and trailing buffered bytes parse without front erase | libp2p spec frame layout, Rust muxer harness buffering expectations | `test_fcl_yamux yamux_parser_preserves_partial_and_buffered_frames` |
 | Terminal stream reclamation releases stream-count and buffer budget while preserving typed reset for existing handles | Go reset behavior, Rust stream lifecycle and bounded buffers | `test_fcl_yamux yamux_reclaims_terminal_streams_before_stream_cap`, `test_fcl_yamux yamux_reset_reclaim_releases_buffer_budget` |
+| Reset streams become invalid but read/write still fail with typed Yamux reset | Go/Rust reset semantics, FCL transport boundary rule | `test_fcl_yamux yamux_reset_invalidates_stream_and_cancel_sends_rst` |
+| Underlying write failure is normalized at the Yamux boundary | FCL typed exception boundary | `test_fcl_yamux yamux_write_failure_throws_typed_yamux_closed` |
 | Stream zero misuse and oversized DATA rejection | libp2p spec | `test_fcl_yamux yamux_rejects_limits_and_malformed_frames_with_typed_errors` |
 | PING ACK and GOAWAY close | libp2p spec | `test_fcl_yamux yamux_handles_ping_and_goaway_control_frames` |
 | `transport::session` wrapper delegation | Rust muxer harness | `test_fcl_yamux yamux_exposes_transport_session_wrapper` |

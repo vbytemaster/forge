@@ -57,15 +57,25 @@ bool resource_manager::try_acquire_stream(const scope& value) noexcept {
    if (empty(value.peer) || empty(value.protocol)) {
       return deny();
    }
-   const auto peer_streams = streams_by_peer_[value.peer];
-   const auto protocol_streams = streams_by_protocol_[value.protocol.value];
+   const auto peer = streams_by_peer_.find(value.peer);
+   const auto protocol = streams_by_protocol_.find(value.protocol.value);
+   const auto peer_streams = peer == streams_by_peer_.end() ? 0 : peer->second;
+   const auto protocol_streams = protocol == streams_by_protocol_.end() ? 0 : protocol->second;
    if (snapshot_.active_streams >= limits_.max_streams || peer_streams >= limits_.max_streams_per_peer ||
        protocol_streams >= limits_.max_streams_per_protocol) {
       return deny();
    }
    ++snapshot_.active_streams;
-   ++streams_by_peer_[value.peer];
-   ++streams_by_protocol_[value.protocol.value];
+   if (peer == streams_by_peer_.end()) {
+      streams_by_peer_.emplace(value.peer, 1);
+   } else {
+      ++peer->second;
+   }
+   if (protocol == streams_by_protocol_.end()) {
+      streams_by_protocol_.emplace(value.protocol.value, 1);
+   } else {
+      ++protocol->second;
+   }
    return true;
 }
 
@@ -88,8 +98,11 @@ void resource_manager::release_stream(const scope& value) noexcept {
 }
 
 bool resource_manager::try_acquire_relay_stream() noexcept {
-   if (snapshot_.active_relay_streams >= limits_.max_relay_streams || !try_acquire_stream()) {
+   if (snapshot_.active_relay_streams >= limits_.max_relay_streams) {
       return deny();
+   }
+   if (!try_acquire_stream()) {
+      return false;
    }
    ++snapshot_.active_relay_streams;
    return true;

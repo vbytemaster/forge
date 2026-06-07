@@ -357,6 +357,36 @@ BOOST_AUTO_TEST_CASE(transport_chunk_and_pool_reuse_bounded_storage) {
    BOOST_CHECK_LE(cached.bytes, 32U);
 }
 
+BOOST_AUTO_TEST_CASE(transport_buffer_pool_drops_oversized_returned_storage) {
+   auto pool = fcl::transport::buffer_pool{fcl::transport::buffer_pool_options{
+       .default_capacity = 8,
+       .max_cached_buffers = 4,
+       .max_cached_bytes = 64,
+       .max_cached_buffer_capacity = 16,
+   }};
+
+   {
+      auto builder = pool.acquire(32);
+      auto writable = builder.writable();
+      BOOST_REQUIRE_GE(writable.size(), 32U);
+   }
+   auto cached = pool.cached();
+   BOOST_TEST(cached.buffers == 0U);
+   BOOST_TEST(cached.bytes == 0U);
+
+   const std::uint8_t* released_storage = nullptr;
+   {
+      auto builder = pool.acquire(12);
+      released_storage = builder.writable().data();
+   }
+   cached = pool.cached();
+   BOOST_TEST(cached.buffers == 1U);
+   BOOST_TEST(cached.bytes <= 64U);
+
+   auto reused = pool.acquire(12);
+   BOOST_TEST(reused.writable().data() == released_storage);
+}
+
 BOOST_AUTO_TEST_CASE(transport_stream_delegates_and_preserves_buffered_frames) {
    auto runtime = fcl::asio::runtime{};
    auto model = std::make_shared<fake_stream>(42);

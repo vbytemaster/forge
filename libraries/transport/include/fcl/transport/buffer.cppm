@@ -16,6 +16,7 @@ struct buffer_pool_options {
    std::size_t default_capacity = 64 * 1024;
    std::size_t max_cached_buffers = 64;
    std::size_t max_cached_bytes = 16 * 1024 * 1024;
+   std::size_t max_cached_buffer_capacity = 1 * 1024 * 1024;
 };
 
 struct buffer_pool_stats {

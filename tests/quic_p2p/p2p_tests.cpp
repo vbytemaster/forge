@@ -1902,6 +1902,18 @@ BOOST_AUTO_TEST_CASE(p2p_resource_manager_enforces_relay_stream_and_byte_limits)
    snapshot = manager.current();
    BOOST_TEST(snapshot.active_streams == 0U);
    BOOST_TEST(snapshot.active_relay_streams == 0U);
+
+   auto saturated = resource_manager{resource_manager::limits{
+       .max_streams = 1,
+       .max_relay_streams = 4,
+   }};
+   BOOST_TEST(saturated.try_acquire_stream());
+   auto before = saturated.current();
+   BOOST_TEST(!saturated.try_acquire_relay_stream());
+   auto after = saturated.current();
+   BOOST_TEST(after.denied == before.denied + 1U);
+   BOOST_TEST(after.active_streams == 1U);
+   BOOST_TEST(after.active_relay_streams == 0U);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_relay_accounting_validates_reservation_before_global_charge) {
@@ -1972,6 +1984,22 @@ BOOST_AUTO_TEST_CASE(p2p_resource_manager_enforces_peer_protocol_dial_and_reserv
    BOOST_TEST(manager.try_acquire_stream(other));
    BOOST_TEST(!manager.try_acquire_stream(scope));
    manager.release_stream(other);
+   auto scoped_snapshot = manager.current();
+   BOOST_TEST(scoped_snapshot.active_streams == 0U);
+   BOOST_TEST(scoped_snapshot.active_peer_scopes == 0U);
+   BOOST_TEST(scoped_snapshot.active_protocol_scopes == 0U);
+
+   auto saturated = resource_manager{resource_manager::limits{
+       .max_streams = 1,
+       .max_streams_per_peer = 4,
+       .max_streams_per_protocol = 4,
+   }};
+   BOOST_TEST(saturated.try_acquire_stream(resource_manager::scope{.peer = peer(96), .protocol = builtins::relay_hop}));
+   BOOST_TEST(!saturated.try_acquire_stream(resource_manager::scope{.peer = peer(97), .protocol = builtins::ping}));
+   auto saturated_snapshot = saturated.current();
+   BOOST_TEST(saturated_snapshot.active_streams == 1U);
+   BOOST_TEST(saturated_snapshot.active_peer_scopes == 1U);
+   BOOST_TEST(saturated_snapshot.active_protocol_scopes == 1U);
 
    BOOST_TEST(manager.try_acquire_relay_reservation(scope));
    BOOST_TEST(!manager.try_acquire_relay_reservation(

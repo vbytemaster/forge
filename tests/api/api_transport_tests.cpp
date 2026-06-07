@@ -294,6 +294,19 @@ class fake_session final : public fcl::transport::detail::session_concept {
    };
 }
 
+[[nodiscard]] fcl::api::frame stream_item(std::uint64_t id, std::string value) {
+   auto item = read_response(id, std::move(value));
+   item.kind = fcl::api::frame_kind::stream_item;
+   return item;
+}
+
+[[nodiscard]] fcl::api::frame stream_end(std::uint64_t id) {
+   auto end = read_response(id, "");
+   end.kind = fcl::api::frame_kind::stream_end;
+   end.payload.clear();
+   return end;
+}
+
 boost::asio::awaitable<void> wait_for_writes(const std::shared_ptr<fake_stream>& model, std::size_t count) {
    const auto executor = co_await boost::asio::this_coro::executor;
    auto timer = boost::asio::steady_timer{executor};
@@ -310,6 +323,17 @@ struct call_state {
 
    boost::asio::steady_timer timer;
    std::optional<fcl::api::frame> response;
+   std::exception_ptr error;
+   bool done = false;
+};
+
+struct stream_call_state {
+   explicit stream_call_state(boost::asio::any_io_executor executor_value) : timer(std::move(executor_value)) {
+      timer.expires_at(boost::asio::steady_timer::time_point::max());
+   }
+
+   boost::asio::steady_timer timer;
+   std::optional<std::vector<fcl::api::frame>> response;
    std::exception_ptr error;
    bool done = false;
 };
@@ -393,6 +417,36 @@ boost::asio::awaitable<fcl::api::frame> wait_call(std::shared_ptr<call_state> st
    co_return std::move(*state->response);
 }
 
+std::shared_ptr<stream_call_state> start_stream_call(fcl::api::transport::client& client,
+                                                     boost::asio::any_io_executor executor,
+                                                     fcl::api::frame request) {
+   auto state = std::make_shared<stream_call_state>(executor);
+   boost::asio::co_spawn(
+       executor,
+       [&client, request = std::move(request), state]() mutable -> boost::asio::awaitable<void> {
+          try {
+             state->response.emplace(co_await client.async_call_stream(std::move(request)));
+          } catch (...) {
+             state->error = std::current_exception();
+          }
+          state->done = true;
+          state->timer.cancel();
+       },
+       boost::asio::detached);
+   return state;
+}
+
+boost::asio::awaitable<std::vector<fcl::api::frame>> wait_stream_call(std::shared_ptr<stream_call_state> state) {
+   while (!state->done) {
+      auto error = boost::system::error_code{};
+      co_await state->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+   }
+   if (state->error) {
+      std::rethrow_exception(state->error);
+   }
+   co_return std::move(*state->response);
+}
+
 } // namespace
 
 BOOST_AUTO_TEST_SUITE(api_transport_tests)
@@ -445,6 +499,103 @@ BOOST_AUTO_TEST_CASE(api_transport_client_routes_concurrent_out_of_order_respons
       BOOST_REQUIRE_EQUAL(model->writes.size(), 2U);
       BOOST_TEST(unpack_written_frame(model->writes[0]).id.value == 1U);
       BOOST_TEST(unpack_written_frame(model->writes[1]).id.value == 2U);
+   };
+
+   fcl::asio::blocking::run(runtime, scenario());
+}
+
+BOOST_AUTO_TEST_CASE(api_transport_client_keeps_streaming_call_pending_until_stream_end) {
+   auto runtime = fcl::asio::runtime{};
+
+   auto scenario = []() -> boost::asio::awaitable<void> {
+      auto model = std::make_shared<fake_stream>();
+      model->wait_for_reads = true;
+      auto client = fcl::api::transport::client{make_stream(model),
+                                                fcl::api::transport::options{.max_inflight = 1}};
+      const auto executor = co_await boost::asio::this_coro::executor;
+
+      auto pending = start_call(client, executor, read_request(3, "stream"));
+      co_await wait_for_writes(model, 1);
+
+      model->reads.push_back(pack_api_frame(stream_item(3, "stream:0")));
+      model->notify_reads();
+      auto timer = boost::asio::steady_timer{executor};
+      timer.expires_after(std::chrono::milliseconds{10});
+      co_await timer.async_wait(boost::asio::use_awaitable);
+      BOOST_TEST(!pending->done);
+
+      auto rejected = false;
+      try {
+         (void)co_await client.async_call(read_request(4, "blocked"));
+      } catch (const fcl::api::exceptions::resource_exhausted&) {
+         rejected = true;
+      }
+      BOOST_TEST(rejected);
+
+      model->reads.push_back(pack_api_frame(stream_end(3)));
+      model->notify_reads();
+      const auto response = co_await wait_call(std::move(pending));
+      BOOST_TEST(static_cast<int>(response.kind) == static_cast<int>(fcl::api::frame_kind::stream_item));
+      BOOST_TEST(fcl::raw::unpack<protocol::chunk>(response.payload).bytes == "stream:0");
+   };
+
+   fcl::asio::blocking::run(runtime, scenario());
+}
+
+BOOST_AUTO_TEST_CASE(api_transport_client_returns_streaming_response_sequence) {
+   auto runtime = fcl::asio::runtime{};
+
+   auto scenario = []() -> boost::asio::awaitable<void> {
+      auto model = std::make_shared<fake_stream>();
+      model->wait_for_reads = true;
+      auto client = fcl::api::transport::client{make_stream(model), fcl::api::transport::options{}};
+      const auto executor = co_await boost::asio::this_coro::executor;
+
+      auto pending = start_stream_call(client, executor, read_request(5, "stream"));
+      co_await wait_for_writes(model, 1);
+      model->reads.push_back(pack_api_frame(stream_item(5, "stream:0")));
+      model->reads.push_back(pack_api_frame(stream_item(5, "stream:1")));
+      model->reads.push_back(pack_api_frame(stream_end(5)));
+      model->notify_reads();
+
+      const auto responses = co_await wait_stream_call(std::move(pending));
+      BOOST_REQUIRE_EQUAL(responses.size(), 3U);
+      BOOST_TEST(static_cast<int>(responses[0].kind) == static_cast<int>(fcl::api::frame_kind::stream_item));
+      BOOST_TEST(static_cast<int>(responses[1].kind) == static_cast<int>(fcl::api::frame_kind::stream_item));
+      BOOST_TEST(static_cast<int>(responses[2].kind) == static_cast<int>(fcl::api::frame_kind::stream_end));
+      BOOST_TEST(fcl::raw::unpack<protocol::chunk>(responses[0].payload).bytes == "stream:0");
+      BOOST_TEST(fcl::raw::unpack<protocol::chunk>(responses[1].payload).bytes == "stream:1");
+   };
+
+   fcl::asio::blocking::run(runtime, scenario());
+}
+
+BOOST_AUTO_TEST_CASE(api_transport_client_releases_streaming_slot_after_stream_end) {
+   auto runtime = fcl::asio::runtime{};
+
+   auto scenario = []() -> boost::asio::awaitable<void> {
+      auto model = std::make_shared<fake_stream>();
+      model->wait_for_reads = true;
+      auto client = fcl::api::transport::client{make_stream(model),
+                                                fcl::api::transport::options{.max_inflight = 1}};
+      const auto executor = co_await boost::asio::this_coro::executor;
+
+      auto first = start_stream_call(client, executor, read_request(6, "first"));
+      co_await wait_for_writes(model, 1);
+      model->reads.push_back(pack_api_frame(stream_item(6, "first:0")));
+      model->reads.push_back(pack_api_frame(stream_end(6)));
+      model->notify_reads();
+      const auto first_response = co_await wait_stream_call(std::move(first));
+      BOOST_REQUIRE_EQUAL(first_response.size(), 2U);
+
+      auto second = start_stream_call(client, executor, read_request(7, "second"));
+      co_await wait_for_writes(model, 2);
+      model->reads.push_back(pack_api_frame(stream_item(7, "second:0")));
+      model->reads.push_back(pack_api_frame(stream_end(7)));
+      model->notify_reads();
+      const auto second_response = co_await wait_stream_call(std::move(second));
+      BOOST_REQUIRE_EQUAL(second_response.size(), 2U);
+      BOOST_TEST(fcl::raw::unpack<protocol::chunk>(second_response[0].payload).bytes == "second:0");
    };
 
    fcl::asio::blocking::run(runtime, scenario());

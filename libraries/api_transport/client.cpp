@@ -112,7 +112,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       }
 
       boost::asio::steady_timer timer;
-      std::optional<frame> response;
+      std::vector<frame> responses;
       std::exception_ptr error;
       bool done = false;
    };
@@ -177,9 +177,14 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
          FCL_THROW_EXCEPTION(exceptions::protocol_error, "API transport received unknown call_id",
                              fcl::exceptions::ctx("call_id", response.id.value));
       }
-      auto pending_value = std::move(found->second);
+      auto pending_value = found->second;
+      const auto terminal = response.kind == frame_kind::response || response.kind == frame_kind::error ||
+                            response.kind == frame_kind::stream_end;
+      pending_value->responses.push_back(std::move(response));
+      if (!terminal) {
+         return;
+      }
       pending.erase(found);
-      pending_value->response.emplace(std::move(response));
       pending_value->done = true;
       pending_value->timer.cancel();
    }
@@ -269,7 +274,7 @@ const options& client::settings() const noexcept {
    return impl_ ? impl_->settings : defaults;
 }
 
-boost::asio::awaitable<frame> client::async_call(frame request, call_options value) {
+boost::asio::awaitable<std::vector<frame>> client::async_call_stream(frame request, call_options value) {
    if (!valid()) {
       FCL_THROW_EXCEPTION(exceptions::cancelled, "API transport client is closed");
    }
@@ -343,7 +348,17 @@ boost::asio::awaitable<frame> client::async_call(frame request, call_options val
    if (pending->error) {
       std::rethrow_exception(pending->error);
    }
-   co_return std::move(*pending->response);
+   co_return std::move(pending->responses);
+}
+
+boost::asio::awaitable<frame> client::async_call(frame request, call_options value) {
+   auto responses = co_await async_call_stream(std::move(request), std::move(value));
+   for (auto& response : responses) {
+      if (response.kind != frame_kind::stream_end) {
+         co_return std::move(response);
+      }
+   }
+   FCL_THROW_EXCEPTION(exceptions::protocol_error, "API transport streaming response has no item");
 }
 
 boost::asio::awaitable<void> client::async_close() {

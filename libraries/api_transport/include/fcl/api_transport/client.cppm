@@ -3,6 +3,7 @@ module;
 #include <boost/asio/awaitable.hpp>
 
 #include <memory>
+#include <vector>
 
 export module fcl.api.transport.client;
 
@@ -28,6 +29,7 @@ class client {
    [[nodiscard]] const options& settings() const noexcept;
 
    boost::asio::awaitable<frame> async_call(frame request, call_options value = {});
+   boost::asio::awaitable<std::vector<frame>> async_call_stream(frame request, call_options value = {});
    boost::asio::awaitable<void> async_close();
    void cancel();
 

@@ -155,13 +155,17 @@ connection_manager::admission connection_manager::remember(session_record record
    }
 
    auto result = admission{};
-   if (sessions_.size() >= policy_.max_sessions) {
-      const auto may_prune = !last_prune_ || now - *last_prune_ >= policy_.prune_silence;
-      if (count_direction_sessions(record.direction) >= direction_limit &&
-          (!may_prune || sessions_.size() <= policy_.low_watermark ||
-           !prune_one(resources, result.pruned, now, record.direction))) {
+   const auto may_prune = !last_prune_ || now - *last_prune_ >= policy_.prune_silence;
+   const auto direction_saturated = count_direction_sessions(record.direction) >= direction_limit;
+   const auto global_saturated = sessions_.size() >= policy_.max_sessions;
+   if (direction_saturated) {
+      if (!may_prune || sessions_.size() < policy_.low_watermark ||
+          !prune_one(resources, result.pruned, now, record.direction)) {
          return admission{.accepted = false, .reason = "P2P session resource limit reached"};
       }
+   }
+
+   if (global_saturated) {
       while (may_prune && sessions_.size() > policy_.low_watermark && prune_one(resources, result.pruned, now)) {
       }
       if (!result.pruned.empty()) {
@@ -171,6 +175,8 @@ connection_manager::admission connection_manager::remember(session_record record
          return admission{.accepted = false, .pruned = std::move(result.pruned),
                           .reason = "P2P max sessions reached"};
       }
+   } else if (!result.pruned.empty()) {
+      last_prune_ = now;
    }
 
    if (!resources.try_acquire_session(resource_scope(record))) {

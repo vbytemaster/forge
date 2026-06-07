@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -37,6 +38,26 @@ struct pubsub_payload {
    bool operator==(const pubsub_payload&) const = default;
 };
 BOOST_DESCRIBE_STRUCT(pubsub_payload, (), (text, value))
+
+struct operation_request {
+   std::string request_id;
+   std::string subject;
+   std::uint64_t revision = 0;
+
+   bool operator==(const operation_request&) const = default;
+};
+BOOST_DESCRIBE_STRUCT(operation_request, (), (request_id, subject, revision))
+
+struct operation_receipt {
+   std::string request_id;
+   bool accepted = false;
+   std::uint64_t applied_revision = 0;
+   std::string authority;
+   std::string evidence;
+
+   bool operator==(const operation_receipt&) const = default;
+};
+BOOST_DESCRIBE_STRUCT(operation_receipt, (), (request_id, accepted, applied_revision, authority, evidence))
 
 namespace {
 
@@ -128,6 +149,51 @@ class node_test_api_impl final : public node_test_api {
    boost::asio::awaitable<int> ping(int request) override {
       co_return request + 1;
    }
+};
+
+class receipt_test_api {
+ public:
+   virtual ~receipt_test_api() = default;
+   virtual boost::asio::awaitable<operation_receipt> apply(operation_request request) = 0;
+
+   static fcl::api::descriptor describe() {
+      return fcl::api::contract<receipt_test_api>(
+                {.id = {"receipt.test"}, .version = {.major = 1, .revision = 0}})
+         .method<&receipt_test_api::apply, operation_request, operation_receipt>("apply")
+         .build();
+   }
+};
+
+struct receipt_test_state {
+   mutable std::mutex mutex;
+   std::unordered_map<std::string, operation_receipt> receipts;
+   std::size_t applied = 0;
+};
+
+class receipt_test_api_impl final : public receipt_test_api {
+ public:
+   explicit receipt_test_api_impl(std::shared_ptr<receipt_test_state> state) : state_{std::move(state)} {}
+
+   boost::asio::awaitable<operation_receipt> apply(operation_request request) override {
+      auto lock = std::scoped_lock{state_->mutex};
+      if (const auto existing = state_->receipts.find(request.request_id); existing != state_->receipts.end()) {
+         co_return existing->second;
+      }
+
+      const auto revision = ++state_->applied;
+      auto receipt = operation_receipt{
+         .request_id = request.request_id,
+         .accepted = true,
+         .applied_revision = revision,
+         .authority = "receipt-test",
+         .evidence = request.subject + ":" + std::to_string(request.revision) + ":" + std::to_string(revision),
+      };
+      auto [inserted, _] = state_->receipts.emplace(request.request_id, std::move(receipt));
+      co_return inserted->second;
+   }
+
+ private:
+   std::shared_ptr<receipt_test_state> state_;
 };
 
 struct received_pubsub_messages {
@@ -427,6 +493,37 @@ class resolver_custom_transport_route_plugin final : public fcl::app::plugin {
    }
 };
 
+class receipt_route_publisher_plugin final : public fcl::app::plugin {
+ public:
+   [[nodiscard]] fcl::app::plugin_id id() const override {
+      return fcl::app::plugin_id{.value = "receipt-route-publisher"};
+   }
+
+   [[nodiscard]] std::string version() const override {
+      return "1";
+   }
+
+   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+      auto resolver = context.apis().get<fcl::plugins::p2p_api_resolver::api>(
+         {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+
+      auto plan = fcl::api::binding()
+                     .serve(context.apis())
+                     .export_api<receipt_test_api>({.id = {"receipt.test"}, .major = 1, .min_revision = 0})
+                     .build();
+      resolver->publish_api(std::move(plan), fcl::p2p::protocol_id{.value = "/fcl/api/receipt-test/1"});
+      co_return;
+   }
+
+   boost::asio::awaitable<void> startup() override {
+      co_return;
+   }
+
+   boost::asio::awaitable<void> shutdown() override {
+      co_return;
+   }
+};
+
 class resolver_protocol_conflict_plugin final : public fcl::app::plugin {
  public:
    [[nodiscard]] fcl::app::plugin_id id() const override {
@@ -616,6 +713,33 @@ class resolver_custom_transport_application final : public fcl::app::application
       context.apis().install<node_test_api>(node_test_api::describe(), std::make_shared<node_test_api_impl>());
       co_return;
    }
+};
+
+class receipt_resolver_application final : public fcl::app::application_shell {
+ public:
+   explicit receipt_resolver_application(std::shared_ptr<receipt_test_state> state) : state_{std::move(state)} {}
+
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p_api_resolver::descriptor());
+      registry.register_plugin(fcl::app::plugin_descriptor{
+         .id = fcl::app::plugin_id{.value = "receipt-route-publisher"},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.p2p_api_resolver"}},
+         .factory = [] {
+            return std::make_unique<receipt_route_publisher_plugin>();
+         },
+      });
+   }
+
+   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+      context.apis().install<receipt_test_api>(receipt_test_api::describe(),
+                                               std::make_shared<receipt_test_api_impl>(state_));
+      co_return;
+   }
+
+ private:
+   std::shared_ptr<receipt_test_state> state_;
 };
 
 class resolver_protocol_conflict_application final : public fcl::app::application_shell {
@@ -1491,6 +1615,68 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_remote_honors_advertised_transport_options
       client.runtime(),
       remote.call<int, int>({.id = {"node.test"}, .major = 1, .min_revision = 0}, "ping", 41));
    BOOST_TEST(response == 42);
+
+   fcl::asio::blocking::run(client.runtime(), client.shutdown());
+   fcl::asio::blocking::run(server.runtime(), server.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_api_resolver_supports_receipt_based_product_api) {
+   const auto server_peer = test_peer(74);
+   auto server_config = test_p2p_config(server_peer);
+   server_config.set("p2p.listen", fcl::config::value::array_type{
+                                      fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
+
+   auto server_state = std::make_shared<receipt_test_state>();
+   auto server = receipt_resolver_application{server_state};
+   server.configure(server_config);
+   fcl::asio::blocking::run(server.runtime(), server.startup());
+
+   auto server_p2p = server.apis().get<fcl::plugins::p2p_node::api>(
+      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   const auto server_endpoint = server_p2p->local_endpoint();
+   BOOST_REQUIRE(server_endpoint.has_value());
+
+   auto client_config = test_p2p_config(test_peer(75));
+   client_config.set("p2p.bootstrap",
+                     fcl::config::value::array_type{fcl::config::value{server_endpoint->to_string()}});
+   auto client = resolver_only_application{};
+   client.configure(client_config);
+   fcl::asio::blocking::run(client.runtime(), client.startup());
+
+   auto resolver = client.apis().get<fcl::plugins::p2p_api_resolver::api>(
+      {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+   const auto resolved = fcl::asio::blocking::run(
+      client.runtime(), resolver->resolve(server_peer, {.id = {"receipt.test"}, .major = 1, .min_revision = 0}));
+   BOOST_TEST(resolved.api.protocol == "/fcl/api/receipt-test/1");
+
+   auto remote = fcl::asio::blocking::run(client.runtime(), resolver->remote<receipt_test_api>(server_peer));
+   const auto request =
+      operation_request{.request_id = "request-1", .subject = "neutral-operation", .revision = 7};
+
+   const auto first = fcl::asio::blocking::run(
+      client.runtime(),
+      remote.call<operation_request, operation_receipt>(
+         {.id = {"receipt.test"}, .major = 1, .min_revision = 0}, "apply", request));
+   BOOST_TEST(first.accepted);
+   BOOST_TEST(first.request_id == request.request_id);
+   BOOST_TEST(first.applied_revision == 1U);
+   BOOST_TEST(first.authority == "receipt-test");
+   BOOST_TEST(first.evidence == "neutral-operation:7:1");
+
+   const auto repeated = fcl::asio::blocking::run(
+      client.runtime(),
+      remote.call<operation_request, operation_receipt>(
+         {.id = {"receipt.test"}, .major = 1, .min_revision = 0}, "apply", request));
+   BOOST_TEST(repeated.request_id == first.request_id);
+   BOOST_TEST(repeated.accepted == first.accepted);
+   BOOST_TEST(repeated.applied_revision == first.applied_revision);
+   BOOST_TEST(repeated.authority == first.authority);
+   BOOST_TEST(repeated.evidence == first.evidence);
+   {
+      auto lock = std::scoped_lock{server_state->mutex};
+      BOOST_TEST(server_state->applied == 1U);
+      BOOST_TEST(server_state->receipts.size() == 1U);
+   }
 
    fcl::asio::blocking::run(client.runtime(), client.shutdown());
    fcl::asio::blocking::run(server.runtime(), server.shutdown());

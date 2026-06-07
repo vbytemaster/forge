@@ -46,6 +46,10 @@ or storage backends build dependencies.
   latency, backoff and failures; prefer higher-quality known candidates.
 - Kubo `CoreAPI` style facade: consumers use narrow API surfaces backed by a
   node instead of constructing or mutating the node directly.
+- Kubo `CoreAPI` and Boxo service split for product operations: a focused
+  service API returns operation-specific results, while the host/network layer
+  supplies connectivity and protocol routing. FCL maps this to typed
+  `p2p_api_resolver` remotes that return domain receipts.
 - Kubo diagnostics/read-only service split: operator visibility is exposed as
   focused queries over node state, not as mutable host ownership.
 - Rust libp2p `SwarmBuilder` style composition: transports, security upgrades,
@@ -129,6 +133,14 @@ which external projects provide accepted patterns and criteria:
 - Product protocols own idempotency, authorization and business-level
   acknowledgement. Raw `p2p::message` delivery means the frame was written to
   the selected protocol stream.
+- Product protocols can use typed request/receipt APIs as the synchronous
+  baseline. The request carries an idempotency key; the domain receipt records
+  what the product service accepted/applied. This is different from a generic
+  delivery acknowledgement and does not require `p2p_delivery`.
+
+## Product API Receipt FCL Test
+
+- `test_fcl_plugins p2p_api_resolver_supports_receipt_based_product_api`
 
 ## Diagnostics FCL Tests
 

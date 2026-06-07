@@ -215,6 +215,44 @@ runtime function/type metadata. The resolver sends only the stable projection:
 API id/version, protocol id string, codec, limits, method names/kinds and error
 identities.
 
+### Product API Receipt Pattern
+
+Storlane-level consumers should model product obligations as ordinary typed API
+requests that return domain receipts. The receipt proves the application-level
+operation result; it is not a generic P2P delivery acknowledgement. The request
+should carry an idempotency key so retries can return the same receipt without
+executing the operation twice.
+
+```cpp
+struct apply_request {
+   std::string request_id; // Idempotency key owned by the product protocol.
+   std::string subject;
+   std::uint64_t revision = 0;
+};
+
+struct apply_receipt {
+   std::string request_id;
+   bool accepted = false;
+   std::uint64_t applied_revision = 0;
+   std::string authority;
+   std::string evidence;
+};
+
+class operation_api {
+ public:
+   virtual ~operation_api() = default;
+   virtual boost::asio::awaitable<apply_receipt> apply(apply_request request) = 0;
+
+   static fcl::api::descriptor describe();
+};
+```
+
+Server plugins publish this API through `p2p_api_resolver`; client plugins open
+it with `resolver->remote<operation_api>(peer)` and call the typed method. The
+product remains responsible for authorization, durable state and authoritative
+settlement. `p2p_delivery` is only a future optional plugin for asynchronous
+store-backed retry, not a prerequisite for request/receipt APIs.
+
 ## P2P Diagnostics Plugin
 
 `p2p_diagnostics` is the focused read-only visibility layer for the shared
@@ -278,7 +316,7 @@ auto pubsub = context.apis().get<fcl::plugins::p2p_pubsub::api>(
    {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1});
 
 auto subscription = co_await pubsub->subscribe<cache_event>(
-   {.value = "storlane.cache.events"},
+   {.value = "example.cache.events"},
    [](fcl::plugins::p2p_pubsub::typed_message<cache_event> message)
       -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
       co_await handle_cache_event(message.source, message.value);
@@ -286,7 +324,7 @@ auto subscription = co_await pubsub->subscribe<cache_event>(
    });
 
 co_await pubsub->publish(
-   {.value = "storlane.cache.events"},
+   {.value = "example.cache.events"},
    cache_event{.key = "abc", .revision = 42});
 ```
 

@@ -499,6 +499,13 @@ READMEs may link here, but must not define a second block order.
   async plugin if a product needs store-backed retry. It is separate from the
   host facade, does not promise exactly-once semantics and does not own product
   acknowledgement semantics.
+- H.0 implemented checkpoint: Storlane-level products do not need generic
+  delivery acknowledgements for ordinary request/response work. Product plugins
+  publish typed APIs through `p2p_api_resolver`, clients resolve compatible
+  remotes without hardcoded protocol ids, and domain methods return product
+  receipts with idempotency keys. The receipt proves the application-level
+  operation result for that protocol; authorization, durable state and
+  authoritative settlement remain product/control-plane responsibilities.
 - IPFS/Boxo content, provider, exchange, retrieval and pinning donors inform
   future product/content/storage layers. They are not `fcl_plugins` or
   `fcl_p2p` support claims.
@@ -635,6 +642,10 @@ Accepted:
   symbolication/redaction/export happens outside the crashing signal context.
 - Transactional outbox style durable retry as an application/plugin-level
   pattern, not a storage dependency inside `fcl_p2p`.
+- Typed request/receipt protocols over `p2p_api_resolver` as the baseline for
+  synchronous product operations. Idempotency keys and domain receipts belong to
+  the product API contract, while FCL supplies discovery, stream opening and API
+  frame transport.
 
 Rejected:
 

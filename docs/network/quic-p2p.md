@@ -481,16 +481,17 @@ READMEs may link here, but must not define a second block order.
   event-loop and packaging cost. Do not vendor-lock FCL to backend SDKs for
   Sentry, Grafana, Datadog or OpenTelemetry C++; backend routing belongs in the
   Collector.
-- G.6b planned checkpoint: crash capture is separate from the live appender.
-  Signal handlers may only write preallocated records to a local spool with
-  async-signal-safe operations. On the next start, the runtime resends the spool
-  as OTLP fatal log records through the normal appender and then clears it.
-  `std::set_terminate` should capture unhandled C++ exceptions, typed exception
-  code/category and backtrace addresses into the same spool before aborting.
-  Symbolication, redaction and export happen during resend, not in the signal
-  handler.
-- G.6 out of scope: Crashpad/minidump integration, watchdogs for SIGKILL/hangs,
-  metrics registry export and trace/span export remain later optional blocks.
+- G.6b implemented checkpoint: crash capture is separate from the live appender.
+  Signal handlers write only fixed binary records to a bounded local spool with
+  async-signal-safe operations. On the next start, `fcl_otlp` reads and
+  validates the spool, quarantines malformed files, exports safe crash evidence
+  through the existing OTLP/HTTP log exporter and deletes files only after a
+  successful export. `std::set_terminate` captures typed exception category/code
+  and stacktrace addresses before aborting, but never persists raw `what()` text
+  or application context.
+- G.6 out of scope: native minidump SDK integration, watchdogs for
+  SIGKILL/hangs, metrics registry export and trace/span export remain later
+  optional blocks.
   Telemetry export is opt-in by config; local spool contents and outgoing
   attributes must respect redaction rules because peer ids, paths and application
   context can be sensitive.

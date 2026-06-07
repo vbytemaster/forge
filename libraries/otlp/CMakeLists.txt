@@ -1,5 +1,6 @@
 add_library(
    fcl_otlp STATIC
+   crash.cpp
    log_exporter.cpp
    log_sink.cpp
 )

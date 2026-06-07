@@ -426,6 +426,24 @@ struct log_exporter::impl : std::enable_shared_from_this<impl> {
       }
    }
 
+   awaitable<export_result> export_now(std::vector<fcl::log_record> records) {
+      co_await asio::post(strand, use_awaitable);
+      auto result = export_result{.submitted_records = records.size()};
+      if (records.empty()) {
+         co_return result;
+      }
+
+      const auto exported = co_await export_batch(records);
+      if (exported) {
+         record_exported(records.size());
+         result.exported_records = records.size();
+      } else {
+         record_direct_failed(records.size());
+         result.failed_records = records.size();
+      }
+      co_return result;
+   }
+
    std::vector<fcl::log_record> take_batch() {
       auto records = std::vector<fcl::log_record>{};
       const auto lock = std::scoped_lock{mutex};
@@ -695,6 +713,12 @@ struct log_exporter::impl : std::enable_shared_from_this<impl> {
       refresh_queue_metrics_locked();
    }
 
+   void record_direct_failed(std::size_t count) {
+      const auto lock = std::scoped_lock{mutex};
+      current_metrics.failed_records += count;
+      refresh_queue_metrics_locked();
+   }
+
    void refresh_queue_metrics_locked() const {
       current_metrics.queue_depth = queue.size();
       current_metrics.queue_bytes = queue_bytes;
@@ -743,6 +767,10 @@ bool log_exporter::enqueue(const fcl::log_record& record) {
 
 exporter_metrics log_exporter::metrics() const {
    return impl_->metrics();
+}
+
+boost::asio::awaitable<export_result> log_exporter::async_export(std::vector<fcl::log_record> records) {
+   co_return co_await impl_->export_now(std::move(records));
 }
 
 boost::asio::awaitable<void> log_exporter::async_flush() {

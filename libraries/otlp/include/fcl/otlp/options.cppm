@@ -60,4 +60,10 @@ struct exporter_metrics {
    std::size_t queue_bytes = 0;
 };
 
+struct export_result {
+   std::uint64_t submitted_records = 0;
+   std::uint64_t exported_records = 0;
+   std::uint64_t failed_records = 0;
+};
+
 } // namespace fcl::otlp

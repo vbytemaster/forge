@@ -24,6 +24,7 @@ class log_exporter {
    [[nodiscard]] bool enqueue(const fcl::log_record& record);
    [[nodiscard]] exporter_metrics metrics() const;
 
+   boost::asio::awaitable<export_result> async_export(std::vector<fcl::log_record> records);
    boost::asio::awaitable<void> async_flush();
    boost::asio::awaitable<void> async_shutdown();
 

@@ -50,6 +50,10 @@ add_executable(
    otlp/otlp_tests.cpp
 )
 target_link_libraries(test_fcl_otlp fcl Boost::included_unit_test_framework)
+add_executable(fcl_otlp_crash_helper otlp/crash_helper.cpp)
+target_link_libraries(fcl_otlp_crash_helper fcl)
+add_dependencies(test_fcl_otlp fcl_otlp_crash_helper)
+target_compile_definitions(test_fcl_otlp PRIVATE FCL_OTLP_CRASH_HELPER="$<TARGET_FILE:fcl_otlp_crash_helper>")
 add_test(NAME test_fcl_otlp COMMAND test_fcl_otlp WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(

@@ -1,0 +1,669 @@
+module;
+
+#include <fcl/exceptions/macros.hpp>
+
+#include <boost/asio/awaitable.hpp>
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <csignal>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <exception>
+#include <filesystem>
+#include <fstream>
+#include <limits>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+#if defined(__unix__) || defined(__APPLE__)
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#endif
+
+module fcl.otlp.crash;
+
+import fcl.exceptions;
+import fcl.log.log_message;
+import fcl.log.record;
+
+namespace fcl::otlp {
+namespace {
+
+constexpr auto record_magic = std::uint64_t{0x46434c4f544c5043ULL}; // "FCLOTLPC"
+constexpr auto record_version = std::uint16_t{1};
+constexpr auto max_exception_category = std::size_t{64};
+constexpr auto max_stack_addresses = std::size_t{32};
+
+enum class record_kind : std::uint32_t {
+   signal = 1,
+   terminate = 2,
+};
+
+struct disk_record {
+   std::uint64_t magic = record_magic;
+   std::uint16_t version = record_version;
+   std::uint16_t header_size = 0;
+   std::uint32_t record_size = 0;
+   std::uint32_t checksum = 0;
+   std::uint32_t kind = 0;
+   std::uint32_t pid = 0;
+   std::uint64_t sequence = 0;
+   std::uint64_t unix_nanos = 0;
+   std::int32_t signal_number = 0;
+   std::uint64_t fault_address = 0;
+   std::int32_t exception_code = 0;
+   std::uint32_t stack_count = 0;
+   std::array<char, max_exception_category> exception_category{};
+   std::array<std::uint64_t, max_stack_addresses> stack_addresses{};
+};
+
+static_assert(sizeof(disk_record) <= 4096);
+
+std::uint32_t checksum_record(const disk_record& record) noexcept {
+   const auto* bytes = reinterpret_cast<const unsigned char*>(&record);
+   auto hash = std::uint32_t{2166136261u};
+   for (auto index = std::size_t{0}; index < sizeof(disk_record); ++index) {
+      auto value = bytes[index];
+      if (index >= offsetof(disk_record, checksum) &&
+          index < offsetof(disk_record, checksum) + sizeof(disk_record::checksum)) {
+         value = 0;
+      }
+      hash ^= value;
+      hash *= 16777619u;
+   }
+   return hash;
+}
+
+void copy_fixed(std::array<char, max_exception_category>& out, std::string_view value) noexcept {
+   const auto count = std::min(out.size() - 1, value.size());
+   for (auto index = std::size_t{0}; index < count; ++index) {
+      out[index] = value[index];
+   }
+   out[count] = '\0';
+}
+
+std::string fixed_string(const std::array<char, max_exception_category>& value) {
+   auto size = std::size_t{0};
+   while (size < value.size() && value[size] != '\0') {
+      ++size;
+   }
+   return std::string{value.data(), size};
+}
+
+std::uint64_t now_nanos() {
+   const auto now = std::chrono::system_clock::now().time_since_epoch();
+   const auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(now);
+   if (nanos.count() <= 0) {
+      return 0;
+   }
+   return static_cast<std::uint64_t>(nanos.count());
+}
+
+void write_all_noexcept(int fd, const disk_record& record) noexcept {
+#if defined(__unix__) || defined(__APPLE__)
+   const auto* data = reinterpret_cast<const char*>(&record);
+   auto remaining = sizeof(disk_record);
+   while (remaining > 0) {
+      const auto written = ::write(fd, data, remaining);
+      if (written <= 0) {
+         return;
+      }
+      data += static_cast<std::size_t>(written);
+      remaining -= static_cast<std::size_t>(written);
+   }
+#else
+   static_cast<void>(fd);
+   static_cast<void>(record);
+#endif
+}
+
+} // namespace
+
+struct crash_state;
+
+std::atomic<crash_state*> active_capture{nullptr};
+
+struct crash_state {
+#if defined(__unix__) || defined(__APPLE__)
+   int fd = -1;
+   pid_t pid = 0;
+   volatile std::sig_atomic_t records_written = 0;
+   std::sig_atomic_t max_records = 0;
+   std::vector<int> installed_signals;
+   std::vector<struct sigaction> previous_actions;
+#endif
+   std::terminate_handler previous_terminate = nullptr;
+   bool terminate_installed = false;
+   bool restored = false;
+
+   ~crash_state() {
+      restore();
+   }
+
+   void restore() noexcept {
+      if (restored) {
+         return;
+      }
+      restored = true;
+
+      auto* expected = this;
+      active_capture.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
+
+      if (terminate_installed) {
+         std::set_terminate(previous_terminate);
+      }
+
+#if defined(__unix__) || defined(__APPLE__)
+      for (auto index = std::size_t{0}; index < installed_signals.size(); ++index) {
+         ::sigaction(installed_signals[index], &previous_actions[index], nullptr);
+      }
+      if (fd >= 0) {
+         ::close(fd);
+         fd = -1;
+      }
+#endif
+   }
+
+};
+
+namespace {
+
+void validate_options(const crash_spool_options& options, bool installing) {
+   if (options.directory.empty() || options.directory == options.directory.root_path()) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash spool directory is not safe");
+   }
+   if (options.max_record_bytes < sizeof(disk_record) || options.max_records_per_process == 0 ||
+       options.max_records_per_resend == 0 || options.max_file_bytes < sizeof(disk_record)) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash spool limits must be positive");
+   }
+   if (options.max_file_bytes < options.max_record_bytes) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash file limit must cover one record");
+   }
+   if (options.max_records_per_process >
+       static_cast<std::size_t>((std::numeric_limits<std::sig_atomic_t>::max)())) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash process record limit is too large");
+   }
+   if (installing && !options.capture_signals && !options.capture_terminate) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash capture has no enabled capture source");
+   }
+   if (options.capture_signals) {
+      if (options.signals.empty()) {
+         FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash signal set must not be empty");
+      }
+      for (const auto signal_number : options.signals) {
+         if (signal_number <= 0
+#if defined(NSIG)
+             || signal_number >= NSIG
+#endif
+         ) {
+            FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash signal is not supported",
+                                fcl::exceptions::ctx("signal", signal_number));
+         }
+      }
+   }
+}
+
+void fill_common(disk_record& record, crash_state& state, record_kind kind) noexcept {
+#if defined(__unix__) || defined(__APPLE__)
+   record.header_size = sizeof(disk_record);
+   record.record_size = sizeof(disk_record);
+   record.kind = static_cast<std::uint32_t>(kind);
+   record.pid = static_cast<std::uint32_t>(state.pid);
+   record.sequence = static_cast<std::uint64_t>(state.records_written + 1);
+#else
+   static_cast<void>(record);
+   static_cast<void>(state);
+   static_cast<void>(kind);
+#endif
+}
+
+void write_record(crash_state& state, disk_record record) noexcept {
+#if defined(__unix__) || defined(__APPLE__)
+   if (state.fd < 0 || state.records_written >= state.max_records) {
+      return;
+   }
+   state.records_written = state.records_written + 1;
+   record.sequence = static_cast<std::uint64_t>(state.records_written);
+   record.checksum = checksum_record(record);
+   write_all_noexcept(state.fd, record);
+#else
+   static_cast<void>(state);
+   static_cast<void>(record);
+#endif
+}
+
+void capture_current_exception(disk_record& record) noexcept {
+   try {
+      const auto current = std::current_exception();
+      if (!current) {
+         return;
+      }
+      std::rethrow_exception(current);
+   } catch (const fcl::exceptions::base& error) {
+      record.exception_code = error.code().value();
+      copy_fixed(record.exception_category, error.code().category().name());
+   } catch (const std::exception&) {
+      copy_fixed(record.exception_category, "std.exception");
+   } catch (...) {
+      copy_fixed(record.exception_category, "unknown");
+   }
+}
+
+void capture_stack_addresses(disk_record& record) noexcept {
+   try {
+      const auto stacktrace = fcl::capture_stacktrace(2, max_stack_addresses);
+      const auto count = std::min(stacktrace.frames.size(), record.stack_addresses.size());
+      record.stack_count = static_cast<std::uint32_t>(count);
+      for (auto index = std::size_t{0}; index < count; ++index) {
+         record.stack_addresses[index] = static_cast<std::uint64_t>(stacktrace.frames[index].address);
+      }
+   } catch (...) {
+      record.stack_count = 0;
+   }
+}
+
+[[noreturn]] void forward_signal_or_exit(int signal_number) noexcept {
+#if defined(__unix__) || defined(__APPLE__)
+   ::signal(signal_number, SIG_DFL);
+   ::kill(::getpid(), signal_number);
+#endif
+   std::_Exit(128 + signal_number);
+}
+
+void signal_handler(int signal_number, siginfo_t* info, void*) noexcept {
+   auto* state = active_capture.load(std::memory_order_acquire);
+   if (state != nullptr) {
+      auto record = disk_record{};
+      fill_common(record, *state, record_kind::signal);
+      record.signal_number = signal_number;
+      if (info != nullptr) {
+         record.fault_address = reinterpret_cast<std::uintptr_t>(info->si_addr);
+      }
+      write_record(*state, record);
+   }
+   forward_signal_or_exit(signal_number);
+}
+
+[[noreturn]] void terminate_handler() noexcept {
+   auto* state = active_capture.load(std::memory_order_acquire);
+   auto previous = std::terminate_handler{};
+   if (state != nullptr) {
+      auto record = disk_record{};
+      fill_common(record, *state, record_kind::terminate);
+      record.unix_nanos = now_nanos();
+      capture_current_exception(record);
+      capture_stack_addresses(record);
+      write_record(*state, record);
+      previous = state->previous_terminate;
+      active_capture.store(nullptr, std::memory_order_release);
+   }
+
+   if (previous != nullptr && previous != terminate_handler) {
+      previous();
+   }
+   std::abort();
+}
+
+void ensure_crash_directory(const std::filesystem::path& directory) {
+   auto error = std::error_code{};
+   std::filesystem::create_directories(directory, error);
+   if (error) {
+      FCL_THROW_EXCEPTION(exceptions::spool_error, "failed to create OTLP crash spool directory",
+                          fcl::exceptions::ctx("path", directory.string()),
+                          fcl::exceptions::ctx("reason", error.message()));
+   }
+}
+
+std::filesystem::path spool_path_for(const std::filesystem::path& directory, std::uint64_t pid) {
+   return directory / ("crash-" + std::to_string(pid) + ".spool");
+}
+
+#if defined(__unix__) || defined(__APPLE__)
+int open_spool_file(const std::filesystem::path& path) {
+   auto flags = O_CREAT | O_APPEND | O_WRONLY;
+#if defined(O_CLOEXEC)
+   flags |= O_CLOEXEC;
+#endif
+   const auto fd = ::open(path.c_str(), flags, S_IRUSR | S_IWUSR);
+   if (fd < 0) {
+      FCL_THROW_EXCEPTION(exceptions::spool_error, "failed to open OTLP crash spool",
+                          fcl::exceptions::ctx("path", path.string()),
+                          fcl::exceptions::ctx("errno", errno));
+   }
+   return fd;
+}
+#endif
+
+std::vector<std::filesystem::path> list_spool_files(const std::filesystem::path& directory) {
+   auto files = std::vector<std::filesystem::path>{};
+   auto error = std::error_code{};
+   if (!std::filesystem::exists(directory, error)) {
+      return files;
+   }
+   for (const auto& entry : std::filesystem::directory_iterator{directory}) {
+      if (entry.path().extension() == ".spool") {
+         files.push_back(entry.path());
+      }
+   }
+   std::sort(files.begin(), files.end());
+   return files;
+}
+
+bool valid_record(const disk_record& record) {
+   return record.magic == record_magic && record.version == record_version &&
+          record.header_size == sizeof(disk_record) && record.record_size == sizeof(disk_record) &&
+          record.checksum == checksum_record(record);
+}
+
+struct read_file_result {
+   std::vector<disk_record> records;
+   std::uint64_t total_records = 0;
+   bool malformed = false;
+};
+
+read_file_result read_records(const std::filesystem::path& path, std::size_t limit, std::size_t max_file_bytes) {
+   auto result = read_file_result{};
+   auto error = std::error_code{};
+   const auto file_size = std::filesystem::file_size(path, error);
+   if (error || file_size == 0 || file_size > max_file_bytes || file_size % sizeof(disk_record) != 0) {
+      result.malformed = true;
+      return result;
+   }
+
+   result.total_records = file_size / sizeof(disk_record);
+   const auto count = std::min<std::uint64_t>(result.total_records, limit);
+   auto input = std::ifstream{path, std::ios::binary};
+   if (!input) {
+      FCL_THROW_EXCEPTION(exceptions::spool_error, "failed to read OTLP crash spool",
+                          fcl::exceptions::ctx("path", path.string()));
+   }
+
+   result.records.reserve(static_cast<std::size_t>(count));
+   for (auto index = std::uint64_t{0}; index < count; ++index) {
+      auto record = disk_record{};
+      input.read(reinterpret_cast<char*>(&record), sizeof(record));
+      if (!input || !valid_record(record)) {
+         result.records.clear();
+         result.malformed = true;
+         return result;
+      }
+      result.records.push_back(record);
+   }
+   return result;
+}
+
+void quarantine_file(const std::filesystem::path& path) {
+   auto target = path;
+   target += ".bad";
+   auto error = std::error_code{};
+   std::filesystem::remove(target, error);
+   error.clear();
+   std::filesystem::rename(path, target, error);
+   if (error) {
+      FCL_THROW_EXCEPTION(exceptions::spool_error, "failed to quarantine malformed OTLP crash spool",
+                          fcl::exceptions::ctx("path", path.string()),
+                          fcl::exceptions::ctx("reason", error.message()));
+   }
+}
+
+void remove_exported_records(const std::filesystem::path& path, std::uint64_t removed, std::uint64_t total) {
+   if (removed >= total) {
+      auto error = std::error_code{};
+      std::filesystem::remove(path, error);
+      if (error) {
+         FCL_THROW_EXCEPTION(exceptions::spool_error, "failed to remove exported OTLP crash spool",
+                             fcl::exceptions::ctx("path", path.string()),
+                             fcl::exceptions::ctx("reason", error.message()));
+      }
+      return;
+   }
+
+   auto input = std::ifstream{path, std::ios::binary};
+   if (!input) {
+      FCL_THROW_EXCEPTION(exceptions::spool_error, "failed to rewrite OTLP crash spool",
+                          fcl::exceptions::ctx("path", path.string()));
+   }
+   input.seekg(static_cast<std::streamoff>(removed * sizeof(disk_record)));
+
+   auto temp = path;
+   temp += ".tmp";
+   auto output = std::ofstream{temp, std::ios::binary | std::ios::trunc};
+   if (!output) {
+      FCL_THROW_EXCEPTION(exceptions::spool_error, "failed to create OTLP crash spool rewrite",
+                          fcl::exceptions::ctx("path", temp.string()));
+   }
+   output << input.rdbuf();
+   output.close();
+   input.close();
+
+   auto error = std::error_code{};
+   std::filesystem::rename(temp, path, error);
+   if (error) {
+      std::filesystem::remove(temp);
+      FCL_THROW_EXCEPTION(exceptions::spool_error, "failed to replace OTLP crash spool",
+                          fcl::exceptions::ctx("path", path.string()),
+                          fcl::exceptions::ctx("reason", error.message()));
+   }
+}
+
+std::string kind_text(const disk_record& record) {
+   switch (static_cast<record_kind>(record.kind)) {
+   case record_kind::signal:
+      return "signal";
+   case record_kind::terminate:
+      return "terminate";
+   }
+   return "unknown";
+}
+
+std::chrono::sys_time<std::chrono::microseconds> timestamp_for(const disk_record& record) {
+   if (record.unix_nanos == 0) {
+      return std::chrono::time_point_cast<std::chrono::microseconds>(std::chrono::system_clock::now());
+   }
+   const auto nanos = std::chrono::nanoseconds{static_cast<std::chrono::nanoseconds::rep>(record.unix_nanos)};
+   return std::chrono::time_point_cast<std::chrono::microseconds>(std::chrono::sys_time<std::chrono::nanoseconds>{nanos});
+}
+
+fcl::stacktrace_snapshot stacktrace_for(const disk_record& record) {
+   auto stacktrace = fcl::stacktrace_snapshot{.backend = "crash-spool"};
+   const auto count = std::min<std::uint32_t>(record.stack_count, max_stack_addresses);
+   stacktrace.frames.reserve(count);
+   for (auto index = std::uint32_t{0}; index < count; ++index) {
+      const auto address = record.stack_addresses[index];
+      if (address == 0) {
+         continue;
+      }
+      stacktrace.frames.push_back(fcl::stacktrace_frame{
+          .index = stacktrace.frames.size(),
+          .address = static_cast<std::uintptr_t>(address),
+      });
+   }
+   return stacktrace;
+}
+
+fcl::log_record to_log_record(const disk_record& record) {
+   auto fields = fcl::log_fields{};
+   fields.push_back(fcl::log_ctx("crash.severity", "fatal"));
+   fields.push_back(fcl::log_ctx("crash.kind", kind_text(record)));
+   fields.push_back(fcl::log_ctx("process.pid", record.pid));
+   fields.push_back(fcl::log_ctx("crash.sequence", record.sequence));
+   if (record.signal_number != 0) {
+      fields.push_back(fcl::log_ctx("signal.number", record.signal_number));
+   }
+   if (record.fault_address != 0) {
+      fields.push_back(fcl::log_ctx("fault.address", record.fault_address));
+   }
+   const auto category = fixed_string(record.exception_category);
+   if (!category.empty()) {
+      fields.push_back(fcl::log_ctx("exception.category", category));
+      fields.push_back(fcl::log_ctx("exception.code", record.exception_code));
+   }
+
+   auto log = fcl::log_record{
+       .level = fcl::log_level::error,
+       .logger = "fcl.otlp.crash",
+       .component = "otlp.crash",
+       .message = "fcl crash captured",
+       .fields = std::move(fields),
+       .timestamp = timestamp_for(record),
+       .thread_id = "crash",
+       .thread_name = "crash",
+   };
+
+   auto stacktrace = stacktrace_for(record);
+   if (stacktrace.available()) {
+      log.stacktrace = std::move(stacktrace);
+   }
+   return log;
+}
+
+} // namespace
+
+std::vector<int> default_crash_signals() {
+   auto signals = std::vector<int>{};
+   auto add = [&](int signal_number) {
+      if (std::find(signals.begin(), signals.end(), signal_number) == signals.end()) {
+         signals.push_back(signal_number);
+      }
+   };
+#if defined(SIGABRT)
+   add(SIGABRT);
+#endif
+#if defined(SIGSEGV)
+   add(SIGSEGV);
+#endif
+#if defined(SIGBUS)
+   add(SIGBUS);
+#endif
+#if defined(SIGILL)
+   add(SIGILL);
+#endif
+#if defined(SIGFPE)
+   add(SIGFPE);
+#endif
+   return signals;
+}
+
+crash_guard::crash_guard(std::shared_ptr<void> impl) : impl_(std::move(impl)) {}
+
+crash_guard::~crash_guard() = default;
+
+crash_guard::crash_guard(crash_guard&& other) noexcept = default;
+
+crash_guard& crash_guard::operator=(crash_guard&& other) noexcept = default;
+
+crash_guard::operator bool() const noexcept {
+   return impl_ != nullptr;
+}
+
+crash_guard install_crash_capture(crash_spool_options options) {
+   validate_options(options, true);
+   ensure_crash_directory(options.directory);
+
+   auto state = std::make_shared<crash_state>();
+#if defined(__unix__) || defined(__APPLE__)
+   state->pid = ::getpid();
+   state->max_records = static_cast<std::sig_atomic_t>(options.max_records_per_process);
+   const auto path = spool_path_for(options.directory, static_cast<std::uint64_t>(state->pid));
+   state->fd = open_spool_file(path);
+#endif
+
+   auto* expected = static_cast<crash_state*>(nullptr);
+   if (!active_capture.compare_exchange_strong(expected, state.get(), std::memory_order_acq_rel)) {
+      FCL_THROW_EXCEPTION(exceptions::capture_active, "OTLP crash capture is already active");
+   }
+
+   try {
+#if defined(__unix__) || defined(__APPLE__)
+      if (options.capture_signals) {
+         struct sigaction action {};
+         action.sa_sigaction = signal_handler;
+         action.sa_flags = SA_SIGINFO;
+         sigemptyset(&action.sa_mask);
+         for (const auto signal_number : options.signals) {
+            struct sigaction previous {};
+            if (::sigaction(signal_number, &action, &previous) != 0) {
+               FCL_THROW_EXCEPTION(exceptions::invalid_options, "failed to install OTLP crash signal handler",
+                                   fcl::exceptions::ctx("signal", signal_number),
+                                   fcl::exceptions::ctx("errno", errno));
+            }
+            state->installed_signals.push_back(signal_number);
+            state->previous_actions.push_back(previous);
+         }
+      }
+#endif
+      if (options.capture_terminate) {
+         state->previous_terminate = std::set_terminate(terminate_handler);
+         state->terminate_installed = true;
+      }
+   } catch (...) {
+      state->restore();
+      throw;
+   }
+
+   return crash_guard{std::move(state)};
+}
+
+boost::asio::awaitable<crash_resend_result> async_resend_crashes(log_exporter& exporter,
+                                                                 crash_spool_options options) {
+   validate_options(options, false);
+   ensure_crash_directory(options.directory);
+
+   auto result = crash_resend_result{};
+   auto remaining = options.max_records_per_resend;
+   for (const auto& path : list_spool_files(options.directory)) {
+      if (remaining == 0) {
+         ++result.files_retained;
+         break;
+      }
+
+      ++result.files_scanned;
+      auto read = read_records(path, remaining, options.max_file_bytes);
+      if (read.malformed) {
+         quarantine_file(path);
+         ++result.bad_files;
+         continue;
+      }
+      if (read.records.empty()) {
+         continue;
+      }
+
+      auto records = std::vector<fcl::log_record>{};
+      records.reserve(read.records.size());
+      for (const auto& record : read.records) {
+         records.push_back(to_log_record(record));
+      }
+
+      result.records_read += records.size();
+      remaining -= records.size();
+      const auto exported = co_await exporter.async_export(std::move(records));
+      if (exported.failed_records == 0 && exported.exported_records == read.records.size()) {
+         result.exported_records += exported.exported_records;
+         ++result.files_exported;
+         remove_exported_records(path, read.records.size(), read.total_records);
+         if (read.records.size() < read.total_records) {
+            ++result.files_retained;
+         }
+      } else {
+         result.failed_records += read.records.size();
+         ++result.files_retained;
+      }
+   }
+
+   co_return result;
+}
+
+} // namespace fcl::otlp

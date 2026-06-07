@@ -69,6 +69,7 @@ class call_runtime {
    explicit call_runtime(call_runtime_options options = {});
 
    void observe(const frame& value);
+   void observe_input_stream_end(const frame& value);
    [[nodiscard]] bool active(call_id id) const noexcept;
    [[nodiscard]] std::size_t active_calls() const noexcept;
 

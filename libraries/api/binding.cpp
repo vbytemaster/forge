@@ -153,6 +153,31 @@ void call_runtime::observe(const frame& value) {
    }
 }
 
+void call_runtime::observe_input_stream_end(const frame& value) {
+   if (value.kind != frame_kind::stream_end) {
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "API input stream end observer received non-terminal frame",
+                          fcl::exceptions::ctx("call_id", value.id.value));
+   }
+
+   const auto id = value.id.value;
+   if (id == 0) {
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "API frame call_id must not be zero");
+   }
+
+   const auto active = active_.find(id);
+   if (active == active_.end()) {
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "API frame references unknown call_id",
+                          fcl::exceptions::ctx("call_id", id));
+   }
+
+   if (options_.deadline.count() > 0 &&
+       std::chrono::steady_clock::now() - active->second.started_at > options_.deadline) {
+      active_.erase(active);
+      FCL_THROW_EXCEPTION(exceptions::deadline_exceeded, "API call deadline exceeded",
+                          fcl::exceptions::ctx("call_id", id));
+   }
+}
+
 std::size_t call_runtime::active_calls() const noexcept {
    return active_.size();
 }
@@ -251,13 +276,14 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::ve
 
    if (!calls.active(frames.front().id)) {
       calls.observe(frames.front());
-      for (auto index = std::size_t{1}; index != frames.size(); ++index) {
-         const auto& frame_value = frames[index];
-         if (index + 1U == frames.size() && frame_value.kind == frame_kind::stream_end) {
-            continue;
-         }
-         calls.observe(frame_value);
+   }
+   for (auto index = std::size_t{1}; index != frames.size(); ++index) {
+      const auto& frame_value = frames[index];
+      if (index + 1U == frames.size() && frame_value.kind == frame_kind::stream_end) {
+         calls.observe_input_stream_end(frame_value);
+         continue;
       }
+      calls.observe(frame_value);
    }
 
    auto context = make_context(frames.front());

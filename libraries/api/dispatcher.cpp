@@ -71,7 +71,14 @@ boost::asio::awaitable<std::vector<frame>> frame_dispatcher::dispatch(frame valu
          impl_->grouped.erase(active);
          co_return std::vector<frame>{};
       }
-      if (value.kind != frame_kind::stream_end) {
+      if (value.kind == frame_kind::stream_end) {
+         try {
+            impl_->calls.observe_input_stream_end(value);
+         } catch (...) {
+            impl_->grouped.erase(active);
+            throw;
+         }
+      } else {
          impl_->calls.observe(value);
       }
       active->second.push_back(std::move(value));

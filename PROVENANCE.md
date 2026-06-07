@@ -14,8 +14,15 @@ commits moved and rewrote portions into FCL modules. The following current
 areas retain file-level source lineage or substantial layout/semantic
 continuity:
 
-- `libraries/raw`: raw serialization, datastream, varint, enum/raw variant
-  support.
+- `libraries/raw`: mixed provenance, not a whole-library FC-derived claim.
+  Retained or adapted source includes the byte-compatible pack/unpack
+  templates, variant raw encoding, datastream shape,
+  varint/signed_int/unsigned_int wrappers, `varint.cpp` conversion helpers,
+  and enum serialization behavior that trace to `include/fc/io` and `src/io`.
+  FCL-original additions include the C++ module/target boundary, typed
+  `fcl.raw.exceptions`, macro-only `serialization.hpp` explicit-instantiation
+  helpers, and hardened typed exception plumbing around datastream range
+  errors.
 - `libraries/variant`: variant value/object/static-variant support and legacy
   serialization behavior.
 - `libraries/core`: selected utility code including `uint128`, string helpers,
@@ -51,6 +58,9 @@ this audit:
   DER/PEM helpers, Ed25519, RSA, X25519, X.509, WebAuthn parsing, asymmetric
   facade modules, and rewritten P-256 mechanics where current code no longer
   retains old FC source structure.
+- FCL raw infrastructure added after the initial import, including
+  `fcl.raw.exceptions`, `serialization.hpp`, target/module glue, and typed
+  datastream range-error plumbing.
 - current Glaze-backed `libraries/json`
 - current Boost.Describe-based `libraries/reflect`
 - `libraries/asio`, `libraries/env`, `libraries/exceptions`, `libraries/http`,

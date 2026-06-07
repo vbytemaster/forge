@@ -21,7 +21,7 @@ register/discover against rust-libp2p.
 | Area | Donor source | Accepted pattern | FCL target |
 |---|---|---|---|
 | Kademlia DHT | `donors/libp2p-specs/kad-dht/README.md` | XOR distance over `sha256(key)`, `k=20`, `alpha=10`, bounded query timeouts and closest-peer expansion | `fcl.p2p.dht`, `dht::routing_table`, `dht_query`, `node::async_find_peer` |
-| DHT wire messages | `donors/rust-libp2p/protocols/kad/src/generated/dht.proto`, `donors/go-libp2p-kad-dht/pb/dht.proto`, `donors/go-libp2p-kad-dht/handlers.go` | Length-delimited protobuf message with `FIND_NODE`, `ADD_PROVIDER`, `GET_PROVIDERS`; `ADD_PROVIDER` is send-message and validates provider peer equals stream peer | `dht::codec`, `node::impl::handle_dht`, `node::async_provide` |
+| DHT wire messages | `donors/rust-libp2p/protocols/kad/src/generated/dht.proto`, `donors/go-libp2p-kad-dht/pb/dht.proto`, `donors/go-libp2p-kad-dht/handlers.go` | Length-delimited Protocol Buffers message with `FIND_NODE`, `ADD_PROVIDER`, `GET_PROVIDERS`; `ADD_PROVIDER` is send-message and validates provider peer equals stream peer | `dht::codec`, `node::impl::handle_dht`, `node::async_provide` |
 | Rendezvous protocol | `donors/libp2p-specs/rendezvous/README.md` | `/rendezvous/1.0.0`, register/discover/unregister, TTL, namespace limits, cookie continuation | `fcl.p2p.rendezvous`, `node::impl::handle_rendezvous` |
 | Rendezvous wire messages | `donors/rust-libp2p/protocols/rendezvous/src/generated/rpc.proto`, `donors/rust-libp2p/protocols/rendezvous/src/codec.rs` | Proto2 message types, status codes, signed PeerRecord and cookie format | `rendezvous::codec` |
 

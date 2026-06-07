@@ -21,6 +21,7 @@ set(
    api
    api_transport
    log
+   otlp
    crypto
    multiformats
    asio
@@ -85,6 +86,10 @@ macro(_fcl_add_component component)
          _fcl_add_component(core)
          _fcl_add_component(reflect)
          _fcl_add_component(variant)
+      elseif("${component}" STREQUAL "otlp")
+         _fcl_add_component(log)
+         _fcl_add_component(http)
+         _fcl_add_component(asio)
       elseif("${component}" STREQUAL "crypto")
          _fcl_add_component(core)
          _fcl_add_component(exceptions)

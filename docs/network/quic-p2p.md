@@ -468,7 +468,33 @@ READMEs may link here, but must not define a second block order.
   subscriptions and capped plugin snapshots for application plugins. It is not a
   durable queue, delivery system, authorization layer or replacement for
   `fcl_p2p` GossipSub mesh/scoring/heartbeat mechanics.
-- G.6 optional future checkpoint: `p2p_delivery` may become a separate durable
+- G.6a implemented checkpoint: observability starts as a reusable FCL OTLP logs
+  exporter. OTLP is OpenTelemetry Protocol. `fcl_otlp` exports `fcl_log` records
+  to an operator-configured OpenTelemetry Collector through OTLP/HTTP JSON over
+  `fcl_http` and `fcl_asio`. `fcl_log` remains synchronous and transport-free;
+  the OTLP sink is an optional adapter with bounded queueing, batching,
+  retry/backoff, `Retry-After` handling, `Resource` attributes such as
+  `service.name` and deterministic shutdown. Metrics and traces are later
+  additive exporters, not log appenders.
+- G.6 scope decisions: start with OTLP JSON over HTTP, not a gRPC transport,
+  because gRPC and Protocol Buffers runtime dependencies bring a large
+  event-loop and packaging cost. Do not vendor-lock FCL to backend SDKs for
+  Sentry, Grafana, Datadog or OpenTelemetry C++; backend routing belongs in the
+  Collector.
+- G.6b planned checkpoint: crash capture is separate from the live appender.
+  Signal handlers may only write preallocated records to a local spool with
+  async-signal-safe operations. On the next start, the runtime resends the spool
+  as OTLP fatal log records through the normal appender and then clears it.
+  `std::set_terminate` should capture unhandled C++ exceptions, typed exception
+  code/category and backtrace addresses into the same spool before aborting.
+  Symbolication, redaction and export happen during resend, not in the signal
+  handler.
+- G.6 out of scope: Crashpad/minidump integration, watchdogs for SIGKILL/hangs,
+  metrics registry export and trace/span export remain later optional blocks.
+  Telemetry export is opt-in by config; local spool contents and outgoing
+  attributes must respect redaction rules because peer ids, paths and application
+  context can be sensitive.
+- G.7 optional future checkpoint: `p2p_delivery` may become a separate durable
   async plugin if a product needs store-backed retry. It is separate from the
   host facade, does not promise exactly-once semantics and does not own product
   acknowledgement semantics.
@@ -600,6 +626,12 @@ Accepted:
 - Chained relay paths are a future extension above the compatible one-hop Relay
   v2 baseline, never a replacement for libp2p Relay v2 semantics.
 - Syncthing/libtorrent-style path scoring/backoff.
+- OTLP/HTTP JSON as the first observability export path, with one
+  operator-configured OpenTelemetry Collector endpoint and reusable `fcl_otlp`
+  for logs first, metrics/traces later.
+- Crash reporting through a local durable spool and next-start resend over the
+  same OTLP path. Signal handlers only perform async-signal-safe writes; normal
+  symbolication/redaction/export happens outside the crashing signal context.
 - Transactional outbox style durable retry as an application/plugin-level
   pattern, not a storage dependency inside `fcl_p2p`.
 
@@ -612,6 +644,11 @@ Rejected:
 - Product storage/application semantics inside P2P.
 - Product authorization or business acknowledgement inside P2P.
 - Silent insecure peer identity fallback outside tests.
+- Direct backend SDK lock-in for observability, including Sentry native,
+  OpenTelemetry C++ or per-backend FCL appenders that bypass the Collector.
+- gRPC as the first OTLP transport path for FCL runtime telemetry; it can be
+  revisited only if HTTP/JSON becomes insufficient and dependency/event-loop
+  costs are justified.
 
 ## Verification
 

@@ -486,6 +486,46 @@ BOOST_AUTO_TEST_CASE(binding_plan_dispatches_client_stream_as_item_sequence_and_
    BOOST_TEST(fcl::raw::unpack<protocol::chunk>(responses[0].payload).bytes == "a,b");
 }
 
+BOOST_AUTO_TEST_CASE(api_dispatcher_clears_grouped_stream_on_cancel) {
+   auto runtime = fcl::asio::runtime{};
+   auto registry = fcl::api::registry{};
+   auto descriptor = fcl::api::define<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
+                         .client_stream<&cache_api::upload, protocol::read_chunk, protocol::chunk>("upload")
+                         .build();
+   registry.install<cache_api>(std::move(descriptor), std::make_shared<cache_impl>());
+
+   auto dispatcher = fcl::api::frame_dispatcher{
+       fcl::api::binding().serve(registry).build(),
+       fcl::api::dispatch_options{.max_inflight = 1},
+   };
+   auto start = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 37},
+       .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
+       .method = "upload",
+       .codec = {.value = "fcl.raw"},
+   };
+
+   auto responses = fcl::asio::blocking::run(runtime, dispatcher.dispatch(start));
+   BOOST_TEST(responses.empty());
+   BOOST_TEST(dispatcher.grouped_calls() == 1U);
+   BOOST_TEST(dispatcher.active_calls() == 1U);
+
+   auto cancel = start;
+   cancel.kind = fcl::api::frame_kind::cancel;
+   responses = fcl::asio::blocking::run(runtime, dispatcher.dispatch(cancel));
+   BOOST_TEST(responses.empty());
+   BOOST_TEST(dispatcher.grouped_calls() == 0U);
+   BOOST_TEST(dispatcher.active_calls() == 0U);
+
+   auto replacement = start;
+   replacement.id.value = 38;
+   responses = fcl::asio::blocking::run(runtime, dispatcher.dispatch(replacement));
+   BOOST_TEST(responses.empty());
+   BOOST_TEST(dispatcher.grouped_calls() == 1U);
+   BOOST_TEST(dispatcher.active_calls() == 1U);
+}
+
 BOOST_AUTO_TEST_CASE(binding_plan_dispatch_stream_honors_preobserved_runtime_deadline) {
    auto runtime = fcl::asio::runtime{};
    auto registry = fcl::api::registry{};

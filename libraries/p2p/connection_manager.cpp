@@ -159,8 +159,7 @@ connection_manager::admission connection_manager::remember(session_record record
    const auto direction_saturated = count_direction_sessions(record.direction) >= direction_limit;
    const auto global_saturated = sessions_.size() >= policy_.max_sessions;
    if (direction_saturated) {
-      if (!may_prune || sessions_.size() < policy_.low_watermark ||
-          !prune_one(resources, result.pruned, now, record.direction)) {
+      if (!may_prune || !prune_one(resources, result.pruned, now, record.direction)) {
          return admission{.accepted = false, .reason = "P2P session resource limit reached"};
       }
    }

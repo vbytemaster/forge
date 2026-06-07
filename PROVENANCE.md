@@ -21,9 +21,13 @@ continuity:
 - `libraries/core`: selected utility code including `uint128`, string helpers,
   UTF-8 helpers, type names, time/version helpers where the file history traces
   to the initial FC import.
-- `libraries/crypto`: selected FC/EOS-compatible primitives, encodings, digest
-  wrappers, key/signature compatibility helpers, and BLS/BN/secp256k1 adapter
-  code where file history traces to the initial import or vendored code.
+- `libraries/crypto`: mixed provenance, not a whole-library FC-derived claim.
+  Retained or adapted source includes selected legacy encodings and numeric
+  helpers (`base58`, `base64`, `bigint`, `modular_arithmetic`), embedded
+  CityHash, selected BLS wrappers, selected secp256k1/recovery wrappers, and
+  digest value/bitwise/HMAC/hex compatibility code where current files retain
+  source continuity to the initial import. OpenSSL3 EVP backends and newer
+  high-level crypto APIs are FCL-original rewrites or additions.
 - `libraries/log`: selected legacy logger, log message, log context, appender,
   and config code tracing to FC logging. Newer structured record/sink support,
   `std::source_location` APIs, and other hardened additions are FCL-original.
@@ -42,6 +46,11 @@ this audit:
 - `libraries/config`
 - `libraries/program_options`
 - `libraries/yaml`
+- OpenSSL3-backed crypto mechanics introduced after the initial import,
+  including current AES streaming/GCM/CBC mechanics, random bytes, KDF,
+  DER/PEM helpers, Ed25519, RSA, X25519, X.509, WebAuthn parsing, asymmetric
+  facade modules, and rewritten P-256 mechanics where current code no longer
+  retains old FC source structure.
 - current Glaze-backed `libraries/json`
 - current Boost.Describe-based `libraries/reflect`
 - `libraries/asio`, `libraries/env`, `libraries/exceptions`, `libraries/http`,

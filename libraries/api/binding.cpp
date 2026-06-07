@@ -260,7 +260,7 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::ve
       FCL_THROW_EXCEPTION(exceptions::protocol_error, "API stream dispatch requires at least one frame");
    }
    if (!exported(exports, frames.front().api)) {
-      co_return std::vector<frame>{make_error_response(
+      auto response = make_error_response(
           frames.front(), error_payload{
                             .error = "api_not_exported",
                             .message = "API is not exported by this binding plan",
@@ -271,7 +271,11 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::ve
                                     .category = "fcl.api",
                                     .code = static_cast<std::uint32_t>(exceptions::code::incompatible_version),
                                 },
-                   })};
+                        });
+      if (calls.active(frames.front().id)) {
+         calls.observe(response);
+      }
+      co_return std::vector<frame>{std::move(response)};
    }
 
    if (!calls.active(frames.front().id)) {

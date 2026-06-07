@@ -447,6 +447,7 @@ node::impl::remember_session(std::shared_ptr<node::impl::session_state> session,
       for (auto& stale : pruned) {
          stale->connection.cancel();
       }
+      detail::cancel_rejected_session(session);
       metrics_value.active_sessions = sessions.size();
       ++metrics_value.backpressure_rejections;
       ++metrics_value.connection_rejections;

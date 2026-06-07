@@ -1576,6 +1576,29 @@ BOOST_AUTO_TEST_CASE(p2p_session_lifecycle_ignores_stale_replaced_session) {
    BOOST_TEST(!sessions.contains(current->id));
 }
 
+BOOST_AUTO_TEST_CASE(p2p_session_lifecycle_cancels_rejected_new_session) {
+   struct tracked_connection {
+      void cancel() {
+         canceled = true;
+         ++cancel_count;
+      }
+
+      bool canceled = false;
+      std::size_t cancel_count = 0;
+   };
+   struct tracked_session {
+      bool closed = false;
+      tracked_connection connection;
+   };
+
+   auto rejected = std::make_shared<tracked_session>();
+   detail::cancel_rejected_session(rejected);
+
+   BOOST_TEST(rejected->closed);
+   BOOST_TEST(rejected->connection.canceled);
+   BOOST_TEST(rejected->connection.cancel_count == 1U);
+}
+
 BOOST_AUTO_TEST_CASE(quic_transport_adapter_preserves_endpoint_kind_and_authority) {
    const auto ip4 = fcl::quic::to_transport_endpoint(fcl::quic::endpoint{.host = "127.0.0.1", .port = 4001});
    BOOST_TEST(static_cast<int>(ip4.host_type) == static_cast<int>(fcl::transport::endpoint::host_kind::ip4));

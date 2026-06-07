@@ -605,6 +605,54 @@ BOOST_AUTO_TEST_CASE(api_dispatcher_observes_grouped_stream_end_before_dispatch)
    BOOST_TEST(*upload_calls == 0);
 }
 
+BOOST_AUTO_TEST_CASE(api_dispatcher_releases_preobserved_grouped_call_on_export_denial) {
+   auto runtime = fcl::asio::runtime{};
+   auto registry = fcl::api::registry{};
+   auto descriptor = fcl::api::define<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
+                         .client_stream<&cache_api::upload, protocol::read_chunk, protocol::chunk>("upload")
+                         .build();
+   auto upload_calls = std::make_shared<int>(0);
+   registry.install<cache_api>(std::move(descriptor), std::make_shared<tracking_cache_impl>(upload_calls));
+
+   auto dispatcher = fcl::api::frame_dispatcher{
+       fcl::api::binding()
+           .serve(registry)
+           .export_api<remote_only_api>({.id = {"remote.only"}, .major = 1, .min_revision = 0})
+           .build(),
+       fcl::api::dispatch_options{.max_inflight = 1},
+   };
+   auto start = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 43},
+       .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
+       .method = "upload",
+       .codec = {.value = "fcl.raw"},
+   };
+
+   auto responses = fcl::asio::blocking::run(runtime, dispatcher.dispatch(start));
+   BOOST_TEST(responses.empty());
+   BOOST_TEST(dispatcher.grouped_calls() == 1U);
+   BOOST_TEST(dispatcher.active_calls() == 1U);
+
+   auto end = start;
+   end.kind = fcl::api::frame_kind::stream_end;
+   responses = fcl::asio::blocking::run(runtime, dispatcher.dispatch(end));
+   BOOST_REQUIRE_EQUAL(responses.size(), 1U);
+   BOOST_CHECK(responses[0].kind == fcl::api::frame_kind::error);
+   const auto payload = fcl::raw::unpack<fcl::api::error_payload>(responses[0].payload);
+   BOOST_TEST(payload.error == "api_not_exported");
+   BOOST_TEST(dispatcher.grouped_calls() == 0U);
+   BOOST_TEST(dispatcher.active_calls() == 0U);
+   BOOST_TEST(*upload_calls == 0);
+
+   auto replacement = start;
+   replacement.id.value = 44;
+   responses = fcl::asio::blocking::run(runtime, dispatcher.dispatch(replacement));
+   BOOST_TEST(responses.empty());
+   BOOST_TEST(dispatcher.grouped_calls() == 1U);
+   BOOST_TEST(dispatcher.active_calls() == 1U);
+}
+
 BOOST_AUTO_TEST_CASE(binding_plan_dispatch_stream_honors_preobserved_runtime_deadline) {
    auto runtime = fcl::asio::runtime{};
    auto registry = fcl::api::registry{};

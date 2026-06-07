@@ -444,6 +444,9 @@ node::impl::remember_session(std::shared_ptr<node::impl::session_state> session,
       pubsub_value.outbound_streams.erase(peer);
    }
    if (!admission.accepted) {
+      for (auto& stale : pruned) {
+         stale->connection.cancel();
+      }
       metrics_value.active_sessions = sessions.size();
       ++metrics_value.backpressure_rejections;
       ++metrics_value.connection_rejections;

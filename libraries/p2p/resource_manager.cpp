@@ -151,7 +151,8 @@ bool resource_manager::try_acquire_session(const session_scope& value) noexcept 
    if (empty(value.peer)) {
       return deny();
    }
-   const auto peer_sessions = sessions_by_peer_[value.peer];
+   const auto peer = sessions_by_peer_.find(value.peer);
+   const auto peer_sessions = peer == sessions_by_peer_.end() ? 0 : peer->second;
    const auto inbound = value.direction == session_direction::inbound;
    const auto total = snapshot_.active_inbound_sessions + snapshot_.active_outbound_sessions;
    if (total >= limits_.max_inbound_sessions + limits_.max_outbound_sessions ||

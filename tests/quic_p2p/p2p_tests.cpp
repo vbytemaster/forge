@@ -2023,6 +2023,28 @@ BOOST_AUTO_TEST_CASE(p2p_resource_manager_enforces_connection_session_scopes) {
    BOOST_TEST(snapshot.pending_inbound_sessions == 0U);
    BOOST_TEST(snapshot.pending_outbound_sessions == 0U);
    BOOST_TEST(snapshot.denied >= 3U);
+
+   auto saturated = resource_manager{resource_manager::limits{
+       .max_inbound_sessions = 1,
+       .max_outbound_sessions = 0,
+       .max_sessions_per_peer = 1,
+   }};
+   BOOST_TEST(saturated.try_acquire_session(resource_manager::session_scope{
+       .peer = peer(233),
+       .direction = resource_manager::session_direction::inbound,
+   }));
+   BOOST_TEST(!saturated.try_acquire_session(resource_manager::session_scope{
+       .peer = peer(234),
+       .direction = resource_manager::session_direction::inbound,
+   }));
+   auto saturated_snapshot = saturated.current();
+   BOOST_TEST(saturated_snapshot.active_session_peer_scopes == 1U);
+   saturated.release_session(resource_manager::session_scope{
+       .peer = peer(233),
+       .direction = resource_manager::session_direction::inbound,
+   });
+   saturated_snapshot = saturated.current();
+   BOOST_TEST(saturated_snapshot.active_session_peer_scopes == 0U);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_node_peer_protection_api_is_tagged_and_additive) {

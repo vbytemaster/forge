@@ -442,13 +442,13 @@ class p2p_api_resolver::api::impl final : public p2p_api_resolver::api {
                           fcl::exceptions::ctx("api", api.id.value));
    }
 
-   boost::asio::awaitable<fcl::api::transport::connection>
+   boost::asio::awaitable<resolved_connection>
    open_resolved_connection(fcl::p2p::peer_id peer, fcl::api::api_ref api, fcl::api::descriptor descriptor,
                             resolve_options options) override {
       auto selected = co_await resolve(peer, api, options);
       validate_descriptor_compatible(descriptor, selected.api);
       auto protocol = fcl::p2p::protocol_id{.value = selected.api.protocol};
-      co_return co_await impl_->p2p->open_api_connection(
+      auto connection = co_await impl_->p2p->open_api_connection(
          std::move(peer), std::move(protocol),
          fcl::plugins::p2p_node::remote_options{
             .open_deadline = impl_->open_deadline(options),
@@ -456,6 +456,14 @@ class p2p_api_resolver::api::impl final : public p2p_api_resolver::api {
             .max_inflight = static_cast<std::size_t>(selected.api.max_inflight),
             .max_frame_size = static_cast<std::uint32_t>(selected.api.max_frame_size),
          });
+      co_return resolved_connection{
+         .connection = std::move(connection),
+         .selected = fcl::api::api_ref{
+            .id = std::move(selected.api.id),
+            .major = selected.api.version.major,
+            .min_revision = selected.api.version.revision,
+         },
+      };
    }
 
  private:

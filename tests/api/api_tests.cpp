@@ -313,6 +313,24 @@ class recording_invoker final : public fcl::api::remote_invoker {
    fcl::api::request last;
 };
 
+class recording_remote_mount final : public fcl::api::remote_mount {
+ public:
+   explicit recording_remote_mount(std::shared_ptr<recording_invoker> invoker) : invoker_{std::move(invoker)} {}
+
+ private:
+   boost::asio::awaitable<std::shared_ptr<fcl::api::remote_invoker>>
+   open_remote_invoker(fcl::api::api_ref requested, fcl::api::descriptor) override {
+      last_requested = requested;
+      co_return invoker_;
+   }
+
+ public:
+   fcl::api::api_ref last_requested;
+
+ private:
+   std::shared_ptr<recording_invoker> invoker_;
+};
+
 BOOST_AUTO_TEST_CASE(generated_api_descriptor_records_contract_and_method_metadata) {
    const auto descriptor = cache_api::describe();
 
@@ -349,6 +367,21 @@ BOOST_AUTO_TEST_CASE(generated_proxy_invokes_remote_through_typed_handle) {
    BOOST_TEST(invoker->last.api.min_revision == 8U);
    BOOST_TEST(invoker->last.method == "read");
    BOOST_TEST(invoker->last.codec.value == "fcl.raw");
+}
+
+BOOST_AUTO_TEST_CASE(generated_proxy_preserves_requested_api_revision) {
+   auto runtime = fcl::asio::runtime{};
+   auto invoker = std::make_shared<recording_invoker>();
+   auto mount = recording_remote_mount{invoker};
+
+   auto handle = fcl::asio::blocking::run(runtime, mount.get_remote_api<cache_api>(cache_api::ref(2)));
+   const auto response = fcl::asio::blocking::run(runtime, handle->read({.ref = "abc"}));
+
+   BOOST_TEST(response.bytes == "remote:abc");
+   BOOST_TEST(mount.last_requested.min_revision == 2U);
+   BOOST_TEST(invoker->last.api.id.value == "cache");
+   BOOST_TEST(invoker->last.api.major == 1U);
+   BOOST_TEST(invoker->last.api.min_revision == 2U);
 }
 
 BOOST_AUTO_TEST_CASE(api_body_decode_rejects_trailing_bytes) {

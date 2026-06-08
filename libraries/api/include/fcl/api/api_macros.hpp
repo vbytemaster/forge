@@ -56,7 +56,7 @@
       co_return co_await this->invoker_->template call<                                                            \
          ::fcl::api::method_request_t<&INTERFACE::FCL_API_DETAIL_METHOD_NAME(METHOD)>,                             \
          ::fcl::api::method_response_t<&INTERFACE::FCL_API_DETAIL_METHOD_NAME(METHOD)>>(                           \
-            ::fcl::api::api_traits<INTERFACE>::describe(), ::fcl::api::api_traits<INTERFACE>::ref(),               \
+            ::fcl::api::api_traits<INTERFACE>::describe(), this->selected_api_,                                    \
             BOOST_PP_STRINGIZE(FCL_API_DETAIL_METHOD_NAME(METHOD)), std::move(request));                           \
    }
 
@@ -85,17 +85,22 @@
    namespace detail {                                                                                             \
    template <> class proxy_impl<INTERFACE, true> : public INTERFACE {                                              \
     public:                                                                                                        \
-      explicit proxy_impl(std::shared_ptr<remote_invoker> invoker) : invoker_(std::move(invoker)) {}               \
+      explicit proxy_impl(std::shared_ptr<remote_invoker> invoker, api_ref selected_api)                           \
+          : invoker_(std::move(invoker)), selected_api_(std::move(selected_api)) {}                                \
       FCL_API_DETAIL_PROXY_METHODS(INTERFACE, __VA_ARGS__)                                                         \
     private:                                                                                                       \
       std::shared_ptr<remote_invoker> invoker_;                                                                    \
+      api_ref selected_api_;                                                                                       \
    };                                                                                                              \
    }                                                                                                               \
-   template <> class proxy<INTERFACE> final                                                                         \
+   template <> class proxy<INTERFACE> final                                                                        \
        : public detail::proxy_impl<INTERFACE, remote_interface<INTERFACE>> {                                       \
     public:                                                                                                        \
       explicit proxy(std::shared_ptr<remote_invoker> invoker)                                                      \
-          : detail::proxy_impl<INTERFACE, remote_interface<INTERFACE>>(std::move(invoker)) {}                      \
+          : proxy(std::move(invoker), INTERFACE::ref()) {}                                                         \
+      explicit proxy(std::shared_ptr<remote_invoker> invoker, api_ref selected_api)                                \
+          : detail::proxy_impl<INTERFACE, remote_interface<INTERFACE>>(std::move(invoker),                         \
+                                                                       std::move(selected_api)) {}                 \
    };                                                                                                              \
    }                                                                                                               \
    FCL_API_DETAIL_DIAGNOSTIC_POP

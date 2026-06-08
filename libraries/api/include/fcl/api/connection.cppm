@@ -98,6 +98,7 @@ template <typename Interface, bool Remote> class proxy_impl;
 template <typename Interface> class proxy_impl<Interface, false> {
  public:
    explicit proxy_impl(std::shared_ptr<remote_invoker>) {}
+   explicit proxy_impl(std::shared_ptr<remote_invoker> invoker, api_ref) : proxy_impl(std::move(invoker)) {}
 };
 
 } // namespace detail
@@ -125,7 +126,7 @@ class remote_mount {
       static_assert(remote_interface<Interface>, "Interface must opt in to fcl::api::surface::remote");
       auto remote_descriptor = Interface::describe();
       auto invoker = co_await open_remote_invoker(requested, remote_descriptor);
-      co_return handle<Interface>{std::make_shared<proxy<Interface>>(std::move(invoker))};
+      co_return handle<Interface>{std::make_shared<proxy<Interface>>(std::move(invoker), std::move(requested))};
    }
 
  protected:

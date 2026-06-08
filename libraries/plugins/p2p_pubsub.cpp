@@ -3,10 +3,12 @@ module;
 #include <fcl/exceptions/macros.hpp>
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
+#include <boost/system/error_code.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -114,8 +116,21 @@ struct p2p_pubsub::impl : public std::enable_shared_from_this<p2p_pubsub::impl> 
       std::chrono::milliseconds deadline{0};
    };
 
+   struct join_waiter {
+      explicit join_waiter(boost::asio::any_io_executor executor) : timer(std::move(executor)) {
+         timer.expires_at(boost::asio::steady_timer::time_point::max());
+      }
+
+      boost::asio::steady_timer timer;
+      std::exception_ptr error;
+      bool ready = false;
+   };
+
    struct topic_state {
       std::map<std::uint64_t, handler_record> handlers;
+      std::vector<std::shared_ptr<join_waiter>> waiters;
+      bool joining = false;
+      bool joined = false;
    };
 
    config settings;
@@ -316,7 +331,9 @@ class p2p_pubsub::api::impl final : public p2p_pubsub::api {
       }
 
       auto value = subscription{};
-      auto first_for_topic = false;
+      auto join_leader = false;
+      auto waiter = std::shared_ptr<p2p_pubsub::impl::join_waiter>{};
+      const auto executor = co_await boost::asio::this_coro::executor;
       {
          auto lock = std::scoped_lock{impl_->mutex};
          const auto new_topic = !impl_->topics.contains(subject.value);
@@ -329,7 +346,6 @@ class p2p_pubsub::api::impl final : public p2p_pubsub::api {
             FCL_THROW_EXCEPTION(exceptions::handler_limit, "P2P PubSub handler limit reached",
                                 fcl::exceptions::ctx("topic", subject.value));
          }
-         first_for_topic = state.handlers.empty();
          value = subscription{.id = impl_->next_subscription++, .subject = subject};
          auto deadline = options.handler_deadline;
          if (deadline.count() <= 0) {
@@ -341,9 +357,29 @@ class p2p_pubsub::api::impl final : public p2p_pubsub::api {
                                              .callback = std::move(callback),
                                              .deadline = deadline,
                                           });
+         if (!state.joined) {
+            if (state.joining) {
+               waiter = std::make_shared<p2p_pubsub::impl::join_waiter>(executor);
+               state.waiters.push_back(waiter);
+            } else {
+               state.joining = true;
+               join_leader = true;
+            }
+         }
       }
 
-      if (first_for_topic) {
+      if (waiter) {
+         while (!waiter->ready) {
+            auto error = boost::system::error_code{};
+            co_await waiter->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+         }
+         if (waiter->error) {
+            std::rethrow_exception(waiter->error);
+         }
+         co_return value;
+      }
+
+      if (join_leader) {
          auto self = impl_;
          try {
             (void)co_await source.async_join_topic(
@@ -351,13 +387,33 @@ class p2p_pubsub::api::impl final : public p2p_pubsub::api {
                            -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
                   co_return co_await self->handle_event(std::move(event));
                });
+            auto waiters = std::vector<std::shared_ptr<p2p_pubsub::impl::join_waiter>>{};
+            {
+               auto lock = std::scoped_lock{impl_->mutex};
+               if (auto found = impl_->topics.find(value.subject.value); found != impl_->topics.end()) {
+                  found->second.joined = true;
+                  found->second.joining = false;
+                  waiters = std::move(found->second.waiters);
+               }
+            }
+            for (auto& pending : waiters) {
+               pending->ready = true;
+               pending->timer.cancel();
+            }
          } catch (...) {
-            auto lock = std::scoped_lock{impl_->mutex};
-            if (auto found = impl_->topics.find(value.subject.value); found != impl_->topics.end()) {
-               found->second.handlers.erase(value.id);
-               if (found->second.handlers.empty()) {
+            auto failure = std::current_exception();
+            auto waiters = std::vector<std::shared_ptr<p2p_pubsub::impl::join_waiter>>{};
+            {
+               auto lock = std::scoped_lock{impl_->mutex};
+               if (auto found = impl_->topics.find(value.subject.value); found != impl_->topics.end()) {
+                  waiters = std::move(found->second.waiters);
                   impl_->topics.erase(found);
                }
+            }
+            for (auto& pending : waiters) {
+               pending->error = failure;
+               pending->ready = true;
+               pending->timer.cancel();
             }
             throw;
          }

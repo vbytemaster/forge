@@ -1,14 +1,18 @@
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/describe.hpp>
 #include <boost/test/unit_test.hpp>
 #include <fcl/api/api_macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -280,6 +284,168 @@ bool wait_for_pubsub_peer(const fcl::plugins::p2p_pubsub::api& pubsub, std::chro
       },
       timeout);
 }
+
+template <typename Predicate>
+boost::asio::awaitable<bool> async_wait_for_condition(Predicate predicate, std::chrono::milliseconds timeout) {
+   auto executor = co_await boost::asio::this_coro::executor;
+   const auto deadline = std::chrono::steady_clock::now() + timeout;
+   while (std::chrono::steady_clock::now() < deadline) {
+      if (predicate()) {
+         co_return true;
+      }
+      auto timer = boost::asio::steady_timer{executor, std::chrono::milliseconds{10}};
+      co_await timer.async_wait(boost::asio::use_awaitable);
+   }
+   co_return predicate();
+}
+
+struct fake_pubsub_source_state {
+   mutable std::mutex mutex;
+   bool release_join = false;
+   bool fail_join = false;
+   std::size_t enable_calls = 0;
+   std::size_t join_attempts = 0;
+   std::size_t leave_attempts = 0;
+   std::size_t joined_handlers = 0;
+
+   [[nodiscard]] std::size_t joins() const {
+      auto lock = std::scoped_lock{mutex};
+      return join_attempts;
+   }
+
+   [[nodiscard]] bool released() const {
+      auto lock = std::scoped_lock{mutex};
+      return release_join;
+   }
+
+   void release(bool fail) {
+      auto lock = std::scoped_lock{mutex};
+      fail_join = fail;
+      release_join = true;
+   }
+};
+
+struct subscribe_task_result {
+   mutable std::mutex mutex;
+   bool done = false;
+   std::exception_ptr error;
+   std::optional<fcl::plugins::p2p_pubsub::subscription> value;
+
+   void complete(fcl::plugins::p2p_pubsub::subscription subscription) {
+      auto lock = std::scoped_lock{mutex};
+      value = std::move(subscription);
+      done = true;
+   }
+
+   void fail(std::exception_ptr exception) {
+      auto lock = std::scoped_lock{mutex};
+      error = std::move(exception);
+      done = true;
+   }
+
+   [[nodiscard]] bool finished() const {
+      auto lock = std::scoped_lock{mutex};
+      return done;
+   }
+
+   [[nodiscard]] bool failed() const {
+      auto lock = std::scoped_lock{mutex};
+      return error != nullptr;
+   }
+};
+
+class fake_pubsub_source final : public fcl::plugins::p2p_node::pubsub_source {
+ public:
+   explicit fake_pubsub_source(std::shared_ptr<fake_pubsub_source_state> state) : state_{std::move(state)} {}
+
+   void enable(fcl::p2p::pubsub::options) override {
+      auto lock = std::scoped_lock{state_->mutex};
+      ++state_->enable_calls;
+   }
+
+   [[nodiscard]] fcl::p2p::peer_id local_peer() const override {
+      return fcl::p2p::peer_id{.value = "fake-pubsub-peer"};
+   }
+
+   boost::asio::awaitable<fcl::p2p::pubsub::message>
+   async_publish_message(fcl::p2p::pubsub::topic subject, std::vector<std::uint8_t> data,
+                         fcl::p2p::pubsub::publish_options) override {
+      co_return fcl::p2p::pubsub::message{
+         .from = local_peer(),
+         .data = std::move(data),
+         .seqno = {1},
+         .subject = std::move(subject),
+      };
+   }
+
+   boost::asio::awaitable<fcl::p2p::pubsub::subscription>
+   async_join_topic(fcl::p2p::pubsub::topic subject, fcl::p2p::pubsub::handler) override {
+      auto executor = co_await boost::asio::this_coro::executor;
+      {
+         auto lock = std::scoped_lock{state_->mutex};
+         ++state_->join_attempts;
+      }
+      while (!state_->released()) {
+         auto timer = boost::asio::steady_timer{executor, std::chrono::milliseconds{10}};
+         co_await timer.async_wait(boost::asio::use_awaitable);
+      }
+      {
+         auto lock = std::scoped_lock{state_->mutex};
+         if (state_->fail_join) {
+            FCL_THROW_EXCEPTION(fcl::plugins::p2p_pubsub::exceptions::handler_limit,
+                                "fake PubSub source join failed");
+         }
+         ++state_->joined_handlers;
+      }
+      co_return fcl::p2p::pubsub::subscription{.subscribe = true, .subject = std::move(subject)};
+   }
+
+   boost::asio::awaitable<void> async_leave_topic(fcl::p2p::pubsub::topic) override {
+      auto lock = std::scoped_lock{state_->mutex};
+      ++state_->leave_attempts;
+      co_return;
+   }
+
+   fcl::p2p::pubsub::snapshot snapshot() const override {
+      return fcl::p2p::pubsub::snapshot{};
+   }
+
+ private:
+   std::shared_ptr<fake_pubsub_source_state> state_;
+};
+
+class fake_p2p_node_plugin final : public fcl::app::plugin {
+ public:
+   explicit fake_p2p_node_plugin(std::shared_ptr<fake_pubsub_source_state> state) : state_{std::move(state)} {}
+
+   [[nodiscard]] fcl::app::plugin_id id() const override {
+      return fcl::app::plugin_id{.value = "fcl.p2p_node"};
+   }
+
+   [[nodiscard]] std::string version() const override {
+      return "test";
+   }
+
+   boost::asio::awaitable<void> provide(fcl::api::provider& provider) override {
+      provider.install<fcl::plugins::p2p_node::pubsub_source>(std::make_shared<fake_pubsub_source>(state_));
+      co_return;
+   }
+
+   boost::asio::awaitable<void> initialize(fcl::app::plugin_context&) override {
+      co_return;
+   }
+
+   boost::asio::awaitable<void> startup() override {
+      co_return;
+   }
+
+   boost::asio::awaitable<void> shutdown() override {
+      co_return;
+   }
+
+ private:
+   std::shared_ptr<fake_pubsub_source_state> state_;
+};
 
 struct scripted_resolver_state {
    std::vector<fcl::plugins::p2p_api_resolver::response> responses;
@@ -641,6 +807,25 @@ class pubsub_application final : public fcl::app::application_shell {
       registry.register_plugin(fcl::plugins::p2p_node::descriptor());
       registry.register_plugin(fcl::plugins::p2p_pubsub::descriptor());
    }
+};
+
+class fake_pubsub_application final : public fcl::app::application_shell {
+ public:
+   explicit fake_pubsub_application(std::shared_ptr<fake_pubsub_source_state> state) : state_{std::move(state)} {}
+
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(fcl::app::plugin_descriptor{
+         .id = fcl::app::plugin_id{.value = "fcl.p2p_node"},
+         .factory = [state = state_] {
+            return std::make_unique<fake_p2p_node_plugin>(state);
+         },
+      });
+      registry.register_plugin(fcl::plugins::p2p_pubsub::descriptor());
+   }
+
+ private:
+   std::shared_ptr<fake_pubsub_source_state> state_;
 };
 
 class resolver_plugin_application final : public fcl::app::application_shell {
@@ -1178,6 +1363,122 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_requests_core_pubsub_capability_before_st
    BOOST_TEST(subscription.id != 0U);
    BOOST_TEST(pubsub->snapshot().core.topics == 1U);
    BOOST_TEST(pubsub->subscriptions().size() == 1U);
+
+   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_serializes_first_join_per_topic) {
+   auto source_state = std::make_shared<fake_pubsub_source_state>();
+   auto app = fake_pubsub_application{source_state};
+   fcl::asio::blocking::run(app.runtime(), app.startup());
+
+   auto pubsub = app.apis().get<fcl::plugins::p2p_pubsub::api>(
+      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
+   const auto topic = fcl::p2p::pubsub::topic{.value = "fcl.fake.pending"};
+   auto first = std::make_shared<subscribe_task_result>();
+   auto second = std::make_shared<subscribe_task_result>();
+   auto handler = [](fcl::plugins::p2p_pubsub::message) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+      co_return fcl::p2p::pubsub::validation_result::accept;
+   };
+
+   fcl::asio::blocking::run(
+      app.runtime(), [&]() -> boost::asio::awaitable<void> {
+         auto executor = co_await boost::asio::this_coro::executor;
+         boost::asio::co_spawn(
+            executor,
+            [pubsub, topic, first, handler]() mutable -> boost::asio::awaitable<void> {
+               try {
+                  first->complete(co_await pubsub->subscribe(topic, handler));
+               } catch (...) {
+                  first->fail(std::current_exception());
+               }
+            },
+            boost::asio::detached);
+         boost::asio::co_spawn(
+            executor,
+            [pubsub, topic, second, handler]() mutable -> boost::asio::awaitable<void> {
+               try {
+                  second->complete(co_await pubsub->subscribe(topic, handler));
+               } catch (...) {
+                  second->fail(std::current_exception());
+               }
+            },
+            boost::asio::detached);
+
+         BOOST_REQUIRE(co_await async_wait_for_condition([&] { return source_state->joins() == 1U; },
+                                                        std::chrono::seconds{1}));
+         auto settle_timer = boost::asio::steady_timer{executor, std::chrono::milliseconds{50}};
+         co_await settle_timer.async_wait(boost::asio::use_awaitable);
+         BOOST_TEST(!first->finished());
+         BOOST_TEST(!second->finished());
+         source_state->release(false);
+         BOOST_REQUIRE(co_await async_wait_for_condition([&] { return first->finished() && second->finished(); },
+                                                        std::chrono::seconds{1}));
+      }());
+
+   BOOST_TEST(!first->failed());
+   BOOST_TEST(!second->failed());
+   BOOST_TEST(source_state->joins() == 1U);
+   BOOST_TEST(pubsub->snapshot().topics == 1U);
+   BOOST_TEST(pubsub->subscriptions().size() == 2U);
+
+   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_failed_first_join_clears_pending_topic) {
+   auto source_state = std::make_shared<fake_pubsub_source_state>();
+   auto app = fake_pubsub_application{source_state};
+   fcl::asio::blocking::run(app.runtime(), app.startup());
+
+   auto pubsub = app.apis().get<fcl::plugins::p2p_pubsub::api>(
+      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
+   const auto topic = fcl::p2p::pubsub::topic{.value = "fcl.fake.failed"};
+   auto first = std::make_shared<subscribe_task_result>();
+   auto second = std::make_shared<subscribe_task_result>();
+   auto handler = [](fcl::plugins::p2p_pubsub::message) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+      co_return fcl::p2p::pubsub::validation_result::accept;
+   };
+
+   fcl::asio::blocking::run(
+      app.runtime(), [&]() -> boost::asio::awaitable<void> {
+         auto executor = co_await boost::asio::this_coro::executor;
+         boost::asio::co_spawn(
+            executor,
+            [pubsub, topic, first, handler]() mutable -> boost::asio::awaitable<void> {
+               try {
+                  first->complete(co_await pubsub->subscribe(topic, handler));
+               } catch (...) {
+                  first->fail(std::current_exception());
+               }
+            },
+            boost::asio::detached);
+         boost::asio::co_spawn(
+            executor,
+            [pubsub, topic, second, handler]() mutable -> boost::asio::awaitable<void> {
+               try {
+                  second->complete(co_await pubsub->subscribe(topic, handler));
+               } catch (...) {
+                  second->fail(std::current_exception());
+               }
+            },
+            boost::asio::detached);
+
+         BOOST_REQUIRE(co_await async_wait_for_condition([&] { return source_state->joins() == 1U; },
+                                                        std::chrono::seconds{1}));
+         source_state->release(true);
+         BOOST_REQUIRE(co_await async_wait_for_condition([&] { return first->finished() && second->finished(); },
+                                                        std::chrono::seconds{1}));
+      }());
+
+   BOOST_TEST(first->failed());
+   BOOST_TEST(second->failed());
+   BOOST_TEST(pubsub->snapshot().topics == 0U);
+   BOOST_TEST(pubsub->subscriptions().empty());
+
+   source_state->release(false);
+   const auto retry = fcl::asio::blocking::run(app.runtime(), pubsub->subscribe(topic, handler));
+   BOOST_TEST(retry.subject.value == topic.value);
+   BOOST_TEST(source_state->joins() == 2U);
 
    fcl::asio::blocking::run(app.runtime(), app.shutdown());
 }

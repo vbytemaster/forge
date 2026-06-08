@@ -37,6 +37,7 @@ class p2p_api_resolver final : public fcl::app::plugin {
    struct method;
    struct entry;
    struct resolution;
+   struct resolved_connection;
    struct query;
    struct response;
    class exceptions;
@@ -144,6 +145,11 @@ struct p2p_api_resolver::resolution {
    bool operator==(const resolution&) const = default;
 };
 
+struct p2p_api_resolver::resolved_connection {
+   fcl::api::transport::connection connection;
+   fcl::api::api_ref selected;
+};
+
 struct p2p_api_resolver::query {
    std::vector<fcl::api::api_ref> apis;
 
@@ -173,16 +179,16 @@ class p2p_api_resolver::api : public fcl::api::contract<p2p_api_resolver::api> {
       auto requested = fcl::api::api_ref{.id = descriptor.id,
                                          .major = descriptor.version.major,
                                          .min_revision = descriptor.version.revision};
-      auto connection =
+      auto resolved =
          co_await open_resolved_connection(std::move(peer), std::move(requested), std::move(descriptor), options);
-      co_return co_await connection.template get_remote_api<Interface>();
+      co_return co_await resolved.connection.template get_remote_api<Interface>(std::move(resolved.selected));
    }
 
  private:
    friend class p2p_api_resolver;
    class impl;
 
-   virtual boost::asio::awaitable<fcl::api::transport::connection>
+   virtual boost::asio::awaitable<resolved_connection>
    open_resolved_connection(fcl::p2p::peer_id peer, fcl::api::api_ref api, fcl::api::descriptor descriptor,
                             resolve_options options) = 0;
 };

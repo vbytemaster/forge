@@ -73,7 +73,7 @@ class cache_api
 
 } // namespace api_transport_typed
 
-FCL_API(::api_transport_typed::cache_api, FCL_API_CONTRACT("cache", 1, 0), FCL_API_METHOD(read))
+FCL_API(::api_transport_typed::cache_api, FCL_API_CONTRACT("cache", 1, 8), FCL_API_METHOD(read))
 
 namespace {
 
@@ -694,6 +694,36 @@ BOOST_AUTO_TEST_CASE(api_transport_connection_returns_typed_remote_handle) {
    const auto request = unpack_written_frame(model->writes.front());
    BOOST_TEST(request.method == "read");
    BOOST_TEST(fcl::api::unpack_body<api_transport_typed::read_chunk>(request.payload).ref == "typed");
+}
+
+BOOST_AUTO_TEST_CASE(connection_get_remote_api_preserves_requested_revision) {
+   auto runtime = fcl::asio::runtime{};
+   auto model = std::make_shared<fake_stream>();
+   model->reads.push_back(pack_api_frame(fcl::api::frame{
+       .kind = fcl::api::frame_kind::response,
+       .id = {.value = 1},
+       .api = {.id = {"cache"}, .major = 1, .min_revision = 2},
+       .method = "read",
+       .codec = {.value = "fcl.raw"},
+       .payload = fcl::api::pack_body(api_transport_typed::chunk{.bytes = "typed:older"}),
+   }));
+
+   auto scenario = [model]() -> boost::asio::awaitable<void> {
+      auto connection = fcl::api::transport::connection{make_stream(model), fcl::api::transport::options{}};
+      auto cache = co_await connection.get_remote_api<api_transport_typed::cache_api>(
+         api_transport_typed::cache_api::ref(2));
+      const auto response = co_await cache->read(api_transport_typed::read_chunk{.ref = "typed"});
+
+      BOOST_TEST(response.bytes == "typed:older");
+   };
+
+   fcl::asio::blocking::run(runtime, scenario());
+   BOOST_REQUIRE_EQUAL(model->writes.size(), 1U);
+   const auto request = unpack_written_frame(model->writes.front());
+   BOOST_TEST(request.api.id.value == "cache");
+   BOOST_TEST(request.api.major == 1U);
+   BOOST_TEST(request.api.min_revision == 2U);
+   BOOST_TEST(request.method == "read");
 }
 
 BOOST_AUTO_TEST_CASE(api_transport_serve_stream_dispatches_requests) {

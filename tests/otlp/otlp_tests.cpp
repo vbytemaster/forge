@@ -50,8 +50,9 @@ struct collected_request {
 
 class fake_collector {
  public:
-   fake_collector(fcl::asio::runtime& runtime, std::vector<collector_response> responses)
+   fake_collector(fcl::asio::runtime& runtime, std::vector<collector_response> responses, bool block_responses = false)
        : responses_(std::move(responses)),
+         block_responses_(block_responses),
          server_(runtime, {.bind_address = "127.0.0.1", .port = 0},
                  [this](fcl::http::route_context& context) { return handle(context); }) {
       if (responses_.empty()) {
@@ -68,6 +69,7 @@ class fake_collector {
    }
 
    ~fake_collector() {
+      release_responses();
       server_.stop();
       // fcl::http::server::stop() closes accept, while active sessions finish on runtime workers.
       std::this_thread::sleep_for(20ms);
@@ -85,6 +87,14 @@ class fake_collector {
    [[nodiscard]] bool wait_for_requests(std::size_t count, std::chrono::milliseconds timeout = 2s) const {
       auto lock = std::unique_lock{mutex_};
       return ready_.wait_for(lock, timeout, [&] { return requests_.size() >= count; });
+   }
+
+   void release_responses() {
+      {
+         const auto lock = std::scoped_lock{mutex_};
+         release_responses_ = true;
+      }
+      response_ready_.notify_all();
    }
 
  private:
@@ -107,6 +117,11 @@ class fake_collector {
       }
       ready_.notify_all();
 
+      if (block_responses_) {
+         auto lock = std::unique_lock{mutex_};
+         response_ready_.wait(lock, [&] { return release_responses_; });
+      }
+
       auto response = fcl::http::make_text_response(context.request, response_value.status, response_value.body,
                                                     "application/json");
       if (response_value.retry_after.has_value()) {
@@ -116,9 +131,12 @@ class fake_collector {
    }
 
    std::vector<collector_response> responses_;
+   bool block_responses_ = false;
+   bool release_responses_ = false;
    fcl::http::server server_;
    mutable std::mutex mutex_;
    mutable std::condition_variable ready_;
+   mutable std::condition_variable response_ready_;
    std::vector<collected_request> requests_;
 };
 
@@ -516,6 +534,65 @@ BOOST_AUTO_TEST_CASE(crash_resend_skips_active_current_process_spool) {
 
    struct stat stat_value {};
    BOOST_REQUIRE(::lstat(path.c_str(), &stat_value) == 0);
+   BOOST_TEST(S_ISREG(stat_value.st_mode));
+   BOOST_TEST(stat_value.st_uid == ::geteuid());
+   BOOST_TEST((stat_value.st_mode & (S_IWGRP | S_IWOTH)) == 0);
+}
+
+BOOST_AUTO_TEST_CASE(crash_resend_does_not_mutate_spool_when_capture_installs_concurrently) {
+   auto source_directory = temp_directory{"fcl-otlp-crash-race-source"};
+   BOOST_TEST(run_crash_helper("sigabrt", source_directory.path()) == 0);
+   const auto source = first_spool_file(source_directory.path());
+
+   auto directory = temp_directory{"fcl-otlp-crash-race"};
+   const auto active_path = directory.path() / ("crash-" + std::to_string(::getpid()) + ".spool");
+   std::filesystem::copy_file(source, active_path);
+   std::filesystem::permissions(active_path, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                                std::filesystem::perm_options::replace);
+
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto collector = fake_collector{runtime, {{.status = fcl::http::status::ok}}, true};
+   auto exporter = fcl::otlp::log_exporter{runtime, make_options(collector)};
+
+   auto result = fcl::otlp::crash_resend_result{};
+   auto error = std::exception_ptr{};
+   auto resend = std::thread{[&] {
+      try {
+         result =
+             fcl::asio::blocking::run(runtime, fcl::otlp::async_resend_crashes(exporter, make_spool_options(directory.path())));
+      } catch (...) {
+         error = std::current_exception();
+      }
+   }};
+
+   if (!collector.wait_for_requests(1)) {
+      collector.release_responses();
+      resend.join();
+      BOOST_FAIL("expected resend to reach the fake OTLP collector before installing crash capture");
+   }
+
+   auto options = make_spool_options(directory.path());
+   options.capture_terminate = false;
+   auto guard = fcl::otlp::install_crash_capture(options);
+   BOOST_REQUIRE(guard);
+   BOOST_CHECK_THROW((void)fcl::otlp::install_crash_capture(options), fcl::otlp::exceptions::capture_active);
+
+   collector.release_responses();
+   resend.join();
+   if (error) {
+      std::rethrow_exception(error);
+   }
+   fcl::asio::blocking::run(runtime, exporter.async_shutdown());
+
+   BOOST_TEST(result.records_read == 1U);
+   BOOST_TEST(result.exported_records == 1U);
+   BOOST_TEST(result.files_retained == 1U);
+   BOOST_TEST(std::filesystem::exists(active_path));
+   BOOST_TEST(!std::filesystem::exists(active_path.string() + ".bad"));
+   BOOST_TEST(count_spool_files(directory.path()) == 1U);
+
+   struct stat stat_value {};
+   BOOST_REQUIRE(::lstat(active_path.c_str(), &stat_value) == 0);
    BOOST_TEST(S_ISREG(stat_value.st_mode));
    BOOST_TEST(stat_value.st_uid == ::geteuid());
    BOOST_TEST((stat_value.st_mode & (S_IWGRP | S_IWOTH)) == 0);

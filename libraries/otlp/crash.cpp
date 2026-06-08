@@ -18,6 +18,7 @@ module;
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -135,12 +136,23 @@ void write_all_noexcept(int fd, const disk_record& record) noexcept {
 
 struct crash_state;
 
+#if defined(__unix__) || defined(__APPLE__)
+struct spool_identity {
+   pid_t pid = 0;
+   dev_t device = 0;
+   ino_t inode = 0;
+   std::string name;
+};
+#endif
+
 std::atomic<crash_state*> active_capture{nullptr};
+std::mutex capture_lifecycle_mutex;
 
 struct crash_state {
 #if defined(__unix__) || defined(__APPLE__)
    int fd = -1;
    pid_t pid = 0;
+   spool_identity identity;
    volatile std::sig_atomic_t records_written = 0;
    std::sig_atomic_t max_records = 0;
    std::vector<int> installed_signals;
@@ -161,8 +173,11 @@ struct crash_state {
       }
       restored = true;
 
-      auto* expected = this;
-      active_capture.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
+      {
+         const auto lock = std::scoped_lock{capture_lifecycle_mutex};
+         auto* expected = this;
+         active_capture.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
+      }
 
       if (terminate_installed) {
          std::set_terminate(previous_terminate);
@@ -437,6 +452,7 @@ struct open_spool_result {
    int fd = -1;
    std::size_t existing_records = 0;
    std::size_t max_records = 0;
+   spool_identity identity;
 };
 
 [[nodiscard]] std::size_t max_file_records(const crash_spool_options& options) noexcept {
@@ -519,7 +535,18 @@ void validate_existing_records(int fd, std::size_t count, const std::filesystem:
    }
    (void)checked_signal_count(existing, path);
    (void)checked_signal_count(existing + writable, path);
-   return open_spool_result{.fd = fd.release(), .existing_records = existing, .max_records = existing + writable};
+   return open_spool_result{
+       .fd = fd.release(),
+       .existing_records = existing,
+       .max_records = existing + writable,
+       .identity =
+           spool_identity{
+               .pid = ::getpid(),
+               .device = stat_value.st_dev,
+               .inode = stat_value.st_ino,
+               .name = path.filename().string(),
+           },
+   };
 }
 
 open_spool_result open_spool_file(const std::filesystem::path& path, const crash_spool_options& options) {
@@ -583,13 +610,6 @@ struct spool_entry {
 
 [[nodiscard]] bool is_spool_name(std::string_view value) {
    return value.starts_with("crash-") && value.ends_with(".spool");
-}
-
-[[nodiscard]] bool is_active_current_process_spool(const spool_entry& entry) {
-   if (active_capture.load(std::memory_order_acquire) == nullptr) {
-      return false;
-   }
-   return entry.name == "crash-" + std::to_string(::getpid()) + ".spool";
 }
 
 std::vector<spool_entry> list_spool_files(const std::filesystem::path& directory, int directory_fd) {
@@ -658,6 +678,37 @@ open_existing_result open_existing_spool_file(int directory_fd, const spool_entr
       return open_existing_result{.unsafe = true};
    }
    return open_existing_result{.fd = std::move(fd), .stat_value = stat_value};
+}
+
+[[nodiscard]] bool active_spool_matches_locked(int directory_fd, const spool_entry& entry) {
+   auto* state = active_capture.load(std::memory_order_acquire);
+   if (state == nullptr) {
+      return false;
+   }
+   if (entry.name != state->identity.name || state->identity.pid != ::getpid()) {
+      return false;
+   }
+
+   auto opened = open_existing_spool_file(directory_fd, entry);
+   if (opened.missing || opened.unsafe) {
+      return false;
+   }
+   return opened.stat_value.st_dev == state->identity.device && opened.stat_value.st_ino == state->identity.inode;
+}
+
+[[nodiscard]] bool is_active_current_process_spool(int directory_fd, const spool_entry& entry) {
+   const auto lock = std::scoped_lock{capture_lifecycle_mutex};
+   return active_spool_matches_locked(directory_fd, entry);
+}
+
+template <typename Mutation>
+[[nodiscard]] bool mutate_if_not_active_current_spool(int directory_fd, const spool_entry& entry, Mutation&& mutation) {
+   const auto lock = std::scoped_lock{capture_lifecycle_mutex};
+   if (active_spool_matches_locked(directory_fd, entry)) {
+      return false;
+   }
+   std::forward<Mutation>(mutation)();
+   return true;
 }
 
 [[nodiscard]] bool read_exact_or_malformed(int fd, void* out, std::size_t size,
@@ -896,24 +947,28 @@ crash_guard::operator bool() const noexcept {
 crash_guard install_crash_capture(crash_spool_options options) {
    validate_options(options, true);
    ensure_crash_directory(options.directory);
-   if (active_capture.load(std::memory_order_acquire) != nullptr) {
-      FCL_THROW_EXCEPTION(exceptions::capture_active, "OTLP crash capture is already active");
-   }
 
    auto state = std::make_shared<crash_state>();
    state->chain_after_capture = options.chain_after_capture;
+   {
+      const auto lock = std::scoped_lock{capture_lifecycle_mutex};
+      if (active_capture.load(std::memory_order_acquire) != nullptr) {
+         FCL_THROW_EXCEPTION(exceptions::capture_active, "OTLP crash capture is already active");
+      }
 #if defined(__unix__) || defined(__APPLE__)
-   state->pid = ::getpid();
-   const auto path = spool_path_for(options.directory, static_cast<std::uint64_t>(state->pid));
-   const auto opened = open_spool_file(path, options);
-   state->records_written = checked_signal_count(opened.existing_records, path);
-   state->max_records = checked_signal_count(opened.max_records, path);
-   state->fd = opened.fd;
+      state->pid = ::getpid();
+      const auto path = spool_path_for(options.directory, static_cast<std::uint64_t>(state->pid));
+      const auto opened = open_spool_file(path, options);
+      state->records_written = checked_signal_count(opened.existing_records, path);
+      state->max_records = checked_signal_count(opened.max_records, path);
+      state->fd = opened.fd;
+      state->identity = opened.identity;
 #endif
 
-   auto* expected = static_cast<crash_state*>(nullptr);
-   if (!active_capture.compare_exchange_strong(expected, state.get(), std::memory_order_acq_rel)) {
-      FCL_THROW_EXCEPTION(exceptions::capture_active, "OTLP crash capture is already active");
+      auto* expected = static_cast<crash_state*>(nullptr);
+      if (!active_capture.compare_exchange_strong(expected, state.get(), std::memory_order_acq_rel)) {
+         FCL_THROW_EXCEPTION(exceptions::capture_active, "OTLP crash capture is already active");
+      }
    }
 
    try {
@@ -963,13 +1018,17 @@ boost::asio::awaitable<crash_resend_result> async_resend_crashes(log_exporter& e
       }
 
       ++result.files_scanned;
-      if (is_active_current_process_spool(entry)) {
+      if (is_active_current_process_spool(directory_fd.get(), entry)) {
          ++result.files_retained;
          continue;
       }
       auto read = read_records(directory_fd.get(), entry, remaining, options.max_file_bytes);
       if (read.malformed) {
-         quarantine_file(directory_fd.get(), entry);
+         if (!mutate_if_not_active_current_spool(directory_fd.get(), entry,
+                                                 [&] { quarantine_file(directory_fd.get(), entry); })) {
+            ++result.files_retained;
+            continue;
+         }
          ++result.bad_files;
          continue;
       }
@@ -989,7 +1048,12 @@ boost::asio::awaitable<crash_resend_result> async_resend_crashes(log_exporter& e
       if (exported.failed_records == 0 && exported.exported_records == read.records.size()) {
          result.exported_records += exported.exported_records;
          ++result.files_exported;
-         remove_exported_records(directory_fd.get(), entry, read.records.size(), read.total_records);
+         if (!mutate_if_not_active_current_spool(
+                 directory_fd.get(), entry,
+                 [&] { remove_exported_records(directory_fd.get(), entry, read.records.size(), read.total_records); })) {
+            ++result.files_retained;
+            continue;
+         }
          if (read.records.size() < read.total_records) {
             ++result.files_retained;
          }

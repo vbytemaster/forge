@@ -48,7 +48,7 @@ constexpr auto record_magic = std::uint64_t{0x46434c4f544c5043ULL}; // "FCLOTLPC
 constexpr auto record_version = std::uint16_t{1};
 constexpr auto max_exception_category = std::size_t{64};
 constexpr auto max_stack_addresses = std::size_t{32};
-constexpr auto resend_lock_name = std::string_view{".crash-resend.lock"};
+constexpr auto spool_mutation_lock_name = std::string_view{".crash-resend.lock"};
 
 enum class record_kind : std::uint32_t {
    signal = 1,
@@ -455,6 +455,76 @@ fd_guard open_spool_directory(const std::filesystem::path& directory) {
    return fd;
 }
 
+class spool_mutation_lock {
+ public:
+   spool_mutation_lock(int directory_fd, const std::filesystem::path& directory)
+       : path_{directory / std::string{spool_mutation_lock_name}} {
+      const auto name = std::string{spool_mutation_lock_name};
+      auto flags = O_RDWR;
+#if defined(O_CLOEXEC)
+      flags |= O_CLOEXEC;
+#endif
+#if defined(O_NOFOLLOW)
+      flags |= O_NOFOLLOW;
+#endif
+      fd_ = fd_guard{::openat(directory_fd, name.c_str(), flags)};
+      if (fd_.get() < 0) {
+         if (errno != ENOENT) {
+            throw_errno_spool_error("failed to open OTLP crash spool mutation lock", path_);
+         }
+         auto create_flags = O_CREAT | O_EXCL | O_RDWR;
+#if defined(O_CLOEXEC)
+         create_flags |= O_CLOEXEC;
+#endif
+         fd_ = fd_guard{::openat(directory_fd, name.c_str(), create_flags, S_IRUSR | S_IWUSR)};
+         if (fd_.get() < 0) {
+            if (errno != EEXIST) {
+               throw_errno_spool_error("failed to create OTLP crash spool mutation lock", path_);
+            }
+            fd_ = fd_guard{::openat(directory_fd, name.c_str(), flags)};
+            if (fd_.get() < 0) {
+               throw_errno_spool_error("failed to open raced OTLP crash spool mutation lock", path_);
+            }
+         }
+      }
+
+      struct stat stat_value {};
+      if (::fstat(fd_.get(), &stat_value) != 0) {
+         throw_errno_spool_error("failed to stat OTLP crash spool mutation lock", path_);
+      }
+      ensure_owner_private_mode(stat_value, path_, false);
+
+      struct flock lock {};
+      lock.l_type = F_WRLCK;
+      lock.l_whence = SEEK_SET;
+      while (::fcntl(fd_.get(), F_SETLKW, &lock) != 0) {
+         if (errno == EINTR) {
+            continue;
+         }
+         throw_errno_spool_error("failed to lock OTLP crash spool mutation", path_);
+      }
+      locked_ = true;
+   }
+
+   ~spool_mutation_lock() {
+      if (!locked_) {
+         return;
+      }
+      struct flock lock {};
+      lock.l_type = F_UNLCK;
+      lock.l_whence = SEEK_SET;
+      (void)::fcntl(fd_.get(), F_SETLK, &lock);
+   }
+
+   spool_mutation_lock(const spool_mutation_lock&) = delete;
+   spool_mutation_lock& operator=(const spool_mutation_lock&) = delete;
+
+ private:
+   fd_guard fd_;
+   std::filesystem::path path_;
+   bool locked_ = false;
+};
+
 struct open_spool_result {
    int fd = -1;
    std::size_t existing_records = 0;
@@ -558,6 +628,7 @@ void validate_existing_records(int fd, std::size_t count, const std::filesystem:
 
 open_spool_result open_spool_file(const std::filesystem::path& path, const crash_spool_options& options) {
    const auto directory_fd = open_spool_directory(path.parent_path());
+   const auto mutation_lock = spool_mutation_lock{directory_fd.get(), path.parent_path()};
    auto flags = O_CREAT | O_EXCL | O_WRONLY;
 #if defined(O_CLOEXEC)
    flags |= O_CLOEXEC;
@@ -709,76 +780,6 @@ struct open_existing_result {
    struct stat stat_value {};
 };
 
-class resend_lock {
- public:
-   resend_lock(int directory_fd, const std::filesystem::path& directory)
-       : path_{directory / std::string{resend_lock_name}} {
-      const auto name = std::string{resend_lock_name};
-      auto flags = O_RDWR;
-#if defined(O_CLOEXEC)
-      flags |= O_CLOEXEC;
-#endif
-#if defined(O_NOFOLLOW)
-      flags |= O_NOFOLLOW;
-#endif
-      fd_ = fd_guard{::openat(directory_fd, name.c_str(), flags)};
-      if (fd_.get() < 0) {
-         if (errno != ENOENT) {
-            throw_errno_spool_error("failed to open OTLP crash resend lock", path_);
-         }
-         auto create_flags = O_CREAT | O_EXCL | O_RDWR;
-#if defined(O_CLOEXEC)
-         create_flags |= O_CLOEXEC;
-#endif
-         fd_ = fd_guard{::openat(directory_fd, name.c_str(), create_flags, S_IRUSR | S_IWUSR)};
-         if (fd_.get() < 0) {
-            if (errno != EEXIST) {
-               throw_errno_spool_error("failed to create OTLP crash resend lock", path_);
-            }
-            fd_ = fd_guard{::openat(directory_fd, name.c_str(), flags)};
-            if (fd_.get() < 0) {
-               throw_errno_spool_error("failed to open raced OTLP crash resend lock", path_);
-            }
-         }
-      }
-
-      struct stat stat_value {};
-      if (::fstat(fd_.get(), &stat_value) != 0) {
-         throw_errno_spool_error("failed to stat OTLP crash resend lock", path_);
-      }
-      ensure_owner_private_mode(stat_value, path_, false);
-
-      struct flock lock {};
-      lock.l_type = F_WRLCK;
-      lock.l_whence = SEEK_SET;
-      while (::fcntl(fd_.get(), F_SETLKW, &lock) != 0) {
-         if (errno == EINTR) {
-            continue;
-         }
-         throw_errno_spool_error("failed to lock OTLP crash resend mutations", path_);
-      }
-      locked_ = true;
-   }
-
-   ~resend_lock() {
-      if (!locked_) {
-         return;
-      }
-      struct flock lock {};
-      lock.l_type = F_UNLCK;
-      lock.l_whence = SEEK_SET;
-      (void)::fcntl(fd_.get(), F_SETLK, &lock);
-   }
-
-   resend_lock(const resend_lock&) = delete;
-   resend_lock& operator=(const resend_lock&) = delete;
-
- private:
-   fd_guard fd_;
-   std::filesystem::path path_;
-   bool locked_ = false;
-};
-
 open_existing_result open_existing_spool_file(int directory_fd, const spool_entry& entry) {
    auto flags = O_RDONLY;
 #if defined(O_CLOEXEC)
@@ -845,7 +846,7 @@ template <typename Mutation>
 [[nodiscard]] bool mutate_if_malformed_spool_still_quarantinable(int directory_fd, const spool_entry& entry,
                                                                  const std::optional<spool_snapshot>& snapshot,
                                                                  Mutation&& mutation) {
-   const auto mutation_lock = resend_lock{directory_fd, entry.path.parent_path()};
+   const auto mutation_lock = spool_mutation_lock{directory_fd, entry.path.parent_path()};
    const auto lock = std::scoped_lock{capture_lifecycle_mutex};
    if (active_spool_matches_locked(directory_fd, entry) || spool_may_belong_to_live_process(entry)) {
       return false;
@@ -861,7 +862,7 @@ template <typename Mutation>
 [[nodiscard]] bool mutate_if_exported_spool_still_removable(int directory_fd, const spool_entry& entry,
                                                             const spool_snapshot& snapshot,
                                                             Mutation&& mutation) {
-   const auto mutation_lock = resend_lock{directory_fd, entry.path.parent_path()};
+   const auto mutation_lock = spool_mutation_lock{directory_fd, entry.path.parent_path()};
    const auto lock = std::scoped_lock{capture_lifecycle_mutex};
    if (active_spool_matches_locked(directory_fd, entry) || spool_may_belong_to_live_process(entry)) {
       return false;

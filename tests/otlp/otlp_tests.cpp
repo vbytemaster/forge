@@ -17,6 +17,7 @@
 #include <vector>
 
 #if defined(__unix__) || defined(__APPLE__)
+#include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -308,6 +309,59 @@ class helper_process {
 bool exited_successfully(int status) {
    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
+
+class held_spool_mutation_lock {
+ public:
+   explicit held_spool_mutation_lock(const std::filesystem::path& directory) {
+      auto directory_flags = O_RDONLY;
+#if defined(O_CLOEXEC)
+      directory_flags |= O_CLOEXEC;
+#endif
+#if defined(O_NOFOLLOW)
+      directory_flags |= O_NOFOLLOW;
+#endif
+#if defined(O_DIRECTORY)
+      directory_flags |= O_DIRECTORY;
+#endif
+      directory_fd_ = ::open(directory.c_str(), directory_flags);
+      BOOST_REQUIRE(directory_fd_ >= 0);
+
+      auto flags = O_CREAT | O_RDWR;
+#if defined(O_CLOEXEC)
+      flags |= O_CLOEXEC;
+#endif
+#if defined(O_NOFOLLOW)
+      flags |= O_NOFOLLOW;
+#endif
+      fd_ = ::openat(directory_fd_, ".crash-resend.lock", flags, S_IRUSR | S_IWUSR);
+      BOOST_REQUIRE(fd_ >= 0);
+
+      struct flock lock {};
+      lock.l_type = F_WRLCK;
+      lock.l_whence = SEEK_SET;
+      BOOST_REQUIRE(::fcntl(fd_, F_SETLK, &lock) == 0);
+   }
+
+   ~held_spool_mutation_lock() {
+      if (fd_ >= 0) {
+         struct flock lock {};
+         lock.l_type = F_UNLCK;
+         lock.l_whence = SEEK_SET;
+         (void)::fcntl(fd_, F_SETLK, &lock);
+         (void)::close(fd_);
+      }
+      if (directory_fd_ >= 0) {
+         (void)::close(directory_fd_);
+      }
+   }
+
+   held_spool_mutation_lock(const held_spool_mutation_lock&) = delete;
+   held_spool_mutation_lock& operator=(const held_spool_mutation_lock&) = delete;
+
+ private:
+   int directory_fd_ = -1;
+   int fd_ = -1;
+};
 #endif
 
 bool wait_for_path(const std::filesystem::path& path, std::chrono::milliseconds timeout = 2s) {
@@ -718,6 +772,44 @@ BOOST_AUTO_TEST_CASE(crash_resend_retains_live_process_valid_spool_before_remova
    BOOST_TEST(result.exported_records == 1U);
    BOOST_TEST(result.files_retained == 1U);
    BOOST_TEST(result.bad_files == 0U);
+   BOOST_TEST(std::filesystem::exists(spool));
+   BOOST_TEST(std::filesystem::file_size(spool) == record_size);
+   BOOST_TEST(!std::filesystem::exists(spool.string() + ".bad"));
+
+   struct stat stat_value {};
+   BOOST_REQUIRE(::lstat(spool.c_str(), &stat_value) == 0);
+   BOOST_TEST(S_ISREG(stat_value.st_mode));
+   BOOST_TEST(stat_value.st_uid == ::geteuid());
+   BOOST_TEST((stat_value.st_mode & (S_IWGRP | S_IWOTH)) == 0);
+}
+
+BOOST_AUTO_TEST_CASE(crash_install_waits_for_resend_mutation_lock) {
+   auto source_directory = temp_directory{"fcl-otlp-crash-install-lock-source"};
+   BOOST_TEST(run_crash_helper("sigabrt", source_directory.path()) == 0);
+   const auto source = first_spool_file(source_directory.path());
+   const auto record_size = std::filesystem::file_size(source);
+   BOOST_REQUIRE(record_size > 0);
+
+   auto directory = temp_directory{"fcl-otlp-crash-install-lock"};
+   const auto go_path = directory.path() / "capture.go";
+   const auto ready_path = directory.path() / "capture.ready";
+   auto helper = helper_process{"hold_capture_after_marker", directory.path(), {go_path.string(), ready_path.string()}};
+
+   const auto spool = directory.path() / ("crash-" + std::to_string(helper.pid()) + ".spool");
+   std::filesystem::copy_file(source, spool);
+   std::filesystem::permissions(spool, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                                std::filesystem::perm_options::replace);
+   BOOST_REQUIRE_EQUAL(std::filesystem::file_size(spool), record_size);
+
+   auto lock = std::optional<held_spool_mutation_lock>{std::in_place, directory.path()};
+   auto go = std::ofstream{go_path, std::ios::binary};
+   go << "go";
+   go.close();
+
+   BOOST_TEST(!wait_for_path(ready_path, 1s));
+   lock.reset();
+
+   BOOST_REQUIRE(wait_for_path(ready_path, 5s));
    BOOST_TEST(std::filesystem::exists(spool));
    BOOST_TEST(std::filesystem::file_size(spool) == record_size);
    BOOST_TEST(!std::filesystem::exists(spool.string() + ".bad"));

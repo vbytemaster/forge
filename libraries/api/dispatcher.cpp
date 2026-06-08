@@ -3,6 +3,7 @@ module;
 #include <fcl/exceptions/macros.hpp>
 
 #include <memory>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -14,9 +15,25 @@ module fcl.api.dispatcher;
 namespace fcl::api {
 namespace {
 
+[[nodiscard]] const descriptor* find_export(const std::vector<descriptor>& exports,
+                                            const api_ref& requested) noexcept {
+   for (const auto& available : exports) {
+      if (compatible(available, requested)) {
+         return &available;
+      }
+   }
+   return nullptr;
+}
+
+[[nodiscard]] const method_descriptor* exported_method(const binding_plan& plan, api_ref requested,
+                                                       std::string_view method_name) noexcept {
+   const auto* descriptor = plan.exports.empty() ? (plan.local == nullptr ? nullptr : plan.local->describe(requested))
+                                                 : find_export(plan.exports, requested);
+   return descriptor == nullptr ? nullptr : find_method(*descriptor, method_name);
+}
+
 [[nodiscard]] bool grouped_stream_method(const binding_plan& plan, const frame& request) noexcept {
-   const auto* descriptor = plan.local == nullptr ? nullptr : plan.local->describe(request.api);
-   const auto* method = descriptor == nullptr ? nullptr : find_method(*descriptor, request.method);
+   const auto* method = exported_method(plan, request.api, request.method);
    return method != nullptr &&
           (method->kind == method_kind::client_stream || method->kind == method_kind::bidirectional_stream);
 }

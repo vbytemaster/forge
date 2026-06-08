@@ -2,6 +2,7 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -107,6 +108,11 @@ class binding_builder {
       descriptor.id = std::move(api.id);
       descriptor.version.major = api.major;
       descriptor.version.revision = api.min_revision;
+      descriptor.methods.erase(std::remove_if(descriptor.methods.begin(), descriptor.methods.end(),
+                                              [&](const auto& method) {
+                                                 return method.since_revision > api.min_revision;
+                                              }),
+                               descriptor.methods.end());
       plan_.exports.push_back(std::move(descriptor));
       return *this;
    }

@@ -8,6 +8,7 @@ module;
 #include <deque>
 #include <exception>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <unordered_map>
@@ -135,14 +136,30 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
    std::unordered_map<std::uint64_t, std::shared_ptr<pending_call>> pending;
    std::deque<std::shared_ptr<write_waiter>> write_waiters;
    std::exception_ptr failure;
+   mutable std::mutex mutex;
    bool reader_started = false;
    bool write_busy = false;
    bool canceled = false;
+
+   [[nodiscard]] bool valid_locked() const noexcept {
+      return !canceled && !failure && stream.valid();
+   }
+
+   [[nodiscard]] bool valid() const noexcept {
+      auto lock = std::scoped_lock{mutex};
+      return valid_locked();
+   }
+
+   [[nodiscard]] bool is_canceled() const noexcept {
+      auto lock = std::scoped_lock{mutex};
+      return canceled;
+   }
 
    void fail_all(std::exception_ptr error) {
       if (!error) {
          return;
       }
+      auto lock = std::scoped_lock{mutex};
       if (!failure) {
          failure = error;
       }
@@ -162,6 +179,80 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       write_busy = false;
    }
 
+   void fail_closed(std::exception_ptr error) {
+      {
+         auto lock = std::scoped_lock{mutex};
+         canceled = true;
+      }
+      fail_all(error);
+   }
+
+   struct reservation {
+      call_id id;
+      std::shared_ptr<pending_call> pending;
+      bool start_reader = false;
+   };
+
+   reservation reserve_call(frame& request, call_options& value, boost::asio::any_io_executor executor) {
+      auto pending_value = std::make_shared<pending_call>(std::move(executor));
+      auto lock = std::scoped_lock{mutex};
+      if (!valid_locked()) {
+         FCL_THROW_EXCEPTION(exceptions::cancelled, "API transport client is closed");
+      }
+      if (pending.size() >= settings.max_inflight) {
+         FCL_THROW_EXCEPTION(exceptions::resource_exhausted, "API transport max inflight calls exceeded",
+                             fcl::exceptions::ctx("max_inflight", settings.max_inflight));
+      }
+      if (value.id.value != 0) {
+         request.id = value.id;
+      } else if (request.id.value == 0) {
+         request.id.value = next_id++;
+      }
+      if (!value.meta.empty()) {
+         request.meta = std::move(value.meta);
+      }
+      request.codec = settings.codec;
+
+      if (pending.contains(request.id.value)) {
+         FCL_THROW_EXCEPTION(exceptions::protocol_error, "duplicate active API transport call",
+                             fcl::exceptions::ctx("call_id", request.id.value));
+      }
+      const auto deadline = effective_deadline(value, settings);
+      if (deadline.count() > 0) {
+         pending_value->timer.expires_after(deadline);
+      }
+      pending.emplace(request.id.value, pending_value);
+
+      auto start = false;
+      if (!reader_started) {
+         reader_started = true;
+         start = true;
+      }
+      return reservation{.id = request.id, .pending = std::move(pending_value), .start_reader = start};
+   }
+
+   void remove_pending(call_id id, const std::shared_ptr<pending_call>& pending_value) {
+      auto lock = std::scoped_lock{mutex};
+      if (auto found = pending.find(id.value); found != pending.end() && found->second == pending_value) {
+         pending.erase(found);
+      }
+   }
+
+   [[nodiscard]] bool pending_done(const std::shared_ptr<pending_call>& pending_value) const {
+      auto lock = std::scoped_lock{mutex};
+      return pending_value->done;
+   }
+
+   [[nodiscard]] std::exception_ptr pending_error(const std::shared_ptr<pending_call>& pending_value) const {
+      auto lock = std::scoped_lock{mutex};
+      return pending_value->error;
+   }
+
+   [[nodiscard]] std::vector<frame> take_responses(const std::shared_ptr<pending_call>& pending_value) {
+      auto lock = std::scoped_lock{mutex};
+      return std::move(pending_value->responses);
+   }
+
    void complete_pending(frame response) {
       if (response.kind != frame_kind::response && response.kind != frame_kind::error &&
           response.kind != frame_kind::stream_item && response.kind != frame_kind::stream_end) {
@@ -172,6 +263,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
          FCL_THROW_EXCEPTION(exceptions::codec_failed, "API transport response codec is not accepted",
                              fcl::exceptions::ctx("codec", response.codec.value));
       }
+      auto lock = std::scoped_lock{mutex};
       auto found = pending.find(response.id.value);
       if (found == pending.end()) {
          FCL_THROW_EXCEPTION(exceptions::protocol_error, "API transport received unknown call_id",
@@ -189,30 +281,39 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       pending_value->timer.cancel();
    }
 
+   [[nodiscard]] bool no_pending_and_stop_reader() {
+      auto lock = std::scoped_lock{mutex};
+      if (!pending.empty()) {
+         return false;
+      }
+      reader_started = false;
+      return true;
+   }
+
+   void stop_reader() {
+      auto lock = std::scoped_lock{mutex};
+      reader_started = false;
+   }
+
    boost::asio::awaitable<void> run_reader() {
       try {
-         while (!canceled) {
+         while (!is_canceled()) {
             auto payload = co_await read_transport_frame(stream, read_buffer, consumed, settings.max_frame_size);
             complete_pending(fcl::raw::unpack<frame>(payload.to_vector()));
-            if (pending.empty()) {
-               reader_started = false;
+            if (no_pending_and_stop_reader()) {
                co_return;
             }
          }
       } catch (...) {
-         reader_started = false;
+         stop_reader();
          fail_all(std::current_exception());
-         if (!canceled) {
+         if (!is_canceled()) {
             stream.cancel();
          }
       }
    }
 
    void start_reader(boost::asio::any_io_executor executor) {
-      if (reader_started) {
-         return;
-      }
-      reader_started = true;
       boost::asio::co_spawn(
           std::move(executor),
           [self = shared_from_this()]() mutable -> boost::asio::awaitable<void> {
@@ -222,27 +323,41 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
    }
 
    boost::asio::awaitable<void> acquire_write() {
-      if (failure) {
-         std::rethrow_exception(failure);
-      }
-      if (!write_busy) {
-         write_busy = true;
-         co_return;
+      const auto executor = co_await boost::asio::this_coro::executor;
+      auto waiter = std::shared_ptr<write_waiter>{};
+      {
+         auto lock = std::scoped_lock{mutex};
+         if (failure) {
+            std::rethrow_exception(failure);
+         }
+         if (canceled) {
+            FCL_THROW_EXCEPTION(exceptions::cancelled, "API transport client is closed");
+         }
+         if (!write_busy) {
+            write_busy = true;
+            co_return;
+         }
+         waiter = std::make_shared<write_waiter>(executor);
+         write_waiters.push_back(waiter);
       }
 
-      const auto executor = co_await boost::asio::this_coro::executor;
-      auto waiter = std::make_shared<write_waiter>(executor);
-      write_waiters.push_back(waiter);
-      while (!waiter->ready) {
+      while (true) {
+         {
+            auto lock = std::scoped_lock{mutex};
+            if (waiter->ready) {
+               if (waiter->error) {
+                  std::rethrow_exception(waiter->error);
+               }
+               co_return;
+            }
+         }
          auto error = boost::system::error_code{};
          co_await waiter->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
-      }
-      if (waiter->error) {
-         std::rethrow_exception(waiter->error);
       }
    }
 
    void release_write() {
+      auto lock = std::scoped_lock{mutex};
       if (write_waiters.empty()) {
          write_busy = false;
          return;
@@ -266,7 +381,7 @@ client::client(client&&) noexcept = default;
 client& client::operator=(client&&) noexcept = default;
 
 bool client::valid() const noexcept {
-   return impl_ && !impl_->canceled && !impl_->failure && impl_->stream.valid();
+   return impl_ && impl_->valid();
 }
 
 const options& client::settings() const noexcept {
@@ -275,41 +390,18 @@ const options& client::settings() const noexcept {
 }
 
 boost::asio::awaitable<std::vector<frame>> client::async_call_stream(frame request, call_options value) {
-   if (!valid()) {
+   auto self = impl_;
+   if (!self) {
       FCL_THROW_EXCEPTION(exceptions::cancelled, "API transport client is closed");
    }
-   auto self = impl_;
    const auto executor = co_await boost::asio::this_coro::executor;
-   if (self->pending.size() >= self->settings.max_inflight) {
-      FCL_THROW_EXCEPTION(exceptions::resource_exhausted, "API transport max inflight calls exceeded",
-                          fcl::exceptions::ctx("max_inflight", self->settings.max_inflight));
+   auto reservation = self->reserve_call(request, value, executor);
+   if (reservation.start_reader) {
+      self->start_reader(executor);
    }
-   if (value.id.value != 0) {
-      request.id = value.id;
-   } else if (request.id.value == 0) {
-      request.id.value = self->next_id++;
-   }
-   if (!value.meta.empty()) {
-      request.meta = std::move(value.meta);
-   }
-   request.codec = self->settings.codec;
-
-   if (self->pending.contains(request.id.value)) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "duplicate active API transport call",
-                          fcl::exceptions::ctx("call_id", request.id.value));
-   }
-   auto pending = std::make_shared<impl::pending_call>(executor);
-   const auto deadline = effective_deadline(value, self->settings);
-   if (deadline.count() > 0) {
-      pending->timer.expires_after(deadline);
-   }
-   self->pending.emplace(request.id.value, pending);
-   self->start_reader(executor);
 
    auto remove_pending = [&] {
-      if (auto found = self->pending.find(request.id.value); found != self->pending.end() && found->second == pending) {
-         self->pending.erase(found);
-      }
+      self->remove_pending(reservation.id, reservation.pending);
    };
    auto encoded = fcl::api::bytes{};
    fcl::raw::pack(encoded, request);
@@ -328,15 +420,15 @@ boost::asio::awaitable<std::vector<frame>> client::async_call_stream(frame reque
       throw;
    }
 
-   while (!pending->done) {
+   while (!self->pending_done(reservation.pending)) {
       auto error = boost::system::error_code{};
-      co_await pending->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
-      if (!pending->done && !error) {
+      co_await reservation.pending->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+      if (!self->pending_done(reservation.pending) && !error) {
          remove_pending();
          auto timeout = std::exception_ptr{};
          try {
             FCL_THROW_EXCEPTION(exceptions::deadline_exceeded, "API transport call deadline exceeded",
-                                fcl::exceptions::ctx("call_id", request.id.value));
+                                fcl::exceptions::ctx("call_id", reservation.id.value));
          } catch (...) {
             timeout = std::current_exception();
          }
@@ -345,10 +437,10 @@ boost::asio::awaitable<std::vector<frame>> client::async_call_stream(frame reque
          std::rethrow_exception(timeout);
       }
    }
-   if (pending->error) {
-      std::rethrow_exception(pending->error);
+   if (auto error = self->pending_error(reservation.pending)) {
+      std::rethrow_exception(error);
    }
-   co_return std::move(pending->responses);
+   co_return self->take_responses(reservation.pending);
 }
 
 boost::asio::awaitable<frame> client::async_call(frame request, call_options value) {
@@ -366,8 +458,7 @@ boost::asio::awaitable<void> client::async_close() {
    if (!self) {
       co_return;
    }
-   self->canceled = true;
-   self->fail_all(make_cancelled_error("API transport client is closed"));
+   self->fail_closed(make_cancelled_error("API transport client is closed"));
    co_await self->stream.async_close();
 }
 
@@ -376,8 +467,7 @@ void client::cancel() {
    if (!self) {
       return;
    }
-   self->canceled = true;
-   self->fail_all(make_cancelled_error("API transport client is cancelled"));
+   self->fail_closed(make_cancelled_error("API transport client is cancelled"));
    self->stream.cancel();
 }
 

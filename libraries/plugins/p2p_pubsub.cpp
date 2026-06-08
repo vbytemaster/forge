@@ -5,6 +5,7 @@ module;
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
@@ -132,6 +133,14 @@ struct p2p_pubsub::impl : public std::enable_shared_from_this<p2p_pubsub::impl> 
       bool joining = false;
       bool joined = false;
    };
+
+   static void complete_join_waiter(std::shared_ptr<join_waiter> pending, std::exception_ptr error = {}) {
+      boost::asio::post(pending->timer.get_executor(), [pending = std::move(pending), error = std::move(error)]() mutable {
+         pending->error = std::move(error);
+         pending->ready = true;
+         pending->timer.cancel(); // waiter_executor
+      });
+   }
 
    config settings;
    std::shared_ptr<fcl::plugins::p2p_node::pubsub_source> source;
@@ -397,8 +406,7 @@ class p2p_pubsub::api::impl final : public p2p_pubsub::api {
                }
             }
             for (auto& pending : waiters) {
-               pending->ready = true;
-               pending->timer.cancel();
+               p2p_pubsub::impl::complete_join_waiter(std::move(pending));
             }
          } catch (...) {
             auto failure = std::current_exception();
@@ -411,9 +419,7 @@ class p2p_pubsub::api::impl final : public p2p_pubsub::api {
                }
             }
             for (auto& pending : waiters) {
-               pending->error = failure;
-               pending->ready = true;
-               pending->timer.cancel();
+               p2p_pubsub::impl::complete_join_waiter(std::move(pending), failure);
             }
             throw;
          }

@@ -26,6 +26,7 @@ module;
 #include <vector>
 
 #if defined(__unix__) || defined(__APPLE__)
+#include <dirent.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
@@ -449,21 +450,6 @@ int open_spool_file(const std::filesystem::path& path) {
 }
 #endif
 
-std::vector<std::filesystem::path> list_spool_files(const std::filesystem::path& directory) {
-   auto files = std::vector<std::filesystem::path>{};
-   auto error = std::error_code{};
-   if (!std::filesystem::exists(directory, error)) {
-      return files;
-   }
-   for (const auto& entry : std::filesystem::directory_iterator{directory}) {
-      if (entry.path().extension() == ".spool") {
-         files.push_back(entry.path());
-      }
-   }
-   std::sort(files.begin(), files.end());
-   return files;
-}
-
 bool valid_record(const disk_record& record) {
    return record.magic == record_magic && record.version == record_version &&
           record.header_size == sizeof(disk_record) && record.record_size == sizeof(disk_record) &&
@@ -476,28 +462,152 @@ struct read_file_result {
    bool malformed = false;
 };
 
-read_file_result read_records(const std::filesystem::path& path, std::size_t limit, std::size_t max_file_bytes) {
+#if defined(__unix__) || defined(__APPLE__)
+struct dir_guard {
+   DIR* value = nullptr;
+
+   ~dir_guard() {
+      if (value != nullptr) {
+         ::closedir(value);
+      }
+   }
+
+   dir_guard() = default;
+   explicit dir_guard(DIR* directory) : value(directory) {}
+
+   dir_guard(const dir_guard&) = delete;
+   dir_guard& operator=(const dir_guard&) = delete;
+};
+
+struct spool_entry {
+   std::string name;
+   std::filesystem::path path;
+};
+
+[[nodiscard]] bool is_spool_name(std::string_view value) {
+   return value.starts_with("crash-") && value.ends_with(".spool");
+}
+
+std::vector<spool_entry> list_spool_files(const std::filesystem::path& directory, int directory_fd) {
+   auto duplicate = fd_guard{::dup(directory_fd)};
+   if (duplicate.get() < 0) {
+      throw_errno_spool_error("failed to duplicate OTLP crash spool directory fd", directory);
+   }
+
+   auto handle = dir_guard{::fdopendir(duplicate.get())};
+   if (handle.value == nullptr) {
+      throw_errno_spool_error("failed to enumerate OTLP crash spool directory", directory);
+   }
+   (void)duplicate.release();
+
+   auto files = std::vector<spool_entry>{};
+   while (auto* entry = ::readdir(handle.value)) {
+      const auto name = std::string{entry->d_name};
+      if (!is_spool_name(name)) {
+         continue;
+      }
+      files.push_back(spool_entry{.name = name, .path = directory / name});
+   }
+   std::sort(files.begin(), files.end(), [](const auto& left, const auto& right) {
+      return left.name < right.name;
+   });
+   return files;
+}
+
+[[nodiscard]] bool safe_spool_file(const struct stat& value) noexcept {
+   return S_ISREG(value.st_mode) && value.st_uid == ::geteuid() && (value.st_mode & (S_IWGRP | S_IWOTH)) == 0;
+}
+
+struct open_existing_result {
+   fd_guard fd;
+   bool unsafe = false;
+   bool missing = false;
+   struct stat stat_value {};
+};
+
+open_existing_result open_existing_spool_file(int directory_fd, const spool_entry& entry) {
+   auto flags = O_RDONLY;
+#if defined(O_CLOEXEC)
+   flags |= O_CLOEXEC;
+#endif
+#if defined(O_NOFOLLOW)
+   flags |= O_NOFOLLOW;
+#endif
+   auto fd = fd_guard{::openat(directory_fd, entry.name.c_str(), flags)};
+   if (fd.get() < 0) {
+      if (errno == ENOENT) {
+         return open_existing_result{.missing = true};
+      }
+#if defined(ELOOP)
+      if (errno == ELOOP) {
+         return open_existing_result{.unsafe = true};
+      }
+#endif
+      throw_errno_spool_error("failed to open OTLP crash spool", entry.path);
+   }
+
+   struct stat stat_value {};
+   if (::fstat(fd.get(), &stat_value) != 0) {
+      throw_errno_spool_error("failed to stat OTLP crash spool", entry.path);
+   }
+   if (!safe_spool_file(stat_value)) {
+      return open_existing_result{.unsafe = true};
+   }
+   return open_existing_result{.fd = std::move(fd), .stat_value = stat_value};
+}
+
+[[nodiscard]] bool read_exact_or_malformed(int fd, void* out, std::size_t size,
+                                           const std::filesystem::path& path) {
+   auto* cursor = static_cast<char*>(out);
+   auto remaining = size;
+   while (remaining > 0) {
+      const auto read = ::read(fd, cursor, remaining);
+      if (read == 0) {
+         return false;
+      }
+      if (read < 0) {
+         throw_errno_spool_error("failed to read OTLP crash spool", path);
+      }
+      cursor += static_cast<std::size_t>(read);
+      remaining -= static_cast<std::size_t>(read);
+   }
+   return true;
+}
+
+void write_all(int fd, const char* data, std::size_t size, const std::filesystem::path& path) {
+   auto remaining = size;
+   while (remaining > 0) {
+      const auto written = ::write(fd, data, remaining);
+      if (written <= 0) {
+         throw_errno_spool_error("failed to write OTLP crash spool", path);
+      }
+      data += static_cast<std::size_t>(written);
+      remaining -= static_cast<std::size_t>(written);
+   }
+}
+
+read_file_result read_records(int directory_fd, const spool_entry& entry, std::size_t limit,
+                              std::size_t max_file_bytes) {
    auto result = read_file_result{};
-   auto error = std::error_code{};
-   const auto file_size = std::filesystem::file_size(path, error);
-   if (error || file_size == 0 || file_size > max_file_bytes || file_size % sizeof(disk_record) != 0) {
+   auto opened = open_existing_spool_file(directory_fd, entry);
+   if (opened.missing) {
+      return result;
+   }
+   if (opened.unsafe || opened.stat_value.st_size <= 0 ||
+       static_cast<std::uint64_t>(opened.stat_value.st_size) > max_file_bytes ||
+       static_cast<std::uint64_t>(opened.stat_value.st_size) % sizeof(disk_record) != 0) {
       result.malformed = true;
       return result;
    }
 
+   const auto file_size = static_cast<std::uint64_t>(opened.stat_value.st_size);
    result.total_records = file_size / sizeof(disk_record);
    const auto count = std::min<std::uint64_t>(result.total_records, limit);
-   auto input = std::ifstream{path, std::ios::binary};
-   if (!input) {
-      FCL_THROW_EXCEPTION(exceptions::spool_error, "failed to read OTLP crash spool",
-                          fcl::exceptions::ctx("path", path.string()));
-   }
 
    result.records.reserve(static_cast<std::size_t>(count));
    for (auto index = std::uint64_t{0}; index < count; ++index) {
       auto record = disk_record{};
-      input.read(reinterpret_cast<char*>(&record), sizeof(record));
-      if (!input || !valid_record(record)) {
+      if (!read_exact_or_malformed(opened.fd.get(), &record, sizeof(record), entry.path) || !valid_record(record)) {
          result.records.clear();
          result.malformed = true;
          return result;
@@ -507,59 +617,67 @@ read_file_result read_records(const std::filesystem::path& path, std::size_t lim
    return result;
 }
 
-void quarantine_file(const std::filesystem::path& path) {
-   auto target = path;
-   target += ".bad";
-   auto error = std::error_code{};
-   std::filesystem::remove(target, error);
-   error.clear();
-   std::filesystem::rename(path, target, error);
-   if (error) {
-      FCL_THROW_EXCEPTION(exceptions::spool_error, "failed to quarantine malformed OTLP crash spool",
-                          fcl::exceptions::ctx("path", path.string()),
-                          fcl::exceptions::ctx("reason", error.message()));
+void quarantine_file(int directory_fd, const spool_entry& entry) {
+   const auto target = entry.name + ".bad";
+   (void)::unlinkat(directory_fd, target.c_str(), 0);
+   if (::renameat(directory_fd, entry.name.c_str(), directory_fd, target.c_str()) != 0 && errno != ENOENT) {
+      throw_errno_spool_error("failed to quarantine malformed OTLP crash spool", entry.path);
    }
 }
 
-void remove_exported_records(const std::filesystem::path& path, std::uint64_t removed, std::uint64_t total) {
+void remove_exported_records(int directory_fd, const spool_entry& entry, std::uint64_t removed, std::uint64_t total) {
    if (removed >= total) {
-      auto error = std::error_code{};
-      std::filesystem::remove(path, error);
-      if (error) {
-         FCL_THROW_EXCEPTION(exceptions::spool_error, "failed to remove exported OTLP crash spool",
-                             fcl::exceptions::ctx("path", path.string()),
-                             fcl::exceptions::ctx("reason", error.message()));
+      if (::unlinkat(directory_fd, entry.name.c_str(), 0) != 0 && errno != ENOENT) {
+         throw_errno_spool_error("failed to remove exported OTLP crash spool", entry.path);
       }
       return;
    }
 
-   auto input = std::ifstream{path, std::ios::binary};
-   if (!input) {
-      FCL_THROW_EXCEPTION(exceptions::spool_error, "failed to rewrite OTLP crash spool",
-                          fcl::exceptions::ctx("path", path.string()));
+   auto opened = open_existing_spool_file(directory_fd, entry);
+   if (opened.missing || opened.unsafe) {
+      FCL_THROW_EXCEPTION(exceptions::spool_error, "cannot safely rewrite OTLP crash spool",
+                          fcl::exceptions::ctx("path", entry.path.string()));
    }
-   input.seekg(static_cast<std::streamoff>(removed * sizeof(disk_record)));
-
-   auto temp = path;
-   temp += ".tmp";
-   auto output = std::ofstream{temp, std::ios::binary | std::ios::trunc};
-   if (!output) {
-      FCL_THROW_EXCEPTION(exceptions::spool_error, "failed to create OTLP crash spool rewrite",
-                          fcl::exceptions::ctx("path", temp.string()));
+   const auto offset = static_cast<off_t>(removed * sizeof(disk_record));
+   if (::lseek(opened.fd.get(), offset, SEEK_SET) < 0) {
+      throw_errno_spool_error("failed to seek OTLP crash spool rewrite source", entry.path);
    }
-   output << input.rdbuf();
-   output.close();
-   input.close();
 
-   auto error = std::error_code{};
-   std::filesystem::rename(temp, path, error);
-   if (error) {
-      std::filesystem::remove(temp);
-      FCL_THROW_EXCEPTION(exceptions::spool_error, "failed to replace OTLP crash spool",
-                          fcl::exceptions::ctx("path", path.string()),
-                          fcl::exceptions::ctx("reason", error.message()));
+   const auto temp_name = entry.name + ".tmp";
+   (void)::unlinkat(directory_fd, temp_name.c_str(), 0);
+   auto flags = O_CREAT | O_EXCL | O_WRONLY;
+#if defined(O_CLOEXEC)
+   flags |= O_CLOEXEC;
+#endif
+#if defined(O_NOFOLLOW)
+   flags |= O_NOFOLLOW;
+#endif
+   auto temp = fd_guard{::openat(directory_fd, temp_name.c_str(), flags, S_IRUSR | S_IWUSR)};
+   const auto temp_path = entry.path.parent_path() / temp_name;
+   if (temp.get() < 0) {
+      throw_errno_spool_error("failed to create OTLP crash spool rewrite", temp_path);
+   }
+
+   auto buffer = std::array<char, 8192>{};
+   while (true) {
+      const auto read = ::read(opened.fd.get(), buffer.data(), buffer.size());
+      if (read == 0) {
+         break;
+      }
+      if (read < 0) {
+         (void)::unlinkat(directory_fd, temp_name.c_str(), 0);
+         throw_errno_spool_error("failed to read OTLP crash spool rewrite source", entry.path);
+      }
+      write_all(temp.get(), buffer.data(), static_cast<std::size_t>(read), temp_path);
+   }
+   temp = fd_guard{};
+
+   if (::renameat(directory_fd, temp_name.c_str(), directory_fd, entry.name.c_str()) != 0) {
+      (void)::unlinkat(directory_fd, temp_name.c_str(), 0);
+      throw_errno_spool_error("failed to replace OTLP crash spool", entry.path);
    }
 }
+#endif
 
 std::string kind_text(const disk_record& record) {
    switch (static_cast<record_kind>(record.kind)) {
@@ -729,17 +847,19 @@ boost::asio::awaitable<crash_resend_result> async_resend_crashes(log_exporter& e
    ensure_crash_directory(options.directory);
 
    auto result = crash_resend_result{};
+#if defined(__unix__) || defined(__APPLE__)
+   const auto directory_fd = open_spool_directory(options.directory);
    auto remaining = options.max_records_per_resend;
-   for (const auto& path : list_spool_files(options.directory)) {
+   for (const auto& entry : list_spool_files(options.directory, directory_fd.get())) {
       if (remaining == 0) {
          ++result.files_retained;
          break;
       }
 
       ++result.files_scanned;
-      auto read = read_records(path, remaining, options.max_file_bytes);
+      auto read = read_records(directory_fd.get(), entry, remaining, options.max_file_bytes);
       if (read.malformed) {
-         quarantine_file(path);
+         quarantine_file(directory_fd.get(), entry);
          ++result.bad_files;
          continue;
       }
@@ -759,7 +879,7 @@ boost::asio::awaitable<crash_resend_result> async_resend_crashes(log_exporter& e
       if (exported.failed_records == 0 && exported.exported_records == read.records.size()) {
          result.exported_records += exported.exported_records;
          ++result.files_exported;
-         remove_exported_records(path, read.records.size(), read.total_records);
+         remove_exported_records(directory_fd.get(), entry, read.records.size(), read.total_records);
          if (read.records.size() < read.total_records) {
             ++result.files_retained;
          }
@@ -768,6 +888,7 @@ boost::asio::awaitable<crash_resend_result> async_resend_crashes(log_exporter& e
          ++result.files_retained;
       }
    }
+#endif
 
    co_return result;
 }

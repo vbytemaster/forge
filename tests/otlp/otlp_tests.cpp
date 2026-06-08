@@ -213,6 +213,16 @@ std::size_t count_spool_files(const std::filesystem::path& directory) {
    return count;
 }
 
+std::filesystem::path first_spool_file(const std::filesystem::path& directory) {
+   for (const auto& entry : std::filesystem::directory_iterator{directory}) {
+      if (entry.path().extension() == ".spool") {
+         return entry.path();
+      }
+   }
+   BOOST_FAIL("expected at least one crash spool file");
+   return {};
+}
+
 fcl::otlp::crash_spool_options make_spool_options(const std::filesystem::path& directory) {
    return fcl::otlp::crash_spool_options{
        .directory = directory,
@@ -455,6 +465,51 @@ BOOST_AUTO_TEST_CASE(crash_spool_creates_private_regular_file) {
    BOOST_TEST(S_ISREG(stat_value.st_mode));
    BOOST_TEST(stat_value.st_uid == ::geteuid());
    BOOST_TEST((stat_value.st_mode & (S_IWGRP | S_IWOTH)) == 0);
+}
+#endif
+
+#if defined(__unix__) || defined(__APPLE__)
+BOOST_AUTO_TEST_CASE(crash_resend_rejects_unsafe_directory) {
+   auto directory = temp_directory{"fcl-otlp-crash-resend-writable-dir"};
+   std::filesystem::permissions(directory.path(), std::filesystem::perms::owner_all | std::filesystem::perms::group_write,
+                                std::filesystem::perm_options::replace);
+
+   auto runtime = fcl::asio::runtime{};
+   auto collector = fake_collector{runtime, {{.status = fcl::http::status::ok}}};
+   auto exporter = fcl::otlp::log_exporter{runtime, make_options(collector)};
+
+   BOOST_CHECK_THROW(
+       (void)fcl::asio::blocking::run(runtime, fcl::otlp::async_resend_crashes(exporter, make_spool_options(directory.path()))),
+       fcl::otlp::exceptions::spool_error);
+   BOOST_TEST(collector.requests().empty());
+
+   std::filesystem::permissions(directory.path(), std::filesystem::perms::owner_all,
+                                std::filesystem::perm_options::replace);
+}
+
+BOOST_AUTO_TEST_CASE(crash_resend_does_not_follow_spool_symlink) {
+   auto target_directory = temp_directory{"fcl-otlp-crash-resend-target"};
+   BOOST_TEST(run_crash_helper("sigabrt", target_directory.path()) == 0);
+   const auto target = first_spool_file(target_directory.path());
+   const auto target_size = std::filesystem::file_size(target);
+
+   auto directory = temp_directory{"fcl-otlp-crash-resend-symlink"};
+   const auto link = directory.path() / "crash-999999.spool";
+   std::filesystem::create_symlink(target, link);
+
+   auto runtime = fcl::asio::runtime{};
+   auto collector = fake_collector{runtime, {{.status = fcl::http::status::ok}}};
+   auto exporter = fcl::otlp::log_exporter{runtime, make_options(collector)};
+   const auto result =
+       fcl::asio::blocking::run(runtime, fcl::otlp::async_resend_crashes(exporter, make_spool_options(directory.path())));
+   fcl::asio::blocking::run(runtime, exporter.async_shutdown());
+
+   BOOST_TEST(result.bad_files == 1U);
+   BOOST_TEST(result.exported_records == 0U);
+   BOOST_TEST(collector.requests().empty());
+   BOOST_TEST(std::filesystem::exists(target));
+   BOOST_TEST(std::filesystem::file_size(target) == target_size);
+   BOOST_TEST(std::filesystem::exists(directory.path() / "crash-999999.spool.bad"));
 }
 #endif
 

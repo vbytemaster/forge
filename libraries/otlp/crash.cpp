@@ -143,6 +143,12 @@ struct spool_identity {
    ino_t inode = 0;
    std::string name;
 };
+
+struct spool_snapshot {
+   dev_t device = 0;
+   ino_t inode = 0;
+   std::uint64_t size = 0;
+};
 #endif
 
 std::atomic<crash_state*> active_capture{nullptr};
@@ -584,6 +590,9 @@ struct read_file_result {
    std::vector<disk_record> records;
    std::uint64_t total_records = 0;
    bool malformed = false;
+#if defined(__unix__) || defined(__APPLE__)
+   std::optional<spool_snapshot> snapshot;
+#endif
 };
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -696,6 +705,16 @@ open_existing_result open_existing_spool_file(int directory_fd, const spool_entr
    return opened.stat_value.st_dev == state->identity.device && opened.stat_value.st_ino == state->identity.inode;
 }
 
+[[nodiscard]] bool spool_snapshot_matches_locked(int directory_fd, const spool_entry& entry,
+                                                 const spool_snapshot& snapshot) {
+   auto opened = open_existing_spool_file(directory_fd, entry);
+   if (opened.missing || opened.unsafe || opened.stat_value.st_size < 0) {
+      return false;
+   }
+   return opened.stat_value.st_dev == snapshot.device && opened.stat_value.st_ino == snapshot.inode &&
+          static_cast<std::uint64_t>(opened.stat_value.st_size) == snapshot.size;
+}
+
 [[nodiscard]] bool is_active_current_process_spool(int directory_fd, const spool_entry& entry) {
    const auto lock = std::scoped_lock{capture_lifecycle_mutex};
    return active_spool_matches_locked(directory_fd, entry);
@@ -705,6 +724,18 @@ template <typename Mutation>
 [[nodiscard]] bool mutate_if_not_active_current_spool(int directory_fd, const spool_entry& entry, Mutation&& mutation) {
    const auto lock = std::scoped_lock{capture_lifecycle_mutex};
    if (active_spool_matches_locked(directory_fd, entry)) {
+      return false;
+   }
+   std::forward<Mutation>(mutation)();
+   return true;
+}
+
+template <typename Mutation>
+[[nodiscard]] bool mutate_if_spool_snapshot_current_and_not_active(int directory_fd, const spool_entry& entry,
+                                                                  const spool_snapshot& snapshot,
+                                                                  Mutation&& mutation) {
+   const auto lock = std::scoped_lock{capture_lifecycle_mutex};
+   if (active_spool_matches_locked(directory_fd, entry) || !spool_snapshot_matches_locked(directory_fd, entry, snapshot)) {
       return false;
    }
    std::forward<Mutation>(mutation)();
@@ -756,6 +787,11 @@ read_file_result read_records(int directory_fd, const spool_entry& entry, std::s
    }
 
    const auto file_size = static_cast<std::uint64_t>(opened.stat_value.st_size);
+   result.snapshot = spool_snapshot{
+       .device = opened.stat_value.st_dev,
+       .inode = opened.stat_value.st_ino,
+       .size = file_size,
+   };
    result.total_records = file_size / sizeof(disk_record);
    const auto count = std::min<std::uint64_t>(result.total_records, limit);
 
@@ -1048,9 +1084,12 @@ boost::asio::awaitable<crash_resend_result> async_resend_crashes(log_exporter& e
       if (exported.failed_records == 0 && exported.exported_records == read.records.size()) {
          result.exported_records += exported.exported_records;
          ++result.files_exported;
-         if (!mutate_if_not_active_current_spool(
-                 directory_fd.get(), entry,
-                 [&] { remove_exported_records(directory_fd.get(), entry, read.records.size(), read.total_records); })) {
+         if (!read.snapshot.has_value() || !mutate_if_spool_snapshot_current_and_not_active(
+                                             directory_fd.get(), entry, *read.snapshot,
+                                             [&] {
+                                                remove_exported_records(directory_fd.get(), entry, read.records.size(),
+                                                                        read.total_records);
+                                             })) {
             ++result.files_retained;
             continue;
          }

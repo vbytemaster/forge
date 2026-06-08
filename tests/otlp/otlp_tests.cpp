@@ -241,6 +241,14 @@ std::filesystem::path first_spool_file(const std::filesystem::path& directory) {
    return {};
 }
 
+void append_file_bytes(const std::filesystem::path& source, const std::filesystem::path& target) {
+   auto input = std::ifstream{source, std::ios::binary};
+   BOOST_REQUIRE(input.good());
+   auto output = std::ofstream{target, std::ios::binary | std::ios::app};
+   BOOST_REQUIRE(output.good());
+   output << input.rdbuf();
+}
+
 fcl::otlp::crash_spool_options make_spool_options(const std::filesystem::path& directory) {
    return fcl::otlp::crash_spool_options{
        .directory = directory,
@@ -596,6 +604,105 @@ BOOST_AUTO_TEST_CASE(crash_resend_does_not_mutate_spool_when_capture_installs_co
    BOOST_TEST(S_ISREG(stat_value.st_mode));
    BOOST_TEST(stat_value.st_uid == ::geteuid());
    BOOST_TEST((stat_value.st_mode & (S_IWGRP | S_IWOTH)) == 0);
+}
+
+BOOST_AUTO_TEST_CASE(crash_resend_does_not_drop_retained_records_when_resends_overlap) {
+   auto first_source_directory = temp_directory{"fcl-otlp-crash-overlap-first"};
+   auto second_source_directory = temp_directory{"fcl-otlp-crash-overlap-second"};
+   BOOST_TEST(run_crash_helper("sigabrt", first_source_directory.path()) == 0);
+   BOOST_TEST(run_crash_helper("sigabrt", second_source_directory.path()) == 0);
+   const auto first_source = first_spool_file(first_source_directory.path());
+   const auto second_source = first_spool_file(second_source_directory.path());
+   const auto record_size = std::filesystem::file_size(first_source);
+   BOOST_REQUIRE(record_size > 0);
+   BOOST_REQUIRE_EQUAL(std::filesystem::file_size(second_source), record_size);
+
+   auto directory = temp_directory{"fcl-otlp-crash-overlap"};
+   const auto target = directory.path() / "crash-999999.spool";
+   std::filesystem::copy_file(first_source, target);
+   append_file_bytes(second_source, target);
+   std::filesystem::permissions(target, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                                std::filesystem::perm_options::replace);
+   BOOST_REQUIRE_EQUAL(std::filesystem::file_size(target), record_size * 2);
+
+   auto first_collector_runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto second_collector_runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto first_collector = fake_collector{first_collector_runtime, {{.status = fcl::http::status::ok}}, true};
+   auto second_collector = fake_collector{second_collector_runtime, {{.status = fcl::http::status::ok}}, true};
+   auto first_runtime = fcl::asio::runtime{};
+   auto second_runtime = fcl::asio::runtime{};
+   auto first_exporter = fcl::otlp::log_exporter{first_runtime, make_options(first_collector)};
+   auto second_exporter = fcl::otlp::log_exporter{second_runtime, make_options(second_collector)};
+   auto first_options = make_spool_options(directory.path());
+   auto second_options = make_spool_options(directory.path());
+   first_options.max_records_per_resend = 1;
+   second_options.max_records_per_resend = 1;
+
+   auto first_result = fcl::otlp::crash_resend_result{};
+   auto second_result = fcl::otlp::crash_resend_result{};
+   auto first_error = std::exception_ptr{};
+   auto second_error = std::exception_ptr{};
+   auto first_resend = std::thread{[&] {
+      try {
+         first_result = fcl::asio::blocking::run(first_runtime,
+                                                 fcl::otlp::async_resend_crashes(first_exporter, first_options));
+      } catch (...) {
+         first_error = std::current_exception();
+      }
+   }};
+   auto second_resend = std::thread{[&] {
+      try {
+         second_result = fcl::asio::blocking::run(second_runtime,
+                                                  fcl::otlp::async_resend_crashes(second_exporter, second_options));
+      } catch (...) {
+         second_error = std::current_exception();
+      }
+   }};
+
+   if (!first_collector.wait_for_requests(1) || !second_collector.wait_for_requests(1)) {
+      first_collector.release_responses();
+      second_collector.release_responses();
+      first_resend.join();
+      second_resend.join();
+      BOOST_FAIL("expected both resend operations to export before release");
+   }
+
+   first_collector.release_responses();
+   second_collector.release_responses();
+   first_resend.join();
+   second_resend.join();
+   if (first_error) {
+      std::rethrow_exception(first_error);
+   }
+   if (second_error) {
+      std::rethrow_exception(second_error);
+   }
+   fcl::asio::blocking::run(first_runtime, first_exporter.async_shutdown());
+   fcl::asio::blocking::run(second_runtime, second_exporter.async_shutdown());
+
+   BOOST_TEST(first_result.exported_records + second_result.exported_records == 2U);
+   BOOST_TEST(first_result.files_retained + second_result.files_retained >= 1U);
+   BOOST_REQUIRE(std::filesystem::exists(target));
+   BOOST_TEST(std::filesystem::file_size(target) == record_size);
+
+   struct stat stat_value {};
+   BOOST_REQUIRE(::lstat(target.c_str(), &stat_value) == 0);
+   BOOST_TEST(S_ISREG(stat_value.st_mode));
+   BOOST_TEST(stat_value.st_uid == ::geteuid());
+   BOOST_TEST((stat_value.st_mode & (S_IWGRP | S_IWOTH)) == 0);
+
+   auto followup_runtime = fcl::asio::runtime{};
+   auto followup_collector = fake_collector{followup_runtime, {{.status = fcl::http::status::ok}}};
+   auto followup_exporter = fcl::otlp::log_exporter{followup_runtime, make_options(followup_collector)};
+   const auto followup_result =
+       fcl::asio::blocking::run(followup_runtime,
+                                fcl::otlp::async_resend_crashes(followup_exporter, make_spool_options(directory.path())));
+   fcl::asio::blocking::run(followup_runtime, followup_exporter.async_shutdown());
+
+   BOOST_REQUIRE(followup_collector.wait_for_requests(1));
+   BOOST_TEST(followup_result.records_read == 1U);
+   BOOST_TEST(followup_result.exported_records == 1U);
+   BOOST_TEST(count_spool_files(directory.path()) == 0U);
 }
 #endif
 

@@ -122,20 +122,8 @@ namespace {
    return dht::peer{.id = record.peer, .endpoints = std::move(endpoints), .connection = dht::connection_type::can_connect};
 }
 
-[[nodiscard]] host_addresses::learning_context discovery_context_for(const dht::peer& source) {
-   auto context = host_addresses::learning_context{.source = host_addresses::source_kind::authenticated};
-   if (!source.endpoints.empty()) {
-      context.remote_endpoint = source.endpoints.front();
-   }
-   return context;
-}
-
-[[nodiscard]] host_addresses::learning_context discovery_context_for(const peer_store::record& source) {
-   auto context = host_addresses::learning_context{.source = host_addresses::source_kind::authenticated};
-   if (!source.endpoints.empty()) {
-      context.remote_endpoint = source.endpoints.front().endpoint;
-   }
-   return context;
+[[nodiscard]] host_addresses::learning_context third_party_discovery_context() {
+   return host_addresses::learning_context{.source = host_addresses::source_kind::third_party};
 }
 
 [[nodiscard]] dht::peer sanitize_discovered_peer(dht::peer value, host_addresses::learning_context context) {
@@ -684,7 +672,7 @@ boost::asio::awaitable<std::vector<discovery::result>> node::async_refresh_disco
                 auto response = dht::codec::decode(
                     co_await async_read_length_delimited(stream, buffer, self->options.limits.dht.max_message_size),
                     self->options.limits.dht);
-                const auto context = discovery_context_for(candidate);
+                const auto context = third_party_discovery_context();
                 for (auto& closer : response.closer_peers) {
                    closer = sanitize_discovered_peer(std::move(closer), context);
                    if (has_usable_endpoint(closer)) {
@@ -762,7 +750,7 @@ boost::asio::awaitable<std::vector<discovery::result>> node::async_refresh_disco
                   if (registration.peer == self->local || out.size() >= self->options.limits.discovery.max_results) {
                      continue;
                   }
-                  auto sanitized = sanitize_discovered_registration(registration, discovery_context_for(record));
+                  auto sanitized = sanitize_discovered_registration(registration, third_party_discovery_context());
                   if (!sanitized) {
                      continue;
                   }
@@ -829,7 +817,7 @@ boost::asio::awaitable<dht::query_result> node::async_find_peer(peer_id peer) {
           auto response = dht::codec::decode(
               co_await async_read_length_delimited(stream, buffer, self->options.limits.dht.max_message_size),
               self->options.limits.dht);
-          const auto context = discovery_context_for(candidate);
+          const auto context = third_party_discovery_context();
           for (auto& closer : response.closer_peers) {
              closer = sanitize_discovered_peer(std::move(closer), context);
              if (has_usable_endpoint(closer)) {
@@ -878,7 +866,7 @@ boost::asio::awaitable<void> node::async_provide(dht::key key) {
           auto response = dht::codec::decode(
               co_await async_read_length_delimited(stream, buffer, self->options.limits.dht.max_message_size),
               self->options.limits.dht);
-          const auto context = discovery_context_for(candidate);
+          const auto context = third_party_discovery_context();
           for (auto& closer : response.closer_peers) {
              closer = sanitize_discovered_peer(std::move(closer), context);
              if (has_usable_endpoint(closer)) {
@@ -944,15 +932,17 @@ boost::asio::awaitable<std::vector<dht::peer>> node::async_find_providers(dht::k
           auto response = dht::codec::decode(
               co_await async_read_length_delimited(stream, buffer, self->options.limits.dht.max_message_size),
               self->options.limits.dht);
-          const auto context = discovery_context_for(candidate);
+          const auto context = third_party_discovery_context();
           for (auto& provider : response.provider_peers) {
              provider = sanitize_discovered_peer(std::move(provider), context);
-             self->store.upsert_provider(peer_store::provider_record{
-                 .key = key,
-                 .provider = provider,
-                 .discovered_by = discovery::source::dht,
-                 .expires_at = std::chrono::system_clock::now() + self->options.limits.dht.provider_record_ttl,
-             });
+             if (has_usable_endpoint(provider)) {
+                self->store.upsert_provider(peer_store::provider_record{
+                    .key = key,
+                    .provider = provider,
+                    .discovered_by = discovery::source::dht,
+                    .expires_at = std::chrono::system_clock::now() + self->options.limits.dht.provider_record_ttl,
+                });
+             }
           }
           for (auto& closer : response.closer_peers) {
              closer = sanitize_discovered_peer(std::move(closer), context);
@@ -965,6 +955,9 @@ boost::asio::awaitable<std::vector<dht::peer>> node::async_find_providers(dht::k
           response.closer_peers.erase(std::remove_if(response.closer_peers.begin(), response.closer_peers.end(),
                                                      [](const auto& peer) { return !has_usable_endpoint(peer); }),
                                       response.closer_peers.end());
+          response.provider_peers.erase(std::remove_if(response.provider_peers.begin(), response.provider_peers.end(),
+                                                       [](const auto& peer) { return !has_usable_endpoint(peer); }),
+                                        response.provider_peers.end());
           co_await stream.async_close();
           co_return response;
        });
@@ -1013,12 +1006,7 @@ node::async_rendezvous_discover(peer_id rendezvous_peer, rendezvous::discover_re
       FCL_THROW_EXCEPTION(exceptions::protocol_error, "rendezvous expected discover response");
    }
    auto sanitized_registrations = std::vector<rendezvous::registration>{};
-   const auto context = [&] {
-      if (const auto record = self->store.find(rendezvous_peer)) {
-         return discovery_context_for(*record);
-      }
-      return host_addresses::learning_context{.source = host_addresses::source_kind::third_party};
-   }();
+   const auto context = third_party_discovery_context();
    for (auto& registration : response.discover_response_value->registrations) {
       auto sanitized = sanitize_discovered_registration(std::move(registration), context);
       if (!sanitized) {

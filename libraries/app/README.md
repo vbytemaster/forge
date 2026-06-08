@@ -610,9 +610,6 @@ boost::asio::awaitable<void> run_runtime(fcl::app::application_runtime& runtime)
 config collection, shell-owned default merge, configure-before-initialize,
 startup rollback, reverse shutdown and diagnostics.
 
-Buildable examples:
-
-- [`examples/app/application_lifecycle.cpp`](../../examples/app/application_lifecycle.cpp)
-- [`examples/app/application_builder.cpp`](../../examples/app/application_builder.cpp)
-- [`examples/app/daemon_runner.cpp`](../../examples/app/daemon_runner.cpp)
-- [`examples/app/exception_logging.cpp`](../../examples/app/exception_logging.cpp)
+Executable lifecycle coverage lives in `test_fcl_app`. Consumer snippets stay in
+this README and the runtime docs so they cannot drift behind an unbuilt example
+tree.

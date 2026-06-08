@@ -25,8 +25,8 @@ FCL.
 - Synchronous logger v2 with structured records, sinks, redaction and private
   stacktrace backend.
 - CMake install/export package with external consumer smoke.
-- Buildable app/exception examples that downstream programs can copy as
-  starting patterns.
+- App lifecycle snippets and executable `test_fcl_app` coverage for downstream
+  adoption patterns.
 
 ## Library Families
 

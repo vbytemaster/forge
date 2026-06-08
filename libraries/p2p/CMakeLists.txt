@@ -13,12 +13,16 @@ add_library(
    reachability.cpp
    relay.cpp
    hole_punch.cpp
+   connection_manager.cpp
+   connection_manager.hpp
    resource_manager.cpp
    stream.cpp
    negotiation.cpp
    peer_store.cpp
    direct_transport.cpp
    direct_transport.hpp
+   host_addresses.cpp
+   host_addresses.hpp
    quic_direct_transport.cpp
    tcp_direct_transport.cpp
    libp2p_tls.cpp
@@ -28,8 +32,12 @@ add_library(
    node_impl.hpp
    operation_deadline.cpp
    operation_deadline.hpp
+   path_selector.cpp
+   path_selector.hpp
    peer_exchange_codec.cpp
    peer_exchange_codec.hpp
+   relay_discovery.cpp
+   relay_discovery.hpp
    relay_transport.cpp
    relay_transport.hpp
    session_lifecycle.hpp
@@ -46,6 +54,7 @@ target_link_libraries(
    fcl_p2p PUBLIC
       fcl_exceptions
       fcl_api
+      fcl_api_transport
       fcl_raw
       fcl_crypto
       fcl_multiformats

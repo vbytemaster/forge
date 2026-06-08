@@ -205,3 +205,16 @@ The repository also contains external smoke projects under
 [`tests/package_core_lightweight`](tests/package_core_lightweight). They verify
 both component-rich consumers and the lightweight `find_package(FCL)` path that
 does not discover heavy crypto/transport/codec backends.
+
+## License
+
+FCL is licensed under the Apache License, Version 2.0.
+
+Copyright (c) 2026 Vladimir Tarnakin.
+
+FCL is intended to be a reusable foundation library for open-source and
+commercial software. Product-level Storlane components may use separate
+licensing terms.
+
+Canonical upstream:
+https://github.com/vbytemaster/storlane-fc

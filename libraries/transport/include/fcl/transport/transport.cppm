@@ -1,5 +1,6 @@
 export module fcl.transport;
 
+export import fcl.transport.buffer;
 export import fcl.transport.connector;
 export import fcl.transport.endpoint;
 export import fcl.transport.exceptions;

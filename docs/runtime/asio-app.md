@@ -151,19 +151,9 @@ boost::asio::awaitable<void> start_then_stop(fcl::app::application_shell& app) {
 }
 ```
 
-Buildable examples:
-
-- [examples/app/application_lifecycle.cpp](../../examples/app/application_lifecycle.cpp)
-  shows `application_shell`, typed APIs, config, lifecycle signals,
-  diagnostics and POSIX signal bridge.
-- [examples/app/application_builder.cpp](../../examples/app/application_builder.cpp)
-  shows builder syntax that still returns an `application_shell`.
-- [examples/app/daemon_runner.cpp](../../examples/app/daemon_runner.cpp)
-  shows `run_daemon(...)` with built-in daemon config, app config and plugin
-  config.
-- [examples/app/exception_logging.cpp](../../examples/app/exception_logging.cpp)
-  shows exception capture routed into `fcl_log` without making
-  `fcl_exceptions` depend on logging.
+Executable lifecycle coverage lives in `test_fcl_app`. Consumer snippets stay in
+this document and the library README so they cannot drift behind an unbuilt
+example tree.
 
 ## Failure And Rollback
 

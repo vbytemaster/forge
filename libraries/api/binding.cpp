@@ -46,13 +46,50 @@ namespace {
    return response;
 }
 
-[[nodiscard]] bool exported(const std::vector<descriptor>& exports, const api_ref& requested) noexcept {
-   if (exports.empty()) {
-      return true;
+[[nodiscard]] frame make_api_not_exported_response(const frame& request) {
+   return make_error_response(
+       request, error_payload{
+                    .error = "api_not_exported",
+                    .message = "API is not exported by this binding plan",
+                    .retryable = false,
+                    .status_code = status::permission_denied,
+                    .identity =
+                        {
+                            .category = "fcl.api",
+                            .code = static_cast<std::uint32_t>(exceptions::code::incompatible_version),
+                        },
+                });
+}
+
+[[nodiscard]] const descriptor* find_export(const std::vector<descriptor>& exports,
+                                            const api_ref& requested) noexcept {
+   for (const auto& available : exports) {
+      if (compatible(available, requested)) {
+         return &available;
+      }
    }
-   return std::any_of(exports.begin(), exports.end(), [&](const auto& available) {
-      return compatible(available, requested);
-   });
+   return nullptr;
+}
+
+[[nodiscard]] bool exports_api(const binding_plan& plan, api_ref requested) noexcept {
+   return plan.exports.empty() || find_export(plan.exports, requested) != nullptr;
+}
+
+[[nodiscard]] bool method_hidden_by_export(const binding_plan& plan, api_ref requested,
+                                           std::string_view method) noexcept {
+   const auto* exported = plan.exports.empty() ? (plan.local == nullptr ? nullptr : plan.local->describe(requested))
+                                               : find_export(plan.exports, requested);
+   if (exported == nullptr) {
+      return false;
+   }
+   if (const auto* exported_method = find_method(*exported, method)) {
+      return exported_method->since_revision > requested.min_revision;
+   }
+   if (plan.exports.empty() || plan.local == nullptr) {
+      return false;
+   }
+   const auto* local_descriptor = plan.local->describe(std::move(requested));
+   return local_descriptor != nullptr && find_method(*local_descriptor, method) != nullptr;
 }
 
 void sort_interceptors(std::vector<interceptor_step>& interceptors) {
@@ -153,6 +190,31 @@ void call_runtime::observe(const frame& value) {
    }
 }
 
+void call_runtime::observe_input_stream_end(const frame& value) {
+   if (value.kind != frame_kind::stream_end) {
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "API input stream end observer received non-terminal frame",
+                          fcl::exceptions::ctx("call_id", value.id.value));
+   }
+
+   const auto id = value.id.value;
+   if (id == 0) {
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "API frame call_id must not be zero");
+   }
+
+   const auto active = active_.find(id);
+   if (active == active_.end()) {
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "API frame references unknown call_id",
+                          fcl::exceptions::ctx("call_id", id));
+   }
+
+   if (options_.deadline.count() > 0 &&
+       std::chrono::steady_clock::now() - active->second.started_at > options_.deadline) {
+      active_.erase(active);
+      FCL_THROW_EXCEPTION(exceptions::deadline_exceeded, "API call deadline exceeded",
+                          fcl::exceptions::ctx("call_id", id));
+   }
+}
+
 std::size_t call_runtime::active_calls() const noexcept {
    return active_.size();
 }
@@ -180,19 +242,8 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_many(frame req
    if (local == nullptr) {
       FCL_THROW_EXCEPTION(exceptions::incompatible_version, "API binding plan has no local registry");
    }
-   if (!exported(exports, request.api)) {
-      co_return std::vector<frame>{make_error_response(
-          request, error_payload{
-                       .error = "api_not_exported",
-                       .message = "API is not exported by this binding plan",
-                       .retryable = false,
-                       .status_code = status::permission_denied,
-                       .identity =
-                           {
-                               .category = "fcl.api",
-                               .code = static_cast<std::uint32_t>(exceptions::code::incompatible_version),
-                           },
-                   })};
+   if (!exports_api(*this, request.api) || method_hidden_by_export(*this, request.api, request.method)) {
+      co_return std::vector<frame>{make_api_not_exported_response(request)};
    }
 
    calls.observe(request);
@@ -234,30 +285,25 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::ve
    if (frames.empty()) {
       FCL_THROW_EXCEPTION(exceptions::protocol_error, "API stream dispatch requires at least one frame");
    }
-   if (!exported(exports, frames.front().api)) {
-      co_return std::vector<frame>{make_error_response(
-          frames.front(), error_payload{
-                            .error = "api_not_exported",
-                            .message = "API is not exported by this binding plan",
-                            .retryable = false,
-                            .status_code = status::permission_denied,
-                            .identity =
-                                {
-                                    .category = "fcl.api",
-                                    .code = static_cast<std::uint32_t>(exceptions::code::incompatible_version),
-                                },
-                   })};
+   if (!exports_api(*this, frames.front().api) ||
+       method_hidden_by_export(*this, frames.front().api, frames.front().method)) {
+      auto response = make_api_not_exported_response(frames.front());
+      if (calls.active(frames.front().id)) {
+         calls.observe(response);
+      }
+      co_return std::vector<frame>{std::move(response)};
    }
 
    if (!calls.active(frames.front().id)) {
       calls.observe(frames.front());
-      for (auto index = std::size_t{1}; index != frames.size(); ++index) {
-         const auto& frame_value = frames[index];
-         if (index + 1U == frames.size() && frame_value.kind == frame_kind::stream_end) {
-            continue;
-         }
-         calls.observe(frame_value);
+   }
+   for (auto index = std::size_t{1}; index != frames.size(); ++index) {
+      const auto& frame_value = frames[index];
+      if (index + 1U == frames.size() && frame_value.kind == frame_kind::stream_end) {
+         calls.observe_input_stream_end(frame_value);
+         continue;
       }
+      calls.observe(frame_value);
    }
 
    auto context = make_context(frames.front());

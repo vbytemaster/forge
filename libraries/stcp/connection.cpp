@@ -472,6 +472,21 @@ class stream_model final : public transport::detail::stream_concept {
       co_return out;
    }
 
+   boost::asio::awaitable<transport::chunk> async_read_chunk() override {
+      if (!valid()) {
+         FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp stream");
+      }
+      auto builder = pool_.acquire(read_chunk_size_);
+      auto writable = builder.writable();
+      auto error = boost::system::error_code{};
+      const auto size = co_await stream_->async_read_some(boost::asio::buffer(writable),
+                                                          boost::asio::redirect_error(boost::asio::use_awaitable, error));
+      if (error) {
+         throw_read_write_error(error);
+      }
+      co_return builder.commit(size);
+   }
+
    boost::asio::awaitable<void> async_close() override {
       if (!stream_) {
          co_return;
@@ -490,6 +505,7 @@ class stream_model final : public transport::detail::stream_concept {
    std::shared_ptr<native_stream> stream_;
    std::shared_ptr<asio::ssl::context> context_;
    std::size_t read_chunk_size_ = 64 * 1024;
+   transport::buffer_pool pool_;
    std::int64_t id_ = -1;
 };
 

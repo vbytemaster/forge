@@ -4,12 +4,9 @@ module;
 #include <fcl/exceptions/macros.hpp>
 
 #include <cstddef>
-#include <functional>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <utility>
-#include <vector>
 
 export module fcl.websocket.api;
 
@@ -26,29 +23,18 @@ struct api_backpressure_options {
 
 class api_binding {
  public:
-   using session_handler = std::function<boost::asio::awaitable<void>(fcl::api::session&)>;
-
    api_binding(fcl::api::binding_plan plan, fcl::api::codec_id codec, std::size_t max_frame_size,
                api_backpressure_options backpressure)
        : plan_{std::move(plan)}, codec_{std::move(codec)}, max_frame_size_{max_frame_size},
          backpressure_{backpressure} {}
 
-   api_binding& on_session(session_handler handler) {
-      on_session_ = std::move(handler);
-      return *this;
-   }
-
-   boost::asio::awaitable<fcl::api::session> accept(connection::ptr connection) const {
-      auto session = make_session();
-      if (on_session_) {
-         co_await on_session_(session);
-      }
+   boost::asio::awaitable<void> accept(connection::ptr connection) const {
       install_frame_handler(std::move(connection));
-      co_return session;
+      co_return;
    }
 
-   boost::asio::awaitable<fcl::api::session> connect(connection::ptr connection) const {
-      co_return co_await accept(std::move(connection));
+   boost::asio::awaitable<void> connect(connection::ptr connection) const {
+      co_await accept(std::move(connection));
    }
 
    [[nodiscard]] const fcl::api::codec_id& codec() const noexcept {
@@ -64,13 +50,6 @@ class api_binding {
    }
 
  private:
-   [[nodiscard]] fcl::api::session make_session() const {
-      if (plan_.local == nullptr) {
-         FCL_THROW_EXCEPTION(fcl::api::exceptions::incompatible_version, "websocket API binding has no local registry");
-      }
-      return fcl::api::session{fcl::api::view{*plan_.local}};
-   }
-
    void install_frame_handler(connection::ptr connection) const {
       if (!connection) {
          FCL_THROW_EXCEPTION(fcl::websocket::exceptions::closed, "websocket API binding received null connection");
@@ -81,55 +60,18 @@ class api_binding {
       auto plan = plan_;
       auto codec = codec_;
       auto max_frame_size = max_frame_size_;
-      auto max_inflight = backpressure_.max_inflight;
-      auto calls = std::make_shared<fcl::api::call_runtime>(
-          fcl::api::call_runtime_options{.max_inflight = max_inflight});
-      auto streams = std::make_shared<std::unordered_map<std::uint64_t, std::vector<fcl::api::frame>>>();
+      auto dispatcher = std::make_shared<fcl::api::frame_dispatcher>(
+          std::move(plan), fcl::api::dispatch_options{.codec = codec, .max_inflight = backpressure_.max_inflight});
       connection->on_message(
-          [plan = std::move(plan), codec = std::move(codec), calls, streams, max_frame_size, max_inflight](
-              fcl::websocket::connection& connection_value, std::string message) mutable
+          [dispatcher = std::move(dispatcher), max_frame_size](
+              fcl::websocket::connection& connection_value, std::string message)
           -> boost::asio::awaitable<void> {
              if (message.size() > max_frame_size) {
                 FCL_THROW_EXCEPTION(fcl::websocket::exceptions::frame_too_large, "websocket API frame is too large");
              }
              auto request_bytes = fcl::api::bytes{message.begin(), message.end()};
              auto request = fcl::raw::unpack<fcl::api::frame>(request_bytes);
-             if (request.codec != codec) {
-                FCL_THROW_EXCEPTION(fcl::api::exceptions::codec_failed, "websocket API frame codec is not accepted",
-                                    fcl::exceptions::ctx("codec", request.codec.value));
-             }
-             const auto* descriptor = plan.local == nullptr ? nullptr : plan.local->describe(request.api);
-             const auto* method = descriptor == nullptr ? nullptr : fcl::api::find_method(*descriptor, request.method);
-             const auto grouped_stream =
-                method != nullptr && (method->kind == fcl::api::method_kind::client_stream ||
-                                      method->kind == fcl::api::method_kind::bidirectional_stream);
-             if (request.kind == fcl::api::frame_kind::request && grouped_stream) {
-                if (streams->size() >= max_inflight) {
-                   FCL_THROW_EXCEPTION(fcl::api::exceptions::resource_exhausted,
-                                       "websocket API max streams exceeded");
-                }
-                if (!streams->emplace(request.id.value, std::vector<fcl::api::frame>{std::move(request)}).second) {
-                   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
-                                       "duplicate active websocket API stream");
-                }
-                co_return;
-             }
-             if (auto active = streams->find(request.id.value); active != streams->end()) {
-                active->second.push_back(std::move(request));
-                if (active->second.back().kind != fcl::api::frame_kind::stream_end) {
-                   co_return;
-                }
-                auto frames = std::move(active->second);
-                streams->erase(active);
-                auto responses = co_await plan.dispatch_stream(std::move(frames));
-                for (const auto& response : responses) {
-                   auto response_bytes = fcl::api::bytes{};
-                   fcl::raw::pack(response_bytes, response);
-                   co_await connection_value.send(std::string{response_bytes.begin(), response_bytes.end()});
-                }
-                co_return;
-             }
-             auto responses = co_await plan.dispatch_many(std::move(request), *calls);
+             auto responses = co_await dispatcher->dispatch(std::move(request));
              for (const auto& response : responses) {
                 auto response_bytes = fcl::api::bytes{};
                 fcl::raw::pack(response_bytes, response);
@@ -142,7 +84,6 @@ class api_binding {
    fcl::api::codec_id codec_;
    std::size_t max_frame_size_ = 1024 * 1024;
    api_backpressure_options backpressure_{};
-   session_handler on_session_;
 };
 
 class api_builder {

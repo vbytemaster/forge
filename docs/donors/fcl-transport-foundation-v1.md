@@ -24,7 +24,7 @@ Relay, DHT, GossipSub or API frame semantics.
 ## FCL Decisions
 
 - `stream_connector` and `stream_listener` model raw byte-stream transports such
-  as future TCP/STCP.
+  as the concrete TCP/STCP layers.
 - `session_connector` and `session_listener` model native multiplexed transports
   such as QUIC.
 - `registry` routes by `transport::endpoint::protocol_kind`, not by multiaddr or

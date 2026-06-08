@@ -2,7 +2,10 @@ module;
 
 #include <fcl/exceptions/macros.hpp>
 
+#include <algorithm>
+#include <iterator>
 #include <memory>
+#include <ranges>
 #include <utility>
 #include <vector>
 
@@ -33,7 +36,6 @@ namespace {
 
 struct registry::state {
    std::vector<profile> profiles;
-   profile* active_listener = nullptr;
 };
 
 registry::registry(fcl::asio::runtime& runtime, const node::options& options) : state_(std::make_unique<state>()) {
@@ -44,34 +46,57 @@ registry::registry(fcl::asio::runtime& runtime, const node::options& options) : 
 registry::~registry() = default;
 
 bool registry::listening() const noexcept {
-   return state_ && state_->active_listener != nullptr && state_->active_listener->listening();
+   return state_ && std::ranges::any_of(state_->profiles, [](const profile& value) {
+      return value.listening();
+   });
 }
 
 std::optional<fcl::p2p::endpoint> registry::local_endpoint() const {
-   if (!listening()) {
+   auto endpoints = local_endpoints();
+   if (endpoints.empty()) {
       return std::nullopt;
    }
-   return state_->active_listener->local_endpoint();
+   return endpoints.front();
+}
+
+std::vector<fcl::p2p::endpoint> registry::local_endpoints() const {
+   auto out = std::vector<fcl::p2p::endpoint>{};
+   if (!state_) {
+      return out;
+   }
+   for (const auto& value : state_->profiles) {
+      auto endpoints = value.local_endpoints();
+      out.insert(out.end(), std::make_move_iterator(endpoints.begin()), std::make_move_iterator(endpoints.end()));
+   }
+   return out;
 }
 
 void registry::add(profile value) {
-   if (!value.supports || !value.listening || !value.local_endpoint || !value.listen || !value.stop ||
+   if (!value.supports || !value.listening || !value.local_endpoints || !value.listen || !value.stop ||
        !value.async_connect || !value.async_accept) {
       FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P direct transport profile is empty");
    }
    state_->profiles.push_back(std::move(value));
 }
 
-void registry::listen(fcl::p2p::endpoint endpoint) {
+fcl::p2p::endpoint registry::listen(fcl::p2p::endpoint endpoint) {
+   const auto requested = endpoint.to_string();
+   const auto existing = local_endpoints();
+   if (std::ranges::any_of(existing, [&](const auto& value) { return value.to_string() == requested; })) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P direct listener endpoint is already active");
+   }
    auto& selected = profile_for(state_->profiles, endpoint);
-   selected.listen(std::move(endpoint));
-   state_->active_listener = &selected;
+   return selected.listen(std::move(endpoint));
 }
 
 void registry::stop() {
-   if (state_ && state_->active_listener) {
-      state_->active_listener->stop();
-      state_->active_listener = nullptr;
+   if (!state_) {
+      return;
+   }
+   for (auto& value : state_->profiles) {
+      if (value.listening()) {
+         value.stop();
+      }
    }
 }
 
@@ -81,11 +106,9 @@ boost::asio::awaitable<connection> registry::async_connect(fcl::p2p::endpoint en
    co_return co_await selected.async_connect(std::move(endpoint), options);
 }
 
-boost::asio::awaitable<connection> registry::async_accept() {
-   if (!listening()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "P2P direct listener is not active");
-   }
-   co_return co_await state_->active_listener->async_accept();
+boost::asio::awaitable<connection> registry::async_accept(fcl::p2p::endpoint endpoint) {
+   auto& selected = profile_for(state_->profiles, endpoint);
+   co_return co_await selected.async_accept(std::move(endpoint));
 }
 
 } // namespace fcl::p2p::direct

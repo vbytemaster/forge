@@ -21,6 +21,7 @@ import fcl.tcp.exceptions;
 import fcl.tcp.listener;
 import fcl.tcp.options;
 import fcl.tcp.transport;
+import fcl.transport.buffer;
 import fcl.transport.endpoint;
 import fcl.transport.exceptions;
 import fcl.transport.frame;
@@ -79,10 +80,24 @@ boost::asio::awaitable<void> tcp_roundtrip() {
    auto received_pong = co_await client.stream.async_read();
    BOOST_CHECK_EQUAL_COLLECTIONS(received_pong.begin(), received_pong.end(), pong.begin(), pong.end());
 
+   const auto chunk_payload = text_bytes("chunk payload");
+   co_await client.stream.async_write(fcl::transport::chunk{chunk_payload});
+   auto received_chunk = co_await server.stream.async_read_chunk();
+   const auto received_chunk_bytes = received_chunk.to_vector();
+   BOOST_CHECK_EQUAL_COLLECTIONS(
+       received_chunk_bytes.begin(), received_chunk_bytes.end(), chunk_payload.begin(), chunk_payload.end());
+
    const auto framed = text_bytes("framed payload");
    co_await client.stream.async_write_frame(framed);
    auto received_frame = co_await server.stream.async_read_frame();
    BOOST_CHECK_EQUAL_COLLECTIONS(received_frame.begin(), received_frame.end(), framed.begin(), framed.end());
+
+   const auto framed_chunk = text_bytes("framed chunk payload");
+   co_await client.stream.async_write_frame(fcl::transport::chunk{framed_chunk});
+   auto received_frame_chunk = co_await server.stream.async_read_frame_chunk();
+   const auto received_frame_chunk_bytes = received_frame_chunk.to_vector();
+   BOOST_CHECK_EQUAL_COLLECTIONS(received_frame_chunk_bytes.begin(), received_frame_chunk_bytes.end(),
+                                 framed_chunk.begin(), framed_chunk.end());
 
    co_await client.stream.async_close();
    co_await server.stream.async_close();

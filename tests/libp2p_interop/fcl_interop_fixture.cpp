@@ -486,6 +486,24 @@ std::shared_ptr<pubsub_stress_state> register_pubsub_stress_listener(fcl::asio::
    return state;
 }
 
+void prepare_pubsub_publisher(fcl::asio::runtime& runtime, fcl::p2p::node& value) {
+   fcl::asio::blocking::run(
+       runtime, value.async_subscribe(
+                    fcl::p2p::pubsub::topic{.value = std::string{pubsub_topic}},
+                    [](fcl::p2p::pubsub::event) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+                       co_return fcl::p2p::pubsub::validation_result::accept;
+                    }));
+
+   const auto deadline = std::chrono::steady_clock::now() + 8s;
+   while (std::chrono::steady_clock::now() < deadline) {
+      const auto snapshot = value.pubsub_snapshot();
+      if (snapshot.peers > 0 || snapshot.mesh_edges > 0) {
+         return;
+      }
+      std::this_thread::sleep_for(100ms);
+   }
+}
+
 void write_pubsub_stress_result(const std::filesystem::path& result_file, std::string_view implementation,
                                 const pubsub_stress_state& state, std::uint64_t expected, const fcl::p2p::node& value) {
    auto payloads = std::string{};
@@ -615,7 +633,11 @@ int listen_mode(const std::map<std::string, std::string>& args) {
              << " handshakes_completed=" << metrics.handshakes_completed
              << " handshakes_failed=" << metrics.handshakes_failed
              << " protocol_streams_accepted=" << metrics.protocol_streams_accepted
-             << " protocol_rejections=" << metrics.protocol_rejections << "\n";
+             << " protocol_rejections=" << metrics.protocol_rejections
+             << " pubsub_received=" << metrics.pubsub_messages_received
+             << " pubsub_delivered=" << metrics.pubsub_messages_delivered
+             << " pubsub_invalid=" << metrics.pubsub_invalid_messages
+             << " pubsub_duplicates=" << metrics.pubsub_duplicates << "\n";
    if (stress_state) {
       auto lock = std::scoped_lock{stress_state->mutex};
       write_pubsub_stress_result(required(args, "result-file"), "fcl", *stress_state,
@@ -743,6 +765,7 @@ std::string run_scenario(fcl::asio::runtime& runtime, fcl::p2p::node& value, std
              ",\"cookie_bytes\":" + std::to_string(discovered.cookie.size());
    }
    if (scenario == "gossipsub_publish" || scenario == "gossipsub_mixed_mesh_stress") {
+      prepare_pubsub_publisher(runtime, value);
       const auto message = fcl::asio::blocking::run(runtime, value.async_publish(
                                                                 fcl::p2p::pubsub::topic{
                                                                     .value = std::string{pubsub_topic},

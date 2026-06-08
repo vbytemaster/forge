@@ -45,6 +45,18 @@ target_link_libraries(test_fcl_log fcl Boost::included_unit_test_framework)
 add_test(NAME test_fcl_log COMMAND test_fcl_log WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
+   test_fcl_otlp
+   unit/main.cpp
+   otlp/otlp_tests.cpp
+)
+target_link_libraries(test_fcl_otlp fcl Boost::included_unit_test_framework)
+add_executable(fcl_otlp_crash_helper otlp/crash_helper.cpp)
+target_link_libraries(fcl_otlp_crash_helper fcl)
+add_dependencies(test_fcl_otlp fcl_otlp_crash_helper)
+target_compile_definitions(test_fcl_otlp PRIVATE FCL_OTLP_CRASH_HELPER="$<TARGET_FILE:fcl_otlp_crash_helper>")
+add_test(NAME test_fcl_otlp COMMAND test_fcl_otlp WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(
    test_fcl_json
    unit/main.cpp
    json/test_json.cpp
@@ -191,6 +203,14 @@ add_executable(
 )
 target_link_libraries(test_fcl_api fcl Boost::included_unit_test_framework)
 add_test(NAME test_fcl_api COMMAND test_fcl_api WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(
+   test_fcl_api_transport
+   unit/main.cpp
+   api/api_transport_tests.cpp
+)
+target_link_libraries(test_fcl_api_transport fcl Boost::included_unit_test_framework)
+add_test(NAME test_fcl_api_transport COMMAND test_fcl_api_transport WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
    test_fcl_http_websocket
@@ -355,6 +375,17 @@ add_custom_target(
    DEPENDS test_fcl_package_install
 )
 add_custom_target(
+   test_fcl_package_otlp_component
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_otlp_component
+      ${CMAKE_BINARY_DIR}/fcl-package-otlp-component
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command fcl_package_otlp_component
+   DEPENDS test_fcl_package_install
+)
+add_custom_target(
    test_fcl_package_all_missing_dependency
    COMMAND ${CMAKE_COMMAND}
       -DFCL_PACKAGE_TEST_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_all_missing_dependency
@@ -442,6 +473,17 @@ add_test(
       --test-command fcl_package_quic_component
 )
 set_tests_properties(test_fcl_package_quic_component PROPERTIES DEPENDS test_fcl_package_install)
+add_test(
+   NAME test_fcl_package_otlp_component
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_otlp_component
+      ${CMAKE_BINARY_DIR}/fcl-package-otlp-component
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command fcl_package_otlp_component
+)
+set_tests_properties(test_fcl_package_otlp_component PROPERTIES DEPENDS test_fcl_package_install)
 add_test(
    NAME test_fcl_package_all_missing_dependency
    COMMAND ${CMAKE_COMMAND}

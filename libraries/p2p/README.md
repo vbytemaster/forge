@@ -66,9 +66,9 @@ Future transports must plug into the same multiaddr and transport session
 boundary, not fork P2P core.
 
 `fcl_transport` is the stream/session substrate for `fcl_p2p`; it is not an API
-or RPC layer. API-over-transport is intentionally future work in
-`fcl.api.transport`, where QUIC/P2P/TCP API bindings can share frame serve-loop
-logic without putting `fcl::api` into `fcl_transport` or `fcl_p2p`.
+or RPC layer. API-over-transport lives in `fcl.api.transport`, where QUIC/P2P
+bindings share frame serve-loop logic without putting `fcl::api` into
+`fcl_transport`.
 
 Network-level behaviors that must not be pushed into plugins:
 
@@ -125,6 +125,9 @@ auto endpoint = fcl::p2p::parse_endpoint(
    "/ip4/127.0.0.1/udp/4001/quic-v1/p2p/12D3KooW...");
 
 co_await node.async_listen(endpoint);
+
+co_await node.async_listen(fcl::p2p::parse_endpoint("/ip4/127.0.0.1/tcp/4001"));
+std::vector<fcl::p2p::endpoint> advertised = node.local_endpoints();
 ```
 
 QUIC and TCP+TLS/Noise+Yamux are currently registered direct transports. TCP
@@ -132,6 +135,10 @@ prefers libp2p TLS (`/tls/1.0.0`) and keeps Noise as fallback. `/ws` and `/wss`
 multiaddrs are parseable but direct dial/listen returns typed unsupported until
 a dedicated compatibility block wires a production transport. Future transports
 must use the same private direct profile boundary.
+
+`local_endpoints()` is the full canonical listen/advertise set and each endpoint
+includes `/p2p/<local-peer>`. `local_endpoint()` remains a first-endpoint
+compatibility convenience for older single-listen consumers.
 
 ### Peer Store Backends
 
@@ -191,7 +198,9 @@ co_await p2p->broadcast(std::move(message));
 `fcl.p2p.api` builds P2P API bindings on top of negotiated protocol streams.
 The binding path uses `multistream-select` and the same direct, hole-punch and
 relay path manager as ordinary P2P protocol streams; it must not reintroduce an
-FCL-only hello envelope into direct QUIC sessions.
+FCL-only hello envelope into direct QUIC sessions. Once a protocol stream is
+open, frame serving delegates to `fcl.api.transport`; P2P keeps only P2P policy:
+protocol id, known-peer checks and discovery scope.
 
 ### Connect And Open A Protocol Stream
 

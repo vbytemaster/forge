@@ -51,6 +51,7 @@ inline constexpr std::uint16_t fin = 0x04;
 inline constexpr std::uint16_t rst = 0x08;
 inline constexpr std::uint16_t known_flags = syn | ack | fin | rst;
 inline constexpr std::size_t header_size = 12;
+inline constexpr std::size_t read_compact_threshold = 65'536;
 inline constexpr std::uint32_t go_away_normal = 0;
 inline constexpr std::uint32_t go_away_protocol = 1;
 inline constexpr std::uint32_t go_away_internal = 2;
@@ -79,10 +80,8 @@ struct frame_header {
 };
 
 [[nodiscard]] std::uint32_t load_u32(std::span<const std::uint8_t> value, std::size_t offset) noexcept {
-   return (static_cast<std::uint32_t>(value[offset]) << 24U) |
-          (static_cast<std::uint32_t>(value[offset + 1]) << 16U) |
-          (static_cast<std::uint32_t>(value[offset + 2]) << 8U) |
-          static_cast<std::uint32_t>(value[offset + 3]);
+   return (static_cast<std::uint32_t>(value[offset]) << 24U) | (static_cast<std::uint32_t>(value[offset + 1]) << 16U) |
+          (static_cast<std::uint32_t>(value[offset + 2]) << 8U) | static_cast<std::uint32_t>(value[offset + 3]);
 }
 
 void append_u32(bytes& out, std::uint32_t value) {
@@ -92,8 +91,8 @@ void append_u32(bytes& out, std::uint32_t value) {
    out.push_back(static_cast<std::uint8_t>(value & 0xffU));
 }
 
-[[nodiscard]] bytes encode_frame(frame_type type, std::uint16_t flags, std::uint32_t stream_id,
-                                 std::uint32_t length, std::span<const std::uint8_t> payload = {}) {
+[[nodiscard]] bytes encode_frame(frame_type type, std::uint16_t flags, std::uint32_t stream_id, std::uint32_t length,
+                                 std::span<const std::uint8_t> payload = {}) {
    auto out = bytes{};
    out.reserve(header_size + payload.size());
    out.push_back(version);
@@ -104,6 +103,10 @@ void append_u32(bytes& out, std::uint32_t value) {
    append_u32(out, length);
    out.insert(out.end(), payload.begin(), payload.end());
    return out;
+}
+
+[[nodiscard]] bool exceeds_limit(std::size_t current, std::size_t addition, std::size_t limit) noexcept {
+   return current > limit || addition > limit - current;
 }
 
 [[nodiscard]] bool remote_opens_stream(side local_side, std::uint32_t stream_id) noexcept {
@@ -189,11 +192,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
       if (start) {
          auto self = shared_from_this();
          boost::asio::co_spawn(
-             executor,
-             [self]() -> boost::asio::awaitable<void> {
-                co_await self->read_loop();
-             },
-             boost::asio::detached);
+             executor, [self]() -> boost::asio::awaitable<void> { co_await self->read_loop(); }, boost::asio::detached);
       }
    }
 
@@ -306,8 +305,8 @@ struct session::impl : std::enable_shared_from_this<impl> {
                   FCL_THROW_EXCEPTION(exceptions::stream_reset, "yamux stream reset");
                }
                if (state->send_window > 0) {
-                  chunk_size = std::min<std::size_t>(
-                      {payload.size() - offset, options_.max_frame_size, state->send_window});
+                  chunk_size =
+                      std::min<std::size_t>({payload.size() - offset, options_.max_frame_size, state->send_window});
                   state->send_window -= static_cast<std::uint32_t>(chunk_size);
                   break;
                }
@@ -403,12 +402,28 @@ struct session::impl : std::enable_shared_from_this<impl> {
          co_await owner->write_stream(stream_id_, std::move(owned));
       }
 
+      boost::asio::awaitable<void> async_write_chunk(transport::chunk value) override {
+         auto owner = owner_.lock();
+         if (!owner) {
+            FCL_THROW_EXCEPTION(exceptions::closed, "yamux session expired");
+         }
+         co_await owner->write_stream(stream_id_, std::move(value).into_vector());
+      }
+
       boost::asio::awaitable<bytes> async_read() override {
          auto owner = owner_.lock();
          if (!owner) {
             FCL_THROW_EXCEPTION(exceptions::closed, "yamux session expired");
          }
          co_return co_await owner->read_stream(stream_id_);
+      }
+
+      boost::asio::awaitable<transport::chunk> async_read_chunk() override {
+         auto owner = owner_.lock();
+         if (!owner) {
+            FCL_THROW_EXCEPTION(exceptions::closed, "yamux session expired");
+         }
+         co_return transport::chunk{co_await owner->read_stream(stream_id_)};
       }
 
       boost::asio::awaitable<void> async_close() override {
@@ -421,7 +436,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
       void cancel() override {
          auto owner = owner_.lock();
          if (owner) {
-            owner->reset_stream(stream_id_);
+            owner->cancel_stream(stream_id_);
          }
       }
 
@@ -436,7 +451,8 @@ struct session::impl : std::enable_shared_from_this<impl> {
       }
       if (options_.initial_window == 0 || options_.max_stream_window < options_.initial_window ||
           options_.max_frame_size == 0 || options_.max_streams == 0 || options_.max_pending_accepts == 0 ||
-          options_.max_stream_buffer == 0 || options_.max_session_buffer == 0) {
+          options_.max_stream_buffer < options_.initial_window ||
+          options_.max_session_buffer < options_.initial_window) {
          FCL_THROW_EXCEPTION(exceptions::invalid_options, "invalid yamux options");
       }
       if (options_.max_frame_size > static_cast<std::size_t>((std::numeric_limits<std::uint32_t>::max)())) {
@@ -583,8 +599,8 @@ struct session::impl : std::enable_shared_from_this<impl> {
    }
 
    boost::asio::awaitable<void> write_frame(frame_type type, std::uint16_t flags, std::uint32_t stream_id,
-                                           std::uint32_t length, std::span<const std::uint8_t> payload = {},
-                                           bool allow_after_close = false) {
+                                            std::uint32_t length, std::span<const std::uint8_t> payload = {},
+                                            bool allow_after_close = false) {
       auto encoded = encode_frame(type, flags, stream_id, length, payload);
 
       co_await acquire_write_slot(allow_after_close);
@@ -594,7 +610,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
       } catch (...) {
          finish_write();
          fail_session(exceptions::code::closed, "yamux underlying stream write failed");
-         throw;
+         FCL_THROW_EXCEPTION(exceptions::closed, "yamux underlying stream write failed");
       }
       finish_write();
    }
@@ -622,8 +638,9 @@ struct session::impl : std::enable_shared_from_this<impl> {
       auto go_away = std::optional<std::uint32_t>{};
       try {
          auto buffer = bytes{};
+         auto consumed = std::size_t{0};
          while (true) {
-            const auto next = co_await read_frame(buffer);
+            const auto next = co_await read_frame(buffer, consumed);
             co_await handle_frame(next.first, next.second);
          }
       } catch (const exceptions::resource_limit&) {
@@ -650,8 +667,25 @@ struct session::impl : std::enable_shared_from_this<impl> {
       fail_session(terminal, std::move(message));
    }
 
-   boost::asio::awaitable<std::pair<frame_header, bytes>> read_frame(bytes& buffer) {
-      while (buffer.size() < header_size) {
+   static void compact_read_buffer(bytes& buffer, std::size_t& consumed) {
+      if (consumed == 0) {
+         return;
+      }
+      if (consumed >= buffer.size()) {
+         buffer.clear();
+         consumed = 0;
+         return;
+      }
+      auto compacted = bytes{};
+      compacted.reserve(buffer.size() - consumed);
+      compacted.insert(compacted.end(), buffer.begin() + static_cast<std::ptrdiff_t>(consumed), buffer.end());
+      buffer = std::move(compacted);
+      consumed = 0;
+   }
+
+   boost::asio::awaitable<std::pair<frame_header, bytes>> read_frame(bytes& buffer, std::size_t& consumed) {
+      while (buffer.size() - consumed < header_size) {
+         compact_read_buffer(buffer, consumed);
          auto chunk = co_await stream_.async_read();
          if (chunk.empty()) {
             continue;
@@ -659,7 +693,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
          buffer.insert(buffer.end(), chunk.begin(), chunk.end());
       }
 
-      auto view = std::span<const std::uint8_t>{buffer.data(), buffer.size()};
+      auto view = std::span<const std::uint8_t>{buffer.data() + consumed, buffer.size() - consumed};
       if (view[0] != version) {
          FCL_THROW_EXCEPTION(exceptions::protocol_error, "yamux frame version mismatch");
       }
@@ -682,7 +716,8 @@ struct session::impl : std::enable_shared_from_this<impl> {
          FCL_THROW_EXCEPTION(exceptions::resource_limit, "yamux frame exceeds maximum size");
       }
       const auto payload_size = header.type == frame_type::data ? static_cast<std::size_t>(header.length) : 0U;
-      while (buffer.size() < header_size + payload_size) {
+      while (buffer.size() - consumed < header_size + payload_size) {
+         compact_read_buffer(buffer, consumed);
          auto chunk = co_await stream_.async_read();
          if (chunk.empty()) {
             continue;
@@ -692,10 +727,15 @@ struct session::impl : std::enable_shared_from_this<impl> {
 
       auto payload = bytes{};
       if (payload_size > 0) {
-         payload.insert(payload.end(), buffer.begin() + static_cast<std::ptrdiff_t>(header_size),
-                        buffer.begin() + static_cast<std::ptrdiff_t>(header_size + payload_size));
+         const auto payload_begin = consumed + header_size;
+         const auto payload_end = payload_begin + payload_size;
+         payload.insert(payload.end(), buffer.begin() + static_cast<std::ptrdiff_t>(payload_begin),
+                        buffer.begin() + static_cast<std::ptrdiff_t>(payload_end));
       }
-      buffer.erase(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(header_size + payload_size));
+      consumed += header_size + payload_size;
+      if (consumed >= buffer.size() || consumed > read_compact_threshold) {
+         compact_read_buffer(buffer, consumed);
+      }
       co_return std::pair{header, std::move(payload)};
    }
 
@@ -740,9 +780,9 @@ struct session::impl : std::enable_shared_from_this<impl> {
          auto lock = std::scoped_lock{mutex_};
          auto state = opened ? opened : get_stream_locked(header.stream_id);
          if (!payload.empty()) {
-            if (state->buffered + payload.size() > options_.max_stream_buffer ||
-                session_buffer_ + payload.size() > options_.max_session_buffer) {
-               state->reset = true;
+            if (exceeds_limit(state->buffered, payload.size(), options_.max_stream_buffer) ||
+                exceeds_limit(session_buffer_, payload.size(), options_.max_session_buffer)) {
+               reset_stream_locked(state);
                needs_reset = true;
             } else {
                state->inbound.push_back(payload);
@@ -760,7 +800,6 @@ struct session::impl : std::enable_shared_from_this<impl> {
 
       if (needs_reset) {
          co_await write_frame(frame_type::data, rst, header.stream_id, 0);
-         FCL_THROW_EXCEPTION(exceptions::resource_limit, "yamux stream buffer limit exceeded");
       }
    }
 
@@ -805,8 +844,8 @@ struct session::impl : std::enable_shared_from_this<impl> {
       }
    }
 
-   boost::asio::awaitable<std::shared_ptr<stream_state>>
-   handle_stream_open(const frame_header& header, std::uint32_t send_window) {
+   boost::asio::awaitable<std::shared_ptr<stream_state>> handle_stream_open(const frame_header& header,
+                                                                            std::uint32_t send_window) {
       if (!remote_opens_stream(side_, header.stream_id)) {
          FCL_THROW_EXCEPTION(exceptions::protocol_error, "yamux stream id has invalid parity");
       }
@@ -854,17 +893,8 @@ struct session::impl : std::enable_shared_from_this<impl> {
             continue;
          }
          std::erase(pending_accepts_, it->first);
-         if (state.buffered > 0) {
-            session_buffer_ = state.buffered > session_buffer_ ? 0 : session_buffer_ - state.buffered;
-            state.buffered = 0;
-            state.inbound.clear();
-         }
-         if (state.read_timer) {
-            notify_waiters(state.read_timer);
-         }
-         if (state.window_timer) {
-            notify_waiters(state.window_timer);
-         }
+         release_stream_buffers_locked(state);
+         notify_stream_waiters_locked(it->second);
          it = streams_.erase(it);
       }
    }
@@ -892,12 +922,53 @@ struct session::impl : std::enable_shared_from_this<impl> {
       if (found == streams_.end()) {
          return;
       }
-      found->second->reset = true;
-      if (found->second->read_timer) {
-         notify_waiters(found->second->read_timer);
+      reset_stream_locked(found->second);
+   }
+
+   void cancel_stream(std::uint32_t id) {
+      reset_stream(id);
+      auto executor = std::optional<boost::asio::any_io_executor>{};
+      {
+         auto lock = std::scoped_lock{mutex_};
+         executor = executor_;
       }
-      if (found->second->window_timer) {
-         notify_waiters(found->second->window_timer);
+      if (!executor) {
+         return;
+      }
+
+      auto self = shared_from_this();
+      boost::asio::co_spawn(
+          *executor,
+          [self, id]() -> boost::asio::awaitable<void> {
+             try {
+                co_await self->write_frame(frame_type::data, rst, id, 0, {}, true);
+             } catch (...) {
+             }
+          },
+          boost::asio::detached);
+   }
+
+   void reset_stream_locked(const std::shared_ptr<stream_state>& state) {
+      state->reset = true;
+      release_stream_buffers_locked(*state);
+      notify_stream_waiters_locked(state);
+   }
+
+   void release_stream_buffers_locked(stream_state& state) {
+      if (state.buffered == 0) {
+         return;
+      }
+      session_buffer_ = state.buffered > session_buffer_ ? 0 : session_buffer_ - state.buffered;
+      state.buffered = 0;
+      state.inbound.clear();
+   }
+
+   static void notify_stream_waiters_locked(const std::shared_ptr<stream_state>& state) {
+      if (state->read_timer) {
+         notify_waiters(state->read_timer);
+      }
+      if (state->window_timer) {
+         notify_waiters(state->window_timer);
       }
    }
 

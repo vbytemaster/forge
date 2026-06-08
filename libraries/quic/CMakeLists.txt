@@ -21,6 +21,7 @@ target_link_libraries(
    fcl_quic PUBLIC
       fcl_exceptions
       fcl_api
+      fcl_api_transport
       fcl_raw
       fcl_crypto
       fcl_asio

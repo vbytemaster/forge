@@ -4,6 +4,7 @@ module;
 
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <typeindex>
@@ -17,8 +18,57 @@ export import fcl.api.exceptions;
 export import fcl.api.types;
 export import fcl.exceptions;
 export import fcl.raw.raw;
+export import fcl.raw.datastream;
 
 export namespace fcl::api {
+
+template <typename T>
+[[nodiscard]] T unpack_body(std::span<const std::uint8_t> body) {
+   auto out = T{};
+   fcl::datastream<const std::uint8_t*> stream{body.data(), body.size()};
+   fcl::raw::unpack(stream, out);
+   if (stream.remaining() != 0) {
+      throw exceptions::protocol_error{"API body has trailing bytes"};
+   }
+   return out;
+}
+
+template <typename T>
+[[nodiscard]] T unpack_body(const bytes& body) {
+   return unpack_body<T>(std::span<const std::uint8_t>{body.data(), body.size()});
+}
+
+template <typename T>
+[[nodiscard]] bytes pack_body(const T& value) {
+   auto out = bytes(fcl::raw::pack_size(value));
+   if (!out.empty()) {
+      fcl::datastream<std::uint8_t*> stream{out.data(), out.size()};
+      fcl::raw::pack(stream, value);
+   }
+   return out;
+}
+
+template <typename T> struct method_signature;
+
+template <typename Class, typename Response, typename Request>
+struct method_signature<boost::asio::awaitable<Response> (Class::*)(Request)> {
+   using class_type = Class;
+   using request_type = Request;
+   using response_type = Response;
+};
+
+template <typename Class, typename Response, typename Request>
+struct method_signature<boost::asio::awaitable<Response> (Class::*)(Request) const> {
+   using class_type = Class;
+   using request_type = Request;
+   using response_type = Response;
+};
+
+template <auto Method>
+using method_request_t = typename method_signature<decltype(Method)>::request_type;
+
+template <auto Method>
+using method_response_t = typename method_signature<decltype(Method)>::response_type;
 
 struct error_options {
    status status_code = status::internal;
@@ -38,6 +88,9 @@ struct error_descriptor {
 struct method_descriptor {
    std::string name;
    method_kind kind = method_kind::unary;
+   std::uint16_t since_revision = 0;
+   bool deprecated = false;
+   std::string deprecation_reason;
    std::type_index request_type = typeid(void);
    std::type_index response_type = typeid(void);
    std::vector<error_descriptor> errors;
@@ -73,6 +126,10 @@ template <typename Interface> class contract_builder {
  public:
    explicit contract_builder(descriptor value) : descriptor_(std::move(value)) {}
 
+   template <auto Method> method_builder<Interface> method(std::string name) {
+      return method<Method, method_request_t<Method>, method_response_t<Method>>(std::move(name));
+   }
+
    template <auto Method, typename Request, typename Response> method_builder<Interface> method(std::string name) {
       return add_method<Method, Request, Response>(std::move(name), method_kind::unary);
    }
@@ -92,14 +149,12 @@ template <typename Interface> class contract_builder {
           .raw_stream_invoker =
               [](std::shared_ptr<void> implementation, bytes payload) -> boost::asio::awaitable<std::vector<bytes>> {
              auto typed = std::static_pointer_cast<Interface>(std::move(implementation));
-             auto request = fcl::raw::unpack<Request>(payload);
+             auto request = unpack_body<Request>(payload);
              auto responses = co_await std::invoke(Method, *typed, std::move(request));
              auto packed = std::vector<bytes>{};
              packed.reserve(responses.size());
              for (const auto& response : responses) {
-                auto item = bytes{};
-                fcl::raw::pack(item, response);
-                packed.push_back(std::move(item));
+                packed.push_back(pack_body(response));
              }
              co_return packed;
           },
@@ -125,12 +180,10 @@ template <typename Interface> class contract_builder {
              auto requests = std::vector<Request>{};
              requests.reserve(payloads.size());
              for (auto& payload : payloads) {
-                requests.push_back(fcl::raw::unpack<Request>(payload));
+                requests.push_back(unpack_body<Request>(payload));
              }
              auto response = co_await std::invoke(Method, *typed, std::move(requests));
-             auto packed = bytes{};
-             fcl::raw::pack(packed, response);
-             co_return packed;
+             co_return pack_body(response);
           },
       });
       return method_builder<Interface>{*this, descriptor_.methods.back()};
@@ -155,15 +208,13 @@ template <typename Interface> class contract_builder {
              auto requests = std::vector<Request>{};
              requests.reserve(payloads.size());
              for (auto& payload : payloads) {
-                requests.push_back(fcl::raw::unpack<Request>(payload));
+                requests.push_back(unpack_body<Request>(payload));
              }
              auto responses = co_await std::invoke(Method, *typed, std::move(requests));
              auto packed = std::vector<bytes>{};
              packed.reserve(responses.size());
              for (const auto& response : responses) {
-                auto item = bytes{};
-                fcl::raw::pack(item, response);
-                packed.push_back(std::move(item));
+                packed.push_back(pack_body(response));
              }
              co_return packed;
           },
@@ -187,11 +238,9 @@ template <typename Interface> class contract_builder {
           .raw_invoker =
               [](std::shared_ptr<void> implementation, bytes payload) -> boost::asio::awaitable<bytes> {
              auto typed = std::static_pointer_cast<Interface>(std::move(implementation));
-             auto request = fcl::raw::unpack<Request>(payload);
+             auto request = unpack_body<Request>(payload);
              auto response = co_await std::invoke(Method, *typed, std::move(request));
-             auto packed = bytes{};
-             fcl::raw::pack(packed, response);
-             co_return packed;
+             co_return pack_body(response);
           },
       });
       return method_builder<Interface>{*this, descriptor_.methods.back()};
@@ -242,6 +291,17 @@ template <typename Interface> class method_builder {
       return *this;
    }
 
+   method_builder& since_revision(std::uint16_t value) noexcept {
+      method_->since_revision = value;
+      return *this;
+   }
+
+   method_builder& deprecated(std::string reason) {
+      method_->deprecated = true;
+      method_->deprecation_reason = std::move(reason);
+      return *this;
+   }
+
    template <auto Method, typename Request, typename Response> method_builder method(std::string name) {
       return owner_->template method<Method, Request, Response>(std::move(name));
    }
@@ -267,7 +327,7 @@ template <typename Interface> class method_builder {
    method_descriptor* method_ = nullptr;
 };
 
-template <typename Interface> contract_builder<Interface> contract(descriptor value) {
+template <typename Interface> contract_builder<Interface> define(descriptor value) {
    value.interface_type = typeid(Interface);
    return contract_builder<Interface>{std::move(value)};
 }

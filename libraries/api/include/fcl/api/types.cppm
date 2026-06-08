@@ -104,6 +104,27 @@ struct error_payload {
    bool operator==(const error_payload&) const = default;
 };
 
+struct request {
+   api_ref api;
+   std::string method;
+   metadata meta;
+   codec_id codec;
+   bytes body;
+
+   bool operator==(const request&) const = default;
+};
+
+struct response {
+   api_ref api;
+   std::string method;
+   metadata meta;
+   codec_id codec;
+   bytes body;
+   std::optional<error_payload> error;
+
+   bool operator==(const response&) const = default;
+};
+
 struct frame {
    frame_kind kind = frame_kind::request;
    call_id id;
@@ -128,6 +149,8 @@ BOOST_DESCRIBE_STRUCT(call_id, (), (value))
 BOOST_DESCRIBE_STRUCT(metadata_entry, (), (key, value))
 BOOST_DESCRIBE_STRUCT(error_identity, (), (category, code))
 BOOST_DESCRIBE_STRUCT(error_payload, (), (error, message, retryable, status_code, identity, details_codec, details))
+BOOST_DESCRIBE_STRUCT(request, (), (api, method, meta, codec, body))
+BOOST_DESCRIBE_STRUCT(response, (), (api, method, meta, codec, body, error))
 BOOST_DESCRIBE_STRUCT(frame, (), (kind, id, api, method, meta, codec, payload))
 
 } // namespace fcl::api

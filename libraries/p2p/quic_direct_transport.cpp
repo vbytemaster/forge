@@ -2,10 +2,15 @@ module;
 
 #include <fcl/exceptions/macros.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <map>
 #include <memory>
 #include <optional>
+#include <ranges>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include <boost/asio/awaitable.hpp>
 
@@ -52,6 +57,11 @@ namespace {
 
 [[nodiscard]] fcl::p2p::endpoint p2p_endpoint_for(const fcl::quic::endpoint& value) {
    return fcl::p2p::endpoint{.transport = fcl::quic::to_transport_endpoint(value)};
+}
+
+[[nodiscard]] std::string listener_key(fcl::p2p::endpoint value) {
+   value.peer.reset();
+   return value.to_string();
 }
 
 [[nodiscard]] exceptions::code map_quic_error(fcl::quic::exceptions::code kind) noexcept {
@@ -145,6 +155,11 @@ namespace {
 }
 
 class quic_profile final {
+   struct listener_entry {
+      std::unique_ptr<fcl::quic::listener> value;
+      bool active = true;
+   };
+
  public:
    quic_profile(fcl::asio::runtime& runtime_value, const node::options& options_value)
        : runtime_(runtime_value), options_(options_value), connector_(runtime_value) {}
@@ -154,27 +169,52 @@ class quic_profile final {
    }
 
    [[nodiscard]] bool listening() const noexcept {
-      return listener_ != nullptr;
+      return std::ranges::any_of(listeners_, [](const auto& item) {
+         return item.second.active;
+      });
    }
 
-   [[nodiscard]] std::optional<fcl::p2p::endpoint> local_endpoint() const {
-      if (!listening()) {
-         return std::nullopt;
+   [[nodiscard]] std::vector<fcl::p2p::endpoint> local_endpoints() const {
+      auto out = std::vector<fcl::p2p::endpoint>{};
+      out.reserve(listeners_.size());
+      for (const auto& [_, listener] : listeners_) {
+         if (listener.active) {
+            out.push_back(p2p_endpoint_for(listener.value->local_endpoint()));
+         }
       }
-      return p2p_endpoint_for(listener_->local_endpoint());
+      return out;
    }
 
-   void listen(fcl::p2p::endpoint endpoint) {
+   fcl::p2p::endpoint listen(fcl::p2p::endpoint endpoint) {
+      if (!endpoint.is_direct_quic()) {
+         FCL_THROW_EXCEPTION(exceptions::unsupported_protocol, "P2P endpoint is not a direct QUIC endpoint");
+      }
+      const auto requested_key = listener_key(endpoint);
+      if (endpoint.transport.port != 0) {
+         auto found = listeners_.find(requested_key);
+         if (found != listeners_.end() && found->second.active) {
+            FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P QUIC direct listener endpoint is already active");
+         }
+      }
       try {
-         listener_ = std::make_unique<fcl::quic::listener>(runtime_, quic_endpoint_for(endpoint), server_options());
+         auto listener = std::make_unique<fcl::quic::listener>(runtime_, quic_endpoint_for(endpoint), server_options());
+         auto local = p2p_endpoint_for(listener->local_endpoint());
+         const auto key = listener_key(local);
+         auto found = listeners_.find(key);
+         if (found != listeners_.end() && found->second.active) {
+            FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P QUIC direct listener endpoint is already active");
+         }
+         listeners_[key] = listener_entry{.value = std::move(listener), .active = true};
+         return local;
       } catch (const fcl::exceptions::base& error) {
          rethrow_quic_as_p2p(error);
       }
    }
 
    void stop() {
-      if (listener_) {
-         listener_->stop();
+      for (auto& [_, listener] : listeners_) {
+         listener.active = false;
+         listener.value->stop();
       }
    }
 
@@ -198,9 +238,13 @@ class quic_profile final {
       }
    }
 
-   boost::asio::awaitable<connection> async_accept() {
+   boost::asio::awaitable<connection> async_accept(fcl::p2p::endpoint endpoint) {
       try {
-         auto quic = co_await listener_->async_accept();
+         auto found = listeners_.find(listener_key(std::move(endpoint)));
+         if (found == listeners_.end() || !found->second.active) {
+            FCL_THROW_EXCEPTION(exceptions::closed, "P2P QUIC direct listener is not active");
+         }
+         auto quic = co_await found->second.value->async_accept();
          const auto remote = verified_peer_id_for(quic, std::nullopt, options_.allow_insecure_test_mode);
          auto local_endpoint = p2p_endpoint_for(quic.local_endpoint());
          auto remote_endpoint = p2p_endpoint_for(quic.remote_endpoint());
@@ -263,7 +307,7 @@ class quic_profile final {
    fcl::asio::runtime& runtime_;
    const node::options& options_;
    fcl::quic::connector connector_;
-   std::unique_ptr<fcl::quic::listener> listener_;
+   std::map<std::string, listener_entry> listeners_;
 };
 
 } // namespace
@@ -273,14 +317,14 @@ void register_quic_profile(registry& value, fcl::asio::runtime& runtime, const n
    value.add(profile{
        .supports = [owned](const fcl::p2p::endpoint& endpoint) { return owned->supports(endpoint); },
        .listening = [owned] { return owned->listening(); },
-       .local_endpoint = [owned] { return owned->local_endpoint(); },
-       .listen = [owned](fcl::p2p::endpoint endpoint) { owned->listen(std::move(endpoint)); },
+       .local_endpoints = [owned] { return owned->local_endpoints(); },
+       .listen = [owned](fcl::p2p::endpoint endpoint) { return owned->listen(std::move(endpoint)); },
        .stop = [owned] { owned->stop(); },
        .async_connect =
            [owned](fcl::p2p::endpoint endpoint, const node::connect_options& options) {
               return owned->async_connect(std::move(endpoint), options);
            },
-       .async_accept = [owned] { return owned->async_accept(); },
+       .async_accept = [owned](fcl::p2p::endpoint endpoint) { return owned->async_accept(std::move(endpoint)); },
    });
 }
 

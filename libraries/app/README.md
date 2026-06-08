@@ -463,20 +463,18 @@ a read-only API view. This keeps lifecycle in `fcl_app` and contract/version/err
 semantics in `fcl_api`.
 
 ```cpp
-class cache {
+#include <fcl/api/api_macros.hpp>
+
+class cache : public fcl::api::contract<cache> {
  public:
    virtual ~cache() = default;
    virtual boost::asio::awaitable<models::chunk> read(protocol::read_chunk request) = 0;
-
-   static fcl::api::descriptor describe() {
-      return fcl::api::contract<cache>({.id = {"cache"}, .version = {1, 8}})
-         .method<&cache::read, protocol::read_chunk, models::chunk>("read")
-         .build();
-   }
 };
 
+FCL_API(cache, FCL_API_CONTRACT("cache", 1, 8), FCL_API_METHOD(read))
+
 boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
-   context.apis().install<cache>(cache::describe(), std::make_shared<rocks_cache>());
+   context.apis().install<cache>(std::make_shared<rocks_cache>());
    co_return;
 }
 
@@ -612,9 +610,6 @@ boost::asio::awaitable<void> run_runtime(fcl::app::application_runtime& runtime)
 config collection, shell-owned default merge, configure-before-initialize,
 startup rollback, reverse shutdown and diagnostics.
 
-Buildable examples:
-
-- [`examples/app/application_lifecycle.cpp`](../../examples/app/application_lifecycle.cpp)
-- [`examples/app/application_builder.cpp`](../../examples/app/application_builder.cpp)
-- [`examples/app/daemon_runner.cpp`](../../examples/app/daemon_runner.cpp)
-- [`examples/app/exception_logging.cpp`](../../examples/app/exception_logging.cpp)
+Executable lifecycle coverage lives in `test_fcl_app`. Consumer snippets stay in
+this README and the runtime docs so they cannot drift behind an unbuilt example
+tree.

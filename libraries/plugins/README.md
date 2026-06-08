@@ -2,15 +2,15 @@
 
 `fcl_plugins` contains ready-made infrastructure plugins built on top of
 `fcl_app`. These plugins own lifecycle and transport bootstrap, then publish
-small typed APIs for product plugins to contribute behavior safely.
+small typed APIs for application plugins to contribute behavior safely.
 
 ## When To Use
 
 - An application wants one shared infrastructure component, such as a P2P node,
   instead of every plugin constructing its own runtime.
-- Product plugins need to mount routes, publish typed API protocols or send
-  messages without owning transport lifecycle.
-- Tests need the same composition shape as production.
+- Application plugins need to mount routes, publish typed API protocols or open
+  typed remote APIs without owning transport lifecycle.
+- Tests need the same composition shape as deployed applications.
 
 ## When Not To Use
 
@@ -22,11 +22,15 @@ small typed APIs for product plugins to contribute behavior safely.
 ## Public Modules
 
 - `fcl.plugins.p2p_node` — ready P2P node plugin and safe local API.
+- `fcl.plugins.p2p_api_resolver` — API-over-P2P metadata resolver plugin.
+- `fcl.plugins.p2p_diagnostics` — read-only P2P host diagnostics plugin.
+- `fcl.plugins.p2p_pubsub` — in-process facade over core GossipSub.
 - `fcl.plugins` — aggregate import.
 
 Target: `fcl_plugins`.
 
-Dependencies: `fcl_app`, `fcl_api`, `fcl_p2p`, `fcl_config`, `fcl_asio`.
+Dependencies: `fcl_app`, `fcl_api`, `fcl_api_transport`, `fcl_p2p`,
+`fcl_config`, `fcl_asio`.
 
 ## P2P Node Plugin
 
@@ -37,13 +41,18 @@ plugins can contribute protocol handlers and API bindings before startup.
 AutoNAT, AutoRelay, DHT, rendezvous, pubsub/gossip, relay-only path support,
 endpoint/address compatibility, peer discovery and libp2p protocol mechanics
 belong to `fcl_p2p`. `p2p_node` is not a private P2P network stack; it only maps
-config into the shared node, mounts route/API contributions, exposes safe
-send/broadcast/delivery handles and integrates the optional outbox.
+config into the shared node and mounts route/API contributions.
 
 The long-term network profile is libp2p-compatible, but the plugin boundary
 does not change: `p2p_node` enables and configures the shared FCL node. It must
 not reimplement Identify, Ping, relay discovery, DHT, pubsub or interop logic in
 plugin-local loops.
+
+G.2 narrows the public `p2p_node` contract to a host facade: `local_peer`,
+`local_endpoint`, `local_endpoints`, `network_info`, `publish_api`,
+`remote<T>(...)` and advanced `publish_protocol`. Durable message queues,
+application fan-out and read-only network diagnostics belong to focused
+plugins or application services, not to this host facade.
 
 `fcl::plugins::p2p_node::config` is the public config contract. Config section
 `p2p` owns transport bootstrap and policy:
@@ -61,18 +70,10 @@ p2p:
   certificate-pem: "..."
   private-key-pem: "..."
   api-codec: fcl.raw
+  api:
+    deadline-ms: 5000
+    max-frame-size: 16777216
   max-inflight-per-peer: 64
-  delivery:
-    outbox-mode: memory
-    queue-limit: 4096
-    worker-batch: 64
-  retry:
-    reliability: bounded-retry
-    max-attempts: 3
-    deadline-ms: 60000
-    initial-backoff-ms: 250
-    max-backoff-ms: 30000
-    jitter: true
   path:
     policy: direct-preferred
   relay:
@@ -84,14 +85,13 @@ p2p:
     max-candidates: 4
 ```
 
-`allow-insecure-test-mode` exists for local tests only; production config should
+`allow-insecure-test-mode` exists for local tests only; deployed config should
 provide certificate and private key material.
 
 Register the infrastructure plugin through its owner type:
 
 ```cpp
-auto builder = fcl::app::application_builder{};
-builder.plugin(fcl::plugins::p2p_node::descriptor());
+registry.register_plugin(fcl::plugins::p2p_node::descriptor());
 ```
 
 ```cpp
@@ -120,11 +120,11 @@ class cache_routes final : public fcl::app::plugin {
 };
 ```
 
-For raw product protocols, publish a protocol route instead of an API binding:
+For raw application protocols, publish a protocol route instead of an API binding:
 
 ```cpp
 p2p->publish_protocol(
-   {.value = "/product/blob-transfer/1"},
+   {.value = "/fcl/test/blob-transfer/1"},
    [](fcl::p2p::node::incoming_protocol_stream incoming) -> boost::asio::awaitable<void> {
       auto bytes = co_await incoming.stream.async_read_frame();
       co_await handle_blob_frame(incoming.session.remote_peer, std::move(bytes));
@@ -136,79 +136,223 @@ peer opens that `protocol_id`. If the raw protocol needs an ACK or response, the
 handler writes it to the incoming stream. Use `fcl_api` over P2P when you want
 standard request/response/error handling instead of manual ACK frames.
 
-For outbound product messages, use `fcl::p2p::message`:
+Outbound application APIs should normally use the typed `remote<T>(...)` helper over
+`fcl.p2p.api` and `fcl.api.transport`:
 
 ```cpp
-auto message = fcl::p2p::message{
-   fcl::p2p::protocol_id{.value = "/product/cache/announce/1"},
-   protocol::announce_chunk{.ref = ref}};
+auto cache = co_await p2p->remote<cache_api>(
+   peer,
+   {.value = "/fcl/api/cache/1"},
+   fcl::plugins::p2p_node::remote_options{.open_deadline = 5s});
 
-auto result = co_await p2p->send(remote_peer, std::move(message));
-if (result.state != fcl::plugins::p2p_node::delivery_state::delivered) {
-   handle_delivery_failure(result.error);
-}
+auto reply = co_await cache->read(request);
 ```
 
-`send()` waits for a terminal transport-level result. `send_async()` accepts the
-delivery into the plugin-managed outbox and returns a coroutine-friendly handle:
+Raw application protocols remain an advanced escape hatch for protocols that
+intentionally own their own wire format and acknowledgement. Durable retry,
+store-backed queues and application-level fan-out are planned as separate
+focused plugins or application services, not as part of `p2p_node`.
+
+## P2P API Resolver Plugin
+
+`p2p_api_resolver` is the focused discovery layer for API-over-P2P metadata. A
+application plugin publishes a discoverable API through the resolver; the resolver
+delegates the actual route mount to `p2p_node`, records a bounded serializable
+projection of the API descriptor and serves that projection over the private
+FCL protocol `/fcl/api/resolver/1`.
+
+The resolver does not own P2P discovery, authorization, DHT, rendezvous, relay
+policy or application routing decisions. Peer identity comes from the authenticated
+P2P session. Resolver payloads are metadata only and cannot claim or override
+the remote peer id.
+
+```yaml
+p2p-api-resolver:
+  protocol-id: /fcl/api/resolver/1
+  cache-ttl-ms: 60000
+  query-deadline-ms: 5000
+  open-deadline-ms: 10000
+  max-cached-peers: 4096
+  max-apis-per-peer: 1024
+  max-methods-per-api: 256
+  max-errors-per-method: 64
+```
+
+Publish a discoverable API from an application plugin:
 
 ```cpp
-auto delivery = co_await p2p->send_async(
-   remote_peer,
-   std::move(message),
-   {.reliability = fcl::plugins::p2p_node::delivery_reliability::durable_retry});
+auto resolver = context.apis().get<fcl::plugins::p2p_api_resolver::api>(
+   {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1});
 
-auto snapshot = co_await delivery.snapshot();
-auto result = co_await delivery.result();
+auto plan = fcl::api::binding()
+   .serve(context.apis())
+   .export_api<cache_api>({.id = {"cache"}, .major = 1, .min_revision = 8})
+   .build();
+
+resolver->publish_api(std::move(plan), {.value = "/fcl/api/cache/1"});
 ```
 
-For restart-safe retry, provide an external outbox store through the application
-API registry. The outbox contract still uses queue terms because it is a storage
-backend; ordinary product plugins should work with `delivery` handles:
+Open a compatible remote API without hardcoding that application protocol id:
 
 ```cpp
-builder.provide([outbox](fcl::app::application_context& context) {
-   context.apis().install<fcl::plugins::p2p_node::outbox_store>(
-      fcl::plugins::p2p_node::outbox_store::describe(),
-      outbox);
-});
+auto cache = co_await resolver->remote<cache_api>(
+   peer,
+   fcl::plugins::p2p_api_resolver::resolve_options{
+      .open_deadline = 5s,
+   });
+
+auto reply = co_await cache->read(request);
 ```
 
-The built-in outbox is in-memory. Products that need restart-safe delivery
-provide their own `p2p_node::outbox_store`; `fcl_plugins` never depends on a
-database or product storage layer.
+The wire response is not raw `fcl::api::descriptor`: descriptors contain local
+runtime function/type metadata. The resolver sends only the stable projection:
+API id/version, protocol id string, codec, limits, method names/kinds and error
+identities.
 
-`p2p_node` retries retryable path failures, uses direct -> hole punch -> relay
-when policy allows it, and reports the final delivery state. Raw messages are
-confirmed at transport write level. Business-level acknowledgement belongs in a
-product protocol or `fcl_api` request/response contract.
+### Product API Receipt Pattern
+
+Storlane-level consumers should model product obligations as ordinary typed API
+requests that return domain receipts. The receipt proves the application-level
+operation result; it is not a generic P2P delivery acknowledgement. The request
+should carry an idempotency key so retries can return the same receipt without
+executing the operation twice.
+
+```cpp
+struct apply_request {
+   std::string request_id; // Idempotency key owned by the product protocol.
+   std::string subject;
+   std::uint64_t revision = 0;
+};
+
+struct apply_receipt {
+   std::string request_id;
+   bool accepted = false;
+   std::uint64_t applied_revision = 0;
+   std::string authority;
+   std::string evidence;
+};
+
+class operation_api
+   : public fcl::api::contract<
+        operation_api,
+        fcl::api::surface::local | fcl::api::surface::remote> {
+ public:
+   virtual ~operation_api() = default;
+   virtual boost::asio::awaitable<apply_receipt> apply(apply_request request) = 0;
+};
+
+FCL_API(operation_api, FCL_API_CONTRACT("operation", 1, 0), FCL_API_METHOD(apply))
+```
+
+Server plugins publish this API through `p2p_api_resolver`; client plugins open
+it with `resolver->remote<operation_api>(peer)` and call the typed method. The
+product remains responsible for authorization, durable state and authoritative
+settlement. `p2p_delivery` is only a future optional plugin for asynchronous
+store-backed retry, not a prerequisite for request/receipt APIs.
+
+## P2P Diagnostics Plugin
+
+`p2p_diagnostics` is the focused read-only visibility layer for the shared
+`p2p_node`. It exposes immutable snapshots from `fcl_p2p`: local network
+identity, endpoints, metrics, resource scopes, peer records, sessions, relay
+reservations, connection protection/pruning state and pubsub counters.
+
+It does not add a network diagnostics protocol, remote operator access,
+authorization, remediation, retries or routing policy. Application code can inspect
+health through this plugin, but `fcl_p2p` remains the owner of real network
+state and `p2p_node` remains the lifecycle/route facade.
+
+```yaml
+p2p-diagnostics:
+  max-peers: 1024
+  max-sessions: 1024
+  max-endpoints-per-peer: 64
+  max-protocols-per-peer: 128
+  max-relay-reservations-per-peer: 64
+```
+
+```cpp
+auto diagnostics = context.apis().get<fcl::plugins::p2p_diagnostics::api>(
+   {.id = {"fcl.plugins.p2p_diagnostics"}, .major = 1});
+
+auto network = diagnostics->network();
+auto resources = diagnostics->resources();
+auto peer = diagnostics->peer(remote_peer);
+```
+
+Snapshot limits are deterministic truncation controls for operator and test
+surfaces. They are not resource-management policy and do not change the running
+node.
+
+## P2P PubSub Plugin
+
+`p2p_pubsub` is the focused application facade over core `fcl_p2p` GossipSub.
+It lets plugins publish and subscribe to topics without owning mesh, scoring,
+heartbeat, protocol negotiation or wire compatibility. Those mechanics remain
+inside `fcl_p2p`.
+
+The plugin supports raw byte messages, typed `fcl.raw` payload helpers, bounded
+local handler fan-out, deterministic subscription ids, handler deadlines,
+topic allow/deny policy and a local snapshot. It is not a durable queue, not an
+exactly-once delivery system and not a product authorization layer.
+
+```yaml
+p2p-pubsub:
+  max-topics: 1024
+  max-handlers-per-topic: 64
+  max-active-handlers: 4096
+  max-message-size: 1048576
+  handler-deadline-ms: 5000
+  allowed-topics: []
+  denied-topics: []
+  sign-publishes: true
+```
+
+```cpp
+auto pubsub = context.apis().get<fcl::plugins::p2p_pubsub::api>(
+   {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1});
+
+auto subscription = co_await pubsub->subscribe<cache_event>(
+   {.value = "example.cache.events"},
+   [](fcl::plugins::p2p_pubsub::typed_message<cache_event> message)
+      -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+      co_await handle_cache_event(message.source, message.value);
+      co_return fcl::p2p::pubsub::validation_result::accept;
+   });
+
+co_await pubsub->publish(
+   {.value = "example.cache.events"},
+   cache_event{.key = "abc", .revision = 42});
+```
 
 ## Risks And Anti-Patterns
 
-- Do not let product plugins call `node.register_protocol_handler(...)`
+- Do not let application plugins call `node.register_protocol_handler(...)`
   directly when the node is owned by `p2p_node`; publish a route contribution.
-- Do not let product plugins override codec, inflight limits or bootstrap policy
+- Do not let application plugins override codec, inflight limits or bootstrap policy
   that the node plugin owns from config.
 - Do not expose `fcl::p2p::node::open_options`, relay peer selection or hole-punch
-  calls to ordinary product plugins. Use semantic `p2p_node::send_options`.
-- Do not create one P2P node per product protocol inside the same application.
+  calls to ordinary application plugins. Use typed `remote<T>(...)` or a focused
+  future plugin facade.
+- Do not create one P2P node per application protocol inside the same application.
   One owner plugin should mount multiple bindings/routes.
-- Do not use `p2p_node` as product authorization. It only owns transport
+- Do not use `p2p_node` as application authorization. It only owns transport
   lifecycle and route/API contribution points.
-- Do not treat the outbox as exactly-once delivery. It provides bounded retry
-  and optional durable at-least-once attempts; product protocols own
-  idempotency and business acknowledgements.
+- Do not attach durable queue persistence or application fan-out semantics to
+  `p2p_node`. If needed, those belong to a future focused plugin or application
+  service.
 - Keep AutoNAT, AutoRelay, DHT, rendezvous, pubsub/gossip and relay discovery in
   `fcl_p2p`. `p2p_node` stays lifecycle/config/composition glue over the shared
   network node.
-- Do not turn `p2p_node` into a superplugin. Future helpers such as diagnostics,
-  discovery policy, relay service, pubsub gateway or interop harness should be
-  focused friend plugins that compose through the safe APIs exposed by
-  `p2p_node`.
+- Keep the host facade narrow. Focused helpers such as `p2p_api_resolver`,
+  `p2p_diagnostics`, `p2p_pubsub` and an optional durable queue plugin should be focused
+  friend plugins that compose through the safe APIs exposed by `p2p_node`.
 
 ## Tests
 
 `test_fcl_plugins` covers publishing the safe local P2P node API, contributing
 typed API and raw protocol routes before startup, deterministic duplicate
-protocol rejection, delivery config defaults, plugin exceptions, pluggable
-outbox usage and bounded retry failure projection.
+protocol rejection, multi-listen endpoint reporting, typed remote API calls and
+plugin exceptions. It also covers resolver publication, duplicate API
+rejection, compatible remote resolution, malformed metadata rejection, cache TTL
+and forced refresh behavior.

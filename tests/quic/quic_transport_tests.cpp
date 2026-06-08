@@ -34,6 +34,7 @@ import fcl.quic.exceptions;
 import fcl.quic.options;
 import fcl.quic.security;
 import fcl.quic.transport;
+import fcl.transport.buffer;
 import fcl.transport.connector;
 import fcl.transport.endpoint;
 import fcl.transport.exceptions;
@@ -324,10 +325,20 @@ boost::asio::awaitable<void> session_loopback_roundtrip(fcl::asio::runtime& runt
    auto received = co_await accepted.async_read_frame();
    BOOST_TEST(received == payload, boost::test_tools::per_element());
 
+   const auto chunk_payload = text_bytes("quic chunk");
+   co_await outbound.async_write(fcl::transport::chunk{chunk_payload});
+   auto received_chunk = co_await accepted.async_read_chunk();
+   BOOST_TEST(received_chunk.to_vector() == chunk_payload, boost::test_tools::per_element());
+
    const auto reply = text_bytes("session reply");
    co_await accepted.async_write_frame(reply);
    auto echoed = co_await outbound.async_read_frame();
    BOOST_TEST(echoed == reply, boost::test_tools::per_element());
+
+   const auto frame_chunk = text_bytes("session chunk reply");
+   co_await accepted.async_write_frame(fcl::transport::chunk{frame_chunk});
+   auto echoed_chunk = co_await outbound.async_read_frame_chunk();
+   BOOST_TEST(echoed_chunk.to_vector() == frame_chunk, boost::test_tools::per_element());
 
    co_await outbound.async_close();
    co_await accepted.async_close();

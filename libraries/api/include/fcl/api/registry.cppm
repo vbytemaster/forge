@@ -17,10 +17,11 @@ export module fcl.api.registry;
 export import fcl.api.descriptor;
 export import fcl.api.error_projection;
 export import fcl.api.handle;
+export import fcl.api.connection;
 
 export namespace fcl::api {
 
-class registry {
+class registry : public service_mount {
  public:
    registry();
    ~registry();
@@ -31,6 +32,7 @@ class registry {
    template <typename Interface> void install(descriptor descriptor, std::shared_ptr<Interface> implementation) {
       static_assert(std::is_class_v<Interface>, "API interface must be a class type");
       static_assert(std::has_virtual_destructor_v<Interface>, "API interface must have a virtual destructor");
+      static_assert(local_interface<Interface>, "Interface must opt in to fcl::api::surface::local");
       if (!implementation) {
          throw exceptions::protocol_error{"cannot install null API implementation"};
       }
@@ -44,7 +46,12 @@ class registry {
       entries_.emplace(key, entry{std::move(descriptor), std::move(implementation), typeid(Interface)});
    }
 
+   template <typename Interface> void install(std::shared_ptr<Interface> implementation) {
+      install<Interface>(Interface::describe(), std::move(implementation));
+   }
+
    template <typename Interface> [[nodiscard]] handle<Interface> try_get(api_ref requested) const {
+      static_assert(local_interface<Interface>, "Interface must opt in to fcl::api::surface::local");
       const auto* entry = find(requested);
       if (entry == nullptr || entry->interface_type != typeid(Interface)) {
          return {};
@@ -53,6 +60,7 @@ class registry {
    }
 
    template <typename Interface> [[nodiscard]] handle<Interface> get(api_ref requested) const {
+      static_assert(local_interface<Interface>, "Interface must opt in to fcl::api::surface::local");
       auto result = try_get<Interface>(std::move(requested));
       if (!result) {
          throw exceptions::protocol_error{"required API is not available"};
@@ -77,6 +85,8 @@ class registry {
    static std::string key_for(std::string_view id, std::uint16_t major);
    [[nodiscard]] const entry* find(api_ref requested) const noexcept;
 
+   void register_api(descriptor value, std::shared_ptr<void> implementation, std::type_index type) override;
+
    std::unordered_map<std::string, entry> entries_;
 };
 
@@ -85,7 +95,12 @@ class installer {
    explicit installer(registry& apis) : apis_(&apis) {}
 
    template <typename Interface> void install(descriptor descriptor, std::shared_ptr<Interface> implementation) {
+      static_assert(local_interface<Interface>, "Interface must opt in to fcl::api::surface::local");
       apis_->install<Interface>(std::move(descriptor), std::move(implementation));
+   }
+
+   template <typename Interface> void install(std::shared_ptr<Interface> implementation) {
+      apis_->install<Interface>(std::move(implementation));
    }
 
  private:
@@ -99,10 +114,12 @@ class view {
    explicit view(const registry& apis) : apis_(&apis) {}
 
    template <typename Interface> [[nodiscard]] handle<Interface> try_get(api_ref requested) const {
+      static_assert(local_interface<Interface>, "Interface must opt in to fcl::api::surface::local");
       return apis_->try_get<Interface>(std::move(requested));
    }
 
    template <typename Interface> [[nodiscard]] handle<Interface> get(api_ref requested) const {
+      static_assert(local_interface<Interface>, "Interface must opt in to fcl::api::surface::local");
       return apis_->get<Interface>(std::move(requested));
    }
 

@@ -237,8 +237,8 @@ class p2p_node {
   a shared catch-all plugin exceptions module. For example,
   `fcl::plugins::p2p_node::exceptions::*` belongs to `fcl.plugins.p2p_node`.
 - `fcl::plugins::p2p_node` is the production owner for a shared P2P node inside
-  an application. It owns bootstrap, route/API contribution mounting, delivery
-  retry, relay policy and optional outbox integration; product plugins must not
+  an application. It owns bootstrap, route/API contribution mounting, local
+  endpoint reporting and typed remote API access; product plugins must not
   create parallel P2P nodes or call raw `p2p::node` path/relay primitives when
   the plugin owns the node.
 - Production P2P network mechanics belong to `fcl_p2p`, not to
@@ -250,8 +250,8 @@ class p2p_node {
   persistent peer/path store, AutoNAT/reachability, Circuit Relay/relay manager,
   AutoRelay, DCUtR/hole punching, DHT/rendezvous, pubsub/gossip, network limits,
   backpressure and network metrics must be added at the network layer. The
-  plugin only maps config, owns app lifecycle, mounts route/API contributions,
-  exposes safe local APIs and integrates the optional outbox.
+  plugin only maps config, owns app lifecycle, mounts route/API contributions
+  and exposes safe local APIs.
 - Public P2P APIs should use FCL/Boost-style vocabulary such as `endpoint`,
   `resolver`, `listener`, `connector`, `session`, `stream` and `protocol_id`.
   libp2p terms such as `multiaddr` describe the compatibility wire/text format;
@@ -264,9 +264,9 @@ class p2p_node {
   `fcl_p2p`. If a network-level behavior is missing, expose a typed
   unsupported/limited behavior or implement it in `fcl_p2p`; do not hide it
   above the network layer.
-- Durable P2P delivery in FCL is pluggable, not storage-bound. `fcl_plugins` may
-  define an outbox interface and an in-memory default, but it must not depend on
-  RocksDB, SQLite or downstream product storage backends.
+- Durable P2P delivery in FCL is pluggable, not storage-bound. If needed, it
+  belongs to a focused future plugin or product service, not to the
+  `p2p_node` host facade.
 - Plugin enable/disable is application-shell-owned config under
   `plugins.<plugin-id>.enabled`. Products must not manually distribute plugin
   selection from their own monolithic config object as the primary path.

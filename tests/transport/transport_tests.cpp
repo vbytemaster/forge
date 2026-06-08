@@ -12,6 +12,7 @@
 
 import fcl.asio.blocking;
 import fcl.asio.runtime;
+import fcl.transport.buffer;
 import fcl.transport.connector;
 import fcl.transport.endpoint;
 import fcl.transport.exceptions;
@@ -51,8 +52,16 @@ class fake_stream final : public fcl::transport::detail::stream_concept {
    }
 
    boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> value) override {
+      ++span_write_count;
       last_write_data = value.data();
       writes.push_back({value.begin(), value.end()});
+      co_return;
+   }
+
+   boost::asio::awaitable<void> async_write_chunk(fcl::transport::chunk value) override {
+      ++chunk_write_count;
+      last_write_data = value.bytes().data();
+      writes.push_back(value.to_vector());
       co_return;
    }
 
@@ -62,6 +71,14 @@ class fake_stream final : public fcl::transport::detail::stream_concept {
       auto out = std::move(reads.front());
       reads.pop_front();
       co_return out;
+   }
+
+   boost::asio::awaitable<fcl::transport::chunk> async_read_chunk() override {
+      ++chunk_reads_started;
+      BOOST_REQUIRE(!reads.empty());
+      auto out = std::move(reads.front());
+      reads.pop_front();
+      co_return fcl::transport::chunk{std::move(out)};
    }
 
    boost::asio::awaitable<void> async_close() override {
@@ -79,6 +96,9 @@ class fake_stream final : public fcl::transport::detail::stream_concept {
    std::vector<bytes> writes;
    const std::uint8_t* last_write_data = nullptr;
    std::uint64_t reads_started = 0;
+   std::uint64_t chunk_reads_started = 0;
+   std::uint64_t span_write_count = 0;
+   std::uint64_t chunk_write_count = 0;
    std::uint64_t close_count = 0;
    std::uint64_t cancel_count = 0;
    bool open = true;
@@ -297,6 +317,76 @@ class fake_session_listener final : public fcl::transport::detail::session_liste
 
 BOOST_AUTO_TEST_SUITE(transport)
 
+BOOST_AUTO_TEST_CASE(transport_chunk_and_pool_reuse_bounded_storage) {
+   auto pool = fcl::transport::buffer_pool{
+       fcl::transport::buffer_pool_options{.default_capacity = 8, .max_cached_buffers = 1, .max_cached_bytes = 32}};
+
+   const std::uint8_t* released_storage = nullptr;
+   {
+      auto builder = pool.acquire(8);
+      auto writable = builder.writable();
+      BOOST_REQUIRE_GE(writable.size(), 8U);
+      released_storage = writable.data();
+      const auto payload = text_bytes("abc");
+      std::copy(payload.begin(), payload.end(), writable.begin());
+
+      auto value = builder.commit(payload.size());
+      BOOST_CHECK_EQUAL(value.size(), payload.size());
+      BOOST_CHECK_EQUAL_COLLECTIONS(value.bytes().begin(), value.bytes().end(), payload.begin(), payload.end());
+      const auto copied = value.to_vector();
+      BOOST_CHECK_EQUAL_COLLECTIONS(copied.begin(), copied.end(), payload.begin(), payload.end());
+      BOOST_CHECK_THROW((void)builder.commit(0), fcl::transport::exceptions::invalid_buffer);
+   }
+
+   auto cached = pool.cached();
+   BOOST_CHECK_EQUAL(cached.buffers, 1U);
+   BOOST_CHECK_GE(cached.bytes, 8U);
+
+   auto reused = pool.acquire(8);
+   BOOST_CHECK_EQUAL(reused.writable().data(), released_storage);
+   BOOST_CHECK_THROW((void)reused.commit(reused.writable().size() + 1), fcl::transport::exceptions::invalid_buffer);
+
+   {
+      auto a = pool.copy(text_bytes("one"));
+      auto b = pool.copy(text_bytes("two"));
+      (void)a;
+      (void)b;
+   }
+   cached = pool.cached();
+   BOOST_CHECK_EQUAL(cached.buffers, 1U);
+   BOOST_CHECK_LE(cached.bytes, 32U);
+}
+
+BOOST_AUTO_TEST_CASE(transport_buffer_pool_drops_oversized_returned_storage) {
+   auto pool = fcl::transport::buffer_pool{fcl::transport::buffer_pool_options{
+       .default_capacity = 8,
+       .max_cached_buffers = 4,
+       .max_cached_bytes = 64,
+       .max_cached_buffer_capacity = 16,
+   }};
+
+   {
+      auto builder = pool.acquire(32);
+      auto writable = builder.writable();
+      BOOST_REQUIRE_GE(writable.size(), 32U);
+   }
+   auto cached = pool.cached();
+   BOOST_TEST(cached.buffers == 0U);
+   BOOST_TEST(cached.bytes == 0U);
+
+   const std::uint8_t* released_storage = nullptr;
+   {
+      auto builder = pool.acquire(12);
+      released_storage = builder.writable().data();
+   }
+   cached = pool.cached();
+   BOOST_TEST(cached.buffers == 1U);
+   BOOST_TEST(cached.bytes <= 64U);
+
+   auto reused = pool.acquire(12);
+   BOOST_TEST(reused.writable().data() == released_storage);
+}
+
 BOOST_AUTO_TEST_CASE(transport_stream_delegates_and_preserves_buffered_frames) {
    auto runtime = fcl::asio::runtime{};
    auto model = std::make_shared<fake_stream>(42);
@@ -315,7 +405,8 @@ BOOST_AUTO_TEST_CASE(transport_stream_delegates_and_preserves_buffered_frames) {
    BOOST_CHECK_EQUAL_COLLECTIONS(first_payload.begin(), first_payload.end(), expected_one.begin(), expected_one.end());
    auto second_payload = fcl::asio::blocking::run(runtime, value.async_read_frame());
    BOOST_CHECK_EQUAL_COLLECTIONS(second_payload.begin(), second_payload.end(), expected_two.begin(), expected_two.end());
-   BOOST_CHECK_EQUAL(model->reads_started, 1U);
+   BOOST_CHECK_EQUAL(model->chunk_reads_started, 1U);
+   BOOST_CHECK_EQUAL(model->reads_started, 0U);
 
    fcl::asio::blocking::run(runtime, value.async_write_frame(text_bytes("out")));
    const auto expected_write = fcl::transport::encode_frame(text_bytes("out"));
@@ -326,6 +417,51 @@ BOOST_AUTO_TEST_CASE(transport_stream_delegates_and_preserves_buffered_frames) {
    fcl::asio::blocking::run(runtime, value.async_close());
    BOOST_CHECK_EQUAL(model->close_count, 1U);
    BOOST_CHECK(!value.valid());
+}
+
+BOOST_AUTO_TEST_CASE(transport_stream_delegates_chunk_read_write_without_forcing_vector_path) {
+   auto runtime = fcl::asio::runtime{};
+   auto model = std::make_shared<fake_stream>(46);
+   model->reads.push_back(text_bytes("chunk read"));
+   auto value = make_stream(model);
+
+   auto written = fcl::transport::chunk{text_bytes("chunk write")};
+   const auto* written_data = written.bytes().data();
+   fcl::asio::blocking::run(runtime, value.async_write(std::move(written)));
+   BOOST_CHECK_EQUAL(model->chunk_write_count, 1U);
+   BOOST_CHECK_EQUAL(model->span_write_count, 0U);
+   BOOST_CHECK_EQUAL(model->last_write_data, written_data);
+   const auto expected_write = text_bytes("chunk write");
+   BOOST_REQUIRE_EQUAL(model->writes.size(), 1U);
+   BOOST_CHECK_EQUAL_COLLECTIONS(
+       model->writes.front().begin(), model->writes.front().end(), expected_write.begin(), expected_write.end());
+
+   auto read = fcl::asio::blocking::run(runtime, value.async_read_chunk());
+   const auto expected_read = text_bytes("chunk read");
+   BOOST_CHECK_EQUAL(model->chunk_reads_started, 1U);
+   BOOST_CHECK_EQUAL(model->reads_started, 0U);
+   BOOST_CHECK_EQUAL_COLLECTIONS(read.bytes().begin(), read.bytes().end(), expected_read.begin(), expected_read.end());
+}
+
+BOOST_AUTO_TEST_CASE(transport_stream_reads_framed_chunks_and_preserves_trailing_bytes_without_extra_reads) {
+   auto runtime = fcl::asio::runtime{};
+   auto model = std::make_shared<fake_stream>(47);
+   auto combined = fcl::transport::encode_frame(text_bytes("one"));
+   auto second = fcl::transport::encode_frame(text_bytes("two"));
+   combined.insert(combined.end(), second.begin(), second.end());
+   model->reads.push_back(combined);
+
+   auto value = make_stream(model);
+   auto first = fcl::asio::blocking::run(runtime, value.async_read_frame_chunk());
+   auto second_value = fcl::asio::blocking::run(runtime, value.async_read_frame_chunk());
+
+   const auto expected_one = text_bytes("one");
+   const auto expected_two = text_bytes("two");
+   BOOST_CHECK_EQUAL_COLLECTIONS(first.bytes().begin(), first.bytes().end(), expected_one.begin(), expected_one.end());
+   BOOST_CHECK_EQUAL_COLLECTIONS(
+       second_value.bytes().begin(), second_value.bytes().end(), expected_two.begin(), expected_two.end());
+   BOOST_CHECK_EQUAL(model->chunk_reads_started, 1U);
+   BOOST_CHECK_EQUAL(model->reads_started, 0U);
 }
 
 BOOST_AUTO_TEST_CASE(transport_stream_write_owns_caller_buffer_across_await) {
@@ -411,6 +547,37 @@ BOOST_AUTO_TEST_CASE(transport_frame_handles_partial_multiple_and_limit) {
                      fcl::transport::exceptions::frame_too_large);
    const auto over_limit = fcl::transport::encode_frame(text_bytes("toolong"));
    BOOST_CHECK_THROW((void)fcl::transport::decode_frame(over_limit, fcl::transport::frame_options{.max_size = 3}),
+                     fcl::transport::exceptions::frame_too_large);
+}
+
+BOOST_AUTO_TEST_CASE(transport_frame_view_decodes_without_payload_copy) {
+   const auto encoded_a = fcl::transport::encode_frame(text_bytes("a"));
+   auto partial = bytes{encoded_a.begin(), encoded_a.begin() + 2};
+   auto decoded_partial = fcl::transport::decode_frame_view(partial);
+   BOOST_CHECK(decoded_partial.status == fcl::transport::frame_decode_status::need_more_data);
+
+   auto encoded_b = fcl::transport::encode_frame(text_bytes("b"));
+   auto combined = encoded_a;
+   combined.insert(combined.end(), encoded_b.begin(), encoded_b.end());
+   auto first = fcl::transport::decode_frame_view(combined);
+   BOOST_REQUIRE(first.status == fcl::transport::frame_decode_status::complete);
+   BOOST_CHECK_EQUAL(first.consumed, encoded_a.size());
+   BOOST_CHECK_EQUAL(first.payload.data(), combined.data() + 4);
+   BOOST_CHECK_EQUAL(first.payload.size(), 1U);
+   BOOST_CHECK_EQUAL(first.payload.front(), static_cast<std::uint8_t>('a'));
+
+   auto second = fcl::transport::decode_frame_view({combined.data() + first.consumed, combined.size() - first.consumed});
+   BOOST_REQUIRE(second.status == fcl::transport::frame_decode_status::complete);
+   BOOST_CHECK_EQUAL(second.payload.data(), combined.data() + first.consumed + 4);
+   BOOST_CHECK_EQUAL(second.payload.front(), static_cast<std::uint8_t>('b'));
+
+   auto encoded = bytes{};
+   fcl::transport::encode_frame_to(encoded, text_bytes("view"));
+   const auto expected = fcl::transport::encode_frame(text_bytes("view"));
+   BOOST_CHECK_EQUAL_COLLECTIONS(encoded.begin(), encoded.end(), expected.begin(), expected.end());
+
+   const auto over_limit = fcl::transport::encode_frame(text_bytes("toolong"));
+   BOOST_CHECK_THROW((void)fcl::transport::decode_frame_view(over_limit, fcl::transport::frame_options{.max_size = 3}),
                      fcl::transport::exceptions::frame_too_large);
 }
 

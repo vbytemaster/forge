@@ -208,7 +208,9 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/program_options/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/env/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/api/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/api_transport/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/log/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/otlp/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/crypto/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/multiformats/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/asio/include"
@@ -331,11 +333,13 @@ add_subdirectory(libraries/yaml)
 add_subdirectory(libraries/program_options)
 add_subdirectory(libraries/env)
 add_subdirectory(libraries/api)
+add_subdirectory(libraries/api_transport)
 add_subdirectory(libraries/log)
 add_subdirectory(libraries/crypto)
 add_subdirectory(libraries/multiformats)
 add_subdirectory(libraries/asio)
 add_subdirectory(libraries/http)
+add_subdirectory(libraries/otlp)
 add_subdirectory(libraries/websocket)
 add_subdirectory(libraries/transport)
 add_subdirectory(libraries/tcp)
@@ -363,7 +367,9 @@ set(
    fcl_program_options
    fcl_env
    fcl_api
+   fcl_api_transport
    fcl_log
+   fcl_otlp
    fcl_crypto
    fcl_multiformats
    fcl_asio
@@ -426,7 +432,9 @@ install(
              libraries/program_options/include/fcl
              libraries/env/include/fcl
              libraries/api/include/fcl
+             libraries/api_transport/include/fcl
              libraries/log/include/fcl
+             libraries/otlp/include/fcl
              libraries/crypto/include/fcl
              libraries/multiformats/include/fcl
              libraries/asio/include/fcl
@@ -459,6 +467,18 @@ install(
 install(
    DIRECTORY vendor/bls12-381/include/
    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+   COMPONENT dev
+   EXCLUDE_FROM_ALL
+)
+
+install(
+   FILES
+      "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+      "${CMAKE_CURRENT_SOURCE_DIR}/NOTICE"
+      "${CMAKE_CURRENT_SOURCE_DIR}/AUTHORS"
+      "${CMAKE_CURRENT_SOURCE_DIR}/PROVENANCE.md"
+      "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_LICENSES"
+   DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/FCL"
    COMPONENT dev
    EXCLUDE_FROM_ALL
 )

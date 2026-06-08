@@ -5,6 +5,7 @@ module;
 #include <exception>
 #include <sstream>
 #include <string>
+#include <typeindex>
 #include <utility>
 #include <vector>
 
@@ -302,6 +303,20 @@ std::size_t registry::size() const noexcept {
 
 void registry::clear() noexcept {
    entries_.clear();
+}
+
+void registry::register_api(descriptor value, std::shared_ptr<void> implementation, std::type_index type) {
+   if (!implementation) {
+      throw exceptions::protocol_error{"cannot install null API implementation"};
+   }
+   if (!value.interface_type.hash_code() || value.interface_type != type) {
+      value.interface_type = type;
+   }
+   const auto key = key_for(value.id.value, value.version.major);
+   if (entries_.contains(key)) {
+      throw exceptions::protocol_error{"duplicate API implementation"};
+   }
+   entries_.emplace(key, entry{std::move(value), std::move(implementation), type});
 }
 
 std::string registry::key_for(std::string_view id, std::uint16_t major) {

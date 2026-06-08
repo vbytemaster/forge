@@ -15,7 +15,8 @@
       "fcl_tests": [
         "test_fcl_multiformats multiaddr_matches_donor_tcp_and_quic_binary_vectors",
         "test_fcl_multiformats multiaddr_roundtrips_dns_wss_peer_and_relay_circuit"
-      ]
+      ],
+      "known_gap": "No standalone live fixture; exercised indirectly by live P2P address exchange and kept as multiformats component proof."
     },
     {
       "id": "multiaddr.encapsulation_decapsulation",
@@ -26,7 +27,8 @@
       "supported": true,
       "fcl_tests": [
         "test_fcl_multiformats multiaddr_encapsulates_and_decapsulates_like_libp2p"
-      ]
+      ],
+      "known_gap": "No standalone live fixture; encapsulation and decapsulation are component-level multiaddr behavior."
     },
     {
       "id": "multiaddr.p2p_endpoint_views",
@@ -39,7 +41,11 @@
         "test_fcl_quic_p2p p2p_endpoint_parses_libp2p_quic_address_format",
         "test_fcl_quic_p2p p2p_endpoint_uses_multiaddr_for_tcp_wss_and_relay_views",
         "test_fcl_quic_p2p p2p_websocket_multiaddr_is_parseable_but_not_dialable"
-      ]
+      ],
+      "fcl_live_scenario": [
+        "test_fcl_libp2p_interop identify scenarios record advertised addresses"
+      ],
+      "known_gap": "`/ws` and `/wss` have parse/store coverage only; no dial/listen live scenario is claimed."
     },
     {
       "id": "autonatv2.dial_request_response_nonce",
@@ -51,6 +57,9 @@
       "fcl_tests": [
         "p2p_libp2p_autonat_v2_codec_covers_nonce_data_and_statuses",
         "p2p_autonat_v2_probe_public_and_persists_observation"
+      ],
+      "fcl_live_scenario": [
+        "test_fcl_libp2p_interop AutoNAT v2 FCL <-> Go/Rust"
       ]
     },
     {
@@ -62,7 +71,8 @@
       "supported": true,
       "fcl_tests": [
         "p2p_libp2p_autonat_v2_rejects_oversized_data_response_and_unknown_status"
-      ]
+      ],
+      "known_gap": "Negative malformed and oversized AutoNAT v2 behavior is component-only; live fixtures exercise valid exchanges."
     },
     {
       "id": "relayv2.reserve_connect_status",
@@ -77,6 +87,10 @@
         "p2p_relay_connect_requires_target_reservation",
         "p2p_relay_stop_connect_passes_frames_after_target_reservation",
         "p2p_relay_transport_opens_arbitrary_registered_protocol"
+      ],
+      "fcl_live_scenario": [
+        "test_fcl_libp2p_interop relay reservation FCL <-> Go/Rust",
+        "test_fcl_libp2p_interop relayed stream FCL <-> Go/Rust"
       ]
     },
     {
@@ -90,7 +104,25 @@
         "p2p_signed_envelope_seals_and_verifies_domain_payload_and_signer",
         "p2p_relay_voucher_uses_signed_envelope_and_rejects_stale_or_wrong_signer",
         "p2p_libp2p_relay_wire_roundtrips_statuses_limits_and_voucher"
-      ]
+      ],
+      "known_gap": "Voucher signature failure cases are component-only; live relay fixtures exercise valid vouchers and reservations."
+    },
+    {
+      "id": "autorelay.discovery_reservation_lifecycle",
+      "protocol": "AutoRelay",
+      "source": "donors/libp2p-specs/relay/circuit-v2.md",
+      "donor": "go-libp2p p2p/host/autorelay relay_finder and rust-libp2p relay priv_client reservation lifecycle",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_autorelay_refresh_reserves_peer_store_candidate",
+        "p2p_autorelay_refresh_backs_off_failed_candidate_and_tries_next",
+        "p2p_autorelay_refresh_accepts_dht_and_rendezvous_sourced_candidates",
+        "p2p_autorelay_refresh_respects_candidate_and_target_limits",
+        "p2p_relay_fallback_refreshes_candidate_without_explicit_relay_peer",
+        "p2p_discovery_refresh_learns_dht_and_rendezvous_relay_candidates_for_autorelay"
+      ],
+      "known_gap": "Live fixtures cover relay reservation and use; autonomous relay candidate discovery policy is component-only because fixtures do not expose every discovery source."
     },
     {
       "id": "dcutr.connect_sync_attempt",
@@ -106,6 +138,12 @@
         "test_fcl_libp2p_interop fcl_source_rust_relay_rust_destination_dcutr",
         "test_fcl_libp2p_interop go_source_fcl_relay_fcl_destination_dcutr",
         "test_fcl_libp2p_interop rust_source_fcl_relay_fcl_destination_dcutr"
+      ],
+      "fcl_live_scenario": [
+        "fcl_source_go_relay_go_destination_dcutr",
+        "fcl_source_rust_relay_rust_destination_dcutr",
+        "go_source_fcl_relay_fcl_destination_dcutr",
+        "rust_source_fcl_relay_fcl_destination_dcutr"
       ]
     },
     {
@@ -118,7 +156,76 @@
       "fcl_tests": [
         "p2p_resource_manager_enforces_peer_protocol_dial_and_reservation_scopes",
         "p2p_relay_policy_options_are_behavioral"
-      ]
+      ],
+      "known_gap": "Resource-manager scope failures are component-only; live interop remains the protocol compatibility gate."
+    },
+    {
+      "id": "connection_manager.host_session_policy",
+      "protocol": "Connection Manager",
+      "source": "go-libp2p connmgr/resource-manager/swarm dial backoff and rust-libp2p connection-limits",
+      "donor": "go-libp2p low/high watermark pruning, protected peers, resource scopes, endpoint dial backoff and rust-libp2p swarm connection events",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_resource_manager_enforces_connection_session_scopes",
+        "p2p_node_peer_protection_api_is_tagged_and_additive",
+        "p2p_connection_manager_prunes_unprotected_sessions_and_keeps_protected_peer",
+        "p2p_connection_manager_rejects_when_all_sessions_are_protected",
+        "p2p_connection_manager_enforces_outbound_session_limit",
+        "p2p_connection_manager_allows_bounded_parallel_sessions_per_peer",
+        "p2p_connection_manager_enforces_sessions_per_peer_limit",
+        "p2p_connection_manager_rejects_pending_outbound_limit_without_killing_first_attempt",
+        "p2p_path_manager_tries_next_direct_endpoint_after_attempt_timeout",
+        "p2p_abusive_peer_crossing_malformed_threshold_closes_only_offender_session"
+      ],
+      "known_gap": "Live donor fixtures do not expose all pruning/protection knobs; component tests cover host policy and live interop remains the compatibility gate."
+    },
+    {
+      "id": "plugin.p2p_api_resolver_metadata",
+      "protocol": "FCL P2P API Resolver",
+      "source": "docs/donors/fcl-p2p-api-resolver-v1.md",
+      "donor": "libp2p Identify protocol-listing, Kubo CoreAPI facade pattern, Boxo service separation and rust-libp2p behaviour composition",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "test_fcl_plugins p2p_api_resolver_plugin_config_is_described_from_public_schema",
+        "test_fcl_plugins p2p_api_resolver_publishes_metadata_and_delegates_route_mounting",
+        "test_fcl_plugins p2p_api_resolver_resolves_remote_api_and_opens_typed_remote",
+        "test_fcl_plugins p2p_api_resolver_rejects_malformed_remote_metadata_without_caching_it"
+      ],
+      "known_gap": "`/fcl/api/resolver/1` is an FCL-specific metadata protocol; no Go/Rust libp2p resolver interop claim is made."
+    },
+    {
+      "id": "plugin.p2p_diagnostics_snapshot",
+      "protocol": "FCL P2P Diagnostics",
+      "source": "docs/donors/fcl-p2p-node-plugin-delivery-automation.md",
+      "donor": "Kubo CoreAPI/service facade split, Go libp2p peerstore/connmgr/resource-manager visibility and rust-libp2p swarm state projection patterns",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "test_fcl_quic_p2p p2p_diagnostics_snapshot_reports_live_network_state_without_mutation",
+        "test_fcl_quic_p2p p2p_diagnostics_snapshot_caps_are_deterministic",
+        "test_fcl_plugins p2p_diagnostics_plugin_config_is_described_from_public_schema",
+        "test_fcl_plugins p2p_diagnostics_api_rejects_facade_calls_before_initialize",
+        "test_fcl_plugins p2p_diagnostics_plugin_reports_live_p2p_node_state"
+      ],
+      "known_gap": "`p2p_diagnostics` is an FCL in-process operator/test API over local snapshots; no Go/Rust libp2p wire interop claim is made."
+    },
+    {
+      "id": "plugin.p2p_pubsub_facade",
+      "protocol": "FCL P2P PubSub Plugin",
+      "source": "docs/donors/fcl-p2p-node-plugin-delivery-automation.md and docs/donors/fcl-p2p-gossipsub-v1.md",
+      "donor": "Go libp2p Topic/Subscription/RegisterTopicValidator, rust-libp2p Behaviour/Event validation and Kubo CoreAPI facade split",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "test_fcl_plugins p2p_pubsub_plugin_config_is_described_from_public_schema",
+        "test_fcl_plugins p2p_pubsub_api_rejects_facade_calls_before_initialize",
+        "test_fcl_plugins p2p_pubsub_plugin_requests_core_pubsub_capability_before_startup",
+        "test_fcl_plugins p2p_pubsub_plugin_publishes_and_subscribes_raw_and_typed_messages",
+        "test_fcl_plugins p2p_pubsub_plugin_enforces_topic_policy_and_handler_bounds"
+      ],
+      "known_gap": "`p2p_pubsub` is an FCL in-process plugin facade over core GossipSub; Go/Rust wire compatibility remains tracked by the core GossipSub live cases."
     },
     {
       "id": "interop.live_ping_identify_autonat_relay",
@@ -129,6 +236,10 @@
       "supported": true,
       "fcl_tests": [
         "test_fcl_libp2p_interop"
+      ],
+      "fcl_live_scenario": [
+        "FCL <-> Go Ping, Identify, AutoNAT v2 and Relay",
+        "FCL <-> Rust Ping, Identify, AutoNAT v2 and Relay"
       ]
     },
     {
@@ -173,7 +284,7 @@
         "fcl->rust tcp echo",
         "rust->fcl tcp echo"
       ],
-      "known_gap": "WebSocket paths remain outside this scope"
+      "known_gap": "`/ws` and `/wss` have parse/store coverage only; no dial/listen live scenario is claimed."
     },
     {
       "id": "transport.tcp_tls_yamux_direct",
@@ -230,7 +341,43 @@
         "fcl->rust tcp-tls echo",
         "rust->fcl tcp-tls echo"
       ],
-      "known_gap": "WebSocket paths remain outside this scope"
+      "known_gap": "`/ws` and `/wss` have parse/store coverage only; no dial/listen live scenario is claimed."
+    },
+    {
+      "id": "p2p.host_multi_transport_orchestration",
+      "protocol": "P2P Host",
+      "source": "donors/libp2p-specs/addressing/README.md",
+      "donor": "go-libp2p default/listen transport registration tests and rust-libp2p SwarmBuilder transport/relay composition",
+      "donor_file": [
+        "donors/go-libp2p/defaults.go",
+        "donors/go-libp2p/libp2p_test.go",
+        "donors/rust-libp2p/libp2p/src/builder.rs",
+        "donors/rust-libp2p/libp2p/src/builder/phase/relay.rs",
+        "donors/libp2p-specs/addressing/README.md"
+      ],
+      "donor_case": [
+        "multiple listen transports",
+        "transport registration controls listen support",
+        "host-level transport composition",
+        "relay path composed above direct transport",
+        "network address plus peer identity"
+      ],
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "test_fcl_quic_p2p p2p_node_listens_on_quic_and_tcp_and_identify_advertises_both",
+        "test_fcl_quic_p2p p2p_duplicate_direct_listen_rejects_typed",
+        "test_fcl_quic_p2p p2p_peer_exchange_preserves_multiple_direct_endpoints_without_duplicates",
+        "test_fcl_quic_p2p p2p_identify_push_rejects_mismatched_endpoint_peer_suffix",
+        "test_fcl_quic_p2p p2p_stop_closes_all_direct_listeners",
+        "test_fcl_quic_p2p p2p_websocket_multiaddr_is_parseable_but_not_dialable"
+      ],
+      "fcl_live_scenario": [
+        "test_fcl_libp2p_interop identify scenarios record advertised addresses",
+        "test_fcl_libp2p_interop tcp/tcp-tls scenarios prove advertised TCP is dialable",
+        "test_fcl_libp2p_interop relay scenarios keep relay path separate from direct"
+      ],
+      "known_gap": "`/ws` and `/wss` have parse/store coverage only; no dial/listen live scenario is claimed."
     },
     {
       "id": "interop.live_dcutr_relay_topology",
@@ -246,6 +393,12 @@
         "mixed FCL source -> rust-libp2p relay -> rust-libp2p destination DCUtR topology",
         "mixed go-libp2p source -> FCL relay -> FCL destination DCUtR topology",
         "mixed rust-libp2p source -> FCL relay -> FCL destination DCUtR topology"
+      ],
+      "fcl_live_scenario": [
+        "fcl_source_go_relay_go_destination_dcutr",
+        "fcl_source_rust_relay_rust_destination_dcutr",
+        "go_source_fcl_relay_fcl_destination_dcutr",
+        "rust_source_fcl_relay_fcl_destination_dcutr"
       ]
     },
     {
@@ -257,7 +410,8 @@
       "supported": true,
       "fcl_tests": [
         "p2p_dht_routing_table_uses_sha256_xor_distance_and_bounds_results"
-      ]
+      ],
+      "known_gap": "Routing-table distance ordering is component-only; live DHT lookup proof is tracked by interop.live_dht_peer_provider_lookup."
     },
     {
       "id": "dht.message_codec_and_provider_records",
@@ -270,7 +424,21 @@
         "p2p_dht_codec_roundtrips_libp2p_message_shape_and_rejects_malformed",
         "p2p_dht_node_finds_peer_and_provider_over_negotiated_stream",
         "p2p_peer_store_rocksdb_persists_discovery_dht_and_rendezvous_state"
-      ]
+      ],
+      "known_gap": "Codec and persistence negative cases are component-only; live DHT lookup proof is tracked by interop.live_dht_peer_provider_lookup."
+    },
+    {
+      "id": "dht.iterative_lookup_and_provider_publication",
+      "protocol": "Kademlia DHT",
+      "source": "donors/libp2p-specs/kad-dht/README.md",
+      "donor": "go-libp2p-kad-dht query/provider behaviour and rust-libp2p kad query pool acceptance criteria",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_dht_iterative_lookup_walks_many_peer_topology",
+        "p2p_dht_iterative_provider_lookup_and_provide_reach_closest_peers"
+      ],
+      "known_gap": "Live many-peer DHT topology artifacts remain limited by current fixture support"
     },
     {
       "id": "rendezvous.register_discover_ttl_cookie",
@@ -283,7 +451,21 @@
         "p2p_rendezvous_codec_roundtrips_register_discover_cookie_and_status",
         "p2p_rendezvous_node_registers_and_discovers_over_negotiated_stream",
         "p2p_peer_store_rocksdb_persists_discovery_dht_and_rendezvous_state"
-      ]
+      ],
+      "known_gap": "Component-level protocol and persistence proof; live Rust register/discover proof is tracked by interop.live_rendezvous_register_discover."
+    },
+    {
+      "id": "rendezvous.refresh_cookie_and_discovery_feed",
+      "protocol": "Rendezvous",
+      "source": "donors/libp2p-specs/rendezvous/README.md",
+      "donor": "rust-libp2p rendezvous refresh, signed PeerRecord and cookie continuation behaviour",
+      "status": "ported",
+      "supported": true,
+      "fcl_tests": [
+        "p2p_rendezvous_refresh_replaces_registration_and_cookie_discovers_new_records",
+        "p2p_discovery_refresh_learns_dht_and_rendezvous_relay_candidates_for_autorelay"
+      ],
+      "known_gap": "Go rendezvous remains a wire-level future scenario because no official go-libp2p rendezvous behaviour donor is present"
     },
     {
       "id": "interop.live_dht_peer_provider_lookup",
@@ -318,8 +500,7 @@
         "go->fcl dht_provide_find_provider",
         "fcl->rust dht_provide_find_provider",
         "rust->fcl dht_provide_find_provider"
-      ],
-      "known_gap": ""
+      ]
     },
     {
       "id": "interop.live_rendezvous_register_discover",
@@ -375,8 +556,7 @@
         "go->fcl gossipsub_publish",
         "fcl->rust gossipsub_publish",
         "rust->fcl gossipsub_publish"
-      ],
-      "known_gap": ""
+      ]
     },
     {
       "id": "gossipsub.rpc_codec_control_and_limits",
@@ -398,7 +578,7 @@
       "fcl_tests": [
         "p2p_gossipsub_codec_roundtrips_v11_rpc_and_rejects_malformed"
       ],
-      "known_gap": ""
+      "known_gap": "RPC codec, malformed control and resource-limit failures are component-only; live publish delivery is tracked by gossipsub.live_publish_delivery."
     },
     {
       "id": "gossipsub.message_signing_and_id",
@@ -421,7 +601,7 @@
         "p2p_gossipsub_codec_roundtrips_v11_rpc_and_rejects_malformed",
         "p2p_gossipsub_signing_rejects_tampered_payload"
       ],
-      "known_gap": ""
+      "known_gap": "Tampered-message signature rejection is component-only; live valid signed delivery is tracked by gossipsub.live_publish_delivery."
     },
     {
       "id": "gossipsub.live_publish_delivery",
@@ -455,8 +635,7 @@
         "fcl->rust gossipsub_publish",
         "rust->fcl gossipsub_publish",
         "mixed 4 FCL + 3 Go + 3 Rust gossipsub_mixed_mesh_stress"
-      ],
-      "known_gap": ""
+      ]
     },
     {
       "id": "gossipsub.mesh_hardening_and_resource_bounds",
@@ -494,7 +673,7 @@
       "fcl_live_scenario": [
         "mixed 4 FCL + 3 Go + 3 Rust gossipsub_mixed_mesh_stress"
       ],
-      "known_gap": ""
+      "known_gap": "Live fixtures cover mixed mesh delivery; resource-abuse and scoring edge cases remain component-only because donor fixtures do not expose every queue/score knob."
     }
   ]
 }

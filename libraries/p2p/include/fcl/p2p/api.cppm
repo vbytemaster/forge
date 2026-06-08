@@ -3,23 +3,19 @@ module;
 #include <boost/asio/awaitable.hpp>
 #include <fcl/exceptions/macros.hpp>
 
+#include <chrono>
 #include <cstddef>
-#include <functional>
-#include <span>
 #include <string>
-#include <unordered_map>
 #include <utility>
-#include <vector>
 
 export module fcl.p2p.api;
 
 import fcl.api;
+import fcl.api.transport;
 import fcl.p2p.exceptions;
 import fcl.p2p.node;
 import fcl.p2p.protocol;
 import fcl.p2p.stream;
-import fcl.raw.raw;
-import fcl.transport.exceptions;
 
 export namespace fcl::p2p {
 
@@ -33,18 +29,10 @@ class api_binding {
       std::string value;
    };
 
-   using session_handler = std::function<boost::asio::awaitable<void>(fcl::api::session&)>;
-
-   api_binding(node* owner, fcl::api::binding_plan plan, protocol_id protocol, fcl::api::codec_id codec,
-               peer_policy peer_policy_value, discovery_scope discovery_scope_value, std::size_t max_inflight_per_peer)
-       : owner_{owner}, plan_{std::move(plan)}, protocol_{std::move(protocol)}, codec_{std::move(codec)},
-         peer_policy_{std::move(peer_policy_value)}, discovery_scope_{std::move(discovery_scope_value)},
-         max_inflight_per_peer_{max_inflight_per_peer} {}
-
-   api_binding& on_session(session_handler handler) {
-      on_session_ = std::move(handler);
-      return *this;
-   }
+   api_binding(node* owner, fcl::api::binding_plan plan, protocol_id protocol, fcl::api::transport::options options,
+               peer_policy peer_policy_value, discovery_scope discovery_scope_value)
+       : owner_{owner}, plan_{std::move(plan)}, protocol_{std::move(protocol)}, options_{std::move(options)},
+         peer_policy_{std::move(peer_policy_value)}, discovery_scope_{std::move(discovery_scope_value)} {}
 
    [[nodiscard]] const protocol_id& protocol() const noexcept {
       return protocol_;
@@ -56,68 +44,17 @@ class api_binding {
       };
    }
 
-   boost::asio::awaitable<fcl::api::session> accept(node::incoming_protocol_stream stream) const {
+   boost::asio::awaitable<void> accept(node::incoming_protocol_stream stream) const {
       validate_stream(stream);
-      auto session = make_session();
-      if (on_session_) {
-         co_await on_session_(session);
-      }
-      co_await serve(std::move(stream));
-      co_return session;
+      co_await fcl::api::transport::serve_stream(std::move(stream.stream).into_transport_stream(), plan_, options_);
    }
 
    boost::asio::awaitable<void> serve(node::incoming_protocol_stream stream) const {
-      validate_stream(stream);
-      auto calls = fcl::api::call_runtime{
-          fcl::api::call_runtime_options{.max_inflight = max_inflight_per_peer_}};
-      auto streams = std::unordered_map<std::uint64_t, std::vector<fcl::api::frame>>{};
-
-      while (true) {
-         try {
-            auto payload = co_await stream.stream.async_read_frame();
-            auto request = fcl::raw::unpack<fcl::api::frame>(payload);
-            if (request.codec != codec_) {
-               FCL_THROW_EXCEPTION(fcl::api::exceptions::codec_failed, "P2P API frame codec is not accepted",
-                                   fcl::exceptions::ctx("codec", request.codec.value));
-            }
-            if (request.kind == fcl::api::frame_kind::request && grouped_stream_method(request)) {
-               calls.observe(request);
-               if (streams.size() >= max_inflight_per_peer_) {
-                  FCL_THROW_EXCEPTION(fcl::api::exceptions::resource_exhausted, "P2P API max streams exceeded");
-               }
-               if (!streams.emplace(request.id.value, std::vector<fcl::api::frame>{std::move(request)}).second) {
-                  FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error, "duplicate active P2P API stream");
-               }
-               continue;
-            }
-            if (auto active = streams.find(request.id.value); active != streams.end()) {
-               if (request.kind != fcl::api::frame_kind::stream_end) {
-                  calls.observe(request);
-               }
-               active->second.push_back(std::move(request));
-               if (active->second.back().kind == fcl::api::frame_kind::stream_end) {
-                  auto frames = std::move(active->second);
-                  streams.erase(active);
-                  auto responses = co_await plan_.dispatch_stream(std::move(frames), calls);
-                  co_await write_responses(stream.stream, responses);
-               }
-               continue;
-            }
-            auto responses = co_await plan_.dispatch_many(std::move(request), calls);
-            co_await write_responses(stream.stream, responses);
-         } catch (const fcl::exceptions::base& error) {
-            if (fcl::p2p::exceptions::is(error, fcl::p2p::exceptions::code::closed) ||
-                fcl::transport::exceptions::is(error, fcl::transport::exceptions::code::closed) ||
-                fcl::transport::exceptions::is(error, fcl::transport::exceptions::code::canceled)) {
-               co_return;
-            }
-            throw;
-         }
-      }
+      co_await accept(std::move(stream));
    }
 
    [[nodiscard]] const fcl::api::codec_id& codec() const noexcept {
-      return codec_;
+      return options_.codec;
    }
 
    [[nodiscard]] const peer_policy& peer_policy_value() const noexcept {
@@ -129,26 +66,14 @@ class api_binding {
    }
 
    [[nodiscard]] std::size_t max_inflight_per_peer() const noexcept {
-      return max_inflight_per_peer_;
+      return options_.max_inflight;
+   }
+
+   [[nodiscard]] const fcl::api::transport::options& options() const noexcept {
+      return options_;
    }
 
  private:
-   [[nodiscard]] bool grouped_stream_method(const fcl::api::frame& request) const noexcept {
-      const auto* descriptor = plan_.local == nullptr ? nullptr : plan_.local->describe(request.api);
-      const auto* method = descriptor == nullptr ? nullptr : fcl::api::find_method(*descriptor, request.method);
-      return method != nullptr && (method->kind == fcl::api::method_kind::client_stream ||
-                                   method->kind == fcl::api::method_kind::bidirectional_stream);
-   }
-
-   static boost::asio::awaitable<void> write_responses(fcl::p2p::stream& stream,
-                                                       const std::vector<fcl::api::frame>& responses) {
-      for (const auto& response : responses) {
-         auto response_bytes = fcl::api::bytes{};
-         fcl::raw::pack(response_bytes, response);
-         co_await stream.async_write_frame(std::span<const std::uint8_t>{response_bytes.data(), response_bytes.size()});
-      }
-   }
-
    void validate_stream(const node::incoming_protocol_stream& stream) const {
       if (stream.protocol != protocol_) {
          FCL_THROW_EXCEPTION(fcl::p2p::exceptions::unsupported_protocol, "P2P API binding received wrong protocol",
@@ -162,21 +87,12 @@ class api_binding {
       }
    }
 
-   [[nodiscard]] fcl::api::session make_session() const {
-      if (plan_.local == nullptr) {
-         FCL_THROW_EXCEPTION(fcl::api::exceptions::incompatible_version, "P2P API binding has no local registry");
-      }
-      return fcl::api::session{fcl::api::view{*plan_.local}};
-   }
-
    node* owner_ = nullptr;
    fcl::api::binding_plan plan_;
    protocol_id protocol_;
-   fcl::api::codec_id codec_;
+   fcl::api::transport::options options_;
    peer_policy peer_policy_{};
    discovery_scope discovery_scope_{};
-   std::size_t max_inflight_per_peer_ = 64;
-   session_handler on_session_;
 };
 
 class api_builder {
@@ -200,7 +116,7 @@ class api_builder {
    }
 
    api_builder& codec(fcl::api::codec_id value) {
-      codec_ = std::move(value);
+      options_.codec = std::move(value);
       return *this;
    }
 
@@ -215,23 +131,32 @@ class api_builder {
    }
 
    api_builder& max_inflight_per_peer(std::size_t value) {
-      max_inflight_per_peer_ = value;
+      options_.max_inflight = value;
+      return *this;
+   }
+
+   api_builder& deadline(std::chrono::milliseconds value) {
+      options_.deadline = value;
+      return *this;
+   }
+
+   api_builder& max_frame_size(std::uint32_t value) {
+      options_.max_frame_size = value;
       return *this;
    }
 
    [[nodiscard]] api_binding build() {
-      return api_binding{owner_, std::move(plan_), std::move(protocol_), std::move(codec_), peer_policy_,
-                         std::move(discovery_scope_), max_inflight_per_peer_};
+      return api_binding{owner_, std::move(plan_), std::move(protocol_), options_, peer_policy_,
+                         std::move(discovery_scope_)};
    }
 
  private:
    node* owner_ = nullptr;
    fcl::api::binding_plan plan_;
    fcl::p2p::protocol_id protocol_{.value = "/fcl/api/1"};
-   fcl::api::codec_id codec_{.value = "fcl.raw"};
+   fcl::api::transport::options options_{.max_inflight = 64};
    api_binding::peer_policy peer_policy_{};
    api_binding::discovery_scope discovery_scope_{};
-   std::size_t max_inflight_per_peer_ = 64;
 };
 
 [[nodiscard]] inline api_builder api(node& owner) {
@@ -278,18 +203,11 @@ class route_builder {
    }
 
    [[nodiscard]] route_binding build() {
-      if (protocol_.value.empty()) {
-         FCL_THROW_EXCEPTION(fcl::p2p::exceptions::unsupported_protocol, "P2P route protocol id must not be empty");
-      }
-      if (!handler_) {
-         FCL_THROW_EXCEPTION(fcl::p2p::exceptions::unsupported_protocol, "P2P route handler must not be empty",
-                             fcl::exceptions::ctx("protocol", protocol_.value));
-      }
       return route_binding{std::move(protocol_), std::move(handler_)};
    }
 
  private:
-   fcl::p2p::protocol_id protocol_;
+   fcl::p2p::protocol_id protocol_{.value = "/fcl/route/1"};
    node::protocol_handler handler_;
 };
 

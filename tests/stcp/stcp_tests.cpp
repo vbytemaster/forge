@@ -42,6 +42,7 @@ import fcl.stcp.listener;
 import fcl.stcp.options;
 import fcl.tcp.connector;
 import fcl.tcp.listener;
+import fcl.transport.buffer;
 import fcl.transport.endpoint;
 import fcl.transport.stream;
 
@@ -313,14 +314,24 @@ boost::asio::awaitable<void> stcp_direct_roundtrip() {
    auto received_ping = co_await server.async_read();
    BOOST_CHECK_EQUAL_COLLECTIONS(received_ping.begin(), received_ping.end(), ping.begin(), ping.end());
 
-   auto stream_connection = std::move(client).into_transport_stream();
-   const auto framed = text_bytes("tls framed");
-   co_await stream_connection.stream.async_write_frame(framed);
-   auto received_frame = co_await server.async_read();
-   BOOST_CHECK(received_frame.size() > framed.size());
+   auto client_stream = std::move(client).into_transport_stream();
+   auto server_stream = std::move(server).into_transport_stream();
 
-   co_await stream_connection.stream.async_close();
-   co_await server.async_close();
+   const auto chunk_payload = text_bytes("tls chunk");
+   co_await client_stream.stream.async_write(fcl::transport::chunk{chunk_payload});
+   auto received_chunk = co_await server_stream.stream.async_read_chunk();
+   const auto received_chunk_bytes = received_chunk.to_vector();
+   BOOST_CHECK_EQUAL_COLLECTIONS(
+       received_chunk_bytes.begin(), received_chunk_bytes.end(), chunk_payload.begin(), chunk_payload.end());
+
+   const auto framed = text_bytes("tls framed chunk");
+   co_await client_stream.stream.async_write_frame(fcl::transport::chunk{framed});
+   auto received_frame = co_await server_stream.stream.async_read_frame_chunk();
+   const auto received_frame_bytes = received_frame.to_vector();
+   BOOST_CHECK_EQUAL_COLLECTIONS(received_frame_bytes.begin(), received_frame_bytes.end(), framed.begin(), framed.end());
+
+   co_await client_stream.stream.async_close();
+   co_await server_stream.stream.async_close();
    co_await listener.async_close();
 }
 

@@ -17,6 +17,7 @@ export module fcl.p2p.node;
 import fcl.asio.runtime;
 import fcl.p2p.dht;
 import fcl.p2p.discovery;
+import fcl.p2p.diagnostics;
 import fcl.p2p.endpoint;
 import fcl.p2p.hole_punch;
 import fcl.p2p.identity;
@@ -37,6 +38,17 @@ class node {
  public:
    struct limits {
       std::size_t max_sessions = 1024;
+      std::size_t max_pending_inbound_sessions = 1024;
+      std::size_t max_pending_outbound_sessions = 1024;
+      std::size_t max_inbound_sessions = 1024;
+      std::size_t max_outbound_sessions = 1024;
+      std::size_t max_sessions_per_peer = 4;
+      std::size_t session_low_watermark = 1024;
+      std::chrono::milliseconds session_grace_period{60'000};
+      std::chrono::milliseconds session_prune_silence{10'000};
+      std::chrono::milliseconds dial_backoff_base{5'000};
+      std::chrono::milliseconds dial_backoff_step{1'000};
+      std::chrono::milliseconds dial_backoff_max{300'000};
       std::size_t max_protocol_handlers = 1024;
       std::size_t max_peer_exchange_message_size = 4 * 1024 * 1024;
       std::size_t max_peer_exchange_records = 1024;
@@ -105,49 +117,7 @@ class node {
 
    using protocol_handler = std::function<boost::asio::awaitable<void>(incoming_protocol_stream)>;
 
-   struct metrics_snapshot {
-      std::uint64_t sessions_opened = 0;
-      std::uint64_t sessions_closed = 0;
-      std::uint64_t handshakes_completed = 0;
-      std::uint64_t handshakes_failed = 0;
-      std::uint64_t protocol_streams_opened = 0;
-      std::uint64_t protocol_streams_accepted = 0;
-      std::uint64_t protocol_rejections = 0;
-      std::uint64_t peer_exchange_messages = 0;
-      std::uint64_t reachability_checks = 0;
-      std::uint64_t reachability_public = 0;
-      std::uint64_t reachability_private = 0;
-      std::uint64_t relays_opened = 0;
-      std::uint64_t relay_rejections = 0;
-      std::uint64_t relay_reservations = 0;
-      std::uint64_t relay_reservation_rejections = 0;
-      std::uint64_t relay_reservation_expirations = 0;
-      std::uint64_t relay_bytes = 0;
-      std::uint64_t hole_punch_attempts = 0;
-      std::uint64_t hole_punch_successes = 0;
-      std::uint64_t hole_punch_failures = 0;
-      std::uint64_t path_direct_opens = 0;
-      std::uint64_t path_relay_opens = 0;
-      std::uint64_t path_direct_attempts = 0;
-      std::uint64_t path_relay_attempts = 0;
-      std::uint64_t direct_failures = 0;
-      std::uint64_t relay_failures = 0;
-      std::uint64_t dht_queries = 0;
-      std::uint64_t dht_responses = 0;
-      std::uint64_t rendezvous_registrations = 0;
-      std::uint64_t rendezvous_discovers = 0;
-      std::uint64_t pubsub_messages_published = 0;
-      std::uint64_t pubsub_messages_received = 0;
-      std::uint64_t pubsub_messages_delivered = 0;
-      std::uint64_t pubsub_duplicates = 0;
-      std::uint64_t pubsub_invalid_messages = 0;
-      std::uint64_t pubsub_control_messages = 0;
-      std::uint64_t backpressure_rejections = 0;
-      std::size_t active_sessions = 0;
-      std::size_t active_relays = 0;
-      std::size_t active_relay_reservations = 0;
-      bool stopped = false;
-   };
+   using metrics_snapshot = diagnostics::metrics_snapshot;
 
    node(fcl::asio::runtime& runtime, options options_value);
    ~node();
@@ -160,9 +130,16 @@ class node {
 
    [[nodiscard]] const peer_id& local_peer() const noexcept;
    [[nodiscard]] std::optional<fcl::p2p::endpoint> local_endpoint() const;
+   [[nodiscard]] std::vector<fcl::p2p::endpoint> local_endpoints() const;
    [[nodiscard]] metrics_snapshot metrics() const;
+   [[nodiscard]] fcl::p2p::diagnostics::snapshot
+   diagnostics(fcl::p2p::diagnostics::options options = {}) const;
    [[nodiscard]] peer_store& peers() noexcept;
    [[nodiscard]] const peer_store& peers() const noexcept;
+
+   void protect_peer(peer_id peer, std::string tag = "manual");
+   [[nodiscard]] bool unprotect_peer(peer_id peer, std::string tag = "manual");
+   [[nodiscard]] bool is_peer_protected(const peer_id& peer) const;
 
    void register_protocol_handler(protocol_id protocol, protocol_handler handler);
    boost::asio::awaitable<void> async_listen(fcl::p2p::endpoint endpoint);
@@ -173,6 +150,8 @@ class node {
    boost::asio::awaitable<relay::reservation::info> async_reserve_relay(peer_id relay_peer);
    boost::asio::awaitable<relay::reservation::info> async_reserve_relay(peer_id relay_peer,
                                                                         relay::reservation::options options);
+   boost::asio::awaitable<std::vector<relay::reservation::info>> async_refresh_relay_candidates();
+   boost::asio::awaitable<std::vector<discovery::result>> async_refresh_discovery();
    boost::asio::awaitable<void> async_cancel_relay(peer_id relay_peer);
    boost::asio::awaitable<dht::query_result> async_find_peer(peer_id peer);
    boost::asio::awaitable<void> async_provide(dht::key key);

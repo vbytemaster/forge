@@ -31,8 +31,10 @@ diagnostic context.
 - `fcl.api.error_projection` — error payload projection and remote typed-error restore.
 - `fcl.api.handle` — typed local/remote handle wrapper.
 - `fcl.api.registry` — registry, installer, view and local frame dispatch.
-- `fcl.api.binding` — connection, session, binding plan, call runtime and
-  protocol-neutral interceptors.
+- `fcl.api.binding` — binding plan, call runtime and protocol-neutral
+  interceptors.
+- `fcl.api.dispatcher` — shared API frame dispatcher for stream-oriented
+  bindings.
 - `fcl.api` — aggregate import.
 - `fcl.api.exceptions` — core typed exceptions such as `method_not_found`,
   `incompatible_version` and `remote_internal`.
@@ -42,22 +44,17 @@ Target: `fcl_api`.
 ## Local Contract
 
 ```cpp
-class cache {
+#include <fcl/api/api_macros.hpp>
+
+class cache : public fcl::api::contract<cache> {
  public:
    virtual ~cache() = default;
 
    virtual boost::asio::awaitable<models::chunk>
    read(protocol::read_chunk request) = 0;
-
-   static fcl::api::descriptor describe() {
-      return fcl::api::contract<cache>({.id = {"cache"}, .version = {1, 8}})
-         .method<&cache::read, protocol::read_chunk, models::chunk>("read")
-         .error<cache_errors::chunk_not_found>(
-            "chunk_not_found",
-            {.status_code = fcl::api::status::not_found, .retryable = false})
-         .build();
-   }
 };
+
+FCL_API(cache, FCL_API_CONTRACT("cache", 1, 8), FCL_API_METHOD(read))
 ```
 
 Product DTO serialization stays beside the DTO owner:
@@ -72,9 +69,7 @@ FCL_DECLARE_SERIALIZATION(protocol::read_chunk)
 ```cpp
 boost::asio::awaitable<void>
 application::on_provide(fcl::app::application_context& context) {
-   context.apis().install<cache>(
-      cache::describe(),
-      std::make_shared<rocks_cache>());
+   context.apis().install<cache>(std::make_shared<rocks_cache>());
    co_return;
 }
 
@@ -114,7 +109,7 @@ Frame lifecycle is checked by `fcl::api::call_runtime`:
 Descriptor method kinds are explicit:
 
 ```cpp
-return fcl::api::contract<cache>({.id = {"cache.events"}, .version = {1, 0}})
+return fcl::api::define<cache>({.id = {"cache.events"}, .version = {1, 0}})
    .server_stream<&cache::watch, protocol::watch_chunks, models::chunk>("watch")
    .build();
 ```
@@ -126,26 +121,27 @@ returns a single `response` or `error`. A bidirectional stream follows the same
 input shape and returns `stream_item...stream_end` or `error`.
 
 ```cpp
-return fcl::api::contract<cache>({.id = {"cache.bulk"}, .version = {1, 0}})
+return fcl::api::define<cache>({.id = {"cache.bulk"}, .version = {1, 0}})
    .client_stream<&cache::upload, protocol::write_chunk, protocol::write_receipt>("upload")
    .bidirectional_stream<&cache::sync, protocol::write_chunk, protocol::sync_event>("sync")
    .build();
 ```
 
-## Future API Over Transport
+## API Over Transport
 
-`fcl.api.transport` is the planned reusable binding for API-over-stream
-transports. It will sit above `fcl_api` and `fcl_transport`, use
-`fcl::transport::stream` / `fcl::transport::session`, and own the shared frame
-read/write loop, codec checks, grouped stream handling, max-inflight limits,
-deadlines and error projection.
+`fcl.api.transport` is the reusable binding for API-over-stream transports. It
+sits above `fcl_api` and `fcl_transport`, uses `fcl::transport::stream` /
+`fcl::transport::session`, and owns the shared frame read/write loop, codec
+checks, grouped stream handling, max-inflight limits, deadlines and error
+projection.
 
 This layer must not move into `fcl_transport`: transport stays a low-level
-byte-stream/session contract and must not import `fcl.api`. Once implemented,
-`fcl.quic.api`, `fcl.p2p.api` and future TCP API bindings should become thin
-adapters or policy wrappers over `fcl.api.transport`. HTTP remains a separate
-binding because it is request/response oriented rather than a long-lived
-bidirectional stream.
+byte-stream/session contract and must not import `fcl.api`. `fcl.quic.api` and
+`fcl.p2p.api` are thin adapters or policy wrappers over `fcl.api.transport`.
+WebSocket shares `fcl::api::frame_dispatcher`, but not `fcl.api.transport`,
+because it is message-oriented rather than a `transport::stream`. HTTP remains a
+separate binding because it is request/response oriented rather than a
+long-lived bidirectional stream.
 
 The network/P2P implementation order is tracked only in
 [`docs/network/quic-p2p.md`](../../docs/network/quic-p2p.md); this README only
@@ -184,7 +180,7 @@ Typed FCL exceptions are projected to one shared DTO:
   "message": "chunk not found",
   "retryable": false,
   "identity": {
-    "category": "storlane.cache",
+    "category": "cache",
     "code": 1
   }
 }

@@ -1,7 +1,9 @@
 module;
 
 #include <boost/asio/awaitable.hpp>
+#include <fcl/exceptions/macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -17,28 +19,6 @@ export module fcl.api.binding;
 export import fcl.api.registry;
 
 export namespace fcl::api {
-
-class connection {
- public:
-   virtual ~connection() = default;
-   virtual boost::asio::awaitable<frame> call(frame request) = 0;
-};
-
-class session {
- public:
-   explicit session(view apis) : apis_(std::move(apis)) {}
-
-   [[nodiscard]] const view& apis() const noexcept {
-      return apis_;
-   }
-
-   [[nodiscard]] const view& view() const noexcept {
-      return apis_;
-   }
-
- private:
-   fcl::api::view apis_;
-};
 
 enum class interceptor_phase : std::uint8_t {
    observe = 1,
@@ -91,6 +71,7 @@ class call_runtime {
    explicit call_runtime(call_runtime_options options = {});
 
    void observe(const frame& value);
+   void observe_input_stream_end(const frame& value);
    [[nodiscard]] bool active(call_id id) const noexcept;
    [[nodiscard]] std::size_t active_calls() const noexcept;
 
@@ -123,16 +104,28 @@ class binding_builder {
    binding_builder& serve(const view& apis);
 
    template <typename Interface> binding_builder& export_api(api_ref api) {
+      static_assert(remote_interface<Interface>, "Interface must opt in to fcl::api::surface::remote");
       auto descriptor = Interface::describe();
+      if (api.min_revision > descriptor.version.revision) {
+         FCL_THROW_EXCEPTION(exceptions::incompatible_version, "API export revision exceeds implementation revision",
+                             fcl::exceptions::ctx("api", api.id.value),
+                             fcl::exceptions::ctx("requested_revision", api.min_revision),
+                             fcl::exceptions::ctx("implementation_revision", descriptor.version.revision));
+      }
       descriptor.id = std::move(api.id);
       descriptor.version.major = api.major;
       descriptor.version.revision = api.min_revision;
+      descriptor.methods.erase(std::remove_if(descriptor.methods.begin(), descriptor.methods.end(),
+                                              [&](const auto& method) {
+                                                 return method.since_revision > api.min_revision;
+                                              }),
+                               descriptor.methods.end());
       plan_.exports.push_back(std::move(descriptor));
       return *this;
    }
 
    template <typename Interface> binding_builder& require_peer_api(api_ref api) {
-      static_cast<void>(typeid(Interface));
+      static_assert(remote_interface<Interface>, "Interface must opt in to fcl::api::surface::remote");
       plan_.peer_requirements.push_back(std::move(api));
       return *this;
    }

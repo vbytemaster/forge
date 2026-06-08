@@ -858,12 +858,15 @@ template <typename Mutation>
 }
 
 template <typename Mutation>
-[[nodiscard]] bool mutate_if_spool_snapshot_current_and_not_active(int directory_fd, const spool_entry& entry,
-                                                                  const spool_snapshot& snapshot,
-                                                                  Mutation&& mutation) {
+[[nodiscard]] bool mutate_if_exported_spool_still_removable(int directory_fd, const spool_entry& entry,
+                                                            const spool_snapshot& snapshot,
+                                                            Mutation&& mutation) {
    const auto mutation_lock = resend_lock{directory_fd, entry.path.parent_path()};
    const auto lock = std::scoped_lock{capture_lifecycle_mutex};
-   if (active_spool_matches_locked(directory_fd, entry) || !spool_snapshot_matches_locked(directory_fd, entry, snapshot)) {
+   if (active_spool_matches_locked(directory_fd, entry) || spool_may_belong_to_live_process(entry)) {
+      return false;
+   }
+   if (!spool_snapshot_matches_locked(directory_fd, entry, snapshot)) {
       return false;
    }
    std::forward<Mutation>(mutation)();
@@ -1215,7 +1218,7 @@ boost::asio::awaitable<crash_resend_result> async_resend_crashes(log_exporter& e
       if (exported.failed_records == 0 && exported.exported_records == read.records.size()) {
          result.exported_records += exported.exported_records;
          ++result.files_exported;
-         if (!read.snapshot.has_value() || !mutate_if_spool_snapshot_current_and_not_active(
+         if (!read.snapshot.has_value() || !mutate_if_exported_spool_still_removable(
                                              directory_fd.get(), entry, *read.snapshot,
                                              [&] {
                                                 remove_exported_records(directory_fd.get(), entry, read.records.size(),

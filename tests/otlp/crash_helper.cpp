@@ -79,6 +79,14 @@ int run_hold_capture(const char* directory, const char* ready_path) {
    }
 }
 
+int run_hold_capture_after_marker(const char* directory, const char* go_path, const char* ready_path) {
+   while (!std::filesystem::exists(go_path)) {
+      std::this_thread::sleep_for(10ms);
+   }
+
+   return run_hold_capture(directory, ready_path);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -93,6 +101,12 @@ int main(int argc, char** argv) {
          return 2;
       }
       return run_hold_capture(argv[2], argv[3]);
+   }
+   if (argc >= 2 && std::string{argv[1]} == "hold_capture_after_marker") {
+      if (argc != 5) {
+         return 2;
+      }
+      return run_hold_capture_after_marker(argv[2], argv[3], argv[4]);
    }
 
    if (argc != 3) {

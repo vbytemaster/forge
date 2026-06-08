@@ -681,6 +681,54 @@ BOOST_AUTO_TEST_CASE(crash_resend_retains_live_process_empty_spool_from_other_pr
    BOOST_TEST((stat_value.st_mode & (S_IWGRP | S_IWOTH)) == 0);
 }
 
+BOOST_AUTO_TEST_CASE(crash_resend_retains_live_process_valid_spool_before_removal) {
+   auto source_directory = temp_directory{"fcl-otlp-crash-live-valid-source"};
+   BOOST_TEST(run_crash_helper("sigabrt", source_directory.path()) == 0);
+   const auto source = first_spool_file(source_directory.path());
+   const auto record_size = std::filesystem::file_size(source);
+   BOOST_REQUIRE(record_size > 0);
+
+   auto directory = temp_directory{"fcl-otlp-crash-live-valid"};
+   const auto go_path = directory.path() / "capture.go";
+   const auto ready_path = directory.path() / "capture.ready";
+   auto helper = helper_process{"hold_capture_after_marker", directory.path(), {go_path.string(), ready_path.string()}};
+
+   const auto spool = directory.path() / ("crash-" + std::to_string(helper.pid()) + ".spool");
+   std::filesystem::copy_file(source, spool);
+   std::filesystem::permissions(spool, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                                std::filesystem::perm_options::replace);
+   BOOST_REQUIRE_EQUAL(std::filesystem::file_size(spool), record_size);
+
+   auto go = std::ofstream{go_path, std::ios::binary};
+   go << "go";
+   go.close();
+   BOOST_REQUIRE(wait_for_path(ready_path, 5s));
+   BOOST_REQUIRE(::kill(helper.pid(), 0) == 0);
+
+   auto runtime = fcl::asio::runtime{};
+   auto collector = fake_collector{runtime, {{.status = fcl::http::status::ok}}};
+   auto exporter = fcl::otlp::log_exporter{runtime, make_options(collector)};
+   const auto result =
+       fcl::asio::blocking::run(runtime, fcl::otlp::async_resend_crashes(exporter, make_spool_options(directory.path())));
+   fcl::asio::blocking::run(runtime, exporter.async_shutdown());
+
+   BOOST_REQUIRE(collector.wait_for_requests(1));
+   BOOST_TEST(result.files_scanned == 1U);
+   BOOST_TEST(result.records_read == 1U);
+   BOOST_TEST(result.exported_records == 1U);
+   BOOST_TEST(result.files_retained == 1U);
+   BOOST_TEST(result.bad_files == 0U);
+   BOOST_TEST(std::filesystem::exists(spool));
+   BOOST_TEST(std::filesystem::file_size(spool) == record_size);
+   BOOST_TEST(!std::filesystem::exists(spool.string() + ".bad"));
+
+   struct stat stat_value {};
+   BOOST_REQUIRE(::lstat(spool.c_str(), &stat_value) == 0);
+   BOOST_TEST(S_ISREG(stat_value.st_mode));
+   BOOST_TEST(stat_value.st_uid == ::geteuid());
+   BOOST_TEST((stat_value.st_mode & (S_IWGRP | S_IWOTH)) == 0);
+}
+
 BOOST_AUTO_TEST_CASE(crash_resend_quarantines_stale_empty_spool_when_process_is_not_alive) {
    auto directory = temp_directory{"fcl-otlp-crash-stale-empty"};
    const auto spool = directory.path() / "crash-999999999.spool";

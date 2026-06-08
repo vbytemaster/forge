@@ -1,6 +1,7 @@
 module;
 
 #include <functional>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -18,14 +19,19 @@ export namespace fcl::http {
 using websocket_route_handler = std::function<void(std::shared_ptr<fcl::websocket::connection>)>;
 
 class router {
- public:
-   void use(middleware handler);
+   public:
+      void use(middleware handler);
+      void use(middleware_descriptor descriptor);
 
    void get(std::string path, route_handler handler);
    void post(std::string path, route_handler handler);
    void put(std::string path, route_handler handler);
    void del(std::string path, route_handler handler);
    void websocket(std::string path, websocket_route_handler handler);
+
+   template <typename Binding> void mount(const Binding& binding) {
+      binding.mount(*this);
+   }
 
    [[nodiscard]] response handle(route_context& context) const;
    [[nodiscard]] std::optional<websocket_route_handler> match_websocket(route_context& context) const;
@@ -50,7 +56,8 @@ class router {
 
    std::vector<route_entry> routes_;
    std::vector<websocket_route_entry> websocket_routes_;
-   middleware_list middlewares_;
+   std::vector<middleware_descriptor> middlewares_;
+   std::uint64_t anonymous_middleware_id_ = 0;
 };
 
 } // namespace fcl::http

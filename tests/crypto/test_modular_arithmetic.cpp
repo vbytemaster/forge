@@ -1,37 +1,28 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <chrono>
 #include <limits>
 #include <ostream>
 #include <random>
 #include <string>
+#include <string_view>
 #include <tuple>
-#include <variant>
 #include <vector>
 
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.crypto.hex;
 import fcl.crypto.modular_arithmetic;
 import fcl.core.utility;
 
 using namespace fcl;
+using namespace fcl::crypto;
 #include "test_utils.hpp"
-
-namespace std {
-std::ostream& operator<<(std::ostream& st, const std::variant<fcl::modular_arithmetic_error, bytes>& err) {
-   if (std::holds_alternative<fcl::modular_arithmetic_error>(err))
-      st << static_cast<int32_t>(std::get<fcl::modular_arithmetic_error>(err));
-   else
-      st << fcl::to_hex(std::get<bytes>(err));
-   return st;
-}
-} // namespace std
 
 BOOST_AUTO_TEST_SUITE(modular_arithmetic)
 
 BOOST_AUTO_TEST_CASE(modexp) try {
 
-   using modexp_test = std::tuple<std::vector<std::string>, std::variant<fcl::modular_arithmetic_error, bytes>>;
+   using modexp_test = std::tuple<std::vector<std::string>, bytes>;
 
    const std::vector<modexp_test> tests{
        // test1
@@ -51,14 +42,6 @@ BOOST_AUTO_TEST_CASE(modexp) try {
             "fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f",
         },
         to_bytes("0000000000000000000000000000000000000000000000000000000000000000")},
-
-       // test3
-       {{
-            "01",
-            "fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2e",
-            "",
-        },
-        modular_arithmetic_error::modulus_len_zero},
 
        // test4
        {{
@@ -108,9 +91,21 @@ BOOST_AUTO_TEST_CASE(modexp) try {
       auto exponent = to_bytes(parts[1]);
       auto modulus = to_bytes(parts[2]);
 
-      auto res = fcl::modexp(base, exponent, modulus);
-      BOOST_CHECK_EQUAL(res, expected_result);
+      auto res = fcl::crypto::modexp(base, exponent, modulus);
+      BOOST_CHECK_EQUAL(fcl::crypto::to_hex(res), fcl::crypto::to_hex(expected_result));
    }
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(modexp_rejects_empty_modulus) try {
+   const auto call_with_empty_modulus = [] {
+      (void)fcl::crypto::modexp(to_bytes("01"), to_bytes("02"), bytes{});
+   };
+
+   BOOST_CHECK_EXCEPTION(call_with_empty_modulus(), fcl::crypto::modular_arithmetic::exceptions::invalid_modulus,
+                         [](const fcl::crypto::modular_arithmetic::exceptions::invalid_modulus& error) {
+      return error.code().category().name() == std::string_view{"fcl.crypto.modular_arithmetic"};
+   });
 }
 FCL_LOG_AND_RETHROW();
 
@@ -1008,7 +1003,8 @@ BOOST_AUTO_TEST_CASE(modexp_vectors) try {
       // the host function's result is always length of modulus; pad expected result with enough 0x00s to match up
       expected_result.insert(expected_result.begin(), modulus.size() - expected_result.size(), 0x00);
 
-      BOOST_CHECK_EQUAL(std::get<bytes>(fcl::modexp(base, exponent, modulus)), expected_result);
+      BOOST_CHECK_EQUAL(fcl::crypto::to_hex(fcl::crypto::modexp(base, exponent, modulus)),
+                        fcl::crypto::to_hex(expected_result));
    }
 }
 FCL_LOG_AND_RETHROW();
@@ -1018,7 +1014,7 @@ BOOST_AUTO_TEST_CASE(modexp_benchmarking) try {
    std::mt19937 r(0x11223344);
 
    auto generate_random_bytes = [](std::mt19937& rand_eng, unsigned int num_bytes) {
-      std::vector<char> result(num_bytes);
+      bytes result(num_bytes);
 
       uint_fast32_t v = 0;
       for (int byte_pos = 0, end = result.size(); byte_pos < end; ++byte_pos) {
@@ -1085,14 +1081,14 @@ BOOST_AUTO_TEST_CASE(modexp_benchmarking) try {
 
             auto start_time = std::chrono::steady_clock::now();
 
-            auto res = fcl::modexp(base, exponent, modulus);
+            auto res = fcl::crypto::modexp(base, exponent, modulus);
 
             auto end_time = std::chrono::steady_clock::now();
 
             int64_t duration_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count();
 
             // ilog("(${base})^(${exp}) % ${mod} = ${result} [took ${duration} ns]",
-            //      ("base", base)("exp", exponent)("mod", modulus)("result", std::get<bytes>(res))("duration",
+            //      ("base", base)("exp", exponent)("mod", modulus)("result", res)("duration",
             //      duration_ns)
             //     );
 

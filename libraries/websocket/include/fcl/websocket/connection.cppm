@@ -22,6 +22,7 @@ struct connection_metrics {
    std::uint64_t failed_writes = 0;
    std::uint64_t ping_count = 0;
    std::uint64_t close_count = 0;
+   std::uint64_t handler_failures = 0;
    std::size_t queued_writes = 0;
 };
 

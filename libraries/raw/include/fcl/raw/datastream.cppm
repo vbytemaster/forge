@@ -3,7 +3,8 @@ module;
 #include <bit>
 #include <string.h>
 #include <stdint.h>
-#include <stdexcept>
+#include <algorithm>
+#include <cstdint>
 #include <string>
 #include <type_traits>
 #include <boost/multiprecision/cpp_int.hpp>
@@ -11,11 +12,12 @@ module;
 export module fcl.raw.datastream;
 
 import fcl.core.utility;
+import fcl.raw.exceptions;
 
 export namespace fcl {
 
 namespace detail {
-NO_RETURN void throw_datastream_range_error(const char* file, size_t len, int64_t over);
+NO_RETURN void raise_datastream_range(const char* file, size_t len, int64_t over);
 }
 
 template <typename Storage, typename Enable = void> class datastream;
@@ -29,6 +31,7 @@ template <typename Storage, typename Enable = void> class datastream;
  */
 template <typename T>
 class datastream<T, std::enable_if_t<std::is_same_v<T, char*> || std::is_same_v<T, const char*> ||
+                                     std::is_same_v<T, unsigned char*> ||
                                      std::is_same_v<T, const unsigned char*>>> {
  public:
    datastream(T start, size_t s) : _start(start), _pos(start), _end(start + s) {};
@@ -42,7 +45,7 @@ class datastream<T, std::enable_if_t<std::is_same_v<T, char*> || std::is_same_v<
          _pos += s;
          return true;
       }
-      detail::throw_datastream_range_error("read", _end - _start, int64_t(-((_end - _pos) - 1)));
+      detail::raise_datastream_range("read", _end - _start, int64_t(-((_end - _pos) - 1)));
    }
 
    inline bool write(const char* d, size_t s) {
@@ -51,7 +54,7 @@ class datastream<T, std::enable_if_t<std::is_same_v<T, char*> || std::is_same_v<
          _pos += s;
          return true;
       }
-      detail::throw_datastream_range_error("write", _end - _start, int64_t(-((_end - _pos) - 1)));
+      detail::raise_datastream_range("write", _end - _start, int64_t(-((_end - _pos) - 1)));
    }
 
    inline bool put(char c) {
@@ -60,7 +63,7 @@ class datastream<T, std::enable_if_t<std::is_same_v<T, char*> || std::is_same_v<
          ++_pos;
          return true;
       }
-      detail::throw_datastream_range_error("put", _end - _start, int64_t(-((_end - _pos) - 1)));
+      detail::raise_datastream_range("put", _end - _start, int64_t(-((_end - _pos) - 1)));
    }
 
    inline bool get(unsigned char& c) {
@@ -72,7 +75,7 @@ class datastream<T, std::enable_if_t<std::is_same_v<T, char*> || std::is_same_v<
          ++_pos;
          return true;
       }
-      detail::throw_datastream_range_error("get", _end - _start, int64_t(-((_end - _pos) - 1)));
+      detail::raise_datastream_range("get", _end - _start, int64_t(-((_end - _pos) - 1)));
    }
 
    T pos() const {
@@ -177,7 +180,9 @@ class datastream<Streambuf,
 
 template <typename Container>
 class datastream<Container, typename std::enable_if_t<(std::is_same_v<std::vector<char>, Container> ||
-                                                       std::is_same_v<std::deque<char>, Container>)>> {
+                                                       std::is_same_v<std::vector<std::uint8_t>, Container> ||
+                                                       std::is_same_v<std::deque<char>, Container> ||
+                                                       std::is_same_v<std::deque<std::uint8_t>, Container>)>> {
  private:
    Container _container;
    size_t cur;
@@ -191,14 +196,14 @@ class datastream<Container, typename std::enable_if_t<(std::is_same_v<std::vecto
          throw std::out_of_range("read datastream<std::vector<char>> of length " + std::to_string(_container.size()) +
                                  " over by " + std::to_string(over));
       }
-      std::copy_n(_container.begin() + cur, n, s);
+      std::copy_n(_container.begin() + cur, n, reinterpret_cast<std::uint8_t*>(s));
       cur += n;
       return n;
    }
 
    size_t write(const char* s, size_t n) {
       _container.resize(std::max(cur + n, _container.size()));
-      std::copy_n(s, n, _container.begin() + cur);
+      std::copy_n(reinterpret_cast<const std::uint8_t*>(s), n, _container.begin() + cur);
       cur += n;
       return n;
    }

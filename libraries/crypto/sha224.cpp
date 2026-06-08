@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <cstring>
 #include <exception>
 #include <memory>
@@ -12,25 +12,25 @@ module fcl.crypto.sha224;
 import fcl.core.utility;
 import fcl.crypto.hex;
 import fcl.crypto.hmac;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.variant;
 
 #include "_digest_common.hpp"
 #include "_evp_digest.hpp"
 
-namespace fcl {
+namespace fcl::crypto {
 
 sha224::sha224() {
    memset(_hash, 0, sizeof(_hash));
 }
 sha224::sha224(const std::string& hex_str) {
-   auto bytes_written = fcl::from_hex(hex_str, (char*)_hash, sizeof(_hash));
+   auto bytes_written = fcl::crypto::from_hex(hex_str, (char*)_hash, sizeof(_hash));
    if (bytes_written < sizeof(_hash))
       memset((char*)_hash + bytes_written, 0, (sizeof(_hash) - bytes_written));
 }
 
 std::string sha224::str() const {
-   return fcl::to_hex((char*)_hash, sizeof(_hash));
+   return fcl::crypto::to_hex((char*)_hash, sizeof(_hash));
 }
 sha224::operator std::string() const {
    return str();
@@ -114,4 +114,4 @@ void from_variant(const variant& v, sha224& bi) {
 template <> unsigned int hmac<sha224>::internal_block_size() const {
    return 64;
 }
-} // namespace fcl
+} // namespace fcl::crypto

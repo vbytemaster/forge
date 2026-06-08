@@ -16,18 +16,31 @@ module;
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
 module fcl.asio.task_scheduler;
 
+import fcl.asio.exceptions;
+
 namespace fcl::asio {
 namespace {
 
-std::runtime_error canceled_error() {
-   return std::runtime_error{"scheduled task was canceled"};
+std::exception_ptr make_error(exceptions::code code, std::string message) {
+   switch (code) {
+   case exceptions::code::invalid_state:
+      return std::make_exception_ptr(exceptions::invalid_state{std::move(message)});
+   case exceptions::code::invalid_options:
+      return std::make_exception_ptr(exceptions::invalid_options{std::move(message)});
+   case exceptions::code::canceled:
+      return std::make_exception_ptr(exceptions::canceled{std::move(message)});
+   case exceptions::code::rejected:
+      return std::make_exception_ptr(exceptions::rejected{std::move(message)});
+   case exceptions::code::internal:
+      break;
+   }
+   return std::make_exception_ptr(exceptions::internal{std::move(message)});
 }
 
 } // namespace
@@ -113,14 +126,14 @@ bool task_handle::cancel() noexcept {
    auto expected = false;
    const auto changed = state_->cancel_requested.compare_exchange_strong(expected, true, std::memory_order_acq_rel);
    if (changed && !state_->started.load(std::memory_order_acquire)) {
-      state_->complete_exception(std::make_exception_ptr(canceled_error()));
+      state_->complete_exception(make_error(exceptions::code::canceled, "scheduled task was canceled"));
    }
    return changed;
 }
 
 boost::asio::awaitable<void> task_handle::wait() const {
    if (state_ == nullptr) {
-      throw std::logic_error{"task handle is empty"};
+      throw exceptions::invalid_state{"task handle is empty"};
    }
 
    while (!state_->completed.load(std::memory_order_acquire)) {
@@ -166,10 +179,10 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
        : runtime_ref(runtime_value), options(std::move(options_value)),
          strand(boost::asio::make_strand(runtime_ref.context())), ready_timer(strand) {
       if (options.max_active_tasks == 0) {
-         throw std::invalid_argument{"task scheduler requires at least one active task slot"};
+         throw exceptions::invalid_options{"task scheduler requires at least one active task slot"};
       }
       if (options.max_pending_tasks == 0) {
-         throw std::invalid_argument{"task scheduler queue depth must be non-zero"};
+         throw exceptions::invalid_options{"task scheduler queue depth must be non-zero"};
       }
    }
 
@@ -179,7 +192,7 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
 
    task_handle submit(scheduled_task task, std::chrono::steady_clock::time_point ready_at) {
       if (!task.work) {
-         throw std::invalid_argument{"scheduled task requires work"};
+         throw exceptions::invalid_options{"scheduled task requires work"};
       }
 
       auto state =
@@ -199,12 +212,12 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
          const auto lock = std::scoped_lock{mutex};
          if (stopped) {
             ++current_metrics.rejected;
-            state->complete_exception(std::make_exception_ptr(std::runtime_error{"task scheduler is stopped"}));
+            state->complete_exception(make_error(exceptions::code::rejected, "task scheduler is stopped"));
             return task_handle{std::move(state)};
          }
          if (pending_count_locked() >= options.max_pending_tasks) {
             ++current_metrics.rejected;
-            state->complete_exception(std::make_exception_ptr(std::runtime_error{"task scheduler queue is full"}));
+            state->complete_exception(make_error(exceptions::code::rejected, "task scheduler queue is full"));
             return task_handle{std::move(state)};
          }
 
@@ -268,7 +281,7 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
 
       for (const auto& state : canceled) {
          state->cancel_requested.store(true, std::memory_order_release);
-         state->complete_exception(std::make_exception_ptr(canceled_error()));
+         state->complete_exception(make_error(exceptions::code::canceled, "scheduled task was canceled"));
       }
 
       boost::asio::post(strand, [weak = weak_from_this()] {
@@ -310,7 +323,7 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
       try {
          task.state->started.store(true, std::memory_order_release);
          if (task.state->cancel_requested.load(std::memory_order_acquire)) {
-            throw canceled_error();
+            throw exceptions::canceled{"scheduled task was canceled"};
          }
          task.work();
          completed_ok = task.state->complete_value();
@@ -357,7 +370,7 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
          if (task.state->cancel_requested.load(std::memory_order_acquire) ||
              task.state->completed.load(std::memory_order_acquire)) {
             ++current_metrics.canceled;
-            task.state->complete_exception(std::make_exception_ptr(canceled_error()));
+            task.state->complete_exception(make_error(exceptions::code::canceled, "scheduled task was canceled"));
             refresh_metrics_locked();
             continue;
          }
@@ -375,7 +388,7 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
          if (task.state->cancel_requested.load(std::memory_order_acquire) ||
              task.state->completed.load(std::memory_order_acquire)) {
             ++current_metrics.canceled;
-            task.state->complete_exception(std::make_exception_ptr(canceled_error()));
+            task.state->complete_exception(make_error(exceptions::code::canceled, "scheduled task was canceled"));
             continue;
          }
          ready_heap.push_back(std::move(task));

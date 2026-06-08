@@ -10,7 +10,12 @@ FCL.
 - Module-first public API under `libraries/<lib>/include/fcl/<lib>/*.cppm`.
 - Boost.Describe as canonical reflection metadata.
 - `fcl_raw` byte compatibility for retained old FC wire layouts.
-- Std-based exception context instead of old exception hierarchy.
+- Typed `fcl_exceptions` categories plus redacted context instead of old
+  exception hierarchy.
+- Neutral `fcl_api` contracts for in-process plugin APIs and transport API
+  bindings.
+- `fcl_plugins` infrastructure plugins for shared lifecycle-owned components
+  such as P2P nodes, with narrow local APIs for route/binding contributions.
 - Std chrono instead of old FC time aliases.
 - Glaze-backed JSON/YAML codec API.
 - Async app/runtime stack over Boost.Asio.
@@ -20,13 +25,15 @@ FCL.
 - Synchronous logger v2 with structured records, sinks, redaction and private
   stacktrace backend.
 - CMake install/export package with external consumer smoke.
-- Buildable app/exception examples that downstream programs can copy as
-  starting patterns.
+- App lifecycle snippets and executable `test_fcl_app` coverage for downstream
+  adoption patterns.
 
 ## Library Families
 
 - [Runtime + App](runtime/asio-app.md): runtime ownership, scheduler,
   backpressure and async plugin lifecycle.
+- [API Contracts](../libraries/api/README.md): typed handles, descriptor
+  builders, API frames and shared error payloads.
 - [HTTP + WebSocket](web/http-websocket.md): web/control-plane substrate,
   routing, middleware, upgrades and retry boundaries.
 - [QUIC + P2P](network/quic-p2p.md): secure transport, peer identity, protocol
@@ -46,9 +53,10 @@ Build/test gates:
 
 ```bash
 cmake --build build/fcl-debug -j 1 \
-  --target fcl test_fcl test_fcl_exception test_fcl_raw test_fcl_json test_fcl_crypto \
+  --target fcl test_fcl test_fcl_exceptions test_fcl_raw test_fcl_json test_fcl_crypto \
   test_fcl_asio test_fcl_app test_fcl_schema test_fcl_config test_fcl_yaml \
-  test_fcl_program_options test_fcl_env test_fcl_http_websocket test_fcl_quic_p2p test_fcl_tui
+  test_fcl_program_options test_fcl_env test_fcl_http_websocket test_fcl_quic_p2p \
+  test_fcl_plugins test_fcl_tui
 
 ctest --test-dir build/fcl-debug --output-on-failure
 git diff --check

@@ -4,6 +4,22 @@
 It exposes endpoints, security options, listeners, connectors, connections and
 framed streams without defining application protocols.
 
+## Transport Alignment Checkpoint
+
+`fcl_quic` is a native `fcl_transport` session transport. The
+`fcl.quic.transport` module exposes:
+
+- `quic::as_transport_stream(...)` and `quic::as_transport_session(...)` for
+  adapting existing QUIC objects.
+- `quic::make_session_connector(...)` and
+  `quic::make_session_listener(...)` for direct `transport::session` usage.
+- `quic::register_session(...)` for `transport::registry` integration.
+- `quic::to_transport_limits(...)` and `quic::from_transport_limits(...)` for
+  explicit limit mapping.
+
+QUIC is already a multiplexed session transport. TCP and STCP remain
+byte-stream transports; they become sessions only after a muxer such as Yamux.
+
 ## When To Use
 
 - Need multiplexed, TLS-backed streams over UDP.
@@ -21,7 +37,7 @@ framed streams without defining application protocols.
 - `fcl.quic.endpoint`, `fcl.quic.options`, `fcl.quic.security`.
 - `fcl.quic.listener`, `fcl.quic.connector`, `fcl.quic.connection`.
 - `fcl.quic.stream`, `fcl.quic.framed_stream`.
-- `fcl.quic.runtime`, `fcl.quic.metrics`, `fcl.quic.errors`.
+- `fcl.quic.runtime`, `fcl.quic.metrics`, `fcl.quic.exceptions`.
 - `fcl.quic` — aggregate import.
 
 Target: `fcl_quic`.
@@ -119,6 +135,38 @@ boost::asio::awaitable<void> write_payload(fcl::quic::connection& connection) {
 }
 ```
 
+### Bind API Frames To QUIC Streams
+
+`fcl.quic.api` is the API-over-QUIC adapter. It keeps QUIC transport policy in
+`fcl_quic`, contract/error semantics in `fcl_api`, and delegates frame-loop
+mechanics to `fcl.api.transport`.
+
+```cpp
+import fcl.api;
+import fcl.quic.api;
+
+auto plan = fcl::api::binding()
+   .serve(app.apis())
+   .export_api<cache>({.id = {"cache"}, .major = 1, .min_revision = 8})
+   .build();
+
+auto binding = fcl::quic::api()
+   .use(plan)
+   .codec({"fcl.raw"})
+   .max_concurrent_calls(256)
+   .deadline(std::chrono::seconds{5})
+   .build();
+
+boost::asio::awaitable<void> serve_api_stream(fcl::quic::connection& connection) {
+   auto stream = co_await connection.async_accept_stream();
+   co_await binding.accept(std::move(stream));
+}
+```
+
+`fcl.quic.api` does not own certificates, ALPN, listener/connector setup or
+packet-level limits. Those remain in `fcl_quic` transport options. It also does
+not own the generic API frame state machine; that lives in `fcl.api.transport`.
+
 ### Decode Frames Without A Connection
 
 ```cpp
@@ -163,6 +211,14 @@ become product defaults.
   the certificate to the requested endpoint host.
 - Do not raise frame/queue limits without backpressure tests. Oversized frames
   are a memory pressure and denial-of-service vector.
+- Do not define product API envelopes in QUIC handlers. Use `fcl.quic.api` and
+  `fcl::api::frame` for typed API calls over QUIC streams.
+- Do not swallow handler exceptions in detached stream tasks; convert expected
+  failures into typed `fcl_exceptions` values or API error frames.
+- Do not treat `.deadline(...)` or `.max_concurrent_calls(...)` as documentation
+  only; API frames are checked by the call runtime before product code runs.
+- Do not put ALPN, certificate or listener lifecycle options into
+  `fcl.quic.api`; those belong to the transport owner.
 
 ## Typical Mistakes
 

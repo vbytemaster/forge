@@ -382,9 +382,9 @@ void select_value(read_result<config::document>& result, std::map<std::string, s
 }
 
 [[nodiscard]] std::optional<std::string> parse_quoted_value(std::string_view value, char quote,
-                                                            std::string& error_message) {
+                                                            std::string& parse_error) {
    if (value.size() < 2 || value.back() != quote) {
-      error_message = "unterminated quoted value";
+      parse_error = "unterminated quoted value";
       return std::nullopt;
    }
 
@@ -466,13 +466,13 @@ void select_value(read_result<config::document>& result, std::map<std::string, s
 
    auto value = std::string{};
    if (!value_text.empty() && (value_text.front() == '"' || value_text.front() == '\'')) {
-      auto error_message = std::string{};
-      auto parsed = parse_quoted_value(value_text, value_text.front(), error_message);
+      auto parse_error = std::string{};
+      auto parsed = parse_quoted_value(value_text, value_text.front(), parse_error);
       if (!parsed) {
          auto location = config::source_location{.source = options.source_name, .line = line_number,
                                                 .column = equals + 2};
          diagnostics.push_back(
-             make_diagnostic(options.source_name, "env.parse", schema::severity::error, error_message, location));
+             make_diagnostic(options.source_name, "env.parse", schema::severity::error, parse_error, location));
          return std::nullopt;
       }
       value = std::move(*parsed);

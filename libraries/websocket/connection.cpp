@@ -28,6 +28,9 @@ module;
 
 module fcl.websocket.connection;
 
+import fcl.exceptions;
+import fcl.websocket.exceptions;
+
 namespace fcl::websocket {
 namespace {
 
@@ -211,6 +214,11 @@ struct connection::impl {
       ++current_metrics.close_count;
    }
 
+   void record_handler_failure() {
+      const auto lock = std::scoped_lock{metrics_mutex};
+      ++current_metrics.handler_failures;
+   }
+
    [[nodiscard]] connection_metrics metrics() const {
       const auto lock = std::scoped_lock{metrics_mutex};
       auto snapshot = current_metrics;
@@ -258,7 +266,8 @@ boost::asio::awaitable<void> connection::send(std::string message) {
    auto completion = std::make_shared<completion_state>(impl_->executor());
    asio::post(impl_->executor(), [self = shared_from_this(), message = std::move(message), completion]() mutable {
       if (self->impl_->closing) {
-         completion->complete_error(std::make_exception_ptr(std::runtime_error{"websocket connection is closing"}));
+         completion->complete_error(
+             std::make_exception_ptr(exceptions::closed{"websocket connection is closing"}));
          return;
       }
       self->impl_->writes.push_back(std::make_shared<write_operation>(write_operation{
@@ -347,11 +356,35 @@ void connection::start_read_loop() {
              self->impl_->buffer.consume(self->impl_->buffer.size());
              self->impl_->record_received();
              if (self->impl_->on_message) {
-                co_await self->impl_->on_message(*self, std::move(message));
+                try {
+                   co_await self->impl_->on_message(*self, std::move(message));
+                } catch (const fcl::exceptions::base&) {
+                   self->impl_->record_handler_failure();
+                   if (self->impl_->on_close) {
+                      self->impl_->on_close(*self);
+                   }
+                   co_return;
+                } catch (const std::exception&) {
+                   self->impl_->record_handler_failure();
+                   if (self->impl_->on_close) {
+                      self->impl_->on_close(*self);
+                   }
+                   co_return;
+                } catch (...) {
+                   self->impl_->record_handler_failure();
+                   if (self->impl_->on_close) {
+                      self->impl_->on_close(*self);
+                   }
+                   co_return;
+                }
              }
           }
        },
-       [](std::exception_ptr) {});
+       [self](std::exception_ptr error) {
+          if (error) {
+             self->impl_->record_handler_failure();
+          }
+       });
 }
 
 connection_metrics connection::metrics() const {

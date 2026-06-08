@@ -7,18 +7,30 @@ module;
 module fcl.app.plugin_context;
 
 namespace fcl::app {
+namespace {
 
-plugin_context::plugin_context(fcl::asio::task_scheduler& scheduler, port_registry& ports, signal_bus& signals,
+fcl::api::registry& default_api_registry() {
+   static auto registry = fcl::api::registry{};
+   return registry;
+}
+
+} // namespace
+
+plugin_context::plugin_context(fcl::asio::task_scheduler& scheduler, fcl::api::registry& apis, signal_bus& signals,
                                event_bus& events, diagnostics_store* diagnostics, config_view config)
-    : scheduler_{&scheduler}, ports_{&ports}, signals_{&signals}, events_{&events}, diagnostics_{diagnostics},
+    : scheduler_{&scheduler}, apis_{&apis}, signals_{&signals}, events_{&events}, diagnostics_{diagnostics},
       config_{std::move(config)} {}
+
+plugin_context::plugin_context(fcl::asio::task_scheduler& scheduler, signal_bus& signals, event_bus& events,
+                               diagnostics_store* diagnostics, config_view config)
+    : plugin_context{scheduler, default_api_registry(), signals, events, diagnostics, std::move(config)} {}
 
 fcl::asio::task_scheduler& plugin_context::scheduler() noexcept {
    return *scheduler_;
 }
 
-port_registry& plugin_context::ports() noexcept {
-   return *ports_;
+fcl::api::view plugin_context::apis() const noexcept {
+   return fcl::api::view{*apis_};
 }
 
 signal_bus& plugin_context::signals() noexcept {

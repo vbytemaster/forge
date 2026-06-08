@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <cstdint>
 #include <exception>
 #include <string>
@@ -7,9 +7,9 @@ module;
 
 module fcl.crypto.hex;
 
-import fcl.exception.exception;
+import fcl.exceptions;
 
-namespace fcl {
+namespace fcl::crypto {
 
 uint8_t from_hex(char c) {
    if (c >= '0' && c <= '9')
@@ -18,7 +18,8 @@ uint8_t from_hex(char c) {
       return c - 'a' + 10;
    if (c >= 'A' && c <= 'F')
       return c - 'A' + 10;
-   FCL_THROW("Invalid hex character '${c}'", fcl::error::ctx("c", std::string(&c, 1)));
+   FCL_THROW_EXCEPTION(hex::exceptions::invalid_character, "invalid hex character",
+                       fcl::exceptions::ctx("c", std::string(&c, 1)));
    return 0;
 }
 
@@ -29,6 +30,10 @@ std::string to_hex(const char* d, uint32_t s) {
    for (uint32_t i = 0; i < s; ++i)
       (r += to_hex[(c[i] >> 4)]) += to_hex[(c[i] & 0x0f)];
    return r;
+}
+
+std::string to_hex(const std::uint8_t* d, uint32_t s) {
+   return to_hex(reinterpret_cast<const char*>(d), s);
 }
 
 size_t from_hex(const std::string& hex_str, char* out_data, size_t out_data_len) {
@@ -46,10 +51,21 @@ size_t from_hex(const std::string& hex_str, char* out_data, size_t out_data_len)
    }
    return out_pos - (uint8_t*)out_data;
 }
+
+size_t from_hex(const std::string& hex_str, std::uint8_t* out_data, size_t out_data_len) {
+   return from_hex(hex_str, reinterpret_cast<char*>(out_data), out_data_len);
+}
+
 std::string to_hex(const std::vector<char>& data) {
    if (data.size())
       return to_hex(data.data(), data.size());
    return "";
 }
 
-} // namespace fcl
+std::string to_hex(const bytes& data) {
+   if (data.size())
+      return to_hex(data.data(), data.size());
+   return "";
+}
+
+} // namespace fcl::crypto

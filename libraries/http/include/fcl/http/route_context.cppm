@@ -7,6 +7,7 @@ module;
 
 export module fcl.http.route_context;
 
+import fcl.asio.runtime;
 import fcl.http.target;
 import fcl.http.types;
 
@@ -16,6 +17,7 @@ struct route_context {
    const request& request;
    target parsed_target;
    std::unordered_map<std::string, std::string> route_params;
+   fcl::asio::runtime* runtime = nullptr;
 
    [[nodiscard]] std::optional<std::string_view> route_param(std::string_view name) const;
 };

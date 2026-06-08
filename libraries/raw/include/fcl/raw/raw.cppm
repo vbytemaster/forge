@@ -1,6 +1,6 @@
 module;
 #include <fcl/core/macros.hpp>
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <boost/multiprecision/cpp_int.hpp>
 #include <boost/dynamic_bitset.hpp>
 #include <array>
@@ -11,6 +11,7 @@ module;
 #include <filesystem>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -21,12 +22,13 @@ export module fcl.raw.raw;
 
 import fcl.reflect.reflect;
 import fcl.core.type_name;
+import fcl.raw.exceptions;
 import fcl.raw.datastream;
 import fcl.raw.varint;
 import fcl.core.utility;
 import fcl.core.chrono;
 import fcl.core.uint128;
-import fcl.exception.exception;
+import fcl.exceptions;
 import fcl.variant.static_variant;
 import fcl.variant;
 import fcl.variant.dynamic_bitset;
@@ -66,6 +68,8 @@ template <typename Stream, typename T> void pack(Stream& s, const std::vector<T>
 template <typename Stream, typename T> void unpack(Stream& s, std::vector<T>& v);
 template <typename Stream> void pack(Stream& s, const std::vector<char>& value);
 template <typename Stream> void unpack(Stream& s, std::vector<char>& value);
+template <typename Stream> void pack(Stream& s, const std::vector<std::uint8_t>& value);
+template <typename Stream> void unpack(Stream& s, std::vector<std::uint8_t>& value);
 template <typename Stream> void pack(Stream& s, const bool& v);
 template <typename Stream> void unpack(Stream& s, bool& v);
 template <typename Stream> void pack(Stream& s, const signed_int& v);
@@ -178,7 +182,7 @@ template <typename Stream> inline void unpack(Stream& s, variant& v) {
       return;
    }
    default:
-      FCL_THROW("Unknown Variant Type ${t}", fcl::error::ctx("t", t));
+      FCL_THROW_EXCEPTION(fcl::raw::exceptions::codec_error, "unknown variant type", fcl::exceptions::ctx("t", t));
    }
 }
 
@@ -295,8 +299,8 @@ inline void unpack(Stream& s, T (&v)[N]) {
       for (uint64_t i = 0; i < N; ++i)
          fcl::raw::unpack(s, v[i]);
    }
-   FCL_CAPTURE_AND_RETHROW("array unpack failed", fcl::error::ctx("type", fcl::get_typename<T>::name()),
-                           fcl::error::ctx("length", N))
+   FCL_CAPTURE_AND_RETHROW("array unpack failed", fcl::exceptions::ctx("type", fcl::get_typename<T>::name()),
+                           fcl::exceptions::ctx("length", N))
 }
 
 template <typename Stream, typename T> inline void pack(Stream& s, const std::shared_ptr<T>& v) {
@@ -318,7 +322,7 @@ template <typename Stream, typename T> inline void unpack(Stream& s, std::shared
          v.reset();
       }
    }
-   FCL_CAPTURE_AND_RETHROW("std::shared_ptr<T>", fcl::error::ctx("type", fcl::get_typename<T>::name()))
+   FCL_CAPTURE_AND_RETHROW("std::shared_ptr<T>", fcl::exceptions::ctx("type", fcl::get_typename<T>::name()))
 }
 
 template <typename Stream> inline void pack(Stream& s, const signed_int& v) {
@@ -391,23 +395,52 @@ template <typename Stream, typename T> void unpack(Stream& s, std::optional<T>& 
          v.reset();
       } // in case v has already has a value
    }
-   FCL_CAPTURE_AND_RETHROW("optional<${type}>", fcl::error::ctx("type", fcl::get_typename<T>::name()))
+   FCL_CAPTURE_AND_RETHROW("optional<${type}>", fcl::exceptions::ctx("type", fcl::get_typename<T>::name()))
 }
 
-// std::vector<char>
-template <typename Stream> inline void pack(Stream& s, const std::vector<char>& value) {
+namespace detail {
+
+template <typename Stream, typename Byte> inline void pack_byte_vector(Stream& s, const std::vector<Byte>& value) {
    FCL_ASSERT(value.size() <= MAX_SIZE_OF_BYTE_ARRAYS);
    fcl::raw::pack(s, unsigned_int((uint32_t)value.size()));
    if (value.size())
-      s.write(&value.front(), (uint32_t)value.size());
+      s.write(reinterpret_cast<const char*>(value.data()), (uint32_t)value.size());
 }
-template <typename Stream> inline void unpack(Stream& s, std::vector<char>& value) {
+
+template <typename Stream, typename Byte> inline void unpack_byte_vector(Stream& s, std::vector<Byte>& value) {
    unsigned_int size;
    fcl::raw::unpack(s, size);
    FCL_ASSERT(size.value <= MAX_SIZE_OF_BYTE_ARRAYS);
    value.resize(size.value);
    if (value.size())
-      s.read(value.data(), value.size());
+      s.read(reinterpret_cast<char*>(value.data()), value.size());
+}
+
+template <typename Container, typename T> inline void pack_to_container(Container& out, const T& value) {
+   datastream<size_t> ps;
+   fcl::raw::pack(ps, value);
+   out.resize(ps.tellp());
+   if (!out.empty()) {
+      datastream<Container> ds(std::move(out));
+      fcl::raw::pack(ds, value);
+      out = std::move(ds.storage());
+   }
+}
+
+} // namespace detail
+
+// byte vectors are raw byte blobs, not element-wise vectors.
+template <typename Stream> inline void pack(Stream& s, const std::vector<char>& value) {
+   detail::pack_byte_vector(s, value);
+}
+template <typename Stream> inline void unpack(Stream& s, std::vector<char>& value) {
+   detail::unpack_byte_vector(s, value);
+}
+template <typename Stream> inline void pack(Stream& s, const std::vector<std::uint8_t>& value) {
+   detail::pack_byte_vector(s, value);
+}
+template <typename Stream> inline void unpack(Stream& s, std::vector<std::uint8_t>& value) {
+   detail::unpack_byte_vector(s, value);
 }
 
 // fcl::string
@@ -449,7 +482,7 @@ template <typename Stream, typename T> inline void unpack_described_object(Strea
       try {
          fcl::raw::unpack(s, const_cast<std::remove_const_t<member_type>&>(v.*member));
       }
-      FCL_CAPTURE_AND_RETHROW("Error unpacking field ${field}", fcl::error::ctx("field", name))
+      FCL_CAPTURE_AND_RETHROW("Error unpacking field ${field}", fcl::exceptions::ctx("field", name))
    });
 }
 
@@ -717,7 +750,7 @@ template <typename Stream, typename T> inline void unpack(Stream& s, T& v) {
          fcl::raw::detail::if_class<typename fcl::is_class<T>::type>::unpack(s, v);
       }
    }
-   FCL_CAPTURE_AND_RETHROW("error unpacking ${type}", fcl::error::ctx("type", fcl::type_name<T>()))
+   FCL_CAPTURE_AND_RETHROW("error unpacking ${type}", fcl::exceptions::ctx("type", fcl::type_name<T>()))
 }
 
 template <typename T> inline size_t pack_size(const T& v) {
@@ -736,6 +769,14 @@ template <typename T> inline std::vector<char> pack(const T& v) {
       fcl::raw::pack(ds, v);
    }
    return vec;
+}
+
+template <typename T> inline void pack(std::vector<char>& out, const T& v) {
+   detail::pack_to_container(out, v);
+}
+
+template <typename T> inline void pack(std::vector<std::uint8_t>& out, const T& v) {
+   detail::pack_to_container(out, v);
 }
 
 template <typename T, typename... Next> inline std::vector<char> pack(const T& v, Next... next) {
@@ -757,7 +798,33 @@ template <typename T> inline T unpack(const std::vector<char>& s) {
       fcl::raw::unpack(ds, tmp);
       return tmp;
    }
-   FCL_CAPTURE_AND_RETHROW("error unpacking ${type}", fcl::error::ctx("type", fcl::type_name<T>()))
+   FCL_CAPTURE_AND_RETHROW("error unpacking ${type}", fcl::exceptions::ctx("type", fcl::type_name<T>()))
+}
+
+template <typename T> inline T unpack(std::span<const std::uint8_t> s) {
+   try {
+      T tmp;
+      datastream<const unsigned char*> ds(s.data(), size_t(s.size()));
+      fcl::raw::unpack(ds, tmp);
+      return tmp;
+   }
+   FCL_CAPTURE_AND_RETHROW("error unpacking ${type}", fcl::exceptions::ctx("type", fcl::type_name<T>()))
+}
+
+template <typename T> inline void unpack(std::span<const std::uint8_t> s, T& tmp) {
+   try {
+      datastream<const unsigned char*> ds(s.data(), size_t(s.size()));
+      fcl::raw::unpack(ds, tmp);
+   }
+   FCL_CAPTURE_AND_RETHROW("error unpacking ${type}", fcl::exceptions::ctx("type", fcl::type_name<T>()))
+}
+
+template <typename T> inline T unpack(const std::vector<std::uint8_t>& s) {
+   return fcl::raw::unpack<T>(std::span<const std::uint8_t>{s.data(), s.size()});
+}
+
+template <typename T> inline void unpack(const std::vector<std::uint8_t>& s, T& tmp) {
+   fcl::raw::unpack(std::span<const std::uint8_t>{s.data(), s.size()}, tmp);
 }
 
 template <typename T> inline void unpack(const std::vector<char>& s, T& tmp) {
@@ -765,7 +832,7 @@ template <typename T> inline void unpack(const std::vector<char>& s, T& tmp) {
       datastream<const char*> ds(s.data(), size_t(s.size()));
       fcl::raw::unpack(ds, tmp);
    }
-   FCL_CAPTURE_AND_RETHROW("error unpacking ${type}", fcl::error::ctx("type", fcl::type_name<T>()))
+   FCL_CAPTURE_AND_RETHROW("error unpacking ${type}", fcl::exceptions::ctx("type", fcl::type_name<T>()))
 }
 
 template <typename T> inline void pack(char* d, uint32_t s, const T& v) {
@@ -780,7 +847,7 @@ template <typename T> inline T unpack(const char* d, uint32_t s) {
       fcl::raw::unpack(ds, v);
       return v;
    }
-   FCL_CAPTURE_AND_RETHROW("error unpacking ${type}", fcl::error::ctx("type", fcl::get_typename<T>::name()))
+   FCL_CAPTURE_AND_RETHROW("error unpacking ${type}", fcl::exceptions::ctx("type", fcl::get_typename<T>::name()))
 }
 
 template <typename T> inline void unpack(const char* d, uint32_t s, T& v) {
@@ -788,7 +855,7 @@ template <typename T> inline void unpack(const char* d, uint32_t s, T& v) {
       datastream<const char*> ds(d, s);
       fcl::raw::unpack(ds, v);
    }
-   FCL_CAPTURE_AND_RETHROW("error unpacking ${type}", fcl::error::ctx("type", fcl::get_typename<T>::name()))
+   FCL_CAPTURE_AND_RETHROW("error unpacking ${type}", fcl::exceptions::ctx("type", fcl::get_typename<T>::name()))
 }
 
 template <typename Stream> struct pack_static_variant {

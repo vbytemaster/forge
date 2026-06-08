@@ -1,16 +1,25 @@
 module;
+#include <fcl/exceptions/macros.hpp>
 #include <cstdint>
-#include <vector>
-#include <variant>
 
 export module fcl.crypto.modular_arithmetic;
 
-export namespace fcl {
-using bytes = std::vector<char>;
+export import fcl.exceptions;
+import fcl.crypto.types;
 
-enum class modular_arithmetic_error : int32_t {
-   modulus_len_zero,
+export namespace fcl::crypto::modular_arithmetic::exceptions {
+
+enum class code : std::uint16_t {
+   invalid_modulus = 1,
 };
 
-std::variant<modular_arithmetic_error, bytes> modexp(const bytes& _base, const bytes& _exponent, const bytes& _modulus);
-} // namespace fcl
+FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.crypto.modular_arithmetic")
+
+using invalid_modulus = fcl::exceptions::coded_exception<code, code::invalid_modulus>;
+
+} // namespace fcl::crypto::modular_arithmetic::exceptions
+
+export namespace fcl::crypto {
+
+bytes modexp(const bytes& _base, const bytes& _exponent, const bytes& _modulus);
+} // namespace fcl::crypto

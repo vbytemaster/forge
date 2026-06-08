@@ -63,7 +63,37 @@ router.get("/healthz", [](fcl::http::route_context& ctx) {
 });
 ```
 
+### Mount API Bindings
+
+`fcl.http.api` maps a typed `fcl_api` contract onto native HTTP routes. The
+binding is a composable artifact; `build()` does not mutate the router.
+
+```cpp
+import fcl.api;
+import fcl.http.api;
+import fcl.http.router;
+
+auto plan = fcl::api::binding()
+   .serve(app.apis())
+   .export_api<cache>({.id = {"cache"}, .major = 1, .min_revision = 8})
+   .build();
+
+auto binding = fcl::http::api(router)
+   .use(plan)
+   .post<&cache::write, protocol::write_chunk, protocol::write_receipt>(
+      "/cache/chunks",
+      {.success_status = fcl::http::status::created})
+   .build();
+
+router.mount(binding);
+```
+
+HTTP stays HTTP: route/path/status semantics remain native. Message-oriented
+`fcl::api::frame` is not required as the HTTP body.
+
 ### Add Middleware
+
+Low-level middleware can be installed directly on a router:
 
 ```cpp
 router.use([](fcl::http::route_context& ctx, fcl::http::next_handler next) {
@@ -76,6 +106,34 @@ router.use([](fcl::http::route_context& ctx, fcl::http::next_handler next) {
    return next();
 });
 ```
+
+Typed API bindings should contribute middleware through the binding artifact so
+route plugins can be composed before the server starts:
+
+```cpp
+auto binding = fcl::http::api()
+   .use(plan)
+   .middleware(fcl::http::middleware_descriptor{
+      .id = "cache.authz",
+      .phase = fcl::http::middleware_phase::security,
+      .order = 100,
+      .path_prefix = "/cache",
+      .handler = [](fcl::http::route_context& ctx, fcl::http::next_handler next) {
+         authorize_cache_request(ctx.request);
+         return next();
+      },
+   })
+   .get<&cache::read, protocol::read_chunk, models::chunk>(
+      "/cache/chunks/:ref",
+      {.query = {"offset", "limit"}})
+   .build();
+
+router.mount(binding);
+```
+
+Middleware contributions are sorted by `phase`, `order` and `id`. Duplicate
+middleware ids and duplicate routes fail deterministically during
+`router.mount(binding)`, before serving traffic.
 
 ### Start A Local Server
 
@@ -168,6 +226,15 @@ boundary.
   operation is idempotent and safe to replay.
 - Do not log request bodies, headers or query strings before redaction. They may
   contain credentials or user data.
+- Do not catch product exceptions in every route by hand. Prefer typed
+  `fcl_exceptions` categories and let API bindings project them to
+  `fcl::api::error_payload`.
+- Do not force all typed APIs into `POST /rpc`; use native HTTP route/status
+  mapping where HTTP is the transport.
+- Do not hide server bind/TLS/lifecycle in `fcl.http.api`; the API builder owns
+  route mapping, API middleware, status projection and error payloads only.
+- Do not add HTTP API builder options unless they change runtime behavior and
+  have tests.
 
 ## Typical Mistakes
 

@@ -10,7 +10,6 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,14 +36,17 @@ enum class engine_error_kind {
    internal_error
 };
 
-class engine_error final : public std::runtime_error {
+class engine_failure final {
  public:
-   engine_error(engine_error_kind kind, std::string message);
+   engine_failure(engine_error_kind kind, std::string message);
 
    [[nodiscard]] engine_error_kind kind() const noexcept;
+   [[nodiscard]] const char* what() const noexcept;
+   [[nodiscard]] const std::string& message() const noexcept;
 
  private:
    engine_error_kind kind_;
+   std::string message_;
 };
 
 struct engine_endpoint {
@@ -136,6 +138,7 @@ class engine_stream : public std::enable_shared_from_this<engine_stream> {
    boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> bytes);
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read();
    boost::asio::awaitable<void> async_close();
+   void cancel();
 
  private:
    friend class engine_connection;
@@ -154,6 +157,8 @@ class engine_connection : public std::enable_shared_from_this<engine_connection>
    ~engine_connection();
 
    [[nodiscard]] engine_connection_metrics metrics() const;
+   [[nodiscard]] engine_endpoint local_endpoint() const;
+   [[nodiscard]] engine_endpoint remote_endpoint() const;
    [[nodiscard]] std::optional<engine_peer_certificate> peer_certificate() const;
    boost::asio::awaitable<std::shared_ptr<engine_stream>> async_open_stream();
    boost::asio::awaitable<std::shared_ptr<engine_stream>> async_accept_stream();
@@ -176,9 +181,11 @@ class engine_connector {
 
    boost::asio::awaitable<std::shared_ptr<engine_connection>> async_connect(engine_endpoint remote,
                                                                             engine_client_options options);
+   void cancel();
 
  private:
-   boost::asio::io_context& context_;
+   struct impl;
+   std::shared_ptr<impl> impl_;
 };
 
 class engine_listener {

@@ -13,13 +13,13 @@ module;
 #include <iostream>
 #include <mutex>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <utility>
 
 module fcl.log.record;
 
 import fcl.core.chrono;
+import fcl.log.exceptions;
 import fcl.log.log_message;
 
 namespace {
@@ -79,7 +79,7 @@ class locked_file {
       }
       stream.open(path, mode);
       if (!stream) {
-         throw std::runtime_error{"failed to open log file: " + path.generic_string()};
+         throw fcl::log::exceptions::io_error{"failed to open log file: " + path.generic_string()};
       }
    }
 

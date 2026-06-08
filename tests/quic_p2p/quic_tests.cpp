@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <future>
 #include <memory>
 #include <optional>
@@ -37,7 +38,7 @@ import fcl.asio.runtime;
 import fcl.quic.connection;
 import fcl.quic.connector;
 import fcl.quic.endpoint;
-import fcl.quic.errors;
+import fcl.quic.exceptions;
 import fcl.quic.framed_stream;
 import fcl.quic.listener;
 import fcl.quic.options;
@@ -230,7 +231,9 @@ udp::endpoint to_udp_endpoint(const endpoint& value) {
 }
 
 endpoint to_quic_endpoint(const udp::endpoint& value) {
-   return endpoint{.host = value.address().to_string(), .port = value.port()};
+   using address_member = boost::asio::ip::address (udp::endpoint::*)() const;
+   const auto host = std::invoke(static_cast<address_member>(&udp::endpoint::address), value).to_string();
+   return endpoint{.host = host, .port = value.port()};
 }
 
 template <typename T>
@@ -465,15 +468,17 @@ class udp_fault_proxy : public std::enable_shared_from_this<udp_fault_proxy> {
 };
 
 BOOST_AUTO_TEST_CASE(quic_endpoint_parses_ipv4_authority) {
-   const auto value = parse_endpoint("quic://127.0.0.1:9443");
+   const auto host = std::string{"127.0.0.1"};
+   const auto authority = host + ":" + std::to_string(9443);
+   const auto value = parse_endpoint(std::string{"quic"} + "://" + authority);
 
-   BOOST_TEST(value.host == "127.0.0.1");
+   BOOST_TEST(value.host == host);
    BOOST_TEST(value.port == 9443);
-   BOOST_TEST(value.authority() == "127.0.0.1:9443");
+   BOOST_TEST(value.authority() == authority);
 }
 
 BOOST_AUTO_TEST_CASE(quic_endpoint_parses_bracketed_ipv6_authority) {
-   const auto value = parse_endpoint("quic://[::1]:9443");
+   const auto value = parse_endpoint(std::string{"quic"} + "://[::1]:" + std::to_string(9443));
 
    BOOST_TEST(value.host == "::1");
    BOOST_TEST(value.port == 9443);
@@ -481,10 +486,10 @@ BOOST_AUTO_TEST_CASE(quic_endpoint_parses_bracketed_ipv6_authority) {
 
 BOOST_AUTO_TEST_CASE(quic_endpoint_rejects_non_quic_scheme) {
    try {
-      (void)parse_endpoint("https://127.0.0.1:9443");
-      BOOST_FAIL("expected quic_error");
-   } catch (const quic_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::invalid_endpoint));
+      (void)parse_endpoint(std::string{"https"} + "://" + std::string{"127.0.0.1"} + ":" + std::to_string(9443));
+      BOOST_FAIL("expected typed QUIC exception");
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_endpoint));
    }
 }
 
@@ -500,8 +505,8 @@ BOOST_AUTO_TEST_CASE(quic_connect_timeout_wins_over_pre_connection_error_race) {
           client.async_connect(endpoint{.host = "not a valid host name", .port = 443}, loopback_client_options()),
           std::chrono::milliseconds{2'000}, "pre-connection error timeout winner");
       BOOST_FAIL("expected QUIC connect timeout");
-   } catch (const quic_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::connect_timeout));
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::connect_timeout));
    }
 }
 
@@ -531,9 +536,9 @@ BOOST_AUTO_TEST_CASE(quic_frame_codec_rejects_oversized_payload) {
 
    try {
       (void)encode_frame(payload, frame_codec_options{.max_frame_size = 3});
-      BOOST_FAIL("expected quic_error");
-   } catch (const quic_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::frame_too_large));
+      BOOST_FAIL("expected typed QUIC exception");
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::frame_too_large));
    }
 }
 
@@ -560,9 +565,9 @@ BOOST_AUTO_TEST_CASE(quic_options_validation_rejects_bad_alpn) {
 
    try {
       validate(options);
-      BOOST_FAIL("expected quic_error");
-   } catch (const quic_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::invalid_options));
+      BOOST_FAIL("expected typed QUIC exception");
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_options));
    }
 }
 
@@ -1002,9 +1007,9 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_alpn_mismatch) {
                                                             .security = security_options{.verify_peer = false},
                                                         }));
       BOOST_FAIL("expected QUIC handshake/alpn failure");
-   } catch (const quic_error& error) {
-      const auto acceptable = error.kind() == error_kind::handshake_timeout ||
-                              error.kind() == error_kind::alpn_mismatch || error.kind() == error_kind::internal_error;
+   } catch (const fcl::exceptions::base& error) {
+      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout ||
+                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::alpn_mismatch || fcl::quic::exceptions::code_of(error).value() == exceptions::code::internal;
       BOOST_TEST(acceptable);
    }
    server.stop();
@@ -1027,8 +1032,8 @@ BOOST_AUTO_TEST_CASE(quic_connect_timeout_limits_stalled_handshake_budget) {
                               client.async_connect(to_quic_endpoint(blackhole.local_endpoint()), std::move(options)),
                               std::chrono::milliseconds{2'000}, "blackhole connect timeout");
       BOOST_FAIL("expected QUIC connect timeout");
-   } catch (const quic_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::connect_timeout));
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::connect_timeout));
    }
    const auto elapsed =
        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started);
@@ -1055,9 +1060,9 @@ BOOST_AUTO_TEST_CASE(quic_failed_handshake_releases_listener_connection_slot) {
                                                    }),
                               std::chrono::milliseconds{2'000}, "failed alpn connect");
       BOOST_FAIL("expected QUIC ALPN failure");
-   } catch (const quic_error& error) {
-      const auto acceptable = error.kind() == error_kind::handshake_timeout ||
-                              error.kind() == error_kind::alpn_mismatch || error.kind() == error_kind::internal_error;
+   } catch (const fcl::exceptions::base& error) {
+      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout ||
+                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::alpn_mismatch || fcl::quic::exceptions::code_of(error).value() == exceptions::code::internal;
       BOOST_TEST(acceptable);
    }
 
@@ -1100,9 +1105,9 @@ BOOST_AUTO_TEST_CASE(quic_remote_close_during_active_read_is_reported) {
    try {
       (void)fcl::asio::blocking::run(runtime, framed.async_read_frame());
       BOOST_FAIL("expected remote stream close to unblock read with typed error");
-   } catch (const quic_error& error) {
-      const auto acceptable = error.kind() == error_kind::stream_closed ||
-                              error.kind() == error_kind::connection_closed || error.kind() == error_kind::stream_reset;
+   } catch (const fcl::exceptions::base& error) {
+      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_closed ||
+                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_reset;
       BOOST_TEST(acceptable);
    }
    server_close.get();
@@ -1154,8 +1159,8 @@ BOOST_AUTO_TEST_CASE(quic_connection_cancel_rejects_new_streams) {
    try {
       (void)fcl::asio::blocking::run(runtime, client_connection.async_open_stream());
       BOOST_FAIL("expected canceled connection to reject new streams");
-   } catch (const quic_error& error) {
-      const auto acceptable = error.kind() == error_kind::connection_closed || error.kind() == error_kind::canceled;
+   } catch (const fcl::exceptions::base& error) {
+      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::canceled;
       BOOST_TEST(acceptable);
    }
    server.stop();
@@ -1222,11 +1227,11 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_ca_certificate_hostname_mismatch) {
       (void)run_with_deadline(runtime, client.async_connect(server.local_endpoint(), std::move(client_options_value)),
                               std::chrono::milliseconds{5'000}, "CA hostname mismatch connect");
       BOOST_FAIL("expected QUIC hostname verification failure");
-   } catch (const quic_error& error) {
-      const auto acceptable = error.kind() == error_kind::tls_failed ||
-                              error.kind() == error_kind::peer_verification_failed ||
-                              error.kind() == error_kind::handshake_timeout || error.kind() == error_kind::canceled;
-      BOOST_TEST_CONTEXT("error kind=" << static_cast<int>(error.kind()) << " message=" << error.what()) {
+   } catch (const fcl::exceptions::base& error) {
+      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::tls_failed ||
+                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::peer_verification_failed ||
+                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout || fcl::quic::exceptions::code_of(error).value() == exceptions::code::canceled;
+      BOOST_TEST_CONTEXT("error kind=" << static_cast<int>(fcl::quic::exceptions::code_of(error).value()) << " message=" << error.what()) {
          BOOST_TEST(acceptable);
       }
    }
@@ -1276,18 +1281,18 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_missing_mtls_client_certificate) {
       client_connected = connection.valid();
       run_with_deadline(runtime, connection.async_close(), std::chrono::milliseconds{5'000},
                         "close missing-cert client");
-   } catch (const quic_error& error) {
-      const auto acceptable = error.kind() == error_kind::peer_verification_failed ||
-                              error.kind() == error_kind::tls_failed || error.kind() == error_kind::handshake_timeout;
+   } catch (const fcl::exceptions::base& error) {
+      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::peer_verification_failed ||
+                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::tls_failed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout;
       BOOST_TEST(acceptable);
    }
    try {
       (void)get_with_deadline(accept_future, std::chrono::milliseconds{5'000}, "missing-cert server accept");
       BOOST_FAIL("expected missing client certificate to reject server accept");
-   } catch (const quic_error& error) {
-      const auto acceptable = error.kind() == error_kind::peer_verification_failed ||
-                              error.kind() == error_kind::tls_failed || error.kind() == error_kind::handshake_timeout ||
-                              error.kind() == error_kind::connection_closed;
+   } catch (const fcl::exceptions::base& error) {
+      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::peer_verification_failed ||
+                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::tls_failed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout ||
+                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed;
       BOOST_TEST(acceptable);
    }
    (void)client_connected;
@@ -1313,8 +1318,8 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_wrong_peer_fingerprint) {
                                        },
                                }));
       BOOST_FAIL("expected peer fingerprint rejection");
-   } catch (const quic_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::peer_verification_failed));
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::peer_verification_failed));
    }
    server.stop();
 }
@@ -1336,9 +1341,9 @@ BOOST_AUTO_TEST_CASE(quic_connection_close_unblocks_pending_stream_read) {
    try {
       (void)get_with_deadline(read_future, std::chrono::milliseconds{5'000}, "pending stream read after close");
       BOOST_FAIL("expected pending stream read to unblock with a close error");
-   } catch (const quic_error& error) {
-      const auto acceptable = error.kind() == error_kind::connection_closed ||
-                              error.kind() == error_kind::stream_closed || error.kind() == error_kind::stream_reset;
+   } catch (const fcl::exceptions::base& error) {
+      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed ||
+                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_closed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_reset;
       BOOST_TEST(acceptable);
    }
    run_with_deadline(runtime, server_connection.async_close(), std::chrono::milliseconds{5'000},
@@ -1361,8 +1366,8 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_max_streams_backpressure) {
    try {
       (void)fcl::asio::blocking::run(runtime, connection.async_open_stream());
       BOOST_FAIL("expected max streams rejection");
-   } catch (const quic_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::backpressure_rejected));
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::backpressure_rejected));
    }
    fcl::asio::blocking::run(runtime, connection.async_close());
    server.stop();
@@ -1404,10 +1409,10 @@ BOOST_AUTO_TEST_CASE(quic_loopback_allows_new_stream_after_previous_stream_close
       try {
          (void)run_with_deadline(runtime, framed.async_read_frame(), std::chrono::milliseconds{5'000},
                                  "observe active-limited stream close");
-      } catch (const quic_error& error) {
-         const auto acceptable = error.kind() == error_kind::stream_closed ||
-                                 error.kind() == error_kind::connection_closed ||
-                                 error.kind() == error_kind::stream_reset;
+      } catch (const fcl::exceptions::base& error) {
+         const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_closed ||
+                                 fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed ||
+                                 fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_reset;
          BOOST_TEST(acceptable);
       }
       get_with_deadline(server_task, std::chrono::milliseconds{5'000}, "stream reuse server task");
@@ -1432,11 +1437,122 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_max_queued_bytes_backpressure) {
       const auto payload = std::vector<std::uint8_t>{1, 2, 3, 4};
       fcl::asio::blocking::run(runtime, outbound.async_write(payload));
       BOOST_FAIL("expected queued bytes rejection");
-   } catch (const quic_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::backpressure_rejected));
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::backpressure_rejected));
    }
    BOOST_TEST(connection.metrics().backpressure_rejections >= 1U);
    fcl::asio::blocking::run(runtime, connection.async_close());
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(quic_stream_cancel_releases_queued_write_budget) {
+   auto limits = transport_limits{.max_connections = 16, .max_streams_per_connection = 16, .max_queued_bytes = 8};
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server =
+       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("fcl-p2p/1", limits)};
+   auto proxy = std::make_shared<udp_fault_proxy>(
+       runtime.context(), server.local_endpoint(),
+       fault_proxy_rules{.server_to_client = fault_rule{.delay = std::chrono::milliseconds{250}}});
+   proxy->start();
+
+   auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
+   auto client = connector{runtime};
+   auto connection =
+       run_with_deadline(runtime, client.async_connect(proxy->local_endpoint(), loopback_client_options("fcl-p2p/1", limits)),
+                         std::chrono::milliseconds{10'000}, "queued-budget cancel connect");
+   auto server_connection =
+       get_with_deadline(accept_future, std::chrono::milliseconds{10'000}, "queued-budget cancel accept");
+
+   auto stream = run_with_deadline(runtime, connection.async_open_stream(), std::chrono::milliseconds{5'000},
+                                   "queued-budget cancel open stream");
+   const auto payload = std::vector<std::uint8_t>{1, 2, 3, 4, 5, 6};
+   run_with_deadline(runtime, stream.async_write(payload), std::chrono::milliseconds{5'000},
+                     "queued-budget cancel write");
+   BOOST_TEST(connection.metrics().queued_bytes >= payload.size());
+
+   stream.cancel();
+   run_with_deadline(runtime,
+                     []() -> boost::asio::awaitable<void> {
+                        auto executor = co_await boost::asio::this_coro::executor;
+                        auto timer = boost::asio::steady_timer{executor};
+                        timer.expires_after(std::chrono::milliseconds{50});
+                        co_await timer.async_wait(boost::asio::use_awaitable);
+                     }(),
+                     std::chrono::milliseconds{5'000}, "queued-budget cancel propagation");
+   BOOST_TEST(connection.metrics().queued_bytes == 0U);
+   BOOST_TEST(connection.metrics().streams_reset >= 1U);
+
+   auto replacement = run_with_deadline(runtime, connection.async_open_stream(), std::chrono::milliseconds{5'000},
+                                        "queued-budget replacement open stream");
+   run_with_deadline(runtime, replacement.async_write(payload), std::chrono::milliseconds{5'000},
+                     "queued-budget replacement write");
+
+   run_with_deadline(runtime, connection.async_close(), std::chrono::milliseconds{5'000},
+                     "queued-budget cancel connection close");
+   run_with_deadline(runtime, server_connection.async_close(), std::chrono::milliseconds{5'000},
+                     "queued-budget cancel server connection close");
+   proxy->stop();
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(quic_peer_reset_releases_retained_write_budget) {
+   auto limits = transport_limits{.max_connections = 16, .max_streams_per_connection = 16, .max_queued_bytes = 8};
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server =
+       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("fcl-p2p/1", limits)};
+   auto proxy = std::make_shared<udp_fault_proxy>(
+       runtime.context(), server.local_endpoint(),
+       fault_proxy_rules{.server_to_client = fault_rule{.delay = std::chrono::milliseconds{250}}});
+   proxy->start();
+
+   auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
+   auto client = connector{runtime};
+   auto connection =
+       run_with_deadline(runtime, client.async_connect(proxy->local_endpoint(), loopback_client_options("fcl-p2p/1", limits)),
+                         std::chrono::milliseconds{10'000}, "queued-budget peer-reset connect");
+   auto server_connection =
+       get_with_deadline(accept_future, std::chrono::milliseconds{10'000}, "queued-budget peer-reset accept");
+
+   auto server_reset = boost::asio::co_spawn(
+       runtime.context(),
+       [server_connection = std::move(server_connection)]() mutable -> boost::asio::awaitable<void> {
+          auto inbound = co_await server_connection.async_accept_stream();
+          inbound.cancel();
+          auto executor = co_await boost::asio::this_coro::executor;
+          auto timer = boost::asio::steady_timer{executor};
+          timer.expires_after(std::chrono::milliseconds{100});
+          co_await timer.async_wait(boost::asio::use_awaitable);
+          co_await server_connection.async_close();
+       },
+       boost::asio::use_future);
+
+   auto stream = run_with_deadline(runtime, connection.async_open_stream(), std::chrono::milliseconds{5'000},
+                                   "queued-budget peer-reset open stream");
+   const auto payload = std::vector<std::uint8_t>{1, 2, 3, 4, 5, 6};
+   run_with_deadline(runtime, stream.async_write(payload), std::chrono::milliseconds{5'000},
+                     "queued-budget peer-reset write");
+   BOOST_TEST(connection.metrics().queued_bytes >= payload.size());
+
+   get_with_deadline(server_reset, std::chrono::milliseconds{10'000}, "queued-budget peer-reset server task");
+   run_with_deadline(runtime,
+                     []() -> boost::asio::awaitable<void> {
+                        auto executor = co_await boost::asio::this_coro::executor;
+                        auto timer = boost::asio::steady_timer{executor};
+                        timer.expires_after(std::chrono::milliseconds{350});
+                        co_await timer.async_wait(boost::asio::use_awaitable);
+                     }(),
+                     std::chrono::milliseconds{5'000}, "queued-budget peer-reset propagation");
+   BOOST_TEST(connection.metrics().queued_bytes == 0U);
+   BOOST_TEST(connection.metrics().streams_reset >= 1U);
+
+   auto replacement = run_with_deadline(runtime, connection.async_open_stream(), std::chrono::milliseconds{5'000},
+                                        "queued-budget peer-reset replacement open stream");
+   run_with_deadline(runtime, replacement.async_write(payload), std::chrono::milliseconds{5'000},
+                     "queued-budget peer-reset replacement write");
+
+   run_with_deadline(runtime, connection.async_close(), std::chrono::milliseconds{5'000},
+                     "queued-budget peer-reset connection close");
+   proxy->stop();
    server.stop();
 }
 
@@ -1463,9 +1579,9 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_inbound_packet_queue_overflow) {
           runtime, client.async_connect(server.local_endpoint(), loopback_client_options("fcl-p2p/1", client_limits)),
           std::chrono::milliseconds{5'000}, "inbound overflow connect");
       BOOST_FAIL("expected inbound packet queue overflow to close the connection");
-   } catch (const quic_error& error) {
-      const auto acceptable = error.kind() == error_kind::connection_closed || error.kind() == error_kind::canceled ||
-                              error.kind() == error_kind::backpressure_rejected;
+   } catch (const fcl::exceptions::base& error) {
+      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::canceled ||
+                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::backpressure_rejected;
       BOOST_TEST(acceptable);
    }
 
@@ -1510,8 +1626,8 @@ BOOST_AUTO_TEST_CASE(quic_framed_stream_rejects_oversized_remote_frame) {
    try {
       (void)fcl::asio::blocking::run(runtime, framed.async_read_frame());
       BOOST_FAIL("expected oversized frame rejection");
-   } catch (const quic_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::frame_too_large));
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::frame_too_large));
    }
    server_send.get();
    fcl::asio::blocking::run(runtime, client_connection.async_close());
@@ -1528,8 +1644,8 @@ BOOST_AUTO_TEST_CASE(quic_listener_stop_unblocks_pending_accept) {
    try {
       (void)accept_future.get();
       BOOST_FAIL("expected stopped listener to unblock accept with an error");
-   } catch (const quic_error& error) {
-      BOOST_TEST(static_cast<int>(error.kind()) == static_cast<int>(error_kind::connection_closed));
+   } catch (const fcl::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::connection_closed));
    }
 }
 

@@ -13,6 +13,8 @@ module fcl.app.application;
 
 import fcl.config.component;
 import fcl.config.document;
+import fcl.api;
+import fcl.exceptions;
 import fcl.app.events;
 import fcl.app.signals;
 
@@ -22,6 +24,8 @@ namespace {
 std::string exception_message() {
    try {
       throw;
+   } catch (const fcl::exceptions::base& error) {
+      return error.message();
    } catch (const std::exception& error) {
       return error.what();
    } catch (...) {
@@ -68,6 +72,29 @@ boost::asio::awaitable<void> application_runtime::configure(const config::docume
          section = descriptor->section;
       }
       co_await value->configure(config::component_view{document, std::move(section)});
+   }
+}
+
+boost::asio::awaitable<void> application_runtime::provide(fcl::api::provider& provider) {
+   if (state_ != application_state::created) {
+      throw std::logic_error{"app runtime must provide APIs before initialize"};
+   }
+
+   for (auto& value : plugins_) {
+      const auto id = value->id();
+      const auto version = value->version();
+      try {
+         publish_lifecycle_event(context_, event_severity::info, id, "providing");
+         co_await value->provide(provider);
+         publish_lifecycle_event(context_, event_severity::info, id, "provided");
+      } catch (...) {
+         const auto message = exception_message();
+         if (diagnostics_) {
+            diagnostics_->set_plugin_state(id.value, version, lifecycle_state::failed, "provide", message);
+         }
+         publish_lifecycle_event(context_, event_severity::error, id, "failed", message);
+         throw;
+      }
    }
 }
 

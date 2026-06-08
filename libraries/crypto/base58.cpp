@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2012 The Bitcoin Developers
 // Distributed under the MIT/X11 software license, see the accompanying
@@ -16,12 +16,16 @@ module;
 #ifndef BITCOIN_BASE58_H
 #define BITCOIN_BASE58_H
 
+#include <cstdint>
+#include <cstring>
+#include <span>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 #include <limits>
 #include <algorithm>
 
-#include <stdexcept>
 #include <vector>
 #include <openssl/bn.h>
 
@@ -29,13 +33,12 @@ module fcl.crypto.base58;
 
 import fcl.core.string;
 import fcl.core.utility;
-import fcl.exception.exception;
+import fcl.exceptions;
+import fcl.crypto.types;
 
-/** Errors thrown by the bignum class */
-class bignum_error : public std::runtime_error {
- public:
-   explicit bignum_error(const std::string& str) : std::runtime_error(str) {}
-};
+[[noreturn]] void raise_bignum_failure(std::string message) {
+   FCL_THROW_EXCEPTION(fcl::crypto::base58::exceptions::backend_error, std::move(message));
+}
 
 /** RAII encapsulated BN_CTX (OpenSSL bignum context) */
 class CAutoBN_CTX {
@@ -49,7 +52,7 @@ class CAutoBN_CTX {
    CAutoBN_CTX() {
       pctx = BN_CTX_new();
       if (pctx == NULL)
-         throw bignum_error("CAutoBN_CTX : BN_CTX_new() returned NULL");
+         raise_bignum_failure("CAutoBN_CTX : BN_CTX_new() returned NULL");
    }
 
    ~CAutoBN_CTX() {
@@ -81,13 +84,13 @@ class CBigNum {
    CBigNum(const CBigNum& b) : CBigNum() {
       if (!BN_copy(bn, b.bn)) {
          BN_clear_free(bn);
-         throw bignum_error("CBigNum::CBigNum(const CBigNum&) : BN_copy failed");
+         raise_bignum_failure("CBigNum::CBigNum(const CBigNum&) : BN_copy failed");
       }
    }
 
    CBigNum& operator=(const CBigNum& b) {
       if (!BN_copy(bn, b.bn))
-         throw bignum_error("CBigNum::operator= : BN_copy failed");
+         raise_bignum_failure("CBigNum::operator= : BN_copy failed");
       return (*this);
    }
 
@@ -136,7 +139,7 @@ class CBigNum {
 
    void setulong(unsigned long n) {
       if (!BN_set_word(bn, n))
-         throw bignum_error("CBigNum conversion from unsigned long : BN_set_word failed");
+         raise_bignum_failure("CBigNum conversion from unsigned long : BN_set_word failed");
    }
 
    unsigned long getulong() const {
@@ -308,7 +311,7 @@ class CBigNum {
          return "0";
       while (BN_cmp(bn.bn, bn0.bn) > 0) {
          if (!BN_div(dv.bn, rem.bn, bn.bn, bnBase.bn, pctx))
-            throw bignum_error("CBigNum::ToString() : BN_div failed");
+            raise_bignum_failure("CBigNum::ToString() : BN_div failed");
          bn = dv;
          unsigned int c = rem.getulong();
          str += "0123456789abcdef"[c];
@@ -329,40 +332,40 @@ class CBigNum {
 
    CBigNum& operator+=(const CBigNum& b) {
       if (!BN_add(bn, bn, b.bn))
-         throw bignum_error("CBigNum::operator+= : BN_add failed");
+         raise_bignum_failure("CBigNum::operator+= : BN_add failed");
       return *this;
    }
 
    CBigNum& operator-=(const CBigNum& b) {
       if (!BN_sub(bn, bn, b.bn))
-         throw bignum_error("CBigNum::operator-= : BN_sub failed");
+         raise_bignum_failure("CBigNum::operator-= : BN_sub failed");
       return *this;
    }
 
    CBigNum& operator*=(const CBigNum& b) {
       CAutoBN_CTX pctx;
       if (!BN_mul(bn, bn, b.bn, pctx))
-         throw bignum_error("CBigNum::operator*= : BN_mul failed");
+         raise_bignum_failure("CBigNum::operator*= : BN_mul failed");
       return *this;
    }
 
    CBigNum& operator/=(const CBigNum& b) {
       CAutoBN_CTX pctx;
       if (!BN_div(bn, NULL, bn, b.bn, pctx))
-         throw bignum_error("CBigNum::operator/= : BN_div failed");
+         raise_bignum_failure("CBigNum::operator/= : BN_div failed");
       return *this;
    }
 
    CBigNum& operator%=(const CBigNum& b) {
       CAutoBN_CTX pctx;
       if (!BN_div(NULL, bn, bn, b.bn, pctx))
-         throw bignum_error("CBigNum::operator%= : BN_div failed");
+         raise_bignum_failure("CBigNum::operator%= : BN_div failed");
       return *this;
    }
 
    CBigNum& operator<<=(unsigned int shift) {
       if (!BN_lshift(bn, bn, shift))
-         throw bignum_error("CBigNum:operator<<= : BN_lshift failed");
+         raise_bignum_failure("CBigNum:operator<<= : BN_lshift failed");
       return *this;
    }
 
@@ -377,14 +380,14 @@ class CBigNum {
       }
 
       if (!BN_rshift(bn, bn, shift))
-         throw bignum_error("CBigNum:operator>>= : BN_rshift failed");
+         raise_bignum_failure("CBigNum:operator>>= : BN_rshift failed");
       return *this;
    }
 
    CBigNum& operator++() {
       // prefix operator
       if (!BN_add(bn, bn, BN_value_one()))
-         throw bignum_error("CBigNum::operator++ : BN_add failed");
+         raise_bignum_failure("CBigNum::operator++ : BN_add failed");
       return *this;
    }
 
@@ -399,7 +402,7 @@ class CBigNum {
       // prefix operator
       CBigNum r;
       if (!BN_sub(r.bn, bn, BN_value_one()))
-         throw bignum_error("CBigNum::operator-- : BN_sub failed");
+         raise_bignum_failure("CBigNum::operator-- : BN_sub failed");
       *this = r;
       return *this;
    }
@@ -422,14 +425,14 @@ class CBigNum {
 inline const CBigNum operator+(const CBigNum& a, const CBigNum& b) {
    CBigNum r;
    if (!BN_add(r.to_bignum(), a.to_bignum(), b.to_bignum()))
-      throw bignum_error("CBigNum::operator+ : BN_add failed");
+      raise_bignum_failure("CBigNum::operator+ : BN_add failed");
    return r;
 }
 
 inline const CBigNum operator-(const CBigNum& a, const CBigNum& b) {
    CBigNum r;
    if (!BN_sub(r.to_bignum(), a.to_bignum(), b.to_bignum()))
-      throw bignum_error("CBigNum::operator- : BN_sub failed");
+      raise_bignum_failure("CBigNum::operator- : BN_sub failed");
    return r;
 }
 
@@ -443,7 +446,7 @@ inline const CBigNum operator*(const CBigNum& a, const CBigNum& b) {
    CAutoBN_CTX pctx;
    CBigNum r;
    if (!BN_mul(r.to_bignum(), a.to_bignum(), b.to_bignum(), pctx))
-      throw bignum_error("CBigNum::operator* : BN_mul failed");
+      raise_bignum_failure("CBigNum::operator* : BN_mul failed");
    return r;
 }
 
@@ -451,7 +454,7 @@ inline const CBigNum operator/(const CBigNum& a, const CBigNum& b) {
    CAutoBN_CTX pctx;
    CBigNum r;
    if (!BN_div(r.to_bignum(), NULL, a.to_bignum(), b.to_bignum(), pctx))
-      throw bignum_error("CBigNum::operator/ : BN_div failed");
+      raise_bignum_failure("CBigNum::operator/ : BN_div failed");
    return r;
 }
 
@@ -459,14 +462,14 @@ inline const CBigNum operator%(const CBigNum& a, const CBigNum& b) {
    CAutoBN_CTX pctx;
    CBigNum r;
    if (!BN_mod(r.to_bignum(), a.to_bignum(), b.to_bignum(), pctx))
-      throw bignum_error("CBigNum::operator% : BN_div failed");
+      raise_bignum_failure("CBigNum::operator% : BN_div failed");
    return r;
 }
 
 inline const CBigNum operator<<(const CBigNum& a, unsigned int shift) {
    CBigNum r;
    if (!BN_lshift(r.to_bignum(), a.to_bignum(), shift))
-      throw bignum_error("CBigNum:operator<< : BN_lshift failed");
+      raise_bignum_failure("CBigNum:operator<< : BN_lshift failed");
    return r;
 }
 
@@ -525,7 +528,7 @@ inline std::string EncodeBase58(const unsigned char* pbegin, const unsigned char
    while (bn > bn0) {
       yield();
       if (!BN_div(dv.to_bignum(), rem.to_bignum(), bn.to_bignum(), bn58.to_bignum(), pctx))
-         throw bignum_error("EncodeBase58 : BN_div failed");
+         raise_bignum_failure("EncodeBase58 : BN_div failed");
       bn = dv;
       unsigned int c = rem.getulong();
       str += pszBase58[c];
@@ -574,7 +577,7 @@ inline bool DecodeBase58(const char* psz, std::vector<unsigned char>& vchRet) {
       }
       bnChar.setulong(p1 - pszBase58);
       if (!BN_mul(bn.to_bignum(), bn.to_bignum(), bn58.to_bignum(), pctx))
-         throw bignum_error("DecodeBase58 : BN_mul failed");
+         raise_bignum_failure("DecodeBase58 : BN_mul failed");
       bn += bnChar;
    }
 
@@ -602,10 +605,32 @@ inline bool DecodeBase58(const std::string& str, std::vector<unsigned char>& vch
    return DecodeBase58(str.c_str(), vchRet);
 }
 
-namespace fcl {
+namespace fcl::crypto {
+
+std::string base58_encode(std::span<const std::uint8_t> data, const fcl::yield_function_t& yield) {
+   if (data.empty()) {
+      return {};
+   }
+   return EncodeBase58(data.data(), data.data() + data.size(), yield);
+}
+
+bytes base58_decode(std::string_view base58_str) {
+   std::vector<unsigned char> out;
+   const auto input = std::string{base58_str};
+   if (!DecodeBase58(input.c_str(), out)) {
+      FCL_THROW_EXCEPTION(base58::exceptions::invalid_character, "unable to decode base58 string",
+                          fcl::exceptions::ctx("base58_str", input));
+   }
+   return bytes{out.begin(), out.end()};
+}
+
+} // namespace fcl::crypto
+
+namespace fcl::crypto {
 
 std::string to_base58(const char* d, size_t s, const fcl::yield_function_t& yield) {
-   return EncodeBase58((const unsigned char*)d, (const unsigned char*)d + s, yield);
+   const auto bytes = std::span{reinterpret_cast<const std::uint8_t*>(d), s};
+   return fcl::crypto::base58_encode(bytes, yield);
 }
 
 std::string to_base58(const std::vector<char>& d, const fcl::yield_function_t& yield) {
@@ -614,25 +639,19 @@ std::string to_base58(const std::vector<char>& d, const fcl::yield_function_t& y
    return std::string();
 }
 std::vector<char> from_base58(const std::string& base58_str) {
-   std::vector<unsigned char> out;
-   if (!DecodeBase58(base58_str.c_str(), out)) {
-      FCL_THROW("Unable to decode base58 string ${base58_str}", fcl::error::ctx("base58_str", base58_str));
-   }
-   return std::vector<char>((const char*)out.data(), ((const char*)out.data()) + out.size());
+   auto out = fcl::crypto::base58_decode(base58_str);
+   return std::vector<char>(out.begin(), out.end());
 }
 /**
  *  @return the number of bytes decoded
  */
 size_t from_base58(const std::string& base58_str, char* out_data, size_t out_data_len) {
    // slog( "%s", base58_str.c_str() );
-   std::vector<unsigned char> out;
-   if (!DecodeBase58(base58_str.c_str(), out)) {
-      FCL_THROW("Unable to decode base58 string ${base58_str}", fcl::error::ctx("base58_str", base58_str));
-   }
+   auto out = fcl::crypto::base58_decode(base58_str);
    FCL_ASSERT(out.size() <= out_data_len);
    memcpy(out_data, out.data(), out.size());
    return out.size();
 }
-} // namespace fcl
+} // namespace fcl::crypto
 
 #endif

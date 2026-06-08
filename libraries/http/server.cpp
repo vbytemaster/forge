@@ -36,8 +36,9 @@ using asio::use_awaitable;
 
 class server_session : public std::enable_shared_from_this<server_session> {
  public:
-   server_session(beast::tcp_stream stream, server_handler handler, std::shared_ptr<router> router_value)
-       : stream_(std::move(stream)), handler_(std::move(handler)), router_(std::move(router_value)) {}
+   server_session(fcl::asio::runtime& runtime, beast::tcp_stream stream, server_handler handler,
+                  std::shared_ptr<router> router_value)
+       : runtime_{runtime}, stream_(std::move(stream)), handler_(std::move(handler)), router_(std::move(router_value)) {}
 
    awaitable<void> run() {
       auto self = shared_from_this();
@@ -105,7 +106,9 @@ class server_session : public std::enable_shared_from_this<server_session> {
  private:
    route_context make_context(const request& request_value) const {
       try {
-         return make_route_context(request_value);
+         auto context = make_route_context(request_value);
+         context.runtime = &runtime_;
+         return context;
       } catch (...) {
          throw std::invalid_argument{"invalid HTTP request target"};
       }
@@ -141,6 +144,7 @@ class server_session : public std::enable_shared_from_this<server_session> {
       co_return true;
    }
 
+   fcl::asio::runtime& runtime_;
    beast::tcp_stream stream_;
    beast::flat_buffer buffer_;
    server_handler handler_;
@@ -174,7 +178,7 @@ struct server::impl {
          }
 
          auto client =
-             std::make_shared<detail::server_session>(beast::tcp_stream{std::move(socket)}, handler, router_value);
+             std::make_shared<detail::server_session>(runtime, beast::tcp_stream{std::move(socket)}, handler, router_value);
          asio::co_spawn(session_strand, client->run(), [](std::exception_ptr error) {
             if (error) {
                try {

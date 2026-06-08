@@ -59,10 +59,10 @@ The accepted state is a domain target graph with no reverse dependencies. Curren
 fcl_variant -> fcl_core
 fcl_reflect -> fcl_core, fcl_variant
 fcl_log -> fcl_core, fcl_reflect, fcl_variant
-fcl_exception -> fcl_core, fcl_log, fcl_variant
-fcl_raw -> fcl_core, fcl_exception, fcl_reflect, fcl_variant
-fcl_json -> fcl_core, fcl_exception, fcl_variant
-fcl_crypto -> fcl_core, fcl_exception, fcl_raw, fcl_reflect, fcl_variant
+fcl_exceptions -> fcl_core, fcl_log, fcl_variant
+fcl_raw -> fcl_core, fcl_exceptions, fcl_reflect, fcl_variant
+fcl_json -> fcl_core, fcl_exceptions, fcl_variant
+fcl_crypto -> fcl_core, fcl_exceptions, fcl_raw, fcl_reflect, fcl_variant
 ```
 
 The exact graph may differ after cleanup, but it must be explicit and acyclic. If a domain needs reverse imports, split the domain rather than hiding the cycle behind an umbrella target. `FILE_SET CXX_MODULES` ownership now belongs to the real domain targets; a shared BMI pool must not return.

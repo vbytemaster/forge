@@ -22,6 +22,7 @@ class connector {
    connector& operator=(const connector&) = delete;
 
    boost::asio::awaitable<connection> async_connect(endpoint remote, client_options options = {});
+   void cancel();
 
  private:
    struct impl;

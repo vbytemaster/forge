@@ -70,6 +70,45 @@ router.websocket("/events", [](std::shared_ptr<fcl::websocket::connection> conne
 });
 ```
 
+### Serve An API Session
+
+`fcl.websocket.api` uses `fcl::api::frame` because WebSocket is
+message-oriented and bidirectional. The binding is continuous: every inbound
+WebSocket message is decoded as an API frame, checked against the configured
+codec and frame-size limit, dispatched through `fcl::api::frame_dispatcher`,
+then replied with a response/error frame.
+
+```cpp
+import fcl.api;
+import fcl.websocket.api;
+
+auto plan = fcl::api::binding()
+   .serve(app.apis())
+   .export_api<cache>({.id = {"cache"}, .major = 1, .min_revision = 8})
+   .require_peer_api<client_session>({.id = {"client.session"}, .major = 1})
+   .build();
+
+auto binding = fcl::websocket::api()
+   .use(plan)
+   .codec({"fcl.raw"})
+   .max_frame_size(1 << 20)
+   .backpressure({.max_inflight = 128})
+   .build();
+
+router.websocket("/api", [binding](fcl::websocket::connection::ptr connection) mutable {
+   boost::asio::co_spawn(
+      app.runtime().context(),
+      binding.accept(std::move(connection)),
+      boost::asio::detached);
+});
+```
+
+`fcl.websocket.api` owns API-level WebSocket binding behavior only:
+max-frame-size rejection and handoff to the shared `frame_dispatcher`. It does
+not use `fcl.api.transport`, because WebSocket messages are not
+`transport::stream` chunks. HTTP upgrade routes, TLS verification and product
+reconnect policy stay with the transport owner.
+
 ### Send, Ping And Close
 
 ```cpp
@@ -106,6 +145,15 @@ stay explicit and should not be hidden behind broad "dev" defaults.
   does not serialize them. Use the FCL connection API boundary.
 - Do not put bearer tokens in query strings for convenience; they commonly leak
   through logs, metrics and diagnostics.
+- Do not leave message handler exceptions to `co_spawn(..., detached)` with an
+  empty completion handler. FCL records handler failures and closes the handler
+  path instead of silently swallowing correctness bugs.
+- Do not invent WebSocket-specific error payloads for typed APIs; use
+  `fcl::api::error_payload` in error frames.
+- Do not treat `.backpressure(...)` as a decorative value. If max inflight is
+  exceeded, the API call runtime rejects the frame before product handlers run.
+- Do not put HTTP upgrade or TLS policy in `fcl.websocket.api`; it is an API
+  binding over an already accepted connection.
 
 ## Typical Mistakes
 

@@ -23,7 +23,7 @@ cross-library architecture decisions.
 Each library guide must be useful without reading source first:
 
 - [core](../libraries/core/README.md)
-- [exception](../libraries/exception/README.md)
+- [exception](../libraries/exceptions/README.md)
 - [reflect](../libraries/reflect/README.md)
 - [variant](../libraries/variant/README.md)
 - [raw](../libraries/raw/README.md)

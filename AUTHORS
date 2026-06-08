@@ -1,0 +1,12 @@
+Vladimir Tarnakin - primary FCL author and maintainer.
+
+Contributors are listed in Git history unless separately documented.
+
+Some repository portions derive from or adapt earlier FC, AntelopeIO/spring,
+EOS Network Foundation, EOSIO/eos, and third-party permissively licensed
+source. Those upstream authors and copyright holders are credited in NOTICE,
+PROVENANCE.md, and THIRD_PARTY_LICENSES.
+
+Business development, promotion, investor discussions, repository mirroring,
+Jira/GitLab integration, CI access, or strategic support do not by themselves
+create authorship or copyright ownership in FCL source code or documentation.

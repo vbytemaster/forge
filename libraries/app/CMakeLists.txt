@@ -1,7 +1,6 @@
 add_library(
    fcl_app STATIC
    application.cpp
-   ports.cpp
    events.cpp
    diagnostics.cpp
    signals.cpp
@@ -19,6 +18,8 @@ target_include_directories(fcl_app PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
    fcl_app PUBLIC
+      fcl_exceptions
+      fcl_api
       fcl_asio
       fcl_config
       fcl_env

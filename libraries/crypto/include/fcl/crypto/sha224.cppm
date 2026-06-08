@@ -9,11 +9,12 @@ module;
 export module fcl.crypto.sha224;
 
 import fcl.crypto.packhash;
+export import fcl.crypto.digest;
 import fcl.raw.raw;
 import fcl.core.string;
 import fcl.variant;
 
-export namespace fcl {
+export namespace fcl::crypto {
 
 class sha224 : public add_packhash_to_hash<sha224> {
  public:
@@ -80,10 +81,10 @@ class sha224 : public add_packhash_to_hash<sha224> {
 void to_variant(const sha224& bi, variant& v);
 void from_variant(const variant& v, sha224& bi);
 
-} // namespace fcl
+} // namespace fcl::crypto
 export namespace std {
-template <> struct hash<fcl::sha224> {
-   size_t operator()(const fcl::sha224& s) const {
+template <> struct hash<fcl::crypto::sha224> {
+   size_t operator()(const fcl::crypto::sha224& s) const {
       return *((size_t*)&s);
    }
 };

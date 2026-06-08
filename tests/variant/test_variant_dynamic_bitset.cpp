@@ -4,7 +4,7 @@
 import fcl.variant.dynamic_bitset;
 import fcl.variant.variant_dynamic_bitset;
 import fcl.variant;
-import fcl.exception.exception;
+import fcl.exceptions;
 
 using namespace fcl;
 using std::string;

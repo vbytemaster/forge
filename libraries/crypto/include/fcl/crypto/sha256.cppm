@@ -1,4 +1,5 @@
 module;
+#include <fcl/exceptions/macros.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <bit>
@@ -12,11 +13,12 @@ module;
 export module fcl.crypto.sha256;
 
 import fcl.core.string;
+export import fcl.crypto.digest;
 import fcl.crypto.packhash;
 import fcl.raw.raw;
 import fcl.variant;
 
-export namespace fcl {
+export namespace fcl::crypto {
 
 class sha256 : public add_packhash_to_hash<sha256> {
  public:
@@ -42,6 +44,7 @@ class sha256 : public add_packhash_to_hash<sha256> {
    }
 
    static sha256 hash(const char* d, uint32_t dlen);
+   static sha256 hash(std::span<const std::uint8_t> data);
    static sha256 hash(const std::string&);
    static sha256 hash(const sha256&);
 
@@ -55,6 +58,7 @@ class sha256 : public add_packhash_to_hash<sha256> {
       ~encoder();
 
       void write(const char* d, uint32_t dlen);
+      void write(std::span<const std::uint8_t> data);
       void put(char c) {
          write(&c, 1);
       }
@@ -116,16 +120,20 @@ void from_variant(const variant& v, sha256& bi);
 
 uint64_t hash64(const char* buf, size_t len);
 
-} // namespace fcl
+inline size_t hash_value(const fcl::crypto::sha256& s) {
+   return s._hash[3];
+}
+
+} // namespace fcl::crypto
 
 export namespace std {
-template <> struct hash<fcl::sha256> {
-   size_t operator()(const fcl::sha256& s) const {
+template <> struct hash<fcl::crypto::sha256> {
+   size_t operator()(const fcl::crypto::sha256& s) const {
       return *((size_t*)&s);
    }
 };
 
-inline std::ostream& operator<<(std::ostream& os, const fcl::sha256& r) {
+inline std::ostream& operator<<(std::ostream& os, const fcl::crypto::sha256& r) {
    os << "sha256(" << r.str() << ")";
    return os;
 }
@@ -133,15 +141,9 @@ inline std::ostream& operator<<(std::ostream& os, const fcl::sha256& r) {
 } // namespace std
 
 export namespace boost {
-template <> struct hash<fcl::sha256> {
-   size_t operator()(const fcl::sha256& s) const {
+template <> struct hash<fcl::crypto::sha256> {
+   size_t operator()(const fcl::crypto::sha256& s) const {
       return s._hash[3]; //*((size_t*)&s);
    }
 };
 } // namespace boost
-
-export namespace fcl {
-inline size_t hash_value(const fcl::sha256& s) {
-   return boost::hash<fcl::sha256>()(s);
-}
-} // namespace fcl

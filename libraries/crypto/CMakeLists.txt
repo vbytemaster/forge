@@ -17,7 +17,7 @@ target_compile_definitions(
 target_link_libraries(
    fcl_crypto PUBLIC
       fcl_core
-      fcl_exception
+      fcl_exceptions
       fcl_raw
       fcl_reflect
       fcl_variant

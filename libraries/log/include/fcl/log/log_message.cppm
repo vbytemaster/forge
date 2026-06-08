@@ -1,5 +1,5 @@
 module;
-#include <fcl/exception/macros.hpp>
+#include <fcl/exceptions/macros.hpp>
 #include <boost/describe.hpp>
 #include <chrono>
 #include <memory>

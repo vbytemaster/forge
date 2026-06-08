@@ -1,6 +1,7 @@
 module;
 
 #include <boost/asio/awaitable.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -105,6 +106,12 @@ class binding_builder {
    template <typename Interface> binding_builder& export_api(api_ref api) {
       static_assert(remote_interface<Interface>, "Interface must opt in to fcl::api::surface::remote");
       auto descriptor = Interface::describe();
+      if (api.min_revision > descriptor.version.revision) {
+         FCL_THROW_EXCEPTION(exceptions::incompatible_version, "API export revision exceeds implementation revision",
+                             fcl::exceptions::ctx("api", api.id.value),
+                             fcl::exceptions::ctx("requested_revision", api.min_revision),
+                             fcl::exceptions::ctx("implementation_revision", descriptor.version.revision));
+      }
       descriptor.id = std::move(api.id);
       descriptor.version.major = api.major;
       descriptor.version.revision = api.min_revision;

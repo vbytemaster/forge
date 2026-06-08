@@ -407,6 +407,17 @@ BOOST_AUTO_TEST_CASE(binding_export_filters_methods_above_selected_revision) {
    BOOST_TEST(fcl::api::find_method(descriptor, "sync") == nullptr);
 }
 
+BOOST_AUTO_TEST_CASE(binding_export_rejects_revision_above_implementation) {
+   auto registry = fcl::api::registry{};
+   registry.install<cache_api>(cache_api::describe(), std::make_shared<cache_impl>());
+
+   auto requested = cache_api::ref();
+   ++requested.min_revision;
+
+   BOOST_CHECK_THROW(static_cast<void>(fcl::api::binding().serve(registry).export_api<cache_api>(requested).build()),
+                     fcl::api::exceptions::incompatible_version);
+}
+
 BOOST_AUTO_TEST_CASE(api_body_decode_rejects_trailing_bytes) {
    auto body = fcl::api::pack_body(protocol::read_chunk{.ref = "abc"});
    body.push_back(0xff);

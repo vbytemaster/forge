@@ -2,6 +2,7 @@ module;
 
 #include <fcl/exceptions/macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -104,6 +105,15 @@ boost::asio::awaitable<void> write_transport_frame(fcl::transport::stream& strea
    return client_options.deadline;
 }
 
+[[nodiscard]] std::exception_ptr make_deadline_error(call_id id) {
+   try {
+      FCL_THROW_EXCEPTION(exceptions::deadline_exceeded, "API transport call deadline exceeded",
+                          fcl::exceptions::ctx("call_id", id.value));
+   } catch (...) {
+      return std::current_exception();
+   }
+}
+
 } // namespace
 
 struct client::impl : std::enable_shared_from_this<client::impl> {
@@ -113,6 +123,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       }
 
       boost::asio::steady_timer timer;
+      std::optional<boost::asio::steady_timer::time_point> deadline_at;
       std::vector<frame> responses;
       std::exception_ptr error;
       bool done = false;
@@ -124,6 +135,8 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       }
 
       boost::asio::steady_timer timer;
+      std::optional<boost::asio::steady_timer::time_point> deadline_at;
+      call_id id;
       std::exception_ptr error;
       bool ready = false;
    };
@@ -220,6 +233,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       const auto deadline = effective_deadline(value, settings);
       if (deadline.count() > 0) {
          pending_value->timer.expires_after(deadline);
+         pending_value->deadline_at = pending_value->timer.expiry();
       }
       pending.emplace(request.id.value, pending_value);
 
@@ -235,6 +249,14 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       auto lock = std::scoped_lock{mutex};
       if (auto found = pending.find(id.value); found != pending.end() && found->second == pending_value) {
          pending.erase(found);
+      }
+   }
+
+   void remove_write_waiter(const std::shared_ptr<write_waiter>& waiter) {
+      auto lock = std::scoped_lock{mutex};
+      auto found = std::find(write_waiters.begin(), write_waiters.end(), waiter);
+      if (found != write_waiters.end()) {
+         write_waiters.erase(found);
       }
    }
 
@@ -322,7 +344,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
           boost::asio::detached);
    }
 
-   boost::asio::awaitable<void> acquire_write() {
+   boost::asio::awaitable<void> acquire_write(call_id id, const std::shared_ptr<pending_call>& pending_value) {
       const auto executor = co_await boost::asio::this_coro::executor;
       auto waiter = std::shared_ptr<write_waiter>{};
       {
@@ -333,11 +355,20 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
          if (canceled) {
             FCL_THROW_EXCEPTION(exceptions::cancelled, "API transport client is closed");
          }
+         if (pending_value->deadline_at &&
+             boost::asio::steady_timer::clock_type::now() >= *pending_value->deadline_at) {
+            std::rethrow_exception(make_deadline_error(id));
+         }
          if (!write_busy) {
             write_busy = true;
             co_return;
          }
          waiter = std::make_shared<write_waiter>(executor);
+         waiter->deadline_at = pending_value->deadline_at;
+         waiter->id = id;
+         if (waiter->deadline_at) {
+            waiter->timer.expires_at(*waiter->deadline_at);
+         }
          write_waiters.push_back(waiter);
       }
 
@@ -353,19 +384,30 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
          }
          auto error = boost::system::error_code{};
          co_await waiter->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+         if (!error) {
+            remove_write_waiter(waiter);
+            std::rethrow_exception(make_deadline_error(id));
+         }
       }
    }
 
    void release_write() {
       auto lock = std::scoped_lock{mutex};
-      if (write_waiters.empty()) {
-         write_busy = false;
+      const auto now = boost::asio::steady_timer::clock_type::now();
+      while (!write_waiters.empty()) {
+         auto waiter = std::move(write_waiters.front());
+         write_waiters.pop_front();
+         if (waiter->deadline_at && now >= *waiter->deadline_at) {
+            waiter->error = make_deadline_error(waiter->id);
+            waiter->ready = true;
+            waiter->timer.cancel();
+            continue;
+         }
+         waiter->ready = true;
+         waiter->timer.cancel();
          return;
       }
-      auto waiter = std::move(write_waiters.front());
-      write_waiters.pop_front();
-      waiter->ready = true;
-      waiter->timer.cancel();
+      write_busy = false;
    }
 };
 
@@ -407,7 +449,7 @@ boost::asio::awaitable<std::vector<frame>> client::async_call_stream(frame reque
    fcl::raw::pack(encoded, request);
 
    try {
-      co_await self->acquire_write();
+      co_await self->acquire_write(reservation.id, reservation.pending);
       try {
          co_await write_transport_frame(self->stream, encoded, self->settings.max_frame_size);
       } catch (...) {
@@ -415,6 +457,12 @@ boost::asio::awaitable<std::vector<frame>> client::async_call_stream(frame reque
          throw;
       }
       self->release_write();
+   } catch (const exceptions::deadline_exceeded&) {
+      remove_pending();
+      auto timeout = std::current_exception();
+      self->fail_all(timeout);
+      self->stream.cancel();
+      throw;
    } catch (...) {
       remove_pending();
       throw;

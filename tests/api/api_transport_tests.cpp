@@ -160,12 +160,14 @@ class fake_stream final : public fcl::transport::detail::stream_concept {
    }
 
    boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> value) override {
+      co_await wait_for_write_release();
       auto lock = std::scoped_lock{mutex};
       writes.push_back({value.begin(), value.end()});
       co_return;
    }
 
    boost::asio::awaitable<void> async_write_chunk(fcl::transport::chunk value) override {
+      co_await wait_for_write_release();
       auto lock = std::scoped_lock{mutex};
       writes.push_back(value.to_vector());
       co_return;
@@ -229,6 +231,7 @@ class fake_stream final : public fcl::transport::detail::stream_concept {
       if (timer) {
          timer->cancel();
       }
+      notify_writes();
    }
 
    void notify_reads() {
@@ -236,6 +239,17 @@ class fake_stream final : public fcl::transport::detail::stream_concept {
       {
          auto lock = std::scoped_lock{mutex};
          timer = read_timer;
+      }
+      if (timer) {
+         timer->cancel();
+      }
+   }
+
+   void notify_writes() {
+      std::shared_ptr<boost::asio::steady_timer> timer;
+      {
+         auto lock = std::scoped_lock{mutex};
+         timer = write_timer;
       }
       if (timer) {
          timer->cancel();
@@ -250,9 +264,22 @@ class fake_stream final : public fcl::transport::detail::stream_concept {
       notify_reads();
    }
 
+   void release_writes() {
+      {
+         auto lock = std::scoped_lock{mutex};
+         writes_released = true;
+      }
+      notify_writes();
+   }
+
    [[nodiscard]] std::size_t write_count() const {
       auto lock = std::scoped_lock{mutex};
       return writes.size();
+   }
+
+   [[nodiscard]] std::size_t blocked_write_count() const {
+      auto lock = std::scoped_lock{mutex};
+      return blocked_writes;
    }
 
    [[nodiscard]] bytes written(std::size_t index) const {
@@ -265,10 +292,45 @@ class fake_stream final : public fcl::transport::detail::stream_concept {
    std::vector<bytes> writes;
    std::uint64_t cancel_count = 0;
    std::shared_ptr<boost::asio::steady_timer> read_timer;
+   std::shared_ptr<boost::asio::steady_timer> write_timer;
    bool wait_for_reads = false;
+   bool hold_writes = false;
+   bool writes_released = false;
+   std::size_t blocked_writes = 0;
    bool open = true;
 
  private:
+   boost::asio::awaitable<void> wait_for_write_release() {
+      const auto executor = co_await boost::asio::this_coro::executor;
+      {
+         auto lock = std::scoped_lock{mutex};
+         if (!hold_writes || writes_released) {
+            co_return;
+         }
+         ++blocked_writes;
+         if (!write_timer) {
+            write_timer = std::make_shared<boost::asio::steady_timer>(executor);
+         }
+      }
+
+      while (true) {
+         std::shared_ptr<boost::asio::steady_timer> timer;
+         {
+            auto lock = std::scoped_lock{mutex};
+            if (!open) {
+               FCL_THROW_EXCEPTION(fcl::transport::exceptions::closed, "fake stream closed");
+            }
+            if (!hold_writes || writes_released) {
+               co_return;
+            }
+            timer = write_timer;
+         }
+         timer->expires_at(boost::asio::steady_timer::time_point::max());
+         auto error = boost::system::error_code{};
+         co_await timer->async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+      }
+   }
+
    mutable std::mutex mutex;
 };
 
@@ -472,13 +534,15 @@ boost::asio::awaitable<fcl::api::frame> wait_call(std::shared_ptr<call_state> st
 
 std::shared_ptr<stream_call_state> start_stream_call(fcl::api::transport::client& client,
                                                      boost::asio::any_io_executor executor,
-                                                     fcl::api::frame request) {
+                                                     fcl::api::frame request,
+                                                     fcl::api::transport::call_options options = {}) {
    auto state = std::make_shared<stream_call_state>(executor);
    boost::asio::co_spawn(
        executor,
-       [&client, request = std::move(request), state]() mutable -> boost::asio::awaitable<void> {
+       [&client, request = std::move(request), options = std::move(options), state]() mutable
+           -> boost::asio::awaitable<void> {
           try {
-             state->response.emplace(co_await client.async_call_stream(std::move(request)));
+             state->response.emplace(co_await client.async_call_stream(std::move(request), std::move(options)));
           } catch (...) {
              state->error = std::current_exception();
           }
@@ -620,6 +684,52 @@ BOOST_AUTO_TEST_CASE(api_transport_client_serializes_concurrent_max_inflight_rej
       const auto first_response = co_await wait_stream_call(std::move(first));
       BOOST_REQUIRE_GE(first_response.size(), 1U);
       BOOST_TEST(fcl::raw::unpack<protocol::chunk>(first_response.front().payload).bytes == "one:0");
+   };
+
+   fcl::asio::blocking::run(runtime, scenario());
+}
+
+BOOST_AUTO_TEST_CASE(api_transport_client_deadline_expires_while_waiting_for_write_lock) {
+   auto runtime = fcl::asio::runtime{};
+
+   auto scenario = []() -> boost::asio::awaitable<void> {
+      auto model = std::make_shared<fake_stream>();
+      model->wait_for_reads = true;
+      model->hold_writes = true;
+      auto client = fcl::api::transport::client{make_stream(model),
+                                                fcl::api::transport::options{.max_inflight = 2}};
+      const auto executor = co_await boost::asio::this_coro::executor;
+
+      auto first = start_stream_call(client, executor, read_request(0, "one"));
+      co_await wait_until([&] { return model->blocked_write_count() == 1; }, std::chrono::milliseconds{100});
+
+      auto second = start_stream_call(
+          client, executor, read_request(0, "two"),
+          fcl::api::transport::call_options{.deadline = std::chrono::milliseconds{10}});
+
+      auto timer = boost::asio::steady_timer{executor};
+      timer.expires_after(std::chrono::milliseconds{50});
+      co_await timer.async_wait(boost::asio::use_awaitable);
+      BOOST_TEST(second->done);
+
+      model->release_writes();
+
+      auto second_deadline = false;
+      try {
+         (void)co_await wait_stream_call(std::move(second));
+      } catch (const fcl::api::exceptions::deadline_exceeded&) {
+         second_deadline = true;
+      }
+      BOOST_TEST(second_deadline);
+
+      try {
+         (void)co_await wait_stream_call(std::move(first));
+      } catch (const fcl::transport::exceptions::closed&) {
+      } catch (const fcl::api::exceptions::deadline_exceeded&) {
+      } catch (const fcl::api::exceptions::cancelled&) {
+      }
+
+      BOOST_TEST(model->write_count() == 0U);
    };
 
    fcl::asio::blocking::run(runtime, scenario());

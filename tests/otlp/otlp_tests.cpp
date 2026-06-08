@@ -1,5 +1,6 @@
 #include <boost/test/unit_test.hpp>
 
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -14,8 +15,10 @@
 #include <vector>
 
 #if defined(__unix__) || defined(__APPLE__)
+#include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -214,12 +217,84 @@ std::string shell_quote(std::string_view value) {
    return quoted;
 }
 
-int run_crash_helper(std::string_view mode, const std::filesystem::path& directory) {
+std::string crash_helper_command(std::string_view mode, const std::filesystem::path& directory,
+                                 std::vector<std::string> arguments = {}) {
    BOOST_REQUIRE(std::string_view{FCL_OTLP_CRASH_HELPER}.size() > 0);
-   const auto command =
-       shell_quote(FCL_OTLP_CRASH_HELPER) + " " + shell_quote(mode) + " " + shell_quote(directory.string());
-   return std::system(command.c_str());
+   auto command = shell_quote(FCL_OTLP_CRASH_HELPER) + " " + shell_quote(mode) + " " +
+                  shell_quote(directory.string());
+   for (const auto& argument : arguments) {
+      command += " " + shell_quote(argument);
+   }
+   return command;
 }
+
+int run_crash_helper(std::string_view mode, const std::filesystem::path& directory) {
+   return std::system(crash_helper_command(mode, directory).c_str());
+}
+
+#if defined(__unix__) || defined(__APPLE__)
+class helper_process {
+ public:
+   helper_process(const std::filesystem::path& directory, std::string endpoint, std::size_t max_records_per_resend) {
+      BOOST_REQUIRE(std::string_view{FCL_OTLP_CRASH_HELPER}.size() > 0);
+      arguments_.push_back(FCL_OTLP_CRASH_HELPER);
+      arguments_.push_back("resend");
+      arguments_.push_back(directory.string());
+      arguments_.push_back(std::move(endpoint));
+      arguments_.push_back(std::to_string(max_records_per_resend));
+      for (auto& argument : arguments_) {
+         argv_.push_back(argument.data());
+      }
+      argv_.push_back(nullptr);
+
+      pid_ = ::fork();
+      BOOST_REQUIRE(pid_ >= 0);
+      if (pid_ == 0) {
+         ::execv(argv_.front(), argv_.data());
+         _exit(127);
+      }
+   }
+
+   ~helper_process() {
+      terminate();
+   }
+
+   helper_process(const helper_process&) = delete;
+   helper_process& operator=(const helper_process&) = delete;
+
+   int wait() {
+      if (pid_ <= 0) {
+         return status_;
+      }
+      while (::waitpid(pid_, &status_, 0) < 0) {
+         if (errno == EINTR) {
+            continue;
+         }
+         BOOST_FAIL("failed to wait for OTLP crash helper process");
+      }
+      pid_ = -1;
+      return status_;
+   }
+
+   void terminate() {
+      if (pid_ <= 0) {
+         return;
+      }
+      (void)::kill(pid_, SIGTERM);
+      (void)wait();
+   }
+
+ private:
+   std::vector<std::string> arguments_;
+   std::vector<char*> argv_;
+   pid_t pid_ = -1;
+   int status_ = -1;
+};
+
+bool exited_successfully(int status) {
+   return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+#endif
 
 std::size_t count_spool_files(const std::filesystem::path& directory) {
    auto count = std::size_t{0};
@@ -659,7 +734,7 @@ BOOST_AUTO_TEST_CASE(crash_resend_does_not_drop_retained_records_when_resends_ov
       }
    }};
 
-   if (!first_collector.wait_for_requests(1) || !second_collector.wait_for_requests(1)) {
+   if (!first_collector.wait_for_requests(1, 10s) || !second_collector.wait_for_requests(1, 10s)) {
       first_collector.release_responses();
       second_collector.release_responses();
       first_resend.join();
@@ -702,6 +777,72 @@ BOOST_AUTO_TEST_CASE(crash_resend_does_not_drop_retained_records_when_resends_ov
    BOOST_REQUIRE(followup_collector.wait_for_requests(1));
    BOOST_TEST(followup_result.records_read == 1U);
    BOOST_TEST(followup_result.exported_records == 1U);
+   BOOST_TEST(count_spool_files(directory.path()) == 0U);
+}
+
+BOOST_AUTO_TEST_CASE(crash_resend_does_not_drop_retained_records_when_resends_overlap_across_processes) {
+   auto first_source_directory = temp_directory{"fcl-otlp-crash-process-overlap-first"};
+   auto second_source_directory = temp_directory{"fcl-otlp-crash-process-overlap-second"};
+   BOOST_TEST(run_crash_helper("sigabrt", first_source_directory.path()) == 0);
+   BOOST_TEST(run_crash_helper("sigabrt", second_source_directory.path()) == 0);
+   const auto first_source = first_spool_file(first_source_directory.path());
+   const auto second_source = first_spool_file(second_source_directory.path());
+   const auto record_size = std::filesystem::file_size(first_source);
+   BOOST_REQUIRE(record_size > 0);
+   BOOST_REQUIRE_EQUAL(std::filesystem::file_size(second_source), record_size);
+
+   auto directory = temp_directory{"fcl-otlp-crash-process-overlap"};
+   const auto target = directory.path() / "crash-999999.spool";
+   constexpr auto record_count = std::size_t{32};
+   std::filesystem::copy_file(first_source, target);
+   for (auto index = std::size_t{1}; index < record_count; ++index) {
+      append_file_bytes(index % 2 == 0 ? first_source : second_source, target);
+   }
+   std::filesystem::permissions(target, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                                std::filesystem::perm_options::replace);
+   BOOST_REQUIRE_EQUAL(std::filesystem::file_size(target), record_size * record_count);
+
+   auto first_runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto second_runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto first_collector = fake_collector{first_runtime, {{.status = fcl::http::status::ok}}, true};
+   auto second_collector = fake_collector{second_runtime, {{.status = fcl::http::status::ok}}, true};
+
+   auto first_resend = helper_process{directory.path(), first_collector.endpoint(), 1};
+   auto second_resend = helper_process{directory.path(), second_collector.endpoint(), 1};
+
+   const auto first_ready = first_collector.wait_for_requests(1, 60s);
+   const auto second_ready = second_collector.wait_for_requests(1, 60s);
+   if (!first_ready || !second_ready) {
+      first_collector.release_responses();
+      second_collector.release_responses();
+      if (!first_ready) {
+         first_resend.terminate();
+      }
+      if (!second_ready) {
+         second_resend.terminate();
+      }
+      BOOST_FAIL("expected both resend helper processes to export before release");
+   }
+
+   first_collector.release_responses();
+   second_collector.release_responses();
+   BOOST_TEST(exited_successfully(first_resend.wait()));
+   BOOST_TEST(exited_successfully(second_resend.wait()));
+
+   BOOST_REQUIRE(std::filesystem::exists(target));
+   BOOST_TEST(std::filesystem::file_size(target) == record_size * (record_count - 1));
+
+   auto followup_runtime = fcl::asio::runtime{};
+   auto followup_collector = fake_collector{followup_runtime, {{.status = fcl::http::status::ok}}};
+   auto followup_exporter = fcl::otlp::log_exporter{followup_runtime, make_options(followup_collector)};
+   const auto followup_result =
+       fcl::asio::blocking::run(followup_runtime,
+                                fcl::otlp::async_resend_crashes(followup_exporter, make_spool_options(directory.path())));
+   fcl::asio::blocking::run(followup_runtime, followup_exporter.async_shutdown());
+
+   BOOST_REQUIRE(followup_collector.wait_for_requests(1));
+   BOOST_TEST(followup_result.records_read == record_count - 1);
+   BOOST_TEST(followup_result.exported_records == record_count - 1);
    BOOST_TEST(count_spool_files(directory.path()) == 0U);
 }
 #endif

@@ -342,6 +342,12 @@ std::filesystem::path spool_path_for(const std::filesystem::path& directory, std
    return directory / ("crash-" + std::to_string(pid) + ".spool");
 }
 
+bool valid_record(const disk_record& record) {
+   return record.magic == record_magic && record.version == record_version &&
+          record.header_size == sizeof(disk_record) && record.record_size == sizeof(disk_record) &&
+          record.checksum == checksum_record(record);
+}
+
 #if defined(__unix__) || defined(__APPLE__)
 struct fd_guard {
    int fd = -1;
@@ -427,7 +433,96 @@ fd_guard open_spool_directory(const std::filesystem::path& directory) {
    return fd;
 }
 
-int open_spool_file(const std::filesystem::path& path) {
+struct open_spool_result {
+   int fd = -1;
+   std::size_t existing_records = 0;
+   std::size_t max_records = 0;
+};
+
+[[nodiscard]] std::size_t max_file_records(const crash_spool_options& options) noexcept {
+   return options.max_file_bytes / sizeof(disk_record);
+}
+
+[[nodiscard]] std::sig_atomic_t checked_signal_count(std::size_t value, const std::filesystem::path& path) {
+   if (value > static_cast<std::size_t>((std::numeric_limits<std::sig_atomic_t>::max)())) {
+      FCL_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool record count is too large",
+                          fcl::exceptions::ctx("path", path.string()));
+   }
+   return static_cast<std::sig_atomic_t>(value);
+}
+
+[[nodiscard]] std::size_t existing_record_count(const struct stat& stat_value, const std::filesystem::path& path,
+                                                const crash_spool_options& options) {
+   if (stat_value.st_size < 0 || static_cast<std::uint64_t>(stat_value.st_size) > options.max_file_bytes ||
+       static_cast<std::uint64_t>(stat_value.st_size) % sizeof(disk_record) != 0) {
+      FCL_THROW_EXCEPTION(exceptions::spool_error, "existing OTLP crash spool is malformed",
+                          fcl::exceptions::ctx("path", path.string()));
+   }
+   return static_cast<std::size_t>(static_cast<std::uint64_t>(stat_value.st_size) / sizeof(disk_record));
+}
+
+void read_record_or_throw(int fd, disk_record& record, const std::filesystem::path& path) {
+   auto* cursor = reinterpret_cast<char*>(&record);
+   auto remaining = sizeof(record);
+   while (remaining > 0) {
+      const auto count = ::read(fd, cursor, remaining);
+      if (count == 0) {
+         FCL_THROW_EXCEPTION(exceptions::spool_error, "existing OTLP crash spool is truncated",
+                             fcl::exceptions::ctx("path", path.string()));
+      }
+      if (count < 0) {
+         if (errno == EINTR) {
+            continue;
+         }
+         throw_errno_spool_error("failed to read existing OTLP crash spool", path);
+      }
+      cursor += static_cast<std::size_t>(count);
+      remaining -= static_cast<std::size_t>(count);
+   }
+}
+
+void validate_existing_records(int fd, std::size_t count, const std::filesystem::path& path) {
+   if (::lseek(fd, 0, SEEK_SET) < 0) {
+      throw_errno_spool_error("failed to seek existing OTLP crash spool", path);
+   }
+   for (auto index = std::size_t{}; index < count; ++index) {
+      auto record = disk_record{};
+      read_record_or_throw(fd, record, path);
+      if (!valid_record(record)) {
+         FCL_THROW_EXCEPTION(exceptions::spool_error, "existing OTLP crash spool contains invalid record",
+                             fcl::exceptions::ctx("path", path.string()));
+      }
+   }
+   if (::lseek(fd, 0, SEEK_END) < 0) {
+      throw_errno_spool_error("failed to seek existing OTLP crash spool end", path);
+   }
+}
+
+[[nodiscard]] open_spool_result finalize_open_spool_file(fd_guard fd, const std::filesystem::path& path,
+                                                         const crash_spool_options& options) {
+   struct stat stat_value {};
+   if (::fstat(fd.get(), &stat_value) != 0) {
+      throw_errno_spool_error("failed to stat OTLP crash spool", path);
+   }
+   ensure_owner_private_mode(stat_value, path, false);
+   const auto existing = existing_record_count(stat_value, path, options);
+   validate_existing_records(fd.get(), existing, path);
+   const auto capacity = max_file_records(options);
+   if (existing >= capacity) {
+      FCL_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool is full",
+                          fcl::exceptions::ctx("path", path.string()));
+   }
+   const auto writable = std::min(options.max_records_per_process, capacity - existing);
+   if (writable == 0) {
+      FCL_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool cannot accept records",
+                          fcl::exceptions::ctx("path", path.string()));
+   }
+   (void)checked_signal_count(existing, path);
+   (void)checked_signal_count(existing + writable, path);
+   return open_spool_result{.fd = fd.release(), .existing_records = existing, .max_records = existing + writable};
+}
+
+open_spool_result open_spool_file(const std::filesystem::path& path, const crash_spool_options& options) {
    const auto directory_fd = open_spool_directory(path.parent_path());
    auto flags = O_CREAT | O_EXCL | O_WRONLY;
 #if defined(O_CLOEXEC)
@@ -439,22 +534,24 @@ int open_spool_file(const std::filesystem::path& path) {
    const auto filename = path.filename().string();
    auto fd = fd_guard{::openat(directory_fd.get(), filename.c_str(), flags, S_IRUSR | S_IWUSR)};
    if (fd.get() < 0) {
-      throw_errno_spool_error("failed to create OTLP crash spool", path);
+      if (errno != EEXIST) {
+         throw_errno_spool_error("failed to create OTLP crash spool", path);
+      }
+      auto existing_flags = O_RDWR | O_APPEND;
+#if defined(O_CLOEXEC)
+      existing_flags |= O_CLOEXEC;
+#endif
+#if defined(O_NOFOLLOW)
+      existing_flags |= O_NOFOLLOW;
+#endif
+      fd = fd_guard{::openat(directory_fd.get(), filename.c_str(), existing_flags)};
+      if (fd.get() < 0) {
+         throw_errno_spool_error("failed to open existing OTLP crash spool", path);
+      }
    }
-   struct stat stat_value {};
-   if (::fstat(fd.get(), &stat_value) != 0) {
-      throw_errno_spool_error("failed to stat OTLP crash spool", path);
-   }
-   ensure_owner_private_mode(stat_value, path, false);
-   return fd.release();
+   return finalize_open_spool_file(std::move(fd), path, options);
 }
 #endif
-
-bool valid_record(const disk_record& record) {
-   return record.magic == record_magic && record.version == record_version &&
-          record.header_size == sizeof(disk_record) && record.record_size == sizeof(disk_record) &&
-          record.checksum == checksum_record(record);
-}
 
 struct read_file_result {
    std::vector<disk_record> records;
@@ -800,9 +897,11 @@ crash_guard install_crash_capture(crash_spool_options options) {
    state->chain_after_capture = options.chain_after_capture;
 #if defined(__unix__) || defined(__APPLE__)
    state->pid = ::getpid();
-   state->max_records = static_cast<std::sig_atomic_t>(options.max_records_per_process);
    const auto path = spool_path_for(options.directory, static_cast<std::uint64_t>(state->pid));
-   state->fd = open_spool_file(path);
+   const auto opened = open_spool_file(path, options);
+   state->records_written = checked_signal_count(opened.existing_records, path);
+   state->max_records = checked_signal_count(opened.max_records, path);
+   state->fd = opened.fd;
 #endif
 
    auto* expected = static_cast<crash_state*>(nullptr);

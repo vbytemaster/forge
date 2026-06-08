@@ -1390,6 +1390,55 @@ BOOST_AUTO_TEST_CASE(p2p_dht_discovery_rejects_third_party_non_routable_endpoint
    fcl::asio::blocking::run(runtime, server.async_stop());
 }
 
+BOOST_AUTO_TEST_CASE(p2p_dht_add_provider_drops_empty_sanitized_provider) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server_options = options_for(peer(226), capability_set{.bits = capabilities::direct_quic | capabilities::dht});
+   server_options.limits.dht.operating_mode = dht::mode::server;
+   auto server_store = std::make_shared<counting_peer_store_backend>();
+   server_options.peer_store_backend = server_store;
+   auto client_options = options_for(peer(227), capability_set{.bits = capabilities::direct_quic | capabilities::dht});
+   auto server = node{runtime, std::move(server_options)};
+   auto client = node{runtime, std::move(client_options)};
+   const auto server_endpoint = listen(server, runtime);
+   client.peers().learn_endpoint(server.local_peer(), server_endpoint,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::dht});
+
+   const auto key = make_dht_key(std::vector<std::uint8_t>{'f', 'c', 'l', '-', 'a', 'd', 'd', '-', 'p', 'r', 'o',
+                                                           'v', 'i', 'd', 'e', 'r'});
+   auto stream = fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::kad_dht));
+   auto authenticated_peer = std::optional<peer_id>{};
+   for (auto attempt = 0U; attempt < 20U && !authenticated_peer; ++attempt) {
+      const auto sessions = server.diagnostics().sessions;
+      if (!sessions.empty()) {
+         authenticated_peer = sessions.front().remote_peer;
+         break;
+      }
+      wait_on_runtime(runtime, std::chrono::milliseconds{50}, "DHT session diagnostics");
+   }
+   BOOST_REQUIRE(authenticated_peer.has_value());
+   auto provider_endpoint = make_quic_endpoint(4227, "169.254.10.20");
+   provider_endpoint.peer = *authenticated_peer;
+   fcl::asio::blocking::run(runtime, stream.async_write(dht::codec::encode(dht::message{
+                                      .type = dht::message_type::add_provider,
+                                      .key_value = key,
+                                      .provider_peers = std::vector<dht::peer>{dht::peer{
+                                          .id = *authenticated_peer,
+                                          .endpoints = std::vector<endpoint>{provider_endpoint},
+                                          .connection = dht::connection_type::connected,
+                                      }},
+                                  })));
+   fcl::asio::blocking::run(runtime, stream.async_close());
+   for (auto attempt = 0U; attempt < 20U && server.metrics().dht_queries == 0; ++attempt) {
+      wait_on_runtime(runtime, std::chrono::milliseconds{50}, "DHT ADD_PROVIDER handling");
+   }
+
+   BOOST_TEST(server.metrics().dht_queries >= 1U);
+   BOOST_TEST(server_store->find_providers(key).empty());
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
 BOOST_AUTO_TEST_CASE(p2p_rendezvous_discovery_rejects_third_party_non_routable_endpoints) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
    auto server_options =
@@ -3753,6 +3802,8 @@ BOOST_AUTO_TEST_CASE(p2p_dht_iterative_provider_lookup_and_provide_reach_closest
    auto client = node{runtime, std::move(client_options)};
    const auto seed_endpoint = listen(seed, runtime);
    const auto hop_endpoint = listen(hop, runtime);
+   const auto client_endpoint = listen(client, runtime);
+   static_cast<void>(client_endpoint);
    client.peers().learn_endpoint(seed.local_peer(), seed_endpoint,
                                  capability_set{.bits = capabilities::direct_quic | capabilities::dht});
    client.peers().learn_endpoint(hop.local_peer(), hop_endpoint, capability_set{});

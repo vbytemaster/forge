@@ -2536,6 +2536,9 @@ boost::asio::awaitable<void> node::impl::handle_dht(std::shared_ptr<node::impl::
             continue;
          }
          auto sanitized = sanitize_discovered_peer_for_session(provider, session);
+         if (!has_usable_endpoint(sanitized)) {
+            continue;
+         }
          store.upsert_provider(peer_store::provider_record{
              .key = request.key_value,
              .provider = std::move(sanitized),

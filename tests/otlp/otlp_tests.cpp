@@ -3,10 +3,12 @@
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
+#include <csignal>
 #include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -236,23 +238,13 @@ int run_crash_helper(std::string_view mode, const std::filesystem::path& directo
 class helper_process {
  public:
    helper_process(const std::filesystem::path& directory, std::string endpoint, std::size_t max_records_per_resend) {
-      BOOST_REQUIRE(std::string_view{FCL_OTLP_CRASH_HELPER}.size() > 0);
-      arguments_.push_back(FCL_OTLP_CRASH_HELPER);
-      arguments_.push_back("resend");
-      arguments_.push_back(directory.string());
-      arguments_.push_back(std::move(endpoint));
-      arguments_.push_back(std::to_string(max_records_per_resend));
-      for (auto& argument : arguments_) {
-         argv_.push_back(argument.data());
-      }
-      argv_.push_back(nullptr);
+      start({"resend", directory.string(), std::move(endpoint), std::to_string(max_records_per_resend)});
+   }
 
-      pid_ = ::fork();
-      BOOST_REQUIRE(pid_ >= 0);
-      if (pid_ == 0) {
-         ::execv(argv_.front(), argv_.data());
-         _exit(127);
-      }
+   helper_process(std::string mode, const std::filesystem::path& directory, std::vector<std::string> arguments) {
+      arguments.insert(arguments.begin(), directory.string());
+      arguments.insert(arguments.begin(), std::move(mode));
+      start(std::move(arguments));
    }
 
    ~helper_process() {
@@ -261,6 +253,10 @@ class helper_process {
 
    helper_process(const helper_process&) = delete;
    helper_process& operator=(const helper_process&) = delete;
+
+   [[nodiscard]] pid_t pid() const noexcept {
+      return pid_;
+   }
 
    int wait() {
       if (pid_ <= 0) {
@@ -285,6 +281,24 @@ class helper_process {
    }
 
  private:
+   void start(std::vector<std::string> arguments) {
+      BOOST_REQUIRE(std::string_view{FCL_OTLP_CRASH_HELPER}.size() > 0);
+      arguments_.push_back(FCL_OTLP_CRASH_HELPER);
+      arguments_.insert(arguments_.end(), std::make_move_iterator(arguments.begin()),
+                        std::make_move_iterator(arguments.end()));
+      for (auto& argument : arguments_) {
+         argv_.push_back(argument.data());
+      }
+      argv_.push_back(nullptr);
+
+      pid_ = ::fork();
+      BOOST_REQUIRE(pid_ >= 0);
+      if (pid_ == 0) {
+         ::execv(argv_.front(), argv_.data());
+         _exit(127);
+      }
+   }
+
    std::vector<std::string> arguments_;
    std::vector<char*> argv_;
    pid_t pid_ = -1;
@@ -295,6 +309,17 @@ bool exited_successfully(int status) {
    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 #endif
+
+bool wait_for_path(const std::filesystem::path& path, std::chrono::milliseconds timeout = 2s) {
+   const auto deadline = std::chrono::steady_clock::now() + timeout;
+   while (std::chrono::steady_clock::now() < deadline) {
+      if (std::filesystem::exists(path)) {
+         return true;
+      }
+      std::this_thread::sleep_for(10ms);
+   }
+   return std::filesystem::exists(path);
+}
 
 std::size_t count_spool_files(const std::filesystem::path& directory) {
    auto count = std::size_t{0};
@@ -621,6 +646,65 @@ BOOST_AUTO_TEST_CASE(crash_resend_skips_active_current_process_spool) {
    BOOST_TEST(stat_value.st_uid == ::geteuid());
    BOOST_TEST((stat_value.st_mode & (S_IWGRP | S_IWOTH)) == 0);
 }
+
+#if defined(__unix__) || defined(__APPLE__)
+BOOST_AUTO_TEST_CASE(crash_resend_retains_live_process_empty_spool_from_other_process) {
+   auto directory = temp_directory{"fcl-otlp-crash-live-empty"};
+   const auto ready_path = directory.path() / "capture.ready";
+   auto helper = helper_process{"hold_capture", directory.path(), {ready_path.string()}};
+
+   BOOST_REQUIRE(wait_for_path(ready_path, 5s));
+   const auto spool = directory.path() / ("crash-" + std::to_string(helper.pid()) + ".spool");
+   BOOST_REQUIRE(wait_for_path(spool, 5s));
+   BOOST_REQUIRE_EQUAL(std::filesystem::file_size(spool), 0U);
+
+   auto runtime = fcl::asio::runtime{};
+   auto collector = fake_collector{runtime, {{.status = fcl::http::status::ok}}};
+   auto exporter = fcl::otlp::log_exporter{runtime, make_options(collector)};
+   const auto result =
+       fcl::asio::blocking::run(runtime, fcl::otlp::async_resend_crashes(exporter, make_spool_options(directory.path())));
+   fcl::asio::blocking::run(runtime, exporter.async_shutdown());
+
+   BOOST_TEST(result.files_scanned == 1U);
+   BOOST_TEST(result.files_retained == 1U);
+   BOOST_TEST(result.bad_files == 0U);
+   BOOST_TEST(result.records_read == 0U);
+   BOOST_TEST(result.exported_records == 0U);
+   BOOST_TEST(collector.requests().empty());
+   BOOST_TEST(std::filesystem::exists(spool));
+   BOOST_TEST(!std::filesystem::exists(spool.string() + ".bad"));
+
+   struct stat stat_value {};
+   BOOST_REQUIRE(::lstat(spool.c_str(), &stat_value) == 0);
+   BOOST_TEST(S_ISREG(stat_value.st_mode));
+   BOOST_TEST(stat_value.st_uid == ::geteuid());
+   BOOST_TEST((stat_value.st_mode & (S_IWGRP | S_IWOTH)) == 0);
+}
+
+BOOST_AUTO_TEST_CASE(crash_resend_quarantines_stale_empty_spool_when_process_is_not_alive) {
+   auto directory = temp_directory{"fcl-otlp-crash-stale-empty"};
+   const auto spool = directory.path() / "crash-999999999.spool";
+   auto file = std::ofstream{spool, std::ios::binary};
+   file.close();
+   std::filesystem::permissions(spool, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                                std::filesystem::perm_options::replace);
+
+   auto runtime = fcl::asio::runtime{};
+   auto collector = fake_collector{runtime, {{.status = fcl::http::status::ok}}};
+   auto exporter = fcl::otlp::log_exporter{runtime, make_options(collector)};
+   const auto result =
+       fcl::asio::blocking::run(runtime, fcl::otlp::async_resend_crashes(exporter, make_spool_options(directory.path())));
+   fcl::asio::blocking::run(runtime, exporter.async_shutdown());
+
+   BOOST_TEST(result.files_scanned == 1U);
+   BOOST_TEST(result.files_retained == 0U);
+   BOOST_TEST(result.bad_files == 1U);
+   BOOST_TEST(result.exported_records == 0U);
+   BOOST_TEST(collector.requests().empty());
+   BOOST_TEST(!std::filesystem::exists(spool));
+   BOOST_TEST(std::filesystem::exists(spool.string() + ".bad"));
+}
+#endif
 
 BOOST_AUTO_TEST_CASE(crash_resend_does_not_mutate_spool_when_capture_installs_concurrently) {
    auto source_directory = temp_directory{"fcl-otlp-crash-race-source"};
@@ -983,7 +1067,7 @@ BOOST_AUTO_TEST_CASE(permanent_export_failure_leaves_spool_for_retry) {
 BOOST_AUTO_TEST_CASE(malformed_spool_is_quarantined_and_resend_is_bounded) {
    {
       auto directory = temp_directory{"fcl-otlp-crash-bad"};
-      auto file = std::ofstream{directory.path() / "crash-1.spool", std::ios::binary};
+      auto file = std::ofstream{directory.path() / "crash-999999999.spool", std::ios::binary};
       file << "truncated";
       file.close();
 
@@ -997,7 +1081,7 @@ BOOST_AUTO_TEST_CASE(malformed_spool_is_quarantined_and_resend_is_bounded) {
       BOOST_TEST(result.bad_files == 1U);
       BOOST_TEST(result.records_read == 0U);
       BOOST_TEST(count_spool_files(directory.path()) == 0U);
-      BOOST_TEST(std::filesystem::exists(directory.path() / "crash-1.spool.bad"));
+      BOOST_TEST(std::filesystem::exists(directory.path() / "crash-999999999.spool.bad"));
       BOOST_TEST(collector.requests().empty());
    }
 

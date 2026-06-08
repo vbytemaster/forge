@@ -622,6 +622,56 @@ struct spool_entry {
    return value.starts_with("crash-") && value.ends_with(".spool");
 }
 
+[[nodiscard]] std::optional<pid_t> pid_from_spool_name(std::string_view value) {
+   if (!is_spool_name(value)) {
+      return std::nullopt;
+   }
+   constexpr auto prefix_size = std::string_view{"crash-"}.size();
+   constexpr auto suffix_size = std::string_view{".spool"}.size();
+   const auto digits = value.substr(prefix_size, value.size() - prefix_size - suffix_size);
+   if (digits.empty()) {
+      return std::nullopt;
+   }
+
+   auto parsed = std::uint64_t{0};
+   for (const auto digit : digits) {
+      if (digit < '0' || digit > '9') {
+         return std::nullopt;
+      }
+      const auto value_digit = static_cast<std::uint64_t>(digit - '0');
+      if (parsed > (std::numeric_limits<std::uint64_t>::max() - value_digit) / 10) {
+         return std::nullopt;
+      }
+      parsed = parsed * 10 + value_digit;
+      if (parsed > static_cast<std::uint64_t>(std::numeric_limits<pid_t>::max())) {
+         return std::nullopt;
+      }
+   }
+   if (parsed == 0) {
+      return std::nullopt;
+   }
+   return static_cast<pid_t>(parsed);
+}
+
+[[nodiscard]] bool process_may_be_alive(pid_t pid) noexcept {
+   if (pid <= 0) {
+      return false;
+   }
+   errno = 0;
+   if (::kill(pid, 0) == 0) {
+      return true;
+   }
+   return errno == EPERM;
+}
+
+[[nodiscard]] bool spool_may_belong_to_live_process(const spool_entry& entry) noexcept {
+   const auto pid = pid_from_spool_name(entry.name);
+   if (!pid.has_value() || *pid == ::getpid()) {
+      return false;
+   }
+   return process_may_be_alive(*pid);
+}
+
 std::vector<spool_entry> list_spool_files(const std::filesystem::path& directory, int directory_fd) {
    auto duplicate = fd_guard{::dup(directory_fd)};
    if (duplicate.get() < 0) {
@@ -792,10 +842,15 @@ open_existing_result open_existing_spool_file(int directory_fd, const spool_entr
 }
 
 template <typename Mutation>
-[[nodiscard]] bool mutate_if_not_active_current_spool(int directory_fd, const spool_entry& entry, Mutation&& mutation) {
+[[nodiscard]] bool mutate_if_malformed_spool_still_quarantinable(int directory_fd, const spool_entry& entry,
+                                                                 const std::optional<spool_snapshot>& snapshot,
+                                                                 Mutation&& mutation) {
    const auto mutation_lock = resend_lock{directory_fd, entry.path.parent_path()};
    const auto lock = std::scoped_lock{capture_lifecycle_mutex};
-   if (active_spool_matches_locked(directory_fd, entry)) {
+   if (active_spool_matches_locked(directory_fd, entry) || spool_may_belong_to_live_process(entry)) {
+      return false;
+   }
+   if (snapshot.has_value() && !spool_snapshot_matches_locked(directory_fd, entry, *snapshot)) {
       return false;
    }
    std::forward<Mutation>(mutation)();
@@ -852,9 +907,7 @@ read_file_result read_records(int directory_fd, const spool_entry& entry, std::s
    if (opened.missing) {
       return result;
    }
-   if (opened.unsafe || opened.stat_value.st_size <= 0 ||
-       static_cast<std::uint64_t>(opened.stat_value.st_size) > max_file_bytes ||
-       static_cast<std::uint64_t>(opened.stat_value.st_size) % sizeof(disk_record) != 0) {
+   if (opened.unsafe || opened.stat_value.st_size < 0) {
       result.malformed = true;
       return result;
    }
@@ -865,6 +918,11 @@ read_file_result read_records(int directory_fd, const spool_entry& entry, std::s
        .inode = opened.stat_value.st_ino,
        .size = file_size,
    };
+   if (file_size == 0 || file_size > max_file_bytes || file_size % sizeof(disk_record) != 0) {
+      result.malformed = true;
+      return result;
+   }
+
    result.total_records = file_size / sizeof(disk_record);
    const auto count = std::min<std::uint64_t>(result.total_records, limit);
 
@@ -1133,8 +1191,8 @@ boost::asio::awaitable<crash_resend_result> async_resend_crashes(log_exporter& e
       }
       auto read = read_records(directory_fd.get(), entry, remaining, options.max_file_bytes);
       if (read.malformed) {
-         if (!mutate_if_not_active_current_spool(directory_fd.get(), entry,
-                                                 [&] { quarantine_file(directory_fd.get(), entry); })) {
+         if (!mutate_if_malformed_spool_still_quarantinable(directory_fd.get(), entry, read.snapshot,
+                                                            [&] { quarantine_file(directory_fd.get(), entry); })) {
             ++result.files_retained;
             continue;
          }

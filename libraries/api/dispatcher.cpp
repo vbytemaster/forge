@@ -29,7 +29,8 @@ namespace {
                                                        std::string_view method_name) noexcept {
    const auto* descriptor = plan.exports.empty() ? (plan.local == nullptr ? nullptr : plan.local->describe(requested))
                                                  : find_export(plan.exports, requested);
-   return descriptor == nullptr ? nullptr : find_method(*descriptor, method_name);
+   const auto* method = descriptor == nullptr ? nullptr : find_method(*descriptor, method_name);
+   return method != nullptr && method->since_revision <= requested.min_revision ? method : nullptr;
 }
 
 [[nodiscard]] bool grouped_stream_method(const binding_plan& plan, const frame& request) noexcept {

@@ -77,11 +77,15 @@ namespace {
 
 [[nodiscard]] bool method_hidden_by_export(const binding_plan& plan, api_ref requested,
                                            std::string_view method) noexcept {
-   if (plan.exports.empty()) {
+   const auto* exported = plan.exports.empty() ? (plan.local == nullptr ? nullptr : plan.local->describe(requested))
+                                               : find_export(plan.exports, requested);
+   if (exported == nullptr) {
       return false;
    }
-   const auto* exported = find_export(plan.exports, requested);
-   if (exported == nullptr || find_method(*exported, method) != nullptr || plan.local == nullptr) {
+   if (const auto* exported_method = find_method(*exported, method)) {
+      return exported_method->since_revision > requested.min_revision;
+   }
+   if (plan.exports.empty() || plan.local == nullptr) {
       return false;
    }
    const auto* local_descriptor = plan.local->describe(std::move(requested));

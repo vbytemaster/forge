@@ -592,6 +592,35 @@ BOOST_AUTO_TEST_CASE(binding_plan_rejects_method_above_exported_revision) {
    BOOST_TEST(*watch_calls == 0);
 }
 
+BOOST_AUTO_TEST_CASE(binding_plan_rejects_method_above_requested_revision) {
+   auto runtime = fcl::asio::runtime{};
+   auto registry = fcl::api::registry{};
+   auto descriptor = fcl::api::define<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
+                         .server_stream<&cache_api::watch, protocol::read_chunk, protocol::chunk>("watch")
+                         .build();
+   auto watch_calls = std::make_shared<int>(0);
+   registry.install<cache_api>(std::move(descriptor),
+                               std::make_shared<tracking_cache_impl>(std::make_shared<int>(0), watch_calls));
+
+   auto plan = fcl::api::binding().serve(registry).export_api<cache_api>(cache_api::ref(8)).build();
+   const auto request = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 46},
+       .api = {.id = {"cache"}, .major = 1, .min_revision = 0},
+       .method = "watch",
+       .codec = {.value = "fcl.raw"},
+       .payload = pack_api_payload(protocol::read_chunk{.ref = "abc"}),
+   };
+
+   const auto responses = fcl::asio::blocking::run(runtime, plan.dispatch_many(request));
+
+   BOOST_REQUIRE_EQUAL(responses.size(), 1U);
+   BOOST_CHECK(responses.front().kind == fcl::api::frame_kind::error);
+   const auto payload = fcl::raw::unpack<fcl::api::error_payload>(responses.front().payload);
+   BOOST_TEST(payload.error == "api_not_exported");
+   BOOST_TEST(*watch_calls == 0);
+}
+
 BOOST_AUTO_TEST_CASE(binding_plan_dispatches_client_stream_as_item_sequence_and_single_response) {
    auto runtime = fcl::asio::runtime{};
    auto registry = fcl::api::registry{};
@@ -758,6 +787,38 @@ BOOST_AUTO_TEST_CASE(api_dispatcher_does_not_group_future_client_stream_method) 
    const auto start = fcl::api::frame{
        .kind = fcl::api::frame_kind::request,
        .id = {.value = 45},
+       .api = {.id = {"cache"}, .major = 1, .min_revision = 2},
+       .method = "upload",
+       .codec = {.value = "fcl.raw"},
+   };
+
+   const auto responses = fcl::asio::blocking::run(runtime, dispatcher.dispatch(start));
+
+   BOOST_REQUIRE_EQUAL(responses.size(), 1U);
+   BOOST_CHECK(responses.front().kind == fcl::api::frame_kind::error);
+   const auto payload = fcl::raw::unpack<fcl::api::error_payload>(responses.front().payload);
+   BOOST_TEST(payload.error == "api_not_exported");
+   BOOST_TEST(dispatcher.grouped_calls() == 0U);
+   BOOST_TEST(dispatcher.active_calls() == 0U);
+   BOOST_TEST(*upload_calls == 0);
+}
+
+BOOST_AUTO_TEST_CASE(api_dispatcher_does_not_group_method_above_requested_revision) {
+   auto runtime = fcl::asio::runtime{};
+   auto registry = fcl::api::registry{};
+   auto descriptor = fcl::api::define<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
+                         .client_stream<&cache_api::upload, protocol::read_chunk, protocol::chunk>("upload")
+                         .build();
+   auto upload_calls = std::make_shared<int>(0);
+   registry.install<cache_api>(std::move(descriptor), std::make_shared<tracking_cache_impl>(upload_calls));
+
+   auto dispatcher = fcl::api::frame_dispatcher{
+       fcl::api::binding().serve(registry).export_api<cache_api>(cache_api::ref(8)).build(),
+       fcl::api::dispatch_options{.max_inflight = 1},
+   };
+   const auto start = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 47},
        .api = {.id = {"cache"}, .major = 1, .min_revision = 2},
        .method = "upload",
        .codec = {.value = "fcl.raw"},

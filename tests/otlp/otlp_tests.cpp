@@ -13,6 +13,12 @@
 #include <thread>
 #include <vector>
 
+#if defined(__unix__) || defined(__APPLE__)
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#endif
+
 import fcl.asio.blocking;
 import fcl.asio.runtime;
 import fcl.http.route_context;
@@ -63,6 +69,8 @@ class fake_collector {
 
    ~fake_collector() {
       server_.stop();
+      // fcl::http::server::stop() closes accept, while active sessions finish on runtime workers.
+      std::this_thread::sleep_for(20ms);
    }
 
    [[nodiscard]] std::string endpoint() const {
@@ -391,15 +399,68 @@ BOOST_AUTO_TEST_CASE(crash_spool_options_and_single_active_guard_are_typed) {
 
    auto directory = temp_directory{"fcl-otlp-crash-guard"};
    auto options = make_spool_options(directory.path());
-   options.capture_signals = false;
+   options.capture_terminate = false;
    auto guard = fcl::otlp::install_crash_capture(options);
 
    BOOST_CHECK_THROW((void)fcl::otlp::install_crash_capture(options), fcl::otlp::exceptions::capture_active);
 }
 
+#if defined(__unix__) || defined(__APPLE__)
+BOOST_AUTO_TEST_CASE(crash_spool_rejects_symlink_and_writable_directory) {
+   {
+      auto directory = temp_directory{"fcl-otlp-crash-symlink"};
+      const auto target = directory.path() / "target";
+      {
+         auto file = std::ofstream{target, std::ios::binary};
+         file << "untouched";
+      }
+      std::filesystem::create_symlink(target, directory.path() / ("crash-" + std::to_string(::getpid()) + ".spool"));
+
+      auto options = make_spool_options(directory.path());
+      options.capture_signals = false;
+      BOOST_CHECK_THROW((void)fcl::otlp::install_crash_capture(options), fcl::otlp::exceptions::spool_error);
+
+      auto input = std::ifstream{target, std::ios::binary};
+      auto body = std::string{};
+      input >> body;
+      BOOST_TEST(body == "untouched");
+   }
+
+   {
+      auto directory = temp_directory{"fcl-otlp-crash-writable-dir"};
+      std::filesystem::permissions(directory.path(),
+                                   std::filesystem::perms::owner_all | std::filesystem::perms::group_write,
+                                   std::filesystem::perm_options::replace);
+
+      auto options = make_spool_options(directory.path());
+      options.capture_signals = false;
+      BOOST_CHECK_THROW((void)fcl::otlp::install_crash_capture(options), fcl::otlp::exceptions::spool_error);
+
+      std::filesystem::permissions(directory.path(), std::filesystem::perms::owner_all,
+                                   std::filesystem::perm_options::replace);
+   }
+}
+
+BOOST_AUTO_TEST_CASE(crash_spool_creates_private_regular_file) {
+   auto directory = temp_directory{"fcl-otlp-crash-private-file"};
+   auto options = make_spool_options(directory.path());
+   options.capture_terminate = false;
+   auto guard = fcl::otlp::install_crash_capture(options);
+
+   const auto path = directory.path() / ("crash-" + std::to_string(::getpid()) + ".spool");
+   BOOST_REQUIRE(std::filesystem::exists(path));
+
+   struct stat stat_value {};
+   BOOST_REQUIRE(::lstat(path.c_str(), &stat_value) == 0);
+   BOOST_TEST(S_ISREG(stat_value.st_mode));
+   BOOST_TEST(stat_value.st_uid == ::geteuid());
+   BOOST_TEST((stat_value.st_mode & (S_IWGRP | S_IWOTH)) == 0);
+}
+#endif
+
 BOOST_AUTO_TEST_CASE(next_start_resends_terminate_spool_as_safe_fatal_log) {
    auto directory = temp_directory{"fcl-otlp-crash-terminate"};
-   BOOST_TEST(run_crash_helper("terminate", directory.path()) != 0);
+   BOOST_TEST(run_crash_helper("terminate", directory.path()) == 0);
    BOOST_REQUIRE_EQUAL(count_spool_files(directory.path()), 1U);
 
    auto runtime = fcl::asio::runtime{};
@@ -407,6 +468,7 @@ BOOST_AUTO_TEST_CASE(next_start_resends_terminate_spool_as_safe_fatal_log) {
    auto exporter = fcl::otlp::log_exporter{runtime, make_options(collector)};
 
    const auto result = fcl::asio::blocking::run(runtime, fcl::otlp::async_resend_crashes(exporter, make_spool_options(directory.path())));
+   fcl::asio::blocking::run(runtime, exporter.async_shutdown());
 
    BOOST_REQUIRE(collector.wait_for_requests(1));
    BOOST_TEST(result.records_read == 1U);
@@ -429,7 +491,7 @@ BOOST_AUTO_TEST_CASE(next_start_resends_terminate_spool_as_safe_fatal_log) {
 
 BOOST_AUTO_TEST_CASE(next_start_resends_signal_spool) {
    auto directory = temp_directory{"fcl-otlp-crash-signal"};
-   BOOST_TEST(run_crash_helper("sigabrt", directory.path()) != 0);
+   BOOST_TEST(run_crash_helper("sigabrt", directory.path()) == 0);
    BOOST_REQUIRE_EQUAL(count_spool_files(directory.path()), 1U);
 
    auto runtime = fcl::asio::runtime{};
@@ -437,6 +499,7 @@ BOOST_AUTO_TEST_CASE(next_start_resends_signal_spool) {
    auto exporter = fcl::otlp::log_exporter{runtime, make_options(collector)};
 
    const auto result = fcl::asio::blocking::run(runtime, fcl::otlp::async_resend_crashes(exporter, make_spool_options(directory.path())));
+   fcl::asio::blocking::run(runtime, exporter.async_shutdown());
 
    BOOST_REQUIRE(collector.wait_for_requests(1));
    BOOST_TEST(result.records_read == 1U);
@@ -451,7 +514,7 @@ BOOST_AUTO_TEST_CASE(next_start_resends_signal_spool) {
 
 BOOST_AUTO_TEST_CASE(permanent_export_failure_leaves_spool_for_retry) {
    auto directory = temp_directory{"fcl-otlp-crash-retry"};
-   BOOST_TEST(run_crash_helper("sigabrt", directory.path()) != 0);
+   BOOST_TEST(run_crash_helper("sigabrt", directory.path()) == 0);
    BOOST_REQUIRE_EQUAL(count_spool_files(directory.path()), 1U);
 
    {
@@ -460,6 +523,7 @@ BOOST_AUTO_TEST_CASE(permanent_export_failure_leaves_spool_for_retry) {
       auto exporter = fcl::otlp::log_exporter{runtime, make_options(collector)};
       const auto result =
           fcl::asio::blocking::run(runtime, fcl::otlp::async_resend_crashes(exporter, make_spool_options(directory.path())));
+      fcl::asio::blocking::run(runtime, exporter.async_shutdown());
 
       BOOST_REQUIRE(collector.wait_for_requests(1));
       BOOST_TEST(result.exported_records == 0U);
@@ -473,6 +537,7 @@ BOOST_AUTO_TEST_CASE(permanent_export_failure_leaves_spool_for_retry) {
       auto exporter = fcl::otlp::log_exporter{runtime, make_options(collector)};
       const auto result =
           fcl::asio::blocking::run(runtime, fcl::otlp::async_resend_crashes(exporter, make_spool_options(directory.path())));
+      fcl::asio::blocking::run(runtime, exporter.async_shutdown());
 
       BOOST_REQUIRE(collector.wait_for_requests(1));
       BOOST_TEST(result.exported_records == 1U);
@@ -493,6 +558,7 @@ BOOST_AUTO_TEST_CASE(malformed_spool_is_quarantined_and_resend_is_bounded) {
       auto exporter = fcl::otlp::log_exporter{runtime, make_options(collector)};
       const auto result =
           fcl::asio::blocking::run(runtime, fcl::otlp::async_resend_crashes(exporter, make_spool_options(directory.path())));
+      fcl::asio::blocking::run(runtime, exporter.async_shutdown());
 
       BOOST_TEST(result.bad_files == 1U);
       BOOST_TEST(result.records_read == 0U);
@@ -503,8 +569,8 @@ BOOST_AUTO_TEST_CASE(malformed_spool_is_quarantined_and_resend_is_bounded) {
 
    {
       auto directory = temp_directory{"fcl-otlp-crash-bounded"};
-      BOOST_TEST(run_crash_helper("sigabrt", directory.path()) != 0);
-      BOOST_TEST(run_crash_helper("sigabrt", directory.path()) != 0);
+      BOOST_TEST(run_crash_helper("sigabrt", directory.path()) == 0);
+      BOOST_TEST(run_crash_helper("sigabrt", directory.path()) == 0);
       BOOST_REQUIRE_EQUAL(count_spool_files(directory.path()), 2U);
 
       auto options = make_spool_options(directory.path());
@@ -514,6 +580,7 @@ BOOST_AUTO_TEST_CASE(malformed_spool_is_quarantined_and_resend_is_bounded) {
       auto collector = fake_collector{runtime, {{.status = fcl::http::status::ok}}};
       auto exporter = fcl::otlp::log_exporter{runtime, make_options(collector)};
       const auto result = fcl::asio::blocking::run(runtime, fcl::otlp::async_resend_crashes(exporter, options));
+      fcl::asio::blocking::run(runtime, exporter.async_shutdown());
 
       BOOST_REQUIRE(collector.wait_for_requests(1));
       BOOST_TEST(result.records_read == 1U);

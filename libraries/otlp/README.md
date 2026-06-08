@@ -72,7 +72,9 @@ auto result = co_await fcl::otlp::async_resend_crashes(
 
 Crash capture writes only bounded, fixed-size records from signal-safe paths.
 Human-readable JSON, HTTP export, symbolication and redaction run later during
-normal process startup.
+normal process startup. By default `chain_after_capture` remains enabled, so
+FCL records evidence and then returns to the platform/default crash handling;
+tests or supervised helpers may disable it to exit cleanly after capture.
 
 ## Tests
 

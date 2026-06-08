@@ -42,6 +42,9 @@ runtime or HTTP dependencies.
 - Crash signal capture writes private fixed-size binary records into a
   per-process spool file. The handler performs no allocation, logger calls,
   JSON encoding, HTTP work, symbolication or redaction.
+- Production defaults chain to platform/default crash handling after capture.
+  Tests can disable chaining so helper processes exit cleanly after writing
+  evidence without making CTest treat the child crash as the test failure.
 - Next-start resend validates checksums, quarantines malformed/truncated spool
   files as `.bad`, exports safe fatal evidence through `log_exporter` and
   removes spool files only after successful export.

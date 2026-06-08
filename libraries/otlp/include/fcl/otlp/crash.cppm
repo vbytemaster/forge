@@ -25,6 +25,7 @@ struct crash_spool_options {
    std::size_t max_file_bytes = 256 * 1024;
    bool capture_signals = true;
    bool capture_terminate = true;
+   bool chain_after_capture = true;
    std::vector<int> signals = default_crash_signals();
 };
 

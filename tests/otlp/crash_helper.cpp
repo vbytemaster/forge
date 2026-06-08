@@ -32,6 +32,7 @@ fcl::otlp::crash_spool_options make_options(const char* directory) {
        .max_file_bytes = 256 * 1024,
        .capture_signals = true,
        .capture_terminate = true,
+       .chain_after_capture = false,
    };
 }
 

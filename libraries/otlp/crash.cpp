@@ -148,6 +148,7 @@ struct crash_state {
    std::terminate_handler previous_terminate = nullptr;
    bool terminate_installed = false;
    bool restored = false;
+   bool chain_after_capture = true;
 
    ~crash_state() {
       restore();
@@ -275,17 +276,21 @@ void capture_stack_addresses(disk_record& record) noexcept {
    }
 }
 
-[[noreturn]] void forward_signal_or_exit(int signal_number) noexcept {
+[[noreturn]] void forward_signal_or_exit(int signal_number, bool chain_after_capture) noexcept {
 #if defined(__unix__) || defined(__APPLE__)
-   ::signal(signal_number, SIG_DFL);
-   ::kill(::getpid(), signal_number);
+   if (chain_after_capture) {
+      ::signal(signal_number, SIG_DFL);
+      ::kill(::getpid(), signal_number);
+   }
 #endif
-   std::_Exit(128 + signal_number);
+   std::_Exit(chain_after_capture ? 128 + signal_number : 0);
 }
 
 void signal_handler(int signal_number, siginfo_t* info, void*) noexcept {
    auto* state = active_capture.load(std::memory_order_acquire);
+   auto chain_after_capture = true;
    if (state != nullptr) {
+      chain_after_capture = state->chain_after_capture;
       auto record = disk_record{};
       fill_common(record, *state, record_kind::signal);
       record.signal_number = signal_number;
@@ -294,13 +299,15 @@ void signal_handler(int signal_number, siginfo_t* info, void*) noexcept {
       }
       write_record(*state, record);
    }
-   forward_signal_or_exit(signal_number);
+   forward_signal_or_exit(signal_number, chain_after_capture);
 }
 
 [[noreturn]] void terminate_handler() noexcept {
    auto* state = active_capture.load(std::memory_order_acquire);
    auto previous = std::terminate_handler{};
+   auto chain_after_capture = true;
    if (state != nullptr) {
+      chain_after_capture = state->chain_after_capture;
       auto record = disk_record{};
       fill_common(record, *state, record_kind::terminate);
       record.unix_nanos = now_nanos();
@@ -311,10 +318,13 @@ void signal_handler(int signal_number, siginfo_t* info, void*) noexcept {
       active_capture.store(nullptr, std::memory_order_release);
    }
 
-   if (previous != nullptr && previous != terminate_handler) {
+   if (chain_after_capture && previous != nullptr && previous != terminate_handler) {
       previous();
    }
-   std::abort();
+   if (chain_after_capture) {
+      std::abort();
+   }
+   std::_Exit(0);
 }
 
 void ensure_crash_directory(const std::filesystem::path& directory) {
@@ -332,18 +342,110 @@ std::filesystem::path spool_path_for(const std::filesystem::path& directory, std
 }
 
 #if defined(__unix__) || defined(__APPLE__)
-int open_spool_file(const std::filesystem::path& path) {
-   auto flags = O_CREAT | O_APPEND | O_WRONLY;
+struct fd_guard {
+   int fd = -1;
+
+   ~fd_guard() {
+      if (fd >= 0) {
+         ::close(fd);
+      }
+   }
+
+   fd_guard() = default;
+   explicit fd_guard(int value) : fd(value) {}
+
+   fd_guard(const fd_guard&) = delete;
+   fd_guard& operator=(const fd_guard&) = delete;
+
+   fd_guard(fd_guard&& other) noexcept : fd(std::exchange(other.fd, -1)) {}
+   fd_guard& operator=(fd_guard&& other) noexcept {
+      if (this != &other) {
+         if (fd >= 0) {
+            ::close(fd);
+         }
+         fd = std::exchange(other.fd, -1);
+      }
+      return *this;
+   }
+
+   [[nodiscard]] int get() const noexcept {
+      return fd;
+   }
+
+   [[nodiscard]] int release() noexcept {
+      return std::exchange(fd, -1);
+   }
+};
+
+void throw_errno_spool_error(std::string_view message, const std::filesystem::path& path) {
+   FCL_THROW_EXCEPTION(exceptions::spool_error, std::string{message}, fcl::exceptions::ctx("path", path.string()),
+                       fcl::exceptions::ctx("errno", errno));
+}
+
+void ensure_owner_private_mode(const struct stat& value, const std::filesystem::path& path, bool directory) {
+   const auto mode = value.st_mode;
+   if (directory) {
+      if (!S_ISDIR(mode)) {
+         FCL_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool path is not a directory",
+                             fcl::exceptions::ctx("path", path.string()));
+      }
+   } else if (!S_ISREG(mode)) {
+      FCL_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool path is not a regular file",
+                          fcl::exceptions::ctx("path", path.string()));
+   }
+   if (value.st_uid != ::geteuid()) {
+      FCL_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool path is not owned by current user",
+                          fcl::exceptions::ctx("path", path.string()));
+   }
+   if ((mode & (S_IWGRP | S_IWOTH)) != 0) {
+      FCL_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool path is group/world writable",
+                          fcl::exceptions::ctx("path", path.string()));
+   }
+}
+
+fd_guard open_spool_directory(const std::filesystem::path& directory) {
+   auto flags = O_RDONLY;
 #if defined(O_CLOEXEC)
    flags |= O_CLOEXEC;
 #endif
-   const auto fd = ::open(path.c_str(), flags, S_IRUSR | S_IWUSR);
-   if (fd < 0) {
-      FCL_THROW_EXCEPTION(exceptions::spool_error, "failed to open OTLP crash spool",
-                          fcl::exceptions::ctx("path", path.string()),
-                          fcl::exceptions::ctx("errno", errno));
+#if defined(O_NOFOLLOW)
+   flags |= O_NOFOLLOW;
+#endif
+#if defined(O_DIRECTORY)
+   flags |= O_DIRECTORY;
+#endif
+   auto fd = fd_guard{::open(directory.c_str(), flags)};
+   if (fd.get() < 0) {
+      throw_errno_spool_error("failed to open OTLP crash spool directory", directory);
    }
+   struct stat stat_value {};
+   if (::fstat(fd.get(), &stat_value) != 0) {
+      throw_errno_spool_error("failed to stat OTLP crash spool directory", directory);
+   }
+   ensure_owner_private_mode(stat_value, directory, true);
    return fd;
+}
+
+int open_spool_file(const std::filesystem::path& path) {
+   const auto directory_fd = open_spool_directory(path.parent_path());
+   auto flags = O_CREAT | O_EXCL | O_WRONLY;
+#if defined(O_CLOEXEC)
+   flags |= O_CLOEXEC;
+#endif
+#if defined(O_NOFOLLOW)
+   flags |= O_NOFOLLOW;
+#endif
+   const auto filename = path.filename().string();
+   auto fd = fd_guard{::openat(directory_fd.get(), filename.c_str(), flags, S_IRUSR | S_IWUSR)};
+   if (fd.get() < 0) {
+      throw_errno_spool_error("failed to create OTLP crash spool", path);
+   }
+   struct stat stat_value {};
+   if (::fstat(fd.get(), &stat_value) != 0) {
+      throw_errno_spool_error("failed to stat OTLP crash spool", path);
+   }
+   ensure_owner_private_mode(stat_value, path, false);
+   return fd.release();
 }
 #endif
 
@@ -572,8 +674,12 @@ crash_guard::operator bool() const noexcept {
 crash_guard install_crash_capture(crash_spool_options options) {
    validate_options(options, true);
    ensure_crash_directory(options.directory);
+   if (active_capture.load(std::memory_order_acquire) != nullptr) {
+      FCL_THROW_EXCEPTION(exceptions::capture_active, "OTLP crash capture is already active");
+   }
 
    auto state = std::make_shared<crash_state>();
+   state->chain_after_capture = options.chain_after_capture;
 #if defined(__unix__) || defined(__APPLE__)
    state->pid = ::getpid();
    state->max_records = static_cast<std::sig_atomic_t>(options.max_records_per_process);

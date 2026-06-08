@@ -58,9 +58,6 @@ enum class scope {
 }
 
 [[nodiscard]] scope endpoint_scope(const endpoint& value) {
-   if (value.relayed.has_value()) {
-      return scope::public_address;
-   }
    using host_kind = endpoint::host_kind;
    switch (value.transport.host_type) {
    case host_kind::dns:

@@ -585,6 +585,13 @@ struct spool_entry {
    return value.starts_with("crash-") && value.ends_with(".spool");
 }
 
+[[nodiscard]] bool is_active_current_process_spool(const spool_entry& entry) {
+   if (active_capture.load(std::memory_order_acquire) == nullptr) {
+      return false;
+   }
+   return entry.name == "crash-" + std::to_string(::getpid()) + ".spool";
+}
+
 std::vector<spool_entry> list_spool_files(const std::filesystem::path& directory, int directory_fd) {
    auto duplicate = fd_guard{::dup(directory_fd)};
    if (duplicate.get() < 0) {
@@ -956,6 +963,10 @@ boost::asio::awaitable<crash_resend_result> async_resend_crashes(log_exporter& e
       }
 
       ++result.files_scanned;
+      if (is_active_current_process_spool(entry)) {
+         ++result.files_retained;
+         continue;
+      }
       auto read = read_records(directory_fd.get(), entry, remaining, options.max_file_bytes);
       if (read.malformed) {
          quarantine_file(directory_fd.get(), entry);

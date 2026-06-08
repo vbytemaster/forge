@@ -1336,6 +1336,45 @@ BOOST_AUTO_TEST_CASE(p2p_peer_exchange_filters_non_routable_third_party_endpoint
    fcl::asio::blocking::run(runtime, server.async_stop());
 }
 
+BOOST_AUTO_TEST_CASE(p2p_host_addresses_rejects_third_party_relay_with_non_routable_transport) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   const auto server_identity = make_test_certificate_identity("peer-exchange-relay-filter-server");
+   const auto client_identity = make_test_certificate_identity("peer-exchange-relay-filter-client");
+   auto server = node{runtime, options_for(server_identity)};
+   auto client = node{runtime, options_for(client_identity)};
+   const auto third = peer(221);
+
+   const auto loopback_relay = parse_endpoint("/ip4/127.0.0.1/tcp/9090/p2p-circuit/p2p/" + third.to_string());
+   const auto private_relay = parse_endpoint("/ip4/10.0.0.7/tcp/9090/p2p-circuit/p2p/" + third.to_string());
+   const auto link_local_relay = parse_endpoint("/ip4/169.254.10.7/tcp/9090/p2p-circuit/p2p/" + third.to_string());
+   const auto public_relay = parse_endpoint("/ip4/8.8.8.8/tcp/9090/p2p-circuit/p2p/" + third.to_string());
+   const auto dns_relay = parse_endpoint("/dns4/relay.example.com/tcp/9090/p2p-circuit/p2p/" + third.to_string());
+   for (const auto& endpoint_value : {loopback_relay, private_relay, link_local_relay, public_relay, dns_relay}) {
+      server.peers().learn_endpoint(third, endpoint_value, capability_set{});
+   }
+
+   fcl::asio::blocking::run(runtime, server.async_listen(make_quic_endpoint(0)));
+   const auto quic = require_endpoint_for(server.local_endpoints(), endpoint::protocol_kind::quic_v1);
+   client.peers().learn_endpoint(server.local_peer(), quic,
+                                 capability_set{.bits = capabilities::direct_quic | capabilities::peer_exchange});
+   fcl::asio::blocking::run(runtime, client.async_request_peer_exchange(server.local_peer()));
+
+   const auto learned = client.peers().find(third);
+   BOOST_REQUIRE(learned);
+   auto seen = std::set<std::string>{};
+   for (const auto& item : learned->endpoints) {
+      seen.insert(item.endpoint.to_string());
+   }
+   BOOST_TEST(seen.contains(public_relay.to_string()));
+   BOOST_TEST(seen.contains(dns_relay.to_string()));
+   BOOST_TEST(!seen.contains(loopback_relay.to_string()));
+   BOOST_TEST(!seen.contains(private_relay.to_string()));
+   BOOST_TEST(!seen.contains(link_local_relay.to_string()));
+
+   fcl::asio::blocking::run(runtime, client.async_stop());
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
 BOOST_AUTO_TEST_CASE(p2p_dht_discovery_rejects_third_party_non_routable_endpoints) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
    auto server_options = options_for(peer(221), capability_set{.bits = capabilities::direct_quic | capabilities::dht});
@@ -1358,10 +1397,13 @@ BOOST_AUTO_TEST_CASE(p2p_dht_discovery_rejects_third_party_non_routable_endpoint
    const auto private_provider = peer(225);
    auto private_endpoint = make_tcp_endpoint(4225, "192.168.50.20");
    private_endpoint.peer = private_provider;
+   const auto loopback_relay_provider = peer(228);
+   const auto loopback_relay_endpoint =
+       parse_endpoint("/ip4/127.0.0.1/tcp/4226/p2p-circuit/p2p/" + loopback_relay_provider.to_string());
 
    for (const auto& [provider, endpoint_value] :
         {std::pair{public_provider, public_endpoint}, std::pair{loopback_provider, loopback_endpoint},
-         std::pair{private_provider, private_endpoint}}) {
+         std::pair{private_provider, private_endpoint}, std::pair{loopback_relay_provider, loopback_relay_endpoint}}) {
       server.peers().upsert_provider(peer_store::provider_record{
           .key = key,
           .provider =
@@ -1456,6 +1498,8 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_discovery_rejects_third_party_non_routable_e
    const auto relay_identity = make_test_certificate_identity("rendezvous-third-party-relay");
    const auto loopback_identity = make_test_certificate_identity("rendezvous-third-party-loopback");
    const auto private_identity = make_test_certificate_identity("rendezvous-third-party-private");
+   const auto loopback_relay_identity = make_test_certificate_identity("rendezvous-third-party-loopback-relay");
+   const auto private_relay_identity = make_test_certificate_identity("rendezvous-third-party-private-relay");
    auto public_endpoint = make_dns_tcp_endpoint(4228, "api.example.com");
    public_endpoint.peer = public_identity.peer;
    const auto relay_endpoint = parse_endpoint("/ip4/8.8.8.8/tcp/4001/p2p-circuit/p2p/" + relay_identity.peer.to_string());
@@ -1463,6 +1507,10 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_discovery_rejects_third_party_non_routable_e
    loopback_endpoint.peer = loopback_identity.peer;
    auto private_endpoint = make_tcp_endpoint(4231, "10.20.30.40");
    private_endpoint.peer = private_identity.peer;
+   const auto loopback_relay_endpoint =
+       parse_endpoint("/ip4/127.0.0.1/tcp/4001/p2p-circuit/p2p/" + loopback_relay_identity.peer.to_string());
+   const auto private_relay_endpoint =
+       parse_endpoint("/ip4/10.20.30.40/tcp/4001/p2p-circuit/p2p/" + private_relay_identity.peer.to_string());
    const auto expires_at = std::chrono::system_clock::now() + std::chrono::hours{1};
 
    server.peers().upsert_rendezvous(rendezvous::registration{
@@ -1501,6 +1549,26 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_discovery_rejects_third_party_non_routable_e
        .expires_at = expires_at,
        .sequence = 4,
    });
+   server.peers().upsert_rendezvous(rendezvous::registration{
+       .namespace_name = "fcl.discovery",
+       .peer = loopback_relay_identity.peer,
+       .endpoints = std::vector<endpoint>{loopback_relay_endpoint},
+       .signed_peer_record =
+           make_signed_rendezvous_peer_record(loopback_relay_identity, std::vector<endpoint>{loopback_relay_endpoint}, 5),
+       .ttl = std::chrono::seconds{7'200},
+       .expires_at = expires_at,
+       .sequence = 5,
+   });
+   server.peers().upsert_rendezvous(rendezvous::registration{
+       .namespace_name = "fcl.discovery",
+       .peer = private_relay_identity.peer,
+       .endpoints = std::vector<endpoint>{private_relay_endpoint},
+       .signed_peer_record =
+           make_signed_rendezvous_peer_record(private_relay_identity, std::vector<endpoint>{private_relay_endpoint}, 6),
+       .ttl = std::chrono::seconds{7'200},
+       .expires_at = expires_at,
+       .sequence = 6,
+   });
 
    const auto discovered = fcl::asio::blocking::run(
        runtime, client.async_rendezvous_discover(server.local_peer(), rendezvous::discover_request{
@@ -1515,6 +1583,8 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_discovery_rejects_third_party_non_routable_e
    BOOST_TEST(peers.contains(relay_identity.peer.to_string()));
    BOOST_TEST(!peers.contains(loopback_identity.peer.to_string()));
    BOOST_TEST(!peers.contains(private_identity.peer.to_string()));
+   BOOST_TEST(!peers.contains(loopback_relay_identity.peer.to_string()));
+   BOOST_TEST(!peers.contains(private_relay_identity.peer.to_string()));
 
    fcl::asio::blocking::run(runtime, client.async_stop());
    fcl::asio::blocking::run(runtime, server.async_stop());

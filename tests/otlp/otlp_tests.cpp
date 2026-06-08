@@ -488,6 +488,38 @@ BOOST_AUTO_TEST_CASE(crash_spool_reuses_existing_safe_file) {
    BOOST_TEST(stat_value.st_uid == ::geteuid());
    BOOST_TEST((stat_value.st_mode & (S_IWGRP | S_IWOTH)) == 0);
 }
+
+BOOST_AUTO_TEST_CASE(crash_resend_skips_active_current_process_spool) {
+   auto directory = temp_directory{"fcl-otlp-crash-active-resend"};
+   auto options = make_spool_options(directory.path());
+   options.capture_terminate = false;
+   auto guard = fcl::otlp::install_crash_capture(options);
+   BOOST_REQUIRE(guard);
+
+   const auto path = directory.path() / ("crash-" + std::to_string(::getpid()) + ".spool");
+   BOOST_REQUIRE(std::filesystem::exists(path));
+
+   auto runtime = fcl::asio::runtime{};
+   auto collector = fake_collector{runtime, {{.status = fcl::http::status::ok}}};
+   auto exporter = fcl::otlp::log_exporter{runtime, make_options(collector)};
+   const auto result =
+       fcl::asio::blocking::run(runtime, fcl::otlp::async_resend_crashes(exporter, make_spool_options(directory.path())));
+   fcl::asio::blocking::run(runtime, exporter.async_shutdown());
+
+   BOOST_TEST(result.files_scanned == 1U);
+   BOOST_TEST(result.files_retained == 1U);
+   BOOST_TEST(result.bad_files == 0U);
+   BOOST_TEST(result.exported_records == 0U);
+   BOOST_TEST(collector.requests().empty());
+   BOOST_TEST(std::filesystem::exists(path));
+   BOOST_TEST(!std::filesystem::exists(path.string() + ".bad"));
+
+   struct stat stat_value {};
+   BOOST_REQUIRE(::lstat(path.c_str(), &stat_value) == 0);
+   BOOST_TEST(S_ISREG(stat_value.st_mode));
+   BOOST_TEST(stat_value.st_uid == ::geteuid());
+   BOOST_TEST((stat_value.st_mode & (S_IWGRP | S_IWOTH)) == 0);
+}
 #endif
 
 #if defined(__unix__) || defined(__APPLE__)

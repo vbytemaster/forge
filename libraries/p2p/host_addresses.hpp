@@ -22,5 +22,7 @@ struct learning_context {
 [[nodiscard]] std::optional<fcl::p2p::endpoint> learned(fcl::p2p::endpoint value, const peer_id& peer);
 [[nodiscard]] std::optional<fcl::p2p::endpoint> learned(fcl::p2p::endpoint value, const peer_id& peer,
                                                         learning_context context);
+[[nodiscard]] std::vector<fcl::p2p::endpoint>
+sanitize_discovered_endpoints(std::vector<fcl::p2p::endpoint> values, const peer_id& peer, learning_context context);
 
 } // namespace fcl::p2p::host_addresses

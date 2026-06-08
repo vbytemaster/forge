@@ -177,4 +177,22 @@ std::optional<endpoint> learned(endpoint value, const peer_id& peer, learning_co
    return value;
 }
 
+std::vector<endpoint> sanitize_discovered_endpoints(std::vector<endpoint> values, const peer_id& peer,
+                                                    learning_context context) {
+   auto out = std::vector<endpoint>{};
+   auto seen = std::set<std::string>{};
+   out.reserve(values.size());
+   for (auto& value : values) {
+      auto item = learned(std::move(value), peer, context);
+      if (!item) {
+         continue;
+      }
+      const auto key = item->to_string();
+      if (seen.insert(key).second) {
+         out.push_back(std::move(*item));
+      }
+   }
+   return out;
+}
+
 } // namespace fcl::p2p::host_addresses

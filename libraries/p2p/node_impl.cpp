@@ -2425,6 +2425,74 @@ boost::asio::awaitable<void> node::impl::handle_dcutr(std::shared_ptr<node::impl
    record_hole_punch_result(hole_punch::status::failed);
 }
 
+namespace {
+
+[[nodiscard]] host_addresses::learning_context discovery_context_for_session_peer(const auto& session,
+                                                                                  const peer_id& peer) {
+   if (session && peer == session->info.remote_peer) {
+      auto remote_endpoint = session->remote_endpoint ? session->remote_endpoint : session->direct_endpoint;
+      return host_addresses::learning_context{
+          .source = host_addresses::source_kind::authenticated,
+          .remote_endpoint = std::move(remote_endpoint),
+      };
+   }
+   return host_addresses::learning_context{.source = host_addresses::source_kind::third_party};
+}
+
+[[nodiscard]] dht::peer sanitize_discovered_peer_for_session(dht::peer value, const auto& session) {
+   value.endpoints = host_addresses::sanitize_discovered_endpoints(
+       std::move(value.endpoints), value.id, discovery_context_for_session_peer(session, value.id));
+   return value;
+}
+
+[[nodiscard]] bool has_usable_endpoint(const dht::peer& value) noexcept {
+   return !value.endpoints.empty();
+}
+
+[[nodiscard]] std::vector<endpoint> endpoints_from_registration(const rendezvous::registration& registration) {
+   if (registration.signed_peer_record.empty()) {
+      return registration.endpoints;
+   }
+   try {
+      const auto record =
+          rendezvous::codec::open_peer_record(signed_envelope::decode(registration.signed_peer_record),
+                                              registration.peer);
+      return record.endpoints;
+   } catch (const fcl::exceptions::base&) {
+      return {};
+   }
+}
+
+[[nodiscard]] std::optional<rendezvous::registration>
+sanitize_registration_for_session(rendezvous::registration registration, const auto& session) {
+   const auto original_endpoints = endpoints_from_registration(registration);
+   if (original_endpoints.empty()) {
+      if (!registration.signed_peer_record.empty()) {
+         return std::nullopt;
+      }
+      return registration;
+   }
+   auto sanitized = host_addresses::sanitize_discovered_endpoints(
+       original_endpoints, registration.peer, discovery_context_for_session_peer(session, registration.peer));
+   if (sanitized.empty()) {
+      return std::nullopt;
+   }
+   if (registration.signed_peer_record.empty() || sanitized.size() != original_endpoints.size()) {
+      registration.signed_peer_record.clear();
+   } else {
+      for (auto index = std::size_t{0}; index < sanitized.size(); ++index) {
+         if (sanitized[index].to_string() != original_endpoints[index].to_string()) {
+            registration.signed_peer_record.clear();
+            break;
+         }
+      }
+   }
+   registration.endpoints = std::move(sanitized);
+   return registration;
+}
+
+} // namespace
+
 boost::asio::awaitable<void> node::impl::handle_dht(std::shared_ptr<node::impl::session_state> session,
                                                     fcl::p2p::stream stream) {
    if (!options.capabilities.has(capabilities::dht) || options.limits.dht.operating_mode != dht::mode::server) {
@@ -2434,13 +2502,19 @@ boost::asio::awaitable<void> node::impl::handle_dht(std::shared_ptr<node::impl::
    auto request = dht::codec::decode(
        co_await async_read_length_delimited(stream, buffer, options.limits.dht.max_message_size), options.limits.dht);
    increment_dht_query();
-   for (const auto& peer : request.closer_peers) {
-      store.upsert_routing_peer(peer, discovery::source::dht,
-                                std::chrono::system_clock::now() + options.limits.dht.refresh_interval);
+   for (auto peer : request.closer_peers) {
+      peer = sanitize_discovered_peer_for_session(std::move(peer), session);
+      if (has_usable_endpoint(peer)) {
+         store.upsert_routing_peer(peer, discovery::source::dht,
+                                   std::chrono::system_clock::now() + options.limits.dht.refresh_interval);
+      }
    }
-   for (const auto& peer : request.provider_peers) {
-      store.upsert_routing_peer(peer, discovery::source::dht,
-                                std::chrono::system_clock::now() + options.limits.dht.refresh_interval);
+   for (auto peer : request.provider_peers) {
+      peer = sanitize_discovered_peer_for_session(std::move(peer), session);
+      if (has_usable_endpoint(peer)) {
+         store.upsert_routing_peer(peer, discovery::source::dht,
+                                   std::chrono::system_clock::now() + options.limits.dht.refresh_interval);
+      }
    }
 
    auto response = dht::message{
@@ -2461,9 +2535,10 @@ boost::asio::awaitable<void> node::impl::handle_dht(std::shared_ptr<node::impl::
          if (provider.id != session->info.remote_peer) {
             continue;
          }
+         auto sanitized = sanitize_discovered_peer_for_session(provider, session);
          store.upsert_provider(peer_store::provider_record{
              .key = request.key_value,
-             .provider = provider,
+             .provider = std::move(sanitized),
              .discovered_by = discovery::source::dht,
              .expires_at = std::chrono::system_clock::now() + options.limits.dht.provider_record_ttl,
          });
@@ -2527,16 +2602,23 @@ boost::asio::awaitable<void> node::impl::handle_rendezvous(std::shared_ptr<node:
             }
          }
          if (response.status_value == rendezvous::status::ok) {
-            store.upsert_rendezvous(rendezvous::registration{
+            auto registration = rendezvous::registration{
                 .namespace_name = request.register_value->namespace_name,
                 .peer = registered_peer,
                 .endpoints = std::move(endpoints),
                 .signed_peer_record = request.register_value->signed_peer_record,
                 .ttl = ttl,
                 .expires_at = std::chrono::system_clock::now() + ttl,
-            });
-            response.ttl = ttl;
-            increment_rendezvous_registration();
+            };
+            auto sanitized = sanitize_registration_for_session(std::move(registration), session);
+            if (!sanitized) {
+               response.status_value = rendezvous::status::not_authorized;
+               response.status_text = "rendezvous registration endpoints are not routable from source";
+            } else {
+               store.upsert_rendezvous(std::move(*sanitized));
+               response.ttl = ttl;
+               increment_rendezvous_registration();
+            }
          }
       }
       co_await stream.async_write(rendezvous::codec::encode(

@@ -102,11 +102,13 @@ struct batch_response {
 };
 
 template <typename Query>
-boost::asio::awaitable<std::vector<batch_response>> query_batch(std::vector<dht::peer> batch, Query& query) {
+boost::asio::awaitable<std::vector<batch_response>>
+query_batch_on_strand(std::vector<dht::peer> batch, Query& query,
+                      boost::asio::strand<boost::asio::any_io_executor> strand) {
    namespace asio = boost::asio;
 
    struct state {
-      explicit state(asio::any_io_executor executor, std::vector<dht::peer> peers)
+      explicit state(asio::strand<asio::any_io_executor> executor, std::vector<dht::peer> peers)
           : remaining(peers.size()), timer(std::move(executor)) {
          items.reserve(peers.size());
          for (auto& peer : peers) {
@@ -114,18 +116,16 @@ boost::asio::awaitable<std::vector<batch_response>> query_batch(std::vector<dht:
          }
       }
 
-      std::mutex mutex;
       std::vector<batch_response> items;
       std::size_t remaining;
       asio::steady_timer timer;
    };
 
-   auto executor = asio::any_io_executor{co_await asio::this_coro::executor};
-   auto shared = std::make_shared<state>(executor, std::move(batch));
+   auto shared = std::make_shared<state>(strand, std::move(batch));
    for (auto index = std::size_t{}; index < shared->items.size(); ++index) {
       const auto peer = shared->items[index].peer;
       asio::co_spawn(
-          executor,
+          strand,
           [shared, index, peer, &query]() mutable -> asio::awaitable<void> {
              auto response = std::optional<dht::message>{};
              auto failed = false;
@@ -134,28 +134,35 @@ boost::asio::awaitable<std::vector<batch_response>> query_batch(std::vector<dht:
              } catch (const fcl::exceptions::base&) {
                 failed = true;
              }
-             {
-                auto lock = std::scoped_lock{shared->mutex};
-                shared->items[index].response = std::move(response);
-                shared->items[index].failed = failed;
-                --shared->remaining;
-             }
-             shared->timer.cancel();
+             shared->items[index].response = std::move(response);
+             shared->items[index].failed = failed;
+             --shared->remaining;
+             shared->timer.cancel(); // on_strand
           },
           asio::detached);
    }
 
    while (true) {
-      {
-         auto lock = std::scoped_lock{shared->mutex};
-         if (shared->remaining == 0) {
-            co_return std::move(shared->items);
-         }
+      if (shared->remaining == 0) {
+         co_return std::move(shared->items);
       }
       shared->timer.expires_after(std::chrono::minutes{10});
       auto error = boost::system::error_code{};
       co_await shared->timer.async_wait(asio::redirect_error(asio::use_awaitable, error));
    }
+}
+
+template <typename Query>
+boost::asio::awaitable<std::vector<batch_response>> query_batch(std::vector<dht::peer> batch, Query& query) {
+   namespace asio = boost::asio;
+   auto executor = asio::any_io_executor{co_await asio::this_coro::executor};
+   auto strand = asio::make_strand(executor);
+   co_return co_await asio::co_spawn(
+       strand,
+       [batch = std::move(batch), &query, strand]() mutable -> asio::awaitable<std::vector<batch_response>> {
+          co_return co_await query_batch_on_strand(std::move(batch), query, strand);
+       },
+       asio::use_awaitable);
 }
 
 template <typename Query>

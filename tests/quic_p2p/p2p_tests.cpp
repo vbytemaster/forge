@@ -3730,7 +3730,7 @@ BOOST_AUTO_TEST_CASE(p2p_identify_protocol_advertises_supported_protocols) {
    const auto payload = fcl::asio::blocking::run(runtime, read_length_delimited(stream));
    const auto doc = identify::decode(payload);
 
-   BOOST_TEST(doc.agent_version == "fcl/0.1.0");
+   BOOST_TEST(doc.agent_version == "fcl/1.0.0");
    BOOST_TEST(std::ranges::any_of(doc.protocols, [](const protocol_id& value) { return value == builtins::ping; }));
    BOOST_TEST(std::ranges::any_of(doc.protocols, [](const protocol_id& value) { return value == builtins::identify; }));
    BOOST_TEST(std::ranges::any_of(doc.protocols, [](const protocol_id& value) { return value == builtins::echo; }));

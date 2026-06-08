@@ -72,8 +72,8 @@ class node {
       fcl::transport::limits transport_limits{};
       std::vector<fcl::p2p::endpoint> advertised_endpoints;
       std::vector<std::uint8_t> public_key;
-      std::string protocol_version = "/fcl/0.1.0";
-      std::string agent_version = "fcl/0.1.0";
+      std::string protocol_version = "/fcl/1.0.0";
+      std::string agent_version = "fcl/1.0.0";
       std::shared_ptr<peer_store::backend> peer_store_backend;
       std::optional<std::filesystem::path> peer_store_path;
       bool allow_insecure_test_mode = false;

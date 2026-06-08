@@ -46,7 +46,7 @@ struct log_exporter_options {
    retry_policy retry;
    std::chrono::milliseconds request_timeout{30'000};
    std::chrono::milliseconds shutdown_timeout{5'000};
-   std::string user_agent = "FCL-OTLP-Exporter-Cpp/0.1";
+   std::string user_agent = "FCL-OTLP-Exporter-Cpp/1.0.0";
 };
 
 struct exporter_metrics {

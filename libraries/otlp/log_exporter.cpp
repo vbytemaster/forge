@@ -47,7 +47,7 @@ using asio::use_awaitable;
 using namespace std::chrono_literals;
 
 constexpr auto instrumentation_scope_name = std::string_view{"fcl.log"};
-constexpr auto instrumentation_scope_version = std::string_view{"0.1"};
+constexpr auto instrumentation_scope_version = std::string_view{"1.0.0"};
 
 bool positive(std::chrono::milliseconds value) {
    return value.count() > 0;

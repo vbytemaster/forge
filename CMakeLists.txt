@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.31)
 
-project(storlane-fc VERSION 0.1.0 LANGUAGES C CXX ASM)
+project(storlane-fc VERSION 1.0.0 LANGUAGES C CXX ASM)
 
 include(GNUInstallDirs)
 include(CheckCXXSourceCompiles)

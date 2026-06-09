@@ -12,7 +12,7 @@ and GossipSub/pubsub.
 - Direct transports should be tried first, with explicit relay/hole-punch
   fallback.
 - Application/plugin composition needs a shared P2P transport owner; use
-  `fcl::plugins::p2p_node` for retry, outbox and relay policy above this
+  `fcl::plugins::p2p_node` as the lifecycle/config/route facade above this
   low-level engine.
 
 ## When Not To Use
@@ -20,9 +20,9 @@ and GossipSub/pubsub.
 - Do not put application message semantics or storage semantics here.
 - Do not treat P2P as authorization. Peer identity is transport identity; product
   authority is owned by consumers.
-- Do not assume global discovery is product-complete today. DHT/rendezvous and
-  GossipSub belong in `fcl_p2p`; product pubsub gateways and global relay
-  discovery are not plugin-level shortcuts.
+- Do not put product receipt, durable queue, storage or authorization semantics
+  into peer networking. DHT, rendezvous, AutoRelay and GossipSub mechanics
+  belong in `fcl_p2p`; product protocols decide what an operation means.
 
 ## Public Modules
 
@@ -172,26 +172,13 @@ node.register_protocol_handler(fcl::p2p::protocol_id{.value = "/example/1"},
 });
 ```
 
-### Send A Product Message
+### Publish Typed APIs Above P2P
 
-`fcl::p2p::message` owns protocol id, codec metadata and serialized bytes. For
-raw DTOs, construct it directly from the product value; callers do not need to
-manually allocate a byte buffer.
-
-```cpp
-struct announce_chunk {
-   std::string ref;
-};
-
-BOOST_DESCRIBE_STRUCT(announce_chunk, (), (ref))
-FCL_DECLARE_SERIALIZATION(announce_chunk)
-
-auto message = fcl::p2p::message{
-   fcl::p2p::protocol_id{.value = "/product/chunks/announce/1"},
-   announce_chunk{.ref = "bafk..."}};
-
-co_await p2p->broadcast(std::move(message));
-```
+Product protocols that need request/response, typed errors and idempotent
+operation receipts should expose an `fcl_api` contract and mount it through the
+P2P API binding or `fcl::plugins::p2p_api_resolver`. P2P opens the stream and
+enforces peer/path policy; API dispatch owns method calls and error projection;
+the product handler owns authorization and durable state.
 
 ### Typed API Protocol Binding
 
@@ -283,9 +270,9 @@ identity extension and invalid envelopes are correctness failures.
   policy. Relay use must be explicit and visible to the caller.
 - Do not put durable delivery, exactly-once semantics or storage guarantees in
   `fcl_p2p`; protocols above P2P own those contracts.
-- Do not implement application retry/outbox loops against raw `node` in product
-  plugins. Use `fcl::plugins::p2p_node` so one transport owner centralizes path
-  policy, relay trust and delivery diagnostics.
+- Do not implement application retry or durable delivery loops against raw
+  `node` in product plugins. Use typed request/receipt APIs for synchronous
+  operations and a focused higher-level service for durable asynchronous work.
 - Do not define a new P2P-only API error payload. API protocols use
   `fcl::api::error_payload` in `fcl::api::frame` error responses.
 - Do not let protocol handler exceptions disappear in detached tasks. Expected

@@ -48,11 +48,11 @@ does not change: `p2p_node` enables and configures the shared FCL node. It must
 not reimplement Identify, Ping, relay discovery, DHT, pubsub or interop logic in
 plugin-local loops.
 
-G.2 narrows the public `p2p_node` contract to a host facade: `local_peer`,
+The public `p2p_node` contract is a host facade: `local_peer`,
 `local_endpoint`, `local_endpoints`, `network_info`, `publish_api`,
 `remote<T>(...)` and advanced `publish_protocol`. Durable message queues,
-application fan-out and read-only network diagnostics belong to focused
-plugins or application services, not to this host facade.
+application fan-out and read-only network diagnostics belong to focused plugins
+or application services, not to this host facade.
 
 `fcl::plugins::p2p_node::config` is the public config contract. Config section
 `p2p` owns transport bootstrap and policy:
@@ -209,12 +209,12 @@ runtime function/type metadata. The resolver sends only the stable projection:
 API id/version, protocol id string, codec, limits, method names/kinds and error
 identities.
 
-### Product API Receipt Pattern
+### API Receipt Pattern
 
-Storlane-level consumers should model product obligations as ordinary typed API
-requests that return domain receipts. The receipt proves the application-level
-operation result; it is not a generic P2P delivery acknowledgement. The request
-should carry an idempotency key so retries can return the same receipt without
+Consumers that need proof of an operation result should model it as an ordinary
+typed API request returning a domain receipt. The receipt is application-level
+evidence; it is not a generic P2P delivery acknowledgement. The request should
+carry an idempotency key so retries can return the same receipt without
 executing the operation twice.
 
 ```cpp
@@ -246,9 +246,10 @@ FCL_API(operation_api, FCL_API_CONTRACT("operation", 1, 0), FCL_API_METHOD(apply
 
 Server plugins publish this API through `p2p_api_resolver`; client plugins open
 it with `resolver->remote<operation_api>(peer)` and call the typed method. The
-product remains responsible for authorization, durable state and authoritative
-settlement. `p2p_delivery` is only a future optional plugin for asynchronous
-store-backed retry, not a prerequisite for request/receipt APIs.
+consumer remains responsible for authorization, durable state and authoritative
+business semantics. A durable delivery plugin would be a separate optional layer
+for asynchronous store-backed retry, not a prerequisite for request/receipt
+APIs.
 
 ## P2P Diagnostics Plugin
 
@@ -331,9 +332,9 @@ co_await pubsub->publish(
   directly when the node is owned by `p2p_node`; publish a route contribution.
 - Do not let application plugins override codec, inflight limits or bootstrap policy
   that the node plugin owns from config.
-- Do not expose `fcl::p2p::node::open_options`, relay peer selection or hole-punch
-  calls to ordinary application plugins. Use typed `remote<T>(...)` or a focused
-  future plugin facade.
+- Do not expose `fcl::p2p::node::open_options`, relay peer selection or
+  hole-punch calls to ordinary application plugins. Use typed `remote<T>(...)`
+  or a focused plugin facade.
 - Do not create one P2P node per application protocol inside the same application.
   One owner plugin should mount multiple bindings/routes.
 - Do not use `p2p_node` as application authorization. It only owns transport
@@ -345,8 +346,8 @@ co_await pubsub->publish(
   `fcl_p2p`. `p2p_node` stays lifecycle/config/composition glue over the shared
   network node.
 - Keep the host facade narrow. Focused helpers such as `p2p_api_resolver`,
-  `p2p_diagnostics`, `p2p_pubsub` and an optional durable queue plugin should be focused
-  friend plugins that compose through the safe APIs exposed by `p2p_node`.
+  `p2p_diagnostics`, `p2p_pubsub` and any optional durable queue plugin should
+  compose through the safe APIs exposed by `p2p_node`.
 
 ## Tests
 

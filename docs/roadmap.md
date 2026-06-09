@@ -1,11 +1,16 @@
 # FCL Roadmap
 
-FCL развивается как набор нейтральных C++23 foundation-библиотек. Цель текущей
-ветки — release candidate, который можно подключать в downstream products без
-возврата старого FC source API and без переноса продуктовой семантики обратно в
-FCL.
+FCL развивается как нейтральный C++23 infrastructure framework и constructor
+substrate. Он нужен для сборки распределённых сервисов, DePIN-сетей,
+blockchain/control-plane runtimes, P2P сетей, plugin-based daemons and
+transport/API layers без переноса продуктовой семантики в FCL.
 
-## Current Release Candidate Scope
+После `v1.0.0` основной ориентир — не “дописать старый FC-слой”, а удерживать
+чистые reusable boundaries: runtime, config, API contracts, transports, P2P,
+plugins, telemetry and compatibility layers должны быть пригодны для серьёзных
+потребителей, но не становиться Storlane/Spring/storage/billing runtime.
+
+## Current Framework Surface
 
 - Module-first public API under `libraries/<lib>/include/fcl/<lib>/*.cppm`.
 - Boost.Describe as canonical reflection metadata.
@@ -25,27 +30,35 @@ FCL.
 - Synchronous logger v2 with structured records, sinks, redaction and private
   stacktrace backend.
 - CMake install/export package with external consumer smoke.
-- App lifecycle snippets and executable `test_fcl_app` coverage for downstream
-  adoption patterns.
+- API-over-transport, P2P plugin facade, resolver, diagnostics and PubSub
+  plugin flows for typed service composition.
+- OTLP log export and crash-spool resend as opt-in observability adapters.
 
 ## Library Families
 
 - [Runtime + App](runtime/asio-app.md): runtime ownership, scheduler,
   backpressure and async plugin lifecycle.
 - [API Contracts](../libraries/api/README.md): typed handles, descriptor
-  builders, API frames and shared error payloads.
+  macros, local/remote surfaces, API frames and shared error payloads.
 - [HTTP + WebSocket](web/http-websocket.md): web/control-plane substrate,
   routing, middleware, upgrades and retry boundaries.
 - [QUIC + P2P](network/quic-p2p.md): secure transport, peer identity, protocol
   streams, relay and path selection.
+- [Transport substrate](../libraries/transport/README.md): reusable
+  stream/session concepts, chunks, frame helpers and muxer substrate.
+- [Infrastructure plugins](../libraries/plugins/README.md): lifecycle-owned P2P
+  node, API resolver, diagnostics and PubSub facade.
+- [Telemetry](../libraries/otlp/README.md): opt-in OTLP logs and crash evidence
+  export.
 - [TUI](tui/notcurses-component-library.md): terminal value models, render
   helpers, navigation and backend isolation.
 - [Codecs](codecs/json-yaml-glaze.md): JSON/YAML namespace APIs, Glaze backend
   boundary and diagnostics.
 - [Config](config/schema-config-program-options.md): schema rules, neutral
   config documents, env/CLI adapters and redaction.
-- [Migration Guide](migration/storlane-fc-to-fcl.md): target mapping, raw
-  compatibility, Boost.Describe, chrono, exception and logger migration.
+- Historical migration notes: target mapping, raw compatibility,
+  Boost.Describe, chrono, exception and logger migration live under
+  `docs/migration` and are not current API commitments.
 
 ## Release Gates
 
@@ -54,9 +67,11 @@ Build/test gates:
 ```bash
 cmake --build build/fcl-debug -j 1 \
   --target fcl test_fcl test_fcl_exceptions test_fcl_raw test_fcl_json test_fcl_crypto \
-  test_fcl_asio test_fcl_app test_fcl_schema test_fcl_config test_fcl_yaml \
-  test_fcl_program_options test_fcl_env test_fcl_http_websocket test_fcl_quic_p2p \
-  test_fcl_plugins test_fcl_tui
+  test_fcl_multiformats test_fcl_asio test_fcl_transport test_fcl_tcp test_fcl_stcp \
+  test_fcl_yamux test_fcl_quic test_fcl_app test_fcl_schema test_fcl_config \
+  test_fcl_yaml test_fcl_program_options test_fcl_env test_fcl_api \
+  test_fcl_api_transport test_fcl_http_websocket test_fcl_quic_p2p \
+  test_fcl_plugins test_fcl_otlp test_fcl_tui
 
 ctest --test-dir build/fcl-debug --output-on-failure
 git diff --check
@@ -78,18 +93,20 @@ Security gates:
 - TLS/P2P verification failures are correctness failures.
 - UI and HTTP helpers are not documented as authority/security boundaries.
 
-## Remaining Before Downstream Migration
+## Ongoing Readiness Work
 
-- Confirm full regression on the target toolchain.
+- Keep library READMEs aligned with public modules and actual targets.
+- Keep donor traceability updated when compatibility behavior changes.
 - Re-run package install plus external `find_package(FCL CONFIG REQUIRED)`
-  consumer smoke after review fixes.
-- Run external review focused on documentation quality, architecture boundaries,
-  dependency hygiene, security and production readiness.
+  consumer smoke before releases.
+- Keep review focused on architecture boundaries, dependency hygiene, security
+  and production readiness.
 
-## Out Of Scope For This Candidate
+## Out Of Scope For FCL Core
 
 - Reintroducing source-level `fc::...` compatibility.
 - A full schema migration framework.
 - Browser UI or product admin flows.
 - Product-specific protocol, storage, billing, authorization or deployment
   semantics.
+- Presenting blueprints as shipped public API.

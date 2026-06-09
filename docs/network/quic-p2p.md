@@ -640,8 +640,8 @@ Accepted:
 - Crash reporting through a local durable spool and next-start resend over the
   same OTLP path. Signal handlers only perform async-signal-safe writes; normal
   symbolication/redaction/export happens outside the crashing signal context.
-- Transactional outbox style durable retry as an application/plugin-level
-  pattern, not a storage dependency inside `fcl_p2p`.
+- Durable asynchronous retry as an application/plugin-level pattern, not a
+  storage dependency inside `fcl_p2p`.
 - Typed request/receipt protocols over `p2p_api_resolver` as the baseline for
   synchronous product operations. Idempotency keys and domain receipts belong to
   the product API contract, while FCL supplies discovery, stream opening and API

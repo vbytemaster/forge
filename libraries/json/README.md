@@ -12,7 +12,7 @@ module interfaces.
 
 ## When Not To Use
 
-- Do not include or expose backend parser types in public FCL or product APIs.
+- Do not include or expose backend parser types in public FCL or application APIs.
 - Do not use JSON for binary contract compatibility; use `fcl_raw`.
 - Do not rely on JSON serialization as redaction. Redact before calling write.
 
@@ -99,7 +99,7 @@ if (!result.ok()) {
 ## Diagnostics
 
 Parser, type and schema errors are mapped into `std::vector<fcl::schema::diagnostic>`.
-Backend parser errors are normalized at the FCL boundary. Product code should
+Backend parser errors are normalized at the FCL boundary. Application code should
 print the FCL diagnostic path, code and message instead of exposing parser
 implementation details:
 

@@ -101,7 +101,7 @@ Diagnostics carry:
 ## Risks And Anti-Patterns
 
 - Do not use schema rules as authorization, live connectivity or credential
-  validation. Schema validates local value shape before product checks run.
+  validation. Schema validates local value shape before application checks run.
 - Do not hide parser-specific decisions in schema metadata. JSON, YAML, env and
   CLI adapters each own their source diagnostics.
 - Do not mark a field `secret()` and then print the raw document. Redaction is an

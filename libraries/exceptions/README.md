@@ -15,7 +15,7 @@ capture semantics without bringing back the old FC exception hierarchy.
 
 - Do not model schema/config validation errors here; those live in `fcl_schema`.
 - Do not serialize diagnostic capture context through `variant` or JSON.
-- Do not put product-specific error enums in FCL core. Product/application code
+- Do not put application-specific error enums in FCL core. Application code
   owns its own typed errors and declares categories next to those enums.
 
 ## Public API
@@ -63,7 +63,7 @@ enum class code : std::uint8_t {
    chunk_not_found = 1,
 };
 
-FCL_DECLARE_EXCEPTION_CATEGORY(code, "storlane.cache")
+FCL_DECLARE_EXCEPTION_CATEGORY(code, "cache")
 
 using chunk_not_found =
    fcl::exceptions::coded_exception<code, code::chunk_not_found>;
@@ -176,7 +176,7 @@ int run_service() {
 }
 ```
 
-The chain is diagnostic text, not a control-flow taxonomy. Product code should
+The chain is diagnostic text, not a control-flow taxonomy. Application code should
 use typed domain errors for decisions such as retry, backoff or user messaging.
 
 ### Route Capture Logs To `fcl_log`
@@ -237,7 +237,7 @@ extra context; non-FCL exceptions are wrapped into a sanitized `context_error`.
 - Do not call `std::terminate()`/`abort()` just to get a stack trace. Capture
   context, log the chain, and let the application lifecycle shut down.
 - Do not branch on substrings from `what()`. Context fields are for diagnostics;
-  product control flow should use typed errors or explicit result codes.
+  application control flow should use typed errors or explicit result codes.
 
 ## Tests
 

@@ -52,7 +52,7 @@ auto* port = merged.try_get("http.bind-port");
 ### Merge Independent Source Adapters
 
 `fcl_config` does not parse YAML, JSON, `.env` or argv itself. Those libraries
-return documents, and the product decides precedence.
+return documents, and the caller decides precedence.
 
 ```cpp
 import fcl.config;
@@ -61,8 +61,8 @@ import fcl.program_options;
 import fcl.yaml;
 
 auto file = fcl::yaml::load_document(workspace / "config.yml");
-auto dotenv = fcl::env::load_document(workspace / ".env", registry, {.prefix = "STORLANE"});
-auto env = fcl::env::read_process_document(registry, {.prefix = "STORLANE"});
+auto dotenv = fcl::env::load_document(workspace / ".env", registry, {.prefix = "FCL_APP"});
+auto env = fcl::env::read_process_document(registry, {.prefix = "FCL_APP"});
 auto cli = fcl::program_options::parse(argc, argv, registry);
 
 auto input = fcl::config::merge({
@@ -100,7 +100,7 @@ auto safe = fcl::config::redact(merged, registry);
 
 ### Compose Sources Before Application Startup
 
-Use `fcl_config` as a glue layer between source adapters. Product code owns the
+Use `fcl_config` as a glue layer between source adapters. Application code owns the
 precedence order; plugins only publish descriptors and receive a component view.
 
 ```cpp
@@ -175,7 +175,7 @@ if (!migrated.ok()) {
 
 ## Risks And Anti-Patterns
 
-- Do not use `config::document` as a second product config framework. Product
+- Do not use `config::document` as a second application config framework. Application
   config remains typed structs plus schema rules.
 - Do not merge invalid layers and hope later code recovers. Source adapter and
   decode diagnostics must stop startup before side effects.
@@ -191,13 +191,13 @@ if (!migrated.ok()) {
 - Do not bypass `component_registry` for plugin config collection; duplicate
   fields/aliases must be detected before runtime startup.
 - Do not make a second generic config document/parser layer in a consuming
-  product. Use `fcl_yaml`, `fcl_json`, `fcl_env` or `fcl_program_options` as
+  application. Use `fcl_yaml`, `fcl_json`, `fcl_env` or `fcl_program_options` as
   source adapters over this document model.
-- Do not turn migrations into product validation. Keep them mechanical:
+- Do not turn migrations into application validation. Keep them mechanical:
   rename, remove or add defaults, then let `fcl_schema` validate the typed
   config.
-- Do not put product validation that requires I/O, credentials or live network
-  checks into `fcl_config`. Decode config first, then run product validation in
+- Do not put application validation that requires I/O, credentials or live network
+  checks into `fcl_config`. Decode config first, then run application validation in
   the owning program/plugin.
 - Do not treat config merge as recovery from invalid config. Diagnostics must
   fail startup before plugins initialize.

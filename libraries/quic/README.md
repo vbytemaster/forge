@@ -29,7 +29,7 @@ byte-stream transports; they become sessions only after a muxer such as Yamux.
 ## When Not To Use
 
 - Do not put peer discovery or relay policy here; that is `fcl_p2p`.
-- Do not put product protocol messages here; use framed streams as substrate.
+- Do not put application protocol messages here; use framed streams as substrate.
 - Do not disable peer verification outside explicit tests.
 
 ## Public Modules
@@ -201,7 +201,7 @@ correctness failures, not warnings. CA-based client verification binds the peer
 certificate to the requested endpoint host; SNI alone is not treated as identity
 verification. Pinned fingerprints and custom verifiers are explicit trust paths;
 they do not implicitly opt into CA hostname checks. Test certificates must not
-become product defaults.
+become application defaults.
 
 ## Risks And Anti-Patterns
 
@@ -211,19 +211,19 @@ become product defaults.
   the certificate to the requested endpoint host.
 - Do not raise frame/queue limits without backpressure tests. Oversized frames
   are a memory pressure and denial-of-service vector.
-- Do not define product API envelopes in QUIC handlers. Use `fcl.quic.api` and
+- Do not define application API envelopes in QUIC handlers. Use `fcl.quic.api` and
   `fcl::api::frame` for typed API calls over QUIC streams.
 - Do not swallow handler exceptions in detached stream tasks; convert expected
   failures into typed `fcl_exceptions` values or API error frames.
 - Do not treat `.deadline(...)` or `.max_concurrent_calls(...)` as documentation
-  only; API frames are checked by the call runtime before product code runs.
+  only; API frames are checked by the call runtime before application handlers run.
 - Do not put ALPN, certificate or listener lifecycle options into
   `fcl.quic.api`; those belong to the transport owner.
 
 ## Typical Mistakes
 
 - Do not put peer discovery or relay fallback in `fcl_quic`; use `fcl_p2p`.
-- Do not use insecure test settings as product defaults; identity and ALPN
+- Do not use insecure test settings as application defaults; identity and ALPN
   checks are part of correctness.
 - Do not bypass `transport_limits` for "temporary" large frames without adding a
   backpressure test.

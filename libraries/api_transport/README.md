@@ -2,7 +2,7 @@
 
 `fcl_api_transport` binds typed `fcl_api` contracts to `fcl_transport`
 streams and sessions. It does not own sockets, QUIC, P2P, WebSocket, HTTP,
-plugins or product policy.
+plugins or application policy.
 
 ## Responsibility
 
@@ -38,22 +38,22 @@ FCL_API(cache, FCL_API_CONTRACT("cache", 1, 0), FCL_API_METHOD(read))
 
 class cache_impl final : public cache {
  public:
-   explicit cache_impl(local_branch& branch) : branch_{branch} {}
+   explicit cache_impl(cache_store& store) : store_{store} {}
 
    boost::asio::awaitable<chunk>
    read(read_chunk request) override {
-      auto bytes = co_await branch_.read_bytes(request.ref, request.offset, request.limit);
+      auto bytes = co_await store_.read_bytes(request.ref, request.offset, request.limit);
       co_return chunk{.bytes = std::move(bytes)};
    }
 
  private:
-   local_branch& branch_;
+   cache_store& store_;
 };
 
 boost::asio::awaitable<void>
-serve_cache(fcl::transport::stream stream, local_branch& branch) {
+serve_cache(fcl::transport::stream stream, cache_store& store) {
    auto apis = fcl::api::registry{};
-   apis.install<cache>(std::make_shared<cache_impl>(branch));
+   apis.install<cache>(std::make_shared<cache_impl>(store));
 
    auto plan = fcl::api::binding().serve(apis).build();
 
@@ -98,7 +98,7 @@ read_remote(fcl::transport::stream stream, std::string ref) {
 ## Notes
 
 - The vector API remains the stable convenience path for typed DTO payloads.
-- Large product data-plane policy stays above this layer; this binding only
+- Large application data-plane policy stays above this layer; this binding only
   moves API frames over an already established stream/session.
 - `serve_session(...)` owns admission through a Boost.Asio strand, so accepted
   stream slots and drain wakeups stay ordered on multi-worker runtimes. The

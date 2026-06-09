@@ -3,7 +3,7 @@
 `fcl_multiformats` owns the libp2p-compatible multiformat primitives used by
 `fcl_p2p`: unsigned varint, multicodec constants, multihash, multibase and
 multiaddr parsing/encoding. It is a compatibility substrate, not a P2P node and
-not a product addressing policy layer.
+not an application addressing policy layer.
 
 ## When To Use
 
@@ -17,7 +17,7 @@ not a product addressing policy layer.
 - Do not put peer-store, routing, relay, DHT or rendezvous policy here.
 - Do not treat a syntactically valid multiaddr as dialable or trusted. Host
   address policy belongs to `fcl_p2p`.
-- Do not add product endpoint names, storage locations or authorization rules.
+- Do not add application endpoint names, storage locations or authorization rules.
 
 ## Public Modules
 

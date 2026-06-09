@@ -12,7 +12,7 @@ WebSocket share routing, TLS and lifecycle boundaries.
 
 ## When Not To Use
 
-- Do not create product subscription/event semantics here.
+- Do not create application subscription/event semantics here.
 - Do not introduce a standalone WebSocket server in v1; HTTP owns upgrade.
 - Do not use WebSocket messages as an implicit authorization boundary.
 
@@ -106,7 +106,7 @@ router.websocket("/api", [binding](fcl::websocket::connection::ptr connection) m
 `fcl.websocket.api` owns API-level WebSocket binding behavior only:
 max-frame-size rejection and handoff to the shared `frame_dispatcher`. It does
 not use `fcl.api.transport`, because WebSocket messages are not
-`transport::stream` chunks. HTTP upgrade routes, TLS verification and product
+`transport::stream` chunks. HTTP upgrade routes, TLS verification and application
 reconnect policy stay with the transport owner.
 
 ### Send, Ping And Close
@@ -140,7 +140,7 @@ stay explicit and should not be hidden behind broad "dev" defaults.
 ## Risks And Anti-Patterns
 
 - Do not treat a connected WebSocket as an authenticated session by itself.
-  Product auth and replay rules live above the connection.
+  Application auth and replay rules live above the connection.
 - Do not send concurrent writes through ad-hoc caller code if the connection
   does not serialize them. Use the FCL connection API boundary.
 - Do not put bearer tokens in query strings for convenience; they commonly leak
@@ -151,7 +151,7 @@ stay explicit and should not be hidden behind broad "dev" defaults.
 - Do not invent WebSocket-specific error payloads for typed APIs; use
   `fcl::api::error_payload` in error frames.
 - Do not treat `.backpressure(...)` as a decorative value. If max inflight is
-  exceeded, the API call runtime rejects the frame before product handlers run.
+  exceeded, the API call runtime rejects the frame before application handlers run.
 - Do not put HTTP upgrade or TLS policy in `fcl.websocket.api`; it is an API
   binding over an already accepted connection.
 
@@ -160,7 +160,7 @@ stay explicit and should not be hidden behind broad "dev" defaults.
 - Do not perform concurrent writes directly against a connection unless the
   connection API serializes them.
 - Do not leak bearer tokens in query strings when rendering endpoint diagnostics.
-- Do not assume WebSocket reconnection is automatic product behavior; callers own
+- Do not assume WebSocket reconnection is automatic application behavior; callers own
   policy.
 - Do not make message handlers mutate shared state without a strand/serialization
   rule in the caller.

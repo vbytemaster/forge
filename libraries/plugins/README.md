@@ -155,7 +155,7 @@ focused plugins or application services, not as part of `p2p_node`.
 
 ## P2P API Resolver Plugin
 
-`p2p_api_resolver` is the focused discovery layer for API-over-P2P metadata. A
+`p2p_api_resolver` is the focused discovery layer for API-over-P2P metadata. An
 application plugin publishes a discoverable API through the resolver; the resolver
 delegates the actual route mount to `p2p_node`, records a bounded serializable
 projection of the API descriptor and serves that projection over the private
@@ -219,7 +219,7 @@ executing the operation twice.
 
 ```cpp
 struct apply_request {
-   std::string request_id; // Idempotency key owned by the product protocol.
+   std::string request_id; // Idempotency key owned by this API contract.
    std::string subject;
    std::uint64_t revision = 0;
 };
@@ -295,7 +295,7 @@ inside `fcl_p2p`.
 The plugin supports raw byte messages, typed `fcl.raw` payload helpers, bounded
 local handler fan-out, deterministic subscription ids, handler deadlines,
 topic allow/deny policy and a local snapshot. It is not a durable queue, not an
-exactly-once delivery system and not a product authorization layer.
+exactly-once delivery system and not an application authorization layer.
 
 ```yaml
 p2p-pubsub:

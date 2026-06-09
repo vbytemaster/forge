@@ -13,7 +13,7 @@ Notcurses is a backend detail and does not appear in public module interfaces.
 
 ## When Not To Use
 
-- Do not put product authority checks in UI. UI can hide/disable actions, but
+- Do not put application authority checks in UI. UI can hide/disable actions, but
   the consuming system must enforce permissions.
 - Do not use Notcurses types outside `libraries/tui/*.cpp`.
 - Do not add browser/web UI assumptions here.
@@ -91,7 +91,7 @@ strings. UI is a presentation boundary, not a security boundary.
 ## Risks And Anti-Patterns
 
 - Do not treat hidden or redacted UI text as access control. Authority belongs
-  to the product/service layer.
+  to the application/service layer.
 - Do not render secret-bearing generic strings and hope endpoint redaction will
   catch every format. Mark sensitive fields explicitly.
 - Do not let terminal rendering perform network, filesystem or app lifecycle

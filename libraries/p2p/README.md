@@ -18,11 +18,11 @@ and GossipSub/pubsub.
 ## When Not To Use
 
 - Do not put application message semantics or storage semantics here.
-- Do not treat P2P as authorization. Peer identity is transport identity; product
-  authority is owned by consumers.
-- Do not put product receipt, durable queue, storage or authorization semantics
+- Do not treat P2P as authorization. Peer identity is transport identity;
+  application authority is owned by consumers.
+- Do not put application receipt, durable queue, storage or authorization semantics
   into peer networking. DHT, rendezvous, AutoRelay and GossipSub mechanics
-  belong in `fcl_p2p`; product protocols decide what an operation means.
+  belong in `fcl_p2p`; application protocols decide what an operation means.
 
 ## Public Modules
 
@@ -79,8 +79,8 @@ Network-level behaviors that must not be pushed into plugins:
 - protocol capability negotiation;
 - network limits, backpressure, metrics and shutdown behavior.
 
-`fcl_p2p` remains free of application plugins, product storage and product
-authorization. Product protocols own idempotency, business acknowledgement and
+`fcl_p2p` remains free of application plugins, storage and authorization
+policy. Application protocols own idempotency, acknowledgement and
 permission checks above P2P.
 
 ## Examples
@@ -116,7 +116,7 @@ paths.
 
 `fcl::p2p::endpoint` is FCL-style public vocabulary. It accepts and emits the
 libp2p address text format for compatibility, but callers do not need to model
-their product API around the `multiaddr` term.
+their application API around the `multiaddr` term.
 
 ```cpp
 import fcl.p2p.endpoint;
@@ -174,11 +174,11 @@ node.register_protocol_handler(fcl::p2p::protocol_id{.value = "/example/1"},
 
 ### Publish Typed APIs Above P2P
 
-Product protocols that need request/response, typed errors and idempotent
+Application protocols that need request/response, typed errors and idempotent
 operation receipts should expose an `fcl_api` contract and mount it through the
 P2P API binding or `fcl::plugins::p2p_api_resolver`. P2P opens the stream and
 enforces peer/path policy; API dispatch owns method calls and error projection;
-the product handler owns authorization and durable state.
+the application handler owns authorization and durable state.
 
 ### Typed API Protocol Binding
 
@@ -191,8 +191,8 @@ protocol id, known-peer checks and discovery scope.
 
 ### Connect And Open A Protocol Stream
 
-This is the low-level engine path for custom transport owners and tests. Product
-plugins should use `fcl::plugins::p2p_node::api` instead of calling these
+This is the low-level engine path for custom transport owners and tests.
+Application plugins should use `fcl::plugins::p2p_node::api` instead of calling these
 methods directly.
 
 ```cpp
@@ -264,22 +264,22 @@ identity extension and invalid envelopes are correctness failures.
 
 ## Risks And Anti-Patterns
 
-- Do not treat peer identity as product authorization. It proves transport
-  identity, not permission to perform product actions.
+- Do not treat peer identity as application authorization. It proves transport
+  identity, not permission to perform application actions.
 - Do not silently fall back to relay for operations that require a direct-peer
   policy. Relay use must be explicit and visible to the caller.
 - Do not put durable delivery, exactly-once semantics or storage guarantees in
   `fcl_p2p`; protocols above P2P own those contracts.
 - Do not implement application retry or durable delivery loops against raw
-  `node` in product plugins. Use typed request/receipt APIs for synchronous
+  `node` in application plugins. Use typed request/receipt APIs for synchronous
   operations and a focused higher-level service for durable asynchronous work.
 - Do not define a new P2P-only API error payload. API protocols use
   `fcl::api::error_payload` in `fcl::api::frame` error responses.
 - Do not let protocol handler exceptions disappear in detached tasks. Expected
-  product failures should be typed exceptions and unexpected failures should be
-  counted/diagnosed.
+  application failures should be typed exceptions and unexpected failures should
+  be counted/diagnosed.
 - Do not treat `.peer_policy(...)` or `.max_inflight_per_peer(...)` as cosmetic.
-  Unknown peers and too many active API calls are rejected before product API
+  Unknown peers and too many active API calls are rejected before application API
   handlers run.
 - Do not make `fcl.p2p.api` responsible for peer discovery, relay or node
   lifecycle. It is only the API protocol binding artifact.

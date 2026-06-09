@@ -24,8 +24,8 @@ the caller decides merge precedence.
   values may leak through process inspection, CI logs or crash dumps.
 - Do not rely on implicit `.env` discovery from the current directory. The
   caller must pass an explicit path.
-- Do not put product bootstrap names such as workspace/config-file discovery in
-  FCL. That belongs to the consuming product.
+- Do not put application bootstrap names such as workspace/config-file discovery in
+  FCL. That belongs to the consuming application.
 
 ## Public Module
 
@@ -49,9 +49,9 @@ Variables are generated from the config registry:
 `-`, `.`, `/` and repeated separators become `_`, then names are uppercased:
 
 ```text
-http.bind-port    -> STORLANE_HTTP_BIND_PORT
-http.tls-enabled  -> STORLANE_HTTP_TLS_ENABLED
-log-level         -> STORLANE_LOG_LEVEL
+http.bind-port    -> FCL_APP_HTTP_BIND_PORT
+http.tls-enabled  -> FCL_APP_HTTP_TLS_ENABLED
+log-level         -> FCL_APP_LOG_LEVEL
 ```
 
 Aliases are accepted when enabled, but values are written to the canonical
@@ -72,7 +72,7 @@ auto dotenv = fcl::env::load_document(
    workspace / ".env",
    registry,
    fcl::env::read_options{
-      .prefix = "STORLANE",
+      .prefix = "FCL_APP",
       .source_name = "workspace/.env",
    });
 
@@ -87,8 +87,8 @@ if (!dotenv.ok()) {
 
 ```cpp
 auto file = fcl::yaml::load_document(workspace / "config.yml");
-auto dotenv = fcl::env::load_document(workspace / ".env", registry, {.prefix = "STORLANE"});
-auto env = fcl::env::read_process_document(registry, {.prefix = "STORLANE"});
+auto dotenv = fcl::env::load_document(workspace / ".env", registry, {.prefix = "FCL_APP"});
+auto env = fcl::env::read_process_document(registry, {.prefix = "FCL_APP"});
 auto cli = fcl::program_options::parse(argc, argv, registry);
 
 if (!file.ok()) {
@@ -116,7 +116,7 @@ if (file.ok() && dotenv.ok() && env.ok() && cli.ok()) {
 }
 ```
 
-Recommended product precedence is:
+Recommended application precedence is:
 
 ```text
 schema defaults < config file < .env < process env < CLI
@@ -129,9 +129,9 @@ described config type:
 
 ```cpp
 auto parsed = fcl::env::read<http_config>(
-   "STORLANE_HTTP_BIND_PORT=9090\n",
+   "FCL_APP_HTTP_BIND_PORT=9090\n",
    "http",
-   {.prefix = "STORLANE"});
+   {.prefix = "FCL_APP"});
 
 if (parsed.ok()) {
    start_http(parsed.value);
@@ -144,18 +144,18 @@ Avoid mutating global process environment in tests. Use `read_variables()`:
 
 ```cpp
 auto vars = std::vector<fcl::env::environment_variable>{
-   {.name = "STORLANE_HTTP_BIND_PORT", .value = "9090"},
+   {.name = "FCL_APP_HTTP_BIND_PORT", .value = "9090"},
 };
 
-auto parsed = fcl::env::read_variables(vars, registry, {.prefix = "STORLANE"});
+auto parsed = fcl::env::read_variables(vars, registry, {.prefix = "FCL_APP"});
 ```
 
 ### Generate `.env.example`
 
 ```cpp
-auto example = fcl::env::write_example(registry, {.prefix = "STORLANE"});
+auto example = fcl::env::write_example(registry, {.prefix = "FCL_APP"});
 if (example.ok()) {
-   fcl::env::save_example(workspace / ".env.example", registry, {.prefix = "STORLANE"});
+   fcl::env::save_example(workspace / ".env.example", registry, {.prefix = "FCL_APP"});
 }
 ```
 
@@ -164,13 +164,13 @@ Secret fields are emitted as empty placeholders in examples:
 ```dotenv
 # HTTP bearer token.
 # Secret value. Prefer a platform secret manager in production.
-STORLANE_HTTP_TOKEN=
+FCL_APP_HTTP_TOKEN=
 ```
 
 ### Write Current Overrides
 
 ```cpp
-auto redacted = fcl::env::write_document(document, registry, {.prefix = "STORLANE"});
+auto redacted = fcl::env::write_document(document, registry, {.prefix = "FCL_APP"});
 if (!redacted.ok()) {
    report_diagnostics(redacted.diagnostics);
 }
@@ -185,10 +185,10 @@ Supported v1 syntax:
 
 ```dotenv
 # comment
-export STORLANE_HTTP_BIND_PORT=9090
-STORLANE_HTTP_TLS_ENABLED=true
-STORLANE_HTTP_TOKEN="secret value"
-STORLANE_HTTP_TAGS=blue,green
+export FCL_APP_HTTP_BIND_PORT=9090
+FCL_APP_HTTP_TLS_ENABLED=true
+FCL_APP_HTTP_TOKEN="secret value"
+FCL_APP_HTTP_TAGS=blue,green
 ```
 
 Supported:
@@ -242,7 +242,7 @@ Unknown prefixed variables warn by default and can be made fatal with
   bind a program to the wrong workspace or leak local developer settings into
   production.
 - Do not write real secret values into generated `.env.example` files or logs.
-  Use placeholders/redaction and product-owned secret storage.
+  Use placeholders/redaction and application-owned secret storage.
 
 ## Tests
 

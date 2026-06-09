@@ -13,7 +13,7 @@ boundaries and a priority task scheduler.
 ## When Not To Use
 
 - Do not use it as a generic global job system.
-- Do not encode product priority names here; `fcl::asio::priority` is numeric.
+- Do not encode application priority names here; `fcl::asio::priority` is numeric.
 - Do not expose `std::future` as public async API. FCL async APIs use
   `boost::asio::awaitable<T>`.
 
@@ -157,12 +157,12 @@ boost::asio::awaitable<void> run_small_job(fcl::asio::runtime& runtime) {
 }
 ```
 
-Queue rejection is a product signal. A daemon should surface a typed busy or
+Queue rejection is an application signal. A daemon should surface a typed busy or
 backpressure error, not spawn an unbounded fallback thread to “make progress”.
 
-### Use Numeric Priorities Without Product Vocabulary
+### Use Numeric Priorities Without Application Vocabulary
 
-The scheduler only knows numbers. A product can define its own named constants
+The scheduler only knows numbers. An application can define its own named constants
 near the component that owns those meanings.
 
 ```cpp

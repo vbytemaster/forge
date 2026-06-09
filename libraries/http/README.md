@@ -12,7 +12,7 @@ internally but keeps FCL-owned route and lifecycle semantics.
 
 ## When Not To Use
 
-- Do not put product DTOs or JSON contracts in this library.
+- Do not put application DTOs or JSON contracts in this library.
 - Do not use HTTP as a security boundary by itself; auth belongs to consumers.
 - Do not add a central application request queue here; request ownership remains
   at server/router/connection boundaries.
@@ -197,7 +197,7 @@ boost::asio::awaitable<void> submit_action(fcl::http::client& client) {
 }
 ```
 
-Raw JSON string literals are fine for tests and probes, but product APIs should
+Raw JSON string literals are fine for tests and probes, but application APIs should
 prefer described DTOs plus `fcl_json` so field names and diagnostics stay in one
 place.
 
@@ -221,12 +221,12 @@ boundary.
 ## Risks And Anti-Patterns
 
 - Do not use HTTP routes as the authorization boundary. Middleware may call a
-  consumer auth service, but product policy lives above `fcl_http`.
+  consumer auth service, but application policy lives above `fcl_http`.
 - Do not retry mutating requests implicitly. The caller must decide whether an
   operation is idempotent and safe to replay.
 - Do not log request bodies, headers or query strings before redaction. They may
   contain credentials or user data.
-- Do not catch product exceptions in every route by hand. Prefer typed
+- Do not catch application exceptions in every route by hand. Prefer typed
   `fcl_exceptions` categories and let API bindings project them to
   `fcl::api::error_payload`.
 - Do not force all typed APIs into `POST /rpc`; use native HTTP route/status

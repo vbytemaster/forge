@@ -129,8 +129,8 @@ for (const auto& diagnostic : parsed.diagnostics) {
 - Do not document aliases that are not present in schema descriptors.
 - Do not parse environment variables here. Use `fcl_env` for process env and
   `.env` files.
-- Do not pass secrets on argv unless the product explicitly accepts the process
-  list/history risk. Prefer config files with permissions, stdin or a product
+- Do not pass secrets on argv unless the application explicitly accepts the process
+  list/history risk. Prefer config files with permissions, stdin or an application
   secret store.
 - Do not bridge YAML `options:` arrays into argv. Parse YAML as config and CLI
   as CLI, then merge documents.

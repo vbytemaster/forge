@@ -30,7 +30,7 @@ Target: `fcl_otlp`.
 
 Dependencies: `fcl_exceptions`, `fcl_log`, `fcl_asio` and `fcl_http`. The
 library does not depend on `opentelemetry-cpp`, gRPC, protobuf, backend SDKs,
-P2P, plugins or product code.
+P2P, plugins or application code.
 
 ## Examples
 
@@ -91,5 +91,5 @@ tests or supervised helpers may disable it to exit cleanly after capture.
 - Metrics and traces are future exporters with separate runtime semantics.
 - Native minidumps, Crashpad, Breakpad, watchdogs, gRPC and protobuf are out of
   scope for this library version.
-- Product authorization, privacy policy, alert routing and storage retention
+- Application authorization, privacy policy, alert routing and storage retention
   belong above FCL.

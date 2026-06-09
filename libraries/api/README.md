@@ -11,7 +11,7 @@ message-oriented frames and the shared external error payload.
 - A plugin or application needs to publish a typed C++ capability to consumers.
 - A transport binding needs one contract shape for local and remote calls.
 - A protocol needs stable API identity, major version and minimum revision
-checks before invoking product code.
+checks before invoking application handler code.
 - Network errors must preserve typed exception identity without leaking internal
 diagnostic context.
 
@@ -57,7 +57,7 @@ class cache : public fcl::api::contract<cache> {
 FCL_API(cache, FCL_API_CONTRACT("cache", 1, 8), FCL_API_METHOD(read))
 ```
 
-Product DTO serialization stays beside the DTO owner:
+DTO serialization stays beside the DTO owner:
 
 ```cpp
 BOOST_DESCRIBE_STRUCT(protocol::read_chunk, (), (ref, offset, limit))
@@ -69,7 +69,7 @@ FCL_DECLARE_SERIALIZATION(protocol::read_chunk)
 ```cpp
 boost::asio::awaitable<void>
 application::on_provide(fcl::app::application_context& context) {
-   context.apis().install<cache>(std::make_shared<rocks_cache>());
+   context.apis().install<cache>(std::make_shared<cache_impl>());
    co_return;
 }
 
@@ -104,7 +104,7 @@ Frame lifecycle is checked by `fcl::api::call_runtime`:
 - unknown call ids, duplicate active ids and post-terminal frames are protocol
   errors.
 - optional deadlines and max-inflight limits are enforced before dispatching the
-  frame to product code.
+  frame to application handler code.
 
 Descriptor method kinds are explicit:
 

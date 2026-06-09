@@ -14,9 +14,9 @@ and signatures, BLS/BN/GMP helpers, random bytes and OpenSSL 3.0+ integration.
 
 ## When Not To Use
 
-- Do not shell out to external `openssl` binaries for product key/cert flows.
+- Do not shell out to external `openssl` binaries for application key/cert flows.
 - Do not log private keys, shared secrets, passphrases or seed material.
-- Do not add product-specific key custody or wallet policy here.
+- Do not add application-specific key custody or wallet policy here.
 - Do not treat `secp256k1` as an SSL/TLS backend; it is a signature library.
 
 ## Public Modules
@@ -45,7 +45,7 @@ Dependencies: `fcl_core`, `fcl_exceptions`, `fcl_raw`, `fcl_reflect`,
 
 ### Hash A Domain Object With Raw-Compatible Bytes
 
-Product protocols should hash stable binary payloads, not ad-hoc strings. The
+Application protocols should hash stable binary payloads, not ad-hoc strings. The
 recommended pattern is: describe the DTO, keep member order stable, pack it with
 `fcl::raw::pack` directly into a hash encoder, then sign that digest if needed.
 
@@ -90,7 +90,7 @@ the digest and breaks signatures, caches and contract compatibility.
 ### Hash Test Vectors And Byte Streams
 
 String hashing is useful for vectors, probes and small tooling. Do not copy this
-as the product protocol pattern when the payload is a C++ DTO.
+as the application protocol pattern when the payload is a C++ DTO.
 
 ```cpp
 import fcl.crypto.sha256;
@@ -307,13 +307,13 @@ auto vault_key = fcl::crypto::derive_scrypt({
 });
 ```
 
-Scrypt parameters are policy, not magic constants. Products must choose them
+Scrypt parameters are policy, not magic constants. Consumers must choose them
 for their latency and memory budget and keep salts non-secret but unique.
 
 ### AES-256-GCM Authenticated Encryption
 
 One-shot encryption is fine for small already-materialized buffers, such as a
-config secret after validation. For product DTOs and large payloads, prefer the
+config secret after validation. For application DTOs and large payloads, prefer the
 streaming encoder below so `fcl::raw::pack` writes directly into authenticated
 encryption.
 
@@ -587,8 +587,8 @@ recovery tests together when touching this code.
 
 - `private_key::to_string()` is secret material. Do not print it in diagnostics.
 - Use explicit redaction in config/log/TUI layers before rendering crypto values.
-- OpenSSL 3.0+ is the only SSL/TLS-related crypto backend expected by FCL product
-  builds.
+- OpenSSL 3.0+ is the only SSL/TLS-related crypto backend expected by FCL
+  consumers.
 - `fcl_crypto` is synchronous and does not import runtime schedulers; async
   scheduling belongs in caller or adapter layers.
 - Canonical signature behavior is compatibility-sensitive; changes require
@@ -600,7 +600,7 @@ recovery tests together when touching this code.
   protocol signatures. Whitespace, field order and locale choices will fork
   consensus. Use `fcl::raw::pack` over a described DTO.
 - Do not verify a signature against bytes reconstructed differently from the
-  signing path. Put the digest DTO next to the product protocol and cover it
+  signing path. Put the digest DTO next to the application protocol and cover it
   with golden raw bytes.
 - Do not reuse AES-GCM nonce/key pairs. A repeated nonce under the same key is a
   confidentiality break, not a recoverable runtime warning.
@@ -615,9 +615,9 @@ recovery tests together when touching this code.
 
 - Do not weaken canonical signature checks to make tests pass.
 - Do not introduce another TLS backend through crypto dependencies.
-- Do not put certificate issuance or identity enrollment product flows in
+- Do not put certificate issuance or identity enrollment application flows in
   `fcl_crypto`; this library provides primitives, not workflows.
-- Do not copy vector examples into product protocols without a named DTO and
+- Do not copy vector examples into application protocols without a named DTO and
   `BOOST_DESCRIBE_STRUCT` order review.
 
 ## Tests

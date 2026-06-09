@@ -15,7 +15,7 @@ type detection, member traversal and enum conversion so `raw`, `variant`,
 - Do not put `to_variant/from_variant` here. Described value mapping belongs to
   `fcl_variant`.
 - Do not put validation rules here. Validation metadata belongs to `fcl_schema`.
-- Do not put product schema or config defaults here.
+- Do not put application schema or config defaults here.
 
 ## Public Modules
 
@@ -71,10 +71,10 @@ order for byte-compatible packing.
 ## Risks And Anti-Patterns
 
 - Do not treat reflection metadata as business validation. It describes shape
-  and order; schema/product layers validate meaning.
+  and order; schema/application layers validate meaning.
 - Do not reorder described members as a cleanup unless every raw/wire consumer
   gets a compatibility migration.
-- Do not add product-specific reflection macros here. FCL stays neutral and
+- Do not add application-specific reflection macros here. FCL stays neutral and
   Boost.Describe remains the explicit source of member order.
 
 ## Typical Mistakes

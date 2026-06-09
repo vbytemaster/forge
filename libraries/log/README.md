@@ -26,7 +26,7 @@ identity, JSONL/text sinks, redaction и диагностический stacktra
 - Не добавляйте сюда async queue/background runtime: это будущий runtime adapter,
   а не обязанность core logger.
 - Не пишите secrets обычными полями. Используйте `log_secret(...)`.
-- Не держите product-specific trace schema в FCL. Продукт может использовать
+- Не держите application-specific trace schema в FCL. Приложение может использовать
   `fcl_log` как sink, но schema принадлежит продукту.
 
 ## Public Modules
@@ -182,7 +182,7 @@ boost::asio::awaitable<void> start_with_logging(fcl::app::application_shell& app
 }
 ```
 
-The log call records context; it does not make the application healthy. Product
+The log call records context; it does not make the application healthy. Application
 code still owns rollback, shutdown and the returned exit status.
 
 ### Format A Record Without A Sink
@@ -220,7 +220,7 @@ This is useful for tests and adapters that need deterministic formatting.
 - Do not allocate expensive fields before checking the log level. Use
   `fcl_log(...)` with `log_field_provider` for expensive diagnostics.
 - Do not install a slow network filesystem path as a synchronous file sink on a
-  hot request path. Route hot-path telemetry through a product-owned trace layer
+  hot request path. Route hot-path telemetry through an application-owned trace layer
   or a bounded adapter.
 - Do not hide errors by logging and continuing unless the code path is explicitly
   best-effort cleanup.

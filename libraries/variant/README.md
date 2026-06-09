@@ -86,7 +86,7 @@ layers before rendering or serialization.
 
 ## Risks And Anti-Patterns
 
-- Do not use `variant` as the primary model for product config when a typed
+- Do not use `variant` as the primary model for application config when a typed
   Boost.Describe struct exists.
 - Do not rely on dynamic field lookup for protocol compatibility. Raw contracts
   need typed DTOs and stable field order.

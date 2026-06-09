@@ -6,7 +6,7 @@ runtime objects that every daemon tends to duplicate by hand: `runtime`,
 registry, plugin context and lifecycle runtime.
 
 The preferred production entrypoint is `fcl::app::application_builder`, which
-returns an `application_shell` without asking the product to subclass the shell.
+returns an `application_shell` without asking the application to subclass the shell.
 Derived `application_shell` classes remain available as an advanced escape hatch
 for applications with substantial state or custom lifecycle hooks.
 
@@ -83,7 +83,7 @@ Derived applications only implement hooks:
 - `on_provide(application_context&)`
 - `on_run_foreground()`
 
-This is deliberately strict. The product controls composition, but FCL controls
+This is deliberately strict. The application controls composition, but FCL controls
 the order: collect config, configure app and plugins, provide app APIs, let
 plugins provide APIs, initialize
 plugins, startup plugins, request stop, shutdown in reverse order.
@@ -191,7 +191,7 @@ app.configure(document);
 
 ## Application Shell Example
 
-The derived app declares only product-specific hooks. It does not store
+The derived app declares only application-specific hooks. It does not store
 `plugin_context`, `application_runtime`, diagnostics, events, signals and API registry
 as repeated boilerplate members.
 
@@ -474,7 +474,7 @@ class cache : public fcl::api::contract<cache> {
 FCL_API(cache, FCL_API_CONTRACT("cache", 1, 8), FCL_API_METHOD(read))
 
 boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
-   context.apis().install<cache>(std::make_shared<rocks_cache>());
+   context.apis().install<cache>(std::make_shared<cache_impl>());
    co_return;
 }
 
@@ -489,9 +489,7 @@ transport/runtime internals:
 
 ```cpp
 boost::asio::awaitable<void> provide(fcl::api::provider& provider) override {
-   provider.install<node_admin_api>(
-      node_admin_api::describe(),
-      std::make_shared<node_admin_api_impl>(impl_));
+   provider.install<node_admin_api>(std::make_shared<node_admin_api_impl>(impl_));
    co_return;
 }
 ```
@@ -567,17 +565,17 @@ boost::asio::awaitable<void> run_runtime(fcl::app::application_runtime& runtime)
 
 ## Typical Mistakes
 
-- Do not copy shell-owned members into every product application.
+- Do not copy shell-owned members into every application.
 - Do not use `application_builder` to define another lifecycle; it only creates
   a shell.
-- Do not manually instantiate plugins in product startup code when
+- Do not manually instantiate plugins in application startup code when
   `application_shell` can own the registry.
 - Do not use APIs as fake plugins. Plugins own lifecycle and behavior; APIs
   expose typed contracts.
 - Do not configure plugin options from `build_plugins()`; plugin config belongs
   to `plugin::describe_config()` and `plugin::configure(component_view)`.
 - Do not parse `argv` or backend parser objects inside plugins.
-- Do not wrap `run_daemon(...)` with another generic config framework. Product
+- Do not wrap `run_daemon(...)` with another generic config framework. Application
   code should define typed config structs and plugin descriptors, not another
   merge engine.
 - Do not put secrets into events or diagnostics without redaction first.
@@ -585,9 +583,9 @@ boost::asio::awaitable<void> run_runtime(fcl::app::application_runtime& runtime)
 - Do not stop the scheduler or `io_context` from a stop callback or hook.
   Plugins may still need async cleanup work during `shutdown()`.
 - Do not ignore failed `initialize()` or `startup()`. Treat the shell as stopped
-  and create a new instance if the product wants another attempt.
+  and create a new instance if the application wants another attempt.
 - Do not use `abort()` from signal handlers or lifecycle catches. Request stop,
-  run shutdown at the product boundary, then return an error.
+  run shutdown at the application boundary, then return an error.
 
 ## Runtime Risks And Anti-Patterns
 

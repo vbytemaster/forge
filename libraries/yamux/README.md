@@ -18,7 +18,7 @@ resource accounting inside the Yamux owner.
 - Do not put peer identity, protocol negotiation, DHT, relay or application
   retries here.
 - Do not bypass `fcl_transport` stream/session handles with Yamux-specific
-  product APIs.
+  application APIs.
 
 ## Public Modules
 

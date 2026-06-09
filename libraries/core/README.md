@@ -68,7 +68,7 @@ auto decoded = fcl::chrono::from_fc_time_point_sec_wire(wire);
 
 ## Risks And Anti-Patterns
 
-- Do not use core helpers to hide product policy. If a rule depends on files,
+- Do not use core helpers to hide application policy. If a rule depends on files,
   network, credentials or daemon layout, it belongs above `fcl_core`.
 - Do not reintroduce global clocks or mock-time state. Tests should pass
   explicit `std::chrono` values.

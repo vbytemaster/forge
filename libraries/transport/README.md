@@ -20,7 +20,7 @@ semantics.
 - Do not add peer IDs, relay policy, protocol negotiation or discovery here.
 - Do not put API contracts or RPC method names in this layer. Use
   `fcl_api_transport` above it.
-- Do not use `buffer_pool` as an unbounded queue or product cache.
+- Do not use `buffer_pool` as an unbounded queue or application cache.
 
 ## Public Modules
 

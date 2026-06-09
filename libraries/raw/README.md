@@ -26,7 +26,7 @@ modern FCL modules and Boost.Describe for structure traversal.
 - `fcl.raw.enum_type` — enum support.
 - `fcl.raw.raw` — `pack`, `unpack`, `pack_size`.
 - `fcl/raw/serialization.hpp` — macro-only explicit-instantiation helpers for
-  product/domain DTOs.
+  application/domain DTOs.
 
 Target: `fcl_raw`.
 
@@ -61,7 +61,7 @@ fcl::raw::pack(stream, transfer{.id = 7, .amount = 42});
 
 ### Use Raw Bytes As The Hash/Signature Contract
 
-When a product signs or hashes a C++ structure, the signed bytes must come from
+When an application signs or hashes a C++ structure, the signed bytes must come from
 the same `fcl::raw::pack` path that the verifier uses. Do not rebuild bytes with
 string concatenation, JSON or hand-written field loops.
 
@@ -141,7 +141,7 @@ fcl::raw::pack(stream, time); // old FC time_point_sec: uint32 seconds
 
 ### Declare Explicit Serialization Instantiations
 
-Use the macro-only header when a product wants one `.cpp` file to own template
+Use the macro-only header when an application wants one `.cpp` file to own template
 instantiations for a frequently used DTO, while other translation units only see
 `extern template` declarations.
 
@@ -209,7 +209,7 @@ FCL_IMPLEMENT_SERIALIZATION(action_payload)
 ## Typical Mistakes
 
 - Do not put `fcl::raw` overloads in `core`.
-- Do not use filesystem path serialization as a product policy boundary.
+- Do not use filesystem path serialization as an application policy boundary.
 - Do not catch raw bounds failures by parsing `what()`; errors are standard
   exceptions such as `std::out_of_range`.
 

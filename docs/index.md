@@ -18,6 +18,15 @@ cross-library architecture decisions.
 | [migration/storlane-fc-to-fcl.md](migration/storlane-fc-to-fcl.md) | Migration map from old FC-style APIs to final FCL modules and targets. |
 | [fcl_concept_ru.md](fcl_concept_ru.md) | Original Russian concept and long-form design motivation. |
 
+## Blueprints
+
+Blueprints are planning documents for possible future FCL directions. They are
+not current public API commitments.
+
+| Blueprint | Purpose |
+| --- | --- |
+| [blockchain-constructor](blueprints/blockchain-constructor/README.md) | Planning map for neutral FCL building blocks that can support blockchain construction without turning FCL into a blockchain framework. |
+
 ## Library Guides
 
 Each library guide must be useful without reading source first:

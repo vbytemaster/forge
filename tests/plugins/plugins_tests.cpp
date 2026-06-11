@@ -1004,6 +1004,16 @@ class scripted_resolver_application final : public fcl::app::application_shell {
    return fcl::config::value{std::move(object)};
 }
 
+[[nodiscard]] fcl::config::value key_entry_without_purposes(std::string key_id,
+                                                            std::string private_key,
+                                                            std::string input_profile) {
+   auto object = fcl::config::value::object_type{};
+   object.emplace("id", fcl::config::value{std::move(key_id)});
+   object.emplace("private-key", fcl::config::value{std::move(private_key)});
+   object.emplace("input-profile", fcl::config::value{std::move(input_profile)});
+   return fcl::config::value{std::move(object)};
+}
+
 [[nodiscard]] fcl::config::document signer_config(std::vector<fcl::config::value> keys,
                                                   std::string default_output_profile = "fcl") {
    auto document = fcl::config::document{};
@@ -1068,6 +1078,49 @@ BOOST_AUTO_TEST_CASE(node_signer_config_is_redacted_and_local_only) {
    const auto* text = std::get_if<std::string>(&value->storage);
    BOOST_REQUIRE(text != nullptr);
    BOOST_TEST(*text == "<redacted>");
+}
+
+BOOST_AUTO_TEST_CASE(node_signer_rejects_malformed_private_key_without_leaking_secret) {
+   auto plugin = node_signer{};
+   const auto bad_key = std::string{"PVT_SECP256K1_not-a-valid-secret!!!!"};
+   auto document = signer_config({key_entry("provider", bad_key, "fcl", {"storage.receipt"})});
+
+   auto runtime = fcl::asio::runtime{};
+   BOOST_CHECK_EXCEPTION(
+      fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "node-signer"})),
+      node_signer::exceptions::invalid_key,
+      [&](const auto& error) {
+         const auto text = std::string{error.what()};
+         return text.find("provider") != std::string::npos &&
+                text.find(bad_key) == std::string::npos &&
+                text.find("not-a-valid-secret") == std::string::npos &&
+                text.find("base58_str") == std::string::npos;
+      });
+}
+
+BOOST_AUTO_TEST_CASE(node_signer_requires_explicit_non_empty_purposes) {
+   const auto key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::secp256k1::private_key_shim>();
+   const auto private_key = fcl::crypto::asymmetric::encoding::fcl().format(key);
+
+   auto runtime = fcl::asio::runtime{};
+
+   auto missing = node_signer{};
+   auto missing_document = signer_config({key_entry_without_purposes("missing", private_key, "fcl")});
+   BOOST_CHECK_THROW(
+      fcl::asio::blocking::run(runtime, missing.configure(fcl::config::component_view{missing_document, "node-signer"})),
+      node_signer::exceptions::invalid_config);
+
+   auto empty = node_signer{};
+   auto empty_document = signer_config({key_entry("empty", private_key, "fcl", {})});
+   BOOST_CHECK_THROW(
+      fcl::asio::blocking::run(runtime, empty.configure(fcl::config::component_view{empty_document, "node-signer"})),
+      node_signer::exceptions::invalid_config);
+
+   auto blank = node_signer{};
+   auto blank_document = signer_config({key_entry("blank", private_key, "fcl", {""})});
+   BOOST_CHECK_THROW(
+      fcl::asio::blocking::run(runtime, blank.configure(fcl::config::component_view{blank_document, "node-signer"})),
+      node_signer::exceptions::invalid_config);
 }
 
 BOOST_AUTO_TEST_CASE(node_signer_signs_k1_digest_with_antelope_output) {

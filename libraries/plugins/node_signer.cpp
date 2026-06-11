@@ -6,6 +6,7 @@ module;
 
 #include <algorithm>
 #include <coroutine>
+#include <exception>
 #include <map>
 #include <memory>
 #include <ostream>
@@ -123,6 +124,18 @@ namespace {
       if (key.private_key.empty()) {
          FCL_THROW_EXCEPTION(node_signer::exceptions::invalid_config, "node-signer private-key is required");
       }
+      if (key.purposes.empty()) {
+         FCL_THROW_EXCEPTION(node_signer::exceptions::invalid_config,
+                             "node-signer key purposes must be explicitly configured",
+                             fcl::exceptions::ctx("key_id", key.id));
+      }
+      if (std::ranges::any_of(key.purposes, [](const auto& purpose) {
+             return purpose.empty();
+          })) {
+         FCL_THROW_EXCEPTION(node_signer::exceptions::invalid_config,
+                             "node-signer key purpose must not be empty",
+                             fcl::exceptions::ctx("key_id", key.id));
+      }
       if (!ids.insert(key.id).second) {
          FCL_THROW_EXCEPTION(node_signer::exceptions::invalid_config, "node-signer key id is duplicated",
                              fcl::exceptions::ctx("key_id", key.id));
@@ -150,7 +163,7 @@ namespace {
 }
 
 [[nodiscard]] bool purpose_allowed(const std::vector<std::string>& allowed, std::string_view value) noexcept {
-   return allowed.empty() || std::ranges::find_if(allowed, [value](const auto& purpose) {
+   return std::ranges::find_if(allowed, [value](const auto& purpose) {
       return purpose == value;
    }) != allowed.end();
 }
@@ -348,17 +361,20 @@ boost::asio::awaitable<void> node_signer::configure(fcl::config::component_view 
    (void)impl_->profile_by_name(config.default_output_profile);
    auto loaded = std::map<std::string, impl::loaded_key>{};
    for (auto& key : config.keys) {
+      const auto& input_profile = impl_->profile_by_name(key.input_profile);
+      auto private_key = fcl::crypto::asymmetric::private_key{};
       try {
-         const auto& input_profile = impl_->profile_by_name(key.input_profile);
-         loaded.emplace(key.id, impl::loaded_key{
-                                    .key_id = key.id,
-                                    .private_key = input_profile.parse_private(key.private_key),
-                                    .purposes = std::move(key.purposes),
-                                 });
-      } catch (const fcl::crypto::asymmetric::exceptions::invalid_key&) {
+         private_key = input_profile.parse_private(key.private_key);
+      } catch (const std::exception&) {
          FCL_THROW_EXCEPTION(exceptions::invalid_key, "node signer private key is invalid",
-                             fcl::exceptions::ctx("key_id", key.id));
+                             fcl::exceptions::ctx("key_id", key.id),
+                             fcl::exceptions::ctx("input_profile", key.input_profile));
       }
+      loaded.emplace(key.id, impl::loaded_key{
+                                .key_id = key.id,
+                                .private_key = std::move(private_key),
+                                .purposes = std::move(key.purposes),
+                             });
    }
    impl_->keys = std::move(loaded);
    impl_->default_output_profile = std::move(config.default_output_profile);

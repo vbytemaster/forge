@@ -5,7 +5,6 @@ module;
 #include <map>
 #include <memory>
 #include <ranges>
-#include <set>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -311,13 +310,28 @@ void append_checksum(std::vector<std::uint8_t>& payload, std::uint32_t checksum)
    return result;
 }
 
-void validate_rule_prefixes(const std::vector<text_encoding_rule>& rules, std::string_view field) {
-   auto seen = std::set<std::string>{};
-   for (const auto& rule : rules) {
-      if (rule.parse && !seen.insert(rule.text_prefix).second) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "encoding profile prefix is ambiguous",
-                             fcl::exceptions::ctx("field", std::string{field}),
-                             fcl::exceptions::ctx("prefix", rule.text_prefix));
+[[nodiscard]] bool same_checksum_options(const checksum_options& lhs, const checksum_options& rhs) {
+   return lhs.scheme == rhs.scheme && lhs.payload == rhs.payload && lhs.text_suffix == rhs.text_suffix;
+}
+
+[[nodiscard]] bool same_parse_rule(const text_encoding_rule& lhs, const text_encoding_rule& rhs) {
+   return lhs.parse == rhs.parse && lhs.type == rhs.type && lhs.text_prefix == rhs.text_prefix &&
+          lhs.codec == rhs.codec && lhs.binary_prefix == rhs.binary_prefix && lhs.binary_suffix == rhs.binary_suffix &&
+          same_checksum_options(lhs.checksum, rhs.checksum);
+}
+
+void validate_parse_rules(const std::vector<text_encoding_rule>& rules, std::string_view field) {
+   for (auto first = rules.begin(); first != rules.end(); ++first) {
+      if (!first->parse) {
+         continue;
+      }
+      auto second = first;
+      for (++second; second != rules.end(); ++second) {
+         if (second->parse && same_parse_rule(*first, *second)) {
+            FCL_THROW_EXCEPTION(exceptions::invalid_options, "encoding profile parse rule is duplicated",
+                                fcl::exceptions::ctx("field", std::string{field}),
+                                fcl::exceptions::ctx("prefix", first->text_prefix));
+         }
       }
    }
 }
@@ -326,29 +340,32 @@ void validate_profile(const text_encoding_profile& profile) {
    if (profile.id.empty()) {
       FCL_THROW_EXCEPTION(exceptions::invalid_options, "encoding profile id is required");
    }
-   validate_rule_prefixes(profile.private_keys, "private_keys");
-   validate_rule_prefixes(profile.public_keys, "public_keys");
-   validate_rule_prefixes(profile.signatures, "signatures");
+   validate_parse_rules(profile.private_keys, "private_keys");
+   validate_parse_rules(profile.public_keys, "public_keys");
+   validate_parse_rules(profile.signatures, "signatures");
 }
 
-[[nodiscard]] const text_encoding_rule* find_parse_rule(const std::vector<text_encoding_rule>& rules,
-                                                        std::string_view text) {
-   const auto* empty_prefix = static_cast<const text_encoding_rule*>(nullptr);
-   const auto* best = static_cast<const text_encoding_rule*>(nullptr);
+[[nodiscard]] std::vector<const text_encoding_rule*> find_parse_rules(const std::vector<text_encoding_rule>& rules,
+                                                                      std::string_view text) {
+   auto result = std::vector<const text_encoding_rule*>{};
    for (const auto& rule : rules) {
       if (!rule.parse) {
          continue;
       }
-      if (rule.text_prefix.empty()) {
-         empty_prefix = &rule;
-         continue;
-      }
-      if (text.starts_with(rule.text_prefix) &&
-          (best == nullptr || rule.text_prefix.size() > best->text_prefix.size())) {
-         best = &rule;
+      if (rule.text_prefix.empty() || text.starts_with(rule.text_prefix)) {
+         result.push_back(&rule);
       }
    }
-   return best != nullptr ? best : empty_prefix;
+   std::ranges::stable_sort(result, [](const auto* lhs, const auto* rhs) {
+      if (lhs->text_prefix.size() != rhs->text_prefix.size()) {
+         return lhs->text_prefix.size() > rhs->text_prefix.size();
+      }
+      if (lhs->binary_prefix.size() != rhs->binary_prefix.size()) {
+         return lhs->binary_prefix.size() > rhs->binary_prefix.size();
+      }
+      return lhs->binary_suffix.size() > rhs->binary_suffix.size();
+   });
+   return result;
 }
 
 [[nodiscard]] const text_encoding_rule& require_format_rule(const std::vector<text_encoding_rule>& rules,
@@ -468,6 +485,23 @@ template <typename Value>
    return value.visit([&](const auto& item) {
       return format_rule_payload(rule, item);
    });
+}
+
+template <typename Value, typename Parser>
+[[nodiscard]] Value parse_profile_value(const std::vector<text_encoding_rule>& rules,
+                                        std::string_view text,
+                                        std::string_view failure_message,
+                                        Parser parser) {
+   auto matched_prefix = false;
+   for (const auto* rule : find_parse_rules(rules, text)) {
+      matched_prefix = true;
+      try {
+         return parser(*rule, text);
+      } catch (const exceptions::invalid_key&) {
+      }
+   }
+   FCL_THROW_EXCEPTION(exceptions::invalid_key, std::string{failure_message},
+                       fcl::exceptions::ctx("matched_prefix", matched_prefix));
 }
 
 template <typename Storage, const char* const* Prefixes>
@@ -617,7 +651,14 @@ const text_encoding_profile& bitcoin() {
             text_encoding_rule{
                .type = algorithm::secp256k1,
                .binary_prefix = {0x80},
+               .binary_suffix = {0x01},
                .checksum = base58check(),
+            },
+            text_encoding_rule{
+               .type = algorithm::secp256k1,
+               .binary_prefix = {0x80},
+               .checksum = base58check(),
+               .format = false,
             },
          },
    };
@@ -711,24 +752,18 @@ const text_encoding_profile& encoding::profile() const noexcept {
 }
 
 public_key encoding::parse_public(std::string_view text) const {
-   if (const auto* rule = find_parse_rule(profile_.public_keys, text)) {
-      return parse_public_rule(*rule, text);
-   }
-   FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded public key prefix is not supported by this profile");
+   return parse_profile_value<public_key>(
+      profile_.public_keys, text, "encoded public key prefix is not supported by this profile", parse_public_rule);
 }
 
 private_key encoding::parse_private(std::string_view text) const {
-   if (const auto* rule = find_parse_rule(profile_.private_keys, text)) {
-      return parse_private_rule(*rule, text);
-   }
-   FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded private key prefix is not supported by this profile");
+   return parse_profile_value<private_key>(
+      profile_.private_keys, text, "encoded private key prefix is not supported by this profile", parse_private_rule);
 }
 
 signature encoding::parse_signature(std::string_view text) const {
-   if (const auto* rule = find_parse_rule(profile_.signatures, text)) {
-      return parse_signature_rule(*rule, text);
-   }
-   FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded signature prefix is not supported by this profile");
+   return parse_profile_value<signature>(
+      profile_.signatures, text, "encoded signature prefix is not supported by this profile", parse_signature_rule);
 }
 
 std::string encoding::format(const public_key& key) const {

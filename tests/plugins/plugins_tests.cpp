@@ -37,8 +37,10 @@ import fcl.crypto.ed25519;
 import fcl.crypto.p256;
 import fcl.crypto.secp256k1;
 import fcl.crypto.sha256;
+import fcl.env;
 import fcl.p2p;
 import fcl.plugins;
+import fcl.program_options;
 import fcl.raw.raw;
 import fcl.schema;
 
@@ -1061,6 +1063,7 @@ BOOST_AUTO_TEST_CASE(node_signer_config_is_redacted_and_local_only) {
 
    const auto& keys = require_field(*descriptor, "keys");
    BOOST_TEST(keys.secret);
+   BOOST_TEST(static_cast<int>(keys.kind) == static_cast<int>(fcl::schema::value_kind::object_list));
    BOOST_TEST(has_field(*descriptor, "default-output-profile"));
 
    auto registry = fcl::config::component_registry{};
@@ -1078,6 +1081,47 @@ BOOST_AUTO_TEST_CASE(node_signer_config_is_redacted_and_local_only) {
    const auto* text = std::get_if<std::string>(&value->storage);
    BOOST_REQUIRE(text != nullptr);
    BOOST_TEST(*text == "<redacted>");
+}
+
+BOOST_AUTO_TEST_CASE(node_signer_structured_keys_are_not_cli_or_env_fields) {
+   auto plugin = node_signer{};
+   const auto descriptor = plugin.describe_config();
+   BOOST_REQUIRE(descriptor.has_value());
+
+   auto registry = fcl::config::component_registry{};
+   registry.add(*descriptor);
+
+   const auto help = fcl::program_options::help(registry, "FCL options");
+   BOOST_TEST(help.find("node-signer.keys") == std::string::npos);
+
+   const char* argv[] = {"tool", "--node-signer.keys=provider"};
+   const auto parsed = fcl::program_options::parse(2, argv, registry);
+   BOOST_TEST(!parsed.ok());
+   BOOST_TEST(parsed.document.try_get("node-signer.keys") == nullptr);
+
+   const auto key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::secp256k1::private_key_shim>();
+   const auto document = signer_config(
+      {key_entry("provider",
+                 fcl::crypto::asymmetric::encoding::fcl().format(key),
+                 "fcl",
+                 {"storage.receipt"})});
+
+   const auto written = fcl::env::write_document(document, registry, {.prefix = "FCL"});
+   BOOST_TEST(written.ok());
+   BOOST_TEST(written.text.find("FCL_NODE_SIGNER_KEYS") == std::string::npos);
+
+   const auto example = fcl::env::write_example(registry, {.prefix = "FCL"});
+   BOOST_TEST(example.ok());
+   BOOST_TEST(example.text.find("FCL_NODE_SIGNER_KEYS") == std::string::npos);
+
+   const auto read = fcl::env::read_document(
+      "FCL_NODE_SIGNER_KEYS=provider\n",
+      registry,
+      {.prefix = "FCL", .unknown_variables = fcl::env::unknown_variable_policy::error});
+   BOOST_TEST(!read.ok());
+   BOOST_REQUIRE_EQUAL(read.diagnostics.size(), 1U);
+   BOOST_TEST(read.diagnostics.front().code == "env.unknown");
+   BOOST_TEST(read.value.try_get("node-signer.keys") == nullptr);
 }
 
 BOOST_AUTO_TEST_CASE(node_signer_rejects_malformed_private_key_without_leaking_secret) {

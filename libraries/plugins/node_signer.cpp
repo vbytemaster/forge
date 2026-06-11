@@ -341,7 +341,7 @@ std::optional<fcl::config::component_descriptor> node_signer::describe_config() 
          {
             fcl::config::field_descriptor{
                .name = "keys",
-               .kind = fcl::schema::value_kind::string_list,
+               .kind = fcl::schema::value_kind::object_list,
                .secret = true,
                .description = "Local signer key entries. Private keys are redacted as a whole.",
             },

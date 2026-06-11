@@ -22,6 +22,10 @@ namespace {
 
 namespace po = boost::program_options;
 
+[[nodiscard]] bool supports_field(schema::value_kind kind) {
+   return kind != schema::value_kind::object_list;
+}
+
 [[nodiscard]] std::string option_name(const config::component_descriptor& component, const std::string& field) {
    if (component.section.empty()) {
       return field;
@@ -46,6 +50,9 @@ void add_field_option(po::options_description& description, const std::string& n
    auto description = po::options_description{std::move(caption)};
    for (const auto& component : registry.components()) {
       for (const auto& field : component.fields) {
+         if (!supports_field(field.kind)) {
+            continue;
+         }
          add_field_option(description, option_name(component, field.name), field.kind, field.description);
          for (const auto& alias : field.aliases) {
             add_field_option(description, option_name(component, alias), field.kind,
@@ -75,6 +82,8 @@ void add_field_option(po::options_description& description, const std::string& n
       return input;
    case schema::value_kind::string_list:
       return config::value::array_type{config::value{input}};
+   case schema::value_kind::object_list:
+      throw std::invalid_argument{"structured object-list options are not supported"};
    }
    return input;
 }
@@ -92,6 +101,9 @@ parse_result parse(int argc, const char* const* argv, const config::component_re
 
       for (const auto& component : registry.components()) {
          for (const auto& field : component.fields) {
+            if (!supports_field(field.kind)) {
+               continue;
+            }
             auto names = std::vector<std::string>{field.name};
             names.insert(names.end(), field.aliases.begin(), field.aliases.end());
 

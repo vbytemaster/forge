@@ -100,6 +100,16 @@ std::any value_to_any(const value& input, schema::value_kind kind) {
          return strings;
       }
       break;
+   case schema::value_kind::object_list:
+      if (const auto* array = input.as_array()) {
+         for (const auto& entry : *array) {
+            if (!entry.as_object()) {
+               throw std::invalid_argument{"list entry is not an object"};
+            }
+         }
+         return *array;
+      }
+      break;
    }
    throw std::invalid_argument{"config value has incompatible type"};
 }
@@ -123,6 +133,8 @@ value any_to_value(schema::value_kind kind, const std::any& input) {
       }
       return array;
    }
+   case schema::value_kind::object_list:
+      return schema::cast_any_to<value::array_type>(input);
    }
    return {};
 }

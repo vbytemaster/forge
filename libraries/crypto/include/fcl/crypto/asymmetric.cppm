@@ -184,6 +184,7 @@ enum class checksum_scheme {
    none,
    ripemd160,
    ripemd160_with_text_suffix,
+   single_sha256,
    double_sha256,
 };
 

@@ -278,6 +278,11 @@ template <typename Data> [[nodiscard]] Data make_value_from_bytes(const std::vec
 
    const auto& checksum_payload =
       options.payload == checksum_payload::encoded_payload ? encoded_payload : raw_payload;
+   if (options.scheme == checksum_scheme::single_sha256) {
+      auto chars = as_chars(checksum_payload);
+      auto digest = sha256::hash(chars.data(), static_cast<std::uint32_t>(chars.size()));
+      return first_four_bytes(digest);
+   }
    if (options.scheme == checksum_scheme::double_sha256) {
       auto chars = as_chars(checksum_payload);
       auto digest = sha256::hash(chars.data(), static_cast<std::uint32_t>(chars.size()));
@@ -569,6 +574,13 @@ namespace {
    };
 }
 
+[[nodiscard]] checksum_options wif_single_sha_checksum() {
+   return checksum_options{
+      .scheme = checksum_scheme::single_sha256,
+      .payload = checksum_payload::encoded_payload,
+   };
+}
+
 [[nodiscard]] text_encoding_rule prefixed_rule(algorithm type, std::string prefix, std::string checksum_suffix,
                                                bool parse = true, bool format = true) {
    return text_encoding_rule{
@@ -620,6 +632,13 @@ const text_encoding_profile& antelope() {
                .text_prefix = "",
                .binary_prefix = {0x80},
                .checksum = base58check(),
+            },
+            text_encoding_rule{
+               .type = algorithm::secp256k1,
+               .text_prefix = "",
+               .binary_prefix = {0x80},
+               .checksum = wif_single_sha_checksum(),
+               .format = false,
             },
             prefixed_rule(algorithm::secp256k1, "PVT_K1_", "K1", true, false),
             prefixed_rule(algorithm::p256, "PVT_R1_", "R1"),

@@ -131,6 +131,7 @@ FCL_LOG_AND_RETHROW();
 BOOST_AUTO_TEST_CASE(built_in_profiles_cover_common_text_encoding_families) try {
    const auto k1 = private_key::generate<secp256k1::private_key_shim>();
    const auto antelope_wif = std::string{"5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3"};
+   const auto antelope_single_sha_wif = std::string{"5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79xoCjBn"};
    const auto bitcoin_compressed_wif = std::string{"L4Gh6zmE7MGoBuRnbyAJajH8xGME9BdL2yAgsYrcXKnaANtNqMhs"};
    const auto ed25519 = private_key::generate<ed25519::private_key_shim>();
    const auto message = std::vector<std::uint8_t>{'p', 'r', 'o', 'f', 'i', 'l', 'e'};
@@ -145,6 +146,8 @@ BOOST_AUTO_TEST_CASE(built_in_profiles_cover_common_text_encoding_families) try 
 
    const auto antelope = encoding::from_profile(profiles::antelope());
    const auto antelope_key = antelope.parse_private(antelope_wif);
+   BOOST_TEST(antelope.parse_private(antelope_single_sha_wif).to_string({}) == antelope_key.to_string({}));
+   BOOST_CHECK_THROW((void)bitcoin.parse_private(antelope_single_sha_wif), asymmetric::exceptions::invalid_key);
    BOOST_TEST(bitcoin.parse_private(antelope_wif).to_string({}) == antelope_key.to_string({}));
    BOOST_TEST(bitcoin.parse_private(bitcoin_compressed_wif).to_string({}) == antelope_key.to_string({}));
    BOOST_TEST(bitcoin.format(antelope_key) == bitcoin_compressed_wif);

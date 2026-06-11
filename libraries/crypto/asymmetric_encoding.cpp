@@ -1,6 +1,11 @@
 module;
 #include <fcl/exceptions/macros.hpp>
+#include <algorithm>
 #include <cstring>
+#include <map>
+#include <memory>
+#include <ranges>
+#include <set>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -11,8 +16,10 @@ module fcl.crypto.asymmetric;
 
 import fcl.core.utility;
 import fcl.crypto.base58;
+import fcl.crypto.ed25519;
 import fcl.crypto.p256;
 import fcl.crypto.ripemd160;
+import fcl.crypto.rsa;
 import fcl.crypto.secp256k1;
 import fcl.crypto.sha256;
 import fcl.exceptions;
@@ -181,15 +188,286 @@ template <typename Data> [[nodiscard]] Data from_wif(std::string_view wif_key) {
    return Data(fcl::variant(key_bytes).as<typename Data::data_type>());
 }
 
-[[nodiscard]] std::pair<std::string_view, std::string_view> split_prefixed(std::string_view text,
-                                                                           std::string_view base) {
-   const auto pivot = text.find('_');
-   FCL_ASSERT(pivot != std::string_view::npos, "missing encoding prefix");
-   FCL_ASSERT(text.substr(0, pivot) == base, "unexpected encoding base prefix");
-   const auto rest = text.substr(pivot + 1U);
-   const auto suite_pivot = rest.find('_');
-   FCL_ASSERT(suite_pivot != std::string_view::npos, "missing encoding suite prefix");
-   return {rest.substr(0, suite_pivot), rest.substr(suite_pivot + 1U)};
+[[nodiscard]] std::vector<std::uint8_t> to_bytes(const std::vector<char>& input) {
+   return std::vector<std::uint8_t>(input.begin(), input.end());
+}
+
+[[nodiscard]] std::vector<char> to_chars(const std::vector<std::uint8_t>& input) {
+   return std::vector<char>(input.begin(), input.end());
+}
+
+template <typename Data> [[nodiscard]] std::vector<std::uint8_t> serialize_bytes(const Data& value) {
+   const auto serialized = value.serialize();
+   const auto packed = raw::pack(serialized);
+   return to_bytes(packed);
+}
+
+template <typename Data> [[nodiscard]] Data make_value_from_bytes(const std::vector<std::uint8_t>& bytes) {
+   using data_type = typename Data::data_type;
+
+   const auto chars = to_chars(bytes);
+   auto unpacker = fcl::datastream<const char*>(chars.data(), chars.size());
+   auto data = data_type{};
+   fcl::raw::unpack(unpacker, data);
+   if (unpacker.remaining()) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_key, "decoded key data length is invalid");
+   }
+   return Data{data};
+}
+
+[[nodiscard]] char hex_digit(std::uint8_t value) {
+   return value < 10 ? static_cast<char>('0' + value) : static_cast<char>('a' + value - 10);
+}
+
+[[nodiscard]] std::string encode_payload(const std::vector<std::uint8_t>& payload, text_codec codec) {
+   if (codec == text_codec::base58) {
+      return base58_encode(payload);
+   }
+   auto result = std::string{};
+   result.reserve(payload.size() * 2U);
+   for (const auto byte : payload) {
+      result.push_back(hex_digit(static_cast<std::uint8_t>(byte >> 4U)));
+      result.push_back(hex_digit(static_cast<std::uint8_t>(byte & 0x0fU)));
+   }
+   return result;
+}
+
+[[nodiscard]] std::uint8_t parse_hex_digit(char value) {
+   if (value >= '0' && value <= '9') {
+      return static_cast<std::uint8_t>(value - '0');
+   }
+   if (value >= 'a' && value <= 'f') {
+      return static_cast<std::uint8_t>(10 + value - 'a');
+   }
+   if (value >= 'A' && value <= 'F') {
+      return static_cast<std::uint8_t>(10 + value - 'A');
+   }
+   FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded key contains invalid hex digit");
+}
+
+[[nodiscard]] std::vector<std::uint8_t> decode_payload(std::string_view payload, text_codec codec) {
+   if (codec == text_codec::base58) {
+      return base58_decode(payload);
+   }
+   if (payload.size() % 2U != 0U) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded key hex payload has odd length");
+   }
+   auto result = std::vector<std::uint8_t>{};
+   result.reserve(payload.size() / 2U);
+   for (std::size_t i = 0; i < payload.size(); i += 2U) {
+      result.push_back(static_cast<std::uint8_t>((parse_hex_digit(payload[i]) << 4U) | parse_hex_digit(payload[i + 1U])));
+   }
+   return result;
+}
+
+[[nodiscard]] std::uint32_t first_four_bytes(const sha256& digest) {
+   auto result = std::uint32_t{};
+   std::memcpy(&result, digest.data(), sizeof(result));
+   return result;
+}
+
+[[nodiscard]] std::vector<char> as_chars(const std::vector<std::uint8_t>& value) {
+   return std::vector<char>(value.begin(), value.end());
+}
+
+[[nodiscard]] std::uint32_t calculate_rule_checksum(const std::vector<std::uint8_t>& raw_payload,
+                                                    const std::vector<std::uint8_t>& encoded_payload,
+                                                    const checksum_options& options) {
+   if (options.scheme == checksum_scheme::none) {
+      return 0;
+   }
+
+   const auto& checksum_payload =
+      options.payload == checksum_payload::encoded_payload ? encoded_payload : raw_payload;
+   if (options.scheme == checksum_scheme::double_sha256) {
+      auto chars = as_chars(checksum_payload);
+      auto digest = sha256::hash(chars.data(), static_cast<std::uint32_t>(chars.size()));
+      digest = sha256::hash(digest);
+      return first_four_bytes(digest);
+   }
+
+   auto encoder = ripemd160::encoder{};
+   const auto chars = as_chars(checksum_payload);
+   encoder.write(chars.data(), chars.size());
+   if (options.scheme == checksum_scheme::ripemd160_with_text_suffix) {
+      encoder.write(options.text_suffix.data(), options.text_suffix.size());
+   }
+   return encoder.result()._hash[0];
+}
+
+void append_checksum(std::vector<std::uint8_t>& payload, std::uint32_t checksum) {
+   const auto packed = raw::pack(checksum);
+   payload.insert(payload.end(), packed.begin(), packed.end());
+}
+
+[[nodiscard]] std::uint32_t read_checksum(std::span<const std::uint8_t> payload) {
+   auto chars = std::vector<char>(payload.begin(), payload.end());
+   auto unpacker = fcl::datastream<const char*>(chars.data(), chars.size());
+   auto result = std::uint32_t{};
+   fcl::raw::unpack(unpacker, result);
+   if (unpacker.remaining()) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded checksum has invalid length");
+   }
+   return result;
+}
+
+void validate_rule_prefixes(const std::vector<text_encoding_rule>& rules, std::string_view field) {
+   auto seen = std::set<std::string>{};
+   for (const auto& rule : rules) {
+      if (rule.parse && !seen.insert(rule.text_prefix).second) {
+         FCL_THROW_EXCEPTION(exceptions::invalid_options, "encoding profile prefix is ambiguous",
+                             fcl::exceptions::ctx("field", std::string{field}),
+                             fcl::exceptions::ctx("prefix", rule.text_prefix));
+      }
+   }
+}
+
+void validate_profile(const text_encoding_profile& profile) {
+   if (profile.id.empty()) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_options, "encoding profile id is required");
+   }
+   validate_rule_prefixes(profile.private_keys, "private_keys");
+   validate_rule_prefixes(profile.public_keys, "public_keys");
+   validate_rule_prefixes(profile.signatures, "signatures");
+}
+
+[[nodiscard]] const text_encoding_rule* find_parse_rule(const std::vector<text_encoding_rule>& rules,
+                                                        std::string_view text) {
+   const auto* empty_prefix = static_cast<const text_encoding_rule*>(nullptr);
+   const auto* best = static_cast<const text_encoding_rule*>(nullptr);
+   for (const auto& rule : rules) {
+      if (!rule.parse) {
+         continue;
+      }
+      if (rule.text_prefix.empty()) {
+         empty_prefix = &rule;
+         continue;
+      }
+      if (text.starts_with(rule.text_prefix) &&
+          (best == nullptr || rule.text_prefix.size() > best->text_prefix.size())) {
+         best = &rule;
+      }
+   }
+   return best != nullptr ? best : empty_prefix;
+}
+
+[[nodiscard]] const text_encoding_rule& require_format_rule(const std::vector<text_encoding_rule>& rules,
+                                                            algorithm value) {
+   for (const auto& rule : rules) {
+      if (rule.format && rule.type == value) {
+         return rule;
+      }
+   }
+   FCL_THROW_EXCEPTION(exceptions::invalid_options, "encoding profile does not support this algorithm");
+}
+
+[[nodiscard]] std::vector<std::uint8_t> decode_rule_payload(const text_encoding_rule& rule, std::string_view text) {
+   if (!text.starts_with(rule.text_prefix)) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded key prefix is not supported by this profile");
+   }
+
+   auto payload = decode_payload(text.substr(rule.text_prefix.size()), rule.codec);
+   if (payload.size() < rule.binary_prefix.size() + rule.binary_suffix.size()) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded key payload is too short");
+   }
+   if (!std::ranges::equal(rule.binary_prefix, payload | std::views::take(rule.binary_prefix.size()))) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded key binary prefix is invalid");
+   }
+
+   auto payload_without_check = payload;
+   auto actual_checksum = std::uint32_t{};
+   if (rule.checksum.scheme != checksum_scheme::none) {
+      if (payload_without_check.size() < 4U) {
+         FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded key checksum is missing");
+      }
+      actual_checksum = read_checksum(std::span<const std::uint8_t>{payload_without_check}.last(4U));
+      payload_without_check.resize(payload_without_check.size() - 4U);
+   }
+   if (payload_without_check.size() < rule.binary_prefix.size() + rule.binary_suffix.size()) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded key payload is too short");
+   }
+   if (!std::ranges::equal(rule.binary_suffix,
+                           payload_without_check |
+                              std::views::drop(payload_without_check.size() - rule.binary_suffix.size()))) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded key binary suffix is invalid");
+   }
+
+   auto raw_payload = std::vector<std::uint8_t>(
+      payload_without_check.begin() + static_cast<std::ptrdiff_t>(rule.binary_prefix.size()),
+      payload_without_check.end() - static_cast<std::ptrdiff_t>(rule.binary_suffix.size()));
+   if (rule.checksum.scheme != checksum_scheme::none) {
+      const auto expected_checksum =
+         calculate_rule_checksum(raw_payload, payload_without_check, rule.checksum);
+      if (actual_checksum != expected_checksum) {
+         FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded key checksum mismatch");
+      }
+   }
+   return raw_payload;
+}
+
+template <typename Data> [[nodiscard]] std::string format_rule_payload(const text_encoding_rule& rule,
+                                                                       const Data& value) {
+   auto raw_payload = serialize_bytes(value);
+   auto encoded_payload = rule.binary_prefix;
+   encoded_payload.insert(encoded_payload.end(), raw_payload.begin(), raw_payload.end());
+   encoded_payload.insert(encoded_payload.end(), rule.binary_suffix.begin(), rule.binary_suffix.end());
+   if (rule.checksum.scheme != checksum_scheme::none) {
+      append_checksum(encoded_payload, calculate_rule_checksum(raw_payload, encoded_payload, rule.checksum));
+   }
+   return rule.text_prefix + encode_payload(encoded_payload, rule.codec);
+}
+
+[[nodiscard]] private_key parse_private_rule(const text_encoding_rule& rule, std::string_view text) {
+   const auto payload = decode_rule_payload(rule, text);
+   switch (rule.type) {
+   case algorithm::secp256k1:
+      return private_key{private_key::storage_type{make_value_from_bytes<secp256k1::private_key_shim>(payload)}};
+   case algorithm::p256:
+      return private_key{private_key::storage_type{make_value_from_bytes<p256::private_key_shim>(payload)}};
+   case algorithm::ed25519:
+      return private_key{private_key::storage_type{make_value_from_bytes<ed25519::private_key_shim>(payload)}};
+   case algorithm::rsa:
+      return private_key{private_key::storage_type{make_value_from_bytes<rsa::private_key_shim>(payload)}};
+   }
+   FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded private key suite is not supported by this profile");
+}
+
+[[nodiscard]] public_key parse_public_rule(const text_encoding_rule& rule, std::string_view text) {
+   const auto payload = decode_rule_payload(rule, text);
+   switch (rule.type) {
+   case algorithm::secp256k1:
+      return public_key{public_key::storage_type{make_value_from_bytes<secp256k1::public_key_shim>(payload)}};
+   case algorithm::p256:
+      return public_key{public_key::storage_type{make_value_from_bytes<p256::public_key_shim>(payload)}};
+   case algorithm::ed25519:
+      return public_key{public_key::storage_type{make_value_from_bytes<ed25519::public_key_shim>(payload)}};
+   case algorithm::rsa:
+      return public_key{public_key::storage_type{make_value_from_bytes<rsa::public_key_shim>(payload)}};
+   }
+   FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded public key suite is not supported by this profile");
+}
+
+[[nodiscard]] signature parse_signature_rule(const text_encoding_rule& rule, std::string_view text) {
+   const auto payload = decode_rule_payload(rule, text);
+   switch (rule.type) {
+   case algorithm::secp256k1:
+      return signature{signature::storage_type{make_value_from_bytes<secp256k1::signature_shim>(payload)}};
+   case algorithm::p256:
+      return signature{signature::storage_type{make_value_from_bytes<p256::signature_shim>(payload)}};
+   case algorithm::ed25519:
+      return signature{signature::storage_type{make_value_from_bytes<ed25519::signature_shim>(payload)}};
+   case algorithm::rsa:
+      return signature{signature::storage_type{make_value_from_bytes<rsa::signature_shim>(payload)}};
+   }
+   FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded signature suite is not supported by this profile");
+}
+
+template <typename Value>
+[[nodiscard]] std::string format_profile_value(const std::vector<text_encoding_rule>& rules, const Value& value) {
+   const auto& rule = require_format_rule(rules, value.type());
+   return value.visit([&](const auto& item) {
+      return format_rule_payload(rule, item);
+   });
 }
 
 template <typename Storage, const char* const* Prefixes>
@@ -232,118 +510,237 @@ std::string signature::to_string(const fcl::yield_function_t& yield) const {
    return std::string(signature_base_prefix) + "_" + data_str;
 }
 
+namespace profiles {
+namespace {
+
+[[nodiscard]] checksum_options ripemd_suffix(std::string suffix) {
+   return checksum_options{
+      .scheme = checksum_scheme::ripemd160_with_text_suffix,
+      .payload = checksum_payload::raw_payload,
+      .text_suffix = std::move(suffix),
+   };
+}
+
+[[nodiscard]] checksum_options ripemd_plain() {
+   return checksum_options{
+      .scheme = checksum_scheme::ripemd160,
+      .payload = checksum_payload::raw_payload,
+   };
+}
+
+[[nodiscard]] checksum_options base58check() {
+   return checksum_options{
+      .scheme = checksum_scheme::double_sha256,
+      .payload = checksum_payload::encoded_payload,
+   };
+}
+
+[[nodiscard]] text_encoding_rule prefixed_rule(algorithm type, std::string prefix, std::string checksum_suffix,
+                                               bool parse = true, bool format = true) {
+   return text_encoding_rule{
+      .type = type,
+      .text_prefix = std::move(prefix),
+      .checksum = ripemd_suffix(std::move(checksum_suffix)),
+      .parse = parse,
+      .format = format,
+   };
+}
+
+} // namespace
+
+const text_encoding_profile& fcl() {
+   static const auto value = text_encoding_profile{
+      .id = "fcl",
+      .private_keys =
+         {
+            prefixed_rule(algorithm::secp256k1, "PVT_SECP256K1_", "SECP256K1"),
+            prefixed_rule(algorithm::p256, "PVT_P256_", "P256"),
+            prefixed_rule(algorithm::ed25519, "PVT_ED25519_", "ED25519"),
+            prefixed_rule(algorithm::rsa, "PVT_RSA_", "RSA"),
+         },
+      .public_keys =
+         {
+            prefixed_rule(algorithm::secp256k1, "PUB_SECP256K1_", "SECP256K1"),
+            prefixed_rule(algorithm::p256, "PUB_P256_", "P256"),
+            prefixed_rule(algorithm::ed25519, "PUB_ED25519_", "ED25519"),
+            prefixed_rule(algorithm::rsa, "PUB_RSA_", "RSA"),
+         },
+      .signatures =
+         {
+            prefixed_rule(algorithm::secp256k1, "SIG_SECP256K1_", "SECP256K1"),
+            prefixed_rule(algorithm::p256, "SIG_P256_", "P256"),
+            prefixed_rule(algorithm::ed25519, "SIG_ED25519_", "ED25519"),
+            prefixed_rule(algorithm::rsa, "SIG_RSA_", "RSA"),
+         },
+   };
+   return value;
+}
+
+const text_encoding_profile& antelope() {
+   static const auto value = text_encoding_profile{
+      .id = "antelope",
+      .private_keys =
+         {
+            text_encoding_rule{
+               .type = algorithm::secp256k1,
+               .text_prefix = "",
+               .binary_prefix = {0x80},
+               .checksum = base58check(),
+            },
+            prefixed_rule(algorithm::secp256k1, "PVT_K1_", "K1", true, false),
+            prefixed_rule(algorithm::p256, "PVT_R1_", "R1"),
+         },
+      .public_keys =
+         {
+            text_encoding_rule{
+               .type = algorithm::secp256k1,
+               .text_prefix = "EOS",
+               .checksum = ripemd_plain(),
+            },
+            prefixed_rule(algorithm::secp256k1, "PUB_K1_", "K1", true, false),
+            prefixed_rule(algorithm::p256, "PUB_R1_", "R1"),
+         },
+      .signatures =
+         {
+            prefixed_rule(algorithm::secp256k1, "SIG_K1_", "K1"),
+            prefixed_rule(algorithm::p256, "SIG_R1_", "R1"),
+         },
+   };
+   return value;
+}
+
+const text_encoding_profile& bitcoin() {
+   static const auto value = text_encoding_profile{
+      .id = "bitcoin",
+      .private_keys =
+         {
+            text_encoding_rule{
+               .type = algorithm::secp256k1,
+               .binary_prefix = {0x80},
+               .checksum = base58check(),
+            },
+         },
+   };
+   return value;
+}
+
+const text_encoding_profile& solana() {
+   static const auto value = text_encoding_profile{
+      .id = "solana",
+      .private_keys =
+         {
+            text_encoding_rule{.type = algorithm::ed25519},
+         },
+      .public_keys =
+         {
+            text_encoding_rule{.type = algorithm::ed25519},
+         },
+      .signatures =
+         {
+            text_encoding_rule{.type = algorithm::ed25519},
+         },
+   };
+   return value;
+}
+
+const text_encoding_profile& tezos() {
+   static const auto value = text_encoding_profile{
+      .id = "tezos",
+      .private_keys =
+         {
+            text_encoding_rule{
+               .type = algorithm::ed25519,
+               .binary_prefix = {43, 246, 78, 7},
+               .checksum = base58check(),
+            },
+         },
+      .public_keys =
+         {
+            text_encoding_rule{
+               .type = algorithm::ed25519,
+               .binary_prefix = {13, 15, 37, 217},
+               .checksum = base58check(),
+            },
+         },
+      .signatures =
+         {
+            text_encoding_rule{
+               .type = algorithm::ed25519,
+               .binary_prefix = {9, 245, 205, 134, 18},
+               .checksum = base58check(),
+            },
+         },
+   };
+   return value;
+}
+
+} // namespace profiles
+
 const encoding& encoding::fcl() {
-   static constexpr auto value = encoding{kind::fcl};
+   static const auto value = encoding::from_profile(profiles::fcl());
    return value;
 }
 
 const encoding& encoding::eos() {
-   static constexpr auto value = encoding{kind::eos};
+   return encoding::antelope();
+}
+
+const encoding& encoding::antelope() {
+   static const auto value = encoding::from_profile(profiles::antelope());
    return value;
 }
 
-encoding::kind encoding::id() const noexcept {
-   return kind_;
+encoding encoding::custom(text_encoding_profile profile) {
+   validate_profile(profile);
+   return encoding{std::move(profile)};
+}
+
+encoding encoding::from_profile(const text_encoding_profile& profile) {
+   validate_profile(profile);
+   return encoding{text_encoding_profile{profile}};
+}
+
+encoding::encoding(text_encoding_profile profile) : profile_(std::move(profile)) {}
+
+const std::string& encoding::id() const noexcept {
+   return profile_.id;
+}
+
+const text_encoding_profile& encoding::profile() const noexcept {
+   return profile_;
 }
 
 public_key encoding::parse_public(std::string_view text) const {
-   if (kind_ == kind::fcl) {
-      return public_key{std::string(text)};
+   if (const auto* rule = find_parse_rule(profile_.public_keys, text)) {
+      return parse_public_rule(*rule, text);
    }
-   if (text.starts_with("EOS") && text.find('_') == std::string_view::npos) {
-      return public_key{public_key::storage_type{
-         parse_checked<secp256k1::public_key_shim>(text.substr(3U), nullptr)}};
-   }
-
-   const auto [suite, payload] = split_prefixed(text, "PUB");
-   if (suite == "K1") {
-      return public_key{public_key::storage_type{parse_checked<secp256k1::public_key_shim>(payload, "K1")}};
-   }
-   if (suite == "R1") {
-      return public_key{public_key::storage_type{parse_checked<p256::public_key_shim>(payload, "R1")}};
-   }
-   FCL_THROW_EXCEPTION(exceptions::invalid_key, "unsupported EOS public key suite");
+   FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded public key prefix is not supported by this profile");
 }
 
 private_key encoding::parse_private(std::string_view text) const {
-   if (kind_ == kind::fcl) {
-      return private_key{std::string(text)};
+   if (const auto* rule = find_parse_rule(profile_.private_keys, text)) {
+      return parse_private_rule(*rule, text);
    }
-   if (text.find('_') == std::string_view::npos) {
-      return private_key{private_key::storage_type{from_wif<secp256k1::private_key_shim>(text)}};
-   }
-   const auto [suite, payload] = split_prefixed(text, "PVT");
-   if (suite == "K1") {
-      return private_key{private_key::storage_type{parse_checked<secp256k1::private_key_shim>(payload, "K1")}};
-   }
-   if (suite == "R1") {
-      return private_key{private_key::storage_type{parse_checked<p256::private_key_shim>(payload, "R1")}};
-   }
-   FCL_THROW_EXCEPTION(exceptions::invalid_key, "unsupported EOS private key suite");
+   FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded private key prefix is not supported by this profile");
 }
 
 signature encoding::parse_signature(std::string_view text) const {
-   if (kind_ == kind::fcl) {
-      return signature{std::string(text)};
+   if (const auto* rule = find_parse_rule(profile_.signatures, text)) {
+      return parse_signature_rule(*rule, text);
    }
-   const auto [suite, payload] = split_prefixed(text, "SIG");
-   if (suite == "K1") {
-      return signature{signature::storage_type{parse_checked<secp256k1::signature_shim>(payload, "K1")}};
-   }
-   if (suite == "R1") {
-      return signature{signature::storage_type{parse_checked<p256::signature_shim>(payload, "R1")}};
-   }
-   FCL_THROW_EXCEPTION(exceptions::invalid_key, "unsupported EOS signature suite");
+   FCL_THROW_EXCEPTION(exceptions::invalid_key, "encoded signature prefix is not supported by this profile");
 }
 
 std::string encoding::format(const public_key& key) const {
-   if (kind_ == kind::fcl) {
-      return key.to_string({});
-   }
-   return std::visit(
-      [](const auto& value) -> std::string {
-         using key_type = std::decay_t<decltype(value)>;
-         if constexpr (std::is_same_v<key_type, secp256k1::public_key_shim>) {
-            return "EOS" + format_checked(value, nullptr);
-         } else if constexpr (std::is_same_v<key_type, p256::public_key_shim>) {
-            return "PUB_R1_" + format_checked(value, "R1");
-         } else {
-            FCL_THROW_EXCEPTION(exceptions::invalid_key, "EOS encoding does not support this public key type");
-         }
-      },
-      key._storage);
+   return format_profile_value(profile_.public_keys, key);
 }
 
 std::string encoding::format(const private_key& key) const {
-   if (kind_ == kind::fcl) {
-      return key.to_string({});
-   }
-   return key.visit([](const auto& value) -> std::string {
-      using key_type = std::decay_t<decltype(value)>;
-      if constexpr (std::is_same_v<key_type, secp256k1::private_key_shim>) {
-         return to_wif(value);
-      } else if constexpr (std::is_same_v<key_type, p256::private_key_shim>) {
-         return "PVT_R1_" + format_checked(value, "R1");
-      } else {
-         FCL_THROW_EXCEPTION(exceptions::invalid_key, "EOS encoding does not support this private key type");
-      }
-   });
+   return format_profile_value(profile_.private_keys, key);
 }
 
 std::string encoding::format(const signature& sig) const {
-   if (kind_ == kind::fcl) {
-      return sig.to_string({});
-   }
-   return sig.visit([](const auto& value) -> std::string {
-      using sig_type = std::decay_t<decltype(value)>;
-      if constexpr (std::is_same_v<sig_type, secp256k1::signature_shim>) {
-         return "SIG_K1_" + format_checked(value, "K1");
-      } else if constexpr (std::is_same_v<sig_type, p256::signature_shim>) {
-         return "SIG_R1_" + format_checked(value, "R1");
-      } else {
-         FCL_THROW_EXCEPTION(exceptions::invalid_key, "EOS encoding does not support this signature type");
-      }
-   });
+   return format_profile_value(profile_.signatures, sig);
 }
 
 void to_variant(const private_key& var, variant& vo, const fcl::yield_function_t& yield) {

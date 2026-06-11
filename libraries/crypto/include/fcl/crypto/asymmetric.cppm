@@ -2,6 +2,8 @@ module;
 #include <fcl/exceptions/macros.hpp>
 #include <boost/describe.hpp>
 #include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <ostream>
 #include <span>
 #include <string>
@@ -178,17 +180,65 @@ class signature {
 
 [[nodiscard]] std::size_t hash_value(const signature& b);
 
+enum class checksum_scheme {
+   none,
+   ripemd160,
+   ripemd160_with_text_suffix,
+   double_sha256,
+};
+
+enum class checksum_payload {
+   raw_payload,
+   encoded_payload,
+};
+
+enum class text_codec {
+   base58,
+   hex,
+};
+
+struct checksum_options {
+   checksum_scheme scheme = checksum_scheme::none;
+   checksum_payload payload = checksum_payload::raw_payload;
+   std::string text_suffix;
+};
+
+struct text_encoding_rule {
+   algorithm type = algorithm::secp256k1;
+   std::string text_prefix;
+   text_codec codec = text_codec::base58;
+   std::vector<std::uint8_t> binary_prefix;
+   std::vector<std::uint8_t> binary_suffix;
+   checksum_options checksum;
+   bool parse = true;
+   bool format = true;
+};
+
+struct text_encoding_profile {
+   std::string id;
+   std::vector<text_encoding_rule> private_keys;
+   std::vector<text_encoding_rule> public_keys;
+   std::vector<text_encoding_rule> signatures;
+};
+
+namespace profiles {
+[[nodiscard]] const text_encoding_profile& fcl();
+[[nodiscard]] const text_encoding_profile& antelope();
+[[nodiscard]] const text_encoding_profile& bitcoin();
+[[nodiscard]] const text_encoding_profile& solana();
+[[nodiscard]] const text_encoding_profile& tezos();
+};
+
 class encoding {
  public:
-   enum class kind {
-      fcl,
-      eos,
-   };
-
    [[nodiscard]] static const encoding& fcl();
-   [[nodiscard]] static const encoding& eos();
+   [[nodiscard]] static const encoding& antelope();
+   [[deprecated("Use encoding::antelope()")]] [[nodiscard]] static const encoding& eos();
+   [[nodiscard]] static encoding custom(text_encoding_profile profile);
+   [[nodiscard]] static encoding from_profile(const text_encoding_profile& profile);
 
-   [[nodiscard]] kind id() const noexcept;
+   [[nodiscard]] const std::string& id() const noexcept;
+   [[nodiscard]] const text_encoding_profile& profile() const noexcept;
 
    [[nodiscard]] public_key parse_public(std::string_view text) const;
    [[nodiscard]] private_key parse_private(std::string_view text) const;
@@ -199,9 +249,9 @@ class encoding {
    [[nodiscard]] std::string format(const signature& sig) const;
 
  private:
-   explicit constexpr encoding(kind value) : kind_(value) {}
+   explicit encoding(text_encoding_profile profile);
 
-   kind kind_;
+   text_encoding_profile profile_;
 };
 
 void to_variant(const private_key& var, fcl::variant& vo,

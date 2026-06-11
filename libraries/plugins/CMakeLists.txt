@@ -1,6 +1,7 @@
 add_library(
    fcl_plugins STATIC
    p2p_diagnostics.cpp
+   node_signer.cpp
    p2p_pubsub.cpp
    p2p_api_resolver.cpp
    p2p_node.cpp
@@ -16,6 +17,7 @@ target_link_libraries(
       fcl_api_transport
       fcl_p2p
       fcl_config
+      fcl_crypto
       fcl_asio
       Boost::asio
 )

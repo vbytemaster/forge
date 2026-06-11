@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -31,6 +32,11 @@ import fcl.asio.runtime;
 import fcl.config.component;
 import fcl.config.document;
 import fcl.config.value;
+import fcl.crypto.asymmetric;
+import fcl.crypto.ed25519;
+import fcl.crypto.p256;
+import fcl.crypto.secp256k1;
+import fcl.crypto.sha256;
 import fcl.p2p;
 import fcl.plugins;
 import fcl.raw.raw;
@@ -100,6 +106,8 @@ namespace {
 using plugin_test_contract::node_test_api;
 using plugin_test_contract::receipt_test_api;
 using plugin_test_contract::scripted_resolver_api;
+
+using fcl::plugins::node_signer;
 
 struct plugin_log {
    std::vector<std::string> entries;
@@ -979,6 +987,31 @@ class scripted_resolver_application final : public fcl::app::application_shell {
    });
 }
 
+[[nodiscard]] fcl::config::value key_entry(std::string key_id,
+                                           std::string private_key,
+                                           std::string input_profile,
+                                           std::vector<std::string> purposes) {
+   auto purpose_values = fcl::config::value::array_type{};
+   for (auto& purpose : purposes) {
+      purpose_values.emplace_back(std::move(purpose));
+   }
+
+   auto object = fcl::config::value::object_type{};
+   object.emplace("id", fcl::config::value{std::move(key_id)});
+   object.emplace("private-key", fcl::config::value{std::move(private_key)});
+   object.emplace("input-profile", fcl::config::value{std::move(input_profile)});
+   object.emplace("purposes", fcl::config::value{std::move(purpose_values)});
+   return fcl::config::value{std::move(object)};
+}
+
+[[nodiscard]] fcl::config::document signer_config(std::vector<fcl::config::value> keys,
+                                                  std::string default_output_profile = "fcl") {
+   auto document = fcl::config::document{};
+   document.set("node-signer.keys", fcl::config::value::array_type(keys.begin(), keys.end()));
+   document.set("node-signer.default-output-profile", std::move(default_output_profile));
+   return document;
+}
+
 template <typename T>
 concept has_metrics = requires(T& value) {
    value.metrics();
@@ -1005,8 +1038,224 @@ static_assert(!has_metrics<fcl::plugins::p2p_node::api>);
 static_assert(!has_peers<fcl::plugins::p2p_node::api>);
 static_assert(!has_pubsub_publish<fcl::plugins::p2p_node::api>);
 static_assert(!has_pubsub_subscribe<fcl::plugins::p2p_node::api>);
+static_assert(fcl::api::local_interface<node_signer::api>);
+static_assert(!fcl::api::remote_interface<node_signer::api>);
 
 } // namespace
+
+BOOST_AUTO_TEST_CASE(node_signer_config_is_redacted_and_local_only) {
+   auto plugin = node_signer{};
+   const auto descriptor = plugin.describe_config();
+   BOOST_REQUIRE(descriptor.has_value());
+   BOOST_TEST(descriptor->section == "node-signer");
+
+   const auto& keys = require_field(*descriptor, "keys");
+   BOOST_TEST(keys.secret);
+   BOOST_TEST(has_field(*descriptor, "default-output-profile"));
+
+   auto registry = fcl::config::component_registry{};
+   registry.add(*descriptor);
+
+   const auto key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::secp256k1::private_key_shim>();
+   auto document = signer_config(
+      {key_entry("provider",
+                 fcl::crypto::asymmetric::encoding::fcl().format(key),
+                 "fcl",
+                 {"storage.receipt"})});
+   const auto redacted = fcl::config::redact(document, registry);
+   const auto* value = redacted.try_get("node-signer.keys");
+   BOOST_REQUIRE(value != nullptr);
+   const auto* text = std::get_if<std::string>(&value->storage);
+   BOOST_REQUIRE(text != nullptr);
+   BOOST_TEST(*text == "<redacted>");
+}
+
+BOOST_AUTO_TEST_CASE(node_signer_signs_k1_digest_with_antelope_output) {
+   const auto key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::secp256k1::private_key_shim>();
+   auto plugin = node_signer{};
+   auto document = signer_config(
+      {key_entry("provider",
+                 fcl::crypto::asymmetric::encoding::fcl().format(key),
+                 "fcl",
+                 {"storage.receipt", "storage.audit"})});
+
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "node-signer"}));
+
+   auto apis = fcl::api::registry{};
+   auto provider = fcl::api::installer{apis};
+   fcl::asio::blocking::run(runtime, plugin.provide(provider));
+
+   auto api = apis.get<node_signer::api>(node_signer::api::ref());
+   const auto digest = fcl::crypto::sha256::hash("receipt-payload");
+   const auto response = fcl::asio::blocking::run(
+      runtime,
+      api->sign(node_signer::request{
+         .key_id = "provider",
+         .purpose = "storage.receipt",
+         .digest = digest,
+         .required_algorithm = node_signer::key_algorithm::secp256k1,
+         .output_profile = "antelope",
+      }));
+
+   const auto signature_text = response.signature_text();
+   BOOST_TEST(response.key_id == "provider");
+   BOOST_TEST(response.algorithm == node_signer::key_algorithm::secp256k1);
+   BOOST_TEST(response.output_profile == "antelope");
+   BOOST_TEST(response.public_key.starts_with("EOS"));
+   BOOST_TEST(signature_text.starts_with("SIG_K1_"));
+
+   const auto signature = fcl::crypto::asymmetric::encoding::antelope().parse_signature(signature_text);
+   const auto recovered = fcl::crypto::asymmetric::public_key{signature, digest, true};
+   BOOST_TEST(recovered.to_string({}) == key.get_public_key().to_string({}));
+}
+
+BOOST_AUTO_TEST_CASE(node_signer_sugar_uses_configured_default_output_profile) {
+   const auto key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::secp256k1::private_key_shim>();
+   auto plugin = node_signer{};
+   auto document = signer_config(
+      {key_entry("provider",
+                 fcl::crypto::asymmetric::encoding::fcl().format(key),
+                 "fcl",
+                 {"storage.receipt"})},
+      "antelope");
+
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "node-signer"}));
+
+   auto apis = fcl::api::registry{};
+   auto provider = fcl::api::installer{apis};
+   fcl::asio::blocking::run(runtime, plugin.provide(provider));
+
+   auto api = apis.get<node_signer::api>(node_signer::api::ref());
+   const auto digest = fcl::crypto::sha256::hash("receipt-payload");
+   const auto defaulted = fcl::asio::blocking::run(
+      runtime,
+      api->sign("provider",
+                digest,
+                node_signer::options{
+                   .purpose = "storage.receipt",
+                   .required_algorithm = node_signer::key_algorithm::secp256k1,
+                }));
+
+   BOOST_TEST(defaulted.output_profile == "antelope");
+   BOOST_TEST(defaulted.signature_text().starts_with("SIG_K1_"));
+
+   const auto overridden = fcl::asio::blocking::run(
+      runtime,
+      api->sign("provider",
+                digest,
+                node_signer::options{
+                   .purpose = "storage.receipt",
+                   .required_algorithm = node_signer::key_algorithm::secp256k1,
+                   .output_profile = "fcl",
+                }));
+
+   BOOST_TEST(overridden.output_profile == "fcl");
+   BOOST_TEST(overridden.signature_text().starts_with("SIG_SECP256K1_"));
+}
+
+BOOST_AUTO_TEST_CASE(node_signer_supports_p256_and_ed25519_without_k1_assumptions) {
+   const auto p256_key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::p256::private_key_shim>();
+   const auto ed25519_key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::ed25519::private_key_shim>();
+   auto plugin = node_signer{};
+   auto document = signer_config(
+      {key_entry("p256", fcl::crypto::asymmetric::encoding::fcl().format(p256_key), "fcl", {"api.auth"}),
+       key_entry("ed25519", fcl::crypto::asymmetric::encoding::fcl().format(ed25519_key), "fcl", {"api.auth"})});
+
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "node-signer"}));
+
+   auto apis = fcl::api::registry{};
+   auto provider = fcl::api::installer{apis};
+   fcl::asio::blocking::run(runtime, plugin.provide(provider));
+   auto api = apis.get<node_signer::api>(node_signer::api::ref());
+
+   const auto digest = fcl::crypto::sha256::hash("auth-payload");
+   const auto p256 = fcl::asio::blocking::run(
+      runtime,
+      api->sign(node_signer::request{
+         .key_id = "p256",
+         .purpose = "api.auth",
+         .digest = digest,
+         .required_algorithm = node_signer::key_algorithm::p256,
+      }));
+   const auto p256_signature = fcl::crypto::asymmetric::encoding::fcl().parse_signature(
+      std::string{p256.signature.begin(), p256.signature.end()});
+   const auto p256_recovered = fcl::crypto::asymmetric::public_key{p256_signature, digest, true};
+   BOOST_TEST(p256_recovered.to_string({}) == p256_key.get_public_key().to_string({}));
+
+   const auto ed25519 = fcl::asio::blocking::run(
+      runtime,
+      api->sign(node_signer::request{
+         .key_id = "ed25519",
+         .purpose = "api.auth",
+         .digest = digest,
+         .required_algorithm = node_signer::key_algorithm::ed25519,
+      }));
+   const auto ed25519_signature = fcl::crypto::asymmetric::encoding::fcl().parse_signature(
+      std::string{ed25519.signature.begin(), ed25519.signature.end()});
+   const auto ed25519_public = fcl::crypto::asymmetric::encoding::fcl().parse_public(ed25519.public_key);
+   BOOST_TEST(ed25519_public.verify(digest.to_uint8_span(), ed25519_signature));
+}
+
+BOOST_AUTO_TEST_CASE(node_signer_enforces_allowed_purpose_and_algorithm) {
+   const auto key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::secp256k1::private_key_shim>();
+   auto plugin = node_signer{};
+   auto document = signer_config(
+      {key_entry("provider", fcl::crypto::asymmetric::encoding::fcl().format(key), "fcl", {"storage.receipt"})});
+
+   auto runtime = fcl::asio::runtime{};
+   fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "node-signer"}));
+
+   auto apis = fcl::api::registry{};
+   auto provider = fcl::api::installer{apis};
+   fcl::asio::blocking::run(runtime, plugin.provide(provider));
+   auto api = apis.get<node_signer::api>(node_signer::api::ref());
+   const auto digest = fcl::crypto::sha256::hash("receipt-payload");
+
+   BOOST_CHECK_THROW(
+      fcl::asio::blocking::run(
+         runtime,
+         api->sign(node_signer::request{
+            .key_id = "missing",
+            .purpose = "storage.receipt",
+            .digest = digest,
+         })),
+      node_signer::exceptions::key_not_found);
+
+   BOOST_CHECK_THROW(
+      fcl::asio::blocking::run(
+         runtime,
+         api->sign(node_signer::request{
+            .key_id = "provider",
+            .purpose = "storage.audit",
+            .digest = digest,
+         })),
+      node_signer::exceptions::purpose_denied);
+
+   BOOST_CHECK_THROW(
+      fcl::asio::blocking::run(
+         runtime,
+         api->sign(node_signer::request{
+            .key_id = "provider",
+            .purpose = "storage.receipt",
+            .digest = digest,
+            .required_algorithm = node_signer::key_algorithm::ed25519,
+         })),
+      node_signer::exceptions::unsupported_algorithm);
+
+   BOOST_CHECK_THROW(
+      fcl::asio::blocking::run(
+         runtime,
+         api->sign(node_signer::request{
+            .key_id = "provider",
+            .purpose = "storage.receipt",
+            .digest = digest,
+            .output_profile = "bitcoin",
+         })),
+      node_signer::exceptions::unsupported_profile);
+}
 
 BOOST_AUTO_TEST_CASE(p2p_node_plugin_config_is_described_from_public_schema) {
    auto plugin = fcl::plugins::p2p_node{};

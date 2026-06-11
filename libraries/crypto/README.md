@@ -249,8 +249,9 @@ auto private_key = fcl::crypto::asymmetric::encoding::fcl().parse_private(privat
 auto public_text = fcl::crypto::asymmetric::encoding::fcl().format(private_key.get_public_key());
 ```
 
-The generic parser accepts only the canonical FCL profile. EOS/FC-like key text
-must go through `fcl::crypto::asymmetric::encoding::eos()` explicitly.
+The generic parser accepts only the canonical FCL profile. EOSIO/Antelope-style
+key text must go through `fcl::crypto::asymmetric::encoding::antelope()`
+explicitly; `encoding::eos()` remains only as a compatibility alias.
 `private_key::to_string()` returns private key material. It is useful for test
 fixtures and import/export flows, not for logs.
 

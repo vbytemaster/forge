@@ -52,6 +52,10 @@ struct binding_build_result {
    std::vector<schema::diagnostic> diagnostics;
 };
 
+[[nodiscard]] bool supports_field(schema::value_kind kind) {
+   return kind != schema::value_kind::object_list;
+}
+
 [[nodiscard]] std::string trim(std::string_view input) {
    auto begin = std::size_t{0};
    while (begin < input.size() && std::isspace(static_cast<unsigned char>(input[begin])) != 0) {
@@ -175,6 +179,9 @@ void add_binding(binding_build_result& result, field_binding candidate, bool cas
    auto result = binding_build_result{};
    for (const auto& component : registry.components()) {
       for (const auto& field : component.fields) {
+         if (!supports_field(field.kind)) {
+            continue;
+         }
          const auto canonical_env = env_name_for(options.prefix, component.section, field.name);
          const auto canonical_path = path_for(component.section, field.name);
          auto canonical = field_binding{
@@ -210,6 +217,9 @@ void add_binding(binding_build_result& result, field_binding candidate, bool cas
    auto result = binding_build_result{};
    for (const auto& component : registry.components()) {
       for (const auto& field : component.fields) {
+         if (!supports_field(field.kind)) {
+            continue;
+         }
          const auto canonical_env = env_name_for(options.prefix, component.section, field.name);
          const auto canonical_path = path_for(component.section, field.name);
          auto candidate = field_binding{
@@ -324,6 +334,8 @@ template <typename Parser>
       return std::string{input};
    case schema::value_kind::string_list:
       return split_list_value(input);
+   case schema::value_kind::object_list:
+      throw std::invalid_argument{"structured object-list environment values are not supported"};
    }
    throw std::invalid_argument{"unsupported schema value kind"};
 }
@@ -801,6 +813,9 @@ write_result write_document(const config::document& document, const config::comp
 
    for (const auto& component : registry.components()) {
       for (const auto& field : component.fields) {
+         if (!supports_field(field.kind)) {
+            continue;
+         }
          const auto path = path_for(component.section, field.name);
          const auto* found = document.try_get(path);
          if (!found) {
@@ -829,6 +844,9 @@ write_result write_example(const config::component_registry& registry, write_opt
 
    for (const auto& component : registry.components()) {
       for (const auto& field : component.fields) {
+         if (!supports_field(field.kind)) {
+            continue;
+         }
          if (options.include_comments && !field.description.empty()) {
             output.text += "# ";
             output.text += field.description;

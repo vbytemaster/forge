@@ -16,6 +16,7 @@ enum class value_kind {
    floating,
    string,
    string_list,
+   object_list,
 };
 
 template <typename T> struct dependent_false : std::false_type {};

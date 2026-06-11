@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <typeindex>
 #include <vector>
 
 import fcl.api;
@@ -127,6 +128,26 @@ class remote_only_api : public fcl::api::contract<remote_only_api, fcl::api::sur
 
 FCL_API(remote_only_api, FCL_API_CONTRACT("remote.only", 1, 0), FCL_API_METHOD(read))
 
+class overloaded_api : public fcl::api::contract<overloaded_api, fcl::api::surface::remote> {
+ public:
+   virtual ~overloaded_api() = default;
+
+   virtual boost::asio::awaitable<protocol::chunk> sign(protocol::read_chunk request) = 0;
+   virtual boost::asio::awaitable<protocol::chunk> sign_since(protocol::read_chunk request) = 0;
+   virtual boost::asio::awaitable<protocol::chunk> sign_old(protocol::read_chunk request) = 0;
+   virtual boost::asio::awaitable<protocol::chunk> sign_old_since(protocol::read_chunk request) = 0;
+
+   boost::asio::awaitable<protocol::chunk> sign(std::string ref) {
+      co_return co_await sign(protocol::read_chunk{.ref = std::move(ref)});
+   }
+};
+
+FCL_API(overloaded_api, FCL_API_CONTRACT("overloaded", 1, 3),
+        FCL_API_METHOD_TYPED(sign, protocol::read_chunk, protocol::chunk),
+        FCL_API_METHOD_TYPED_SINCE(sign_since, protocol::read_chunk, protocol::chunk, 2),
+        FCL_API_METHOD_TYPED_DEPRECATED(sign_old, protocol::read_chunk, protocol::chunk, "use sign"),
+        FCL_API_METHOD_TYPED_DEPRECATED_SINCE(sign_old_since, protocol::read_chunk, protocol::chunk, 2, "use sign"))
+
 static_assert(fcl::api::interface<cache_api>);
 static_assert(fcl::api::local_interface<cache_api>);
 static_assert(fcl::api::remote_interface<cache_api>);
@@ -138,6 +159,7 @@ static_assert(!fcl::api::remote_interface<local_only_api>);
 static_assert(fcl::api::interface<remote_only_api>);
 static_assert(!fcl::api::local_interface<remote_only_api>);
 static_assert(fcl::api::remote_interface<remote_only_api>);
+static_assert(fcl::api::remote_interface<overloaded_api>);
 
 class cache_impl final : public cache_api {
  public:
@@ -361,6 +383,31 @@ BOOST_AUTO_TEST_CASE(generated_api_descriptor_records_contract_and_method_metada
    BOOST_TEST(watch->since_revision == 2U);
 }
 
+BOOST_AUTO_TEST_CASE(generated_api_descriptor_supports_typed_overload_methods) {
+   const auto descriptor = overloaded_api::describe();
+
+   BOOST_TEST(descriptor.id.value == "overloaded");
+   BOOST_TEST(descriptor.version.major == 1U);
+   BOOST_TEST(descriptor.version.revision == 3U);
+
+   const auto* sign = fcl::api::find_method(descriptor, "sign");
+   const auto* sign_since = fcl::api::find_method(descriptor, "sign_since");
+   const auto* sign_old = fcl::api::find_method(descriptor, "sign_old");
+   const auto* sign_old_since = fcl::api::find_method(descriptor, "sign_old_since");
+   BOOST_REQUIRE(sign != nullptr);
+   BOOST_REQUIRE(sign_since != nullptr);
+   BOOST_REQUIRE(sign_old != nullptr);
+   BOOST_REQUIRE(sign_old_since != nullptr);
+   BOOST_TEST((sign->request_type == std::type_index{typeid(protocol::read_chunk)}));
+   BOOST_TEST((sign->response_type == std::type_index{typeid(protocol::chunk)}));
+   BOOST_TEST(sign_since->since_revision == 2U);
+   BOOST_TEST(sign_old->deprecated);
+   BOOST_TEST(sign_old->deprecation_reason == "use sign");
+   BOOST_TEST(sign_old_since->since_revision == 2U);
+   BOOST_TEST(sign_old_since->deprecated);
+   BOOST_TEST(sign_old_since->deprecation_reason == "use sign");
+}
+
 BOOST_AUTO_TEST_CASE(generated_proxy_invokes_remote_through_typed_handle) {
    auto runtime = fcl::asio::runtime{};
    auto invoker = std::make_shared<recording_invoker>();
@@ -374,6 +421,20 @@ BOOST_AUTO_TEST_CASE(generated_proxy_invokes_remote_through_typed_handle) {
    BOOST_TEST(invoker->last.api.min_revision == 8U);
    BOOST_TEST(invoker->last.method == "read");
    BOOST_TEST(invoker->last.codec.value == "fcl.raw");
+}
+
+BOOST_AUTO_TEST_CASE(generated_proxy_invokes_typed_overload_method) {
+   auto runtime = fcl::asio::runtime{};
+   auto invoker = std::make_shared<recording_invoker>();
+   auto handle = fcl::api::handle<overloaded_api>{std::make_shared<fcl::api::proxy<overloaded_api>>(invoker)};
+
+   const auto response = fcl::asio::blocking::run(runtime, handle->sign({.ref = "payload"}));
+
+   BOOST_TEST(response.bytes == "remote:payload");
+   BOOST_TEST(invoker->last.api.id.value == "overloaded");
+   BOOST_TEST(invoker->last.api.major == 1U);
+   BOOST_TEST(invoker->last.api.min_revision == 3U);
+   BOOST_TEST(invoker->last.method == "sign");
 }
 
 BOOST_AUTO_TEST_CASE(generated_proxy_preserves_requested_api_revision) {

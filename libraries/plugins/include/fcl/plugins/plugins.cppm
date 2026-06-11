@@ -1,6 +1,6 @@
 export module fcl.plugins;
 
-export import fcl.plugins.node_signer;
+export import fcl.plugins.signature_provider;
 export import fcl.plugins.p2p_diagnostics;
 export import fcl.plugins.p2p_pubsub;
 export import fcl.plugins.p2p_api_resolver;

@@ -133,6 +133,8 @@ BOOST_AUTO_TEST_CASE(built_in_profiles_cover_common_text_encoding_families) try 
    const auto antelope_wif = std::string{"5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3"};
    const auto antelope_single_sha_wif = std::string{"5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79xoCjBn"};
    const auto bitcoin_compressed_wif = std::string{"L4Gh6zmE7MGoBuRnbyAJajH8xGME9BdL2yAgsYrcXKnaANtNqMhs"};
+   const auto bitcoin_edge_uncompressed_wif = std::string{"5HwoXVkHoRM8sL2KmNRS217n1g8mPPBomrY7yehCuXBzyAQyaGw"};
+   const auto bitcoin_edge_compressed_wif = std::string{"KwntMbt59tTsj8xqpqYqRRWufyjGunvhSyeMo3NTYpFYrbWvZbdd"};
    const auto ed25519 = private_key::generate<ed25519::private_key_shim>();
    const auto message = std::vector<std::uint8_t>{'p', 'r', 'o', 'f', 'i', 'l', 'e'};
    const auto ed25519_signature = ed25519.sign(message);
@@ -153,6 +155,10 @@ BOOST_AUTO_TEST_CASE(built_in_profiles_cover_common_text_encoding_families) try 
    BOOST_TEST(bitcoin.format(antelope_key) == bitcoin_compressed_wif);
    BOOST_TEST(bitcoin.parse_private(bitcoin.format(antelope_key)).to_string({}) == antelope_key.to_string({}));
    BOOST_TEST(antelope.format(antelope_key) == antelope_wif);
+
+   const auto bitcoin_edge_key = bitcoin.parse_private(bitcoin_edge_uncompressed_wif);
+   BOOST_TEST(bitcoin_edge_key.to_string({}) == bitcoin.parse_private(bitcoin_edge_compressed_wif).to_string({}));
+   BOOST_TEST(bitcoin.format(bitcoin_edge_key) == bitcoin_edge_compressed_wif);
 
    const auto solana = encoding::from_profile(profiles::solana());
    const auto solana_public = solana.format(ed25519.get_public_key());

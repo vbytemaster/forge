@@ -214,6 +214,14 @@ template <typename Data> [[nodiscard]] Data make_value_from_bytes(const std::vec
    return Data{data};
 }
 
+template <typename Data> [[nodiscard]] Data make_fixed_value_from_bytes(const std::vector<std::uint8_t>& bytes) {
+   using data_type = typename Data::data_type;
+   if (bytes.size() != sizeof(data_type)) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_key, "decoded key data length is invalid");
+   }
+   return make_value_from_bytes<Data>(bytes);
+}
+
 [[nodiscard]] char hex_digit(std::uint8_t value) {
    return value < 10 ? static_cast<char>('0' + value) : static_cast<char>('a' + value - 10);
 }
@@ -443,11 +451,11 @@ template <typename Data> [[nodiscard]] std::string format_rule_payload(const tex
    const auto payload = decode_rule_payload(rule, text);
    switch (rule.type) {
    case algorithm::secp256k1:
-      return private_key{private_key::storage_type{make_value_from_bytes<secp256k1::private_key_shim>(payload)}};
+      return private_key{private_key::storage_type{make_fixed_value_from_bytes<secp256k1::private_key_shim>(payload)}};
    case algorithm::p256:
-      return private_key{private_key::storage_type{make_value_from_bytes<p256::private_key_shim>(payload)}};
+      return private_key{private_key::storage_type{make_fixed_value_from_bytes<p256::private_key_shim>(payload)}};
    case algorithm::ed25519:
-      return private_key{private_key::storage_type{make_value_from_bytes<ed25519::private_key_shim>(payload)}};
+      return private_key{private_key::storage_type{make_fixed_value_from_bytes<ed25519::private_key_shim>(payload)}};
    case algorithm::rsa:
       return private_key{private_key::storage_type{make_value_from_bytes<rsa::private_key_shim>(payload)}};
    }
@@ -458,11 +466,11 @@ template <typename Data> [[nodiscard]] std::string format_rule_payload(const tex
    const auto payload = decode_rule_payload(rule, text);
    switch (rule.type) {
    case algorithm::secp256k1:
-      return public_key{public_key::storage_type{make_value_from_bytes<secp256k1::public_key_shim>(payload)}};
+      return public_key{public_key::storage_type{make_fixed_value_from_bytes<secp256k1::public_key_shim>(payload)}};
    case algorithm::p256:
-      return public_key{public_key::storage_type{make_value_from_bytes<p256::public_key_shim>(payload)}};
+      return public_key{public_key::storage_type{make_fixed_value_from_bytes<p256::public_key_shim>(payload)}};
    case algorithm::ed25519:
-      return public_key{public_key::storage_type{make_value_from_bytes<ed25519::public_key_shim>(payload)}};
+      return public_key{public_key::storage_type{make_fixed_value_from_bytes<ed25519::public_key_shim>(payload)}};
    case algorithm::rsa:
       return public_key{public_key::storage_type{make_value_from_bytes<rsa::public_key_shim>(payload)}};
    }
@@ -473,11 +481,11 @@ template <typename Data> [[nodiscard]] std::string format_rule_payload(const tex
    const auto payload = decode_rule_payload(rule, text);
    switch (rule.type) {
    case algorithm::secp256k1:
-      return signature{signature::storage_type{make_value_from_bytes<secp256k1::signature_shim>(payload)}};
+      return signature{signature::storage_type{make_fixed_value_from_bytes<secp256k1::signature_shim>(payload)}};
    case algorithm::p256:
-      return signature{signature::storage_type{make_value_from_bytes<p256::signature_shim>(payload)}};
+      return signature{signature::storage_type{make_fixed_value_from_bytes<p256::signature_shim>(payload)}};
    case algorithm::ed25519:
-      return signature{signature::storage_type{make_value_from_bytes<ed25519::signature_shim>(payload)}};
+      return signature{signature::storage_type{make_fixed_value_from_bytes<ed25519::signature_shim>(payload)}};
    case algorithm::rsa:
       return signature{signature::storage_type{make_value_from_bytes<rsa::signature_shim>(payload)}};
    }

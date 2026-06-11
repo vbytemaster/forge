@@ -2,6 +2,7 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/describe.hpp>
+#include <fcl/api/api_macros.hpp>
 #include <fcl/exceptions/macros.hpp>
 
 #include <cstdint>
@@ -12,7 +13,7 @@ module;
 #include <typeinfo>
 #include <vector>
 
-export module fcl.plugins.node_signer;
+export module fcl.plugins.signature_provider;
 
 import fcl.api;
 import fcl.app.plugin;
@@ -28,7 +29,7 @@ import fcl.schema;
 
 export namespace fcl::plugins {
 
-class node_signer final : public fcl::app::plugin {
+class signature_provider final : public fcl::app::plugin {
  public:
    enum class key_algorithm {
       any,
@@ -81,11 +82,11 @@ class node_signer final : public fcl::app::plugin {
    class exceptions;
    class api;
 
-   explicit node_signer(plugin_options value = {});
-   ~node_signer() override;
+   explicit signature_provider(plugin_options value = {});
+   ~signature_provider() override;
 
-   node_signer(const node_signer&) = delete;
-   node_signer& operator=(const node_signer&) = delete;
+   signature_provider(const signature_provider&) = delete;
+   signature_provider& operator=(const signature_provider&) = delete;
 
    [[nodiscard]] static fcl::app::plugin_descriptor descriptor(plugin_options value = {});
 
@@ -105,9 +106,9 @@ class node_signer final : public fcl::app::plugin {
    std::shared_ptr<impl> impl_;
 };
 
-std::ostream& operator<<(std::ostream& out, node_signer::key_algorithm value);
+std::ostream& operator<<(std::ostream& out, signature_provider::key_algorithm value);
 
-class node_signer::exceptions {
+class signature_provider::exceptions {
  public:
    enum class code : std::uint16_t {
       invalid_config = 1,
@@ -128,9 +129,9 @@ class node_signer::exceptions {
    using signing_failed = fcl::exceptions::coded_exception<code, code::signing_failed>;
 };
 
-FCL_DECLARE_EXCEPTION_CATEGORY(node_signer::exceptions::code, "fcl.plugins.node_signer")
+FCL_DECLARE_EXCEPTION_CATEGORY(signature_provider::exceptions::code, "fcl.plugins.signature_provider")
 
-class node_signer::api : public fcl::api::contract<node_signer::api, fcl::api::surface::local> {
+class signature_provider::api : public fcl::api::contract<signature_provider::api, fcl::api::surface::local> {
  public:
    virtual ~api() = default;
 
@@ -139,42 +140,17 @@ class node_signer::api : public fcl::api::contract<node_signer::api, fcl::api::s
    boost::asio::awaitable<response> sign(std::string key_id, fcl::crypto::sha256 digest, options value);
 };
 
-BOOST_DESCRIBE_ENUM(node_signer::key_algorithm, any, secp256k1, p256, ed25519, rsa)
-BOOST_DESCRIBE_STRUCT(node_signer::key, (), (id, private_key, input_profile, purposes))
-BOOST_DESCRIBE_STRUCT(node_signer::config, (), (keys, default_output_profile))
-BOOST_DESCRIBE_STRUCT(node_signer::request, (), (key_id, purpose, digest, required_algorithm, output_profile))
-BOOST_DESCRIBE_STRUCT(node_signer::options, (), (purpose, required_algorithm, output_profile))
-BOOST_DESCRIBE_STRUCT(node_signer::response, (), (key_id, algorithm, output_profile, public_key, signature))
+BOOST_DESCRIBE_ENUM(signature_provider::key_algorithm, any, secp256k1, p256, ed25519, rsa)
+BOOST_DESCRIBE_STRUCT(signature_provider::key, (), (id, private_key, input_profile, purposes))
+BOOST_DESCRIBE_STRUCT(signature_provider::config, (), (keys, default_output_profile))
+BOOST_DESCRIBE_STRUCT(signature_provider::request, (), (key_id, purpose, digest, required_algorithm, output_profile))
+BOOST_DESCRIBE_STRUCT(signature_provider::options, (), (purpose, required_algorithm, output_profile))
+BOOST_DESCRIBE_STRUCT(signature_provider::response, (), (key_id, algorithm, output_profile, public_key, signature))
 
 } // namespace fcl::plugins
 
-export namespace fcl::api {
-
-template <> struct api_traits<::fcl::plugins::node_signer::api> {
-   using interface = ::fcl::plugins::node_signer::api;
-   using request = ::fcl::plugins::node_signer::request;
-   using response = ::fcl::plugins::node_signer::response;
-   using sign_method = boost::asio::awaitable<response> (interface::*)(request);
-
-   static api_id id() {
-      return api_id{.value = "fcl.plugins.node_signer"};
-   }
-
-   static api_version version() {
-      return api_version{.major = 1, .revision = 0};
-   }
-
-   static api_ref ref(std::uint16_t min_revision = version().revision) {
-      const auto value = version();
-      return api_ref{.id = id(), .major = value.major, .min_revision = min_revision};
-   }
-
-   static descriptor describe() {
-      auto builder = ::fcl::api::define<interface>(
-         descriptor{.id = id(), .version = version(), .interface_type = typeid(interface)});
-      (void)builder.template method<static_cast<sign_method>(&interface::sign)>("sign");
-      return builder.build();
-   }
-};
-
-} // namespace fcl::api
+export {
+FCL_API(::fcl::plugins::signature_provider::api, FCL_API_CONTRACT("fcl.plugins.signature_provider", 1, 0),
+        FCL_API_METHOD_TYPED(sign, ::fcl::plugins::signature_provider::request,
+                             ::fcl::plugins::signature_provider::response))
+}

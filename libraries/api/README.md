@@ -64,6 +64,40 @@ BOOST_DESCRIBE_STRUCT(protocol::read_chunk, (), (ref, offset, limit))
 FCL_DECLARE_SERIALIZATION(protocol::read_chunk)
 ```
 
+If a C++ interface has overloads or local convenience helpers with the same
+method name, use the typed method macro to select the wire method explicitly:
+
+```cpp
+struct sign_request {
+   std::string key_id;
+   fcl::crypto::sha256 digest;
+};
+
+struct sign_response {
+   std::vector<std::uint8_t> signature;
+};
+
+class signature_api : public fcl::api::contract<signature_api> {
+ public:
+   virtual ~signature_api() = default;
+
+   virtual boost::asio::awaitable<sign_response>
+   sign(sign_request request) = 0;
+
+   boost::asio::awaitable<sign_response>
+   sign(std::string key_id, fcl::crypto::sha256 digest);
+};
+
+FCL_API(signature_api,
+        FCL_API_CONTRACT("signature", 1, 0),
+        FCL_API_METHOD_TYPED(sign, sign_request, sign_response))
+```
+
+`FCL_API_METHOD_TYPED_SINCE(...)`,
+`FCL_API_METHOD_TYPED_DEPRECATED(...)` and
+`FCL_API_METHOD_TYPED_DEPRECATED_SINCE(...)` provide the same revision and
+deprecation metadata for overloaded methods.
+
 ## Publish And Consume In Process
 
 ```cpp

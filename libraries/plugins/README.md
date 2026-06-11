@@ -25,12 +25,60 @@ small typed APIs for application plugins to contribute behavior safely.
 - `fcl.plugins.p2p_api_resolver` — API-over-P2P metadata resolver plugin.
 - `fcl.plugins.p2p_diagnostics` — read-only P2P host diagnostics plugin.
 - `fcl.plugins.p2p_pubsub` — in-process facade over core GossipSub.
+- `fcl.plugins.signature_provider` — local digital-signature provider plugin.
 - `fcl.plugins` — aggregate import.
 
 Target: `fcl_plugins`.
 
 Dependencies: `fcl_app`, `fcl_api`, `fcl_api_transport`, `fcl_p2p`,
-`fcl_config`, `fcl_asio`.
+`fcl_config`, `fcl_crypto`, `fcl_asio`.
+
+## Signature Provider Plugin
+
+`signature_provider` publishes a local-only API for producing digital
+signatures from configured private keys. It is intentionally not tied to a P2P
+node: application plugins can use it for local receipts, protocol
+authentication or other signature-producing flows without owning key parsing or
+text-profile formatting.
+
+The plugin is not a wallet, vault, hardware security module or key-management
+service. It does not fetch keys from remote systems and it does not authorize
+what a signed payload means. It only enforces configured key ids, allowed
+purposes, required algorithms and output profiles.
+
+Config section `signature-provider` owns local key material. The structured
+`keys` field is secret/redacted and is not accepted through generated CLI or
+environment-variable helpers; load it from a protected config source before
+handing the document to the application.
+
+```yaml
+signature-provider:
+  default-output-profile: fcl
+  keys:
+    - id: service-key
+      private-key: "<redacted private key>"
+      input-profile: fcl
+      purposes: ["api.receipt"]
+```
+
+```cpp
+registry.register_plugin(fcl::plugins::signature_provider::descriptor());
+```
+
+```cpp
+auto signatures = context.apis().get<fcl::plugins::signature_provider::api>(
+   {.id = {"fcl.plugins.signature_provider"}, .major = 1});
+
+auto result = co_await signatures->sign(
+   fcl::plugins::signature_provider::request{
+      .key_id = "service-key",
+      .purpose = "api.receipt",
+      .digest = digest,
+      .required_algorithm =
+         fcl::plugins::signature_provider::key_algorithm::secp256k1,
+      .output_profile = "fcl",
+   });
+```
 
 ## P2P Node Plugin
 

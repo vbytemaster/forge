@@ -28,7 +28,7 @@ import fcl.config.decode;
 import fcl.exceptions;
 import fcl.p2p;
 
-namespace fcl::plugins {
+namespace fcl::plugins::p2p_node {
 namespace {
 
 struct parsed_policy {
@@ -57,15 +57,15 @@ struct parsed_policy {
    return std::chrono::milliseconds{static_cast<std::chrono::milliseconds::rep>(value)};
 }
 
-[[nodiscard]] p2p_node::config decode_config(const fcl::config::component_view& view) {
-   auto decoded = fcl::config::decode<p2p_node::config>(view.source(), view.section());
+[[nodiscard]] config decode_config(const fcl::config::component_view& view) {
+   auto decoded = fcl::config::decode<config>(view.source(), view.section());
    if (!decoded.ok()) {
       auto message = std::string{"invalid P2P node config"};
       if (!decoded.diagnostics.entries.empty()) {
          const auto& first = decoded.diagnostics.entries.front();
          message += ": " + first.path + " " + first.code + " " + first.message;
       }
-      FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_config, message);
+      FCL_THROW_EXCEPTION(exceptions::invalid_config, message);
    }
    return std::move(decoded.value);
 }
@@ -74,14 +74,14 @@ void validate_relay_trust(const std::string& value) {
    if (value == "known-only" || value == "public-allowed") {
       return;
    }
-   FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_config, "invalid P2P relay trust policy",
+   FCL_THROW_EXCEPTION(exceptions::invalid_config, "invalid P2P relay trust policy",
                        fcl::exceptions::ctx("trust", value));
 }
 
 [[nodiscard]] fcl::p2p::path::policy parse_path_policy(const std::string& value, bool relay_client_enabled,
                                                        std::size_t relay_max_candidates) {
    if (relay_max_candidates == 0) {
-      FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_config, "P2P relay candidate limit must be positive");
+      FCL_THROW_EXCEPTION(exceptions::invalid_config, "P2P relay candidate limit must be positive");
    }
    if (value == "direct-only") {
       return fcl::p2p::path::policy{
@@ -107,11 +107,11 @@ void validate_relay_trust(const std::string& value) {
          .max_relay_candidates = relay_max_candidates,
       };
    }
-   FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_config, "invalid P2P path policy",
+   FCL_THROW_EXCEPTION(exceptions::invalid_config, "invalid P2P path policy",
                        fcl::exceptions::ctx("policy", value));
 }
 
-[[nodiscard]] parsed_policy parse_policy(const p2p_node::config& config) {
+[[nodiscard]] parsed_policy parse_policy(const config& config) {
    validate_relay_trust(config.relay_trust);
    const auto relay_max_candidates = static_cast<std::size_t>(config.relay_max_candidates);
    return parsed_policy{
@@ -131,7 +131,7 @@ void validate_relay_trust(const std::string& value) {
       try {
          out.push_back(fcl::p2p::parse_endpoint(value));
       } catch (const std::exception& error) {
-         FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_config, "invalid P2P endpoint",
+         FCL_THROW_EXCEPTION(exceptions::invalid_config, "invalid P2P endpoint",
                              fcl::exceptions::ctx("endpoint", value), fcl::exceptions::ctx("error", error.what()));
       }
    }
@@ -140,7 +140,7 @@ void validate_relay_trust(const std::string& value) {
 
 } // namespace
 
-struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
+struct plugin::impl : public std::enable_shared_from_this<plugin::impl> {
    fcl::p2p::node::options options{
       .explicit_peer_id = default_test_peer(),
       .allow_insecure_test_mode = false,
@@ -163,7 +163,7 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
 
    [[nodiscard]] fcl::p2p::node& ensure_node() {
       if (!runtime) {
-         FCL_THROW_EXCEPTION(p2p_node::exceptions::plugin_not_initialized, "P2P node plugin is not initialized");
+         FCL_THROW_EXCEPTION(exceptions::plugin_not_initialized, "P2P node plugin is not initialized");
       }
       if (!node) {
          if (pubsub_requested) {
@@ -178,28 +178,28 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
 
    [[nodiscard]] fcl::p2p::node& require_node() {
       if (!node) {
-         FCL_THROW_EXCEPTION(p2p_node::exceptions::plugin_not_initialized, "P2P node plugin is not initialized");
+         FCL_THROW_EXCEPTION(exceptions::plugin_not_initialized, "P2P node plugin is not initialized");
       }
       return *node;
    }
 
    [[nodiscard]] const fcl::p2p::node& require_node() const {
       if (!node) {
-         FCL_THROW_EXCEPTION(p2p_node::exceptions::plugin_not_initialized, "P2P node plugin is not initialized");
+         FCL_THROW_EXCEPTION(exceptions::plugin_not_initialized, "P2P node plugin is not initialized");
       }
       return *node;
    }
 
    void add_route(fcl::p2p::protocol_id protocol, fcl::p2p::node::protocol_handler handler) {
       if (started) {
-         FCL_THROW_EXCEPTION(p2p_node::exceptions::route_conflict, "P2P routes must be published before startup",
+         FCL_THROW_EXCEPTION(exceptions::route_conflict, "P2P routes must be published before startup",
                              fcl::exceptions::ctx("protocol", protocol.value));
       }
       if (protocol.value.empty() || !handler) {
-         FCL_THROW_EXCEPTION(p2p_node::exceptions::route_conflict, "P2P route is invalid");
+         FCL_THROW_EXCEPTION(exceptions::route_conflict, "P2P route is invalid");
       }
       if (contains_protocol(routes, protocol)) {
-         FCL_THROW_EXCEPTION(p2p_node::exceptions::route_conflict, "duplicate P2P route",
+         FCL_THROW_EXCEPTION(exceptions::route_conflict, "duplicate P2P route",
                              fcl::exceptions::ctx("protocol", protocol.value));
       }
       routes.emplace_back(std::move(protocol), std::move(handler));
@@ -207,7 +207,7 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
 
    [[nodiscard]] fcl::p2p::node::open_options open_options_for(remote_options value) const {
       if (value.open_deadline.count() <= 0) {
-         FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_config, "P2P remote open deadline must be positive");
+         FCL_THROW_EXCEPTION(exceptions::invalid_config, "P2P remote open deadline must be positive");
       }
       return fcl::p2p::node::open_options{
          .allow_relay = policy.relay_client_enabled && policy.path.allow_relay,
@@ -224,13 +224,13 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
       auto out = api_options;
       if (value.codec.has_value()) {
          if (value.codec->value.empty()) {
-            FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_config, "P2P remote API codec override is invalid");
+            FCL_THROW_EXCEPTION(exceptions::invalid_config, "P2P remote API codec override is invalid");
          }
          out.codec = *value.codec;
       }
       if (value.max_inflight.has_value()) {
          if (*value.max_inflight == 0) {
-            FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_config, "P2P remote API max inflight override is invalid");
+            FCL_THROW_EXCEPTION(exceptions::invalid_config, "P2P remote API max inflight override is invalid");
          }
          out.max_inflight = *value.max_inflight;
       }
@@ -239,7 +239,7 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
       }
       if (value.max_frame_size.has_value()) {
          if (*value.max_frame_size == 0) {
-            FCL_THROW_EXCEPTION(p2p_node::exceptions::invalid_config,
+            FCL_THROW_EXCEPTION(exceptions::invalid_config,
                                 "P2P remote API max frame size override is invalid");
          }
          out.max_frame_size = *value.max_frame_size;
@@ -248,9 +248,9 @@ struct p2p_node::impl : public std::enable_shared_from_this<p2p_node::impl> {
    }
 };
 
-class p2p_node::api::impl final : public p2p_node::api {
+class plugin::api_impl final : public api {
  public:
-   explicit impl(std::shared_ptr<p2p_node::impl> impl) : impl_{std::move(impl)} {}
+   explicit api_impl(std::shared_ptr<plugin::impl> impl) : impl_{std::move(impl)} {}
 
    fcl::p2p::peer_id local_peer() const override {
       return impl_->require_node().local_peer();
@@ -264,8 +264,8 @@ class p2p_node::api::impl final : public p2p_node::api {
       return impl_->require_node().local_endpoints();
    }
 
-   p2p_node::info network_info() const override {
-      return p2p_node::info{
+   info network_info() const override {
+      return info{
          .local_peer = impl_->require_node().local_peer(),
          .local_endpoints = impl_->require_node().local_endpoints(),
          .started = impl_->started,
@@ -302,28 +302,28 @@ class p2p_node::api::impl final : public p2p_node::api {
    }
 
  private:
-   std::shared_ptr<p2p_node::impl> impl_;
+   std::shared_ptr<plugin::impl> impl_;
 };
 
-class p2p_node::diagnostics_source::impl final : public p2p_node::diagnostics_source {
+class plugin::diagnostics_source_impl final : public diagnostics_source {
  public:
-   explicit impl(std::shared_ptr<p2p_node::impl> impl) : impl_{std::move(impl)} {}
+   explicit diagnostics_source_impl(std::shared_ptr<plugin::impl> impl) : impl_{std::move(impl)} {}
 
    fcl::p2p::diagnostics::snapshot snapshot(fcl::p2p::diagnostics::options options) const override {
       return impl_->require_node().diagnostics(options);
    }
 
  private:
-   std::shared_ptr<p2p_node::impl> impl_;
+   std::shared_ptr<plugin::impl> impl_;
 };
 
-class p2p_node::pubsub_source::impl final : public p2p_node::pubsub_source {
+class plugin::pubsub_source_impl final : public pubsub_source {
  public:
-   explicit impl(std::shared_ptr<p2p_node::impl> impl) : impl_{std::move(impl)} {}
+   explicit pubsub_source_impl(std::shared_ptr<plugin::impl> impl) : impl_{std::move(impl)} {}
 
    void enable(fcl::p2p::pubsub::options options) override {
       if (impl_->started || impl_->node) {
-         FCL_THROW_EXCEPTION(p2p_node::exceptions::route_conflict,
+         FCL_THROW_EXCEPTION(exceptions::route_conflict,
                              "P2P PubSub capability must be requested before startup");
       }
       impl_->pubsub_options = std::move(options);
@@ -354,25 +354,25 @@ class p2p_node::pubsub_source::impl final : public p2p_node::pubsub_source {
    }
 
  private:
-   std::shared_ptr<p2p_node::impl> impl_;
+   std::shared_ptr<plugin::impl> impl_;
 };
 
-p2p_node::p2p_node() : impl_{std::make_shared<impl>()} {}
-p2p_node::~p2p_node() = default;
+plugin::plugin() : impl_{std::make_shared<impl>()} {}
+plugin::~plugin() = default;
 
-fcl::app::plugin_id p2p_node::id() const {
+fcl::app::plugin_id plugin::id() const {
    return fcl::app::plugin_id{.value = "fcl.p2p_node"};
 }
 
-std::string p2p_node::version() const {
+std::string plugin::version() const {
    return "1.0.0";
 }
 
-std::optional<fcl::config::component_descriptor> p2p_node::describe_config() const {
-   return fcl::config::describe_component<p2p_node::config>("p2p");
+std::optional<fcl::config::component_descriptor> plugin::describe_config() const {
+   return fcl::config::describe_component<config>("p2p");
 }
 
-boost::asio::awaitable<void> p2p_node::configure(fcl::config::component_view view) {
+boost::asio::awaitable<void> plugin::configure(fcl::config::component_view view) {
    const auto config = decode_config(view);
    impl_->policy = parse_policy(config);
    impl_->api_options = fcl::api::transport::options{
@@ -421,20 +421,20 @@ boost::asio::awaitable<void> p2p_node::configure(fcl::config::component_view vie
    co_return;
 }
 
-boost::asio::awaitable<void> p2p_node::provide(fcl::api::provider& provider) {
-   provider.install<p2p_node::api>(std::make_shared<p2p_node::api::impl>(impl_));
-   provider.install<p2p_node::diagnostics_source>(std::make_shared<p2p_node::diagnostics_source::impl>(impl_));
-   provider.install<p2p_node::pubsub_source>(std::make_shared<p2p_node::pubsub_source::impl>(impl_));
+boost::asio::awaitable<void> plugin::provide(fcl::api::provider& provider) {
+   provider.install<api>(std::make_shared<api_impl>(impl_));
+   provider.install<diagnostics_source>(std::make_shared<diagnostics_source_impl>(impl_));
+   provider.install<pubsub_source>(std::make_shared<pubsub_source_impl>(impl_));
    co_return;
 }
 
-boost::asio::awaitable<void> p2p_node::initialize(fcl::app::plugin_context& context) {
+boost::asio::awaitable<void> plugin::initialize(fcl::app::plugin_context& context) {
    impl_->runtime = &context.scheduler().runtime_context();
    impl_->stopping = false;
    co_return;
 }
 
-boost::asio::awaitable<void> p2p_node::startup() {
+boost::asio::awaitable<void> plugin::startup() {
    auto& node = impl_->ensure_node();
    for (auto& route : impl_->routes) {
       node.register_protocol_handler(route.first, route.second);
@@ -452,14 +452,14 @@ boost::asio::awaitable<void> p2p_node::startup() {
    impl_->started = true;
 }
 
-void p2p_node::request_stop() noexcept {
+void plugin::request_stop() noexcept {
    impl_->stopping = true;
    if (impl_->raw) {
       impl_->raw->stop();
    }
 }
 
-boost::asio::awaitable<void> p2p_node::shutdown() {
+boost::asio::awaitable<void> plugin::shutdown() {
    request_stop();
    if (impl_->node) {
       co_await impl_->node->async_stop();
@@ -469,13 +469,13 @@ boost::asio::awaitable<void> p2p_node::shutdown() {
    impl_->started = false;
 }
 
-fcl::app::plugin_descriptor p2p_node::descriptor() {
+fcl::app::plugin_descriptor descriptor() {
    return fcl::app::plugin_descriptor{
       .id = fcl::app::plugin_id{.value = "fcl.p2p_node"},
       .factory = [] {
-         return std::make_unique<p2p_node>();
+         return std::make_unique<plugin>();
       },
    };
 }
 
-} // namespace fcl::plugins
+} // namespace fcl::plugins::p2p_node

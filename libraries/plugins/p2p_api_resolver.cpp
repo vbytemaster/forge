@@ -33,25 +33,21 @@ import fcl.exceptions;
 import fcl.p2p;
 import fcl.plugins.p2p_node;
 
-namespace fcl::plugins {
-
-namespace detail {
+namespace fcl::plugins::p2p_api_resolver::detail {
 
 class resolver_protocol
     : public fcl::api::contract<resolver_protocol, fcl::api::surface::local | fcl::api::surface::remote> {
  public:
    virtual ~resolver_protocol() = default;
-   virtual boost::asio::awaitable<p2p_api_resolver::response> query(p2p_api_resolver::query request) = 0;
+   virtual boost::asio::awaitable<response> query(::fcl::plugins::p2p_api_resolver::query request) = 0;
 };
 
-} // namespace detail
+} // namespace fcl::plugins::p2p_api_resolver::detail
 
-} // namespace fcl::plugins
-
-FCL_API(::fcl::plugins::detail::resolver_protocol,
+FCL_API(::fcl::plugins::p2p_api_resolver::detail::resolver_protocol,
         FCL_API_CONTRACT("fcl.plugins.p2p_api_resolver.protocol", 1, 0), FCL_API_METHOD(query))
 
-namespace fcl::plugins {
+namespace fcl::plugins::p2p_api_resolver {
 namespace {
 
 constexpr auto resolver_api_id = "fcl.plugins.p2p_api_resolver.protocol";
@@ -64,7 +60,7 @@ constexpr auto resolver_api_id = "fcl.plugins.p2p_api_resolver.protocol";
    return id.value + "#" + std::to_string(major);
 }
 
-[[nodiscard]] std::string entry_key(const p2p_api_resolver::entry& value) {
+[[nodiscard]] std::string entry_key(const entry& value) {
    return api_key(value.id, value.version.major) + "#" + std::to_string(value.version.revision);
 }
 
@@ -72,38 +68,38 @@ constexpr auto resolver_api_id = "fcl.plugins.p2p_api_resolver.protocol";
    return !value.empty() && value.front() == '/';
 }
 
-[[nodiscard]] p2p_api_resolver::config decode_config(const fcl::config::component_view& view) {
-   auto decoded = fcl::config::decode<p2p_api_resolver::config>(view.source(), view.section());
+[[nodiscard]] config decode_config(const fcl::config::component_view& view) {
+   auto decoded = fcl::config::decode<config>(view.source(), view.section());
    if (!decoded.ok()) {
       auto message = std::string{"invalid P2P API resolver config"};
       if (!decoded.diagnostics.entries.empty()) {
          const auto& first = decoded.diagnostics.entries.front();
          message += ": " + first.path + " " + first.code + " " + first.message;
       }
-      FCL_THROW_EXCEPTION(p2p_api_resolver::exceptions::invalid_config, message);
+      FCL_THROW_EXCEPTION(exceptions::invalid_config, message);
    }
    return std::move(decoded.value);
 }
 
-void validate_config(const p2p_api_resolver::config& value) {
+void validate_config(const config& value) {
    if (!valid_protocol(value.protocol_id)) {
-      FCL_THROW_EXCEPTION(p2p_api_resolver::exceptions::invalid_config, "resolver protocol id is invalid",
+      FCL_THROW_EXCEPTION(exceptions::invalid_config, "resolver protocol id is invalid",
                           fcl::exceptions::ctx("protocol", value.protocol_id));
    }
    if (value.cache_ttl_ms == 0 || value.query_deadline_ms == 0 || value.open_deadline_ms == 0 ||
        value.max_cached_peers == 0 || value.max_apis_per_peer == 0 || value.max_methods_per_api == 0) {
-      FCL_THROW_EXCEPTION(p2p_api_resolver::exceptions::invalid_config, "resolver limits must be positive");
+      FCL_THROW_EXCEPTION(exceptions::invalid_config, "resolver limits must be positive");
    }
 }
 
 void validate_transport_options(const fcl::api::transport::options& value) {
    if (value.codec.value.empty() || value.max_inflight == 0 || value.max_frame_size == 0) {
-      FCL_THROW_EXCEPTION(p2p_api_resolver::exceptions::invalid_config, "resolver API transport options are invalid");
+      FCL_THROW_EXCEPTION(exceptions::invalid_config, "resolver API transport options are invalid");
    }
 }
 
-[[nodiscard]] p2p_api_resolver::error project_error(const fcl::api::error_descriptor& value) {
-   return p2p_api_resolver::error{
+[[nodiscard]] error project_error(const fcl::api::error_descriptor& value) {
+   return error{
       .name = value.name,
       .identity = value.identity,
       .status_code = value.status_code,
@@ -111,28 +107,28 @@ void validate_transport_options(const fcl::api::transport::options& value) {
    };
 }
 
-[[nodiscard]] p2p_api_resolver::method project_method(const fcl::api::method_descriptor& value) {
-   auto errors = std::vector<p2p_api_resolver::error>{};
+[[nodiscard]] method project_method(const fcl::api::method_descriptor& value) {
+   auto errors = std::vector<error>{};
    errors.reserve(value.errors.size());
    for (const auto& error : value.errors) {
       errors.push_back(project_error(error));
    }
-   return p2p_api_resolver::method{
+   return method{
       .name = value.name,
       .kind = value.kind,
       .errors = std::move(errors),
    };
 }
 
-[[nodiscard]] p2p_api_resolver::entry project_descriptor(const fcl::api::descriptor& descriptor,
-                                                         const fcl::p2p::protocol_id& protocol,
-                                                         const fcl::api::transport::options& options) {
-   auto methods = std::vector<p2p_api_resolver::method>{};
+[[nodiscard]] entry project_descriptor(const fcl::api::descriptor& descriptor,
+                                       const fcl::p2p::protocol_id& protocol,
+                                       const fcl::api::transport::options& options) {
+   auto methods = std::vector<method>{};
    methods.reserve(descriptor.methods.size());
    for (const auto& method : descriptor.methods) {
       methods.push_back(project_method(method));
    }
-   return p2p_api_resolver::entry{
+   return entry{
       .id = descriptor.id,
       .version = descriptor.version,
       .protocol = protocol.value,
@@ -143,49 +139,49 @@ void validate_transport_options(const fcl::api::transport::options& value) {
    };
 }
 
-void validate_entry(const p2p_api_resolver::entry& value, const p2p_api_resolver::config& limits,
+void validate_entry(const entry& value, const config& limits,
                     std::string_view source) {
    if (value.id.value.empty() || value.version.major == 0 || !valid_protocol(value.protocol)) {
-      FCL_THROW_EXCEPTION(p2p_api_resolver::exceptions::protocol_error, "resolver API entry is invalid",
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "resolver API entry is invalid",
                           fcl::exceptions::ctx("source", source), fcl::exceptions::ctx("api", value.id.value),
                           fcl::exceptions::ctx("protocol", value.protocol));
    }
    if (value.codec.value.empty() || value.max_inflight == 0 || value.max_frame_size == 0) {
-      FCL_THROW_EXCEPTION(p2p_api_resolver::exceptions::protocol_error, "resolver API entry limits are invalid",
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "resolver API entry limits are invalid",
                           fcl::exceptions::ctx("source", source), fcl::exceptions::ctx("api", value.id.value));
    }
    if (value.max_frame_size > (std::numeric_limits<std::uint32_t>::max)()) {
-      FCL_THROW_EXCEPTION(p2p_api_resolver::exceptions::protocol_error,
+      FCL_THROW_EXCEPTION(exceptions::protocol_error,
                           "resolver API max frame size exceeds transport limit",
                           fcl::exceptions::ctx("source", source), fcl::exceptions::ctx("api", value.id.value));
    }
    if (value.methods.size() > limits.max_methods_per_api) {
-      FCL_THROW_EXCEPTION(p2p_api_resolver::exceptions::protocol_error, "resolver API method limit exceeded",
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "resolver API method limit exceeded",
                           fcl::exceptions::ctx("source", source), fcl::exceptions::ctx("api", value.id.value));
    }
    auto method_names = std::set<std::string>{};
    for (const auto& method : value.methods) {
       if (method.name.empty() || !method_names.insert(method.name).second) {
-         FCL_THROW_EXCEPTION(p2p_api_resolver::exceptions::protocol_error, "resolver API method is invalid",
+         FCL_THROW_EXCEPTION(exceptions::protocol_error, "resolver API method is invalid",
                              fcl::exceptions::ctx("source", source), fcl::exceptions::ctx("api", value.id.value));
       }
       if (method.errors.size() > limits.max_errors_per_method) {
-         FCL_THROW_EXCEPTION(p2p_api_resolver::exceptions::protocol_error, "resolver API error limit exceeded",
+         FCL_THROW_EXCEPTION(exceptions::protocol_error, "resolver API error limit exceeded",
                              fcl::exceptions::ctx("source", source), fcl::exceptions::ctx("api", value.id.value),
                              fcl::exceptions::ctx("method", method.name));
       }
    }
 }
 
-void validate_response(const std::vector<p2p_api_resolver::entry>& entries, const p2p_api_resolver::config& limits) {
+void validate_response(const std::vector<entry>& entries, const config& limits) {
    if (entries.size() > limits.max_apis_per_peer) {
-      FCL_THROW_EXCEPTION(p2p_api_resolver::exceptions::protocol_error, "resolver API response limit exceeded");
+      FCL_THROW_EXCEPTION(exceptions::protocol_error, "resolver API response limit exceeded");
    }
    auto keys = std::set<std::string>{};
    for (const auto& entry : entries) {
       validate_entry(entry, limits, "remote");
       if (!keys.insert(entry_key(entry)).second) {
-         FCL_THROW_EXCEPTION(p2p_api_resolver::exceptions::protocol_error,
+         FCL_THROW_EXCEPTION(exceptions::protocol_error,
                              "resolver API response contains duplicate entry",
                              fcl::exceptions::ctx("api", entry.id.value));
       }
@@ -193,14 +189,14 @@ void validate_response(const std::vector<p2p_api_resolver::entry>& entries, cons
 }
 
 [[nodiscard]] bool method_compatible(const fcl::api::method_descriptor& local,
-                                     const p2p_api_resolver::method& remote) noexcept {
+                                     const method& remote) noexcept {
    return local.name == remote.name && local.kind == remote.kind;
 }
 
-void validate_descriptor_compatible(const fcl::api::descriptor& descriptor, const p2p_api_resolver::entry& remote) {
+void validate_descriptor_compatible(const fcl::api::descriptor& descriptor, const entry& remote) {
    if (descriptor.id != remote.id || descriptor.version.major != remote.version.major ||
        descriptor.version.revision > remote.version.revision) {
-      FCL_THROW_EXCEPTION(p2p_api_resolver::exceptions::incompatible_api, "remote API version is incompatible",
+      FCL_THROW_EXCEPTION(exceptions::incompatible_api, "remote API version is incompatible",
                           fcl::exceptions::ctx("api", descriptor.id.value));
    }
    for (const auto& local_method : descriptor.methods) {
@@ -208,16 +204,16 @@ void validate_descriptor_compatible(const fcl::api::descriptor& descriptor, cons
          return method_compatible(local_method, candidate);
       });
       if (found == remote.methods.end()) {
-         FCL_THROW_EXCEPTION(p2p_api_resolver::exceptions::incompatible_api, "remote API method is incompatible",
+         FCL_THROW_EXCEPTION(exceptions::incompatible_api, "remote API method is incompatible",
                              fcl::exceptions::ctx("api", descriptor.id.value),
                              fcl::exceptions::ctx("method", local_method.name));
       }
    }
 }
 
-[[nodiscard]] std::optional<p2p_api_resolver::entry>
-select_compatible(const std::vector<p2p_api_resolver::entry>& entries, const fcl::api::api_ref& requested) {
-   auto selected = std::optional<p2p_api_resolver::entry>{};
+[[nodiscard]] std::optional<entry>
+select_compatible(const std::vector<entry>& entries, const fcl::api::api_ref& requested) {
+   auto selected = std::optional<entry>{};
    for (const auto& entry : entries) {
       if (entry.id != requested.id || entry.version.major != requested.major ||
           entry.version.revision < requested.min_revision) {
@@ -232,7 +228,7 @@ select_compatible(const std::vector<p2p_api_resolver::entry>& entries, const fcl
 
 } // namespace
 
-struct p2p_api_resolver::impl : public std::enable_shared_from_this<p2p_api_resolver::impl> {
+struct plugin::impl : public std::enable_shared_from_this<plugin::impl> {
    struct cache_record {
       std::vector<entry> apis;
       std::chrono::steady_clock::time_point expires_at;
@@ -383,21 +379,21 @@ struct p2p_api_resolver::impl : public std::enable_shared_from_this<p2p_api_reso
    }
 };
 
-class p2p_api_resolver::protocol_impl final : public detail::resolver_protocol {
+class plugin::protocol_impl final : public detail::resolver_protocol {
  public:
-   explicit protocol_impl(std::shared_ptr<p2p_api_resolver::impl> impl) : impl_{std::move(impl)} {}
+   explicit protocol_impl(std::shared_ptr<plugin::impl> impl) : impl_{std::move(impl)} {}
 
-   boost::asio::awaitable<p2p_api_resolver::response> query(p2p_api_resolver::query request) override {
+   boost::asio::awaitable<response> query(::fcl::plugins::p2p_api_resolver::query request) override {
       co_return impl_->query_local(request);
    }
 
  private:
-   std::shared_ptr<p2p_api_resolver::impl> impl_;
+   std::shared_ptr<plugin::impl> impl_;
 };
 
-class p2p_api_resolver::api::impl final : public p2p_api_resolver::api {
+class plugin::api_impl final : public api {
  public:
-   explicit impl(std::shared_ptr<p2p_api_resolver::impl> impl) : impl_{std::move(impl)} {}
+   explicit api_impl(std::shared_ptr<plugin::impl> impl) : impl_{std::move(impl)} {}
 
    void publish_api(fcl::api::binding_plan plan, fcl::p2p::protocol_id protocol, publish_options options) override {
       impl_->add_local(std::move(plan), std::move(protocol), std::move(options));
@@ -467,29 +463,29 @@ class p2p_api_resolver::api::impl final : public p2p_api_resolver::api {
    }
 
  private:
-   std::shared_ptr<p2p_api_resolver::impl> impl_;
+   std::shared_ptr<plugin::impl> impl_;
 };
 
-p2p_api_resolver::p2p_api_resolver() : impl_{std::make_shared<impl>()} {}
-p2p_api_resolver::~p2p_api_resolver() = default;
+plugin::plugin() : impl_{std::make_shared<impl>()} {}
+plugin::~plugin() = default;
 
-fcl::p2p::protocol_id p2p_api_resolver::default_protocol() {
+fcl::p2p::protocol_id default_protocol() {
    return fcl::p2p::protocol_id{.value = "/fcl/api/resolver/1"};
 }
 
-fcl::app::plugin_id p2p_api_resolver::id() const {
+fcl::app::plugin_id plugin::id() const {
    return fcl::app::plugin_id{.value = "fcl.p2p_api_resolver"};
 }
 
-std::string p2p_api_resolver::version() const {
+std::string plugin::version() const {
    return "1.0.0";
 }
 
-std::optional<fcl::config::component_descriptor> p2p_api_resolver::describe_config() const {
-   return fcl::config::describe_component<p2p_api_resolver::config>("p2p-api-resolver");
+std::optional<fcl::config::component_descriptor> plugin::describe_config() const {
+   return fcl::config::describe_component<config>("p2p-api-resolver");
 }
 
-boost::asio::awaitable<void> p2p_api_resolver::configure(fcl::config::component_view view) {
+boost::asio::awaitable<void> plugin::configure(fcl::config::component_view view) {
    auto config = decode_config(view);
    validate_config(config);
    impl_->settings = std::move(config);
@@ -497,12 +493,12 @@ boost::asio::awaitable<void> p2p_api_resolver::configure(fcl::config::component_
    co_return;
 }
 
-boost::asio::awaitable<void> p2p_api_resolver::provide(fcl::api::provider& provider) {
-   provider.install<p2p_api_resolver::api>(std::make_shared<p2p_api_resolver::api::impl>(impl_));
+boost::asio::awaitable<void> plugin::provide(fcl::api::provider& provider) {
+   provider.install<api>(std::make_shared<api_impl>(impl_));
    co_return;
 }
 
-boost::asio::awaitable<void> p2p_api_resolver::initialize(fcl::app::plugin_context& context) {
+boost::asio::awaitable<void> plugin::initialize(fcl::app::plugin_context& context) {
    impl_->p2p = context.apis().get<fcl::plugins::p2p_node::api>(
       {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0}).operator->();
    impl_->protocol_registry.clear();
@@ -523,15 +519,15 @@ boost::asio::awaitable<void> p2p_api_resolver::initialize(fcl::app::plugin_conte
    co_return;
 }
 
-boost::asio::awaitable<void> p2p_api_resolver::startup() {
+boost::asio::awaitable<void> plugin::startup() {
    co_return;
 }
 
-void p2p_api_resolver::request_stop() noexcept {
+void plugin::request_stop() noexcept {
    impl_->stopping = true;
 }
 
-boost::asio::awaitable<void> p2p_api_resolver::shutdown() {
+boost::asio::awaitable<void> plugin::shutdown() {
    impl_->stopping = true;
    impl_->initialized = false;
    impl_->p2p = nullptr;
@@ -540,14 +536,14 @@ boost::asio::awaitable<void> p2p_api_resolver::shutdown() {
    co_return;
 }
 
-fcl::app::plugin_descriptor p2p_api_resolver::descriptor() {
+fcl::app::plugin_descriptor descriptor() {
    return fcl::app::plugin_descriptor{
       .id = fcl::app::plugin_id{.value = "fcl.p2p_api_resolver"},
       .dependencies = {fcl::app::plugin_id{.value = "fcl.p2p_node"}},
       .factory = [] {
-         return std::make_unique<p2p_api_resolver>();
+         return std::make_unique<plugin>();
       },
    };
 }
 
-} // namespace fcl::plugins
+} // namespace fcl::plugins::p2p_api_resolver

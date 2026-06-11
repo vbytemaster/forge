@@ -28,6 +28,15 @@ small typed APIs for application plugins to contribute behavior safely.
 - `fcl.plugins.signature_provider` — local digital-signature provider plugin.
 - `fcl.plugins` — aggregate import.
 
+Each focused plugin uses a namespace owner. The lifecycle object is named
+`plugin`, public contracts live beside it, and registration uses the
+namespace-level `descriptor()`:
+
+```cpp
+registry.register_plugin(fcl::plugins::p2p_node::descriptor());
+auto direct = fcl::plugins::signature_provider::plugin{};
+```
+
 Target: `fcl_plugins`.
 
 Dependencies: `fcl_app`, `fcl_api`, `fcl_api_transport`, `fcl_p2p`,
@@ -136,7 +145,7 @@ p2p:
 `allow-insecure-test-mode` exists for local tests only; deployed config should
 provide certificate and private key material.
 
-Register the infrastructure plugin through its owner type:
+Register the infrastructure plugin through its owner namespace:
 
 ```cpp
 registry.register_plugin(fcl::plugins::p2p_node::descriptor());

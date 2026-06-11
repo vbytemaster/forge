@@ -109,7 +109,7 @@ using plugin_test_contract::node_test_api;
 using plugin_test_contract::receipt_test_api;
 using plugin_test_contract::scripted_resolver_api;
 
-using fcl::plugins::signature_provider;
+namespace signature_provider = fcl::plugins::signature_provider;
 
 struct plugin_log {
    std::vector<std::string> entries;
@@ -1056,7 +1056,7 @@ static_assert(!fcl::api::remote_interface<signature_provider::api>);
 } // namespace
 
 BOOST_AUTO_TEST_CASE(signature_provider_config_is_redacted_and_local_only) {
-   auto plugin = signature_provider{};
+   auto plugin = signature_provider::plugin{};
    const auto descriptor = plugin.describe_config();
    BOOST_REQUIRE(descriptor.has_value());
    BOOST_TEST(descriptor->section == "signature-provider");
@@ -1084,7 +1084,7 @@ BOOST_AUTO_TEST_CASE(signature_provider_config_is_redacted_and_local_only) {
 }
 
 BOOST_AUTO_TEST_CASE(signature_provider_structured_keys_are_not_cli_or_env_fields) {
-   auto plugin = signature_provider{};
+   auto plugin = signature_provider::plugin{};
    const auto descriptor = plugin.describe_config();
    BOOST_REQUIRE(descriptor.has_value());
 
@@ -1125,7 +1125,7 @@ BOOST_AUTO_TEST_CASE(signature_provider_structured_keys_are_not_cli_or_env_field
 }
 
 BOOST_AUTO_TEST_CASE(signature_provider_rejects_malformed_private_key_without_leaking_secret) {
-   auto plugin = signature_provider{};
+   auto plugin = signature_provider::plugin{};
    const auto bad_key = std::string{"PVT_SECP256K1_not-a-valid-secret!!!!"};
    auto document = signer_config({key_entry("provider", bad_key, "fcl", {"storage.receipt"})});
 
@@ -1148,19 +1148,19 @@ BOOST_AUTO_TEST_CASE(signature_provider_requires_explicit_non_empty_purposes) {
 
    auto runtime = fcl::asio::runtime{};
 
-   auto missing = signature_provider{};
+   auto missing = signature_provider::plugin{};
    auto missing_document = signer_config({key_entry_without_purposes("missing", private_key, "fcl")});
    BOOST_CHECK_THROW(
       fcl::asio::blocking::run(runtime, missing.configure(fcl::config::component_view{missing_document, "signature-provider"})),
       signature_provider::exceptions::invalid_config);
 
-   auto empty = signature_provider{};
+   auto empty = signature_provider::plugin{};
    auto empty_document = signer_config({key_entry("empty", private_key, "fcl", {})});
    BOOST_CHECK_THROW(
       fcl::asio::blocking::run(runtime, empty.configure(fcl::config::component_view{empty_document, "signature-provider"})),
       signature_provider::exceptions::invalid_config);
 
-   auto blank = signature_provider{};
+   auto blank = signature_provider::plugin{};
    auto blank_document = signer_config({key_entry("blank", private_key, "fcl", {""})});
    BOOST_CHECK_THROW(
       fcl::asio::blocking::run(runtime, blank.configure(fcl::config::component_view{blank_document, "signature-provider"})),
@@ -1169,7 +1169,7 @@ BOOST_AUTO_TEST_CASE(signature_provider_requires_explicit_non_empty_purposes) {
 
 BOOST_AUTO_TEST_CASE(signature_provider_signs_k1_digest_with_antelope_output) {
    const auto key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::secp256k1::private_key_shim>();
-   auto plugin = signature_provider{};
+   auto plugin = signature_provider::plugin{};
    auto document = signer_config(
       {key_entry("provider",
                  fcl::crypto::asymmetric::encoding::fcl().format(key),
@@ -1209,7 +1209,7 @@ BOOST_AUTO_TEST_CASE(signature_provider_signs_k1_digest_with_antelope_output) {
 
 BOOST_AUTO_TEST_CASE(signature_provider_sugar_uses_configured_default_output_profile) {
    const auto key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::secp256k1::private_key_shim>();
-   auto plugin = signature_provider{};
+   auto plugin = signature_provider::plugin{};
    auto document = signer_config(
       {key_entry("provider",
                  fcl::crypto::asymmetric::encoding::fcl().format(key),
@@ -1255,7 +1255,7 @@ BOOST_AUTO_TEST_CASE(signature_provider_sugar_uses_configured_default_output_pro
 BOOST_AUTO_TEST_CASE(signature_provider_supports_p256_and_ed25519_without_k1_assumptions) {
    const auto p256_key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::p256::private_key_shim>();
    const auto ed25519_key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::ed25519::private_key_shim>();
-   auto plugin = signature_provider{};
+   auto plugin = signature_provider::plugin{};
    auto document = signer_config(
       {key_entry("p256", fcl::crypto::asymmetric::encoding::fcl().format(p256_key), "fcl", {"api.auth"}),
        key_entry("ed25519", fcl::crypto::asymmetric::encoding::fcl().format(ed25519_key), "fcl", {"api.auth"})});
@@ -1298,7 +1298,7 @@ BOOST_AUTO_TEST_CASE(signature_provider_supports_p256_and_ed25519_without_k1_ass
 
 BOOST_AUTO_TEST_CASE(signature_provider_enforces_allowed_purpose_and_algorithm) {
    const auto key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::secp256k1::private_key_shim>();
-   auto plugin = signature_provider{};
+   auto plugin = signature_provider::plugin{};
    auto document = signer_config(
       {key_entry("provider", fcl::crypto::asymmetric::encoding::fcl().format(key), "fcl", {"storage.receipt"})});
 
@@ -1355,7 +1355,7 @@ BOOST_AUTO_TEST_CASE(signature_provider_enforces_allowed_purpose_and_algorithm) 
 }
 
 BOOST_AUTO_TEST_CASE(p2p_node_plugin_config_is_described_from_public_schema) {
-   auto plugin = fcl::plugins::p2p_node{};
+   auto plugin = fcl::plugins::p2p_node::plugin{};
    const auto descriptor = plugin.describe_config();
    BOOST_REQUIRE(descriptor.has_value());
    BOOST_TEST(descriptor->section == "p2p");
@@ -1426,7 +1426,7 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_rejects_duplicate_protocol_contributions_be
 
 BOOST_AUTO_TEST_CASE(p2p_node_api_rejects_facade_calls_before_initialize) {
    auto runtime = fcl::asio::runtime{};
-   auto plugin = fcl::plugins::p2p_node{};
+   auto plugin = fcl::plugins::p2p_node::plugin{};
    auto apis = fcl::api::registry{};
    auto provider = fcl::api::installer{apis};
    fcl::asio::blocking::run(runtime, plugin.provide(provider));
@@ -1552,7 +1552,7 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_rejects_invalid_typed_config_before_startup
 }
 
 BOOST_AUTO_TEST_CASE(p2p_diagnostics_plugin_config_is_described_from_public_schema) {
-   auto plugin = fcl::plugins::p2p_diagnostics{};
+   auto plugin = fcl::plugins::p2p_diagnostics::plugin{};
    const auto descriptor = plugin.describe_config();
    BOOST_REQUIRE(descriptor.has_value());
    BOOST_TEST(descriptor->section == "p2p-diagnostics");
@@ -1568,7 +1568,7 @@ BOOST_AUTO_TEST_CASE(p2p_diagnostics_plugin_config_is_described_from_public_sche
 
 BOOST_AUTO_TEST_CASE(p2p_diagnostics_api_rejects_facade_calls_before_initialize) {
    auto runtime = fcl::asio::runtime{};
-   auto plugin = fcl::plugins::p2p_diagnostics{};
+   auto plugin = fcl::plugins::p2p_diagnostics::plugin{};
    auto apis = fcl::api::registry{};
    auto provider = fcl::api::installer{apis};
    fcl::asio::blocking::run(runtime, plugin.provide(provider));
@@ -1639,7 +1639,7 @@ BOOST_AUTO_TEST_CASE(p2p_diagnostics_plugin_reports_live_p2p_node_state) {
 }
 
 BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_config_is_described_from_public_schema) {
-   auto plugin = fcl::plugins::p2p_pubsub{};
+   auto plugin = fcl::plugins::p2p_pubsub::plugin{};
    const auto descriptor = plugin.describe_config();
    BOOST_REQUIRE(descriptor.has_value());
    BOOST_TEST(descriptor->section == "p2p-pubsub");
@@ -1656,7 +1656,7 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_config_is_described_from_public_schema) {
 
 BOOST_AUTO_TEST_CASE(p2p_pubsub_api_rejects_facade_calls_before_initialize) {
    auto runtime = fcl::asio::runtime{};
-   auto plugin = fcl::plugins::p2p_pubsub{};
+   auto plugin = fcl::plugins::p2p_pubsub::plugin{};
    auto apis = fcl::api::registry{};
    auto provider = fcl::api::installer{apis};
    fcl::asio::blocking::run(runtime, plugin.provide(provider));
@@ -2082,7 +2082,7 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_enforces_topic_policy_and_handler_bounds)
 }
 
 BOOST_AUTO_TEST_CASE(p2p_api_resolver_plugin_config_is_described_from_public_schema) {
-   auto plugin = fcl::plugins::p2p_api_resolver{};
+   auto plugin = fcl::plugins::p2p_api_resolver::plugin{};
    const auto descriptor = plugin.describe_config();
    BOOST_REQUIRE(descriptor.has_value());
    BOOST_TEST(descriptor->section == "p2p-api-resolver");
@@ -2106,7 +2106,7 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_plugin_config_is_described_from_public_sch
 
 BOOST_AUTO_TEST_CASE(p2p_api_resolver_rejects_facade_calls_before_initialize) {
    auto runtime = fcl::asio::runtime{};
-   auto plugin = fcl::plugins::p2p_api_resolver{};
+   auto plugin = fcl::plugins::p2p_api_resolver::plugin{};
    auto apis = fcl::api::registry{};
    auto provider = fcl::api::installer{apis};
    fcl::asio::blocking::run(runtime, plugin.provide(provider));

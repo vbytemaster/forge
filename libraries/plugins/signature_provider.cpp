@@ -35,22 +35,22 @@ import fcl.crypto.sha256;
 import fcl.exceptions;
 import fcl.schema;
 
-namespace fcl::plugins {
+namespace fcl::plugins::signature_provider {
 namespace {
 
-[[nodiscard]] signature_provider::key_algorithm to_key_algorithm(fcl::crypto::asymmetric::algorithm value) noexcept {
+[[nodiscard]] key_algorithm to_key_algorithm(fcl::crypto::asymmetric::algorithm value) noexcept {
    using asymmetric_algorithm = fcl::crypto::asymmetric::algorithm;
    switch (value) {
    case asymmetric_algorithm::secp256k1:
-      return signature_provider::key_algorithm::secp256k1;
+      return key_algorithm::secp256k1;
    case asymmetric_algorithm::p256:
-      return signature_provider::key_algorithm::p256;
+      return key_algorithm::p256;
    case asymmetric_algorithm::ed25519:
-      return signature_provider::key_algorithm::ed25519;
+      return key_algorithm::ed25519;
    case asymmetric_algorithm::rsa:
-      return signature_provider::key_algorithm::rsa;
+      return key_algorithm::rsa;
    }
-   return signature_provider::key_algorithm::any;
+   return key_algorithm::any;
 }
 
 [[nodiscard]] std::string require_string(const fcl::config::value::object_type& object, std::string_view key,
@@ -61,7 +61,7 @@ namespace {
    }
    const auto* value = std::get_if<std::string>(&found->second.storage);
    if (value == nullptr) {
-      FCL_THROW_EXCEPTION(signature_provider::exceptions::invalid_config, "signature provider config field must be a string",
+      FCL_THROW_EXCEPTION(exceptions::invalid_config, "signature provider config field must be a string",
                           fcl::exceptions::ctx("field", std::string{key}));
    }
    return *value;
@@ -75,7 +75,7 @@ namespace {
    }
    const auto* values = std::get_if<fcl::config::value::array_type>(&found->second.storage);
    if (values == nullptr) {
-      FCL_THROW_EXCEPTION(signature_provider::exceptions::invalid_config, "signature provider config field must be a string list",
+      FCL_THROW_EXCEPTION(exceptions::invalid_config, "signature provider config field must be a string list",
                           fcl::exceptions::ctx("field", std::string{key}));
    }
    auto result = std::vector<std::string>{};
@@ -83,7 +83,7 @@ namespace {
    for (const auto& item : *values) {
       const auto* text = std::get_if<std::string>(&item.storage);
       if (text == nullptr) {
-         FCL_THROW_EXCEPTION(signature_provider::exceptions::invalid_config,
+         FCL_THROW_EXCEPTION(exceptions::invalid_config,
                              "signature provider config list item must be a string",
                              fcl::exceptions::ctx("field", std::string{key}));
       }
@@ -92,8 +92,8 @@ namespace {
    return result;
 }
 
-[[nodiscard]] signature_provider::config decode_config(const fcl::config::component_view& view) {
-   auto result = signature_provider::config{};
+[[nodiscard]] config decode_config(const fcl::config::component_view& view) {
+   auto result = config{};
    result.default_output_profile = view.get_or<std::string>("default-output-profile", "fcl");
 
    const auto* keys_value = view.try_get("keys");
@@ -102,7 +102,7 @@ namespace {
    }
    const auto* keys = std::get_if<fcl::config::value::array_type>(&keys_value->storage);
    if (keys == nullptr) {
-      FCL_THROW_EXCEPTION(signature_provider::exceptions::invalid_config, "signature-provider keys must be an array");
+      FCL_THROW_EXCEPTION(exceptions::invalid_config, "signature-provider keys must be an array");
    }
 
    auto ids = std::set<std::string>{};
@@ -110,37 +110,37 @@ namespace {
    for (const auto& item : *keys) {
       const auto* object = std::get_if<fcl::config::value::object_type>(&item.storage);
       if (object == nullptr) {
-         FCL_THROW_EXCEPTION(signature_provider::exceptions::invalid_config, "signature-provider key entry must be an object");
+         FCL_THROW_EXCEPTION(exceptions::invalid_config, "signature-provider key entry must be an object");
       }
-      auto key = signature_provider::key{
+      auto entry = key{
          .id = require_string(*object, "id"),
          .private_key = require_string(*object, "private-key"),
          .input_profile = require_string(*object, "input-profile", "fcl"),
          .purposes = optional_string_list(*object, "purposes"),
       };
-      if (key.id.empty()) {
-         FCL_THROW_EXCEPTION(signature_provider::exceptions::invalid_config, "signature-provider key id is required");
+      if (entry.id.empty()) {
+         FCL_THROW_EXCEPTION(exceptions::invalid_config, "signature-provider key id is required");
       }
-      if (key.private_key.empty()) {
-         FCL_THROW_EXCEPTION(signature_provider::exceptions::invalid_config, "signature-provider private-key is required");
+      if (entry.private_key.empty()) {
+         FCL_THROW_EXCEPTION(exceptions::invalid_config, "signature-provider private-key is required");
       }
-      if (key.purposes.empty()) {
-         FCL_THROW_EXCEPTION(signature_provider::exceptions::invalid_config,
+      if (entry.purposes.empty()) {
+         FCL_THROW_EXCEPTION(exceptions::invalid_config,
                              "signature-provider key purposes must be explicitly configured",
-                             fcl::exceptions::ctx("key_id", key.id));
+                             fcl::exceptions::ctx("key_id", entry.id));
       }
-      if (std::ranges::any_of(key.purposes, [](const auto& purpose) {
+      if (std::ranges::any_of(entry.purposes, [](const auto& purpose) {
              return purpose.empty();
           })) {
-         FCL_THROW_EXCEPTION(signature_provider::exceptions::invalid_config,
+         FCL_THROW_EXCEPTION(exceptions::invalid_config,
                              "signature-provider key purpose must not be empty",
-                             fcl::exceptions::ctx("key_id", key.id));
+                             fcl::exceptions::ctx("key_id", entry.id));
       }
-      if (!ids.insert(key.id).second) {
-         FCL_THROW_EXCEPTION(signature_provider::exceptions::invalid_config, "signature-provider key id is duplicated",
-                             fcl::exceptions::ctx("key_id", key.id));
+      if (!ids.insert(entry.id).second) {
+         FCL_THROW_EXCEPTION(exceptions::invalid_config, "signature-provider key id is duplicated",
+                             fcl::exceptions::ctx("key_id", entry.id));
       }
-      result.keys.push_back(std::move(key));
+      result.keys.push_back(std::move(entry));
    }
    return result;
 }
@@ -159,7 +159,7 @@ namespace {
    case asymmetric::algorithm::rsa:
       return asymmetric::signature{storage_type{key.as<rsa::private_key_shim>().sign(digest.to_uint8_span())}};
    }
-   FCL_THROW_EXCEPTION(signature_provider::exceptions::unsupported_algorithm, "unsupported signer key algorithm");
+   FCL_THROW_EXCEPTION(exceptions::unsupported_algorithm, "unsupported signer key algorithm");
 }
 
 [[nodiscard]] bool purpose_allowed(const std::vector<std::string>& allowed, std::string_view value) noexcept {
@@ -170,7 +170,7 @@ namespace {
 
 } // namespace
 
-struct signature_provider::impl {
+struct plugin::impl {
    using profile_map = std::map<std::string, fcl::crypto::asymmetric::encoding>;
 
    struct loaded_key {
@@ -263,7 +263,7 @@ struct signature_provider::impl {
    }
 };
 
-class signature_provider::api_impl final : public signature_provider::api {
+class plugin::api_impl final : public api {
  public:
    explicit api_impl(std::shared_ptr<impl> state) : state_{std::move(state)} {}
 
@@ -275,12 +275,12 @@ class signature_provider::api_impl final : public signature_provider::api {
    std::shared_ptr<impl> state_;
 };
 
-std::string signature_provider::response::signature_text() const {
+std::string response::signature_text() const {
    return std::string{signature.begin(), signature.end()};
 }
 
-boost::asio::awaitable<signature_provider::response>
-signature_provider::api::sign(std::string key_id, std::string purpose, fcl::crypto::sha256 digest) {
+boost::asio::awaitable<response>
+api::sign(std::string key_id, std::string purpose, fcl::crypto::sha256 digest) {
    co_return co_await sign(request{
       .key_id = std::move(key_id),
       .purpose = std::move(purpose),
@@ -288,8 +288,8 @@ signature_provider::api::sign(std::string key_id, std::string purpose, fcl::cryp
    });
 }
 
-boost::asio::awaitable<signature_provider::response>
-signature_provider::api::sign(std::string key_id, fcl::crypto::sha256 digest, options value) {
+boost::asio::awaitable<response>
+api::sign(std::string key_id, fcl::crypto::sha256 digest, options value) {
    co_return co_await sign(request{
       .key_id = std::move(key_id),
       .purpose = std::move(value.purpose),
@@ -299,42 +299,42 @@ signature_provider::api::sign(std::string key_id, fcl::crypto::sha256 digest, op
    });
 }
 
-signature_provider::signature_provider(plugin_options value) : impl_{std::make_shared<impl>(std::move(value))} {}
+plugin::plugin(plugin_options value) : impl_{std::make_shared<impl>(std::move(value))} {}
 
-signature_provider::~signature_provider() = default;
+plugin::~plugin() = default;
 
-std::ostream& operator<<(std::ostream& out, signature_provider::key_algorithm value) {
+std::ostream& operator<<(std::ostream& out, key_algorithm value) {
    switch (value) {
-   case signature_provider::key_algorithm::any:
+   case key_algorithm::any:
       return out << "any";
-   case signature_provider::key_algorithm::secp256k1:
+   case key_algorithm::secp256k1:
       return out << "secp256k1";
-   case signature_provider::key_algorithm::p256:
+   case key_algorithm::p256:
       return out << "p256";
-   case signature_provider::key_algorithm::ed25519:
+   case key_algorithm::ed25519:
       return out << "ed25519";
-   case signature_provider::key_algorithm::rsa:
+   case key_algorithm::rsa:
       return out << "rsa";
    }
    return out << "unknown";
 }
 
-fcl::app::plugin_descriptor signature_provider::descriptor(plugin_options value) {
+fcl::app::plugin_descriptor descriptor(plugin_options value) {
    return fcl::app::plugin_descriptor{
       .id = {.value = "fcl.signature_provider"},
-      .factory = [value = std::move(value)] { return std::make_unique<signature_provider>(value); },
+      .factory = [value = std::move(value)] { return std::make_unique<plugin>(value); },
    };
 }
 
-fcl::app::plugin_id signature_provider::id() const {
+fcl::app::plugin_id plugin::id() const {
    return {.value = "fcl.signature_provider"};
 }
 
-std::string signature_provider::version() const {
+std::string plugin::version() const {
    return "1.0.0";
 }
 
-std::optional<fcl::config::component_descriptor> signature_provider::describe_config() const {
+std::optional<fcl::config::component_descriptor> plugin::describe_config() const {
    return fcl::config::component_descriptor{
       .section = "signature-provider",
       .fields =
@@ -356,7 +356,7 @@ std::optional<fcl::config::component_descriptor> signature_provider::describe_co
    };
 }
 
-boost::asio::awaitable<void> signature_provider::configure(fcl::config::component_view view) {
+boost::asio::awaitable<void> plugin::configure(fcl::config::component_view view) {
    auto config = decode_config(view);
    (void)impl_->profile_by_name(config.default_output_profile);
    auto loaded = std::map<std::string, impl::loaded_key>{};
@@ -382,27 +382,27 @@ boost::asio::awaitable<void> signature_provider::configure(fcl::config::componen
    co_return;
 }
 
-boost::asio::awaitable<void> signature_provider::provide(fcl::api::provider& provider) {
-   provider.install<signature_provider::api>(std::make_shared<api_impl>(impl_));
+boost::asio::awaitable<void> plugin::provide(fcl::api::provider& provider) {
+   provider.install<api>(std::make_shared<api_impl>(impl_));
    co_return;
 }
 
-boost::asio::awaitable<void> signature_provider::initialize(fcl::app::plugin_context&) {
+boost::asio::awaitable<void> plugin::initialize(fcl::app::plugin_context&) {
    impl_->stopping = false;
    co_return;
 }
 
-boost::asio::awaitable<void> signature_provider::startup() {
+boost::asio::awaitable<void> plugin::startup() {
    co_return;
 }
 
-void signature_provider::request_stop() noexcept {
+void plugin::request_stop() noexcept {
    impl_->stopping = true;
 }
 
-boost::asio::awaitable<void> signature_provider::shutdown() {
+boost::asio::awaitable<void> plugin::shutdown() {
    impl_->stopping = true;
    co_return;
 }
 
-} // namespace fcl::plugins
+} // namespace fcl::plugins::signature_provider

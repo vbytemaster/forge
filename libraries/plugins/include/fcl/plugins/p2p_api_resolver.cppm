@@ -26,31 +26,28 @@ import fcl.p2p;
 import fcl.plugins.p2p_node;
 import fcl.schema;
 
-export namespace fcl::plugins {
+export namespace fcl::plugins::p2p_api_resolver {
 
-class p2p_api_resolver final : public fcl::app::plugin {
+struct config;
+struct publish_options;
+struct resolve_options;
+struct error;
+struct method;
+struct entry;
+struct resolution;
+struct resolved_connection;
+struct query;
+struct response;
+class exceptions;
+class api;
+
+class plugin final : public fcl::app::plugin {
  public:
-   struct config;
-   struct publish_options;
-   struct resolve_options;
-   struct error;
-   struct method;
-   struct entry;
-   struct resolution;
-   struct resolved_connection;
-   struct query;
-   struct response;
-   class exceptions;
-   class api;
+   plugin();
+   ~plugin() override;
 
-   p2p_api_resolver();
-   ~p2p_api_resolver() override;
-
-   p2p_api_resolver(const p2p_api_resolver&) = delete;
-   p2p_api_resolver& operator=(const p2p_api_resolver&) = delete;
-
-   [[nodiscard]] static fcl::app::plugin_descriptor descriptor();
-   [[nodiscard]] static fcl::p2p::protocol_id default_protocol();
+   plugin(const plugin&) = delete;
+   plugin& operator=(const plugin&) = delete;
 
    [[nodiscard]] fcl::app::plugin_id id() const override;
    [[nodiscard]] std::string version() const override;
@@ -65,10 +62,14 @@ class p2p_api_resolver final : public fcl::app::plugin {
  private:
    struct impl;
    class protocol_impl;
+   class api_impl;
    std::shared_ptr<impl> impl_;
 };
 
-class p2p_api_resolver::exceptions {
+[[nodiscard]] fcl::app::plugin_descriptor descriptor();
+[[nodiscard]] fcl::p2p::protocol_id default_protocol();
+
+class exceptions {
  public:
    enum class code : std::uint16_t {
       plugin_not_initialized = 1,
@@ -87,9 +88,9 @@ class p2p_api_resolver::exceptions {
    using protocol_error = fcl::exceptions::coded_exception<code, code::protocol_error>;
 };
 
-FCL_DECLARE_EXCEPTION_CATEGORY(p2p_api_resolver::exceptions::code, "fcl.plugins.p2p_api_resolver")
+FCL_DECLARE_EXCEPTION_CATEGORY(exceptions::code, "fcl.plugins.p2p_api_resolver")
 
-struct p2p_api_resolver::config {
+struct config {
    std::string protocol_id = "/fcl/api/resolver/1";
    std::uint64_t cache_ttl_ms = 60'000;
    std::uint64_t query_deadline_ms = 5'000;
@@ -100,17 +101,17 @@ struct p2p_api_resolver::config {
    std::uint64_t max_errors_per_method = 64;
 };
 
-struct p2p_api_resolver::publish_options {
+struct publish_options {
    fcl::api::transport::options transport{};
 };
 
-struct p2p_api_resolver::resolve_options {
+struct resolve_options {
    std::chrono::milliseconds query_deadline{0};
    std::chrono::milliseconds open_deadline{0};
    bool force_refresh = false;
 };
 
-struct p2p_api_resolver::error {
+struct error {
    std::string name;
    fcl::api::error_identity identity;
    fcl::api::status status_code = fcl::api::status::internal;
@@ -119,7 +120,7 @@ struct p2p_api_resolver::error {
    bool operator==(const error&) const = default;
 };
 
-struct p2p_api_resolver::method {
+struct method {
    std::string name;
    fcl::api::method_kind kind = fcl::api::method_kind::unary;
    std::vector<error> errors;
@@ -127,7 +128,7 @@ struct p2p_api_resolver::method {
    bool operator==(const method&) const = default;
 };
 
-struct p2p_api_resolver::entry {
+struct entry {
    fcl::api::api_id id;
    fcl::api::api_version version;
    std::string protocol;
@@ -139,30 +140,30 @@ struct p2p_api_resolver::entry {
    bool operator==(const entry&) const = default;
 };
 
-struct p2p_api_resolver::resolution {
+struct resolution {
    entry api;
 
    bool operator==(const resolution&) const = default;
 };
 
-struct p2p_api_resolver::resolved_connection {
+struct resolved_connection {
    fcl::api::transport::connection connection;
    fcl::api::api_ref selected;
 };
 
-struct p2p_api_resolver::query {
+struct query {
    std::vector<fcl::api::api_ref> apis;
 
    bool operator==(const query&) const = default;
 };
 
-struct p2p_api_resolver::response {
+struct response {
    std::vector<entry> apis;
 
    bool operator==(const response&) const = default;
 };
 
-class p2p_api_resolver::api : public fcl::api::contract<p2p_api_resolver::api> {
+class api : public fcl::api::contract<api> {
  public:
    virtual ~api() = default;
 
@@ -185,25 +186,24 @@ class p2p_api_resolver::api : public fcl::api::contract<p2p_api_resolver::api> {
    }
 
  private:
-   friend class p2p_api_resolver;
-   class impl;
+   friend class plugin;
 
    virtual boost::asio::awaitable<resolved_connection>
    open_resolved_connection(fcl::p2p::peer_id peer, fcl::api::api_ref api, fcl::api::descriptor descriptor,
                             resolve_options options) = 0;
 };
 
-BOOST_DESCRIBE_STRUCT(p2p_api_resolver::config, (),
+BOOST_DESCRIBE_STRUCT(config, (),
                       (protocol_id, cache_ttl_ms, query_deadline_ms, open_deadline_ms, max_cached_peers,
                        max_apis_per_peer, max_methods_per_api, max_errors_per_method))
-BOOST_DESCRIBE_STRUCT(p2p_api_resolver::error, (), (name, identity, status_code, retryable))
-BOOST_DESCRIBE_STRUCT(p2p_api_resolver::method, (), (name, kind, errors))
-BOOST_DESCRIBE_STRUCT(p2p_api_resolver::entry, (),
+BOOST_DESCRIBE_STRUCT(error, (), (name, identity, status_code, retryable))
+BOOST_DESCRIBE_STRUCT(method, (), (name, kind, errors))
+BOOST_DESCRIBE_STRUCT(entry, (),
                       (id, version, protocol, codec, max_inflight, max_frame_size, methods))
-BOOST_DESCRIBE_STRUCT(p2p_api_resolver::query, (), (apis))
-BOOST_DESCRIBE_STRUCT(p2p_api_resolver::response, (), (apis))
+BOOST_DESCRIBE_STRUCT(query, (), (apis))
+BOOST_DESCRIBE_STRUCT(response, (), (apis))
 
-} // namespace fcl::plugins
+} // namespace fcl::plugins::p2p_api_resolver
 
 export {
 FCL_API(::fcl::plugins::p2p_api_resolver::api, FCL_API_CONTRACT("fcl.plugins.p2p_api_resolver", 1, 0))

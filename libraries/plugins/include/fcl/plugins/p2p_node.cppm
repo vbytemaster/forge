@@ -25,26 +25,24 @@ import fcl.exceptions;
 import fcl.p2p;
 import fcl.schema;
 
-export namespace fcl::plugins {
+export namespace fcl::plugins::p2p_node {
 
-class p2p_node final : public fcl::app::plugin {
+struct config;
+struct info;
+struct remote_options;
+enum class path_policy : std::uint8_t;
+class exceptions;
+class api;
+class diagnostics_source;
+class pubsub_source;
+
+class plugin final : public fcl::app::plugin {
  public:
-   struct config;
-   struct info;
-   struct remote_options;
-   enum class path_policy : std::uint8_t;
-   class exceptions;
-   class api;
-   class diagnostics_source;
-   class pubsub_source;
+   plugin();
+   ~plugin() override;
 
-   p2p_node();
-   ~p2p_node() override;
-
-   p2p_node(const p2p_node&) = delete;
-   p2p_node& operator=(const p2p_node&) = delete;
-
-   [[nodiscard]] static fcl::app::plugin_descriptor descriptor();
+   plugin(const plugin&) = delete;
+   plugin& operator=(const plugin&) = delete;
 
    [[nodiscard]] fcl::app::plugin_id id() const override;
    [[nodiscard]] std::string version() const override;
@@ -58,10 +56,15 @@ class p2p_node final : public fcl::app::plugin {
 
  private:
    struct impl;
+   class api_impl;
+   class diagnostics_source_impl;
+   class pubsub_source_impl;
    std::shared_ptr<impl> impl_;
 };
 
-class p2p_node::exceptions {
+[[nodiscard]] fcl::app::plugin_descriptor descriptor();
+
+class exceptions {
  public:
    enum class code : std::uint16_t {
       plugin_not_initialized = 1,
@@ -74,9 +77,9 @@ class p2p_node::exceptions {
    using invalid_config = fcl::exceptions::coded_exception<code, code::invalid_config>;
 };
 
-FCL_DECLARE_EXCEPTION_CATEGORY(p2p_node::exceptions::code, "fcl.plugins.p2p_node")
+FCL_DECLARE_EXCEPTION_CATEGORY(exceptions::code, "fcl.plugins.p2p_node")
 
-struct p2p_node::config {
+struct config {
    std::vector<std::string> listen;
    std::vector<std::string> bootstrap;
    std::vector<std::string> advertised_endpoints;
@@ -99,13 +102,13 @@ struct p2p_node::config {
    std::uint64_t relay_max_candidates = 4;
 };
 
-struct p2p_node::info {
+struct info {
    fcl::p2p::peer_id local_peer;
    std::vector<fcl::p2p::endpoint> local_endpoints;
    bool started = false;
 };
 
-struct p2p_node::remote_options {
+struct remote_options {
    std::chrono::milliseconds open_deadline{10'000};
    std::optional<fcl::api::codec_id> codec;
    std::optional<std::size_t> max_inflight;
@@ -113,13 +116,13 @@ struct p2p_node::remote_options {
    std::optional<std::uint32_t> max_frame_size;
 };
 
-enum class p2p_node::path_policy : std::uint8_t {
+enum class path_policy : std::uint8_t {
    direct_only = 1,
    direct_preferred = 2,
    relay_only = 3,
 };
 
-class p2p_node::api : public fcl::api::contract<p2p_node::api> {
+class api : public fcl::api::contract<api> {
  public:
    virtual ~api() = default;
 
@@ -144,11 +147,10 @@ class p2p_node::api : public fcl::api::contract<p2p_node::api> {
    }
 
  private:
-   friend class p2p_node;
-   class impl;
+   friend class plugin;
 };
 
-class p2p_node::diagnostics_source : public fcl::api::contract<p2p_node::diagnostics_source> {
+class diagnostics_source : public fcl::api::contract<diagnostics_source> {
  public:
    virtual ~diagnostics_source() = default;
 
@@ -156,11 +158,10 @@ class p2p_node::diagnostics_source : public fcl::api::contract<p2p_node::diagnos
    snapshot(fcl::p2p::diagnostics::options options = {}) const = 0;
 
  private:
-   friend class p2p_node;
-   class impl;
+   friend class plugin;
 };
 
-class p2p_node::pubsub_source : public fcl::api::contract<p2p_node::pubsub_source> {
+class pubsub_source : public fcl::api::contract<pubsub_source> {
  public:
    virtual ~pubsub_source() = default;
 
@@ -175,11 +176,10 @@ class p2p_node::pubsub_source : public fcl::api::contract<p2p_node::pubsub_sourc
    [[nodiscard]] virtual fcl::p2p::pubsub::snapshot snapshot() const = 0;
 
  private:
-   friend class p2p_node;
-   class impl;
+   friend class plugin;
 };
 
-} // namespace fcl::plugins
+} // namespace fcl::plugins::p2p_node
 
 export {
 FCL_API(::fcl::plugins::p2p_node::api, FCL_API_CONTRACT("fcl.plugins.p2p_node", 1, 0))

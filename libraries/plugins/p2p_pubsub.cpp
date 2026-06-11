@@ -36,22 +36,22 @@ import fcl.exceptions;
 import fcl.p2p;
 import fcl.plugins.p2p_node;
 
-namespace fcl::plugins {
+namespace fcl::plugins::p2p_pubsub {
 namespace {
 
 [[nodiscard]] std::chrono::milliseconds to_ms(std::uint64_t value) {
    return std::chrono::milliseconds{static_cast<std::chrono::milliseconds::rep>(value)};
 }
 
-[[nodiscard]] p2p_pubsub::config decode_config(const fcl::config::component_view& view) {
-   auto decoded = fcl::config::decode<p2p_pubsub::config>(view.source(), view.section());
+[[nodiscard]] config decode_config(const fcl::config::component_view& view) {
+   auto decoded = fcl::config::decode<config>(view.source(), view.section());
    if (!decoded.ok()) {
       auto message = std::string{"invalid P2P PubSub config"};
       if (!decoded.diagnostics.entries.empty()) {
          const auto& first = decoded.diagnostics.entries.front();
          message += ": " + first.path + " " + first.code + " " + first.message;
       }
-      FCL_THROW_EXCEPTION(p2p_pubsub::exceptions::invalid_config, message);
+      FCL_THROW_EXCEPTION(exceptions::invalid_config, message);
    }
    return std::move(decoded.value);
 }
@@ -60,21 +60,21 @@ void validate_topic_list(const std::vector<std::string>& values, std::string_vie
    auto seen = std::set<std::string>{};
    for (const auto& value : values) {
       if (value.empty()) {
-         FCL_THROW_EXCEPTION(p2p_pubsub::exceptions::invalid_config, "P2P PubSub topic policy contains empty topic",
+         FCL_THROW_EXCEPTION(exceptions::invalid_config, "P2P PubSub topic policy contains empty topic",
                              fcl::exceptions::ctx("list", std::string{name}));
       }
       if (!seen.insert(value).second) {
-         FCL_THROW_EXCEPTION(p2p_pubsub::exceptions::invalid_config,
+         FCL_THROW_EXCEPTION(exceptions::invalid_config,
                              "P2P PubSub topic policy contains duplicate topic",
                              fcl::exceptions::ctx("list", std::string{name}), fcl::exceptions::ctx("topic", value));
       }
    }
 }
 
-void validate_config(const p2p_pubsub::config& value) {
+void validate_config(const config& value) {
    if (value.max_topics == 0 || value.max_handlers_per_topic == 0 || value.max_active_handlers == 0 ||
        value.max_message_size == 0 || value.handler_deadline_ms == 0) {
-      FCL_THROW_EXCEPTION(p2p_pubsub::exceptions::invalid_config, "P2P PubSub limits must be positive");
+      FCL_THROW_EXCEPTION(exceptions::invalid_config, "P2P PubSub limits must be positive");
    }
    validate_topic_list(value.allowed_topics, "allowed-topics");
    validate_topic_list(value.denied_topics, "denied-topics");
@@ -84,9 +84,9 @@ void validate_config(const p2p_pubsub::config& value) {
    return std::ranges::find(values, topic) != values.end();
 }
 
-[[nodiscard]] p2p_pubsub::message project_message(const fcl::p2p::peer_id& source,
-                                                  const fcl::p2p::pubsub::message& value) {
-   return p2p_pubsub::message{
+[[nodiscard]] message project_message(const fcl::p2p::peer_id& source,
+                                      const fcl::p2p::pubsub::message& value) {
+   return message{
       .source = source,
       .author = value.from,
       .subject = value.subject,
@@ -95,7 +95,7 @@ void validate_config(const p2p_pubsub::config& value) {
    };
 }
 
-[[nodiscard]] fcl::p2p::pubsub::options core_options_for(const p2p_pubsub::config& settings) {
+[[nodiscard]] fcl::p2p::pubsub::options core_options_for(const config& settings) {
    auto out = fcl::p2p::pubsub::options{};
    out.signatures =
       settings.sign_publishes ? fcl::p2p::pubsub::signature_policy::strict_sign
@@ -109,11 +109,11 @@ void validate_config(const p2p_pubsub::config& value) {
 
 } // namespace
 
-struct p2p_pubsub::impl : public std::enable_shared_from_this<p2p_pubsub::impl> {
+struct plugin::impl : public std::enable_shared_from_this<plugin::impl> {
    struct handler_record {
       std::uint64_t id = 0;
       fcl::p2p::pubsub::topic subject;
-      p2p_pubsub::handler callback;
+      handler callback;
       std::chrono::milliseconds deadline{0};
    };
 
@@ -219,7 +219,7 @@ struct p2p_pubsub::impl : public std::enable_shared_from_this<p2p_pubsub::impl> 
    }
 
    boost::asio::awaitable<fcl::p2p::pubsub::validation_result>
-   call_handler(handler_record handler, p2p_pubsub::message value) {
+   call_handler(handler_record handler, message value) {
       if (!try_begin_handler()) {
          co_return fcl::p2p::pubsub::validation_result::ignore;
       }
@@ -309,9 +309,9 @@ struct p2p_pubsub::impl : public std::enable_shared_from_this<p2p_pubsub::impl> 
    }
 };
 
-class p2p_pubsub::api::impl final : public p2p_pubsub::api {
+class plugin::api_impl final : public api {
  public:
-   explicit impl(std::shared_ptr<p2p_pubsub::impl> impl) : impl_{std::move(impl)} {}
+   explicit api_impl(std::shared_ptr<plugin::impl> impl) : impl_{std::move(impl)} {}
 
    boost::asio::awaitable<message> publish(fcl::p2p::pubsub::topic subject, std::vector<std::uint8_t> data,
                                            publish_options options) override {
@@ -341,7 +341,7 @@ class p2p_pubsub::api::impl final : public p2p_pubsub::api {
 
       auto value = subscription{};
       auto join_leader = false;
-      auto waiter = std::shared_ptr<p2p_pubsub::impl::join_waiter>{};
+      auto waiter = std::shared_ptr<plugin::impl::join_waiter>{};
       const auto executor = co_await boost::asio::this_coro::executor;
       {
          auto lock = std::scoped_lock{impl_->mutex};
@@ -360,7 +360,7 @@ class p2p_pubsub::api::impl final : public p2p_pubsub::api {
          if (deadline.count() <= 0) {
             deadline = to_ms(impl_->settings.handler_deadline_ms);
          }
-         state.handlers.emplace(value.id, p2p_pubsub::impl::handler_record{
+         state.handlers.emplace(value.id, plugin::impl::handler_record{
                                              .id = value.id,
                                              .subject = subject,
                                              .callback = std::move(callback),
@@ -368,7 +368,7 @@ class p2p_pubsub::api::impl final : public p2p_pubsub::api {
                                           });
          if (!state.joined) {
             if (state.joining) {
-               waiter = std::make_shared<p2p_pubsub::impl::join_waiter>(executor);
+               waiter = std::make_shared<plugin::impl::join_waiter>(executor);
                state.waiters.push_back(waiter);
             } else {
                state.joining = true;
@@ -396,7 +396,7 @@ class p2p_pubsub::api::impl final : public p2p_pubsub::api {
                            -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
                   co_return co_await self->handle_event(std::move(event));
                });
-            auto waiters = std::vector<std::shared_ptr<p2p_pubsub::impl::join_waiter>>{};
+            auto waiters = std::vector<std::shared_ptr<plugin::impl::join_waiter>>{};
             {
                auto lock = std::scoped_lock{impl_->mutex};
                if (auto found = impl_->topics.find(value.subject.value); found != impl_->topics.end()) {
@@ -406,11 +406,11 @@ class p2p_pubsub::api::impl final : public p2p_pubsub::api {
                }
             }
             for (auto& pending : waiters) {
-               p2p_pubsub::impl::complete_join_waiter(std::move(pending));
+               plugin::impl::complete_join_waiter(std::move(pending));
             }
          } catch (...) {
             auto failure = std::current_exception();
-            auto waiters = std::vector<std::shared_ptr<p2p_pubsub::impl::join_waiter>>{};
+            auto waiters = std::vector<std::shared_ptr<plugin::impl::join_waiter>>{};
             {
                auto lock = std::scoped_lock{impl_->mutex};
                if (auto found = impl_->topics.find(value.subject.value); found != impl_->topics.end()) {
@@ -419,7 +419,7 @@ class p2p_pubsub::api::impl final : public p2p_pubsub::api {
                }
             }
             for (auto& pending : waiters) {
-               p2p_pubsub::impl::complete_join_waiter(std::move(pending), failure);
+               plugin::impl::complete_join_waiter(std::move(pending), failure);
             }
             throw;
          }
@@ -459,14 +459,14 @@ class p2p_pubsub::api::impl final : public p2p_pubsub::api {
       return out;
    }
 
-   p2p_pubsub::snapshot snapshot() const override {
+   ::fcl::plugins::p2p_pubsub::snapshot snapshot() const override {
       auto& source = impl_->require_source();
       auto lock = std::scoped_lock{impl_->mutex};
       auto subscriptions = std::size_t{};
       for (const auto& [_, topic] : impl_->topics) {
          subscriptions += topic.handlers.size();
       }
-      return p2p_pubsub::snapshot{
+      return ::fcl::plugins::p2p_pubsub::snapshot{
          .topics = impl_->topics.size(),
          .subscriptions = subscriptions,
          .active_handlers = impl_->active_handlers,
@@ -482,37 +482,37 @@ class p2p_pubsub::api::impl final : public p2p_pubsub::api {
    }
 
  private:
-   std::shared_ptr<p2p_pubsub::impl> impl_;
+   std::shared_ptr<plugin::impl> impl_;
 };
 
-p2p_pubsub::p2p_pubsub() : impl_{std::make_shared<impl>()} {}
-p2p_pubsub::~p2p_pubsub() = default;
+plugin::plugin() : impl_{std::make_shared<impl>()} {}
+plugin::~plugin() = default;
 
-fcl::app::plugin_id p2p_pubsub::id() const {
+fcl::app::plugin_id plugin::id() const {
    return fcl::app::plugin_id{.value = "fcl.p2p_pubsub"};
 }
 
-std::string p2p_pubsub::version() const {
+std::string plugin::version() const {
    return "1.0.0";
 }
 
-std::optional<fcl::config::component_descriptor> p2p_pubsub::describe_config() const {
-   return fcl::config::describe_component<p2p_pubsub::config>("p2p-pubsub");
+std::optional<fcl::config::component_descriptor> plugin::describe_config() const {
+   return fcl::config::describe_component<config>("p2p-pubsub");
 }
 
-boost::asio::awaitable<void> p2p_pubsub::configure(fcl::config::component_view view) {
+boost::asio::awaitable<void> plugin::configure(fcl::config::component_view view) {
    auto config = decode_config(view);
    validate_config(config);
    impl_->settings = std::move(config);
    co_return;
 }
 
-boost::asio::awaitable<void> p2p_pubsub::provide(fcl::api::provider& provider) {
-   provider.install<p2p_pubsub::api>(std::make_shared<p2p_pubsub::api::impl>(impl_));
+boost::asio::awaitable<void> plugin::provide(fcl::api::provider& provider) {
+   provider.install<api>(std::make_shared<api_impl>(impl_));
    co_return;
 }
 
-boost::asio::awaitable<void> p2p_pubsub::initialize(fcl::app::plugin_context& context) {
+boost::asio::awaitable<void> plugin::initialize(fcl::app::plugin_context& context) {
    impl_->source = context.apis()
                       .get<fcl::plugins::p2p_node::pubsub_source>(
                          {.id = {"fcl.plugins.p2p_node.pubsub_source"}, .major = 1, .min_revision = 0})
@@ -523,15 +523,15 @@ boost::asio::awaitable<void> p2p_pubsub::initialize(fcl::app::plugin_context& co
    co_return;
 }
 
-boost::asio::awaitable<void> p2p_pubsub::startup() {
+boost::asio::awaitable<void> plugin::startup() {
    co_return;
 }
 
-void p2p_pubsub::request_stop() noexcept {
+void plugin::request_stop() noexcept {
    impl_->stopping = true;
 }
 
-boost::asio::awaitable<void> p2p_pubsub::shutdown() {
+boost::asio::awaitable<void> plugin::shutdown() {
    request_stop();
    std::vector<fcl::p2p::pubsub::topic> topics;
    {
@@ -556,14 +556,14 @@ boost::asio::awaitable<void> p2p_pubsub::shutdown() {
    co_return;
 }
 
-fcl::app::plugin_descriptor p2p_pubsub::descriptor() {
+fcl::app::plugin_descriptor descriptor() {
    return fcl::app::plugin_descriptor{
       .id = fcl::app::plugin_id{.value = "fcl.p2p_pubsub"},
       .dependencies = {fcl::app::plugin_id{.value = "fcl.p2p_node"}},
       .factory = [] {
-         return std::make_unique<p2p_pubsub>();
+         return std::make_unique<plugin>();
       },
    };
 }
 
-} // namespace fcl::plugins
+} // namespace fcl::plugins::p2p_pubsub

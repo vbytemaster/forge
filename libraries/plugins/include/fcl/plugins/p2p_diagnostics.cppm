@@ -24,22 +24,20 @@ import fcl.p2p;
 import fcl.plugins.p2p_node;
 import fcl.schema;
 
-export namespace fcl::plugins {
+export namespace fcl::plugins::p2p_diagnostics {
 
-class p2p_diagnostics final : public fcl::app::plugin {
+struct config;
+struct filter;
+class exceptions;
+class api;
+
+class plugin final : public fcl::app::plugin {
  public:
-   struct config;
-   struct filter;
-   class exceptions;
-   class api;
+   plugin();
+   ~plugin() override;
 
-   p2p_diagnostics();
-   ~p2p_diagnostics() override;
-
-   p2p_diagnostics(const p2p_diagnostics&) = delete;
-   p2p_diagnostics& operator=(const p2p_diagnostics&) = delete;
-
-   [[nodiscard]] static fcl::app::plugin_descriptor descriptor();
+   plugin(const plugin&) = delete;
+   plugin& operator=(const plugin&) = delete;
 
    [[nodiscard]] fcl::app::plugin_id id() const override;
    [[nodiscard]] std::string version() const override;
@@ -53,10 +51,13 @@ class p2p_diagnostics final : public fcl::app::plugin {
 
  private:
    struct impl;
+   class api_impl;
    std::shared_ptr<impl> impl_;
 };
 
-class p2p_diagnostics::exceptions {
+[[nodiscard]] fcl::app::plugin_descriptor descriptor();
+
+class exceptions {
  public:
    enum class code : std::uint16_t {
       plugin_not_initialized = 1,
@@ -69,9 +70,9 @@ class p2p_diagnostics::exceptions {
    using not_found = fcl::exceptions::coded_exception<code, code::not_found>;
 };
 
-FCL_DECLARE_EXCEPTION_CATEGORY(p2p_diagnostics::exceptions::code, "fcl.plugins.p2p_diagnostics")
+FCL_DECLARE_EXCEPTION_CATEGORY(exceptions::code, "fcl.plugins.p2p_diagnostics")
 
-struct p2p_diagnostics::config {
+struct config {
    std::uint64_t max_peers = 1'024;
    std::uint64_t max_sessions = 1'024;
    std::uint64_t max_endpoints_per_peer = 64;
@@ -79,14 +80,14 @@ struct p2p_diagnostics::config {
    std::uint64_t max_relay_reservations_per_peer = 64;
 };
 
-struct p2p_diagnostics::filter {
+struct filter {
    std::optional<fcl::p2p::peer_id> peer;
    bool only_connected = false;
    bool only_protected = false;
    std::uint64_t limit = 0;
 };
 
-class p2p_diagnostics::api : public fcl::api::contract<p2p_diagnostics::api> {
+class api : public fcl::api::contract<api> {
  public:
    virtual ~api() = default;
 
@@ -100,11 +101,10 @@ class p2p_diagnostics::api : public fcl::api::contract<p2p_diagnostics::api> {
    [[nodiscard]] virtual fcl::p2p::diagnostics::peer peer(fcl::p2p::peer_id value) const = 0;
 
  private:
-   friend class p2p_diagnostics;
-   class impl;
+   friend class plugin;
 };
 
-} // namespace fcl::plugins
+} // namespace fcl::plugins::p2p_diagnostics
 
 export {
 FCL_API(::fcl::plugins::p2p_diagnostics::api, FCL_API_CONTRACT("fcl.plugins.p2p_diagnostics", 1, 0))

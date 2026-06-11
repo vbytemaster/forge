@@ -28,32 +28,29 @@ import fcl.p2p;
 import fcl.raw.raw;
 import fcl.schema;
 
-export namespace fcl::plugins {
+export namespace fcl::plugins::p2p_pubsub {
 
-class p2p_pubsub final : public fcl::app::plugin {
+struct config;
+struct publish_options;
+struct subscribe_options;
+struct message;
+template <typename T> struct typed_message;
+struct subscription;
+struct snapshot;
+class exceptions;
+class api;
+
+using handler = std::function<boost::asio::awaitable<fcl::p2p::pubsub::validation_result>(message)>;
+template <typename T>
+using typed_handler = std::function<boost::asio::awaitable<fcl::p2p::pubsub::validation_result>(typed_message<T>)>;
+
+class plugin final : public fcl::app::plugin {
  public:
-   struct config;
-   struct publish_options;
-   struct subscribe_options;
-   struct message;
-   template <typename T> struct typed_message;
-   struct subscription;
-   struct snapshot;
-   class exceptions;
-   class api;
+   plugin();
+   ~plugin() override;
 
-   using handler = std::function<boost::asio::awaitable<fcl::p2p::pubsub::validation_result>(message)>;
-   template <typename T>
-   using typed_handler =
-      std::function<boost::asio::awaitable<fcl::p2p::pubsub::validation_result>(typed_message<T>)>;
-
-   p2p_pubsub();
-   ~p2p_pubsub() override;
-
-   p2p_pubsub(const p2p_pubsub&) = delete;
-   p2p_pubsub& operator=(const p2p_pubsub&) = delete;
-
-   [[nodiscard]] static fcl::app::plugin_descriptor descriptor();
+   plugin(const plugin&) = delete;
+   plugin& operator=(const plugin&) = delete;
 
    [[nodiscard]] fcl::app::plugin_id id() const override;
    [[nodiscard]] std::string version() const override;
@@ -67,10 +64,13 @@ class p2p_pubsub final : public fcl::app::plugin {
 
  private:
    struct impl;
+   class api_impl;
    std::shared_ptr<impl> impl_;
 };
 
-class p2p_pubsub::exceptions {
+[[nodiscard]] fcl::app::plugin_descriptor descriptor();
+
+class exceptions {
  public:
    enum class code : std::uint16_t {
       plugin_not_initialized = 1,
@@ -89,9 +89,9 @@ class p2p_pubsub::exceptions {
    using message_too_large = fcl::exceptions::coded_exception<code, code::message_too_large>;
 };
 
-FCL_DECLARE_EXCEPTION_CATEGORY(p2p_pubsub::exceptions::code, "fcl.plugins.p2p_pubsub")
+FCL_DECLARE_EXCEPTION_CATEGORY(exceptions::code, "fcl.plugins.p2p_pubsub")
 
-struct p2p_pubsub::config {
+struct config {
    std::uint64_t max_topics = 1'024;
    std::uint64_t max_handlers_per_topic = 64;
    std::uint64_t max_active_handlers = 4'096;
@@ -102,15 +102,15 @@ struct p2p_pubsub::config {
    bool sign_publishes = true;
 };
 
-struct p2p_pubsub::publish_options {
+struct publish_options {
    std::optional<bool> sign;
 };
 
-struct p2p_pubsub::subscribe_options {
+struct subscribe_options {
    std::chrono::milliseconds handler_deadline{0};
 };
 
-struct p2p_pubsub::message {
+struct message {
    fcl::p2p::peer_id source;
    std::optional<fcl::p2p::peer_id> author;
    fcl::p2p::pubsub::topic subject;
@@ -118,7 +118,7 @@ struct p2p_pubsub::message {
    std::vector<std::uint8_t> seqno;
 };
 
-template <typename T> struct p2p_pubsub::typed_message {
+template <typename T> struct typed_message {
    fcl::p2p::peer_id source;
    std::optional<fcl::p2p::peer_id> author;
    fcl::p2p::pubsub::topic subject;
@@ -126,12 +126,12 @@ template <typename T> struct p2p_pubsub::typed_message {
    std::vector<std::uint8_t> seqno;
 };
 
-struct p2p_pubsub::subscription {
+struct subscription {
    std::uint64_t id = 0;
    fcl::p2p::pubsub::topic subject;
 };
 
-struct p2p_pubsub::snapshot {
+struct snapshot {
    std::size_t topics = 0;
    std::size_t subscriptions = 0;
    std::size_t active_handlers = 0;
@@ -145,7 +145,7 @@ struct p2p_pubsub::snapshot {
    fcl::p2p::pubsub::snapshot core;
 };
 
-class p2p_pubsub::api : public fcl::api::contract<p2p_pubsub::api> {
+class api : public fcl::api::contract<api> {
  public:
    virtual ~api() = default;
 
@@ -185,11 +185,10 @@ class p2p_pubsub::api : public fcl::api::contract<p2p_pubsub::api> {
    }
 
  private:
-   friend class p2p_pubsub;
-   class impl;
+   friend class plugin;
 };
 
-} // namespace fcl::plugins
+} // namespace fcl::plugins::p2p_pubsub
 
 export {
 FCL_API(::fcl::plugins::p2p_pubsub::api, FCL_API_CONTRACT("fcl.plugins.p2p_pubsub", 1, 0))

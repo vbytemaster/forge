@@ -27,68 +27,66 @@ import fcl.crypto.sha256;
 import fcl.exceptions;
 import fcl.schema;
 
-export namespace fcl::plugins {
+export namespace fcl::plugins::signature_provider {
 
-class signature_provider final : public fcl::app::plugin {
+enum class key_algorithm {
+   any,
+   secp256k1,
+   p256,
+   ed25519,
+   rsa,
+};
+
+struct plugin_options {
+   std::vector<fcl::crypto::asymmetric::text_encoding_profile> profiles;
+};
+
+struct key {
+   std::string id;
+   std::string private_key;
+   std::string input_profile = "fcl";
+   std::vector<std::string> purposes;
+};
+
+struct config {
+   std::vector<key> keys;
+   std::string default_output_profile = "fcl";
+};
+
+struct request {
+   std::string key_id;
+   std::string purpose;
+   fcl::crypto::sha256 digest;
+   key_algorithm required_algorithm = key_algorithm::any;
+   std::string output_profile;
+};
+
+struct options {
+   std::string purpose;
+   key_algorithm required_algorithm = key_algorithm::any;
+   std::string output_profile;
+};
+
+struct response {
+   std::string key_id;
+   key_algorithm algorithm = key_algorithm::any;
+   std::string output_profile;
+   std::string public_key;
+   std::vector<std::uint8_t> signature;
+
+   [[nodiscard]] std::string signature_text() const;
+};
+
+class exceptions;
+class api;
+
+class plugin final : public fcl::app::plugin {
  public:
-   enum class key_algorithm {
-      any,
-      secp256k1,
-      p256,
-      ed25519,
-      rsa,
-   };
+   explicit plugin(plugin_options value = {});
+   ~plugin() override;
 
-   struct plugin_options {
-      std::vector<fcl::crypto::asymmetric::text_encoding_profile> profiles;
-   };
-
-   struct key {
-      std::string id;
-      std::string private_key;
-      std::string input_profile = "fcl";
-      std::vector<std::string> purposes;
-   };
-
-   struct config {
-      std::vector<key> keys;
-      std::string default_output_profile = "fcl";
-   };
-
-   struct request {
-      std::string key_id;
-      std::string purpose;
-      fcl::crypto::sha256 digest;
-      key_algorithm required_algorithm = key_algorithm::any;
-      std::string output_profile;
-   };
-
-   struct options {
-      std::string purpose;
-      key_algorithm required_algorithm = key_algorithm::any;
-      std::string output_profile;
-   };
-
-   struct response {
-      std::string key_id;
-      key_algorithm algorithm = key_algorithm::any;
-      std::string output_profile;
-      std::string public_key;
-      std::vector<std::uint8_t> signature;
-
-      [[nodiscard]] std::string signature_text() const;
-   };
-
-   class exceptions;
-   class api;
-
-   explicit signature_provider(plugin_options value = {});
-   ~signature_provider() override;
-
-   signature_provider(const signature_provider&) = delete;
-   signature_provider& operator=(const signature_provider&) = delete;
-
-   [[nodiscard]] static fcl::app::plugin_descriptor descriptor(plugin_options value = {});
+   plugin(const plugin&) = delete;
+   plugin& operator=(const plugin&) = delete;
 
    [[nodiscard]] fcl::app::plugin_id id() const override;
    [[nodiscard]] std::string version() const override;
@@ -106,9 +104,11 @@ class signature_provider final : public fcl::app::plugin {
    std::shared_ptr<impl> impl_;
 };
 
-std::ostream& operator<<(std::ostream& out, signature_provider::key_algorithm value);
+[[nodiscard]] fcl::app::plugin_descriptor descriptor(plugin_options value = {});
 
-class signature_provider::exceptions {
+std::ostream& operator<<(std::ostream& out, key_algorithm value);
+
+class exceptions {
  public:
    enum class code : std::uint16_t {
       invalid_config = 1,
@@ -129,9 +129,9 @@ class signature_provider::exceptions {
    using signing_failed = fcl::exceptions::coded_exception<code, code::signing_failed>;
 };
 
-FCL_DECLARE_EXCEPTION_CATEGORY(signature_provider::exceptions::code, "fcl.plugins.signature_provider")
+FCL_DECLARE_EXCEPTION_CATEGORY(exceptions::code, "fcl.plugins.signature_provider")
 
-class signature_provider::api : public fcl::api::contract<signature_provider::api, fcl::api::surface::local> {
+class api : public fcl::api::contract<api, fcl::api::surface::local> {
  public:
    virtual ~api() = default;
 
@@ -140,14 +140,14 @@ class signature_provider::api : public fcl::api::contract<signature_provider::ap
    boost::asio::awaitable<response> sign(std::string key_id, fcl::crypto::sha256 digest, options value);
 };
 
-BOOST_DESCRIBE_ENUM(signature_provider::key_algorithm, any, secp256k1, p256, ed25519, rsa)
-BOOST_DESCRIBE_STRUCT(signature_provider::key, (), (id, private_key, input_profile, purposes))
-BOOST_DESCRIBE_STRUCT(signature_provider::config, (), (keys, default_output_profile))
-BOOST_DESCRIBE_STRUCT(signature_provider::request, (), (key_id, purpose, digest, required_algorithm, output_profile))
-BOOST_DESCRIBE_STRUCT(signature_provider::options, (), (purpose, required_algorithm, output_profile))
-BOOST_DESCRIBE_STRUCT(signature_provider::response, (), (key_id, algorithm, output_profile, public_key, signature))
+BOOST_DESCRIBE_ENUM(key_algorithm, any, secp256k1, p256, ed25519, rsa)
+BOOST_DESCRIBE_STRUCT(key, (), (id, private_key, input_profile, purposes))
+BOOST_DESCRIBE_STRUCT(config, (), (keys, default_output_profile))
+BOOST_DESCRIBE_STRUCT(request, (), (key_id, purpose, digest, required_algorithm, output_profile))
+BOOST_DESCRIBE_STRUCT(options, (), (purpose, required_algorithm, output_profile))
+BOOST_DESCRIBE_STRUCT(response, (), (key_id, algorithm, output_profile, public_key, signature))
 
-} // namespace fcl::plugins
+} // namespace fcl::plugins::signature_provider
 
 export {
 FCL_API(::fcl::plugins::signature_provider::api, FCL_API_CONTRACT("fcl.plugins.signature_provider", 1, 0),

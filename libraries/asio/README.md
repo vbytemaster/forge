@@ -131,6 +131,101 @@ boost::asio::awaitable<void> refresh_index(fcl::asio::task_scheduler& scheduler)
 Do not capture stack references in `.work` unless you can prove the work will
 finish before the referenced object goes away.
 
+### Schedule Coroutine Work
+
+Use `awaitable_task` when a background pass needs to call coroutine APIs while
+still using the scheduler's bounded queue, priority, cancellation and metrics.
+The task remains single-shot.
+
+```cpp
+#include <boost/asio/awaitable.hpp>
+
+import fcl.asio.task_scheduler;
+
+boost::asio::awaitable<void> refresh_remote_index();
+
+boost::asio::awaitable<void> refresh_once(fcl::asio::task_scheduler& scheduler) {
+   auto handle = scheduler.submit(fcl::asio::awaitable_task{
+      .priority = fcl::asio::priority{-25},
+      .name = "remote-index-refresh",
+      .work =
+         [](fcl::asio::task_context& context) -> boost::asio::awaitable<void> {
+         context.throw_if_cancel_requested();
+         co_await refresh_remote_index();
+      },
+   });
+
+   co_await handle.wait();
+}
+```
+
+### Repeat Work By Resubmitting
+
+The scheduler intentionally does not own periodic policy. A host or plugin owns
+the loop by submitting the next single-shot task after the current pass
+completes.
+
+```cpp
+#include <boost/asio/awaitable.hpp>
+
+#include <chrono>
+
+import fcl.asio.task_scheduler;
+
+class scrub_worker {
+ public:
+   explicit scrub_worker(fcl::asio::task_scheduler& scheduler) : scheduler_{&scheduler} {}
+
+   void start() {
+      running_ = true;
+      schedule_next();
+   }
+
+   void request_stop() noexcept {
+      running_ = false;
+      if (handle_.valid()) {
+         handle_.cancel();
+      }
+   }
+
+   boost::asio::awaitable<void> shutdown() {
+      if (handle_.valid()) {
+         try {
+            co_await handle_.wait();
+         } catch (const fcl::asio::exceptions::canceled&) {
+            // Normal stop path for a pending background pass.
+         }
+      }
+   }
+
+ private:
+   void schedule_next() {
+      if (!running_) {
+         return;
+      }
+
+      handle_ = scheduler_->submit_after(
+         fcl::asio::awaitable_task{
+            .priority = fcl::asio::priority{-50},
+            .name = "scrub-pass",
+            .work =
+               [this](fcl::asio::task_context& context) -> boost::asio::awaitable<void> {
+               context.throw_if_cancel_requested();
+               co_await run_one_pass();
+               schedule_next();
+            },
+         },
+         std::chrono::seconds{30});
+   }
+
+   boost::asio::awaitable<void> run_one_pass();
+
+   fcl::asio::task_scheduler* scheduler_ = nullptr;
+   fcl::asio::task_handle handle_;
+   bool running_ = false;
+};
+```
+
 ### Handle Queue Backpressure
 
 `max_pending_tasks` is part of correctness. Callers must handle rejection
@@ -248,6 +343,9 @@ work and lets tests verify deterministic shutdown behavior.
   lifecycle integration.
 - Do not sleep in polling loops on runtime threads. Use timers, task handles and
   explicit cancellation.
+- Do not build product-local `steady_timer` plus `co_spawn` scheduling loops for
+  plugin background work. Use `awaitable_task` and resubmit single-shot passes
+  through the scheduler so backpressure, cancellation and metrics remain visible.
 - Do not call `stop()` before consumers have awaited cleanup handles. A stopped
   scheduler rejects new cleanup work by design.
 - Do not capture stack references in queued tasks unless the owner awaits or

@@ -468,7 +468,7 @@ class scheduler_cleanup_plugin final : public fcl::app::plugin {
    }
 
    boost::asio::awaitable<void> shutdown() override {
-      auto handle = scheduler_->submit(fcl::asio::scheduled_task{
+      auto handle = scheduler_->submit(fcl::asio::task{
          .priority = fcl::asio::priority{1},
          .name = "cleanup-flush",
          .work = [this] {

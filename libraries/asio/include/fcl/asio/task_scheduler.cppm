@@ -2,6 +2,7 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <compare>
 #include <cstddef>
@@ -59,10 +60,29 @@ struct task_scheduler_metrics {
    bool stopped = false;
 };
 
-struct scheduled_task {
+struct task {
    priority priority{};
    std::string name;
    std::function<void()> work;
+};
+
+class task_context {
+ public:
+   [[nodiscard]] bool cancel_requested() const noexcept;
+   void throw_if_cancel_requested() const;
+
+ private:
+   explicit task_context(std::atomic_bool& cancel_requested) noexcept;
+
+   std::atomic_bool* cancel_requested_ = nullptr;
+
+   friend class task_scheduler;
+};
+
+struct awaitable_task {
+   priority priority{};
+   std::string name;
+   std::function<boost::asio::awaitable<void>(task_context&)> work;
 };
 
 class task_handle {
@@ -102,8 +122,10 @@ class task_scheduler {
    task_scheduler(task_scheduler&&) = delete;
    task_scheduler& operator=(task_scheduler&&) = delete;
 
-   task_handle submit(scheduled_task task);
-   task_handle submit_after(scheduled_task task, std::chrono::milliseconds delay);
+   task_handle submit(task value);
+   task_handle submit_after(task value, std::chrono::milliseconds delay);
+   task_handle submit(awaitable_task value);
+   task_handle submit_after(awaitable_task value, std::chrono::milliseconds delay);
 
    [[nodiscard]] std::size_t pending_count() const;
    [[nodiscard]] std::size_t pending_count(priority priority) const;

@@ -1,5 +1,7 @@
 module;
 
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -107,6 +109,18 @@ task_handle& task_handle::operator=(task_handle&&) noexcept = default;
 
 task_handle::task_handle(std::shared_ptr<state> state) : state_(std::move(state)) {}
 
+task_context::task_context(std::atomic_bool& cancel_requested) noexcept : cancel_requested_{&cancel_requested} {}
+
+bool task_context::cancel_requested() const noexcept {
+   return cancel_requested_ != nullptr && cancel_requested_->load(std::memory_order_acquire);
+}
+
+void task_context::throw_if_cancel_requested() const {
+   if (cancel_requested()) {
+      throw exceptions::canceled{"scheduled task was canceled"};
+   }
+}
+
 bool task_handle::valid() const noexcept {
    return state_ != nullptr;
 }
@@ -153,6 +167,7 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
       priority scheduled_priority{};
       std::string name;
       std::function<void()> work;
+      std::function<boost::asio::awaitable<void>(task_context&)> awaitable_work;
       std::chrono::steady_clock::time_point ready_at = std::chrono::steady_clock::now();
       std::uint64_t sequence = 0;
    };
@@ -190,8 +205,8 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
       stop();
    }
 
-   task_handle submit(scheduled_task task, std::chrono::steady_clock::time_point ready_at) {
-      if (!task.work) {
+   task_handle submit(task value, std::chrono::steady_clock::time_point ready_at) {
+      if (!value.work) {
          throw exceptions::invalid_options{"scheduled task requires work"};
       }
 
@@ -201,13 +216,40 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
 
       auto queued = queued_task{
           .state = state,
-          .scheduled_priority = task.priority,
-          .name = std::move(task.name),
-          .work = std::move(task.work),
+          .scheduled_priority = value.priority,
+          .name = std::move(value.name),
+          .work = std::move(value.work),
+          .awaitable_work = {},
           .ready_at = ready_at,
           .sequence = next_sequence.fetch_add(1, std::memory_order_relaxed),
       };
 
+      return submit_queued(std::move(queued), std::move(state));
+   }
+
+   task_handle submit(awaitable_task value, std::chrono::steady_clock::time_point ready_at) {
+      if (!value.work) {
+         throw exceptions::invalid_options{"scheduled awaitable task requires work"};
+      }
+
+      auto state =
+          std::make_shared<task_handle::state>(runtime_ref, next_task_id.fetch_add(1, std::memory_order_relaxed));
+      state->weak_self = state;
+
+      auto queued = queued_task{
+          .state = state,
+          .scheduled_priority = value.priority,
+          .name = std::move(value.name),
+          .work = {},
+          .awaitable_work = std::move(value.work),
+          .ready_at = ready_at,
+          .sequence = next_sequence.fetch_add(1, std::memory_order_relaxed),
+      };
+
+      return submit_queued(std::move(queued), std::move(state));
+   }
+
+   task_handle submit_queued(queued_task queued, std::shared_ptr<task_handle::state> state) {
       {
          const auto lock = std::scoped_lock{mutex};
          if (stopped) {
@@ -319,16 +361,64 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
    }
 
    void run_task(queued_task task) {
-      auto completed_ok = false;
       try {
          task.state->started.store(true, std::memory_order_release);
          if (task.state->cancel_requested.load(std::memory_order_acquire)) {
             throw exceptions::canceled{"scheduled task was canceled"};
          }
-         task.work();
-         completed_ok = task.state->complete_value();
       } catch (...) {
-         const auto completed_error = task.state->complete_exception(std::current_exception());
+         finish_task_exception(task, std::current_exception());
+         return;
+      }
+
+      if (task.awaitable_work) {
+         run_awaitable_task(std::move(task));
+         return;
+      }
+
+      try {
+         task.work();
+         finish_task_value(task);
+      } catch (...) {
+         finish_task_exception(task, std::current_exception());
+      }
+   }
+
+   void run_awaitable_task(queued_task task) {
+      boost::asio::co_spawn(
+          runtime_ref.context(),
+          [self = shared_from_this(), task = std::move(task)]() mutable -> boost::asio::awaitable<void> {
+             auto context = task_context{task.state->cancel_requested};
+             try {
+                context.throw_if_cancel_requested();
+                co_await task.awaitable_work(context);
+                self->finish_task_value(task);
+             } catch (...) {
+                self->finish_task_exception(task, std::current_exception());
+             }
+          },
+          boost::asio::detached);
+   }
+
+   void finish_task_value(queued_task& task) {
+      const auto completed_ok = task.state->complete_value();
+
+      {
+         const auto lock = std::scoped_lock{mutex};
+         if (completed_ok) {
+            ++current_metrics.completed;
+         }
+         complete_active_task_locked();
+      }
+
+      active_done.notify_all();
+      schedule_drain();
+   }
+
+   void finish_task_exception(queued_task& task, std::exception_ptr error) {
+      const auto completed_error = task.state->complete_exception(std::move(error));
+
+      {
          const auto lock = std::scoped_lock{mutex};
          if (completed_error) {
             if (task.state->cancel_requested.load(std::memory_order_acquire)) {
@@ -337,21 +427,18 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
                ++current_metrics.failed;
             }
          }
+         complete_active_task_locked();
       }
 
-      {
-         const auto lock = std::scoped_lock{mutex};
-         if (completed_ok) {
-            ++current_metrics.completed;
-         }
-         if (active_tasks > 0) {
-            --active_tasks;
-         }
-         refresh_metrics_locked();
-      }
       active_done.notify_all();
-
       schedule_drain();
+   }
+
+   void complete_active_task_locked() {
+      if (active_tasks > 0) {
+         --active_tasks;
+      }
+      refresh_metrics_locked();
    }
 
    void schedule_drain() {
@@ -442,12 +529,20 @@ task_scheduler::task_scheduler(runtime& runtime, task_scheduler_options options)
 
 task_scheduler::~task_scheduler() = default;
 
-task_handle task_scheduler::submit(scheduled_task task) {
-   return impl_->submit(std::move(task), std::chrono::steady_clock::now());
+task_handle task_scheduler::submit(task value) {
+   return impl_->submit(std::move(value), std::chrono::steady_clock::now());
 }
 
-task_handle task_scheduler::submit_after(scheduled_task task, std::chrono::milliseconds delay) {
-   return impl_->submit(std::move(task), std::chrono::steady_clock::now() + delay);
+task_handle task_scheduler::submit_after(task value, std::chrono::milliseconds delay) {
+   return impl_->submit(std::move(value), std::chrono::steady_clock::now() + delay);
+}
+
+task_handle task_scheduler::submit(awaitable_task value) {
+   return impl_->submit(std::move(value), std::chrono::steady_clock::now());
+}
+
+task_handle task_scheduler::submit_after(awaitable_task value, std::chrono::milliseconds delay) {
+   return impl_->submit(std::move(value), std::chrono::steady_clock::now() + delay);
 }
 
 std::size_t task_scheduler::pending_count() const {

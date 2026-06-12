@@ -217,6 +217,15 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       fail_all_on_strand(error);
    }
 
+   void cancel_stream_on_strand() {
+      if (canceled) {
+         return;
+      }
+      canceled = true;
+      closed.store(true, std::memory_order_release);
+      stream.cancel();
+   }
+
    struct reservation {
       call_id id;
       std::shared_ptr<pending_call> pending;
@@ -325,9 +334,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       } catch (...) {
          stop_reader_on_strand();
          fail_all_on_strand(std::current_exception());
-         if (!canceled) {
-            stream.cancel();
-         }
+         cancel_stream_on_strand();
       }
    }
 
@@ -423,7 +430,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
          remove_pending_on_strand(reservation.id, reservation.pending);
          auto timeout = std::current_exception();
          fail_all_on_strand(timeout);
-         stream.cancel();
+         cancel_stream_on_strand();
          throw;
       } catch (...) {
          remove_pending_on_strand(reservation.id, reservation.pending);
@@ -437,7 +444,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
             remove_pending_on_strand(reservation.id, reservation.pending);
             auto timeout = make_deadline_error(reservation.id);
             fail_all_on_strand(timeout);
-            stream.cancel();
+            cancel_stream_on_strand();
             std::rethrow_exception(timeout);
          }
       }
@@ -522,8 +529,8 @@ void client::cancel() {
       return;
    }
    boost::asio::dispatch(*strand, [self, error = make_cancelled_error("API transport client is cancelled")]() mutable {
-      self->fail_closed_on_strand(error);
-      self->stream.cancel();
+      self->fail_all_on_strand(error);
+      self->cancel_stream_on_strand();
    });
 }
 

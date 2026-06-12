@@ -385,6 +385,10 @@ The factory is intentional. `application_shell` creates its runtime and
 scheduler in the constructor, so early daemon config such as
 `daemon.runtime-threads`, `daemon.scheduler-queue-depth`, `daemon.data-dir` and
 `daemon.profile` must be known before the application object exists.
+For runtimes with two or more workers, the daemon derives the scheduler blocking
+budget as `runtime-threads - 1`, leaving one worker available for timers and
+awaitables. Single-thread mode remains valid for minimal daemons, but blocking
+tasks that wait on the same scheduler can deadlock there.
 
 Built-in daemon YAML:
 

@@ -760,6 +760,7 @@ struct daemon_test_state {
    std::uint16_t workers = 0;
    std::string token;
    std::size_t runtime_threads = 0;
+   std::size_t blocking_tasks = 0;
    std::size_t queue_depth = 0;
    std::filesystem::path data_dir;
    std::filesystem::path config_path;
@@ -772,6 +773,7 @@ class daemon_test_application final : public fcl::app::application_shell {
    daemon_test_application(fcl::app::daemon_context context, daemon_test_state& state)
        : fcl::app::application_shell{context.shell}, state_{&state} {
       state_->runtime_threads = context.shell.runtime.worker_threads;
+      state_->blocking_tasks = context.shell.scheduler.max_blocking_tasks;
       state_->queue_depth = context.shell.scheduler.max_pending_tasks;
       state_->data_dir = context.data_dir;
       state_->config_path = context.config_path;
@@ -1358,6 +1360,7 @@ BOOST_AUTO_TEST_CASE(run_daemon_builds_shell_options_before_factory) {
 
    BOOST_TEST(exit_code == 0);
    BOOST_TEST(state.runtime_threads == 3U);
+   BOOST_TEST(state.blocking_tasks == 2U);
    BOOST_TEST(state.queue_depth == 123U);
    BOOST_TEST(state.data_dir == data_dir);
    BOOST_TEST(state.config_path == data_dir / "config.yml");
@@ -1409,6 +1412,7 @@ http:
 
    BOOST_TEST(exit_code == 0);
    BOOST_TEST(state.runtime_threads == 2U);
+   BOOST_TEST(state.blocking_tasks == 1U);
    BOOST_TEST(state.workers == 5U);
    BOOST_REQUIRE_EQUAL(state.log.entries.size(), 2U);
    BOOST_TEST(state.log.entries[0] == "app.configure:5");

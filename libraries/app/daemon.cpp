@@ -291,6 +291,13 @@ fcl::config::component_registry full_registry(const fcl::config::component_regis
    return registry;
 }
 
+std::size_t blocking_budget(unsigned runtime_threads) {
+   if (runtime_threads <= 1) {
+      return 1;
+   }
+   return static_cast<std::size_t>(runtime_threads - 1);
+}
+
 fcl::config::document dynamic_daemon_defaults(const daemon_options& options) {
    auto output = fcl::config::document{};
    const auto data_dir = default_data_dir(options);
@@ -502,7 +509,7 @@ daemon_context context_from_document(const daemon_options& options, const fcl::c
          },
       .scheduler =
          fcl::asio::task_scheduler::options{
-            .max_blocking_tasks = static_cast<std::size_t>(runtime_threads == 0 ? 1 : runtime_threads),
+            .max_blocking_tasks = blocking_budget(runtime_threads),
             .max_pending_tasks = static_cast<std::size_t>(queue_depth),
          },
    };

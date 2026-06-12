@@ -43,23 +43,6 @@ class priority {
    int value_ = 0;
 };
 
-struct task_scheduler_options {
-   std::size_t max_active_tasks = 2;
-   std::size_t max_pending_tasks = 4096;
-};
-
-struct task_scheduler_metrics {
-   std::uint64_t submitted = 0;
-   std::uint64_t started = 0;
-   std::uint64_t completed = 0;
-   std::uint64_t canceled = 0;
-   std::uint64_t rejected = 0;
-   std::uint64_t failed = 0;
-   std::size_t pending = 0;
-   std::size_t running = 0;
-   bool stopped = false;
-};
-
 struct task {
    priority priority{};
    std::string name;
@@ -113,7 +96,27 @@ class task_handle {
 
 class task_scheduler {
  public:
-   task_scheduler(runtime& runtime, task_scheduler_options options = {});
+   struct options {
+      std::size_t max_blocking_tasks = 2;
+      std::size_t max_awaitable_tasks = 4096;
+      std::size_t max_pending_tasks = 4096;
+   };
+
+   struct metrics {
+      std::uint64_t submitted = 0;
+      std::uint64_t started = 0;
+      std::uint64_t completed = 0;
+      std::uint64_t canceled = 0;
+      std::uint64_t rejected = 0;
+      std::uint64_t failed = 0;
+      std::size_t pending = 0;
+      std::size_t running_blocking = 0;
+      std::size_t running_awaitable = 0;
+      bool stopped = false;
+   };
+
+   explicit task_scheduler(runtime& runtime);
+   task_scheduler(runtime& runtime, options options);
    ~task_scheduler();
 
    task_scheduler(const task_scheduler&) = delete;
@@ -129,7 +132,7 @@ class task_scheduler {
 
    [[nodiscard]] std::size_t pending_count() const;
    [[nodiscard]] std::size_t pending_count(priority priority) const;
-   [[nodiscard]] task_scheduler_metrics metrics() const;
+   [[nodiscard]] metrics snapshot() const;
    [[nodiscard]] runtime& runtime_context() noexcept;
 
    void stop();

@@ -94,7 +94,7 @@ application_builder& application_builder::runtime(fcl::asio::runtime_options val
    return *this;
 }
 
-application_builder& application_builder::scheduler(fcl::asio::task_scheduler_options value) {
+application_builder& application_builder::scheduler(fcl::asio::task_scheduler::options value) {
    impl_->state.options.scheduler = std::move(value);
    return *this;
 }

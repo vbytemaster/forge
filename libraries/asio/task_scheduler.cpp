@@ -190,11 +190,14 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
       }
    };
 
-   impl(runtime& runtime_value, task_scheduler_options options_value)
+   impl(runtime& runtime_value, task_scheduler::options options_value)
        : runtime_ref(runtime_value), options(std::move(options_value)),
-         strand(boost::asio::make_strand(runtime_ref.context())), ready_timer(strand) {
-      if (options.max_active_tasks == 0) {
-         throw exceptions::invalid_options{"task scheduler requires at least one active task slot"};
+         strand(boost::asio::make_strand(runtime_ref.context())) {
+      if (options.max_blocking_tasks == 0) {
+         throw exceptions::invalid_options{"task scheduler requires at least one blocking task slot"};
+      }
+      if (options.max_awaitable_tasks == 0) {
+         throw exceptions::invalid_options{"task scheduler requires at least one awaitable task slot"};
       }
       if (options.max_pending_tasks == 0) {
          throw exceptions::invalid_options{"task scheduler queue depth must be non-zero"};
@@ -292,17 +295,19 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
       return matches(ready_heap) + matches(delayed_heap);
    }
 
-   task_scheduler_metrics metrics() const {
+   task_scheduler::metrics snapshot() const {
       const auto lock = std::scoped_lock{mutex};
       auto snapshot = current_metrics;
       snapshot.pending = pending_count_locked();
-      snapshot.running = active_tasks;
+      snapshot.running_blocking = running_blocking_tasks;
+      snapshot.running_awaitable = running_awaitable_tasks;
       snapshot.stopped = stopped;
       return snapshot;
    }
 
    void stop() {
       auto canceled = std::vector<std::shared_ptr<task_handle::state>>{};
+      auto timer_to_cancel = std::shared_ptr<boost::asio::steady_timer>{};
       {
          const auto lock = std::scoped_lock{mutex};
          if (stopped) {
@@ -317,6 +322,8 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
          }
          ready_heap.clear();
          delayed_heap.clear();
+         timer_to_cancel = std::move(ready_timer);
+         ready_timer_deadline = (std::chrono::steady_clock::time_point::max)();
          current_metrics.canceled += canceled.size();
          refresh_metrics_locked();
       }
@@ -326,38 +333,45 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
          state->complete_exception(make_error(exceptions::code::canceled, "scheduled task was canceled"));
       }
 
-      boost::asio::post(strand, [weak = weak_from_this()] {
-         if (auto self = weak.lock()) {
-            self->ready_timer.cancel();
-         }
-      });
+      if (timer_to_cancel != nullptr) {
+         boost::asio::post(strand, [timer = std::move(timer_to_cancel)] {
+            timer->cancel();
+         });
+      }
 
       auto lock = std::unique_lock{mutex};
-      active_done.wait(lock, [this] { return active_tasks == 0; });
+      active_done.wait(lock, [this] { return running_blocking_tasks == 0 && running_awaitable_tasks == 0; });
    }
 
    void drain() {
-      auto task = std::optional<queued_task>{};
+      auto tasks = std::vector<queued_task>{};
       {
          const auto lock = std::scoped_lock{mutex};
-         move_ready_delayed_locked(std::chrono::steady_clock::now());
-         if (stopped || active_tasks >= options.max_active_tasks) {
+         auto now = std::chrono::steady_clock::now();
+         move_ready_delayed_locked(now);
+         if (stopped) {
             return;
          }
 
-         task = pop_ready_locked();
-         if (!task.has_value()) {
+         while (auto task = pop_ready_locked()) {
+            start_task_locked(*task);
+            ++current_metrics.started;
+            tasks.push_back(std::move(*task));
+         }
+
+         if (tasks.empty()) {
             arm_timer_locked();
             return;
          }
-         ++active_tasks;
-         ++current_metrics.started;
+         arm_timer_locked();
          refresh_metrics_locked();
       }
 
-      boost::asio::post(runtime_ref.context(), [self = shared_from_this(), task = std::move(*task)]() mutable {
-         self->run_task(std::move(task));
-      });
+      for (auto& task : tasks) {
+         boost::asio::post(runtime_ref.context(), [self = shared_from_this(), task = std::move(task)]() mutable {
+            self->run_task(std::move(task));
+         });
+      }
    }
 
    void run_task(queued_task task) {
@@ -408,7 +422,7 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
          if (completed_ok) {
             ++current_metrics.completed;
          }
-         complete_active_task_locked();
+         complete_active_task_locked(task);
       }
 
       active_done.notify_all();
@@ -427,16 +441,20 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
                ++current_metrics.failed;
             }
          }
-         complete_active_task_locked();
+         complete_active_task_locked(task);
       }
 
       active_done.notify_all();
       schedule_drain();
    }
 
-   void complete_active_task_locked() {
-      if (active_tasks > 0) {
-         --active_tasks;
+   void complete_active_task_locked(const queued_task& task) {
+      if (is_awaitable(task)) {
+         if (running_awaitable_tasks > 0) {
+            --running_awaitable_tasks;
+         }
+      } else if (running_blocking_tasks > 0) {
+         --running_blocking_tasks;
       }
       refresh_metrics_locked();
    }
@@ -449,7 +467,35 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
       });
    }
 
+   [[nodiscard]] static bool is_awaitable(const queued_task& task) noexcept {
+      return static_cast<bool>(task.awaitable_work);
+   }
+
+   [[nodiscard]] bool can_start_locked(const queued_task& task) const noexcept {
+      if (is_awaitable(task)) {
+         return running_awaitable_tasks < options.max_awaitable_tasks;
+      }
+      return running_blocking_tasks < options.max_blocking_tasks;
+   }
+
+   void start_task_locked(const queued_task& task) noexcept {
+      if (is_awaitable(task)) {
+         ++running_awaitable_tasks;
+      } else {
+         ++running_blocking_tasks;
+      }
+   }
+
+   void restore_ready_locked(std::vector<queued_task>& tasks) {
+      for (auto& task : tasks) {
+         ready_heap.push_back(std::move(task));
+         std::push_heap(ready_heap.begin(), ready_heap.end(), ready_priority_less{});
+      }
+      tasks.clear();
+   }
+
    std::optional<queued_task> pop_ready_locked() {
+      auto skipped = std::vector<queued_task>{};
       while (!ready_heap.empty()) {
          std::pop_heap(ready_heap.begin(), ready_heap.end(), ready_priority_less{});
          auto task = std::move(ready_heap.back());
@@ -461,9 +507,15 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
             refresh_metrics_locked();
             continue;
          }
+         if (!can_start_locked(task)) {
+            skipped.push_back(std::move(task));
+            continue;
+         }
+         restore_ready_locked(skipped);
          refresh_metrics_locked();
          return task;
       }
+      restore_ready_locked(skipped);
       return std::nullopt;
    }
 
@@ -489,10 +541,26 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
          return;
       }
 
-      ready_timer.expires_at(delayed_heap.front().ready_at);
-      ready_timer.async_wait([weak = weak_from_this()](const boost::system::error_code& error) {
+      const auto deadline = delayed_heap.front().ready_at;
+      if (ready_timer != nullptr && ready_timer_deadline <= deadline) {
+         return;
+      }
+      if (ready_timer != nullptr) {
+         ready_timer->cancel();
+      }
+      ready_timer_deadline = deadline;
+      ready_timer = std::make_shared<boost::asio::steady_timer>(strand, deadline);
+      auto timer = ready_timer;
+      timer->async_wait([weak = weak_from_this(), timer, deadline](const boost::system::error_code& error) {
          if (!error) {
             if (auto self = weak.lock()) {
+               {
+                  const auto lock = std::scoped_lock{self->mutex};
+                  if (self->ready_timer == timer && self->ready_timer_deadline == deadline) {
+                     self->ready_timer.reset();
+                     self->ready_timer_deadline = (std::chrono::steady_clock::time_point::max)();
+                  }
+               }
                self->drain();
             }
          }
@@ -505,26 +573,31 @@ struct task_scheduler::impl : std::enable_shared_from_this<task_scheduler::impl>
 
    void refresh_metrics_locked() const {
       current_metrics.pending = pending_count_locked();
-      current_metrics.running = active_tasks;
+      current_metrics.running_blocking = running_blocking_tasks;
+      current_metrics.running_awaitable = running_awaitable_tasks;
       current_metrics.stopped = stopped;
    }
 
    runtime& runtime_ref;
-   task_scheduler_options options;
+   task_scheduler::options options;
    decltype(boost::asio::make_strand(std::declval<boost::asio::io_context&>())) strand;
-   boost::asio::steady_timer ready_timer;
+   std::shared_ptr<boost::asio::steady_timer> ready_timer;
    mutable std::mutex mutex;
    std::condition_variable active_done;
    std::vector<queued_task> ready_heap;
    std::vector<queued_task> delayed_heap;
    std::atomic_uint64_t next_task_id = 1;
    std::atomic_uint64_t next_sequence = 1;
-   std::size_t active_tasks = 0;
+   std::size_t running_blocking_tasks = 0;
+   std::size_t running_awaitable_tasks = 0;
+   std::chrono::steady_clock::time_point ready_timer_deadline = (std::chrono::steady_clock::time_point::max)();
    bool stopped = false;
-   mutable task_scheduler_metrics current_metrics{};
+   mutable task_scheduler::metrics current_metrics{};
 };
 
-task_scheduler::task_scheduler(runtime& runtime, task_scheduler_options options)
+task_scheduler::task_scheduler(runtime& runtime) : task_scheduler(runtime, options{}) {}
+
+task_scheduler::task_scheduler(runtime& runtime, options options)
     : impl_(std::make_shared<impl>(runtime, std::move(options))) {}
 
 task_scheduler::~task_scheduler() = default;
@@ -553,8 +626,8 @@ std::size_t task_scheduler::pending_count(priority priority_value) const {
    return impl_->pending_count(priority_value);
 }
 
-task_scheduler_metrics task_scheduler::metrics() const {
-   return impl_->metrics();
+task_scheduler::metrics task_scheduler::snapshot() const {
+   return impl_->snapshot();
 }
 
 runtime& task_scheduler::runtime_context() noexcept {

@@ -93,7 +93,14 @@ if (!completed) {
 import fcl.asio.task_scheduler;
 
 boost::asio::awaitable<void> submit_metadata_refresh(fcl::asio::runtime& runtime) {
-   auto scheduler = fcl::asio::task_scheduler{runtime, {.max_active_tasks = 4}};
+   auto scheduler = fcl::asio::task_scheduler{
+      runtime,
+      fcl::asio::task_scheduler::options{
+         .max_blocking_tasks = 4,
+         .max_awaitable_tasks = 1024,
+         .max_pending_tasks = 4096,
+      },
+   };
    auto refresh = scheduler.submit({
       .priority = fcl::asio::priority{100},
       .name = "metadata-refresh",
@@ -103,6 +110,26 @@ boost::asio::awaitable<void> submit_metadata_refresh(fcl::asio::runtime& runtime
    co_await refresh.wait();
 }
 ```
+
+### Runnable Semantics
+
+`task_scheduler` has one delayed/ready priority queue. Runnable work is selected
+by numeric priority and FIFO order within the same priority, but admission uses
+separate budgets:
+
+- `max_blocking_tasks` limits blocking `task` functions until `.work()` returns.
+- `max_awaitable_tasks` limits in-flight `awaitable_task` coroutines until the
+  coroutine completes.
+- `max_pending_tasks` limits not-yet-started work across both task types.
+
+A saturated blocking task at the head of the queue does not block a runnable
+awaitable task, and a saturated awaitable budget does not consume blocking
+capacity. This mirrors the useful `fc::thread` scheduling property without
+copying FC fibers or hiding another runtime under FCL.
+
+This matters for re-entrant workflows: an awaitable pass may submit a short
+blocking companion task to the same scheduler and wait for it. That must not
+deadlock just because the awaitable itself is already in flight.
 
 ### Isolate Blocking Work Behind The Scheduler
 
@@ -235,7 +262,10 @@ instead of assuming the queue can grow forever.
 boost::asio::awaitable<void> run_small_job(fcl::asio::runtime& runtime) {
    auto scheduler = fcl::asio::task_scheduler{
       runtime,
-      {.max_active_tasks = 1, .max_pending_tasks = 2},
+      fcl::asio::task_scheduler::options{
+         .max_blocking_tasks = 1,
+         .max_pending_tasks = 2,
+      },
    };
 
    auto accepted = scheduler.submit({
@@ -323,17 +353,21 @@ boost::asio::awaitable<void> stop_with_pending_work(fcl::asio::task_scheduler& s
    scheduler.stop();
    co_await pending.wait();
 
-   auto metrics = scheduler.metrics();
+   auto metrics = scheduler.snapshot();
    assert(metrics.stopped);
    assert(metrics.canceled >= 1);
+   assert(metrics.running_blocking == 0);
+   assert(metrics.running_awaitable == 0);
 }
 ```
 
 ## Backpressure And Shutdown
 
-`task_scheduler_options::max_pending_tasks` is a correctness knob. Saturated
-queues reject work instead of growing without bound. `stop()` cancels pending
-work and lets tests verify deterministic shutdown behavior.
+`task_scheduler::options::max_pending_tasks` is a correctness knob. Saturated
+queues reject work instead of growing without bound. Blocking and awaitable
+budgets are separate, so a daemon can prevent blocking pool exhaustion without
+accidentally throttling coroutine progress. `stop()` cancels pending work and
+waits for both blocking and awaitable running counts to reach zero.
 
 ## Runtime Risks And Anti-Patterns
 
@@ -343,6 +377,9 @@ work and lets tests verify deterministic shutdown behavior.
   lifecycle integration.
 - Do not sleep in polling loops on runtime threads. Use timers, task handles and
   explicit cancellation.
+- Do not make blocking tasks wait for awaitable work that can only resume on the
+  same saturated runtime. Keep blocking sections short, or move the wait back to
+  an awaitable task.
 - Do not build product-local `steady_timer` plus `co_spawn` scheduling loops for
   plugin background work. Use `awaitable_task` and resubmit single-shot passes
   through the scheduler so backpressure, cancellation and metrics remain visible.
@@ -361,4 +398,5 @@ work and lets tests verify deterministic shutdown behavior.
 ## Tests
 
 `test_fcl_asio` covers priority/FIFO ordering, delayed execution, cancellation,
-queue saturation and shutdown cancellation.
+queue saturation, separated blocking/awaitable budgets and shutdown
+cancellation.

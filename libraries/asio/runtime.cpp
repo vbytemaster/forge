@@ -36,7 +36,8 @@ void set_current_thread_name(const std::string& name) noexcept {
 
 struct runtime::impl {
    explicit impl(runtime_options options_value)
-       : options(std::move(options_value)), io_context(1), work_guard(boost::asio::make_work_guard(io_context)) {
+      : options(std::move(options_value)), io_context(static_cast<int>(options.worker_threads)),
+        work_guard(boost::asio::make_work_guard(io_context)) {
       if (options.worker_threads == 0) {
          throw std::invalid_argument{"asio runtime requires at least one worker thread"};
       }

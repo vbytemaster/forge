@@ -501,8 +501,8 @@ daemon_context context_from_document(const daemon_options& options, const fcl::c
             .thread_name = context.name,
          },
       .scheduler =
-         fcl::asio::task_scheduler_options{
-            .max_active_tasks = static_cast<std::size_t>(runtime_threads == 0 ? 1 : runtime_threads),
+         fcl::asio::task_scheduler::options{
+            .max_blocking_tasks = static_cast<std::size_t>(runtime_threads == 0 ? 1 : runtime_threads),
             .max_pending_tasks = static_cast<std::size_t>(queue_depth),
          },
    };

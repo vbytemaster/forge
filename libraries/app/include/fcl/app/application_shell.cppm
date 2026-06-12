@@ -22,7 +22,7 @@ export namespace fcl::app {
 struct application_shell_options {
    std::string name = "fcl-app";
    fcl::asio::runtime_options runtime{};
-   fcl::asio::task_scheduler_options scheduler{};
+   fcl::asio::task_scheduler::options scheduler{};
 };
 
 class application_context {

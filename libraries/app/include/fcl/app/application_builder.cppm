@@ -33,7 +33,7 @@ class application_builder {
 
    application_builder& name(std::string value);
    application_builder& runtime(fcl::asio::runtime_options value);
-   application_builder& scheduler(fcl::asio::task_scheduler_options value);
+   application_builder& scheduler(fcl::asio::task_scheduler::options value);
 
    application_builder& plugin(plugin_descriptor descriptor);
    application_builder& describe_config(fcl::config::component_descriptor descriptor);

@@ -38,7 +38,6 @@ byte-stream transports; they become sessions only after a muxer such as Yamux.
 - `fcl.quic.listener`, `fcl.quic.connector`, `fcl.quic.connection`.
 - `fcl.quic.stream`, `fcl.quic.framed_stream`.
 - `fcl.quic.runtime`, `fcl.quic.metrics`, `fcl.quic.exceptions`.
-- `fcl.quic` — aggregate import.
 
 Target: `fcl_quic`.
 

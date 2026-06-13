@@ -25,7 +25,6 @@ decodes typed objects and redacts secret fields using schema metadata.
 - `fcl.config.component` — component descriptors, registry, views, redaction.
 - `fcl.config.decode` — `decode<T>`, `defaults_for<T>`, `describe_component<T>`.
 - `fcl.config.migration` — document migrations before typed decode.
-- `fcl.config` — aggregate import.
 
 Target: `fcl_config`.
 

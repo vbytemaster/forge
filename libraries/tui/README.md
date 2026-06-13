@@ -24,7 +24,6 @@ Notcurses is a backend detail and does not appear in public module interfaces.
 - `fcl.tui.render` — deterministic text renderers and redaction helpers.
 - `fcl.tui.navigation` — `navigation_stack`.
 - `fcl.tui.runner` — `screen_runner`, input events, capability detection.
-- `fcl.tui` — aggregate import.
 
 Target: `fcl_tui`.
 

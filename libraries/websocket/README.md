@@ -20,7 +20,6 @@ WebSocket share routing, TLS and lifecycle boundaries.
 
 - `fcl.websocket.connection` — connection pointer, reads/writes, close behavior.
 - `fcl.websocket.client` — client endpoint/options and connect helpers.
-- `fcl.websocket` — aggregate import.
 
 Target: `fcl_websocket`.
 

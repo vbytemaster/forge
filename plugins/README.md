@@ -21,12 +21,20 @@ small typed APIs for application plugins to contribute behavior safely.
 
 ## Public Modules
 
-- `fcl.plugins.p2p_node` — ready P2P node plugin and safe local API.
-- `fcl.plugins.p2p_api_resolver` — API-over-P2P metadata resolver plugin.
-- `fcl.plugins.p2p_diagnostics` — read-only P2P host diagnostics plugin.
-- `fcl.plugins.p2p_pubsub` — in-process facade over core GossipSub.
-- `fcl.plugins.signature_provider` — local digital-signature provider plugin.
-- `fcl.plugins` — aggregate import.
+Each official plugin exposes focused slice modules:
+
+- `fcl.plugins.<name>.plugin` — lifecycle object and `descriptor()`.
+- `fcl.plugins.<name>.api` — typed local/remote API contracts.
+- `fcl.plugins.<name>.types` — config, options and value DTOs.
+- `fcl.plugins.<name>.exceptions` — typed exception category and aliases.
+
+Available plugin names are `p2p_node`, `p2p_api_resolver`,
+`p2p_diagnostics`, `p2p_pubsub` and `signature_provider`.
+
+Do not import a root or per-plugin aggregate module; those files are not part of
+the public module surface. Use the explicit slice module and link the matching
+plugin target. The `fcl_plugins` target and `plugins` package component remain
+aggregate CMake conveniences.
 
 Each focused plugin uses a namespace owner. The lifecycle object is named
 `plugin`, public contracts live beside it, and registration uses the

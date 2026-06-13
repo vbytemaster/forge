@@ -81,7 +81,8 @@ order for byte-compatible packing.
 
 - Do not add `FCL_DESCRIBE_*` wrappers casually. The canonical spelling is
   Boost.Describe until a separate compatibility decision changes it.
-- Do not import `fcl.variant` from this library to "make it convenient".
+- Do not import higher-level variant modules from this library to "make it
+  convenient".
 
 ## Tests
 

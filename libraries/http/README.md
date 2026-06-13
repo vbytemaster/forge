@@ -23,7 +23,6 @@ internally but keeps FCL-owned route and lifecycle semantics.
 - `fcl.http.base_url`, `fcl.http.target`.
 - `fcl.http.router`, `fcl.http.route_context`, `fcl.http.middleware`.
 - `fcl.http.client`, `fcl.http.connection`, `fcl.http.server`.
-- `fcl.http` — aggregate import.
 
 Target: `fcl_http`.
 

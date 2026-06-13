@@ -25,7 +25,6 @@ diagnostics. It is not a full business validation framework.
 - `fcl.schema.value_kind` — supported scalar/list kind metadata.
 - `fcl.schema.object` — `rules<T>`, `object<T>()`, field builders.
 - `fcl.schema.enums` — described enum conversion helpers.
-- `fcl.schema` — aggregate import.
 
 Target: `fcl_schema`.
 

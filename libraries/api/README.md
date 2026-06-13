@@ -35,7 +35,6 @@ diagnostic context.
   interceptors.
 - `fcl.api.dispatcher` — shared API frame dispatcher for stream-oriented
   bindings.
-- `fcl.api` — aggregate import.
 - `fcl.api.exceptions` — core typed exceptions such as `method_not_found`,
   `incompatible_version` and `remote_internal`.
 
@@ -170,12 +169,12 @@ checks, grouped stream handling, max-inflight limits, deadlines and error
 projection.
 
 This layer must not move into `fcl_transport`: transport stays a low-level
-byte-stream/session contract and must not import `fcl.api`. `fcl.quic.api` and
-`fcl.p2p.api` are thin adapters or policy wrappers over `fcl.api.transport`.
-WebSocket shares `fcl::api::frame_dispatcher`, but not `fcl.api.transport`,
-because it is message-oriented rather than a `transport::stream`. HTTP remains a
-separate binding because it is request/response oriented rather than a
-long-lived bidirectional stream.
+byte-stream/session contract and must not import the API contract layer.
+`fcl.quic.api` and `fcl.p2p.api` are thin adapters or policy wrappers over the
+API transport binding. WebSocket shares `fcl::api::frame_dispatcher`, but not the
+stream transport binding, because it is message-oriented rather than a
+`transport::stream`. HTTP remains a separate binding because it is
+request/response oriented rather than a long-lived bidirectional stream.
 
 The network/P2P implementation order is tracked only in
 [`docs/network/quic-p2p.md`](../../docs/network/quic-p2p.md); this README only

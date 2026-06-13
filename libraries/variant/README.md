@@ -27,7 +27,6 @@ It is the bridge between typed C++ values and generic codec/config/log shapes.
 - `fcl.variant.format` — display helpers.
 - `fcl.variant.static_variant` — FC-style static variant.
 - `fcl.variant.dynamic_bitset`, `fcl.variant.variant_dynamic_bitset`.
-- `fcl.variant` — aggregate import.
 
 Target: `fcl_variant`.
 

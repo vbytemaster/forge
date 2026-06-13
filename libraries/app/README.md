@@ -45,7 +45,6 @@ for applications with substantial state or custom lifecycle hooks.
   `application_runtime`.
 - `fcl.app.plugin`, `fcl.app.plugin_context`, `fcl.app.plugin_registry`.
 - `fcl.app.events`, `fcl.app.diagnostics`, `fcl.app.signals`.
-- `fcl.app` — aggregate import.
 
 Target: `fcl_app`.
 

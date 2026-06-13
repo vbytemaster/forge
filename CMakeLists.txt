@@ -223,7 +223,12 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/stcp/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/p2p/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/app/include"
-   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/plugins/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/plugins/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/plugins/signature_provider/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_node/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_api_resolver/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_diagnostics/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_pubsub/include"
 )
 
 if(FCL_ENABLE_TUI AND FCL_TUI_NOTCURSES_TARGET)
@@ -236,16 +241,17 @@ foreach(_fcl_include_dir IN LISTS FCL_SOURCE_INCLUDE_DIRS)
 endforeach()
 list(APPEND FCL_PUBLIC_INCLUDE_DIRS "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
 
-function(fcl_target_modules target lib)
+function(fcl_target_modules_at target module_path)
    file(
       GLOB _fcl_target_module_files CONFIGURE_DEPENDS
-      "${CMAKE_CURRENT_SOURCE_DIR}/include/fcl/${lib}/*.cppm"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/fcl/${module_path}/*.cppm"
    )
    if(NOT _fcl_target_module_files)
-      message(FATAL_ERROR "No public FCL module interfaces found for ${target} in ${CMAKE_CURRENT_SOURCE_DIR}/include/fcl/${lib}")
+      message(FATAL_ERROR "No public FCL module interfaces found for ${target} in ${CMAKE_CURRENT_SOURCE_DIR}/include/fcl/${module_path}")
    endif()
 
-   foreach(_fcl_disabled_module IN LISTS FCL_${lib}_DISABLED_MODULES)
+   string(REPLACE "/" "_" _fcl_module_var "${module_path}")
+   foreach(_fcl_disabled_module IN LISTS FCL_${_fcl_module_var}_DISABLED_MODULES)
       list(FILTER _fcl_target_module_files EXCLUDE REGEX "/${_fcl_disabled_module}\\.cppm$")
    endforeach()
 
@@ -257,6 +263,10 @@ function(fcl_target_modules target lib)
          FILES ${_fcl_target_module_files}
    )
    target_compile_features(${target} PUBLIC cxx_std_23)
+endfunction()
+
+function(fcl_target_modules target lib)
+   fcl_target_modules_at(${target} ${lib})
 endfunction()
 
 
@@ -348,7 +358,7 @@ add_subdirectory(libraries/yamux)
 add_subdirectory(libraries/quic)
 add_subdirectory(libraries/p2p)
 add_subdirectory(libraries/app)
-add_subdirectory(libraries/plugins)
+add_subdirectory(plugins)
 if(FCL_ENABLE_TUI AND FCL_TUI_NOTCURSES_TARGET)
    add_subdirectory(libraries/tui)
 endif()
@@ -382,6 +392,11 @@ set(
    fcl_quic
    fcl_p2p
    fcl_app
+   fcl_plugin_signature_provider
+   fcl_plugin_p2p_node
+   fcl_plugin_p2p_api_resolver
+   fcl_plugin_p2p_diagnostics
+   fcl_plugin_p2p_pubsub
    fcl_plugins
 )
 
@@ -447,7 +462,12 @@ install(
              libraries/stcp/include/fcl
              libraries/p2p/include/fcl
              libraries/app/include/fcl
-             libraries/plugins/include/fcl
+             plugins/include/fcl
+             plugins/signature_provider/include/fcl
+             plugins/p2p_node/include/fcl
+             plugins/p2p_api_resolver/include/fcl
+             plugins/p2p_diagnostics/include/fcl
+             plugins/p2p_pubsub/include/fcl
    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
 )
 

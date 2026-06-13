@@ -62,7 +62,7 @@ Each library guide must be useful without reading source first:
 - [quic](../libraries/quic/README.md)
 - [multiformats](../libraries/multiformats/README.md)
 - [p2p](../libraries/p2p/README.md)
-- [plugins](../libraries/plugins/README.md)
+- [plugins](../plugins/README.md)
 - [tui](../libraries/tui/README.md)
 
 ## Engineering History

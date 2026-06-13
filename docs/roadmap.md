@@ -19,8 +19,9 @@ plugins, telemetry and compatibility layers должны быть пригодн
   exception hierarchy.
 - Neutral `fcl_api` contracts for in-process plugin APIs and transport API
   bindings.
-- `fcl_plugins` infrastructure plugins for shared lifecycle-owned components
-  such as P2P nodes, with narrow local APIs for route/binding contributions.
+- `fcl_plugins` aggregate plus focused `fcl_plugin_*` targets for shared
+  lifecycle-owned components such as P2P nodes, with narrow local APIs for
+  route/binding contributions.
 - Std chrono instead of old FC time aliases.
 - Glaze-backed JSON/YAML codec API.
 - Async app/runtime stack over Boost.Asio.
@@ -46,7 +47,7 @@ plugins, telemetry and compatibility layers должны быть пригодн
   streams, relay and path selection.
 - [Transport substrate](../libraries/transport/README.md): reusable
   stream/session concepts, chunks, frame helpers and muxer substrate.
-- [Infrastructure plugins](../libraries/plugins/README.md): lifecycle-owned P2P
+- [Infrastructure plugins](../plugins/README.md): lifecycle-owned P2P
   node, API resolver, diagnostics and PubSub facade.
 - [Telemetry](../libraries/otlp/README.md): opt-in OTLP logs and crash evidence
   export.

@@ -128,7 +128,7 @@ if (!parsed.ok()) {
 | [quic](libraries/quic/README.md) | `fcl_quic` | QUIC endpoint, listener, connector, framed streams. | ngtcp2, OpenSSL 3.0+, Boost.Asio. |
 | [multiformats](libraries/multiformats/README.md) | `fcl_multiformats` | libp2p-compatible varint, multicodec, multihash, multibase and multiaddr. | `fcl_crypto`, `fcl_exceptions`. |
 | [p2p](libraries/p2p/README.md) | `fcl_p2p` | Peer identity, sessions, discovery, relay, DHT, rendezvous and GossipSub. | `fcl_transport`, `fcl_multiformats`, `fcl_quic`, `fcl_yamux`. |
-| [plugins](libraries/plugins/README.md) | `fcl_plugins` | Infrastructure plugins: P2P node, API resolver, diagnostics and PubSub facade. | `fcl_app`, `fcl_api`, `fcl_p2p`. |
+| [plugins](plugins/README.md) | `fcl_plugins`, `fcl_plugin_*` | Official infrastructure plugins: P2P node, API resolver, diagnostics, PubSub facade and signature provider. | `fcl_app`, `fcl_api`, focused plugin targets. |
 | [tui](libraries/tui/README.md) | `fcl_tui` | Terminal UI value models, render helpers, runner. | Notcurses core privately and optionally. |
 
 `find_package(FCL CONFIG REQUIRED)` is intentionally lightweight and discovers

@@ -99,6 +99,11 @@ class p2p_node {
   - `fcl_p2p`
 - `fcl_plugins`
 - `fcl_tui`
+- Official infrastructure plugin packages live under
+  `plugins/<name>/include/fcl/plugins/<name>/...`. They are the framework
+  plugin layer and may expose module slices such as `types.cppm`, `api.cppm`,
+  `exceptions.cppm` and `plugin.cppm`; normal low-level libraries still live
+  under `libraries/<lib>/include/fcl/<lib>/...`.
 - Heavy classes that own sockets, event loops, crypto contexts, terminal state, or other external resources should use pimpl.
 - Value types, protocol records, and simple POD-like structs should not use pimpl.
 - `_impl` in a file name is allowed only for a large pimpl owner implementation,
@@ -234,9 +239,10 @@ class p2p_node {
   reverse shutdown.
 - Plugins own behavior and lifecycle. APIs expose typed contracts; they
   must not become fake lifecycle modules.
-- Ready-made infrastructure plugins live in `fcl_plugins`. They may own
-  transport/runtime lifecycle and publish narrow `fcl_api` capabilities for
-  product plugins, but they must not own product business logic.
+- Ready-made infrastructure plugins live under root `plugins/` and are exposed
+  through focused `fcl_plugin_*` targets plus the `fcl_plugins` aggregate. They
+  may own transport/runtime lifecycle and publish narrow `fcl_api` capabilities
+  for product plugins, but they must not own product business logic.
 - Plugin-specific exception families live with the owning plugin module, not in
   a shared catch-all plugin exceptions module. For example,
   `fcl::plugins::p2p_node::exceptions::*` belongs to `fcl.plugins.p2p_node`.

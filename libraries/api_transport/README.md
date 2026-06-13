@@ -26,7 +26,7 @@ import fcl.api.registry;
 import fcl.api.binding;
 import fcl.api.transport.options;
 import fcl.api.transport.server;
-#include <fcl/api/api_macros.hpp>
+#include <fcl/api/macros.hpp>
 
 class cache
    : public fcl::api::contract<

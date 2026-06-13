@@ -476,7 +476,7 @@ a read-only API view. This keeps lifecycle in `fcl_app` and contract/version/err
 semantics in `fcl_api`.
 
 ```cpp
-#include <fcl/api/api_macros.hpp>
+#include <fcl/api/macros.hpp>
 
 class cache : public fcl::api::contract<cache> {
  public:

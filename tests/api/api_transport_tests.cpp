@@ -1,5 +1,5 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/api/api_macros.hpp>
+#include <fcl/api/macros.hpp>
 #include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>

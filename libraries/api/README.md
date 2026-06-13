@@ -44,7 +44,7 @@ Target: `fcl_api`.
 ## Local Contract
 
 ```cpp
-#include <fcl/api/api_macros.hpp>
+#include <fcl/api/macros.hpp>
 
 class cache : public fcl::api::contract<cache> {
  public:

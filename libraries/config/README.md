@@ -36,7 +36,12 @@ Dependencies: `fcl_schema`.
 ### Build And Merge Documents
 
 ```cpp
-import fcl.config;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
 
 auto defaults = fcl::config::document{};
 defaults.set("http.bind-host", "127.0.0.1");
@@ -55,7 +60,12 @@ auto* port = merged.try_get("http.bind-port");
 return documents, and the caller decides precedence.
 
 ```cpp
-import fcl.config;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
 import fcl.env;
 import fcl.program_options;
 import fcl.yaml;
@@ -76,7 +86,12 @@ auto input = fcl::config::merge({
 ### Decode A Typed Section
 
 ```cpp
-import fcl.config;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
 
 auto decoded = fcl::config::decode<http_config>(merged, "http");
 if (!decoded.ok()) {
@@ -90,7 +105,12 @@ if (!decoded.ok()) {
 ### Redact Secrets Before Output
 
 ```cpp
-import fcl.config;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
 
 auto registry = fcl::config::component_registry{};
 registry.add(fcl::config::describe_component<http_config>("http"));
@@ -104,7 +124,12 @@ Use `fcl_config` as a glue layer between source adapters. Application code owns 
 precedence order; plugins only publish descriptors and receive a component view.
 
 ```cpp
-import fcl.config;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
 import fcl.program_options;
 import fcl.yaml;
 
@@ -137,7 +162,12 @@ or other operator-provided secrets.
 ### Configure A Component View
 
 ```cpp
-import fcl.config;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
 
 auto view = fcl::config::component_view{merged, "http"};
 auto host = view.get_or<std::string>("bind-host", "127.0.0.1");
@@ -150,7 +180,12 @@ Migrations are document-level cleanup for old config files. They run before
 `decode<T>()`; schema remains responsible for typed validation.
 
 ```cpp
-import fcl.config;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
 
 auto plan = fcl::config::migration_plan{};
 plan.step(0, 1, "rename http port", [](fcl::config::document& doc) {

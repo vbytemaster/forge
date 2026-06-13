@@ -75,7 +75,13 @@ import fcl.transport.endpoint;
 import fcl.transport.frame;
 import fcl.transport.stream;
 import fcl.tcp.listener;
-import fcl.multiformats;
+import fcl.multiformats.exceptions;
+import fcl.multiformats.types;
+import fcl.multiformats.varint;
+import fcl.multiformats.multicodec;
+import fcl.multiformats.multihash;
+import fcl.multiformats.multibase;
+import fcl.multiformats.multiaddr;
 
 #include "../../libraries/p2p/session_lifecycle.hpp"
 #include "../../libraries/p2p/relay_accounting.hpp"

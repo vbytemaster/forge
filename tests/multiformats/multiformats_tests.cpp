@@ -6,7 +6,13 @@
 
 #include <fcl/exceptions/macros.hpp>
 
-import fcl.multiformats;
+import fcl.multiformats.exceptions;
+import fcl.multiformats.types;
+import fcl.multiformats.varint;
+import fcl.multiformats.multicodec;
+import fcl.multiformats.multihash;
+import fcl.multiformats.multibase;
+import fcl.multiformats.multiaddr;
 import fcl.exceptions;
 
 namespace {

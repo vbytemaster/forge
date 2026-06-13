@@ -1,4 +1,4 @@
-import fcl.plugins;
+import fcl.plugins.p2p_node.plugin;
 
 int main() {
    const auto descriptor = fcl::plugins::p2p_node::descriptor();

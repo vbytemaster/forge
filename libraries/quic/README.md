@@ -142,7 +142,15 @@ boost::asio::awaitable<void> write_payload(fcl::quic::connection& connection) {
 mechanics to `fcl.api.transport`.
 
 ```cpp
-import fcl.api;
+import fcl.api.exceptions;
+import fcl.api.types;
+import fcl.api.descriptor;
+import fcl.api.error_projection;
+import fcl.api.handle;
+import fcl.api.connection;
+import fcl.api.registry;
+import fcl.api.binding;
+import fcl.api.dispatcher;
 import fcl.quic.api;
 
 auto plan = fcl::api::binding()

@@ -69,7 +69,15 @@ router.get("/healthz", [](fcl::http::route_context& ctx) {
 binding is a composable artifact; `build()` does not mutate the router.
 
 ```cpp
-import fcl.api;
+import fcl.api.exceptions;
+import fcl.api.types;
+import fcl.api.descriptor;
+import fcl.api.error_projection;
+import fcl.api.handle;
+import fcl.api.connection;
+import fcl.api.registry;
+import fcl.api.binding;
+import fcl.api.dispatcher;
 import fcl.http.api;
 import fcl.http.router;
 

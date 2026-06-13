@@ -10,7 +10,13 @@ module;
 export module fcl.p2p.identity;
 
 import fcl.p2p.exceptions;
-import fcl.multiformats;
+import fcl.multiformats.exceptions;
+import fcl.multiformats.types;
+import fcl.multiformats.varint;
+import fcl.multiformats.multicodec;
+import fcl.multiformats.multihash;
+import fcl.multiformats.multibase;
+import fcl.multiformats.multiaddr;
 
 export namespace fcl::p2p {
 

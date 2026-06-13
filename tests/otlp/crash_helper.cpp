@@ -13,7 +13,11 @@
 import fcl.asio.blocking;
 import fcl.asio.runtime;
 import fcl.exceptions;
-import fcl.otlp;
+import fcl.otlp.exceptions;
+import fcl.otlp.options;
+import fcl.otlp.log_exporter;
+import fcl.otlp.log_sink;
+import fcl.otlp.crash;
 
 namespace {
 

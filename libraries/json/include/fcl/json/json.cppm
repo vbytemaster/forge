@@ -14,9 +14,24 @@ module;
 
 export module fcl.json;
 
-import fcl.config;
-import fcl.schema;
-import fcl.variant;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
+import fcl.schema.diagnostic;
+import fcl.schema.value_kind;
+import fcl.schema.object;
+import fcl.schema.enums;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 
 export namespace fcl::json {
 

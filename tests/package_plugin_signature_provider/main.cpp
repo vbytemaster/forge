@@ -1,4 +1,4 @@
-import fcl.plugins.signature_provider;
+import fcl.plugins.signature_provider.plugin;
 
 int main() {
    const auto descriptor = fcl::plugins::signature_provider::descriptor();

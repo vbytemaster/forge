@@ -4,7 +4,14 @@ module;
 export module fcl.log.appender;
 
 import fcl.log.log_message;
-import fcl.variant;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 
 export namespace fcl {
 class appender;

@@ -58,7 +58,12 @@ if (!config.ok()) {
 ### Write A Redacted Effective Config
 
 ```cpp
-import fcl.config;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
 import fcl.yaml;
 
 auto safe = fcl::config::redact(document, registry);

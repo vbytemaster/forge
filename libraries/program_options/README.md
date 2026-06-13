@@ -32,7 +32,12 @@ Dependencies: `fcl_config`, `fcl_schema`, private Boost.Program_options.
 ### Parse CLI Into A Config Document
 
 ```cpp
-import fcl.config;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
 import fcl.program_options;
 
 auto registry = fcl::config::component_registry{};
@@ -66,7 +71,12 @@ auto text = fcl::program_options::help(registry, "FCL options");
 ### Merge With File Config
 
 ```cpp
-import fcl.config;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
 
 if (!parsed.ok()) {
    report_diagnostics(parsed.diagnostics);

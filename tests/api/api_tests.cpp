@@ -12,14 +12,29 @@
 #include <typeindex>
 #include <vector>
 
-import fcl.api;
+import fcl.api.exceptions;
+import fcl.api.types;
+import fcl.api.descriptor;
+import fcl.api.error_projection;
+import fcl.api.handle;
+import fcl.api.connection;
+import fcl.api.registry;
+import fcl.api.binding;
+import fcl.api.dispatcher;
 import fcl.asio.blocking;
 import fcl.asio.runtime;
 import fcl.crypto.sha256;
 import fcl.raw.datastream;
 import fcl.raw.raw;
 import fcl.reflect.reflect;
-import fcl.variant;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 
 namespace cache_errors {
 

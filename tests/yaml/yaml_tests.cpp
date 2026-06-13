@@ -21,9 +21,24 @@ struct http_config {
 
 BOOST_DESCRIBE_STRUCT(fcl_yaml_tests::http_config, (), (bind_port, bind_host, tls_enabled, tags))
 
-import fcl.config;
-import fcl.schema;
-import fcl.variant;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
+import fcl.schema.diagnostic;
+import fcl.schema.value_kind;
+import fcl.schema.object;
+import fcl.schema.enums;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 import fcl.yaml;
 
 template <> struct fcl::schema::rules<fcl_yaml_tests::http_config> {

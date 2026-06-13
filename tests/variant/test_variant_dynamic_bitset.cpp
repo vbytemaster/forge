@@ -3,7 +3,14 @@
 
 import fcl.variant.dynamic_bitset;
 import fcl.variant.variant_dynamic_bitset;
-import fcl.variant;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 import fcl.exceptions;
 
 using namespace fcl;

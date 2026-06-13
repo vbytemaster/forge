@@ -22,13 +22,40 @@
 #include <string>
 #include <vector>
 
-import fcl.app;
-import fcl.api;
+import fcl.app.exceptions;
+import fcl.app.application;
+import fcl.app.events;
+import fcl.app.diagnostics;
+import fcl.app.signals;
+import fcl.app.plugin_context;
+import fcl.app.plugin;
+import fcl.app.plugin_registry;
+import fcl.app.application_shell;
+import fcl.app.application_builder;
+import fcl.app.runner;
+import fcl.app.daemon;
+import fcl.api.exceptions;
+import fcl.api.types;
+import fcl.api.descriptor;
+import fcl.api.error_projection;
+import fcl.api.handle;
+import fcl.api.connection;
+import fcl.api.registry;
+import fcl.api.binding;
+import fcl.api.dispatcher;
 import fcl.asio.blocking;
 import fcl.asio.runtime;
 import fcl.asio.task_scheduler;
-import fcl.config;
-import fcl.schema;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
+import fcl.schema.diagnostic;
+import fcl.schema.value_kind;
+import fcl.schema.object;
+import fcl.schema.enums;
 
 namespace app_test_contract {
 

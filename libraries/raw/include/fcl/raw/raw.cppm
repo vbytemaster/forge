@@ -30,7 +30,14 @@ import fcl.core.chrono;
 import fcl.core.uint128;
 import fcl.exceptions;
 import fcl.variant.static_variant;
-import fcl.variant;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 import fcl.variant.dynamic_bitset;
 
 export namespace fcl::raw {

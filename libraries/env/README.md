@@ -62,7 +62,12 @@ dotted config path.
 ### Read A `.env` File
 
 ```cpp
-import fcl.config;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
 import fcl.env;
 
 auto registry = fcl::config::component_registry{};

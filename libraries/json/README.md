@@ -31,7 +31,14 @@ private.
 
 ```cpp
 import fcl.json;
-import fcl.variant;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 
 auto parsed = fcl::json::read_value(R"({"name":"node-a","enabled":true})");
 if (!parsed.ok()) {
@@ -46,7 +53,12 @@ if (!parsed.ok()) {
 ### Config Document Roundtrip
 
 ```cpp
-import fcl.config;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
 import fcl.json;
 
 auto document = fcl::config::document{};

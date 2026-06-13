@@ -34,7 +34,9 @@ Dependencies: `fcl_exceptions`, `fcl_transport`, Boost.Asio.
 ## Examples
 
 ```cpp
-import fcl.yamux;
+import fcl.yamux.exceptions;
+import fcl.yamux.options;
+import fcl.yamux.session;
 
 boost::asio::awaitable<void> run_client_mux(fcl::transport::stream base) {
    auto mux = fcl::yamux::session{

@@ -99,9 +99,13 @@ before calling `on_configure(...)` and plugin `configure(...)`.
 
 #include <cstdint>
 
-import fcl.app;
-import fcl.config;
-import fcl.schema;
+import fcl.app.events;
+import fcl.app.plugin_context;
+import fcl.app.plugin;
+import fcl.app.plugin_registry;
+import fcl.app.application_shell;
+import fcl.config.document;
+import fcl.schema.object;
 
 struct http_config {
    std::uint16_t bind_port = 8080;
@@ -260,7 +264,11 @@ owns config merge, plugin lifecycle, rollback, API registry, events and
 diagnostics.
 
 ```cpp
-import fcl.app;
+import fcl.app.events;
+import fcl.app.plugin_context;
+import fcl.app.plugin;
+import fcl.app.application_shell;
+import fcl.app.application_builder;
 import fcl.asio.runtime;
 
 auto workers = std::uint16_t{0};
@@ -301,7 +309,7 @@ receives a neutral `fcl::config::document`.
 
 ```cpp
 import fcl.asio.blocking;
-import fcl.config;
+import fcl.config.document;
 
 auto app = service_application{};
 
@@ -323,8 +331,9 @@ For production foreground daemons prefer `run_application(...)`. It
 standardizes the common flow: configure, startup, wait, request stop, shutdown.
 
 ```cpp
-import fcl.app;
-import fcl.config;
+import fcl.app.application_shell;
+import fcl.app.runner;
+import fcl.config.document;
 
 auto app = service_application{};
 auto document = fcl::config::document{};

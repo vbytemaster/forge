@@ -4,7 +4,14 @@ export module fcl.raw.enum_type;
 
 import fcl.reflect.reflect;
 import fcl.raw.raw;
-import fcl.variant;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 
 export namespace fcl {
 template <typename IntType, typename EnumType> class enum_type {

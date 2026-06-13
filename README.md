@@ -75,9 +75,8 @@ struct http_config {
 
 BOOST_DESCRIBE_STRUCT(http_config, (), (bind_host, bind_port, tls_enabled))
 
-import fcl.config;
 import fcl.json;
-import fcl.schema;
+import fcl.schema.object;
 
 template <>
 struct fcl::schema::rules<http_config> {

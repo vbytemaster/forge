@@ -10,7 +10,15 @@ export module fcl.app.application;
 
 import fcl.config.component;
 import fcl.config.document;
-import fcl.api;
+import fcl.api.exceptions;
+import fcl.api.types;
+import fcl.api.descriptor;
+import fcl.api.error_projection;
+import fcl.api.handle;
+import fcl.api.connection;
+import fcl.api.registry;
+import fcl.api.binding;
+import fcl.api.dispatcher;
 import fcl.app.diagnostics;
 import fcl.app.plugin_context;
 import fcl.app.plugin;

@@ -14,7 +14,13 @@ module fcl.p2p.identity;
 import fcl.crypto.base58;
 import fcl.crypto.asymmetric;
 import fcl.crypto.x509;
-import fcl.multiformats;
+import fcl.multiformats.exceptions;
+import fcl.multiformats.types;
+import fcl.multiformats.varint;
+import fcl.multiformats.multicodec;
+import fcl.multiformats.multihash;
+import fcl.multiformats.multibase;
+import fcl.multiformats.multiaddr;
 
 #include "identity_signature.hpp"
 

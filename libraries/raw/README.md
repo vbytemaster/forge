@@ -155,7 +155,14 @@ instantiations for a frequently used DTO, while other translation units only see
 import fcl.crypto.sha256;
 import fcl.raw.datastream;
 import fcl.raw.raw;
-import fcl.variant;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 
 struct action_payload {
    std::uint64_t id = 0;
@@ -176,7 +183,14 @@ or `.cpp` file:
 import fcl.crypto.sha256;
 import fcl.raw.datastream;
 import fcl.raw.raw;
-import fcl.variant;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 
 FCL_IMPLEMENT_SERIALIZATION(action_payload)
 ```

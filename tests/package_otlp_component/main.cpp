@@ -1,4 +1,4 @@
-import fcl.otlp;
+import fcl.otlp.options;
 
 int main() {
    const auto options = fcl::otlp::log_exporter_options{};

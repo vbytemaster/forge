@@ -19,10 +19,18 @@ import fcl.app.application_shell;
 import fcl.app.runner;
 import fcl.asio.runtime;
 import fcl.asio.task_scheduler;
-import fcl.config;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
 import fcl.env;
 import fcl.program_options;
-import fcl.schema;
+import fcl.schema.diagnostic;
+import fcl.schema.value_kind;
+import fcl.schema.object;
+import fcl.schema.enums;
 import fcl.yaml;
 
 namespace fcl::app {

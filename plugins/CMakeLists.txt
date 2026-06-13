@@ -4,11 +4,7 @@ add_subdirectory(p2p_api_resolver)
 add_subdirectory(p2p_diagnostics)
 add_subdirectory(p2p_pubsub)
 
-add_library(
-   fcl_plugins
-   STATIC
-)
-fcl_target_modules_at(fcl_plugins plugins)
+add_library(fcl_plugins STATIC plugins.cpp)
 
 target_include_directories(fcl_plugins PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 

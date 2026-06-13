@@ -467,7 +467,14 @@ binary compatibility-sensitive.
 ### Serialize Through Variant Without Revealing Secrets
 
 ```cpp
-import fcl.variant;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 
 auto private_key = fcl::crypto::asymmetric::private_key::generate();
 auto public_key = private_key.get_public_key();

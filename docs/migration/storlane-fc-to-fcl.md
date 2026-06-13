@@ -210,7 +210,18 @@ Program shells should move to `application_shell`. It owns the common runtime
 members, plugin registry, config collection and lifecycle order:
 
 ```cpp
-import fcl.app;
+import fcl.app.exceptions;
+import fcl.app.application;
+import fcl.app.events;
+import fcl.app.diagnostics;
+import fcl.app.signals;
+import fcl.app.plugin_context;
+import fcl.app.plugin;
+import fcl.app.plugin_registry;
+import fcl.app.application_shell;
+import fcl.app.application_builder;
+import fcl.app.runner;
+import fcl.app.daemon;
 import fcl.asio.blocking;
 
 auto app = service_application{};

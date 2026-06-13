@@ -12,7 +12,10 @@ module;
 module fcl.config.decode;
 
 import fcl.config.value;
-import fcl.schema;
+import fcl.schema.diagnostic;
+import fcl.schema.value_kind;
+import fcl.schema.object;
+import fcl.schema.enums;
 
 namespace fcl::config {
 

@@ -79,7 +79,15 @@ codec and frame-size limit, dispatched through `fcl::api::frame_dispatcher`,
 then replied with a response/error frame.
 
 ```cpp
-import fcl.api;
+import fcl.api.exceptions;
+import fcl.api.types;
+import fcl.api.descriptor;
+import fcl.api.error_projection;
+import fcl.api.handle;
+import fcl.api.connection;
+import fcl.api.registry;
+import fcl.api.binding;
+import fcl.api.dispatcher;
 import fcl.websocket.api;
 
 auto plan = fcl::api::binding()

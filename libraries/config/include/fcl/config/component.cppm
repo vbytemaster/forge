@@ -14,7 +14,10 @@ export module fcl.config.component;
 
 import fcl.config.document;
 import fcl.config.value;
-import fcl.schema;
+import fcl.schema.diagnostic;
+import fcl.schema.value_kind;
+import fcl.schema.object;
+import fcl.schema.enums;
 
 export namespace fcl::config {
 

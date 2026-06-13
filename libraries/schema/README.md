@@ -41,7 +41,10 @@ Dependencies: `fcl_reflect` and Boost.Describe headers.
 #include <cstdint>
 #include <string>
 
-import fcl.schema;
+import fcl.schema.diagnostic;
+import fcl.schema.value_kind;
+import fcl.schema.object;
+import fcl.schema.enums;
 
 struct http_config {
    std::uint16_t bind_port = 0;
@@ -71,7 +74,10 @@ struct fcl::schema::rules<http_config> {
 ### Apply Defaults And Validate
 
 ```cpp
-import fcl.schema;
+import fcl.schema.diagnostic;
+import fcl.schema.value_kind;
+import fcl.schema.object;
+import fcl.schema.enums;
 
 auto rules = fcl::schema::rules<http_config>::define();
 auto config = http_config{};
@@ -82,7 +88,10 @@ auto diagnostics = rules.validate(config, "http");
 ### Convert Described Enums
 
 ```cpp
-import fcl.schema;
+import fcl.schema.diagnostic;
+import fcl.schema.value_kind;
+import fcl.schema.object;
+import fcl.schema.enums;
 
 auto level = fcl::schema::severity::info;
 bool ok = fcl::schema::enum_from_string("warning", level);

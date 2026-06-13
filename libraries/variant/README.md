@@ -39,7 +39,14 @@ Boost.Multiprecision.
 ### Build A Value Object
 
 ```cpp
-import fcl.variant;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 
 auto object = fcl::mutable_variant_object{};
 object("name", "node-a")("enabled", true)("retries", 3);

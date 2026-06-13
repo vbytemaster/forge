@@ -281,7 +281,12 @@ FC enum conversion имел свою семантику. FCL должен явн
 
 ```cpp
 import fcl.yaml;
-import fcl.config;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
 
 auto loaded = fcl::yaml::load_document("config.yml");
 auto decoded = fcl::config::decode<server_config>(loaded.value, "server");
@@ -321,7 +326,10 @@ Boost.Describe даёт metadata о структуре:
 Добавить отдельный слой:
 
 ```cpp
-import fcl.schema;
+import fcl.schema.diagnostic;
+import fcl.schema.value_kind;
+import fcl.schema.object;
+import fcl.schema.enums;
 ```
 
 Пример идеи:
@@ -543,7 +551,18 @@ FCL должен использовать **OpenSSL 3+**.
 
 ```cpp
 import fcl.asio.runtime;
-import fcl.app;
+import fcl.app.exceptions;
+import fcl.app.application;
+import fcl.app.events;
+import fcl.app.diagnostics;
+import fcl.app.signals;
+import fcl.app.plugin_context;
+import fcl.app.plugin;
+import fcl.app.plugin_registry;
+import fcl.app.application_shell;
+import fcl.app.application_builder;
+import fcl.app.runner;
+import fcl.app.daemon;
 ```
 
 ### 9.2 API style
@@ -580,7 +599,17 @@ auto result = fcl::runtime::blocking::run(runtime, some_awaitable());
 Цель:
 
 ```cpp
-import fcl.http;
+import fcl.http.exceptions;
+import fcl.http.types;
+import fcl.http.base_url;
+import fcl.http.target;
+import fcl.http.route_context;
+import fcl.http.middleware;
+import fcl.http.connection;
+import fcl.http.client;
+import fcl.http.router;
+import fcl.http.server;
+import fcl.http.api;
 ```
 
 Пример:
@@ -649,7 +678,28 @@ FCL_ENABLE_QUIC=ON
 FCL P2P должен позволять:
 
 ```cpp
-import fcl.p2p;
+import fcl.p2p.exceptions;
+import fcl.p2p.identity;
+import fcl.p2p.endpoint;
+import fcl.p2p.envelope;
+import fcl.p2p.identify;
+import fcl.p2p.diagnostics;
+import fcl.p2p.discovery;
+import fcl.p2p.dht;
+import fcl.p2p.rendezvous;
+import fcl.p2p.pubsub;
+import fcl.p2p.reachability;
+import fcl.p2p.hole_punch;
+import fcl.p2p.protocol;
+import fcl.p2p.message;
+import fcl.p2p.scoring;
+import fcl.p2p.relay;
+import fcl.p2p.resource_manager;
+import fcl.p2p.stream;
+import fcl.p2p.negotiation;
+import fcl.p2p.peer_store;
+import fcl.p2p.node;
+import fcl.p2p.api;
 
 node.register_protocol("/my/product/1", handler);
 boost::asio::awaitable<void> open_product_stream() {
@@ -722,7 +772,11 @@ boost::asio::awaitable<void> run_app() {
 TUI должен быть нейтральным:
 
 ```cpp
-import fcl.tui;
+import fcl.tui.exceptions;
+import fcl.tui.types;
+import fcl.tui.render;
+import fcl.tui.navigation;
+import fcl.tui.runner;
 ```
 
 Не переносить Storlane operator screens и Spring roles.

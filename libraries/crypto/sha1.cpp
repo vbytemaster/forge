@@ -13,7 +13,14 @@ module fcl.crypto.sha1;
 import fcl.core.utility;
 import fcl.crypto.hex;
 import fcl.exceptions;
-import fcl.variant;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 
 #include "_digest_common.hpp"
 #include "_evp_digest.hpp"

@@ -32,7 +32,11 @@ import fcl.http.server;
 import fcl.http.types;
 import fcl.log.log_message;
 import fcl.log.record;
-import fcl.otlp;
+import fcl.otlp.exceptions;
+import fcl.otlp.options;
+import fcl.otlp.log_exporter;
+import fcl.otlp.log_sink;
+import fcl.otlp.crash;
 
 #ifndef FCL_OTLP_CRASH_HELPER
 #define FCL_OTLP_CRASH_HELPER ""

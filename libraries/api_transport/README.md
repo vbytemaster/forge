@@ -19,8 +19,13 @@ plugins or application policy.
 ## Server Example
 
 ```cpp
-import fcl.api;
-import fcl.api.transport;
+import fcl.api.types;
+import fcl.api.descriptor;
+import fcl.api.connection;
+import fcl.api.registry;
+import fcl.api.binding;
+import fcl.api.transport.options;
+import fcl.api.transport.server;
 #include <fcl/api/api_macros.hpp>
 
 class cache
@@ -72,8 +77,11 @@ serve_cache(fcl::transport::stream stream, cache_store& store) {
 ## Client Example
 
 ```cpp
-import fcl.api;
-import fcl.api.transport;
+import fcl.api.types;
+import fcl.api.descriptor;
+import fcl.api.connection;
+import fcl.api.transport.options;
+import fcl.api.transport.connection;
 
 boost::asio::awaitable<chunk>
 read_remote(fcl::transport::stream stream, std::string ref) {

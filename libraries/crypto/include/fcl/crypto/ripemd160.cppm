@@ -11,7 +11,14 @@ import fcl.crypto.packhash;
 export import fcl.crypto.digest;
 import fcl.raw.raw;
 import fcl.core.type_name;
-import fcl.variant;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 import fcl.crypto.sha256;
 import fcl.crypto.sha512;
 

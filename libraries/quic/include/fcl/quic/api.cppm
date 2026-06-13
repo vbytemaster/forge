@@ -8,8 +8,20 @@ module;
 
 export module fcl.quic.api;
 
-import fcl.api;
-import fcl.api.transport;
+import fcl.api.exceptions;
+import fcl.api.types;
+import fcl.api.descriptor;
+import fcl.api.error_projection;
+import fcl.api.handle;
+import fcl.api.connection;
+import fcl.api.registry;
+import fcl.api.binding;
+import fcl.api.dispatcher;
+import fcl.api.transport.exceptions;
+import fcl.api.transport.options;
+import fcl.api.transport.client;
+import fcl.api.transport.connection;
+import fcl.api.transport.server;
 import fcl.quic.stream;
 import fcl.quic.transport;
 import fcl.transport.stream;

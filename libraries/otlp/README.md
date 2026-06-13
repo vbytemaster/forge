@@ -39,7 +39,9 @@ P2P, plugins or application code.
 ```cpp
 import fcl.asio.runtime;
 import fcl.log.logger;
-import fcl.otlp;
+import fcl.otlp.options;
+import fcl.otlp.log_exporter;
+import fcl.otlp.log_sink;
 
 auto runtime = fcl::asio::runtime{};
 auto exporter = std::make_shared<fcl::otlp::log_exporter>(
@@ -60,7 +62,9 @@ co_await exporter->async_flush();
 ### Resend Crash Spool
 
 ```cpp
-import fcl.otlp;
+import fcl.otlp.options;
+import fcl.otlp.log_exporter;
+import fcl.otlp.crash;
 
 auto guard = fcl::otlp::install_crash_capture(
    fcl::otlp::crash_spool_options{.directory = "./crash-spool"});

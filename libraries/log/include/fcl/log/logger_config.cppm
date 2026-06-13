@@ -13,7 +13,14 @@ import fcl.log.logger;
 import fcl.log.appender;
 export import fcl.log.log_message;
 import fcl.variant.described;
-import fcl.variant;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 
 export namespace fcl {
 struct appender_config {

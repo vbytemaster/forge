@@ -19,7 +19,10 @@ struct http_config {
 
 BOOST_DESCRIBE_STRUCT(fcl_schema_tests::http_config, (), (bind_port, bind_host, tls_enabled, tags, token))
 
-import fcl.schema;
+import fcl.schema.diagnostic;
+import fcl.schema.value_kind;
+import fcl.schema.object;
+import fcl.schema.enums;
 
 template <> struct fcl::schema::rules<fcl_schema_tests::http_config> {
    [[nodiscard]] static fcl::schema::object_schema<fcl_schema_tests::http_config> define() {

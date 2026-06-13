@@ -380,7 +380,9 @@ class p2p_node {
 - Removed FC-like source APIs must not return as public FCL APIs: `fcl::array`, `fcl::fwd`, `fcl::safe`, `fcl::filesystem`, flat/interprocess containers, mock time and compatibility mutexes.
 - Public time values use `std::chrono`. FCL core may provide chrono formatting and old FC wire helpers, but old FC-style time source APIs must not return.
 - Deterministic tests must pass explicit chrono values instead of relying on a global mock clock.
-- Empty/self-export module files are forbidden. Aggregate modules are allowed only as library-level `export import` lists.
+- Empty/self-export module files and aggregate-only module files are forbidden.
+  Convenience aggregation belongs to CMake targets and package components, not
+  to public `.cppm` files that only `export import` other modules.
 - Public APIs must live under `libraries/<lib>/include/fcl/<lib>/*.cppm`; root include trees and old compatibility include roots are forbidden.
 - Real module interfaces must contain their declarations directly; `.cppm` files that only include private/public headers are forbidden.
 - Macro-only `.hpp` files under `include/fcl` are allowed only for preprocessor macros, because C++ modules cannot export macros.

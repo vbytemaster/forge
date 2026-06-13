@@ -9,7 +9,14 @@ module;
 module fcl.crypto.bigint;
 
 import fcl.core.utility;
-import fcl.variant;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 import fcl.crypto.base64;
 
 import fcl.exceptions;

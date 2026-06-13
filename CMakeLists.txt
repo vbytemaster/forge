@@ -223,7 +223,6 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/stcp/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/p2p/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/app/include"
-   "${CMAKE_CURRENT_SOURCE_DIR}/plugins/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/plugins/signature_provider/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_node/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_api_resolver/include"
@@ -462,7 +461,6 @@ install(
              libraries/stcp/include/fcl
              libraries/p2p/include/fcl
              libraries/app/include/fcl
-             plugins/include/fcl
              plugins/signature_provider/include/fcl
              plugins/p2p_node/include/fcl
              plugins/p2p_api_resolver/include/fcl

@@ -24,7 +24,14 @@ import fcl.crypto.sha256;
 import fcl.exceptions;
 import fcl.raw.datastream;
 import fcl.raw.raw;
-import fcl.variant;
+import fcl.variant.exceptions;
+import fcl.variant.value;
+import fcl.variant.conversion;
+import fcl.variant.containers;
+import fcl.variant.chrono;
+import fcl.variant.multiprecision;
+import fcl.variant.format;
+import fcl.variant.described;
 
 namespace fcl::crypto::asymmetric {
 namespace {

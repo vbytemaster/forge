@@ -14,7 +14,12 @@ module fcl.app.application_builder;
 
 import fcl.asio.runtime;
 import fcl.asio.task_scheduler;
-import fcl.config;
+import fcl.config.key_path;
+import fcl.config.value;
+import fcl.config.document;
+import fcl.config.component;
+import fcl.config.decode;
+import fcl.config.migration;
 import fcl.app.application_shell;
 import fcl.app.plugin_registry;
 

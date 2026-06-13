@@ -9,9 +9,42 @@ module;
 
 export module fcl.plugins.p2p_node.api;
 
-import fcl.api;
-import fcl.api.transport;
-import fcl.p2p;
+import fcl.api.exceptions;
+import fcl.api.types;
+import fcl.api.descriptor;
+import fcl.api.error_projection;
+import fcl.api.handle;
+import fcl.api.connection;
+import fcl.api.registry;
+import fcl.api.binding;
+import fcl.api.dispatcher;
+import fcl.api.transport.exceptions;
+import fcl.api.transport.options;
+import fcl.api.transport.client;
+import fcl.api.transport.connection;
+import fcl.api.transport.server;
+import fcl.p2p.exceptions;
+import fcl.p2p.identity;
+import fcl.p2p.endpoint;
+import fcl.p2p.envelope;
+import fcl.p2p.identify;
+import fcl.p2p.diagnostics;
+import fcl.p2p.discovery;
+import fcl.p2p.dht;
+import fcl.p2p.rendezvous;
+import fcl.p2p.pubsub;
+import fcl.p2p.reachability;
+import fcl.p2p.hole_punch;
+import fcl.p2p.protocol;
+import fcl.p2p.message;
+import fcl.p2p.scoring;
+import fcl.p2p.relay;
+import fcl.p2p.resource_manager;
+import fcl.p2p.stream;
+import fcl.p2p.negotiation;
+import fcl.p2p.peer_store;
+import fcl.p2p.node;
+import fcl.p2p.api;
 import fcl.plugins.p2p_node.types;
 
 export namespace fcl::plugins::p2p_node {

@@ -1,7 +1,9 @@
 #include <utility>
 
-import fcl.api;
+import fcl.api.exceptions;
 import fcl.api.types;
+import fcl.api.descriptor;
+import fcl.api.registry;
 import fcl.api.binding;
 
 int main() {

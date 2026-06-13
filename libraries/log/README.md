@@ -131,7 +131,18 @@ A program wires them together explicitly at the edge.
 #include <fcl/exceptions/macros.hpp>
 
 import fcl.exceptions;
-import fcl.app;
+import fcl.app.exceptions;
+import fcl.app.application;
+import fcl.app.events;
+import fcl.app.diagnostics;
+import fcl.app.signals;
+import fcl.app.plugin_context;
+import fcl.app.plugin;
+import fcl.app.plugin_registry;
+import fcl.app.application_shell;
+import fcl.app.application_builder;
+import fcl.app.runner;
+import fcl.app.daemon;
 import fcl.log.logger;
 import fcl.log.record;
 

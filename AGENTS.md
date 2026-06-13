@@ -11,6 +11,10 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - `dev` is the default development and integration branch.
 - All feature, fix, documentation and cleanup work must branch from the latest
   `origin/dev` and target `dev` for review.
+- Branch names and commit subjects must describe the FCL change, not the actor
+  performing it. Do not use agent/tool/vendor prefixes or names such as
+  `codex/`, `openai`, `claude` or similar automation labels in branch names or
+  commit subjects.
 - Direct work on `main` is forbidden for normal development. `main` is reserved
   for release-ready promotion from `dev` after validation.
 - The only allowed direct `main` changes are explicit repository/bootstrap

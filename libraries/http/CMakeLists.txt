@@ -2,11 +2,13 @@ add_library(
    fcl_http STATIC
    base_url.cpp
    target.cpp
+   range.cpp
    route_context.cpp
    middleware.cpp
    connection.cpp
    client.cpp
    router.cpp
+   file.cpp
    server.cpp
 )
 fcl_target_modules(fcl_http http)

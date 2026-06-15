@@ -29,6 +29,8 @@ HTTP host or testing route/middleware behavior without the app plugin layer.
 - `fcl.http.types` — Beast-compatible request/response aliases.
 - `fcl.http.body`, `fcl.http.stream` — FCL-owned chunk, reader, writer and
   stream route types.
+- `fcl.http.file`, `fcl.http.range` — file responses, static roots and byte
+  range parsing.
 - `fcl.http.base_url`, `fcl.http.target`.
 - `fcl.http.router`, `fcl.http.route_context`, `fcl.http.middleware`.
 - `fcl.http.api`, `fcl.http.mapping`, `fcl.http.proxy`.
@@ -116,9 +118,42 @@ router.get_stream("/download", [](fcl::http::stream_request& req)
 ```
 
 Stream routes currently provide FCL-owned body readers and response body
-sources. Higher-level file/range/upload helpers are separate follow-up layers;
-do not hand-roll downstream object-storage gateway policy or raw router
-mutation in this library.
+sources. Higher-level upload helpers are a separate follow-up layer; do not
+hand-roll downstream object-storage gateway policy or raw router mutation in
+this library.
+
+### Serve Static Files And Ranges
+
+`static_file_root` serves files through the stream response path, with root path
+normalization, traversal rejection, configurable symlink policy, `HEAD`, byte
+ranges and conditional metadata headers.
+
+```cpp
+import fcl.http.file;
+import fcl.http.router;
+import fcl.http.stream;
+
+auto files = std::make_shared<fcl::http::static_file_root>(
+   "/srv/public",
+   fcl::http::file_options{
+      .content_type = "application/octet-stream",
+      .symlinks = fcl::http::symlink_policy::reject,
+   });
+
+router.get_stream("/files/:name", [files](fcl::http::stream_request& req)
+   -> boost::asio::awaitable<fcl::http::stream_response> {
+   co_return co_await files->serve(req, *req.context.route_param("name"));
+});
+
+router.head_stream("/files/:name", [files](fcl::http::stream_request& req)
+   -> boost::asio::awaitable<fcl::http::stream_response> {
+   co_return co_await files->serve(req, *req.context.route_param("name"));
+});
+```
+
+This is a file-serving foundation, not a storage product. Object metadata,
+authorization, placement and compatibility-specific error shapes belong above
+`fcl_http`.
 
 ### Mount API Bindings
 

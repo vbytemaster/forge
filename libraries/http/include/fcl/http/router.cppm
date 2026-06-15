@@ -31,6 +31,7 @@ class router {
    void put(std::string path, route_handler handler);
    void del(std::string path, route_handler handler);
    void get_stream(std::string path, stream_route_handler handler);
+   void head_stream(std::string path, stream_route_handler handler);
    void post_stream(std::string path, stream_route_handler handler);
    void put_stream(std::string path, stream_route_handler handler);
    void websocket(std::string path, websocket_route_handler handler);

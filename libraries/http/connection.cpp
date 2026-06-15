@@ -171,7 +171,14 @@ struct connection::impl {
 
       buffer.consume(buffer.size());
       auto response_value = response{};
-      co_await boost::beast::http::async_read(*plain_stream, buffer, response_value, use_awaitable);
+      if (request_value.method() == method::head) {
+         auto parser = boost::beast::http::response_parser<string_body>{};
+         parser.skip(true);
+         co_await boost::beast::http::async_read(*plain_stream, buffer, parser, use_awaitable);
+         response_value = parser.release();
+      } else {
+         co_await boost::beast::http::async_read(*plain_stream, buffer, response_value, use_awaitable);
+      }
 
       if (!response_value.keep_alive()) {
          close_plain();
@@ -189,7 +196,14 @@ struct connection::impl {
 
       buffer.consume(buffer.size());
       auto response_value = response{};
-      co_await boost::beast::http::async_read(*tls_stream, buffer, response_value, use_awaitable);
+      if (request_value.method() == method::head) {
+         auto parser = boost::beast::http::response_parser<string_body>{};
+         parser.skip(true);
+         co_await boost::beast::http::async_read(*tls_stream, buffer, parser, use_awaitable);
+         response_value = parser.release();
+      } else {
+         co_await boost::beast::http::async_read(*tls_stream, buffer, response_value, use_awaitable);
+      }
 
       if (!response_value.keep_alive()) {
          close_tls();

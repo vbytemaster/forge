@@ -10,6 +10,8 @@
 #include <coroutine>
 #include <cstring>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -47,9 +49,11 @@ import fcl.http.body;
 import fcl.http.client;
 import fcl.http.connection;
 import fcl.http.exceptions;
+import fcl.http.file;
 import fcl.http.mapping;
 import fcl.http.middleware;
 import fcl.http.proxy;
+import fcl.http.range;
 import fcl.http.route_context;
 import fcl.http.router;
 import fcl.http.server;
@@ -278,6 +282,32 @@ body_chunk make_body_chunk(std::string value) {
    std::memcpy(bytes.data(), value.data(), value.size());
    return body_chunk{.bytes = std::move(bytes)};
 }
+
+class temp_directory {
+ public:
+   temp_directory() {
+      path_ = std::filesystem::temp_directory_path() /
+              ("fcl-http-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+      std::filesystem::create_directories(path_);
+   }
+
+   ~temp_directory() {
+      std::error_code ignored;
+      std::filesystem::remove_all(path_, ignored);
+   }
+
+   [[nodiscard]] const std::filesystem::path& path() const noexcept {
+      return path_;
+   }
+
+   void write(std::string_view name, std::string_view bytes) const {
+      auto output = std::ofstream{path_ / std::string{name}, std::ios::binary};
+      output << bytes;
+   }
+
+ private:
+   std::filesystem::path path_;
+};
 
 response raw_http_exchange(std::uint16_t port, std::string request_text) {
    auto io_context = asio::io_context{};
@@ -1181,6 +1211,145 @@ BOOST_AUTO_TEST_CASE(http_stream_body_limit_fires_during_stream_read) {
    BOOST_TEST(invoked->load());
 
    fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_static_file_root_serves_full_file_stream) {
+   auto files = temp_directory{};
+   files.write("chunk.bin", "0123456789");
+   auto root = std::make_shared<static_file_root>(files.path(), file_options{.content_type = "application/test"});
+
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto router = fcl::http::router{};
+   router.get_stream("/files/:name", [root](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      co_return co_await root->serve(request_value, *request_value.context.route_param("name"));
+   });
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   const auto response = fcl::asio::blocking::run(runtime, client.async_get("/files/chunk.bin"));
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(response.body() == "0123456789");
+   BOOST_TEST(response[field::content_type] == "application/test");
+   BOOST_TEST(response[field::accept_ranges] == "bytes");
+   BOOST_TEST(response[field::etag].size() > 0U);
+   BOOST_TEST(response[field::last_modified].size() > 0U);
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_static_file_root_serves_byte_range) {
+   auto files = temp_directory{};
+   files.write("chunk.bin", "0123456789");
+   auto root = std::make_shared<static_file_root>(files.path());
+
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto router = fcl::http::router{};
+   router.get_stream("/files/:name", [root](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      co_return co_await root->serve(request_value, *request_value.context.route_param("name"));
+   });
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   auto connection = fcl::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto request_value = make_request(method::get, "/files/chunk.bin");
+   request_value.set(field::range, "bytes=2-5");
+
+   const auto response = fcl::asio::blocking::run(runtime, connection.async_request(std::move(request_value)));
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::partial_content));
+   BOOST_TEST(response.body() == "2345");
+   BOOST_TEST(response[field::content_range] == "bytes 2-5/10");
+   BOOST_TEST(response[field::content_length] == "4");
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_static_file_root_rejects_invalid_range) {
+   auto files = temp_directory{};
+   files.write("chunk.bin", "0123456789");
+   auto root = std::make_shared<static_file_root>(files.path());
+
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto router = fcl::http::router{};
+   router.get_stream("/files/:name", [root](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      co_return co_await root->serve(request_value, *request_value.context.route_param("name"));
+   });
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   auto connection = fcl::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto request_value = make_request(method::get, "/files/chunk.bin");
+   request_value.set(field::range, "bytes=20-30");
+
+   const auto response = fcl::asio::blocking::run(runtime, connection.async_request(std::move(request_value)));
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::range_not_satisfiable));
+   BOOST_TEST(response.body().empty());
+   BOOST_TEST(response[field::content_range] == "bytes */10");
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_static_file_root_head_returns_headers_without_body) {
+   auto files = temp_directory{};
+   files.write("chunk.bin", "0123456789");
+   auto root = std::make_shared<static_file_root>(files.path());
+
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto router = fcl::http::router{};
+   router.head_stream("/files/:name", [root](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      co_return co_await root->serve(request_value, *request_value.context.route_param("name"));
+   });
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   auto connection = fcl::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto request_value = make_request(method::head, "/files/chunk.bin");
+
+   const auto response = fcl::asio::blocking::run(runtime, connection.async_request(std::move(request_value)));
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(response.body().empty());
+   BOOST_TEST(response[field::content_length] == "10");
+   BOOST_TEST(response[field::accept_ranges] == "bytes");
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_static_file_root_rejects_traversal_and_symlink) {
+   auto files = temp_directory{};
+   files.write("visible.bin", "visible");
+   auto outside = std::filesystem::temp_directory_path() / "fcl-http-outside-secret.bin";
+   {
+      auto output = std::ofstream{outside, std::ios::binary};
+      output << "secret";
+   }
+   const auto link = files.path() / "link.bin";
+   std::error_code symlink_error;
+   std::filesystem::create_symlink(outside, link, symlink_error);
+
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto root = static_file_root{files.path()};
+   auto request_value = make_request(method::get, "/files/link.bin");
+   auto context = make_route_context(request_value);
+   auto stream_request_value = stream_request{.context = context, .body = body_reader{}};
+
+   const auto traversal = fcl::asio::blocking::run(runtime, root.serve(stream_request_value, "../secret.bin"));
+   BOOST_TEST(traversal.head.result_int() == static_cast<unsigned>(status::forbidden));
+
+   if (!symlink_error) {
+      const auto symlink = fcl::asio::blocking::run(runtime, root.serve(stream_request_value, "link.bin"));
+      BOOST_TEST(symlink.head.result_int() == static_cast<unsigned>(status::forbidden));
+   }
+
+   std::error_code ignored;
+   std::filesystem::remove(outside, ignored);
 }
 
 BOOST_AUTO_TEST_CASE(connection_reconnects_after_connection_close) {

@@ -306,6 +306,10 @@ void router::get_stream(std::string path, stream_route_handler handler) {
    add_stream_route(method::get, std::move(path), std::move(handler));
 }
 
+void router::head_stream(std::string path, stream_route_handler handler) {
+   add_stream_route(method::head, std::move(path), std::move(handler));
+}
+
 void router::post_stream(std::string path, stream_route_handler handler) {
    add_stream_route(method::post, std::move(path), std::move(handler));
 }

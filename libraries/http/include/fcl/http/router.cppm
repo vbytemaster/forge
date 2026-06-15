@@ -7,6 +7,8 @@ module;
 #include <string>
 #include <vector>
 
+#include <boost/asio/awaitable.hpp>
+
 export module fcl.http.router;
 
 import fcl.http.middleware;
@@ -33,7 +35,7 @@ class router {
       binding.mount(*this);
    }
 
-   [[nodiscard]] response handle(route_context& context) const;
+   [[nodiscard]] boost::asio::awaitable<response> handle(route_context& context) const;
    [[nodiscard]] std::optional<websocket_route_handler> match_websocket(route_context& context) const;
 
  private:

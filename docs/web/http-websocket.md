@@ -35,6 +35,7 @@ authentication and business routing live above both.
 
 - `base_url` describes the service origin and base path.
 - `target` parsing is per-request and does not mutate the base URL.
+- Server route handlers and middleware are `boost::asio::awaitable`-based.
 - Server middleware runs in registration order and may short-circuit.
 - Client requests are serialized through per-connection mechanics.
 - Retry is only safe when explicitly idempotent.
@@ -50,8 +51,9 @@ authentication and business routing live above both.
 
 ```cpp
 auto router = fcl::http::router{};
-router.get("/healthz", [](fcl::http::route_context& ctx) {
-   return fcl::http::make_text_response(ctx.request, fcl::http::status::ok, "ok");
+router.get("/healthz", [](fcl::http::route_context& ctx)
+   -> boost::asio::awaitable<fcl::http::response> {
+   co_return fcl::http::make_text_response(ctx.request, fcl::http::status::ok, "ok");
 });
 
 router.websocket("/events", [](std::shared_ptr<fcl::websocket::connection> ws) {

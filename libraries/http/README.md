@@ -22,7 +22,9 @@ internally but keeps FCL-owned route and lifecycle semantics.
 - `fcl.http.types` — Beast-compatible request/response aliases.
 - `fcl.http.base_url`, `fcl.http.target`.
 - `fcl.http.router`, `fcl.http.route_context`, `fcl.http.middleware`.
+- `fcl.http.api`, `fcl.http.mapping`, `fcl.http.proxy`.
 - `fcl.http.client`, `fcl.http.connection`, `fcl.http.server`.
+- Macro header: `<fcl/http/macros.hpp>` for `FCL_HTTP_API(...)`.
 
 Target: `fcl_http`.
 
@@ -53,43 +55,78 @@ auto query = parsed.query_params.front();
 ### Route Requests
 
 ```cpp
+#include <boost/asio/awaitable.hpp>
+
 import fcl.http.router;
 import fcl.http.types;
 
 auto router = fcl::http::router{};
-router.get("/healthz", [](fcl::http::route_context& ctx) {
-   return fcl::http::make_text_response(ctx.request, fcl::http::status::ok, "ok");
+router.get("/healthz", [](fcl::http::route_context& ctx)
+   -> boost::asio::awaitable<fcl::http::response> {
+   co_return fcl::http::make_text_response(ctx.request, fcl::http::status::ok, "ok");
 });
 ```
 
 ### Mount API Bindings
 
-`fcl.http.api` maps a typed `fcl_api` contract onto native HTTP routes. The
-binding is a composable artifact; `build()` does not mutate the router.
+`FCL_HTTP_API(...)` maps a typed `FCL_API(...)` contract onto native HTTP routes.
+The binding is a composable artifact; `build()` does not mutate the router.
 
 ```cpp
-import fcl.api.exceptions;
-import fcl.api.types;
-import fcl.api.descriptor;
-import fcl.api.error_projection;
-import fcl.api.handle;
+#include <fcl/api/macros.hpp>
+#include <fcl/http/macros.hpp>
+
 import fcl.api.connection;
 import fcl.api.registry;
 import fcl.api.binding;
-import fcl.api.dispatcher;
 import fcl.http.api;
+import fcl.http.proxy;
 import fcl.http.router;
+
+struct read_chunk {
+   std::string ref;
+   std::uint32_t offset = 0;
+   std::uint32_t limit = 0;
+};
+
+struct write_chunk {
+   std::string ref;
+   std::string bytes;
+};
+
+struct chunk {
+   std::string bytes;
+};
+
+class cache : public fcl::api::contract<
+   cache,
+   fcl::api::surface::local | fcl::api::surface::remote> {
+ public:
+   virtual ~cache() = default;
+
+   virtual boost::asio::awaitable<chunk> read(read_chunk request) = 0;
+   virtual boost::asio::awaitable<chunk> write(write_chunk request) = 0;
+};
+
+FCL_API(
+   cache,
+   FCL_API_CONTRACT("cache", 1, 0),
+   FCL_API_METHOD(read),
+   FCL_API_METHOD(write))
+
+FCL_HTTP_API(
+   cache,
+   FCL_HTTP_GET(read, "/cache/chunks/:ref?offset={offset}&limit={limit}"),
+   FCL_HTTP_PUT(write, "/cache/chunks/:ref", created))
 
 auto plan = fcl::api::binding()
    .serve(app.apis())
-   .export_api<cache>({.id = {"cache"}, .major = 1, .min_revision = 8})
+   .export_api<cache>()
    .build();
 
-auto binding = fcl::http::api(router)
+auto binding = fcl::http::api()
    .use(plan)
-   .post<&cache::write, protocol::write_chunk, protocol::write_receipt>(
-      "/cache/chunks",
-      {.success_status = fcl::http::status::created})
+   .bind<cache>()
    .build();
 
 router.mount(binding);
@@ -103,14 +140,15 @@ HTTP stays HTTP: route/path/status semantics remain native. Message-oriented
 Low-level middleware can be installed directly on a router:
 
 ```cpp
-router.use([](fcl::http::route_context& ctx, fcl::http::next_handler next) {
+router.use([](fcl::http::route_context& ctx, fcl::http::next_handler next)
+   -> boost::asio::awaitable<fcl::http::response> {
    if (ctx.request.find(fcl::http::field::authorization) == ctx.request.end()) {
-      return fcl::http::make_text_response(
+      co_return fcl::http::make_text_response(
          ctx.request,
          fcl::http::status::unauthorized,
          "missing authorization");
    }
-   return next();
+   co_return co_await next();
 });
 ```
 
@@ -125,14 +163,13 @@ auto binding = fcl::http::api()
       .phase = fcl::http::middleware_phase::security,
       .order = 100,
       .path_prefix = "/cache",
-      .handler = [](fcl::http::route_context& ctx, fcl::http::next_handler next) {
+      .handler = [](fcl::http::route_context& ctx, fcl::http::next_handler next)
+         -> boost::asio::awaitable<fcl::http::response> {
          authorize_cache_request(ctx.request);
-         return next();
+         co_return co_await next();
       },
    })
-   .get<&cache::read, protocol::read_chunk, models::chunk>(
-      "/cache/chunks/:ref",
-      {.query = {"offset", "limit"}})
+   .bind<cache>()
    .build();
 
 router.mount(binding);
@@ -171,6 +208,26 @@ boost::asio::awaitable<void> check_ready(fcl::http::client& client) {
    if (response.result() != fcl::http::status::ok) {
       report_http_error(response.result(), response.body());
    }
+}
+```
+
+### Use A Typed HTTP API
+
+```cpp
+#include <boost/asio/awaitable.hpp>
+
+import fcl.api.handle;
+import fcl.http.client;
+import fcl.http.proxy;
+
+boost::asio::awaitable<void> read_chunk(fcl::http::client& client) {
+   fcl::api::handle<cache> cache_api = co_await fcl::http::remote<cache>(client);
+   chunk value = co_await cache_api->read({
+      .ref = "abc",
+      .offset = 0,
+      .limit = 64 * 1024,
+   });
+   consume(value);
 }
 ```
 
@@ -236,7 +293,7 @@ boundary.
 - Do not catch application exceptions in every route by hand. Prefer typed
   `fcl_exceptions` categories and let API bindings project them to
   `fcl::api::error_payload`.
-- Do not force all typed APIs into `POST /rpc`; use native HTTP route/status
+- Do not force all typed APIs into a single generic RPC endpoint; use native HTTP route/status
   mapping where HTTP is the transport.
 - Do not hide server bind/TLS/lifecycle in `fcl.http.api`; the API builder owns
   route mapping, API middleware, status projection and error payloads only.
@@ -255,5 +312,6 @@ boundary.
 
 ## Tests
 
-`test_fcl_http_websocket` covers base URL and target parsing, router matching,
-middleware ordering, client/server roundtrip, reconnects and WebSocket upgrade.
+`test_fcl_http_websocket` covers base URL and target parsing, async router and
+middleware behavior, typed HTTP API mapping, client/server roundtrip, reconnects
+and WebSocket upgrade.

@@ -29,8 +29,8 @@ import fcl.api.connection;
 import fcl.api.registry;
 import fcl.api.binding;
 import fcl.api.dispatcher;
-import fcl.asio.blocking;
 import fcl.http.exceptions;
+export import fcl.http.mapping;
 import fcl.http.middleware;
 import fcl.http.router;
 import fcl.http.route_context;
@@ -106,6 +106,21 @@ class api_builder {
    api_builder& del(std::string path, api_route_options options = {}) {
       steps_.push_back(make_step<Method, Request, Response>(method::delete_, std::move(path), std::move(options)));
       return *this;
+   }
+
+   template <auto Method, typename Request, typename Response> api_builder& route(api_route value) {
+      const auto parsed = detail::parse_route_template(value.target);
+      steps_.push_back(make_step<Method, Request, Response>(
+         value.verb, parsed.path,
+         api_route_options{
+            .query = parsed.query,
+            .success_status = value.success_status,
+         }));
+      return *this;
+   }
+
+   template <typename Interface> api_builder& bind() {
+      return http_api_traits<Interface>::bind(*this);
    }
 
    api_builder& middleware(middleware_descriptor descriptor) {
@@ -287,6 +302,40 @@ class api_builder {
       return request;
    }
 
+   template <typename T>
+   static void require_equal(const T& actual, const T& expected, std::string_view field) {
+      if constexpr (requires { actual == expected; }) {
+         if (!(actual == expected)) {
+            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API route field disagrees with body",
+                                fcl::exceptions::ctx("field", std::string{field}));
+         }
+      } else {
+         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API route field type is not comparable",
+                             fcl::exceptions::ctx("field", std::string{field}));
+      }
+   }
+
+   template <typename Request>
+   static void validate_request_body_matches_route(const route_context& context, const api_route_options& options,
+                                                   const fcl::api::bytes& payload) {
+      auto request = Request{};
+      try {
+         request = fcl::api::unpack_body<Request>(payload);
+      } catch (const std::exception&) {
+         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API request body is invalid");
+      }
+
+      if constexpr (fcl::reflect::is_described_object_v<Request>) {
+         fcl::reflect::for_each_member<Request>([&](const char* name, auto member) {
+            if (auto value = route_value(context, options, name); value.has_value()) {
+               auto expected = std::remove_cvref_t<decltype(request.*member)>{};
+               assign_from_text(expected, *value, name);
+               require_equal(request.*member, expected, name);
+            }
+         });
+      }
+   }
+
    template <auto Method, typename Request, typename Response>
    [[nodiscard]] mount_step make_step(method verb, std::string path, api_route_options options) {
       using interface_type = typename method_class<decltype(Method)>::type;
@@ -294,17 +343,15 @@ class api_builder {
       auto name = method_name<interface_type, Request, Response>();
       return [plan = std::move(plan), verb, path = std::move(path), options = std::move(options),
               name = std::move(name)](router& target) {
-         auto handler = [plan, options, name](route_context& context) -> response {
+         auto handler = [plan, options, name](route_context& context) -> boost::asio::awaitable<response> {
             if (plan.local == nullptr) {
                FCL_THROW_EXCEPTION(fcl::api::exceptions::incompatible_version, "HTTP API binding has no local registry");
-            }
-            if (context.runtime == nullptr) {
-               FCL_THROW_EXCEPTION(fcl::http::exceptions::internal, "HTTP API route has no runtime boundary");
             }
             auto payload = fcl::api::bytes{};
             if (uses_request_body(context.request.method())) {
                const auto& body = context.request.body();
                payload.assign(body.begin(), body.end());
+               validate_request_body_matches_route<Request>(context, options, payload);
             } else {
                auto request = make_request_from_route<Request>(context, options);
                fcl::raw::pack(payload, request);
@@ -320,15 +367,15 @@ class api_builder {
                 .codec = {.value = options.body == body_codec::raw ? "fcl.raw" : "fcl.json"},
                 .payload = std::move(payload),
             };
-            auto response_frame = fcl::asio::blocking::run(*context.runtime, plan.dispatch(std::move(frame)));
+            auto response_frame = co_await plan.dispatch(std::move(frame));
             if (response_frame.kind == fcl::api::frame_kind::error) {
                const auto error = fcl::raw::unpack<fcl::api::error_payload>(response_frame.payload);
-               return make_text_response(context.request, http_status(error.status_code), render_error(error),
-                                         "application/json");
+               co_return make_text_response(context.request, http_status(error.status_code), render_error(error),
+                                            "application/json");
             }
-            return make_text_response(context.request, options.success_status,
-                                      std::string{response_frame.payload.begin(), response_frame.payload.end()},
-                                      "application/octet-stream");
+            co_return make_text_response(context.request, options.success_status,
+                                         std::string{response_frame.payload.begin(), response_frame.payload.end()},
+                                         "application/octet-stream");
          };
          switch (verb) {
          case method::get:

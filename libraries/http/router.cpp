@@ -2,10 +2,13 @@ module;
 
 #include <cstdint>
 #include <algorithm>
+#include <coroutine>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include <boost/asio/awaitable.hpp>
 
 module fcl.http.router;
 
@@ -304,7 +307,7 @@ void router::websocket(std::string path, websocket_route_handler handler) {
    });
 }
 
-response router::handle(route_context& context) const {
+boost::asio::awaitable<response> router::handle(route_context& context) const {
    try {
       auto params = std::unordered_map<std::string, std::string>{};
       for (const auto prefer_parameterized : {false, true}) {
@@ -317,34 +320,34 @@ response router::handle(route_context& context) const {
             }
 
             context.route_params = std::move(params);
-            return run_middleware_chain(matching_middlewares(middlewares_, context.parsed_target), context,
-                                        route.handler);
+            co_return co_await run_middleware_chain(matching_middlewares(middlewares_, context.parsed_target), context,
+                                                    route.handler);
          }
       }
 
       if (path_exists(routes_, context.parsed_target)) {
-         return make_text_response(context.request, status::method_not_allowed, "method not allowed");
+         co_return make_text_response(context.request, status::method_not_allowed, "method not allowed");
       }
       if (path_exists(websocket_routes_, context.parsed_target)) {
-         return make_text_response(context.request, status::upgrade_required, "websocket upgrade required");
+         co_return make_text_response(context.request, status::upgrade_required, "websocket upgrade required");
       }
-      return make_text_response(context.request, status::not_found, "not found");
+      co_return make_text_response(context.request, status::not_found, "not found");
    } catch (const fcl::exceptions::base& error) {
-      return make_exception_response(context.request, error);
+      co_return make_exception_response(context.request, error);
    } catch (const std::exception&) {
-      return make_text_response(context.request, status::internal_server_error,
-                                render_error_payload(fcl::api::error_payload{
-                                    .error = "internal",
-                                    .message = "internal error",
-                                    .identity =
-                                        {
-                                            .category = "fcl.http",
-                                            .code = static_cast<std::uint32_t>(status::internal_server_error),
-                                        },
-                                }),
-                                "application/json");
+      co_return make_text_response(context.request, status::internal_server_error,
+                                   render_error_payload(fcl::api::error_payload{
+                                       .error = "internal",
+                                       .message = "internal error",
+                                       .identity =
+                                           {
+                                               .category = "fcl.http",
+                                               .code = static_cast<std::uint32_t>(status::internal_server_error),
+                                           },
+                                   }),
+                                   "application/json");
    } catch (...) {
-      return make_text_response(context.request, status::internal_server_error, "internal server error");
+      co_return make_text_response(context.request, status::internal_server_error, "internal server error");
    }
 }
 

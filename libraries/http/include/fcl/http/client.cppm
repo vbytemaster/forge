@@ -24,11 +24,16 @@ class client {
    client& operator=(const client&) = delete;
 
    boost::asio::awaitable<response> async_request(fcl::http::request request_value, request_options options = {});
+   boost::asio::awaitable<response> async_send(method verb, std::string_view path, std::string body = {},
+                                               std::string_view content_type = "application/octet-stream",
+                                               request_options options = {});
    boost::asio::awaitable<response> async_get(std::string_view path, request_options options = {});
    boost::asio::awaitable<response> async_post_json(std::string_view path, std::string body,
                                                     request_options options = {});
 
    response request(fcl::http::request request_value, request_options options = {});
+   response send(method verb, std::string_view path, std::string body = {},
+                 std::string_view content_type = "application/octet-stream", request_options options = {});
    response get(std::string_view path, request_options options = {});
    response post_json(std::string_view path, std::string body, request_options options = {});
    [[nodiscard]] connection_metrics metrics() const;

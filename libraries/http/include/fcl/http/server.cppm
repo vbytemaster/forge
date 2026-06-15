@@ -5,6 +5,8 @@ module;
 #include <memory>
 #include <string>
 
+#include <boost/asio/awaitable.hpp>
+
 export module fcl.http.server;
 
 import fcl.asio.runtime;
@@ -20,7 +22,7 @@ struct server_config {
    std::uint16_t port = 0;
 };
 
-using server_handler = std::function<response(route_context&)>;
+using server_handler = std::function<boost::asio::awaitable<response>(route_context&)>;
 
 class server {
  public:

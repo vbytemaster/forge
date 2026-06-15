@@ -84,7 +84,7 @@ class server_session : public std::enable_shared_from_this<server_session> {
             }
          }
 
-         auto response_value = handle_http(context);
+         auto response_value = co_await handle_http(context);
          response_value.version(request_value.version());
          response_value.keep_alive(request_value.keep_alive());
 
@@ -114,16 +114,16 @@ class server_session : public std::enable_shared_from_this<server_session> {
       }
    }
 
-   response handle_http(route_context& context) const {
+   awaitable<response> handle_http(route_context& context) const {
       try {
          if (router_) {
-            return router_->handle(context);
+            co_return co_await router_->handle(context);
          }
-         return handler_(context);
+         co_return co_await handler_(context);
       } catch (const std::invalid_argument&) {
-         return make_text_response(context.request, status::bad_request, "bad request");
+         co_return make_text_response(context.request, status::bad_request, "bad request");
       } catch (...) {
-         return make_text_response(context.request, status::internal_server_error, "internal server error");
+         co_return make_text_response(context.request, status::internal_server_error, "internal server error");
       }
    }
 

@@ -1,6 +1,8 @@
 #include <boost/test/unit_test.hpp>
 #include <boost/describe.hpp>
+#include <fcl/api/macros.hpp>
 #include <fcl/exceptions/macros.hpp>
+#include <fcl/http/macros.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -16,6 +18,9 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ssl.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/this_coro.hpp>
+#include <boost/asio/use_awaitable.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/core/tcp_stream.hpp>
 #include <boost/beast/http.hpp>
@@ -38,7 +43,9 @@ import fcl.http.base_url;
 import fcl.http.client;
 import fcl.http.connection;
 import fcl.http.exceptions;
+import fcl.http.mapping;
 import fcl.http.middleware;
+import fcl.http.proxy;
 import fcl.http.route_context;
 import fcl.http.router;
 import fcl.http.server;
@@ -79,9 +86,27 @@ struct api_chunk {
    std::string bytes;
 };
 
+struct macro_read_request {
+   std::string ref;
+   std::uint32_t offset = 0;
+   std::uint32_t limit = 0;
+};
+
+struct macro_write_request {
+   std::string ref;
+   std::string bytes;
+};
+
+struct macro_chunk {
+   std::string bytes;
+};
+
 BOOST_DESCRIBE_STRUCT(api_read_chunk, (), ())
 BOOST_DESCRIBE_STRUCT(api_routed_read_chunk, (), (ref, offset, limit))
 BOOST_DESCRIBE_STRUCT(api_chunk, (), (bytes))
+BOOST_DESCRIBE_STRUCT(macro_read_request, (), (ref, offset, limit))
+BOOST_DESCRIBE_STRUCT(macro_write_request, (), (ref, bytes))
+BOOST_DESCRIBE_STRUCT(macro_chunk, (), (bytes))
 
 class api_cache : public fcl::api::contract<api_cache, fcl::api::surface::local | fcl::api::surface::remote> {
  public:
@@ -92,8 +117,23 @@ class api_cache : public fcl::api::contract<api_cache, fcl::api::surface::local 
    virtual boost::asio::awaitable<api_chunk> write(api_chunk request) = 0;
 };
 
+class macro_cache : public fcl::api::contract<macro_cache, fcl::api::surface::local | fcl::api::surface::remote> {
+ public:
+   virtual ~macro_cache() = default;
+
+   virtual boost::asio::awaitable<macro_chunk> read(macro_read_request request) = 0;
+   virtual boost::asio::awaitable<macro_chunk> write(macro_write_request request) = 0;
+};
+
 } // namespace test_api
 } // namespace fcl::http
+
+FCL_API(::fcl::http::test_api::macro_cache, FCL_API_CONTRACT("cache.macro", 1, 0), FCL_API_METHOD(read),
+        FCL_API_METHOD(write))
+
+FCL_HTTP_API(::fcl::http::test_api::macro_cache,
+             FCL_HTTP_GET(read, "/cache/chunks/:ref?offset={offset}&limit={limit}"),
+             FCL_HTTP_PUT(write, "/cache/chunks/:ref", created))
 
 namespace fcl::api {
 
@@ -139,6 +179,10 @@ using test_api::api_cache;
 using test_api::api_chunk;
 using test_api::api_read_chunk;
 using test_api::api_routed_read_chunk;
+using test_api::macro_cache;
+using test_api::macro_chunk;
+using test_api::macro_read_request;
+using test_api::macro_write_request;
 
 [[nodiscard]] fcl::api::descriptor api_cache_descriptor() {
    return api_cache::describe();
@@ -190,6 +234,18 @@ class escaping_api_cache final : public api_cache {
    }
 };
 
+class macro_cache_impl final : public macro_cache {
+ public:
+   boost::asio::awaitable<macro_chunk> read(macro_read_request request) override {
+      co_return macro_chunk{.bytes = request.ref + ":" + std::to_string(request.offset) + ":" +
+                                     std::to_string(request.limit)};
+   }
+
+   boost::asio::awaitable<macro_chunk> write(macro_write_request request) override {
+      co_return macro_chunk{.bytes = request.ref + ":" + request.bytes};
+   }
+};
+
 std::uint16_t wait_for_port(const server& server) {
    for (auto attempt = 0; attempt != 100; ++attempt) {
       if (const auto port = server.port(); port != 0) {
@@ -210,6 +266,18 @@ request make_request(method verb, std::string target) {
 
 response make_json_response(const request& request, std::string body) {
    return make_text_response(request, status::ok, std::move(body), "application/json");
+}
+
+response handle(router& target, route_context& context) {
+   if (context.runtime != nullptr) {
+      return fcl::asio::blocking::run(*context.runtime, target.handle(context));
+   }
+
+   auto runtime = fcl::asio::runtime{};
+   context.runtime = &runtime;
+   auto result = fcl::asio::blocking::run(runtime, target.handle(context));
+   context.runtime = nullptr;
+   return result;
 }
 
 class tls_websocket_echo_server {
@@ -315,9 +383,9 @@ class tls_websocket_echo_server {
    std::uint16_t port_ = 0;
 };
 
-class flaky_http_server {
+class flaky_server {
  public:
-   explicit flaky_http_server(bool respond_to_retry) : respond_to_retry_(respond_to_retry), acceptor_(io_context_) {
+   explicit flaky_server(bool respond_to_retry) : respond_to_retry_(respond_to_retry), acceptor_(io_context_) {
       acceptor_.open(tcp::v4());
       acceptor_.set_option(asio::socket_base::reuse_address(true));
       acceptor_.bind(tcp::endpoint{asio::ip::make_address("127.0.0.1"), 0});
@@ -326,7 +394,7 @@ class flaky_http_server {
       worker_ = std::thread([this] { run(); });
    }
 
-   ~flaky_http_server() {
+   ~flaky_server() {
       auto ignored = boost::system::error_code{};
       acceptor_.close(ignored);
       io_context_.stop();
@@ -399,44 +467,94 @@ BOOST_AUTO_TEST_CASE(target_parses_path_segments_and_query_params) {
 
 BOOST_AUTO_TEST_CASE(router_matches_static_and_parameter_routes) {
    auto router = fcl::http::router{};
-   router.get("/items/latest",
-              [](route_context& context) { return make_text_response(context.request, status::ok, "static"); });
-   router.get("/items/:id", [](route_context& context) {
-      return make_text_response(context.request, status::ok, std::string{*context.route_param("id")});
+   router.get("/items/latest", [](route_context& context) -> boost::asio::awaitable<response> {
+      co_return make_text_response(context.request, status::ok, "static");
+   });
+   router.get("/items/:id", [](route_context& context) -> boost::asio::awaitable<response> {
+      co_return make_text_response(context.request, status::ok, std::string{*context.route_param("id")});
    });
 
    auto static_request = make_request(method::get, "/items/latest?ignored=true");
    auto static_context = make_route_context(static_request);
-   BOOST_TEST(router.handle(static_context).body() == "static");
+   BOOST_TEST(handle(router, static_context).body() == "static");
 
    auto param_request = make_request(method::get, "/items/42");
    auto param_context = make_route_context(param_request);
-   BOOST_TEST(router.handle(param_context).body() == "42");
+   BOOST_TEST(handle(router, param_context).body() == "42");
 }
 
 BOOST_AUTO_TEST_CASE(router_returns_404_and_405) {
    auto router = fcl::http::router{};
-   router.get("/items/:id",
-              [](route_context& context) { return make_text_response(context.request, status::ok, "ok"); });
+   router.get("/items/:id", [](route_context& context) -> boost::asio::awaitable<response> {
+      co_return make_text_response(context.request, status::ok, "ok");
+   });
 
    auto missing_request = make_request(method::get, "/missing");
    auto missing_context = make_route_context(missing_request);
-   BOOST_TEST(router.handle(missing_context).result_int() == static_cast<unsigned>(status::not_found));
+   BOOST_TEST(handle(router, missing_context).result_int() == static_cast<unsigned>(status::not_found));
 
    auto wrong_method_request = make_request(method::post, "/items/42");
    auto wrong_method_context = make_route_context(wrong_method_request);
-   BOOST_TEST(router.handle(wrong_method_context).result_int() == static_cast<unsigned>(status::method_not_allowed));
+   BOOST_TEST(handle(router, wrong_method_context).result_int() == static_cast<unsigned>(status::method_not_allowed));
+}
+
+BOOST_AUTO_TEST_CASE(router_awaits_async_route_handler) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto router = fcl::http::router{};
+   auto invoked = std::make_shared<std::atomic<bool>>(false);
+
+   router.get("/async", [invoked](route_context& context) -> boost::asio::awaitable<response> {
+      auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+      timer.expires_after(std::chrono::milliseconds{1});
+      co_await timer.async_wait(boost::asio::use_awaitable);
+      invoked->store(true);
+      co_return make_text_response(context.request, status::ok, "async-ok");
+   });
+
+   auto request = make_request(method::get, "/async");
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+
+   const auto response = fcl::asio::blocking::run(runtime, router.handle(context));
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(response.body() == "async-ok");
+   BOOST_TEST(invoked->load());
+}
+
+BOOST_AUTO_TEST_CASE(router_awaits_async_middleware_chain) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto router = fcl::http::router{};
+   auto trace = std::make_shared<std::string>();
+
+   router.use([trace](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
+      static_cast<void>(context);
+      *trace += "before>";
+      auto response = co_await next();
+      *trace += "<after";
+      co_return response;
+   });
+   router.get("/ok", [](route_context& context) -> boost::asio::awaitable<response> {
+      co_return make_text_response(context.request, status::ok, "ok");
+   });
+
+   auto request = make_request(method::get, "/ok");
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+
+   const auto response = fcl::asio::blocking::run(runtime, router.handle(context));
+   BOOST_TEST(response.body() == "ok");
+   BOOST_TEST(*trace == "before><after");
 }
 
 BOOST_AUTO_TEST_CASE(router_maps_typed_http_exception_to_native_json_response) {
    auto router = fcl::http::router{};
-   router.get("/missing", [](route_context&) -> response {
+   router.get("/missing", [](route_context&) -> boost::asio::awaitable<response> {
       FCL_THROW_EXCEPTION(fcl::http::exceptions::not_found, "chunk not found");
    });
 
    auto request = make_request(method::get, "/missing");
    auto context = make_route_context(request);
-   const auto response = router.handle(context);
+   const auto response = handle(router, context);
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::not_found));
    BOOST_TEST(response[field::content_type] == "application/json");
@@ -448,11 +566,15 @@ BOOST_AUTO_TEST_CASE(router_maps_typed_http_exception_to_native_json_response) {
 
 BOOST_AUTO_TEST_CASE(router_rejects_duplicate_routes_before_serving) {
    auto router = fcl::http::router{};
-   router.get("/items", [](route_context& context) { return make_text_response(context.request, status::ok, "one"); });
+   router.get("/items", [](route_context& context) -> boost::asio::awaitable<response> {
+      co_return make_text_response(context.request, status::ok, "one");
+   });
 
    BOOST_CHECK_THROW(
        router.get("/items",
-                  [](route_context& context) { return make_text_response(context.request, status::ok, "two"); }),
+                  [](route_context& context) -> boost::asio::awaitable<response> {
+                     co_return make_text_response(context.request, status::ok, "two");
+                  }),
        fcl::http::exceptions::conflict);
 }
 
@@ -474,7 +596,7 @@ BOOST_AUTO_TEST_CASE(http_api_binding_maps_custom_exception_to_native_status) {
    auto context = make_route_context(request);
    context.runtime = &runtime;
 
-   const auto response = router.handle(context);
+   const auto response = handle(router, context);
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::not_found));
    BOOST_TEST(response[field::content_type] == "application/json");
@@ -500,7 +622,7 @@ BOOST_AUTO_TEST_CASE(http_api_binding_populates_get_request_from_route_and_query
    auto context = make_route_context(request);
    context.runtime = &runtime;
 
-   const auto response = router.handle(context);
+   const auto response = handle(router, context);
    const auto response_bytes = fcl::api::bytes{response.body().begin(), response.body().end()};
    const auto unpacked = fcl::raw::unpack<api_chunk>(response_bytes);
 
@@ -524,7 +646,7 @@ BOOST_AUTO_TEST_CASE(http_api_binding_escapes_json_error_fields) {
    auto context = make_route_context(request);
    context.runtime = &runtime;
 
-   const auto response = router.handle(context);
+   const auto response = handle(router, context);
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::not_found));
    BOOST_TEST(response.body().find(R"(chunk \"missing\"\n\u0008\u0000not found)") != std::string::npos);
@@ -553,7 +675,7 @@ BOOST_AUTO_TEST_CASE(http_api_binding_passes_put_body_to_typed_api) {
    auto context = make_route_context(request);
    context.runtime = &runtime;
 
-   const auto response = router.handle(context);
+   const auto response = handle(router, context);
    const auto response_bytes = fcl::api::bytes{response.body().begin(), response.body().end()};
    const auto unpacked = fcl::raw::unpack<api_chunk>(response_bytes);
 
@@ -561,40 +683,127 @@ BOOST_AUTO_TEST_CASE(http_api_binding_passes_put_body_to_typed_api) {
    BOOST_TEST(unpacked.bytes == "from-put-body");
 }
 
+BOOST_AUTO_TEST_CASE(http_api_macro_describes_routes_for_fcl_api) {
+   const auto routes = fcl::http::http_api_traits<macro_cache>::routes();
+
+   BOOST_REQUIRE_EQUAL(routes.size(), 2U);
+   BOOST_TEST(routes[0].verb == method::get);
+   BOOST_TEST(routes[0].method_name == "read");
+   BOOST_TEST(routes[0].target == "/cache/chunks/:ref?offset={offset}&limit={limit}");
+   BOOST_TEST(routes[0].success_status == status::ok);
+   BOOST_TEST(routes[1].verb == method::put);
+   BOOST_TEST(routes[1].method_name == "write");
+   BOOST_TEST(routes[1].target == "/cache/chunks/:ref");
+   BOOST_TEST(routes[1].success_status == status::created);
+}
+
+BOOST_AUTO_TEST_CASE(http_api_macro_get_maps_route_and_query) {
+   auto runtime = fcl::asio::runtime{};
+   auto apis = fcl::api::registry{};
+   apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<macro_cache>().build();
+   router.mount(binding);
+
+   auto request = make_request(method::get, "/cache/chunks/abc?offset=7&limit=4096");
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+
+   const auto response = handle(router, context);
+   const auto response_bytes = fcl::api::bytes{response.body().begin(), response.body().end()};
+   const auto unpacked = fcl::api::unpack_body<macro_chunk>(response_bytes);
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(unpacked.bytes == "abc:7:4096");
+}
+
+BOOST_AUTO_TEST_CASE(http_api_macro_put_rejects_body_route_disagreement) {
+   auto runtime = fcl::asio::runtime{};
+   auto apis = fcl::api::registry{};
+   apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<macro_cache>().build();
+   router.mount(binding);
+
+   auto request = make_request(method::put, "/cache/chunks/abc");
+   const auto body = fcl::api::pack_body(macro_write_request{.ref = "other", .bytes = "payload"});
+   request.body().assign(body.begin(), body.end());
+   request.prepare_payload();
+
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+
+   const auto response = handle(router, context);
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::bad_request));
+   BOOST_TEST(response.body().find("disagrees") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(typed_http_client_supports_handle_methods) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<macro_cache>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   const auto port = wait_for_port(server);
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
+
+   auto cache = fcl::asio::blocking::run(runtime, fcl::http::remote<macro_cache>(client));
+   auto chunk = fcl::asio::blocking::run(
+      runtime, cache->read(macro_read_request{.ref = "abc", .offset = 3, .limit = 64}));
+   auto receipt = fcl::asio::blocking::run(
+      runtime, cache->write(macro_write_request{.ref = "abc", .bytes = "payload"}));
+
+   BOOST_TEST(chunk.bytes == "abc:3:64");
+   BOOST_TEST(receipt.bytes == "abc:payload");
+
+   server.stop();
+}
+
 BOOST_AUTO_TEST_CASE(middleware_runs_in_order_and_can_short_circuit) {
    auto router = fcl::http::router{};
    auto trace = std::make_shared<std::string>();
-   router.use([trace](route_context& context, next_handler next) {
+   router.use([trace](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
       *trace += "a>";
-      auto response = next();
+      auto response = co_await next();
       *trace += "<a";
-      return response;
+      co_return response;
    });
-   router.use([trace](route_context& context, next_handler next) {
+   router.use([trace](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
       static_cast<void>(context);
       *trace += "b>";
-      auto response = next();
+      auto response = co_await next();
       *trace += "<b";
-      return response;
+      co_return response;
    });
-   router.get("/ok", [](route_context& context) { return make_text_response(context.request, status::ok, "ok"); });
+   router.get("/ok", [](route_context& context) -> boost::asio::awaitable<response> {
+      co_return make_text_response(context.request, status::ok, "ok");
+   });
 
    auto ok_request = make_request(method::get, "/ok");
    auto ok_context = make_route_context(ok_request);
-   BOOST_TEST(router.handle(ok_context).body() == "ok");
+   BOOST_TEST(handle(router, ok_context).body() == "ok");
    BOOST_TEST(*trace == "a>b><b<a");
 
    auto short_router = fcl::http::router{};
-   short_router.use([](route_context& context, next_handler next) {
+   short_router.use([](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
       static_cast<void>(next);
-      return make_text_response(context.request, status::unauthorized, "nope");
+      co_return make_text_response(context.request, status::unauthorized, "nope");
    });
-   short_router.get("/secure", [](route_context& context) {
-      return make_text_response(context.request, status::ok, "unreachable");
+   short_router.get("/secure", [](route_context& context) -> boost::asio::awaitable<response> {
+      co_return make_text_response(context.request, status::ok, "unreachable");
    });
    auto secure_request = make_request(method::get, "/secure");
    auto secure_context = make_route_context(secure_request);
-   BOOST_TEST(short_router.handle(secure_context).result_int() == static_cast<unsigned>(status::unauthorized));
+   BOOST_TEST(handle(short_router, secure_context).result_int() == static_cast<unsigned>(status::unauthorized));
 }
 
 BOOST_AUTO_TEST_CASE(http_api_binding_mounts_ordered_middleware_contributions) {
@@ -612,12 +821,12 @@ BOOST_AUTO_TEST_CASE(http_api_binding_mounts_ordered_middleware_contributions) {
                           .order = 10,
                           .path_prefix = "/cache",
                           .handler =
-                              [trace](route_context& context, next_handler next) {
+                              [trace](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
                                  static_cast<void>(context);
                                  *trace += "limits>";
-                                 auto response = next();
+                                 auto response = co_await next();
                                  *trace += "<limits";
-                                 return response;
+                                 co_return response;
                               },
                       })
                       .middleware(fcl::http::middleware_descriptor{
@@ -626,12 +835,12 @@ BOOST_AUTO_TEST_CASE(http_api_binding_mounts_ordered_middleware_contributions) {
                           .order = 100,
                           .path_prefix = "/cache",
                           .handler =
-                              [trace](route_context& context, next_handler next) {
+                              [trace](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
                                  static_cast<void>(context);
                                  *trace += "auth>";
-                                 auto response = next();
+                                 auto response = co_await next();
                                  *trace += "<auth";
-                                 return response;
+                                 co_return response;
                               },
                       })
                       .get<&api_cache::read, api_read_chunk, api_chunk>("/cache/chunks/:ref")
@@ -643,7 +852,7 @@ BOOST_AUTO_TEST_CASE(http_api_binding_mounts_ordered_middleware_contributions) {
    auto request = make_request(method::get, "/cache/chunks/abc");
    auto context = make_route_context(request);
    context.runtime = &runtime;
-   const auto response = router.handle(context);
+   const auto response = handle(router, context);
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::not_found));
    BOOST_TEST(*trace == "auth>limits><limits<auth");
@@ -653,16 +862,18 @@ BOOST_AUTO_TEST_CASE(http_api_binding_rejects_duplicate_middleware_ids) {
    auto duplicate = fcl::http::api()
                         .middleware(fcl::http::middleware_descriptor{
                             .id = "auth",
-                            .handler = [](route_context& context, next_handler next) {
+                            .handler = [](route_context& context,
+                                          next_handler next) -> boost::asio::awaitable<response> {
                                static_cast<void>(context);
-                               return next();
+                               co_return co_await next();
                             },
                         })
                         .middleware(fcl::http::middleware_descriptor{
                             .id = "auth",
-                            .handler = [](route_context& context, next_handler next) {
+                            .handler = [](route_context& context,
+                                          next_handler next) -> boost::asio::awaitable<response> {
                                static_cast<void>(context);
-                               return next();
+                               co_return co_await next();
                             },
                         })
                         .build();
@@ -673,17 +884,18 @@ BOOST_AUTO_TEST_CASE(http_api_binding_rejects_duplicate_middleware_ids) {
 
 BOOST_AUTO_TEST_CASE(middleware_exceptions_return_500) {
    auto router = fcl::http::router{};
-   router.use([](route_context& context, next_handler next) -> response {
+   router.use([](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
       static_cast<void>(context);
       static_cast<void>(next);
       throw std::runtime_error("boom");
    });
-   router.get("/boom",
-              [](route_context& context) { return make_text_response(context.request, status::ok, "unreachable"); });
+   router.get("/boom", [](route_context& context) -> boost::asio::awaitable<response> {
+      co_return make_text_response(context.request, status::ok, "unreachable");
+   });
 
    auto request = make_request(method::get, "/boom");
    auto context = make_route_context(request);
-   BOOST_TEST(router.handle(context).result_int() == static_cast<unsigned>(status::internal_server_error));
+   BOOST_TEST(handle(router, context).result_int() == static_cast<unsigned>(status::internal_server_error));
 }
 
 BOOST_AUTO_TEST_CASE(client_roundtrips_over_local_server) {
@@ -694,10 +906,10 @@ BOOST_AUTO_TEST_CASE(client_roundtrips_over_local_server) {
    auto server = fcl::http::server{
        runtime,
        server_config{},
-       [seen_target, seen_body](route_context& context) {
+       [seen_target, seen_body](route_context& context) -> boost::asio::awaitable<response> {
           *seen_target = std::string{context.request.target()};
           *seen_body = context.request.body();
-          return make_json_response(context.request, R"({"ok":true})");
+          co_return make_json_response(context.request, R"({"ok":true})");
        },
    };
    server.start();
@@ -724,9 +936,9 @@ BOOST_AUTO_TEST_CASE(connection_reconnects_after_connection_close) {
    auto server = fcl::http::server{
        runtime,
        server_config{},
-       [request_count](route_context& context) {
+       [request_count](route_context& context) -> boost::asio::awaitable<response> {
           ++(*request_count);
-          return make_json_response(context.request, R"({"ok":true})");
+          co_return make_json_response(context.request, R"({"ok":true})");
        },
    };
    server.start();
@@ -754,7 +966,7 @@ BOOST_AUTO_TEST_CASE(connection_reconnects_after_connection_close) {
 }
 
 BOOST_AUTO_TEST_CASE(connection_retries_only_idempotent_requests_after_remote_close) {
-   auto retry_server = flaky_http_server{true};
+   auto retry_server = flaky_server{true};
    auto runtime = fcl::asio::runtime{};
    auto connection =
        fcl::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(retry_server.port()))};
@@ -769,7 +981,7 @@ BOOST_AUTO_TEST_CASE(connection_retries_only_idempotent_requests_after_remote_cl
    BOOST_CHECK_EQUAL(connection.metrics().retry_attempts, 1U);
    BOOST_CHECK_EQUAL(connection.metrics().completed_requests, 1U);
 
-   auto no_retry_server = flaky_http_server{false};
+   auto no_retry_server = flaky_server{false};
    auto no_retry_connection =
        fcl::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(no_retry_server.port()))};
    auto post_request = make_request(method::post, "/mutation");
@@ -788,9 +1000,9 @@ BOOST_AUTO_TEST_CASE(connection_serializes_concurrent_requests) {
    auto server = fcl::http::server{
        runtime,
        server_config{},
-       [request_count](route_context& context) {
+       [request_count](route_context& context) -> boost::asio::awaitable<response> {
           ++(*request_count);
-          return make_json_response(context.request, R"({"ok":true})");
+          co_return make_json_response(context.request, R"({"ok":true})");
        },
    };
    server.start();
@@ -808,10 +1020,12 @@ BOOST_AUTO_TEST_CASE(connection_serializes_concurrent_requests) {
    server.stop();
 }
 
-BOOST_AUTO_TEST_CASE(websocket_echo_shares_http_server_port) {
+BOOST_AUTO_TEST_CASE(websocket_echo_shares_server_port) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
    auto router = fcl::http::router{};
-   router.get("/health", [](route_context& context) { return make_text_response(context.request, status::ok, "ok"); });
+   router.get("/health", [](route_context& context) -> boost::asio::awaitable<response> {
+      co_return make_text_response(context.request, status::ok, "ok");
+   });
    router.websocket("/ws", [](fcl::websocket::connection::ptr connection) {
       connection->on_message(
           [](fcl::websocket::connection& connection, std::string message) -> boost::asio::awaitable<void> {

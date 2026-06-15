@@ -1,5 +1,6 @@
 #pragma once
 
+#include <boost/preprocessor/cat.hpp>
 #include <boost/preprocessor/seq/for_each.hpp>
 #include <boost/preprocessor/stringize.hpp>
 #include <boost/preprocessor/tuple/elem.hpp>
@@ -9,24 +10,53 @@
 #include <utility>
 #include <vector>
 
-#define FCL_HTTP_GET(NAME, TARGET) (get, NAME, TARGET, ok)
-#define FCL_HTTP_POST(NAME, TARGET, STATUS) (post, NAME, TARGET, STATUS)
-#define FCL_HTTP_PUT(NAME, TARGET, STATUS) (put, NAME, TARGET, STATUS)
-#define FCL_HTTP_PATCH(NAME, TARGET, STATUS) (patch, NAME, TARGET, STATUS)
-#define FCL_HTTP_DELETE(NAME, TARGET, STATUS) (delete_, NAME, TARGET, STATUS)
+#define FCL_HTTP_DETAIL_OPTION_KIND(OPTION) BOOST_PP_TUPLE_ELEM(3, 0, OPTION)
+#define FCL_HTTP_DETAIL_OPTION_APPLY_header(OPTION)                                                                 \
+   .header(BOOST_PP_STRINGIZE(BOOST_PP_TUPLE_ELEM(3, 1, OPTION)), BOOST_PP_TUPLE_ELEM(3, 2, OPTION))
+#define FCL_HTTP_DETAIL_OPTION_APPLY_form(OPTION)                                                                   \
+   .form(BOOST_PP_STRINGIZE(BOOST_PP_TUPLE_ELEM(3, 1, OPTION)), BOOST_PP_TUPLE_ELEM(3, 2, OPTION))
+#define FCL_HTTP_DETAIL_OPTION_APPLY_body_stream(OPTION)                                                            \
+   .body_stream(BOOST_PP_STRINGIZE(BOOST_PP_TUPLE_ELEM(3, 1, OPTION)))
+#define FCL_HTTP_DETAIL_OPTION_APPLY_response_file(OPTION) .response_file()
+#define FCL_HTTP_DETAIL_OPTION_APPLY(r, DATA, OPTION)                                                               \
+   BOOST_PP_CAT(FCL_HTTP_DETAIL_OPTION_APPLY_, FCL_HTTP_DETAIL_OPTION_KIND(OPTION))(OPTION)
+#define FCL_HTTP_DETAIL_OPTIONS(...)                                                                                \
+   __VA_OPT__(BOOST_PP_SEQ_FOR_EACH(FCL_HTTP_DETAIL_OPTION_APPLY, _, BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__)))
 
-#define FCL_HTTP_DETAIL_VERB(ROUTE) BOOST_PP_TUPLE_ELEM(4, 0, ROUTE)
-#define FCL_HTTP_DETAIL_METHOD(ROUTE) BOOST_PP_TUPLE_ELEM(4, 1, ROUTE)
-#define FCL_HTTP_DETAIL_TARGET(ROUTE) BOOST_PP_TUPLE_ELEM(4, 2, ROUTE)
-#define FCL_HTTP_DETAIL_STATUS(ROUTE) BOOST_PP_TUPLE_ELEM(4, 3, ROUTE)
+#define FCL_HTTP_GET(NAME, TARGET, ...)                                                                             \
+   (NAME, (::fcl::http::api_route_builder{::fcl::http::method::get, BOOST_PP_STRINGIZE(NAME), TARGET,               \
+                                          ::fcl::http::status::ok} FCL_HTTP_DETAIL_OPTIONS(__VA_ARGS__))             \
+             .build())
+#define FCL_HTTP_HEAD(NAME, TARGET, ...)                                                                            \
+   (NAME, (::fcl::http::api_route_builder{::fcl::http::method::head, BOOST_PP_STRINGIZE(NAME), TARGET,              \
+                                          ::fcl::http::status::ok} FCL_HTTP_DETAIL_OPTIONS(__VA_ARGS__))             \
+             .build())
+#define FCL_HTTP_POST(NAME, TARGET, STATUS, ...)                                                                    \
+   (NAME, (::fcl::http::api_route_builder{::fcl::http::method::post, BOOST_PP_STRINGIZE(NAME), TARGET,              \
+                                          ::fcl::http::status::STATUS} FCL_HTTP_DETAIL_OPTIONS(__VA_ARGS__))         \
+             .build())
+#define FCL_HTTP_PUT(NAME, TARGET, STATUS, ...)                                                                     \
+   (NAME, (::fcl::http::api_route_builder{::fcl::http::method::put, BOOST_PP_STRINGIZE(NAME), TARGET,               \
+                                          ::fcl::http::status::STATUS} FCL_HTTP_DETAIL_OPTIONS(__VA_ARGS__))         \
+             .build())
+#define FCL_HTTP_PATCH(NAME, TARGET, STATUS, ...)                                                                   \
+   (NAME, (::fcl::http::api_route_builder{::fcl::http::method::patch, BOOST_PP_STRINGIZE(NAME), TARGET,             \
+                                          ::fcl::http::status::STATUS} FCL_HTTP_DETAIL_OPTIONS(__VA_ARGS__))         \
+             .build())
+#define FCL_HTTP_DELETE(NAME, TARGET, STATUS, ...)                                                                  \
+   (NAME, (::fcl::http::api_route_builder{::fcl::http::method::delete_, BOOST_PP_STRINGIZE(NAME), TARGET,           \
+                                          ::fcl::http::status::STATUS} FCL_HTTP_DETAIL_OPTIONS(__VA_ARGS__))         \
+             .build())
 
-#define FCL_HTTP_DETAIL_ROUTE(ROUTE)                                                                                \
-   ::fcl::http::api_route {                                                                                         \
-      .verb = ::fcl::http::method::FCL_HTTP_DETAIL_VERB(ROUTE),                                                      \
-      .method_name = BOOST_PP_STRINGIZE(FCL_HTTP_DETAIL_METHOD(ROUTE)),                                              \
-      .target = FCL_HTTP_DETAIL_TARGET(ROUTE),                                                                       \
-      .success_status = ::fcl::http::status::FCL_HTTP_DETAIL_STATUS(ROUTE),                                          \
-   }
+#define FCL_HTTP_HEADER(FIELD, NAME) (header, FIELD, NAME)
+#define FCL_HTTP_FORM(FIELD, NAME) (form, FIELD, NAME)
+#define FCL_HTTP_BODY_STREAM(FIELD) (body_stream, FIELD, _)
+#define FCL_HTTP_RESPONSE_FILE (response_file, _, _)
+
+#define FCL_HTTP_DETAIL_METHOD(ROUTE) BOOST_PP_TUPLE_ELEM(2, 0, ROUTE)
+#define FCL_HTTP_DETAIL_ROUTE_VALUE(ROUTE) BOOST_PP_TUPLE_ELEM(2, 1, ROUTE)
+
+#define FCL_HTTP_DETAIL_ROUTE(ROUTE) FCL_HTTP_DETAIL_ROUTE_VALUE(ROUTE)
 
 #define FCL_HTTP_DETAIL_ROUTE_ENTRY(r, INTERFACE, ROUTE) FCL_HTTP_DETAIL_ROUTE(ROUTE),
 

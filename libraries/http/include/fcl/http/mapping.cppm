@@ -23,11 +23,56 @@ import fcl.reflect.reflect;
 
 export namespace fcl::http {
 
+struct api_field_binding {
+   std::string field;
+   std::string name;
+};
+
 struct api_route {
    method verb = method::get;
    std::string method_name;
    std::string target;
    status success_status = status::ok;
+   std::vector<api_field_binding> headers;
+   std::vector<api_field_binding> forms;
+   std::optional<std::string> body_stream_field;
+   bool response_file = false;
+};
+
+class api_route_builder {
+ public:
+   api_route_builder(method verb, std::string method_name, std::string target, status success_status)
+       : route_{.verb = verb,
+                .method_name = std::move(method_name),
+                .target = std::move(target),
+                .success_status = success_status} {}
+
+   api_route_builder&& header(std::string field, std::string name) && {
+      route_.headers.push_back(api_field_binding{.field = std::move(field), .name = std::move(name)});
+      return std::move(*this);
+   }
+
+   api_route_builder&& form(std::string field, std::string name) && {
+      route_.forms.push_back(api_field_binding{.field = std::move(field), .name = std::move(name)});
+      return std::move(*this);
+   }
+
+   api_route_builder&& body_stream(std::string field) && {
+      route_.body_stream_field = std::move(field);
+      return std::move(*this);
+   }
+
+   api_route_builder&& response_file() && {
+      route_.response_file = true;
+      return std::move(*this);
+   }
+
+   [[nodiscard]] api_route build() && {
+      return std::move(route_);
+   }
+
+ private:
+   api_route route_;
 };
 
 struct parsed_api_route {

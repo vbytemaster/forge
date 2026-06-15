@@ -28,8 +28,8 @@ Each official plugin exposes focused slice modules:
 - `fcl.plugins.<name>.types` — config, options and value DTOs.
 - `fcl.plugins.<name>.exceptions` — typed exception category and aliases.
 
-Available plugin names are `http_server`, `p2p_node`, `p2p_api_resolver`,
-`p2p_diagnostics`, `p2p_pubsub` and `signature_provider`.
+Available plugin names are `p2p_node`, `p2p_api_resolver`, `p2p_diagnostics`,
+`p2p_pubsub` and `signature_provider`.
 
 Do not import a root or per-plugin aggregate module; those files are not part of
 the public module surface. Use the explicit slice module and link the matching
@@ -47,127 +47,17 @@ auto direct = fcl::plugins::signature_provider::plugin{};
 
 Aggregate target: `fcl_plugins`.
 
-Focused targets: `fcl_plugin_signature_provider`, `fcl_plugin_http_server`,
-`fcl_plugin_p2p_node`, `fcl_plugin_p2p_api_resolver`,
-`fcl_plugin_p2p_diagnostics` and `fcl_plugin_p2p_pubsub`.
+Focused targets: `fcl_plugin_signature_provider`, `fcl_plugin_p2p_node`,
+`fcl_plugin_p2p_api_resolver`, `fcl_plugin_p2p_diagnostics` and
+`fcl_plugin_p2p_pubsub`.
 
 Dependencies are intentionally narrow per plugin. `signature_provider` does not
-depend on P2P; `http_server` depends on the HTTP/API/app layers; and
-`p2p_api_resolver`, `p2p_diagnostics` and `p2p_pubsub` compose through
-`fcl_plugin_p2p_node`.
+depend on P2P; `p2p_api_resolver`, `p2p_diagnostics` and `p2p_pubsub` compose
+through `fcl_plugin_p2p_node`.
 
-## HTTP Server Plugin
-
-`http_server` starts one `fcl_http` server through the application lifecycle and
-publishes local-only APIs for application plugins to contribute typed HTTP API
-bindings, middleware, static file routes and upload routes before startup. It is
-the app-level wrapper around the HTTP foundation; it is not a diagnostics
-endpoint, admin server, auth policy, CORS framework or raw route registry.
-
-Config section `http-server` owns the listen address, default API base path and
-server guardrails:
-
-```yaml
-http-server:
-  bind-address: 127.0.0.1
-  port: 8080
-  api-base-path: /api/v1
-  max-request-body-bytes: 16777216
-  max-header-bytes: 65536
-  read-timeout-ms: 30000
-  idle-timeout-ms: 120000
-```
-
-Register the infrastructure plugin first:
-
-```cpp
-registry.register_plugin(fcl::plugins::http_server::descriptor());
-```
-
-Application plugins contribute typed HTTP APIs through the publisher API. Empty
-`base_path` uses the configured `api-base-path`; `/` mounts at root; any other
-value is normalized as an absolute prefix.
-
-```cpp
-class cache_http_routes final : public fcl::app::plugin {
- public:
-   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
-      auto publisher = context.apis().get<fcl::plugins::http_server::publisher>(
-         {.id = {"fcl.plugins.http_server.publisher"}, .major = 1});
-
-      auto plan = fcl::api::binding()
-         .serve(context.apis())
-         .export_api<cache_api>(cache_api::ref())
-         .build();
-
-      publisher->publish<cache_api>(
-         std::move(plan),
-         fcl::plugins::http_server::publish_options{});
-
-      co_return;
-   }
-};
-```
-
-Middleware is contributed through a separate local API so products can keep
-cross-cutting HTTP behavior in focused plugins without exposing direct router
-mutation:
-
-```cpp
-auto middleware = context.apis().get<fcl::plugins::http_server::middleware>(
-   {.id = {"fcl.plugins.http_server.middleware"}, .major = 1});
-
-middleware->use(fcl::http::middleware_descriptor{
-   .id = "cache.request-id",
-   .phase = fcl::http::middleware_phase::observability,
-   .order = 100,
-   .handler = [](fcl::http::route_context& ctx, fcl::http::next_handler next)
-      -> boost::asio::awaitable<fcl::http::response> {
-      attach_request_id(ctx.request);
-      co_return co_await next();
-   },
-});
-```
-
-Static files and uploads are contributed through their own local APIs. They use
-the `fcl_http` file/upload helpers under the hood, so application plugins do not
-need raw route access.
-
-```cpp
-auto files = context.apis().get<fcl::plugins::http_server::file_publisher>(
-   {.id = {"fcl.plugins.http_server.file_publisher"}, .major = 1});
-
-files->publish(fcl::plugins::http_server::file_publication{
-   .root = "/srv/cache-public",
-   .route_path = "/files/:name",
-   .path_parameter = "name",
-   .options = fcl::http::file_options{
-      .content_type = "application/octet-stream",
-   },
-});
-
-auto uploads = context.apis().get<fcl::plugins::http_server::upload_publisher>(
-   {.id = {"fcl.plugins.http_server.upload_publisher"}, .major = 1});
-
-uploads->publish(fcl::plugins::http_server::upload_publication{
-   .route_path = "/upload",
-   .options = fcl::http::upload_options{
-      .memory_threshold_bytes = 1 * 1024 * 1024,
-      .max_file_bytes = 64 * 1024 * 1024,
-   },
-   .handler = [](fcl::plugins::http_server::upload_request& req)
-      -> boost::asio::awaitable<fcl::http::stream_response> {
-      auto part = co_await req.upload.async_read();
-      store_upload(part);
-      co_return fcl::http::stream_response::buffered(
-         fcl::http::make_text_response(req.context.request, fcl::http::status::ok, "stored"));
-   },
-});
-```
-
-Publishing, middleware, file and upload registration close at plugin startup.
-Late contributions fail with `http_server::exceptions::publication_closed`,
-which keeps the running router immutable and deterministic.
+`fcl_http` is currently a library-level framework surface. The official HTTP
+server plugin is intentionally parked until the typed HTTP binding API is stable,
+so plugin docs do not expose HTTP host publication contracts yet.
 
 ## Signature Provider Plugin
 

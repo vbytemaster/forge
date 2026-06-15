@@ -45,6 +45,7 @@ import fcl.asio.blocking;
 import fcl.asio.runtime;
 import fcl.http.api;
 import fcl.http.base_url;
+import fcl.http.binding;
 import fcl.http.body;
 import fcl.http.client;
 import fcl.http.connection;
@@ -61,7 +62,7 @@ import fcl.http.stream;
 import fcl.http.target;
 import fcl.http.types;
 import fcl.http.upload;
-import fcl.raw.raw;
+import fcl.json;
 import fcl.websocket.client;
 import fcl.websocket.connection;
 import fcl.websocket.exceptions;
@@ -111,12 +112,34 @@ struct macro_chunk {
    std::string bytes;
 };
 
+struct object_put_request {
+   std::string collection;
+   std::string key;
+   fcl::http::header<std::string> content_type;
+   fcl::http::header<std::string> digest;
+   fcl::http::body_stream body;
+};
+
+struct object_put_response {
+   std::uint64_t bytes = 0;
+   std::string content_type;
+   std::string content_md5;
+};
+
+struct object_get_request {
+   std::string collection;
+   std::string key;
+};
+
 BOOST_DESCRIBE_STRUCT(api_read_chunk, (), ())
 BOOST_DESCRIBE_STRUCT(api_routed_read_chunk, (), (ref, offset, limit))
 BOOST_DESCRIBE_STRUCT(api_chunk, (), (bytes))
 BOOST_DESCRIBE_STRUCT(macro_read_request, (), (ref, offset, limit))
 BOOST_DESCRIBE_STRUCT(macro_write_request, (), (ref, bytes))
 BOOST_DESCRIBE_STRUCT(macro_chunk, (), (bytes))
+BOOST_DESCRIBE_STRUCT(object_put_request, (), (collection, key, content_type, digest, body))
+BOOST_DESCRIBE_STRUCT(object_put_response, (), (bytes, content_type, content_md5))
+BOOST_DESCRIBE_STRUCT(object_get_request, (), (collection, key))
 
 class api_cache : public fcl::api::contract<api_cache, fcl::api::surface::local | fcl::api::surface::remote> {
  public:
@@ -135,15 +158,38 @@ class macro_cache : public fcl::api::contract<macro_cache, fcl::api::surface::lo
    virtual boost::asio::awaitable<macro_chunk> write(macro_write_request request) = 0;
 };
 
+class object_api : public fcl::api::contract<object_api> {
+ public:
+   virtual ~object_api() = default;
+
+   virtual boost::asio::awaitable<object_put_response> put_object(object_put_request request) = 0;
+   virtual boost::asio::awaitable<fcl::http::file_response> get_object(object_get_request request) = 0;
+   virtual boost::asio::awaitable<fcl::http::file_response> head_object(object_get_request request) = 0;
+};
+
 } // namespace test_api
 } // namespace fcl::http
 
 FCL_API(::fcl::http::test_api::macro_cache, FCL_API_CONTRACT("cache.macro", 1, 0), FCL_API_METHOD(read),
         FCL_API_METHOD(write))
 
+FCL_API(::fcl::http::test_api::object_api, FCL_API_CONTRACT("object", 1, 0),
+        FCL_API_METHOD_TYPED(put_object, ::fcl::http::test_api::object_put_request,
+                             ::fcl::http::test_api::object_put_response),
+        FCL_API_METHOD_TYPED(get_object, ::fcl::http::test_api::object_get_request, ::fcl::http::file_response),
+        FCL_API_METHOD_TYPED(head_object, ::fcl::http::test_api::object_get_request, ::fcl::http::file_response))
+
 FCL_HTTP_API(::fcl::http::test_api::macro_cache,
              FCL_HTTP_GET(read, "/cache/chunks/:ref?offset={offset}&limit={limit}"),
              FCL_HTTP_PUT(write, "/cache/chunks/:ref", created))
+
+FCL_HTTP_API(::fcl::http::test_api::object_api,
+             FCL_HTTP_PUT(put_object, "/objects/:collection/:key", created,
+                           FCL_HTTP_BODY_STREAM(body),
+                           FCL_HTTP_HEADER(content_type, "Content-Type"),
+                           FCL_HTTP_HEADER(digest, "Content-MD5")),
+             FCL_HTTP_GET(get_object, "/objects/:collection/:key", FCL_HTTP_RESPONSE_FILE),
+             FCL_HTTP_HEAD(head_object, "/objects/:collection/:key", FCL_HTTP_RESPONSE_FILE))
 
 namespace fcl::api {
 
@@ -193,6 +239,10 @@ using test_api::macro_cache;
 using test_api::macro_chunk;
 using test_api::macro_read_request;
 using test_api::macro_write_request;
+using test_api::object_api;
+using test_api::object_get_request;
+using test_api::object_put_request;
+using test_api::object_put_response;
 
 [[nodiscard]] fcl::api::descriptor api_cache_descriptor() {
    return api_cache::describe();
@@ -254,6 +304,42 @@ class macro_cache_impl final : public macro_cache {
    boost::asio::awaitable<macro_chunk> write(macro_write_request request) override {
       co_return macro_chunk{.bytes = request.ref + ":" + request.bytes};
    }
+};
+
+class object_api_impl final : public object_api {
+ public:
+   explicit object_api_impl(std::filesystem::path root) : root_{std::move(root)} {}
+
+   boost::asio::awaitable<object_put_response> put_object(object_put_request request) override {
+      auto body = co_await request.body.async_read_all();
+      auto path = object_path(request.collection, request.key);
+      std::filesystem::create_directories(path.parent_path());
+      auto output = std::ofstream{path, std::ios::binary};
+      output << body;
+      co_return object_put_response{
+         .bytes = static_cast<std::uint64_t>(body.size()),
+         .content_type = request.content_type.present ? request.content_type.value : std::string{},
+         .content_md5 = request.digest.present ? request.digest.value : std::string{},
+      };
+   }
+
+   boost::asio::awaitable<fcl::http::file_response> get_object(object_get_request request) override {
+      co_return fcl::http::file_response{
+         .path = object_path(request.collection, request.key),
+         .options = fcl::http::file_options{.content_type = "application/octet-stream"},
+      };
+   }
+
+   boost::asio::awaitable<fcl::http::file_response> head_object(object_get_request request) override {
+      co_return co_await get_object(std::move(request));
+   }
+
+ private:
+   [[nodiscard]] std::filesystem::path object_path(const std::string& collection, const std::string& key) const {
+      return root_ / collection / key;
+   }
+
+   std::filesystem::path root_;
 };
 
 std::uint16_t wait_for_port(const server& server) {
@@ -705,11 +791,11 @@ BOOST_AUTO_TEST_CASE(http_api_binding_populates_get_request_from_route_and_query
    context.runtime = &runtime;
 
    const auto response = handle(router, context);
-   const auto response_bytes = fcl::api::bytes{response.body().begin(), response.body().end()};
-   const auto unpacked = fcl::raw::unpack<api_chunk>(response_bytes);
+   const auto unpacked = fcl::json::read<api_chunk>(response.body());
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
-   BOOST_TEST(unpacked.bytes == "abc:7:4096");
+   BOOST_REQUIRE(unpacked.ok());
+   BOOST_TEST(unpacked.value.bytes == "abc:7:4096");
 }
 
 BOOST_AUTO_TEST_CASE(http_api_binding_escapes_json_error_fields) {
@@ -750,19 +836,19 @@ BOOST_AUTO_TEST_CASE(http_api_binding_passes_put_body_to_typed_api) {
    router.mount(binding);
 
    auto request = make_request(method::put, "/cache/chunks/abc");
-   const auto body = fcl::raw::pack(api_chunk{.bytes = "from-put-body"});
-   request.body().assign(body.begin(), body.end());
+   request.set(field::content_type, "application/json");
+   request.body() = R"({"bytes":"from-put-body"})";
    request.prepare_payload();
 
    auto context = make_route_context(request);
    context.runtime = &runtime;
 
    const auto response = handle(router, context);
-   const auto response_bytes = fcl::api::bytes{response.body().begin(), response.body().end()};
-   const auto unpacked = fcl::raw::unpack<api_chunk>(response_bytes);
+   const auto unpacked = fcl::json::read<api_chunk>(response.body());
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
-   BOOST_TEST(unpacked.bytes == "from-put-body");
+   BOOST_REQUIRE(unpacked.ok());
+   BOOST_TEST(unpacked.value.bytes == "from-put-body");
 }
 
 BOOST_AUTO_TEST_CASE(http_api_macro_describes_routes_for_fcl_api) {
@@ -793,11 +879,11 @@ BOOST_AUTO_TEST_CASE(http_api_macro_get_maps_route_and_query) {
    context.runtime = &runtime;
 
    const auto response = handle(router, context);
-   const auto response_bytes = fcl::api::bytes{response.body().begin(), response.body().end()};
-   const auto unpacked = fcl::api::unpack_body<macro_chunk>(response_bytes);
+   const auto unpacked = fcl::json::read<macro_chunk>(response.body());
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
-   BOOST_TEST(unpacked.bytes == "abc:7:4096");
+   BOOST_REQUIRE(unpacked.ok());
+   BOOST_TEST(unpacked.value.bytes == "abc:7:4096");
 }
 
 BOOST_AUTO_TEST_CASE(http_api_macro_put_rejects_body_route_disagreement) {
@@ -810,8 +896,8 @@ BOOST_AUTO_TEST_CASE(http_api_macro_put_rejects_body_route_disagreement) {
    router.mount(binding);
 
    auto request = make_request(method::put, "/cache/chunks/abc");
-   const auto body = fcl::api::pack_body(macro_write_request{.ref = "other", .bytes = "payload"});
-   request.body().assign(body.begin(), body.end());
+   request.set(field::content_type, "application/json");
+   request.body() = R"({"ref":"other","bytes":"payload"})";
    request.prepare_payload();
 
    auto context = make_route_context(request);
@@ -819,8 +905,56 @@ BOOST_AUTO_TEST_CASE(http_api_macro_put_rejects_body_route_disagreement) {
 
    const auto response = handle(router, context);
 
-   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::bad_request));
+   BOOST_TEST(response.result_int() == 422U);
    BOOST_TEST(response.body().find("disagrees") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(http_api_macro_put_rejects_unsupported_media_type) {
+   auto runtime = fcl::asio::runtime{};
+   auto apis = fcl::api::registry{};
+   apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<macro_cache>().build();
+   router.mount(binding);
+
+   auto request = make_request(method::put, "/cache/chunks/abc");
+   request.set(field::content_type, "application/octet-stream");
+   request.body() = "payload";
+   request.prepare_payload();
+
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+
+   const auto response = handle(router, context);
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::unsupported_media_type));
+   BOOST_TEST(response[field::content_type] == "application/json");
+   BOOST_TEST(response.body().find("unsupported_media_type") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(http_api_macro_put_reports_invalid_json_as_validation_error) {
+   auto runtime = fcl::asio::runtime{};
+   auto apis = fcl::api::registry{};
+   apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<macro_cache>().build();
+   router.mount(binding);
+
+   auto request = make_request(method::put, "/cache/chunks/abc");
+   request.set(field::content_type, "application/json");
+   request.body() = R"({"ref":"abc","bytes":)";
+   request.prepare_payload();
+
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+
+   const auto response = handle(router, context);
+
+   BOOST_TEST(response.result_int() == 422U);
+   BOOST_TEST(response[field::content_type] == "application/json");
+   BOOST_TEST(response.body().find("validation_error") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(typed_http_client_supports_handle_methods) {
@@ -846,6 +980,56 @@ BOOST_AUTO_TEST_CASE(typed_http_client_supports_handle_methods) {
 
    BOOST_TEST(chunk.bytes == "abc:3:64");
    BOOST_TEST(receipt.bytes == "abc:payload");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_api_special_types_support_streaming_put_and_file_get) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto files = temp_directory{};
+   auto apis = fcl::api::registry{};
+   apis.install<object_api>(object_api::describe(), std::make_shared<object_api_impl>(files.path()));
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<object_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   const auto port = wait_for_port(server);
+   auto connection = fcl::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
+   auto put_request = request{};
+   put_request.method(method::put);
+   put_request.target("/objects/cache/chunk.bin");
+   put_request.version(11);
+   put_request.set(field::content_type, "application/octet-stream");
+   put_request.set("Content-MD5", "checksum");
+   put_request.body() = std::string(96 * 1024, 'x');
+   put_request.prepare_payload();
+
+   const auto put_response = fcl::asio::blocking::run(runtime, connection.async_request(std::move(put_request)));
+   const auto put_body = fcl::json::read<object_put_response>(put_response.body());
+   BOOST_TEST(put_response.result_int() == static_cast<unsigned>(status::created));
+   BOOST_REQUIRE(put_body.ok());
+   BOOST_TEST(put_body.value.bytes == 96U * 1024U);
+   BOOST_TEST(put_body.value.content_type == "application/octet-stream");
+   BOOST_TEST(put_body.value.content_md5 == "checksum");
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
+   const auto get_response =
+      fcl::asio::blocking::run(runtime, client.async_get("/objects/cache/chunk.bin"));
+   BOOST_TEST(get_response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(get_response.body().size() == 96U * 1024U);
+   BOOST_TEST(std::string{get_response[field::content_type]} == "application/octet-stream");
+
+   auto head_request = make_request(method::head, "/objects/cache/chunk.bin");
+   const auto head_response =
+      fcl::asio::blocking::run(runtime, connection.async_request(std::move(head_request)));
+   BOOST_TEST(head_response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(head_response.body().empty());
+   BOOST_TEST(head_response[field::content_length] == std::to_string(96U * 1024U));
+   BOOST_TEST(head_response[field::accept_ranges] == "bytes");
 
    server.stop();
 }
@@ -971,11 +1155,11 @@ BOOST_AUTO_TEST_CASE(http_api_binding_mounts_under_base_path) {
    context.runtime = &runtime;
 
    const auto response = handle(router, context);
-   const auto response_bytes = fcl::api::bytes{response.body().begin(), response.body().end()};
-   const auto unpacked = fcl::api::unpack_body<macro_chunk>(response_bytes);
+   const auto unpacked = fcl::json::read<macro_chunk>(response.body());
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
-   BOOST_TEST(unpacked.bytes == "abc:7:4096");
+   BOOST_REQUIRE(unpacked.ok());
+   BOOST_TEST(unpacked.value.bytes == "abc:7:4096");
    BOOST_TEST(*trace == "limit><limit");
 
    auto unprefixed_request = make_request(method::get, "/cache/chunks/abc?offset=7&limit=4096");

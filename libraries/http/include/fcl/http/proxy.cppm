@@ -17,10 +17,12 @@ import fcl.api.connection;
 import fcl.api.descriptor;
 import fcl.api.error_projection;
 export import fcl.api.handle;
+import fcl.http.binding;
 export import fcl.http.client;
 import fcl.http.exceptions;
 export import fcl.http.mapping;
 import fcl.http.types;
+import fcl.json;
 
 export namespace fcl::http {
 
@@ -132,9 +134,17 @@ boost::asio::awaitable<Response> call(client& target, const fcl::api::descriptor
    auto body = std::string{};
    auto content_type = std::string_view{};
    if (uses_request_body(route.verb)) {
-      auto bytes = fcl::api::pack_body(value);
-      body.assign(bytes.begin(), bytes.end());
-      content_type = "application/octet-stream";
+      if constexpr (detail::request_needs_stream_v<Request>) {
+         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                             "typed HTTP client streaming request writer is not available for this API method");
+      } else {
+         auto encoded = fcl::json::write(value);
+         if (!encoded.ok()) {
+            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API request cannot be encoded as JSON");
+         }
+         body = std::move(encoded.text);
+         content_type = "application/json";
+      }
    }
 
    auto response_value =
@@ -144,15 +154,25 @@ boost::asio::awaitable<Response> call(client& target, const fcl::api::descriptor
       fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
    }
 
-   auto bytes = fcl::api::bytes{response_value.body().begin(), response_value.body().end()};
-   co_return fcl::api::unpack_body<Response>(bytes);
+   if constexpr (detail::response_needs_stream_v<Response>) {
+      FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                          "typed HTTP client streaming response reader is not available for this API method");
+   } else {
+      auto decoded = fcl::json::read<Response>(response_value.body(),
+                                               fcl::json::read_options{.source_name = "http.response",
+                                                                       .unknown_fields =
+                                                                          fcl::json::unknown_field_policy::error});
+      if (!decoded.ok()) {
+         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API response JSON is invalid");
+      }
+      co_return std::move(decoded.value);
+   }
 }
 
 } // namespace detail
 
 template <typename Interface>
 boost::asio::awaitable<fcl::api::handle<Interface>> remote(client& value) {
-   static_assert(fcl::api::remote_interface<Interface>, "Interface must opt in to fcl::api::surface::remote");
    co_return fcl::api::handle<Interface>{std::make_shared<proxy<Interface>>(value)};
 }
 

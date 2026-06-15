@@ -5,9 +5,10 @@ streaming body primitives, routing, middleware, server and client/connection
 primitives. It uses Boost.Beast/URL internally but keeps FCL-owned route and
 lifecycle semantics.
 
-Application-level server lifecycle is usually owned by
-`fcl.plugins.http_server.plugin`; use the library directly when building a custom
-HTTP host or testing route/middleware behavior without the app plugin layer.
+Application-level server lifecycle is library-owned in this slice. The official
+HTTP server plugin is parked until the typed HTTP binding surface is stable; use
+the library directly when building an HTTP host or testing route/middleware
+behavior.
 
 ## When To Use
 
@@ -41,8 +42,8 @@ HTTP host or testing route/middleware behavior without the app plugin layer.
 
 Target: `fcl_http`.
 
-Dependencies: `fcl_asio`, `fcl_websocket`, Boost.Asio, Boost.Beast, Boost.URL,
-OpenSSL.
+Dependencies: `fcl_asio`, `fcl_websocket`, `fcl_json`, `fcl_schema`,
+Boost.Asio, Boost.Beast, Boost.URL, OpenSSL.
 
 ## Examples
 
@@ -254,8 +255,8 @@ auto binding = fcl::http::api()
 router.mount(binding);
 ```
 
-HTTP stays HTTP: route/path/status semantics remain native. Message-oriented
-`fcl::api::frame` is not required as the HTTP body.
+HTTP stays HTTP: route/path/status semantics remain native. The transport does
+not wrap typed calls in a message-frame body.
 
 ### Add Middleware
 

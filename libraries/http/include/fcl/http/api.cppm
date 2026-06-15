@@ -1,12 +1,15 @@
 module;
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/describe.hpp>
+#include <boost/mp11.hpp>
 #include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <cerrno>
 #include <charconv>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <optional>
@@ -28,22 +31,21 @@ import fcl.api.handle;
 import fcl.api.connection;
 import fcl.api.registry;
 import fcl.api.binding;
-import fcl.api.dispatcher;
 import fcl.http.exceptions;
+import fcl.http.body;
+import fcl.http.binding;
+import fcl.http.file;
 export import fcl.http.mapping;
 import fcl.http.middleware;
 import fcl.http.router;
 import fcl.http.route_context;
+import fcl.http.stream;
 import fcl.http.types;
-import fcl.raw.raw;
+import fcl.http.upload;
+import fcl.json;
 import fcl.reflect.reflect;
 
 export namespace fcl::http {
-
-enum class body_codec {
-   raw,
-   json,
-};
 
 enum class api_error_profile {
    json,
@@ -51,7 +53,9 @@ enum class api_error_profile {
 
 struct api_route_options {
    std::vector<std::string> query;
-   body_codec body = body_codec::raw;
+   std::vector<api_field_binding> headers;
+   std::vector<api_field_binding> forms;
+   std::optional<std::string> body_stream_field;
    status success_status = status::ok;
    api_error_profile error_profile = api_error_profile::json;
 };
@@ -86,25 +90,25 @@ class api_builder {
 
    template <auto Method, typename Request, typename Response>
    api_builder& get(std::string path, api_route_options options = {}) {
-      steps_.push_back(make_step<Method, Request, Response>(method::get, std::move(path), std::move(options)));
+      steps_.push_back(make_step<Method, Request, Response>(method::get, std::move(path), std::move(options), {}));
       return *this;
    }
 
    template <auto Method, typename Request, typename Response>
    api_builder& post(std::string path, api_route_options options = {}) {
-      steps_.push_back(make_step<Method, Request, Response>(method::post, std::move(path), std::move(options)));
+      steps_.push_back(make_step<Method, Request, Response>(method::post, std::move(path), std::move(options), {}));
       return *this;
    }
 
    template <auto Method, typename Request, typename Response>
    api_builder& put(std::string path, api_route_options options = {}) {
-      steps_.push_back(make_step<Method, Request, Response>(method::put, std::move(path), std::move(options)));
+      steps_.push_back(make_step<Method, Request, Response>(method::put, std::move(path), std::move(options), {}));
       return *this;
    }
 
    template <auto Method, typename Request, typename Response>
    api_builder& del(std::string path, api_route_options options = {}) {
-      steps_.push_back(make_step<Method, Request, Response>(method::delete_, std::move(path), std::move(options)));
+      steps_.push_back(make_step<Method, Request, Response>(method::delete_, std::move(path), std::move(options), {}));
       return *this;
    }
 
@@ -114,8 +118,12 @@ class api_builder {
          value.verb, parsed.path,
          api_route_options{
             .query = parsed.query,
+            .headers = value.headers,
+            .forms = value.forms,
+            .body_stream_field = value.body_stream_field,
             .success_status = value.success_status,
-         }));
+         },
+         value.method_name));
       return *this;
    }
 
@@ -244,6 +252,19 @@ class api_builder {
       return verb == method::post || verb == method::put || verb == method::patch;
    }
 
+   [[nodiscard]] static bool is_json_content_type(std::string_view value) {
+      if (value.empty()) {
+         return true;
+      }
+      auto lower = std::string{};
+      lower.reserve(value.size());
+      for (const auto character : value) {
+         lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(character))));
+      }
+      return lower == "application/json" || lower.starts_with("application/json;") ||
+             lower.find("+json") != std::string::npos;
+   }
+
    [[nodiscard]] static std::optional<std::string_view> route_value(const route_context& context,
                                                                     const api_route_options& options,
                                                                     std::string_view name) {
@@ -268,7 +289,17 @@ class api_builder {
 
    template <typename T> static void assign_from_text(T& target, std::string_view value, std::string_view field) {
       using clean = std::remove_cvref_t<T>;
-      if constexpr (is_optional<clean>::value) {
+      if constexpr (detail::is_header<clean>::value) {
+         typename detail::is_header<clean>::value_type parsed{};
+         assign_from_text(parsed, value, field);
+         target.value = std::move(parsed);
+         target.present = true;
+      } else if constexpr (detail::is_form_field<clean>::value) {
+         typename detail::is_form_field<clean>::value_type parsed{};
+         assign_from_text(parsed, value, field);
+         target.value = std::move(parsed);
+         target.present = true;
+      } else if constexpr (is_optional<clean>::value) {
          typename is_optional<clean>::value_type parsed{};
          assign_from_text(parsed, value, field);
          target = std::move(parsed);
@@ -323,7 +354,8 @@ class api_builder {
    }
 
    template <typename Request>
-   [[nodiscard]] static Request make_request_from_route(const route_context& context, const api_route_options& options) {
+   [[nodiscard]] static Request make_request_from_route(const route_context& context, const api_route_options& options,
+                                                        bool body_decoded = false) {
       auto request = Request{};
       if constexpr (fcl::reflect::is_described_object_v<Request>) {
          fcl::reflect::for_each_member<Request>([&](const char* name, auto member) {
@@ -333,6 +365,198 @@ class api_builder {
          });
       }
       return request;
+   }
+
+   [[nodiscard]] static std::string header_name_from_field(std::string_view name) {
+      auto output = std::string{};
+      output.reserve(name.size());
+      for (const auto character : name) {
+         output.push_back(character == '_' ? '-' : character);
+      }
+      return output;
+   }
+
+   [[nodiscard]] static std::optional<std::string_view> header_value(const request& request_value,
+                                                                      std::string_view name) {
+      const auto lower_name = [&] {
+         auto output = std::string{name};
+         std::transform(output.begin(), output.end(), output.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+         });
+         return output;
+      }();
+      for (const auto& field_value : request_value) {
+         auto candidate = std::string{field_value.name_string()};
+         std::transform(candidate.begin(), candidate.end(), candidate.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+         });
+         if (candidate == lower_name) {
+            return std::string_view{field_value.value().data(), field_value.value().size()};
+         }
+      }
+      return std::nullopt;
+   }
+
+   [[nodiscard]] static std::string mapped_name_or_default(const std::vector<api_field_binding>& bindings,
+                                                           std::string_view field,
+                                                           std::string (*default_name)(std::string_view)) {
+      const auto found =
+          std::find_if(bindings.begin(), bindings.end(),
+                       [&](const api_field_binding& binding) { return std::string_view{binding.field} == field; });
+      if (found != bindings.end()) {
+         return found->name;
+      }
+      return default_name(field);
+   }
+
+   [[nodiscard]] static std::string identity_name(std::string_view value) {
+      return std::string{value};
+   }
+
+   template <typename Request>
+   static void bind_headers(Request& request, const route_context& context, const api_route_options& options) {
+      if constexpr (fcl::reflect::is_described_object_v<Request>) {
+         fcl::reflect::for_each_member<Request>([&](const char* name, auto member) {
+            using member_type = std::remove_cvref_t<decltype(request.*member)>;
+            if constexpr (detail::is_header<member_type>::value) {
+               const auto header_name = mapped_name_or_default(options.headers, name, header_name_from_field);
+               if (auto value = header_value(context.request, header_name); value.has_value()) {
+                  assign_from_text(request.*member, *value, name);
+               }
+            }
+         });
+      }
+   }
+
+   template <typename Request> static void bind_body_bytes(Request& request, std::vector<std::byte> bytes) {
+      if constexpr (fcl::reflect::is_described_object_v<Request>) {
+         fcl::reflect::for_each_member<Request>([&](const char*, auto member) {
+            using member_type = std::remove_cvref_t<decltype(request.*member)>;
+            if constexpr (detail::is_body_bytes_v<member_type>) {
+               request.*member = body_bytes{.bytes = bytes};
+            }
+         });
+      }
+   }
+
+   template <typename Request>
+   static void bind_body_stream(Request& request, body_reader reader, const api_route_options& options) {
+      if constexpr (fcl::reflect::is_described_object_v<Request>) {
+         auto bound = false;
+         fcl::reflect::for_each_member<Request>([&](const char* name, auto member) {
+            using member_type = std::remove_cvref_t<decltype(request.*member)>;
+            if constexpr (detail::is_body_stream_v<member_type>) {
+               if (!options.body_stream_field.has_value() || *options.body_stream_field == name) {
+                  request.*member = body_stream{reader};
+                  bound = true;
+               }
+            }
+         });
+         if (options.body_stream_field.has_value() && !bound) {
+            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API body stream field is not described",
+                                fcl::exceptions::ctx("field", *options.body_stream_field));
+         }
+      }
+   }
+
+   template <typename Request>
+   static void bind_multipart(Request& request, const multipart_form& form, const api_route_options& options) {
+      if constexpr (fcl::reflect::is_described_object_v<Request>) {
+         fcl::reflect::for_each_member<Request>([&](const char* name, auto member) {
+            using member_type = std::remove_cvref_t<decltype(request.*member)>;
+            if constexpr (detail::is_form_field<member_type>::value) {
+               const auto form_name = mapped_name_or_default(options.forms, name, identity_name);
+               if (auto value = form.field(form_name); value.has_value()) {
+                  assign_from_text(request.*member, *value, name);
+               }
+            } else if constexpr (detail::is_upload_file_v<member_type>) {
+               const auto form_name = mapped_name_or_default(options.forms, name, identity_name);
+               for (const auto& file : form.files) {
+                  if (file.name == form_name) {
+                     request.*member = upload_file{file};
+                     break;
+                  }
+               }
+            }
+         });
+      }
+   }
+
+   template <typename Request>
+   [[nodiscard]] static Request make_request_from_http(const route_context& context, const api_route_options& options) {
+      auto request = Request{};
+      const auto has_body = uses_request_body(context.request.method()) && !context.request.body().empty();
+      if constexpr (!detail::request_needs_stream_v<Request>) {
+      if (has_body) {
+         const auto content_type = context.request.find(field::content_type);
+         if (content_type == context.request.end() || !is_json_content_type(std::string_view{content_type->value()})) {
+            FCL_THROW_EXCEPTION(fcl::http::exceptions::unsupported_media_type,
+                                "HTTP API request body must be application/json");
+         }
+
+         auto decoded = fcl::json::read<Request>(context.request.body(),
+                                                 fcl::json::read_options{.source_name = "http.request",
+                                                                         .unknown_fields =
+                                                                            fcl::json::unknown_field_policy::error});
+         if (!decoded.ok()) {
+            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API JSON request body is invalid");
+         }
+         request = std::move(decoded.value);
+      }
+      }
+
+      if constexpr (fcl::reflect::is_described_object_v<Request>) {
+         fcl::reflect::for_each_member<Request>([&](const char* name, auto member) {
+            using member_type = std::remove_cvref_t<decltype(request.*member)>;
+            if constexpr (detail::is_header<member_type>::value || detail::is_form_field<member_type>::value ||
+                          detail::is_body_stream_v<member_type> || detail::is_body_bytes_v<member_type> ||
+                          detail::is_upload_file_v<member_type>) {
+               return;
+            }
+            if (auto value = route_value(context, options, name); value.has_value()) {
+               auto expected = std::remove_cvref_t<decltype(request.*member)>{};
+               assign_from_text(expected, *value, name);
+               if (has_body) {
+                  require_equal(request.*member, expected, name);
+               } else {
+                  request.*member = std::move(expected);
+               }
+            }
+         });
+      }
+      bind_headers(request, context, options);
+      return request;
+   }
+
+   template <typename Request>
+   static boost::asio::awaitable<Request> make_request_from_stream(stream_request& stream,
+                                                                   const api_route_options& options) {
+      auto request = make_request_from_http<Request>(stream.context, options);
+      if constexpr (fcl::reflect::is_described_object_v<Request>) {
+         auto needs_multipart = false;
+         auto needs_bytes = false;
+         fcl::reflect::for_each_member<Request>([&](const char*, auto member) {
+            using member_type = std::remove_cvref_t<decltype(request.*member)>;
+            needs_multipart = needs_multipart || detail::is_form_field<member_type>::value ||
+                              detail::is_upload_file_v<member_type>;
+            needs_bytes = needs_bytes || detail::is_body_bytes_v<member_type>;
+         });
+         if (needs_multipart) {
+            const auto content_type = stream.context.request.find(field::content_type);
+            auto reader = upload_reader{std::move(stream.body)};
+            auto form = co_await reader.async_read_multipart(
+               content_type == stream.context.request.end() ? std::string_view{} : std::string_view{content_type->value()});
+            bind_multipart(request, form, options);
+         } else if (needs_bytes) {
+            auto text = co_await stream.body.async_read_all();
+            auto bytes = std::vector<std::byte>(text.size());
+            std::memcpy(bytes.data(), text.data(), text.size());
+            bind_body_bytes(request, std::move(bytes));
+         } else {
+            bind_body_stream(request, std::move(stream.body), options);
+         }
+      }
+      co_return request;
    }
 
    template <typename T>
@@ -348,71 +572,147 @@ class api_builder {
       }
    }
 
-   template <typename Request>
-   static void validate_request_body_matches_route(const route_context& context, const api_route_options& options,
-                                                   const fcl::api::bytes& payload) {
-      auto request = Request{};
-      try {
-         request = fcl::api::unpack_body<Request>(payload);
-      } catch (const std::exception&) {
-         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API request body is invalid");
-      }
+   [[nodiscard]] static response make_validation_response(const request& request_value, std::string_view message) {
+      return make_text_response(
+         request_value, static_cast<status>(422),
+         std::string{"{\"error\":\"validation_error\",\"message\":\""} + json_escape(message) + "\"}",
+         "application/json");
+   }
 
-      if constexpr (fcl::reflect::is_described_object_v<Request>) {
-         fcl::reflect::for_each_member<Request>([&](const char* name, auto member) {
-            if (auto value = route_value(context, options, name); value.has_value()) {
-               auto expected = std::remove_cvref_t<decltype(request.*member)>{};
-               assign_from_text(expected, *value, name);
-               require_equal(request.*member, expected, name);
-            }
-         });
+   template <typename Response> [[nodiscard]] static response make_success_response(const request& request_value,
+                                                                                    status success_status,
+                                                                                    const Response& value) {
+      if constexpr (detail::is_bytes_response_v<Response>) {
+         auto body = std::string{reinterpret_cast<const char*>(value.bytes.data()), value.bytes.size()};
+         return make_text_response(request_value, value.status_code, std::move(body), value.content_type);
+      } else if constexpr (detail::is_empty_response_v<Response>) {
+         auto output = response{value.status_code, request_value.version()};
+         output.keep_alive(request_value.keep_alive());
+         return output;
+      } else {
+         auto encoded = fcl::json::write(value);
+         if (!encoded.ok()) {
+            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API response cannot be encoded as JSON");
+         }
+         return make_text_response(request_value, success_status, std::move(encoded.text), "application/json");
       }
    }
 
+   template <typename Response>
+   static boost::asio::awaitable<stream_response> make_success_stream_response(const request& request_value,
+                                                                               status success_status,
+                                                                               Response value) {
+      if constexpr (std::is_same_v<std::remove_cvref_t<Response>, file_response>) {
+         co_return co_await value.to_stream_response(request_value);
+      } else if constexpr (detail::is_stream_response_v<Response>) {
+         co_return std::move(value);
+      } else {
+         co_return stream_response::buffered(make_success_response(request_value, success_status, value));
+      }
+   }
+
+   template <auto Method, typename Interface, typename Request, typename Response>
+   static boost::asio::awaitable<Response> invoke_local(const fcl::api::binding_plan& plan, Request request) {
+      auto implementation = plan.local->get<Interface>(Interface::ref());
+      co_return co_await std::invoke(Method, *implementation.shared(), std::move(request));
+   }
+
+   static stream_response buffered(response value) {
+      return stream_response::buffered(std::move(value));
+   }
+
    template <auto Method, typename Request, typename Response>
-   [[nodiscard]] mount_step make_step(method verb, std::string path, api_route_options options) {
+   [[nodiscard]] mount_step make_step(method verb, std::string path, api_route_options options,
+                                      std::string explicit_name) {
       using interface_type = typename method_class<decltype(Method)>::type;
       auto plan = plan_;
-      auto name = method_name<interface_type, Request, Response>();
+      auto name = explicit_name.empty() ? method_name<interface_type, Request, Response>() : std::move(explicit_name);
       return [plan = std::move(plan), verb, path = std::move(path), options = std::move(options),
               name = std::move(name)](router& target, std::string_view base_path) {
          auto mounted_path = join_path(base_path, path);
-         auto handler = [plan, options, name](route_context& context) -> boost::asio::awaitable<response> {
+         if constexpr (detail::request_needs_stream_v<Request> || detail::response_needs_stream_v<Response>) {
+            auto stream_handler = [plan, options, name](stream_request& request_value)
+               -> boost::asio::awaitable<stream_response> {
+               if (plan.local == nullptr) {
+                  FCL_THROW_EXCEPTION(fcl::api::exceptions::incompatible_version,
+                                      "HTTP API binding has no local registry");
+               }
+               const auto api_descriptor = interface_type::describe();
+               const auto* method_descriptor = fcl::api::find_method(api_descriptor, name);
+               try {
+                  auto request = co_await make_request_from_stream<Request>(request_value, options);
+                  auto result = co_await invoke_local<Method, interface_type, Request, Response>(plan, std::move(request));
+                  co_return co_await make_success_stream_response(request_value.context.request, options.success_status,
+                                                                  std::move(result));
+               } catch (const fcl::http::exceptions::unsupported_media_type& error) {
+                  co_return buffered(make_text_response(
+                     request_value.context.request, status::unsupported_media_type,
+                     std::string{"{\"error\":\"unsupported_media_type\",\"message\":\""} + json_escape(error.message()) +
+                        "\"}",
+                     "application/json"));
+               } catch (const fcl::http::exceptions::bad_request& error) {
+                  co_return buffered(make_validation_response(request_value.context.request, error.message()));
+               } catch (const fcl::exceptions::base& error) {
+                  if (method_descriptor != nullptr) {
+                     const auto payload = fcl::api::project_error(*method_descriptor, error);
+                     co_return buffered(make_text_response(request_value.context.request, http_status(payload.status_code),
+                                                           render_error(payload), "application/json"));
+                  }
+                  const auto payload = fcl::api::make_internal_error_payload();
+                  co_return buffered(make_text_response(request_value.context.request, http_status(payload.status_code),
+                                                        render_error(payload), "application/json"));
+               }
+            };
+            switch (verb) {
+            case method::get:
+               target.get_stream(std::move(mounted_path), std::move(stream_handler));
+               break;
+            case method::head:
+               target.head_stream(std::move(mounted_path), std::move(stream_handler));
+               break;
+            case method::post:
+               target.post_stream(std::move(mounted_path), std::move(stream_handler));
+               break;
+            case method::put:
+               target.put_stream(std::move(mounted_path), std::move(stream_handler));
+               break;
+            default:
+               FCL_THROW_EXCEPTION(fcl::http::exceptions::method_not_allowed, "unsupported HTTP API stream route verb");
+            }
+         } else {
+            auto handler = [plan, options, name](route_context& context) -> boost::asio::awaitable<response> {
             if (plan.local == nullptr) {
                FCL_THROW_EXCEPTION(fcl::api::exceptions::incompatible_version, "HTTP API binding has no local registry");
             }
-            auto payload = fcl::api::bytes{};
-            if (uses_request_body(context.request.method())) {
-               const auto& body = context.request.body();
-               payload.assign(body.begin(), body.end());
-               validate_request_body_matches_route<Request>(context, options, payload);
-            } else {
-               auto request = make_request_from_route<Request>(context, options);
-               fcl::raw::pack(payload, request);
-            }
             const auto api_descriptor = interface_type::describe();
-            auto frame = fcl::api::frame{
-                .kind = fcl::api::frame_kind::request,
-                .id = {.value = 1},
-                .api = {.id = api_descriptor.id,
-                        .major = api_descriptor.version.major,
-                        .min_revision = api_descriptor.version.revision},
-                .method = name,
-                .codec = {.value = options.body == body_codec::raw ? "fcl.raw" : "fcl.json"},
-                .payload = std::move(payload),
-            };
-            auto response_frame = co_await plan.dispatch(std::move(frame));
-            if (response_frame.kind == fcl::api::frame_kind::error) {
-               const auto error = fcl::raw::unpack<fcl::api::error_payload>(response_frame.payload);
-               co_return make_text_response(context.request, http_status(error.status_code), render_error(error),
+            const auto* method_descriptor = fcl::api::find_method(api_descriptor, name);
+            try {
+               auto request = make_request_from_http<Request>(context, options);
+               auto result = co_await invoke_local<Method, interface_type, Request, Response>(plan, std::move(request));
+               co_return make_success_response(context.request, options.success_status, result);
+            } catch (const fcl::http::exceptions::unsupported_media_type& error) {
+               co_return make_text_response(context.request, status::unsupported_media_type,
+                                            std::string{"{\"error\":\"unsupported_media_type\",\"message\":\""} +
+                                               json_escape(error.message()) + "\"}",
+                                            "application/json");
+            } catch (const fcl::http::exceptions::bad_request& error) {
+               co_return make_validation_response(context.request, error.message());
+            } catch (const fcl::exceptions::base& error) {
+               if (method_descriptor != nullptr) {
+                  const auto payload = fcl::api::project_error(*method_descriptor, error);
+                  co_return make_text_response(context.request, http_status(payload.status_code), render_error(payload),
+                                               "application/json");
+               }
+               const auto payload = fcl::api::make_internal_error_payload();
+               co_return make_text_response(context.request, http_status(payload.status_code), render_error(payload),
                                             "application/json");
             }
-            co_return make_text_response(context.request, options.success_status,
-                                         std::string{response_frame.payload.begin(), response_frame.payload.end()},
-                                         "application/octet-stream");
          };
          switch (verb) {
          case method::get:
+            target.get(std::move(mounted_path), std::move(handler));
+            break;
+         case method::head:
             target.get(std::move(mounted_path), std::move(handler));
             break;
          case method::post:
@@ -426,6 +726,7 @@ class api_builder {
             break;
          default:
             FCL_THROW_EXCEPTION(fcl::http::exceptions::method_not_allowed, "unsupported HTTP API route verb");
+         }
          }
       };
    }

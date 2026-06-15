@@ -13,7 +13,7 @@ FCL owns HTTP mechanics:
 - file and range responses;
 - upload spooling and multipart form-data parsing;
 - request limits, timeouts, cancellation and cleanup;
-- publisher APIs in `fcl.plugins.http_server` for FCL-owned HTTP primitives.
+- typed HTTP route binding over FCL-owned request/response primitives.
 
 FCL does not own S3:
 
@@ -71,8 +71,8 @@ From S3 docs as a requirements driver:
 - preserve method, path, query and headers without lossy normalization;
 - support `HEAD`, `Range`, `ETag`, `Last-Modified`, checksums and metadata
   headers as generic HTTP/file primitives;
-- allow downstream code to implement multipart upload and signature policy
-  without full-memory transfer or raw router mutation.
+- allow downstream code to implement multipart upload and request-signing policy
+  without full-memory transfer or direct router mutation.
 
 ## Rejected Patterns
 
@@ -80,8 +80,8 @@ From S3 docs as a requirements driver:
   in public FCL modules;
 - implementing S3 routes, SigV4 credential lookup, bucket/object state or S3
   XML errors in FCL;
-- routing file transfer through `FCL_API` DTO request/response contracts;
-- making `http_server` expose a raw router mutation API;
+- treating file transfer as ordinary in-memory JSON DTO payloads;
+- exposing direct router mutation as the public application pattern;
 - buffering large files in memory as the production path;
 - adding Storlane-specific names or product policy to `fcl_http`.
 
@@ -95,5 +95,4 @@ to distinguish streaming from string buffering:
 - file responses do not allocate the whole file as response body;
 - range responses return exact byte spans and correct status codes;
 - upload spool files are cleaned on cancel/error;
-- plugin publishers expose typed file/upload publication APIs without raw
-  router access.
+- typed HTTP bindings expose file/upload primitives without direct router access.

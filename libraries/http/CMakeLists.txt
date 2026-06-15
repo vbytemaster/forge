@@ -21,6 +21,8 @@ target_link_libraries(
       fcl_exceptions
       fcl_api
       fcl_asio
+      fcl_json
+      fcl_schema
       fcl_websocket
       Boost::asio
       Boost::beast

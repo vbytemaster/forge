@@ -16,6 +16,7 @@ enum class code : int {
    method_not_allowed = 405,
    conflict = 409,
    payload_too_large = 413,
+   unsupported_media_type = 415,
    request_header_fields_too_large = 431,
    too_many_requests = 429,
    internal = 500,
@@ -32,6 +33,7 @@ using not_found = fcl::exceptions::coded_exception<code, code::not_found>;
 using method_not_allowed = fcl::exceptions::coded_exception<code, code::method_not_allowed>;
 using conflict = fcl::exceptions::coded_exception<code, code::conflict>;
 using payload_too_large = fcl::exceptions::coded_exception<code, code::payload_too_large>;
+using unsupported_media_type = fcl::exceptions::coded_exception<code, code::unsupported_media_type>;
 using request_header_fields_too_large =
    fcl::exceptions::coded_exception<code, code::request_header_fields_too_large>;
 using too_many_requests = fcl::exceptions::coded_exception<code, code::too_many_requests>;

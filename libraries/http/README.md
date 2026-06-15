@@ -31,6 +31,8 @@ HTTP host or testing route/middleware behavior without the app plugin layer.
   stream route types.
 - `fcl.http.file`, `fcl.http.range` — file responses, static roots and byte
   range parsing.
+- `fcl.http.upload` — upload reader, spill-to-disk spool and multipart form-data
+  parsing.
 - `fcl.http.base_url`, `fcl.http.target`.
 - `fcl.http.router`, `fcl.http.route_context`, `fcl.http.middleware`.
 - `fcl.http.api`, `fcl.http.mapping`, `fcl.http.proxy`.
@@ -117,10 +119,42 @@ router.get_stream("/download", [](fcl::http::stream_request& req)
 });
 ```
 
-Stream routes currently provide FCL-owned body readers and response body
-sources. Higher-level upload helpers are a separate follow-up layer; do not
-hand-roll downstream object-storage gateway policy or raw router mutation in
-this library.
+Stream routes provide FCL-owned body readers and response body sources. Use
+`fcl.http.upload` when the request body should be bounded, optionally spooled to
+disk, or parsed as browser-style `multipart/form-data`.
+
+### Read Uploads
+
+`upload_reader` consumes a `body_reader` incrementally. Small payloads stay in
+memory; larger payloads spill to an owner-private temporary file that is removed
+when the returned `upload_part` is destroyed unless the caller explicitly
+releases the spool.
+
+```cpp
+import fcl.http.upload;
+
+router.post_stream("/upload", [](fcl::http::stream_request& req)
+   -> boost::asio::awaitable<fcl::http::stream_response> {
+   auto reader = fcl::http::upload_reader{
+      std::move(req.body),
+      fcl::http::upload_options{
+         .memory_threshold_bytes = 1 * 1024 * 1024,
+         .max_file_bytes = 64 * 1024 * 1024,
+         .max_total_bytes = 128 * 1024 * 1024,
+      },
+   };
+
+   auto part = co_await reader.async_read();
+   consume_upload(part);
+
+   co_return fcl::http::stream_response::buffered(
+      fcl::http::make_text_response(req.context.request, fcl::http::status::ok, "stored"));
+});
+```
+
+`async_read_multipart(content_type)` parses browser-style form uploads into
+fields and file parts. It is not an object-storage multipart workflow; object
+storage state machines belong above `fcl_http`.
 
 ### Serve Static Files And Ranges
 
@@ -392,7 +426,7 @@ limits/timeouts apply while chunks are read.
 - Do not force all typed APIs into a single generic RPC endpoint; use native HTTP route/status
   mapping where HTTP is the transport.
 - Do not force file upload/download through `FCL_API`; use stream routes and the
-  future file/upload helper layers.
+  file/upload helper layers.
 - Do not hide server bind/TLS/lifecycle in `fcl.http.api`; the API builder owns
   route mapping, API middleware, status projection and error payloads only.
 - Do not add HTTP API builder options unless they change runtime behavior and

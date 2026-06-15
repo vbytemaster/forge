@@ -3,6 +3,7 @@ add_library(
    base_url.cpp
    target.cpp
    range.cpp
+   upload.cpp
    route_context.cpp
    middleware.cpp
    connection.cpp

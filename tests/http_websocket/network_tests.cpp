@@ -14,6 +14,8 @@
 #include <thread>
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/beast/core.hpp>
@@ -45,6 +47,7 @@ import fcl.http.server;
 import fcl.http.target;
 import fcl.http.types;
 import fcl.raw.raw;
+import fcl.websocket.api;
 import fcl.websocket.client;
 import fcl.websocket.connection;
 import fcl.websocket.exceptions;
@@ -142,6 +145,23 @@ using test_api::api_routed_read_chunk;
 
 [[nodiscard]] fcl::api::descriptor api_cache_descriptor() {
    return api_cache::describe();
+}
+
+[[nodiscard]] std::string pack_websocket_api_frame(const fcl::api::frame& frame) {
+   auto out = fcl::api::bytes{};
+   fcl::raw::pack(out, frame);
+   return {out.begin(), out.end()};
+}
+
+[[nodiscard]] fcl::api::frame unpack_websocket_api_frame(const std::string& value) {
+   const auto bytes = fcl::api::bytes{value.begin(), value.end()};
+   return fcl::raw::unpack<fcl::api::frame>(bytes);
+}
+
+template <typename T> [[nodiscard]] fcl::api::bytes pack_api_payload(const T& value) {
+   auto out = fcl::api::bytes{};
+   fcl::raw::pack(out, value);
+   return out;
 }
 
 class throwing_api_cache final : public api_cache {
@@ -855,6 +875,92 @@ BOOST_AUTO_TEST_CASE(websocket_echo_shares_http_server_port) {
    BOOST_TEST(received == "hello");
    fcl::asio::blocking::run(runtime, connection->close());
 
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(websocket_api_binding_strips_reserved_metadata) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+
+   auto registry = fcl::api::registry{};
+   registry.install<api_cache>(api_cache::describe(), std::make_shared<routed_api_cache>());
+
+   auto observed_peer = std::make_shared<std::string>();
+   auto observed_public = std::make_shared<std::string>();
+   auto plan = fcl::api::binding()
+                  .serve(registry)
+                  .interceptor(fcl::api::interceptor()
+                                  .id("websocket-metadata")
+                                  .phase(fcl::api::interceptor_phase::authorize)
+                                  .handler([observed_peer, observed_public](fcl::api::call_context& context)
+                                               -> boost::asio::awaitable<void> {
+                                     *observed_peer = fcl::api::metadata_value(
+                                                        context.meta,
+                                                        fcl::api::p2p_remote_peer_metadata_key)
+                                                        .value_or("missing");
+                                     *observed_public =
+                                        fcl::api::metadata_value(context.meta, "x-client-trace")
+                                           .value_or("missing");
+                                     co_return;
+                                  })
+                                  .build())
+                  .build();
+
+   auto binding = fcl::websocket::api().use(std::move(plan)).build();
+   auto router = fcl::http::router{};
+   router.websocket("/api", [&runtime, binding = std::move(binding)](fcl::websocket::connection::ptr connection) mutable {
+      boost::asio::co_spawn(runtime.context(), binding.accept(std::move(connection)), boost::asio::detached);
+   });
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   const auto port = wait_for_port(server);
+   auto ws_client = fcl::websocket::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
+   auto connection = ws_client.connect("/api");
+
+   auto response_mutex = std::mutex{};
+   auto response_cv = std::condition_variable{};
+   auto response = std::string{};
+   auto response_ready = false;
+   connection->on_message([&](fcl::websocket::connection&, std::string message) -> boost::asio::awaitable<void> {
+      {
+         const auto lock = std::scoped_lock{response_mutex};
+         response = std::move(message);
+         response_ready = true;
+      }
+      response_cv.notify_all();
+      co_return;
+   });
+
+   auto request = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 71},
+       .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
+       .method = "read",
+       .meta =
+          {
+             {.key = std::string{fcl::api::p2p_remote_peer_metadata_key}, .value = "spoofed-peer"},
+             {.key = "x-client-trace", .value = "trace-2"},
+       },
+       .codec = {.value = "fcl.raw"},
+       .payload = pack_api_payload(api_read_chunk{}),
+   };
+
+   fcl::asio::blocking::run(runtime, connection->send(pack_websocket_api_frame(request)));
+
+   {
+      auto lock = std::unique_lock{response_mutex};
+      BOOST_CHECK(response_cv.wait_for(lock, std::chrono::seconds{2}, [&response_ready] {
+         return response_ready;
+      }));
+   }
+
+   const auto frame = unpack_websocket_api_frame(response);
+   BOOST_CHECK(frame.kind == fcl::api::frame_kind::response);
+   BOOST_TEST(*observed_peer == "missing");
+   BOOST_TEST(*observed_public == "trace-2");
+
+   fcl::asio::blocking::run(runtime, connection->close());
    server.stop();
 }
 

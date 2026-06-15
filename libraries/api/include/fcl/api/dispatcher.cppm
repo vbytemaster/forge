@@ -18,6 +18,7 @@ struct dispatch_options {
    codec_id codec{.value = "fcl.raw"};
    std::size_t max_inflight = 128;
    std::chrono::milliseconds deadline{0};
+   metadata trusted_metadata;
 };
 
 class frame_dispatcher {

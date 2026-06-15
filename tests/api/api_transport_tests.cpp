@@ -107,6 +107,19 @@ class cache_impl final : public cache_api {
    }
 };
 
+class context_cache_impl final : public cache_api {
+ public:
+   boost::asio::awaitable<protocol::chunk> read(protocol::read_chunk) override {
+      const auto context = fcl::api::current_call_context();
+      if (!context.has_value()) {
+         co_return protocol::chunk{.bytes = "no-context"};
+      }
+
+      const auto peer = fcl::api::metadata_value(context->meta, fcl::api::p2p_remote_peer_metadata_key);
+      co_return protocol::chunk{.bytes = peer.value_or("no-remote-peer")};
+   }
+};
+
 struct gated_state {
    std::mutex mutex;
    std::size_t active = 0;
@@ -979,6 +992,50 @@ BOOST_AUTO_TEST_CASE(api_transport_serve_stream_dispatches_requests) {
    const auto response = unpack_written_frame(model->writes.front());
    BOOST_CHECK(response.kind == fcl::api::frame_kind::response);
    BOOST_TEST(fcl::raw::unpack<protocol::chunk>(response.payload).bytes == "server:ok");
+}
+
+BOOST_AUTO_TEST_CASE(api_transport_serve_stream_overwrites_reserved_metadata_with_trusted_values) {
+   auto runtime = fcl::asio::runtime{};
+   auto request = read_request(13, "context");
+   request.meta.push_back({.key = std::string{fcl::api::p2p_remote_peer_metadata_key}, .value = "spoofed-peer"});
+
+   auto model = std::make_shared<fake_stream>();
+   model->reads.push_back(pack_api_frame(request));
+
+   auto registry = fcl::api::registry{};
+   registry.install<cache_api>(cache_api::describe(), std::make_shared<context_cache_impl>());
+   auto plan = fcl::api::binding().serve(registry).build();
+
+   fcl::asio::blocking::run(
+      runtime, fcl::api::transport::serve_stream(
+                  make_stream(model), std::move(plan), fcl::api::transport::options{},
+                  fcl::api::metadata{{.key = std::string{fcl::api::p2p_remote_peer_metadata_key},
+                                      .value = "trusted-peer"}}));
+
+   BOOST_REQUIRE_EQUAL(model->writes.size(), 1U);
+   const auto response = unpack_written_frame(model->writes.front());
+   BOOST_CHECK(response.kind == fcl::api::frame_kind::response);
+   BOOST_TEST(fcl::raw::unpack<protocol::chunk>(response.payload).bytes == "trusted-peer");
+   BOOST_TEST(!fcl::api::current_call_context().has_value());
+}
+
+BOOST_AUTO_TEST_CASE(api_transport_serve_stream_without_trusted_peer_has_no_remote_peer_context) {
+   auto runtime = fcl::asio::runtime{};
+   auto model = std::make_shared<fake_stream>();
+   model->reads.push_back(pack_api_frame(read_request(14, "context")));
+
+   auto registry = fcl::api::registry{};
+   registry.install<cache_api>(cache_api::describe(), std::make_shared<context_cache_impl>());
+   auto plan = fcl::api::binding().serve(registry).build();
+
+   fcl::asio::blocking::run(runtime, fcl::api::transport::serve_stream(make_stream(model), std::move(plan),
+                                                                       fcl::api::transport::options{}));
+
+   BOOST_REQUIRE_EQUAL(model->writes.size(), 1U);
+   const auto response = unpack_written_frame(model->writes.front());
+   BOOST_CHECK(response.kind == fcl::api::frame_kind::response);
+   BOOST_TEST(fcl::raw::unpack<protocol::chunk>(response.payload).bytes == "no-remote-peer");
+   BOOST_TEST(!fcl::api::current_call_context().has_value());
 }
 
 BOOST_AUTO_TEST_CASE(api_transport_serve_session_accepts_streams) {

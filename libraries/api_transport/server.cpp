@@ -6,6 +6,7 @@ module;
 #include <cstdint>
 #include <exception>
 #include <span>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -90,9 +91,32 @@ boost::asio::awaitable<void> write_transport_frame(fcl::transport::stream& strea
           fcl::transport::exceptions::is(error, fcl::transport::exceptions::code::canceled);
 }
 
+[[nodiscard]] bool reserved_metadata_key(std::string_view key) noexcept {
+   return key.starts_with(fcl::api::trusted_metadata_prefix);
+}
+
+void apply_trusted_metadata(fcl::api::frame& value, const fcl::api::metadata& trusted) {
+   auto merged = fcl::api::metadata{};
+   merged.reserve(value.meta.size() + trusted.size());
+   for (auto& entry : value.meta) {
+      if (!reserved_metadata_key(entry.key)) {
+         merged.push_back(std::move(entry));
+      }
+   }
+   for (const auto& entry : trusted) {
+      merged.push_back(entry);
+   }
+   value.meta = std::move(merged);
+}
+
 } // namespace
 
 boost::asio::awaitable<void> serve_stream(fcl::transport::stream stream, binding_plan plan, options value) {
+   co_await serve_stream(std::move(stream), std::move(plan), value, {});
+}
+
+boost::asio::awaitable<void> serve_stream(fcl::transport::stream stream, binding_plan plan, options value,
+                                         fcl::api::metadata trusted_metadata) {
    auto dispatcher = frame_dispatcher{
        std::move(plan), dispatch_options{.codec = value.codec, .max_inflight = value.max_inflight, .deadline = value.deadline}};
    auto buffer = std::vector<std::uint8_t>{};
@@ -102,6 +126,7 @@ boost::asio::awaitable<void> serve_stream(fcl::transport::stream stream, binding
       try {
          auto payload = co_await read_transport_frame(stream, buffer, consumed, value.max_frame_size);
          auto request = fcl::raw::unpack<frame>(payload.to_vector());
+         apply_trusted_metadata(request, trusted_metadata);
          auto responses = co_await dispatcher.dispatch(std::move(request));
          for (const auto& response : responses) {
             auto encoded = fcl::api::bytes{};

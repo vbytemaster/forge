@@ -9,7 +9,9 @@ module;
 #include <coroutine>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 module fcl.api.binding;
 
@@ -254,7 +256,9 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_many(frame req
          co_await step.handler(context);
       }
    }
+   request.meta = context.meta;
 
+   auto current_scope = call_context_scope{context};
    auto responses = co_await local->dispatch_many(std::move(request));
 
    for (auto& response : responses) {
@@ -312,7 +316,9 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::ve
          co_await step.handler(context);
       }
    }
+   frames.front().meta = context.meta;
 
+   auto current_scope = call_context_scope{context};
    auto responses = co_await local->dispatch_stream(std::move(frames));
 
    for (auto& response : responses) {

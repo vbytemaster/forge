@@ -676,50 +676,58 @@ class api_builder {
             case method::put:
                target.put_stream(std::move(mounted_path), std::move(stream_handler));
                break;
+            case method::patch:
+               target.patch_stream(std::move(mounted_path), std::move(stream_handler));
+               break;
             default:
                FCL_THROW_EXCEPTION(fcl::http::exceptions::method_not_allowed, "unsupported HTTP API stream route verb");
             }
-         } else {
-            auto handler = [plan, options, name](route_context& context) -> boost::asio::awaitable<response> {
-            if (plan.local == nullptr) {
-               FCL_THROW_EXCEPTION(fcl::api::exceptions::incompatible_version, "HTTP API binding has no local registry");
-            }
-            const auto api_descriptor = interface_type::describe();
-            const auto* method_descriptor = fcl::api::find_method(api_descriptor, name);
-            try {
-               auto request = make_request_from_http<Request>(context, options);
-               auto result = co_await invoke_local<Method, interface_type, Request, Response>(plan, std::move(request));
-               co_return make_success_response(context.request, options.success_status, result);
-            } catch (const fcl::http::exceptions::unsupported_media_type& error) {
-               co_return make_text_response(context.request, status::unsupported_media_type,
-                                            std::string{"{\"error\":\"unsupported_media_type\",\"message\":\""} +
-                                               json_escape(error.message()) + "\"}",
-                                            "application/json");
-            } catch (const fcl::http::exceptions::bad_request& error) {
-               co_return make_validation_response(context.request, error.message());
-            } catch (const fcl::exceptions::base& error) {
-               if (method_descriptor != nullptr) {
-                  const auto payload = fcl::api::project_error(*method_descriptor, error);
+	         } else {
+	            auto handler = [plan, options, name](route_context& context) -> boost::asio::awaitable<response> {
+               if (plan.local == nullptr) {
+                  FCL_THROW_EXCEPTION(fcl::api::exceptions::incompatible_version,
+                                      "HTTP API binding has no local registry");
+               }
+               const auto api_descriptor = interface_type::describe();
+               const auto* method_descriptor = fcl::api::find_method(api_descriptor, name);
+               try {
+                  auto request = make_request_from_http<Request>(context, options);
+                  auto result =
+                     co_await invoke_local<Method, interface_type, Request, Response>(plan, std::move(request));
+                  co_return make_success_response(context.request, options.success_status, result);
+               } catch (const fcl::http::exceptions::unsupported_media_type& error) {
+                  co_return make_text_response(context.request, status::unsupported_media_type,
+                                               std::string{"{\"error\":\"unsupported_media_type\",\"message\":\""} +
+                                                  json_escape(error.message()) + "\"}",
+                                               "application/json");
+               } catch (const fcl::http::exceptions::bad_request& error) {
+                  co_return make_validation_response(context.request, error.message());
+               } catch (const fcl::exceptions::base& error) {
+                  if (method_descriptor != nullptr) {
+                     const auto payload = fcl::api::project_error(*method_descriptor, error);
+                     co_return make_text_response(context.request, http_status(payload.status_code), render_error(payload),
+                                                  "application/json");
+                  }
+                  const auto payload = fcl::api::make_internal_error_payload();
                   co_return make_text_response(context.request, http_status(payload.status_code), render_error(payload),
                                                "application/json");
                }
-               const auto payload = fcl::api::make_internal_error_payload();
-               co_return make_text_response(context.request, http_status(payload.status_code), render_error(payload),
-                                            "application/json");
-            }
-         };
+            };
          switch (verb) {
          case method::get:
             target.get(std::move(mounted_path), std::move(handler));
             break;
          case method::head:
-            target.get(std::move(mounted_path), std::move(handler));
+            target.head(std::move(mounted_path), std::move(handler));
             break;
          case method::post:
             target.post(std::move(mounted_path), std::move(handler));
             break;
          case method::put:
             target.put(std::move(mounted_path), std::move(handler));
+            break;
+         case method::patch:
+            target.patch(std::move(mounted_path), std::move(handler));
             break;
          case method::delete_:
             target.del(std::move(mounted_path), std::move(handler));

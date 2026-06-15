@@ -22,18 +22,21 @@ export namespace fcl::http {
 using websocket_route_handler = std::function<void(std::shared_ptr<fcl::websocket::connection>)>;
 
 class router {
-   public:
-      void use(middleware handler);
-      void use(middleware_descriptor descriptor);
+ public:
+   void use(middleware handler);
+   void use(middleware_descriptor descriptor);
 
    void get(std::string path, route_handler handler);
+   void head(std::string path, route_handler handler);
    void post(std::string path, route_handler handler);
    void put(std::string path, route_handler handler);
+   void patch(std::string path, route_handler handler);
    void del(std::string path, route_handler handler);
    void get_stream(std::string path, stream_route_handler handler);
    void head_stream(std::string path, stream_route_handler handler);
    void post_stream(std::string path, stream_route_handler handler);
    void put_stream(std::string path, stream_route_handler handler);
+   void patch_stream(std::string path, stream_route_handler handler);
    void websocket(std::string path, websocket_route_handler handler);
 
    template <typename Binding> void mount(const Binding& binding) {

@@ -290,12 +290,20 @@ void router::get(std::string path, route_handler handler) {
    add_route(method::get, std::move(path), std::move(handler));
 }
 
+void router::head(std::string path, route_handler handler) {
+   add_route(method::head, std::move(path), std::move(handler));
+}
+
 void router::post(std::string path, route_handler handler) {
    add_route(method::post, std::move(path), std::move(handler));
 }
 
 void router::put(std::string path, route_handler handler) {
    add_route(method::put, std::move(path), std::move(handler));
+}
+
+void router::patch(std::string path, route_handler handler) {
+   add_route(method::patch, std::move(path), std::move(handler));
 }
 
 void router::del(std::string path, route_handler handler) {
@@ -316,6 +324,10 @@ void router::post_stream(std::string path, stream_route_handler handler) {
 
 void router::put_stream(std::string path, stream_route_handler handler) {
    add_stream_route(method::put, std::move(path), std::move(handler));
+}
+
+void router::patch_stream(std::string path, stream_route_handler handler) {
+   add_stream_route(method::patch, std::move(path), std::move(handler));
 }
 
 void router::websocket(std::string path, websocket_route_handler handler) {
@@ -376,7 +388,12 @@ boost::asio::awaitable<response> router::handle(route_context& context) const {
 }
 
 bool router::can_handle_stream(route_context& context) const {
-   return path_exists(stream_routes_, context.parsed_target);
+   for (const auto& route : stream_routes_) {
+      if (route.verb == context.request.method() && match_path(route, context.parsed_target, nullptr)) {
+         return true;
+      }
+   }
+   return false;
 }
 
 boost::asio::awaitable<stream_response> router::handle_stream(stream_request& request) const {

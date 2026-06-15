@@ -4,12 +4,15 @@ module;
 #include <fcl/exceptions/macros.hpp>
 
 #include <cctype>
+#include <cstddef>
+#include <cstring>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 export module fcl.http.proxy;
 
@@ -157,6 +160,22 @@ boost::asio::awaitable<Response> call(client& target, const fcl::api::descriptor
    if constexpr (detail::response_needs_stream_v<Response>) {
       FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
                           "typed HTTP client streaming response reader is not available for this API method");
+   } else if constexpr (detail::is_bytes_response_v<Response>) {
+      auto bytes = std::vector<std::byte>(response_value.body().size());
+      if (!bytes.empty()) {
+         std::memcpy(bytes.data(), response_value.body().data(), response_value.body().size());
+      }
+      auto content_type = std::string{};
+      if (auto iterator = response_value.find(field::content_type); iterator != response_value.end()) {
+         content_type = std::string{iterator->value()};
+      }
+      co_return Response{
+         .bytes = std::move(bytes),
+         .content_type = content_type.empty() ? std::string{"application/octet-stream"} : std::move(content_type),
+         .status_code = response_value.result(),
+      };
+   } else if constexpr (detail::is_empty_response_v<Response>) {
+      co_return Response{.status_code = response_value.result()};
    } else {
       auto decoded = fcl::json::read<Response>(response_value.body(),
                                                fcl::json::read_options{.source_name = "http.response",

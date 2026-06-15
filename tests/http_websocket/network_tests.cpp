@@ -131,6 +131,28 @@ struct object_get_request {
    std::string key;
 };
 
+struct form_submit_request {
+   fcl::http::form_field<std::string> label;
+   fcl::http::form_field<std::uint32_t> count;
+};
+
+struct form_submit_response {
+   std::string summary;
+};
+
+struct control_request {
+   std::string id;
+};
+
+struct control_patch_request {
+   std::string id;
+   std::string value;
+};
+
+struct control_response {
+   std::string value;
+};
+
 BOOST_DESCRIBE_STRUCT(api_read_chunk, (), ())
 BOOST_DESCRIBE_STRUCT(api_routed_read_chunk, (), (ref, offset, limit))
 BOOST_DESCRIBE_STRUCT(api_chunk, (), (bytes))
@@ -140,6 +162,11 @@ BOOST_DESCRIBE_STRUCT(macro_chunk, (), (bytes))
 BOOST_DESCRIBE_STRUCT(object_put_request, (), (collection, key, content_type, digest, body))
 BOOST_DESCRIBE_STRUCT(object_put_response, (), (bytes, content_type, content_md5))
 BOOST_DESCRIBE_STRUCT(object_get_request, (), (collection, key))
+BOOST_DESCRIBE_STRUCT(form_submit_request, (), (label, count))
+BOOST_DESCRIBE_STRUCT(form_submit_response, (), (summary))
+BOOST_DESCRIBE_STRUCT(control_request, (), (id))
+BOOST_DESCRIBE_STRUCT(control_patch_request, (), (id, value))
+BOOST_DESCRIBE_STRUCT(control_response, (), (value))
 
 class api_cache : public fcl::api::contract<api_cache, fcl::api::surface::local | fcl::api::surface::remote> {
  public:
@@ -165,6 +192,29 @@ class object_api : public fcl::api::contract<object_api> {
    virtual boost::asio::awaitable<object_put_response> put_object(object_put_request request) = 0;
    virtual boost::asio::awaitable<fcl::http::file_response> get_object(object_get_request request) = 0;
    virtual boost::asio::awaitable<fcl::http::file_response> head_object(object_get_request request) = 0;
+   virtual boost::asio::awaitable<fcl::http::empty_response> delete_object(object_get_request request) = 0;
+};
+
+class form_api : public fcl::api::contract<form_api> {
+ public:
+   virtual ~form_api() = default;
+
+   virtual boost::asio::awaitable<form_submit_response> submit(form_submit_request request) = 0;
+};
+
+class control_api : public fcl::api::contract<control_api> {
+ public:
+   virtual ~control_api() = default;
+
+   virtual boost::asio::awaitable<fcl::http::bytes_response> bytes(control_request request) = 0;
+   virtual boost::asio::awaitable<fcl::http::empty_response> head(control_request request) = 0;
+};
+
+class patch_api : public fcl::api::contract<patch_api> {
+ public:
+   virtual ~patch_api() = default;
+
+   virtual boost::asio::awaitable<control_response> patch(control_patch_request request) = 0;
 };
 
 } // namespace test_api
@@ -177,7 +227,20 @@ FCL_API(::fcl::http::test_api::object_api, FCL_API_CONTRACT("object", 1, 0),
         FCL_API_METHOD_TYPED(put_object, ::fcl::http::test_api::object_put_request,
                              ::fcl::http::test_api::object_put_response),
         FCL_API_METHOD_TYPED(get_object, ::fcl::http::test_api::object_get_request, ::fcl::http::file_response),
-        FCL_API_METHOD_TYPED(head_object, ::fcl::http::test_api::object_get_request, ::fcl::http::file_response))
+        FCL_API_METHOD_TYPED(head_object, ::fcl::http::test_api::object_get_request, ::fcl::http::file_response),
+        FCL_API_METHOD_TYPED(delete_object, ::fcl::http::test_api::object_get_request, ::fcl::http::empty_response))
+
+FCL_API(::fcl::http::test_api::form_api, FCL_API_CONTRACT("form", 1, 0),
+        FCL_API_METHOD_TYPED(submit, ::fcl::http::test_api::form_submit_request,
+                             ::fcl::http::test_api::form_submit_response))
+
+FCL_API(::fcl::http::test_api::control_api, FCL_API_CONTRACT("control", 1, 0),
+        FCL_API_METHOD_TYPED(bytes, ::fcl::http::test_api::control_request, ::fcl::http::bytes_response),
+        FCL_API_METHOD_TYPED(head, ::fcl::http::test_api::control_request, ::fcl::http::empty_response))
+
+FCL_API(::fcl::http::test_api::patch_api, FCL_API_CONTRACT("patch", 1, 0),
+        FCL_API_METHOD_TYPED(patch, ::fcl::http::test_api::control_patch_request,
+                             ::fcl::http::test_api::control_response))
 
 FCL_HTTP_API(::fcl::http::test_api::macro_cache,
              FCL_HTTP_GET(read, "/cache/chunks/:ref?offset={offset}&limit={limit}"),
@@ -189,7 +252,20 @@ FCL_HTTP_API(::fcl::http::test_api::object_api,
                            FCL_HTTP_HEADER(content_type, "Content-Type"),
                            FCL_HTTP_HEADER(digest, "Content-MD5")),
              FCL_HTTP_GET(get_object, "/objects/:collection/:key", FCL_HTTP_RESPONSE_FILE),
-             FCL_HTTP_HEAD(head_object, "/objects/:collection/:key", FCL_HTTP_RESPONSE_FILE))
+             FCL_HTTP_HEAD(head_object, "/objects/:collection/:key", FCL_HTTP_RESPONSE_FILE),
+             FCL_HTTP_DELETE(delete_object, "/objects/:collection/:key", no_content))
+
+FCL_HTTP_API(::fcl::http::test_api::form_api,
+             FCL_HTTP_POST(submit, "/forms", ok,
+                           FCL_HTTP_FORM(label, "label"),
+                           FCL_HTTP_FORM(count, "count")))
+
+FCL_HTTP_API(::fcl::http::test_api::control_api,
+             FCL_HTTP_GET(bytes, "/controls/:id/bytes"),
+             FCL_HTTP_HEAD(head, "/controls/:id"))
+
+FCL_HTTP_API(::fcl::http::test_api::patch_api,
+             FCL_HTTP_PATCH(patch, "/controls/:id", ok))
 
 namespace fcl::api {
 
@@ -239,10 +315,18 @@ using test_api::macro_cache;
 using test_api::macro_chunk;
 using test_api::macro_read_request;
 using test_api::macro_write_request;
+using test_api::control_api;
+using test_api::control_patch_request;
+using test_api::control_request;
+using test_api::control_response;
+using test_api::form_api;
+using test_api::form_submit_request;
+using test_api::form_submit_response;
 using test_api::object_api;
 using test_api::object_get_request;
 using test_api::object_put_request;
 using test_api::object_put_response;
+using test_api::patch_api;
 
 [[nodiscard]] fcl::api::descriptor api_cache_descriptor() {
    return api_cache::describe();
@@ -334,12 +418,51 @@ class object_api_impl final : public object_api {
       co_return co_await get_object(std::move(request));
    }
 
+   boost::asio::awaitable<fcl::http::empty_response> delete_object(object_get_request request) override {
+      std::filesystem::remove(object_path(request.collection, request.key));
+      co_return fcl::http::empty_response{.status_code = status::no_content};
+   }
+
  private:
    [[nodiscard]] std::filesystem::path object_path(const std::string& collection, const std::string& key) const {
       return root_ / collection / key;
    }
 
    std::filesystem::path root_;
+};
+
+class form_api_impl final : public form_api {
+ public:
+   boost::asio::awaitable<form_submit_response> submit(form_submit_request request) override {
+      co_return form_submit_response{
+         .summary = (request.label.present ? request.label.value : std::string{}) + ":" +
+                    (request.count.present ? std::to_string(request.count.value) : std::string{"missing"}),
+      };
+   }
+};
+
+class control_api_impl final : public control_api {
+ public:
+   boost::asio::awaitable<fcl::http::bytes_response> bytes(control_request request) override {
+      auto text = std::string{"bytes:" + request.id};
+      auto bytes = std::vector<std::byte>(text.size());
+      std::memcpy(bytes.data(), text.data(), text.size());
+      co_return fcl::http::bytes_response{
+         .bytes = std::move(bytes),
+         .content_type = "application/control",
+      };
+   }
+
+   boost::asio::awaitable<fcl::http::empty_response> head(control_request) override {
+      co_return fcl::http::empty_response{.status_code = status::no_content};
+   }
+};
+
+class patch_api_impl final : public patch_api {
+ public:
+   boost::asio::awaitable<control_response> patch(control_patch_request request) override {
+      co_return control_response{.value = request.id + ":" + request.value};
+   }
 };
 
 std::uint16_t wait_for_port(const server& server) {
@@ -984,6 +1107,35 @@ BOOST_AUTO_TEST_CASE(typed_http_client_supports_handle_methods) {
    server.stop();
 }
 
+BOOST_AUTO_TEST_CASE(typed_http_client_supports_native_bytes_and_empty_responses) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<control_api>(control_api::describe(), std::make_shared<control_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<control_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   const auto port = wait_for_port(server);
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
+   auto control = fcl::asio::blocking::run(runtime, fcl::http::remote<control_api>(client));
+
+   auto bytes = fcl::asio::blocking::run(runtime, control->bytes(control_request{.id = "abc"}));
+   auto text = std::string(bytes.bytes.size(), '\0');
+   std::memcpy(text.data(), bytes.bytes.data(), bytes.bytes.size());
+   BOOST_TEST(bytes.status_code == status::ok);
+   BOOST_TEST(bytes.content_type == "application/control");
+   BOOST_TEST(text == "bytes:abc");
+
+   auto head = fcl::asio::blocking::run(runtime, control->head(control_request{.id = "abc"}));
+   BOOST_TEST(head.status_code == status::no_content);
+
+   server.stop();
+}
+
 BOOST_AUTO_TEST_CASE(http_api_special_types_support_streaming_put_and_file_get) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
    auto files = temp_directory{};
@@ -1032,6 +1184,113 @@ BOOST_AUTO_TEST_CASE(http_api_special_types_support_streaming_put_and_file_get) 
    BOOST_TEST(head_response[field::accept_ranges] == "bytes");
 
    server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_api_stream_route_does_not_shadow_regular_route_with_same_path) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto files = temp_directory{};
+   std::filesystem::create_directories(files.path() / "cache");
+   files.write("cache/chunk.bin", "payload");
+
+   auto apis = fcl::api::registry{};
+   apis.install<object_api>(object_api::describe(), std::make_shared<object_api_impl>(files.path()));
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<object_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   const auto port = wait_for_port(server);
+   auto connection = fcl::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
+   auto delete_request = make_request(method::delete_, "/objects/cache/chunk.bin");
+   const auto delete_response =
+      fcl::asio::blocking::run(runtime, connection.async_request(std::move(delete_request)));
+
+   BOOST_TEST(delete_response.result_int() == static_cast<unsigned>(status::no_content));
+   BOOST_TEST(!std::filesystem::exists(files.path() / "cache" / "chunk.bin"));
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_api_form_only_request_uses_multipart_binding) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<form_api>(form_api::describe(), std::make_shared<form_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<form_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   const auto port = wait_for_port(server);
+   auto connection = fcl::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
+   auto request_value = make_request(method::post, "/forms");
+   request_value.set(field::content_type, "multipart/form-data; boundary=demo");
+   request_value.body() =
+      "--demo\r\n"
+      "Content-Disposition: form-data; name=\"label\"\r\n\r\n"
+      "alpha\r\n"
+      "--demo\r\n"
+      "Content-Disposition: form-data; name=\"count\"\r\n\r\n"
+      "7\r\n"
+      "--demo--\r\n";
+   request_value.prepare_payload();
+
+   const auto response = fcl::asio::blocking::run(runtime, connection.async_request(std::move(request_value)));
+   const auto decoded = fcl::json::read<form_submit_response>(response.body());
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_REQUIRE(decoded.ok());
+   BOOST_TEST(decoded.value.summary == "alpha:7");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_api_non_stream_head_route_is_head_only) {
+   auto runtime = fcl::asio::runtime{};
+   auto apis = fcl::api::registry{};
+   apis.install<control_api>(control_api::describe(), std::make_shared<control_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<control_api>().build();
+   router.mount(binding);
+
+   auto head_request = make_request(method::head, "/controls/abc");
+   auto head_context = make_route_context(head_request);
+   head_context.runtime = &runtime;
+   BOOST_TEST(handle(router, head_context).result_int() == static_cast<unsigned>(status::no_content));
+
+   auto get_request = make_request(method::get, "/controls/abc");
+   auto get_context = make_route_context(get_request);
+   get_context.runtime = &runtime;
+   BOOST_TEST(handle(router, get_context).result_int() == static_cast<unsigned>(status::method_not_allowed));
+}
+
+BOOST_AUTO_TEST_CASE(http_api_patch_route_is_mounted) {
+   auto runtime = fcl::asio::runtime{};
+   auto apis = fcl::api::registry{};
+   apis.install<patch_api>(patch_api::describe(), std::make_shared<patch_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<patch_api>().build();
+   router.mount(binding);
+
+   auto request = make_request(method::patch, "/controls/abc");
+   request.set(field::content_type, "application/json");
+   request.body() = R"({"id":"abc","value":"updated"})";
+   request.prepare_payload();
+
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+   const auto response = handle(router, context);
+   const auto decoded = fcl::json::read<control_response>(response.body());
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_REQUIRE(decoded.ok());
+   BOOST_TEST(decoded.value.value == "abc:updated");
 }
 
 BOOST_AUTO_TEST_CASE(middleware_runs_in_order_and_can_short_circuit) {

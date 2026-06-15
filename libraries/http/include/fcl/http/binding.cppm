@@ -155,6 +155,8 @@ template <typename Object> struct stream_member_predicate {
    template <typename Descriptor>
    using fn = std::bool_constant<
       is_body_stream_v<std::remove_cvref_t<decltype(std::declval<Object>().*Descriptor::pointer)>> ||
+      is_body_bytes_v<std::remove_cvref_t<decltype(std::declval<Object>().*Descriptor::pointer)>> ||
+      is_form_field<std::remove_cvref_t<decltype(std::declval<Object>().*Descriptor::pointer)>>::value ||
       is_upload_file_v<std::remove_cvref_t<decltype(std::declval<Object>().*Descriptor::pointer)>>>;
 };
 

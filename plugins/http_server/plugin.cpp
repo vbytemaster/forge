@@ -30,9 +30,11 @@ import fcl.http.api;
 import fcl.http.middleware;
 import fcl.http.server;
 import fcl.plugins.http_server.exceptions;
+import fcl.plugins.http_server.file_publisher;
 import fcl.plugins.http_server.middleware;
 import fcl.plugins.http_server.publisher;
 import fcl.plugins.http_server.types;
+import fcl.plugins.http_server.upload_publisher;
 
 #include "private/config_decode.hxx"
 #include "private/publication_store.hxx"
@@ -70,6 +72,30 @@ class plugin::middleware_impl final : public middleware {
    std::shared_ptr<impl> state_;
 };
 
+class plugin::file_publisher_impl final : public file_publisher {
+ public:
+   explicit file_publisher_impl(std::shared_ptr<impl> state) : state_{std::move(state)} {}
+
+   void publish(file_publication publication, publish_options options) override {
+      state_->publications.publish(std::move(publication), std::move(options));
+   }
+
+ private:
+   std::shared_ptr<impl> state_;
+};
+
+class plugin::upload_publisher_impl final : public upload_publisher {
+ public:
+   explicit upload_publisher_impl(std::shared_ptr<impl> state) : state_{std::move(state)} {}
+
+   void publish(upload_publication publication, publish_options options) override {
+      state_->publications.publish(std::move(publication), std::move(options));
+   }
+
+ private:
+   std::shared_ptr<impl> state_;
+};
+
 plugin::plugin() : impl_{std::make_shared<impl>()} {}
 
 plugin::~plugin() = default;
@@ -94,6 +120,8 @@ boost::asio::awaitable<void> plugin::configure(fcl::config::component_view view)
 boost::asio::awaitable<void> plugin::provide(fcl::api::provider& provider) {
    provider.install<publisher>(std::make_shared<publisher_impl>(impl_));
    provider.install<middleware>(std::make_shared<middleware_impl>(impl_));
+   provider.install<file_publisher>(std::make_shared<file_publisher_impl>(impl_));
+   provider.install<upload_publisher>(std::make_shared<upload_publisher_impl>(impl_));
    co_return;
 }
 

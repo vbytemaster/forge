@@ -16,6 +16,8 @@
 #include <chrono>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -69,11 +71,14 @@ import fcl.http.base_url;
 import fcl.http.client;
 import fcl.http.connection;
 import fcl.http.exceptions;
+import fcl.http.file;
 import fcl.http.mapping;
 import fcl.http.middleware;
 import fcl.http.proxy;
 import fcl.http.route_context;
+import fcl.http.stream;
 import fcl.http.types;
+import fcl.http.upload;
 import fcl.p2p.exceptions;
 import fcl.p2p.identity;
 import fcl.p2p.endpoint;
@@ -102,9 +107,11 @@ import fcl.plugins.signature_provider.api;
 import fcl.plugins.signature_provider.plugin;
 import fcl.plugins.http_server.types;
 import fcl.plugins.http_server.exceptions;
+import fcl.plugins.http_server.file_publisher;
 import fcl.plugins.http_server.publisher;
 import fcl.plugins.http_server.middleware;
 import fcl.plugins.http_server.plugin;
+import fcl.plugins.http_server.upload_publisher;
 import fcl.plugins.p2p_diagnostics.types;
 import fcl.plugins.p2p_diagnostics.exceptions;
 import fcl.plugins.p2p_diagnostics.api;
@@ -354,6 +361,35 @@ class http_cache_api_impl final : public http_cache_api {
 
 struct http_plugin_state {
    std::shared_ptr<std::string> trace = std::make_shared<std::string>();
+   std::filesystem::path file_root;
+   std::shared_ptr<std::string> uploaded = std::make_shared<std::string>();
+};
+
+class temp_directory {
+ public:
+   temp_directory() {
+      path_ = std::filesystem::temp_directory_path() /
+              ("fcl-plugin-http-test-" +
+               std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+      std::filesystem::create_directories(path_);
+   }
+
+   ~temp_directory() {
+      std::error_code ignored;
+      std::filesystem::remove_all(path_, ignored);
+   }
+
+   [[nodiscard]] const std::filesystem::path& path() const noexcept {
+      return path_;
+   }
+
+   void write(std::string_view name, std::string_view bytes) const {
+      auto output = std::ofstream{path_ / std::string{name}, std::ios::binary};
+      output << bytes;
+   }
+
+ private:
+   std::filesystem::path path_;
 };
 
 struct received_pubsub_messages {
@@ -705,6 +741,31 @@ class http_route_publisher_plugin final : public fcl::app::plugin {
       auto plan = fcl::api::binding().serve(context.apis()).export_api<http_cache_api>(http_cache_api::ref()).build();
       publisher->publish<http_cache_api>(plan);
       publisher->publish<http_cache_api>(std::move(plan), http_server::publish_options{.base_path = "/v2"});
+
+      auto files = context.apis().get<http_server::file_publisher>(http_server::file_publisher::ref());
+      files->publish(http_server::file_publication{
+         .root = state_->file_root,
+         .route_path = "/files/:name",
+         .path_parameter = "name",
+         .options = fcl::http::file_options{.content_type = "application/test"},
+      });
+
+      auto uploads = context.apis().get<http_server::upload_publisher>(http_server::upload_publisher::ref());
+      uploads->publish(http_server::upload_publication{
+         .route_path = "/upload",
+         .options = fcl::http::upload_options{.memory_threshold_bytes = 4,
+                                              .max_file_bytes = 1024,
+                                              .max_total_bytes = 1024,
+                                              .spool_directory = state_->file_root},
+         .handler =
+            [uploaded = state_->uploaded](http_server::upload_request& request)
+               -> boost::asio::awaitable<fcl::http::stream_response> {
+               auto part = co_await request.upload.async_read();
+               *uploaded = part.text();
+               co_return fcl::http::stream_response::buffered(
+                  fcl::http::make_text_response(request.context.request, fcl::http::status::ok, "uploaded"));
+            },
+      });
       co_return;
    }
 
@@ -1278,6 +1339,10 @@ static_assert(fcl::api::local_interface<http_server::publisher>);
 static_assert(!fcl::api::remote_interface<http_server::publisher>);
 static_assert(fcl::api::local_interface<http_server::middleware>);
 static_assert(!fcl::api::remote_interface<http_server::middleware>);
+static_assert(fcl::api::local_interface<http_server::file_publisher>);
+static_assert(!fcl::api::remote_interface<http_server::file_publisher>);
+static_assert(fcl::api::local_interface<http_server::upload_publisher>);
+static_assert(!fcl::api::remote_interface<http_server::upload_publisher>);
 
 } // namespace
 
@@ -1606,7 +1671,10 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_config_is_described_from_public_schema) 
 
 BOOST_AUTO_TEST_CASE(http_server_plugin_publishes_typed_api_and_middleware) {
    const auto port = reserve_loopback_port();
+   auto files = temp_directory{};
+   files.write("asset.bin", "static-body");
    auto state = std::make_shared<http_plugin_state>();
+   state->file_root = files.path();
    auto app = http_server_application{state};
    auto config = fcl::config::document{};
    config.set("http-server.port", static_cast<std::uint64_t>(port));
@@ -1629,9 +1697,39 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_publishes_typed_api_and_middleware) {
       app.runtime(), override_cache->write(http_write_request{.ref = "abc", .bytes = "payload"}));
    BOOST_TEST(receipt.bytes == "abc:payload");
 
+   auto file_client = fcl::http::client{app.runtime(), fcl::http::parse_base_url("http://127.0.0.1:" +
+                                                                                 std::to_string(port) + "/api/v1")};
+   const auto file_response = fcl::asio::blocking::run(app.runtime(), file_client.async_get("/files/asset.bin"));
+   BOOST_TEST(file_response.result_int() == static_cast<unsigned>(fcl::http::status::ok));
+   BOOST_TEST(file_response.body() == "static-body");
+   BOOST_TEST(std::string{file_response[fcl::http::field::content_type]} == "application/test");
+
+   auto upload_connection =
+      fcl::http::connection{app.runtime(), fcl::http::parse_base_url("http://127.0.0.1:" +
+                                                                     std::to_string(port) + "/api/v1")};
+   auto upload_request = fcl::http::request{};
+   upload_request.method(fcl::http::method::post);
+   upload_request.target("/api/v1/upload");
+   upload_request.version(11);
+   upload_request.body() = "0123456789";
+   upload_request.prepare_payload();
+   const auto upload_response = fcl::asio::blocking::run(app.runtime(),
+                                                         upload_connection.async_request(std::move(upload_request)));
+   BOOST_TEST(upload_response.result_int() == static_cast<unsigned>(fcl::http::status::ok));
+   BOOST_TEST(upload_response.body() == "uploaded");
+   BOOST_TEST(*state->uploaded == "0123456789");
+
    auto publisher = app.apis().get<http_server::publisher>(http_server::publisher::ref());
    BOOST_CHECK_THROW(publisher->publish(fcl::http::api().build()), http_server::exceptions::publication_closed);
+   auto file_publisher = app.apis().get<http_server::file_publisher>(http_server::file_publisher::ref());
+   BOOST_CHECK_THROW(file_publisher->publish(http_server::file_publication{.root = files.path()}),
+                     http_server::exceptions::publication_closed);
+   auto upload_publisher = app.apis().get<http_server::upload_publisher>(http_server::upload_publisher::ref());
+   BOOST_CHECK_THROW(upload_publisher->publish(http_server::upload_publication{}),
+                     http_server::exceptions::publication_closed);
    BOOST_TEST(app.apis().describe({.id = {"fcl.plugins.http_server.status"}, .major = 1, .min_revision = 0}) ==
+              nullptr);
+   BOOST_TEST(app.apis().describe({.id = {"fcl.plugins.http_server.router"}, .major = 1, .min_revision = 0}) ==
               nullptr);
 
    fcl::asio::blocking::run(app.runtime(), app.shutdown());

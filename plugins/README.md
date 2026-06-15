@@ -60,9 +60,9 @@ depend on P2P; `http_server` depends on the HTTP/API/app layers; and
 
 `http_server` starts one `fcl_http` server through the application lifecycle and
 publishes local-only APIs for application plugins to contribute typed HTTP API
-bindings and middleware before startup. It is the app-level wrapper around the
-HTTP foundation; it is not a diagnostics endpoint, admin server, auth policy,
-CORS framework or raw route registry.
+bindings, middleware, static file routes and upload routes before startup. It is
+the app-level wrapper around the HTTP foundation; it is not a diagnostics
+endpoint, admin server, auth policy, CORS framework or raw route registry.
 
 Config section `http-server` owns the listen address, default API base path and
 server guardrails:
@@ -129,9 +129,45 @@ middleware->use(fcl::http::middleware_descriptor{
 });
 ```
 
-Publishing and middleware registration close at plugin startup. Late
-contributions fail with `http_server::exceptions::publication_closed`, which
-keeps the running router immutable and deterministic.
+Static files and uploads are contributed through their own local APIs. They use
+the `fcl_http` file/upload helpers under the hood, so application plugins do not
+need raw route access.
+
+```cpp
+auto files = context.apis().get<fcl::plugins::http_server::file_publisher>(
+   {.id = {"fcl.plugins.http_server.file_publisher"}, .major = 1});
+
+files->publish(fcl::plugins::http_server::file_publication{
+   .root = "/srv/cache-public",
+   .route_path = "/files/:name",
+   .path_parameter = "name",
+   .options = fcl::http::file_options{
+      .content_type = "application/octet-stream",
+   },
+});
+
+auto uploads = context.apis().get<fcl::plugins::http_server::upload_publisher>(
+   {.id = {"fcl.plugins.http_server.upload_publisher"}, .major = 1});
+
+uploads->publish(fcl::plugins::http_server::upload_publication{
+   .route_path = "/upload",
+   .options = fcl::http::upload_options{
+      .memory_threshold_bytes = 1 * 1024 * 1024,
+      .max_file_bytes = 64 * 1024 * 1024,
+   },
+   .handler = [](fcl::plugins::http_server::upload_request& req)
+      -> boost::asio::awaitable<fcl::http::stream_response> {
+      auto part = co_await req.upload.async_read();
+      store_upload(part);
+      co_return fcl::http::stream_response::buffered(
+         fcl::http::make_text_response(req.context.request, fcl::http::status::ok, "stored"));
+   },
+});
+```
+
+Publishing, middleware, file and upload registration close at plugin startup.
+Late contributions fail with `http_server::exceptions::publication_closed`,
+which keeps the running router immutable and deterministic.
 
 ## Signature Provider Plugin
 

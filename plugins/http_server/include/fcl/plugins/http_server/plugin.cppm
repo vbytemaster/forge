@@ -46,6 +46,8 @@ class plugin final : public fcl::app::plugin {
    struct impl;
    class publisher_impl;
    class middleware_impl;
+   class file_publisher_impl;
+   class upload_publisher_impl;
    std::shared_ptr<impl> impl_;
 };
 

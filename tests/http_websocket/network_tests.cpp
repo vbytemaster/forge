@@ -858,6 +858,50 @@ BOOST_AUTO_TEST_CASE(http_api_binding_mounts_ordered_middleware_contributions) {
    BOOST_TEST(*trace == "auth>limits><limits<auth");
 }
 
+BOOST_AUTO_TEST_CASE(http_api_binding_mounts_under_base_path) {
+   auto runtime = fcl::asio::runtime{};
+   auto apis = fcl::api::registry{};
+   apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
+
+   auto trace = std::make_shared<std::string>();
+   auto binding = fcl::http::api()
+                      .use(fcl::api::binding().serve(apis).build())
+                      .middleware(fcl::http::middleware_descriptor{
+                          .id = "api-limit",
+                          .path_prefix = "/cache",
+                          .handler =
+                              [trace](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
+                                 static_cast<void>(context);
+                                 *trace += "limit>";
+                                 auto response = co_await next();
+                                 *trace += "<limit";
+                                 co_return response;
+                              },
+                      })
+                      .bind<macro_cache>()
+                      .build();
+
+   auto router = fcl::http::router{};
+   binding.mount(router, "/api/v1");
+
+   auto request = make_request(method::get, "/api/v1/cache/chunks/abc?offset=7&limit=4096");
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+
+   const auto response = handle(router, context);
+   const auto response_bytes = fcl::api::bytes{response.body().begin(), response.body().end()};
+   const auto unpacked = fcl::api::unpack_body<macro_chunk>(response_bytes);
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(unpacked.bytes == "abc:7:4096");
+   BOOST_TEST(*trace == "limit><limit");
+
+   auto unprefixed_request = make_request(method::get, "/cache/chunks/abc?offset=7&limit=4096");
+   auto unprefixed_context = make_route_context(unprefixed_request);
+   unprefixed_context.runtime = &runtime;
+   BOOST_TEST(handle(router, unprefixed_context).result_int() == static_cast<unsigned>(status::not_found));
+}
+
 BOOST_AUTO_TEST_CASE(http_api_binding_rejects_duplicate_middleware_ids) {
    auto duplicate = fcl::http::api()
                         .middleware(fcl::http::middleware_descriptor{
@@ -915,18 +959,65 @@ BOOST_AUTO_TEST_CASE(client_roundtrips_over_local_server) {
    server.start();
 
    const auto port = wait_for_port(server);
-   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port) + "/spring")};
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port) + "/api")};
 
-   const auto response = client.post_json("/v1/chain/get_info", R"({"ping":1})");
+   const auto response = fcl::asio::blocking::run(runtime, client.async_post_json("/v1/info", R"({"ping":1})"));
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
    BOOST_TEST(response.body() == R"({"ok":true})");
-   BOOST_TEST(*seen_target == "/spring/v1/chain/get_info");
+   BOOST_TEST(*seen_target == "/api/v1/info");
    BOOST_TEST(*seen_body == R"({"ping":1})");
    BOOST_CHECK_EQUAL(client.metrics().completed_requests, 1U);
    BOOST_CHECK_EQUAL(client.metrics().status_2xx, 1U);
 
    server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(server_async_start_binds_before_return) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server = fcl::http::server{
+      runtime,
+      server_config{},
+      [](route_context& context) -> boost::asio::awaitable<response> {
+         co_return make_text_response(context.request, status::ok, "ready");
+      },
+   };
+
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   BOOST_TEST(server.port() != 0U);
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   const auto response = fcl::asio::blocking::run(runtime, client.async_post_json("/health", "{}"));
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(response.body() == "ready");
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+   BOOST_TEST(server.port() == 0U);
+}
+
+BOOST_AUTO_TEST_CASE(server_rejects_request_body_over_configured_limit) {
+   auto runtime = fcl::asio::runtime{};
+   auto invoked = std::make_shared<std::atomic<bool>>(false);
+   auto server = fcl::http::server{
+      runtime,
+      server_config{.max_request_body_bytes = 4},
+      [invoked](route_context& context) -> boost::asio::awaitable<response> {
+         *invoked = true;
+         co_return make_text_response(context.request, status::ok, "unreachable");
+      },
+   };
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   auto connection = fcl::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto request = make_request(method::post, "/upload");
+   request.body() = "12345";
+   request.prepare_payload();
+
+   const auto response = fcl::asio::blocking::run(runtime, connection.async_request(std::move(request)));
+   BOOST_TEST(response.result_int() == 413);
+   BOOST_TEST(!invoked->load());
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(connection_reconnects_after_connection_close) {
@@ -950,13 +1041,13 @@ BOOST_AUTO_TEST_CASE(connection_reconnects_after_connection_close) {
    first.keep_alive(false);
    first.set(field::connection, "close");
 
-   const auto first_response = connection.request(std::move(first));
+   const auto first_response = fcl::asio::blocking::run(runtime, connection.async_request(std::move(first)));
    BOOST_TEST(first_response.result_int() == static_cast<unsigned>(status::ok));
 
    auto second = make_request(method::get, "/again");
    second.keep_alive(true);
 
-   const auto second_response = connection.request(std::move(second));
+   const auto second_response = fcl::asio::blocking::run(runtime, connection.async_request(std::move(second)));
    BOOST_TEST(second_response.result_int() == static_cast<unsigned>(status::ok));
    BOOST_TEST(second_response.keep_alive());
    BOOST_TEST(request_count->load() == 2);
@@ -972,9 +1063,13 @@ BOOST_AUTO_TEST_CASE(connection_retries_only_idempotent_requests_after_remote_cl
        fcl::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(retry_server.port()))};
 
    auto get_request = make_request(method::get, "/retry");
-   const auto get_response = connection.request(
-       std::move(get_request),
-       request_options{.retry_idempotent = true, .max_retries = 1, .retry_backoff = std::chrono::milliseconds{1}});
+   const auto get_response =
+      fcl::asio::blocking::run(runtime,
+                               connection.async_request(
+                                  std::move(get_request),
+                                  request_options{.retry_idempotent = true,
+                                                  .max_retries = 1,
+                                                  .retry_backoff = std::chrono::milliseconds{1}}));
 
    BOOST_TEST(get_response.result_int() == static_cast<unsigned>(status::ok));
    BOOST_TEST(get_response.body() == "retry-ok");
@@ -986,9 +1081,12 @@ BOOST_AUTO_TEST_CASE(connection_retries_only_idempotent_requests_after_remote_cl
        fcl::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(no_retry_server.port()))};
    auto post_request = make_request(method::post, "/mutation");
    BOOST_CHECK_THROW(
-       no_retry_connection.request(
-           std::move(post_request),
-           request_options{.retry_idempotent = true, .max_retries = 1, .retry_backoff = std::chrono::milliseconds{1}}),
+       fcl::asio::blocking::run(runtime,
+                                no_retry_connection.async_request(
+                                   std::move(post_request),
+                                   request_options{.retry_idempotent = true,
+                                                   .max_retries = 1,
+                                                   .retry_backoff = std::chrono::milliseconds{1}})),
        std::exception);
    BOOST_CHECK_EQUAL(no_retry_connection.metrics().retry_attempts, 0U);
 }
@@ -1038,8 +1136,9 @@ BOOST_AUTO_TEST_CASE(websocket_echo_shares_server_port) {
 
    const auto port = wait_for_port(server);
    auto http_client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
-   BOOST_TEST(http_client.get("/health").body() == "ok");
-   BOOST_TEST(http_client.get("/ws").result_int() == static_cast<unsigned>(status::upgrade_required));
+   BOOST_TEST(fcl::asio::blocking::run(runtime, http_client.async_get("/health")).body() == "ok");
+   BOOST_TEST(fcl::asio::blocking::run(runtime, http_client.async_get("/ws")).result_int() ==
+              static_cast<unsigned>(status::upgrade_required));
 
    auto ws_client = fcl::websocket::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
    auto connection = ws_client.connect("/ws");

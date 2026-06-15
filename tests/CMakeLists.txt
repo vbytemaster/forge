@@ -397,6 +397,17 @@ add_custom_target(
    DEPENDS test_fcl_package_install
 )
 add_custom_target(
+   test_fcl_package_plugin_http_server
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugin_http_server
+      ${CMAKE_BINARY_DIR}/fcl-package-plugin-http-server
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command fcl_package_plugin_http_server
+   DEPENDS test_fcl_package_install
+)
+add_custom_target(
    test_fcl_package_plugins_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
@@ -517,6 +528,17 @@ add_test(
       --test-command fcl_package_plugin_signature_provider
 )
 set_tests_properties(test_fcl_package_plugin_signature_provider PROPERTIES DEPENDS test_fcl_package_install)
+add_test(
+   NAME test_fcl_package_plugin_http_server
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugin_http_server
+      ${CMAKE_BINARY_DIR}/fcl-package-plugin-http-server
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command fcl_package_plugin_http_server
+)
+set_tests_properties(test_fcl_package_plugin_http_server PROPERTIES DEPENDS test_fcl_package_install)
 add_test(
    NAME test_fcl_package_plugins_component
    COMMAND ${CMAKE_CTEST_COMMAND}

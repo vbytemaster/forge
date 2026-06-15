@@ -28,7 +28,6 @@ module;
 
 module fcl.http.connection;
 
-import fcl.asio.blocking;
 import fcl.asio.runtime;
 import fcl.http.exceptions;
 
@@ -414,10 +413,6 @@ boost::asio::awaitable<response> connection::async_request(fcl::http::request re
       static_cast<void>(error);
    }
    co_return operation->take_result();
-}
-
-response connection::request(fcl::http::request request_value, request_options options) {
-   return fcl::asio::blocking::run(impl_->runtime, async_request(std::move(request_value), options));
 }
 
 connection_metrics connection::metrics() const {

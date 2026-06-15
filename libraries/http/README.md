@@ -4,6 +4,10 @@
 middleware, server and client/connection primitives. It uses Boost.Beast/URL
 internally but keeps FCL-owned route and lifecycle semantics.
 
+Application-level server lifecycle is usually owned by
+`fcl.plugins.http_server.plugin`; use the library directly when building a custom
+HTTP host or testing route/middleware behavior without the app plugin layer.
+
 ## When To Use
 
 - Build local or service HTTP APIs over Boost.Asio.
@@ -188,11 +192,18 @@ import fcl.http.server;
 auto runtime = fcl::asio::runtime{};
 auto server = fcl::http::server{
    runtime,
-   {.bind_address = "127.0.0.1", .port = 8080},
+   {
+      .bind_address = "127.0.0.1",
+      .port = 8080,
+      .max_request_body_bytes = 16 * 1024 * 1024,
+      .max_header_bytes = 64 * 1024,
+      .read_timeout = 30s,
+      .idle_timeout = 120s,
+   },
    std::move(router),
 };
 
-server.start();
+co_await server.async_start();
 ```
 
 ### Use The Client

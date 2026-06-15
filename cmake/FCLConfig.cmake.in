@@ -35,6 +35,7 @@ set(
    quic
    p2p
    plugin_signature_provider
+   plugin_http_server
    plugin_p2p_node
    plugin_p2p_api_resolver
    plugin_p2p_diagnostics
@@ -147,6 +148,12 @@ macro(_fcl_add_component component)
          _fcl_add_component(config)
          _fcl_add_component(schema)
          _fcl_add_component(crypto)
+      elseif("${component}" STREQUAL "plugin_http_server")
+         _fcl_add_component(app)
+         _fcl_add_component(api)
+         _fcl_add_component(config)
+         _fcl_add_component(schema)
+         _fcl_add_component(http)
       elseif("${component}" STREQUAL "plugin_p2p_node")
          _fcl_add_component(app)
          _fcl_add_component(api)
@@ -169,6 +176,7 @@ macro(_fcl_add_component component)
          _fcl_add_component(p2p)
       elseif("${component}" STREQUAL "plugins")
          _fcl_add_component(plugin_signature_provider)
+         _fcl_add_component(plugin_http_server)
          _fcl_add_component(plugin_p2p_node)
          _fcl_add_component(plugin_p2p_api_resolver)
          _fcl_add_component(plugin_p2p_diagnostics)

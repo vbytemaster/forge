@@ -392,6 +392,7 @@ set(
    fcl_p2p
    fcl_app
    fcl_plugin_signature_provider
+   fcl_plugin_http_server
    fcl_plugin_p2p_node
    fcl_plugin_p2p_api_resolver
    fcl_plugin_p2p_diagnostics
@@ -462,6 +463,7 @@ install(
              libraries/p2p/include/fcl
              libraries/app/include/fcl
              plugins/signature_provider/include/fcl
+             plugins/http_server/include/fcl
              plugins/p2p_node/include/fcl
              plugins/p2p_api_resolver/include/fcl
              plugins/p2p_diagnostics/include/fcl

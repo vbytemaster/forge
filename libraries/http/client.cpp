@@ -54,23 +54,6 @@ boost::asio::awaitable<response> client::async_post_json(std::string_view path, 
                                     options);
 }
 
-response client::request(fcl::http::request request_value, request_options options) {
-   return connection_.request(std::move(request_value), options);
-}
-
-response client::send(method verb, std::string_view path, std::string body, std::string_view content_type,
-                      request_options options) {
-   return request(make_request(verb, endpoint_, path, std::move(body), content_type), options);
-}
-
-response client::get(std::string_view path, request_options options) {
-   return request(make_request(method::get, endpoint_, path), options);
-}
-
-response client::post_json(std::string_view path, std::string body, request_options options) {
-   return request(make_request(method::post, endpoint_, path, std::move(body), "application/json"), options);
-}
-
 connection_metrics client::metrics() const {
    return connection_.metrics();
 }

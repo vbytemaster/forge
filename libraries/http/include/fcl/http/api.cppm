@@ -58,13 +58,13 @@ struct api_route_options {
 
 class api_binding {
  public:
-   using mount_step = std::function<void(router&)>;
+   using mount_step = std::function<void(router&, std::string_view)>;
 
    explicit api_binding(std::vector<mount_step> steps) : steps_{std::move(steps)} {}
 
-   void mount(router& target) const {
+   void mount(router& target, std::string_view base_path = {}) const {
       for (const auto& step : steps_) {
-         step(target);
+         step(target, base_path);
       }
    }
 
@@ -124,7 +124,11 @@ class api_builder {
    }
 
    api_builder& middleware(middleware_descriptor descriptor) {
-      steps_.push_back([descriptor = std::move(descriptor)](router& target) mutable { target.use(std::move(descriptor)); });
+      steps_.push_back([descriptor = std::move(descriptor)](router& target, std::string_view base_path) mutable {
+         auto mounted = descriptor;
+         mounted.path_prefix = join_path(base_path, mounted.path_prefix);
+         target.use(std::move(mounted));
+      });
       return *this;
    }
 
@@ -138,6 +142,35 @@ class api_builder {
    template <typename T> struct is_optional<std::optional<T>> : std::true_type {
       using value_type = T;
    };
+
+   [[nodiscard]] static std::string normalize_base_path(std::string_view base_path) {
+      if (base_path.empty() || base_path == "/") {
+         return {};
+      }
+      if (base_path.front() != '/') {
+         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API base path must start with /");
+      }
+      while (base_path.size() > 1U && base_path.back() == '/') {
+         base_path.remove_suffix(1U);
+      }
+      return std::string{base_path};
+   }
+
+   [[nodiscard]] static std::string join_path(std::string_view base_path, std::string_view path) {
+      if (path.empty() || path.front() != '/') {
+         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API path must start with /");
+      }
+      auto base = normalize_base_path(base_path);
+      if (base.empty()) {
+         return std::string{path};
+      }
+      if (path == "/") {
+         return base;
+      }
+      auto result = std::move(base);
+      result += path;
+      return result;
+   }
 
    template <typename Interface, typename Request, typename Response>
    [[nodiscard]] static std::string method_name() {
@@ -342,7 +375,8 @@ class api_builder {
       auto plan = plan_;
       auto name = method_name<interface_type, Request, Response>();
       return [plan = std::move(plan), verb, path = std::move(path), options = std::move(options),
-              name = std::move(name)](router& target) {
+              name = std::move(name)](router& target, std::string_view base_path) {
+         auto mounted_path = join_path(base_path, path);
          auto handler = [plan, options, name](route_context& context) -> boost::asio::awaitable<response> {
             if (plan.local == nullptr) {
                FCL_THROW_EXCEPTION(fcl::api::exceptions::incompatible_version, "HTTP API binding has no local registry");
@@ -379,16 +413,16 @@ class api_builder {
          };
          switch (verb) {
          case method::get:
-            target.get(path, std::move(handler));
+            target.get(std::move(mounted_path), std::move(handler));
             break;
          case method::post:
-            target.post(path, std::move(handler));
+            target.post(std::move(mounted_path), std::move(handler));
             break;
          case method::put:
-            target.put(path, std::move(handler));
+            target.put(std::move(mounted_path), std::move(handler));
             break;
          case method::delete_:
-            target.del(path, std::move(handler));
+            target.del(std::move(mounted_path), std::move(handler));
             break;
          default:
             FCL_THROW_EXCEPTION(fcl::http::exceptions::method_not_allowed, "unsupported HTTP API route verb");

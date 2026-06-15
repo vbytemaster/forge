@@ -28,7 +28,7 @@ Each official plugin exposes focused slice modules:
 - `fcl.plugins.<name>.types` — config, options and value DTOs.
 - `fcl.plugins.<name>.exceptions` — typed exception category and aliases.
 
-Available plugin names are `p2p_node`, `p2p_api_resolver`,
+Available plugin names are `http_server`, `p2p_node`, `p2p_api_resolver`,
 `p2p_diagnostics`, `p2p_pubsub` and `signature_provider`.
 
 Do not import a root or per-plugin aggregate module; those files are not part of
@@ -47,13 +47,91 @@ auto direct = fcl::plugins::signature_provider::plugin{};
 
 Aggregate target: `fcl_plugins`.
 
-Focused targets: `fcl_plugin_signature_provider`, `fcl_plugin_p2p_node`,
-`fcl_plugin_p2p_api_resolver`, `fcl_plugin_p2p_diagnostics` and
-`fcl_plugin_p2p_pubsub`.
+Focused targets: `fcl_plugin_signature_provider`, `fcl_plugin_http_server`,
+`fcl_plugin_p2p_node`, `fcl_plugin_p2p_api_resolver`,
+`fcl_plugin_p2p_diagnostics` and `fcl_plugin_p2p_pubsub`.
 
 Dependencies are intentionally narrow per plugin. `signature_provider` does not
-depend on P2P; `p2p_api_resolver`, `p2p_diagnostics` and `p2p_pubsub` compose
-through `fcl_plugin_p2p_node`.
+depend on P2P; `http_server` depends on the HTTP/API/app layers; and
+`p2p_api_resolver`, `p2p_diagnostics` and `p2p_pubsub` compose through
+`fcl_plugin_p2p_node`.
+
+## HTTP Server Plugin
+
+`http_server` starts one `fcl_http` server through the application lifecycle and
+publishes local-only APIs for application plugins to contribute typed HTTP API
+bindings and middleware before startup. It is the app-level wrapper around the
+HTTP foundation; it is not a diagnostics endpoint, admin server, auth policy,
+CORS framework or raw route registry.
+
+Config section `http-server` owns the listen address, default API base path and
+server guardrails:
+
+```yaml
+http-server:
+  bind-address: 127.0.0.1
+  port: 8080
+  api-base-path: /api/v1
+  max-request-body-bytes: 16777216
+  max-header-bytes: 65536
+  read-timeout-ms: 30000
+  idle-timeout-ms: 120000
+```
+
+Register the infrastructure plugin first:
+
+```cpp
+registry.register_plugin(fcl::plugins::http_server::descriptor());
+```
+
+Application plugins contribute typed HTTP APIs through the publisher API. Empty
+`base_path` uses the configured `api-base-path`; `/` mounts at root; any other
+value is normalized as an absolute prefix.
+
+```cpp
+class cache_http_routes final : public fcl::app::plugin {
+ public:
+   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+      auto publisher = context.apis().get<fcl::plugins::http_server::publisher>(
+         {.id = {"fcl.plugins.http_server.publisher"}, .major = 1});
+
+      auto plan = fcl::api::binding()
+         .serve(context.apis())
+         .export_api<cache_api>(cache_api::ref())
+         .build();
+
+      publisher->publish<cache_api>(
+         std::move(plan),
+         fcl::plugins::http_server::publish_options{});
+
+      co_return;
+   }
+};
+```
+
+Middleware is contributed through a separate local API so products can keep
+cross-cutting HTTP behavior in focused plugins without exposing direct router
+mutation:
+
+```cpp
+auto middleware = context.apis().get<fcl::plugins::http_server::middleware>(
+   {.id = {"fcl.plugins.http_server.middleware"}, .major = 1});
+
+middleware->use(fcl::http::middleware_descriptor{
+   .id = "cache.request-id",
+   .phase = fcl::http::middleware_phase::observability,
+   .order = 100,
+   .handler = [](fcl::http::route_context& ctx, fcl::http::next_handler next)
+      -> boost::asio::awaitable<fcl::http::response> {
+      attach_request_id(ctx.request);
+      co_return co_await next();
+   },
+});
+```
+
+Publishing and middleware registration close at plugin startup. Late
+contributions fail with `http_server::exceptions::publication_closed`, which
+keeps the running router immutable and deterministic.
 
 ## Signature Provider Plugin
 

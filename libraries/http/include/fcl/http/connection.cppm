@@ -48,7 +48,6 @@ class connection {
    connection& operator=(const connection&) = delete;
 
    boost::asio::awaitable<response> async_request(fcl::http::request request_value, request_options options = {});
-   response request(fcl::http::request request_value, request_options options = {});
    [[nodiscard]] connection_metrics metrics() const;
 
  private:

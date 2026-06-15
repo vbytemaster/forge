@@ -1,6 +1,8 @@
 module;
 
 #include <coroutine>
+#include <algorithm>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -36,9 +38,10 @@ using asio::use_awaitable;
 
 class server_session : public std::enable_shared_from_this<server_session> {
  public:
-   server_session(fcl::asio::runtime& runtime, beast::tcp_stream stream, server_handler handler,
+   server_session(fcl::asio::runtime& runtime, beast::tcp_stream stream, server_config config, server_handler handler,
                   std::shared_ptr<router> router_value)
-       : runtime_{runtime}, stream_(std::move(stream)), handler_(std::move(handler)), router_(std::move(router_value)) {}
+       : runtime_{runtime}, stream_(std::move(stream)), config_(std::move(config)), handler_(std::move(handler)),
+         router_(std::move(router_value)) {}
 
    awaitable<void> run() {
       auto self = shared_from_this();
@@ -46,18 +49,40 @@ class server_session : public std::enable_shared_from_this<server_session> {
 
       for (;;) {
          buffer_.consume(buffer_.size());
-         auto request_value = request{};
+         auto parser = beast_http::request_parser<string_body>{};
+         parser.body_limit(config_.max_request_body_bytes);
+         parser.header_limit(static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(config_.max_header_bytes, std::numeric_limits<std::uint32_t>::max())));
+         stream_.expires_after(config_.read_timeout);
          auto [read_error, bytes] =
-             co_await beast_http::async_read(stream_, buffer_, request_value, asio::as_tuple(use_awaitable));
+             co_await beast_http::async_read(stream_, buffer_, parser, asio::as_tuple(use_awaitable));
          static_cast<void>(bytes);
 
          if (read_error == asio::error::eof) {
             co_return;
          }
+         if (read_error == beast_http::error::body_limit || read_error == beast_http::error::header_limit) {
+            const auto result = read_error == beast_http::error::body_limit ? status::payload_too_large
+                                                                            : status::request_header_fields_too_large;
+            auto response_value = response{result, 11};
+            response_value.set(field::content_type, "text/plain");
+            response_value.body() = read_error == beast_http::error::body_limit ? "payload too large"
+                                                                                : "headers too large";
+            response_value.prepare_payload();
+            response_value.keep_alive(false);
+            auto [write_error, written] =
+                co_await beast_http::async_write(stream_, response_value, asio::as_tuple(use_awaitable));
+            static_cast<void>(written);
+            if (write_error) {
+               throw boost::system::system_error{write_error};
+            }
+            break;
+         }
          if (read_error) {
             throw boost::system::system_error{read_error};
          }
 
+         auto request_value = parser.release();
          auto context_storage = std::optional<route_context>{};
          auto invalid_target = false;
          try {
@@ -84,6 +109,7 @@ class server_session : public std::enable_shared_from_this<server_session> {
             }
          }
 
+         stream_.expires_after(config_.idle_timeout);
          auto response_value = co_await handle_http(context);
          response_value.version(request_value.version());
          response_value.keep_alive(request_value.keep_alive());
@@ -146,6 +172,7 @@ class server_session : public std::enable_shared_from_this<server_session> {
 
    fcl::asio::runtime& runtime_;
    beast::tcp_stream stream_;
+   server_config config_;
    beast::flat_buffer buffer_;
    server_handler handler_;
    std::shared_ptr<router> router_;
@@ -177,8 +204,8 @@ struct server::impl {
             throw boost::system::system_error{error};
          }
 
-         auto client =
-             std::make_shared<detail::server_session>(runtime, beast::tcp_stream{std::move(socket)}, handler, router_value);
+         auto client = std::make_shared<detail::server_session>(runtime, beast::tcp_stream{std::move(socket)}, config,
+                                                                handler, router_value);
          asio::co_spawn(session_strand, client->run(), [](std::exception_ptr error) {
             if (error) {
                try {
@@ -196,6 +223,40 @@ struct server::impl {
    std::shared_ptr<router> router_value;
    tcp::acceptor acceptor;
    bool started = false;
+
+   void start_on_executor() {
+      if (started) {
+         return;
+      }
+
+      const auto address = asio::ip::make_address(config.bind_address);
+      auto endpoint = tcp::endpoint{address, config.port};
+
+      acceptor.open(endpoint.protocol());
+      acceptor.set_option(asio::socket_base::reuse_address(true));
+      acceptor.bind(endpoint);
+      acceptor.listen(asio::socket_base::max_listen_connections);
+      started = true;
+
+      asio::co_spawn(acceptor.get_executor(), accept_loop(), [](std::exception_ptr error) {
+         if (error) {
+            try {
+               std::rethrow_exception(error);
+            } catch (const std::exception&) {
+            }
+         }
+      });
+   }
+
+   void stop_on_executor() {
+      if (!started) {
+         return;
+      }
+      auto ignored = boost::system::error_code{};
+      acceptor.cancel(ignored);
+      acceptor.close(ignored);
+      started = false;
+   }
 };
 
 server::server(fcl::asio::runtime& runtime, server_config config, server_handler handler)
@@ -214,25 +275,7 @@ void server::start() {
       return;
    }
 
-   asio::dispatch(impl_->acceptor.get_executor(), [impl = impl_.get()] {
-      const auto address = asio::ip::make_address(impl->config.bind_address);
-      auto endpoint = tcp::endpoint{address, impl->config.port};
-
-      impl->acceptor.open(endpoint.protocol());
-      impl->acceptor.set_option(asio::socket_base::reuse_address(true));
-      impl->acceptor.bind(endpoint);
-      impl->acceptor.listen(asio::socket_base::max_listen_connections);
-      impl->started = true;
-
-      asio::co_spawn(impl->acceptor.get_executor(), impl->accept_loop(), [](std::exception_ptr error) {
-         if (error) {
-            try {
-               std::rethrow_exception(error);
-            } catch (const std::exception&) {
-            }
-         }
-      });
-   });
+   asio::dispatch(impl_->acceptor.get_executor(), [impl = impl_.get()] { impl->start_on_executor(); });
 }
 
 void server::stop() {
@@ -240,12 +283,20 @@ void server::stop() {
       return;
    }
 
-   asio::dispatch(impl_->acceptor.get_executor(), [impl = impl_.get()] {
-      auto ignored = boost::system::error_code{};
-      impl->acceptor.cancel(ignored);
-      impl->acceptor.close(ignored);
-      impl->started = false;
-   });
+   asio::dispatch(impl_->acceptor.get_executor(), [impl = impl_.get()] { impl->stop_on_executor(); });
+}
+
+boost::asio::awaitable<void> server::async_start() {
+   co_await asio::dispatch(impl_->acceptor.get_executor(), use_awaitable);
+   impl_->start_on_executor();
+}
+
+boost::asio::awaitable<void> server::async_stop() {
+   if (!impl_) {
+      co_return;
+   }
+   co_await asio::dispatch(impl_->acceptor.get_executor(), use_awaitable);
+   impl_->stop_on_executor();
 }
 
 std::uint16_t server::port() const {

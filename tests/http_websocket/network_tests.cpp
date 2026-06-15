@@ -8,12 +8,15 @@
 #include <chrono>
 #include <condition_variable>
 #include <coroutine>
+#include <cstring>
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -40,6 +43,7 @@ import fcl.asio.blocking;
 import fcl.asio.runtime;
 import fcl.http.api;
 import fcl.http.base_url;
+import fcl.http.body;
 import fcl.http.client;
 import fcl.http.connection;
 import fcl.http.exceptions;
@@ -49,6 +53,7 @@ import fcl.http.proxy;
 import fcl.http.route_context;
 import fcl.http.router;
 import fcl.http.server;
+import fcl.http.stream;
 import fcl.http.target;
 import fcl.http.types;
 import fcl.raw.raw;
@@ -266,6 +271,25 @@ request make_request(method verb, std::string target) {
 
 response make_json_response(const request& request, std::string body) {
    return make_text_response(request, status::ok, std::move(body), "application/json");
+}
+
+body_chunk make_body_chunk(std::string value) {
+   auto bytes = std::vector<std::byte>(value.size());
+   std::memcpy(bytes.data(), value.data(), value.size());
+   return body_chunk{.bytes = std::move(bytes)};
+}
+
+response raw_http_exchange(std::uint16_t port, std::string request_text) {
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(std::chrono::seconds{2});
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), port});
+   asio::write(stream.socket(), asio::buffer(request_text));
+
+   auto buffer = beast::flat_buffer{};
+   auto response_value = response{};
+   boost::beast::http::read(stream, buffer, response_value);
+   return response_value;
 }
 
 response handle(router& target, route_context& context) {
@@ -1016,6 +1040,145 @@ BOOST_AUTO_TEST_CASE(server_rejects_request_body_over_configured_limit) {
    const auto response = fcl::asio::blocking::run(runtime, connection.async_request(std::move(request)));
    BOOST_TEST(response.result_int() == 413);
    BOOST_TEST(!invoked->load());
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_stream_route_reads_large_request_body_in_chunks) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto total_bytes = std::make_shared<std::atomic<std::size_t>>(0);
+   auto chunk_count = std::make_shared<std::atomic<std::size_t>>(0);
+   auto header_body_empty = std::make_shared<std::atomic<bool>>(false);
+
+   auto router = fcl::http::router{};
+   router.post_stream("/upload",
+                      [total_bytes, chunk_count, header_body_empty](stream_request& request_value)
+                         -> boost::asio::awaitable<stream_response> {
+                         header_body_empty->store(request_value.context.request.body().empty());
+                         while (auto chunk = co_await request_value.body.async_read()) {
+                            total_bytes->fetch_add(chunk->bytes.size());
+                            chunk_count->fetch_add(1);
+                         }
+                         auto reply = make_text_response(request_value.context.request, status::ok,
+                                                         std::to_string(total_bytes->load()));
+                         co_return stream_response::buffered(std::move(reply));
+                      });
+
+   auto server = fcl::http::server{runtime, server_config{.max_request_body_bytes = 512 * 1024}, std::move(router)};
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   auto connection = fcl::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto request_value = make_request(method::post, "/upload");
+   request_value.body().assign(256 * 1024, 'x');
+   request_value.prepare_payload();
+
+   const auto response = fcl::asio::blocking::run(runtime, connection.async_request(std::move(request_value)));
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(response.body() == std::to_string(256 * 1024));
+   BOOST_TEST(total_bytes->load() == 256U * 1024U);
+   BOOST_TEST(chunk_count->load() > 1U);
+   BOOST_TEST(header_body_empty->load());
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_stream_route_writes_chunked_response_body) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto produced = std::make_shared<std::atomic<std::size_t>>(0);
+
+   auto router = fcl::http::router{};
+   router.get_stream("/download", [produced](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      auto chunks = std::make_shared<std::vector<std::string>>(
+         std::vector<std::string>{"alpha", "-", "omega"});
+      auto index = std::make_shared<std::size_t>(0);
+      auto reply = response{status::ok, request_value.context.request.version()};
+      reply.set(field::content_type, "application/octet-stream");
+      co_return stream_response{
+          .head = std::move(reply),
+          .body =
+             [chunks, index, produced]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
+                if (*index == chunks->size()) {
+                   co_return std::nullopt;
+                }
+                produced->fetch_add(1);
+                co_return make_body_chunk((*chunks)[(*index)++]);
+             },
+      };
+   });
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   const auto response = fcl::asio::blocking::run(runtime, client.async_get("/download"));
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(response.body() == "alpha-omega");
+   BOOST_TEST(response[field::transfer_encoding] == "chunked");
+   BOOST_TEST(produced->load() == 3U);
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_stream_middleware_short_circuits_before_body_read) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto invoked = std::make_shared<std::atomic<bool>>(false);
+
+   auto router = fcl::http::router{};
+   router.use([](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
+      static_cast<void>(next);
+      co_return make_text_response(context.request, status::unauthorized, "blocked");
+   });
+   router.post_stream("/upload", [invoked](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      static_cast<void>(request_value);
+      invoked->store(true);
+      co_return stream_response::buffered(response{status::ok, 11});
+   });
+
+   auto server = fcl::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   const auto response = raw_http_exchange(
+      server.port(),
+      "POST /upload HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 1048576\r\n\r\n");
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::unauthorized));
+   BOOST_TEST(response.body() == "blocked");
+   BOOST_TEST(!invoked->load());
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_stream_body_limit_fires_during_stream_read) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto invoked = std::make_shared<std::atomic<bool>>(false);
+
+   auto router = fcl::http::router{};
+   router.post_stream("/upload", [invoked](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      invoked->store(true);
+      while (co_await request_value.body.async_read()) {
+      }
+      co_return stream_response::buffered(make_text_response(request_value.context.request, status::ok, "ok"));
+   });
+
+   auto server = fcl::http::server{runtime, server_config{.max_request_body_bytes = 4}, std::move(router)};
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   const auto response = raw_http_exchange(
+      server.port(),
+      "POST /upload HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Transfer-Encoding: chunked\r\n"
+      "\r\n"
+      "5\r\n"
+      "12345\r\n"
+      "0\r\n"
+      "\r\n");
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::payload_too_large));
+   BOOST_TEST(response.body().find("payload_too_large") != std::string::npos);
+   BOOST_TEST(invoked->load());
 
    fcl::asio::blocking::run(runtime, server.async_stop());
 }

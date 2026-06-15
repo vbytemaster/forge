@@ -15,6 +15,8 @@ enum class code : int {
    not_found = 404,
    method_not_allowed = 405,
    conflict = 409,
+   payload_too_large = 413,
+   request_header_fields_too_large = 431,
    too_many_requests = 429,
    internal = 500,
    unavailable = 503,
@@ -29,6 +31,9 @@ using forbidden = fcl::exceptions::coded_exception<code, code::forbidden>;
 using not_found = fcl::exceptions::coded_exception<code, code::not_found>;
 using method_not_allowed = fcl::exceptions::coded_exception<code, code::method_not_allowed>;
 using conflict = fcl::exceptions::coded_exception<code, code::conflict>;
+using payload_too_large = fcl::exceptions::coded_exception<code, code::payload_too_large>;
+using request_header_fields_too_large =
+   fcl::exceptions::coded_exception<code, code::request_header_fields_too_large>;
 using too_many_requests = fcl::exceptions::coded_exception<code, code::too_many_requests>;
 using internal = fcl::exceptions::coded_exception<code, code::internal>;
 using unavailable = fcl::exceptions::coded_exception<code, code::unavailable>;

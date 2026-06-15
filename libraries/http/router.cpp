@@ -22,6 +22,7 @@ import fcl.api.registry;
 import fcl.api.binding;
 import fcl.api.dispatcher;
 import fcl.http.exceptions;
+import fcl.http.stream;
 import fcl.http.target;
 
 namespace fcl::http {
@@ -69,8 +70,12 @@ std::string http_error_name(int code) {
       return "method_not_allowed";
    case 409:
       return "conflict";
+   case 413:
+      return "payload_too_large";
    case 429:
       return "too_many_requests";
+   case 431:
+      return "request_header_fields_too_large";
    case 503:
       return "unavailable";
    case 504:
@@ -297,6 +302,18 @@ void router::del(std::string path, route_handler handler) {
    add_route(method::delete_, std::move(path), std::move(handler));
 }
 
+void router::get_stream(std::string path, stream_route_handler handler) {
+   add_stream_route(method::get, std::move(path), std::move(handler));
+}
+
+void router::post_stream(std::string path, stream_route_handler handler) {
+   add_stream_route(method::post, std::move(path), std::move(handler));
+}
+
+void router::put_stream(std::string path, stream_route_handler handler) {
+   add_stream_route(method::put, std::move(path), std::move(handler));
+}
+
 void router::websocket(std::string path, websocket_route_handler handler) {
    auto segments = split_route_path(path);
    websocket_routes_.push_back(websocket_route_entry{
@@ -328,6 +345,9 @@ boost::asio::awaitable<response> router::handle(route_context& context) const {
       if (path_exists(routes_, context.parsed_target)) {
          co_return make_text_response(context.request, status::method_not_allowed, "method not allowed");
       }
+      if (path_exists(stream_routes_, context.parsed_target)) {
+         co_return make_text_response(context.request, status::method_not_allowed, "method not allowed");
+      }
       if (path_exists(websocket_routes_, context.parsed_target)) {
          co_return make_text_response(context.request, status::upgrade_required, "websocket upgrade required");
       }
@@ -348,6 +368,62 @@ boost::asio::awaitable<response> router::handle(route_context& context) const {
                                    "application/json");
    } catch (...) {
       co_return make_text_response(context.request, status::internal_server_error, "internal server error");
+   }
+}
+
+bool router::can_handle_stream(route_context& context) const {
+   return path_exists(stream_routes_, context.parsed_target);
+}
+
+boost::asio::awaitable<stream_response> router::handle_stream(stream_request& request) const {
+   auto& context = request.context;
+   try {
+      auto params = std::unordered_map<std::string, std::string>{};
+      for (const auto prefer_parameterized : {false, true}) {
+         for (const auto& route : stream_routes_) {
+            if (route.verb != context.request.method() || route.parameterized != prefer_parameterized) {
+               continue;
+            }
+            if (!match_path(route, context.parsed_target, &params)) {
+               continue;
+            }
+
+            context.route_params = std::move(params);
+            auto gate = co_await run_middleware_chain(
+               matching_middlewares(middlewares_, context.parsed_target), context,
+               [](route_context& route_context_value) -> boost::asio::awaitable<response> {
+                  co_return make_text_response(route_context_value.request, status::continue_, "");
+               });
+            if (gate.result() != status::continue_) {
+               co_return stream_response::buffered(std::move(gate));
+            }
+            co_return co_await route.handler(request);
+         }
+      }
+
+      if (path_exists(stream_routes_, context.parsed_target)) {
+         co_return stream_response::buffered(
+            make_text_response(context.request, status::method_not_allowed, "method not allowed"));
+      }
+      co_return stream_response::buffered(make_text_response(context.request, status::not_found, "not found"));
+   } catch (const fcl::exceptions::base& error) {
+      co_return stream_response::buffered(make_exception_response(context.request, error));
+   } catch (const std::exception&) {
+      co_return stream_response::buffered(make_text_response(context.request, status::internal_server_error,
+                                                            render_error_payload(fcl::api::error_payload{
+                                                                .error = "internal",
+                                                                .message = "internal error",
+                                                                .identity =
+                                                                    {
+                                                                        .category = "fcl.http",
+                                                                        .code = static_cast<std::uint32_t>(
+                                                                           status::internal_server_error),
+                                                                    },
+                                                            }),
+                                                            "application/json"));
+   } catch (...) {
+      co_return stream_response::buffered(
+         make_text_response(context.request, status::internal_server_error, "internal server error"));
    }
 }
 
@@ -372,6 +448,22 @@ void router::add_route(method verb, std::string path, route_handler handler) {
       }
    }
    routes_.push_back(route_entry{
+       .verb = verb,
+       .path = std::move(path),
+       .segments = segments,
+       .parameterized = parameterized(segments),
+       .handler = std::move(handler),
+   });
+}
+
+void router::add_stream_route(method verb, std::string path, stream_route_handler handler) {
+   auto segments = split_route_path(path);
+   for (const auto& route : stream_routes_) {
+      if (route.verb == verb && route.path == path) {
+         throw exceptions::conflict{"duplicate HTTP stream route"};
+      }
+   }
+   stream_routes_.push_back(stream_route_entry{
        .verb = verb,
        .path = std::move(path),
        .segments = segments,

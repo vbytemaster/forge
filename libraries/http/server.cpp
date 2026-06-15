@@ -6,7 +6,11 @@ module;
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <utility>
+#include <vector>
+
+#include <fcl/exceptions/macros.hpp>
 
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/awaitable.hpp>
@@ -22,7 +26,10 @@ module;
 module fcl.http.server;
 
 import fcl.asio.runtime;
+import fcl.http.body;
+import fcl.http.exceptions;
 import fcl.http.route_context;
+import fcl.http.stream;
 import fcl.websocket.connection;
 
 namespace fcl::http {
@@ -35,6 +42,94 @@ namespace beast_websocket = boost::beast::websocket;
 using tcp = asio::ip::tcp;
 using asio::awaitable;
 using asio::use_awaitable;
+
+stream_limits limits_from(const server_config& config) {
+   return stream_limits{
+       .max_body_bytes = config.max_request_body_bytes,
+       .read_timeout = config.read_timeout,
+       .write_timeout = config.idle_timeout,
+   };
+}
+
+request make_header_request(const beast_http::request_parser<beast_http::buffer_body>& parser) {
+   const auto& source = parser.get();
+   auto request_value = request{};
+   request_value.method(source.method());
+   request_value.target(source.target());
+   request_value.version(source.version());
+   request_value.keep_alive(source.keep_alive());
+   for (const auto& field_value : source) {
+      request_value.insert(field_value.name_string(), field_value.value());
+   }
+   return request_value;
+}
+
+void copy_headers(const response& source, beast_http::response<beast_http::buffer_body>& target) {
+   for (const auto& field_value : source) {
+      target.set(field_value.name_string(), field_value.value());
+   }
+}
+
+class beast_body_reader_source final : public body_reader::source {
+ public:
+   beast_body_reader_source(beast::tcp_stream& stream, beast::flat_buffer& buffer,
+                            beast_http::request_parser<beast_http::buffer_body>& parser, stream_limits limits)
+       : stream_(stream), buffer_(buffer), parser_(parser), limits_(limits) {}
+
+   awaitable<std::optional<body_chunk>> async_read() override {
+      if (parser_.is_done()) {
+         co_return std::nullopt;
+      }
+
+      const auto chunk_size = std::max<std::uint64_t>(1, limits_.max_chunk_bytes);
+      for (;;) {
+         auto storage = std::vector<std::byte>(static_cast<std::size_t>(chunk_size));
+         auto& body = parser_.get().body();
+         body.data = storage.data();
+         body.size = storage.size();
+
+         stream_.expires_after(limits_.read_timeout);
+         auto [read_error, bytes] =
+            co_await beast_http::async_read_some(stream_, buffer_, parser_, asio::as_tuple(use_awaitable));
+         static_cast<void>(bytes);
+
+         const auto produced = storage.size() - body.size;
+         if (read_error == beast_http::error::need_buffer) {
+            read_error = {};
+         }
+         if (read_error == beast_http::error::body_limit) {
+            FCL_THROW_EXCEPTION(exceptions::payload_too_large, "HTTP request body is too large");
+         }
+         if (read_error) {
+            throw boost::system::system_error{read_error};
+         }
+
+         bytes_read_ += produced;
+         if (bytes_read_ > limits_.max_body_bytes) {
+            FCL_THROW_EXCEPTION(exceptions::payload_too_large, "HTTP request body is too large");
+         }
+
+         if (produced != 0U) {
+            storage.resize(produced);
+            co_return body_chunk{.bytes = std::move(storage)};
+         }
+         if (parser_.is_done()) {
+            co_return std::nullopt;
+         }
+      }
+   }
+
+   [[nodiscard]] std::uint64_t bytes_read() const noexcept override {
+      return bytes_read_;
+   }
+
+ private:
+   beast::tcp_stream& stream_;
+   beast::flat_buffer& buffer_;
+   beast_http::request_parser<beast_http::buffer_body>& parser_;
+   stream_limits limits_;
+   std::uint64_t bytes_read_ = 0;
+};
 
 class server_session : public std::enable_shared_from_this<server_session> {
  public:
@@ -49,40 +144,41 @@ class server_session : public std::enable_shared_from_this<server_session> {
 
       for (;;) {
          buffer_.consume(buffer_.size());
-         auto parser = beast_http::request_parser<string_body>{};
+         auto parser = beast_http::request_parser<beast_http::buffer_body>{};
          parser.body_limit(config_.max_request_body_bytes);
          parser.header_limit(static_cast<std::uint32_t>(
             std::min<std::uint64_t>(config_.max_header_bytes, std::numeric_limits<std::uint32_t>::max())));
          stream_.expires_after(config_.read_timeout);
          auto [read_error, bytes] =
-             co_await beast_http::async_read(stream_, buffer_, parser, asio::as_tuple(use_awaitable));
+             co_await beast_http::async_read_header(stream_, buffer_, parser, asio::as_tuple(use_awaitable));
          static_cast<void>(bytes);
 
          if (read_error == asio::error::eof) {
             co_return;
          }
-         if (read_error == beast_http::error::body_limit || read_error == beast_http::error::header_limit) {
-            const auto result = read_error == beast_http::error::body_limit ? status::payload_too_large
-                                                                            : status::request_header_fields_too_large;
-            auto response_value = response{result, 11};
+         if (read_error == beast_http::error::header_limit) {
+            auto response_value = response{status::request_header_fields_too_large, 11};
             response_value.set(field::content_type, "text/plain");
-            response_value.body() = read_error == beast_http::error::body_limit ? "payload too large"
-                                                                                : "headers too large";
+            response_value.body() = "headers too large";
             response_value.prepare_payload();
             response_value.keep_alive(false);
-            auto [write_error, written] =
-                co_await beast_http::async_write(stream_, response_value, asio::as_tuple(use_awaitable));
-            static_cast<void>(written);
-            if (write_error) {
-               throw boost::system::system_error{write_error};
-            }
+            co_await write_response(response_value);
+            break;
+         }
+         if (read_error == beast_http::error::body_limit) {
+            auto response_value = response{status::payload_too_large, 11};
+            response_value.set(field::content_type, "text/plain");
+            response_value.body() = "payload too large";
+            response_value.prepare_payload();
+            response_value.keep_alive(false);
+            co_await write_response(response_value);
             break;
          }
          if (read_error) {
             throw boost::system::system_error{read_error};
          }
 
-         auto request_value = parser.release();
+         auto request_value = make_header_request(parser);
          auto context_storage = std::optional<route_context>{};
          auto invalid_target = false;
          try {
@@ -94,12 +190,7 @@ class server_session : public std::enable_shared_from_this<server_session> {
             auto response_value = make_text_response(request_value, status::bad_request, "bad request");
             response_value.version(request_value.version());
             response_value.keep_alive(false);
-            auto [write_error, written] =
-                co_await beast_http::async_write(stream_, response_value, asio::as_tuple(use_awaitable));
-            static_cast<void>(written);
-            if (write_error) {
-               throw boost::system::system_error{write_error};
-            }
+            co_await write_response(response_value);
             break;
          }
          auto& context = *context_storage;
@@ -109,17 +200,43 @@ class server_session : public std::enable_shared_from_this<server_session> {
             }
          }
 
+         auto body_source = std::make_shared<beast_body_reader_source>(stream_, buffer_, parser, limits_from(config_));
+         if (router_ && router_->can_handle_stream(context)) {
+            auto stream_request_value = stream_request{.context = context, .body = body_reader{body_source}};
+            stream_.expires_after(config_.idle_timeout);
+            auto response_value = co_await router_->handle_stream(stream_request_value);
+            response_value.head.version(request_value.version());
+            response_value.head.keep_alive(request_value.keep_alive());
+            co_await write_stream_response(response_value);
+            if (!response_value.head.keep_alive()) {
+               break;
+            }
+            continue;
+         }
+
+         auto body_error_response = std::optional<response>{};
+         try {
+            request_value.body() = co_await body_reader{body_source}.async_read_all();
+         } catch (const exceptions::payload_too_large&) {
+            auto response_value = make_text_response(request_value, status::payload_too_large, "payload too large");
+            response_value.version(request_value.version());
+            response_value.keep_alive(false);
+            body_error_response = std::move(response_value);
+         }
+         if (body_error_response.has_value()) {
+            co_await write_response(*body_error_response);
+            break;
+         }
+         request_value.prepare_payload();
+         context_storage.emplace(make_context(request_value));
+         auto& buffered_context = *context_storage;
+
          stream_.expires_after(config_.idle_timeout);
-         auto response_value = co_await handle_http(context);
+         auto response_value = co_await handle_http(buffered_context);
          response_value.version(request_value.version());
          response_value.keep_alive(request_value.keep_alive());
 
-         auto [write_error, written] =
-             co_await beast_http::async_write(stream_, response_value, asio::as_tuple(use_awaitable));
-         static_cast<void>(written);
-         if (write_error) {
-            throw boost::system::system_error{write_error};
-         }
+         co_await write_response(response_value);
          if (!response_value.keep_alive()) {
             break;
          }
@@ -130,6 +247,64 @@ class server_session : public std::enable_shared_from_this<server_session> {
    }
 
  private:
+   awaitable<void> write_response(response& response_value) {
+      auto [write_error, written] =
+          co_await beast_http::async_write(stream_, response_value, asio::as_tuple(use_awaitable));
+      static_cast<void>(written);
+      if (write_error) {
+         throw boost::system::system_error{write_error};
+      }
+   }
+
+   awaitable<void> write_stream_response(stream_response& response_value) {
+      if (!response_value.body) {
+         co_await write_response(response_value.head);
+         co_return;
+      }
+
+      auto message = beast_http::response<beast_http::buffer_body>{response_value.head.result(),
+                                                                   response_value.head.version()};
+      copy_headers(response_value.head, message);
+      message.keep_alive(response_value.head.keep_alive());
+      if (message.find(field::content_length) == message.end()) {
+         message.chunked(true);
+      }
+
+      auto serializer = beast_http::response_serializer<beast_http::buffer_body>{message};
+      serializer.split(true);
+      auto [header_error, header_bytes] =
+         co_await beast_http::async_write_header(stream_, serializer, asio::as_tuple(use_awaitable));
+      static_cast<void>(header_bytes);
+      if (header_error) {
+         throw boost::system::system_error{header_error};
+      }
+
+      while (auto chunk = co_await response_value.body()) {
+         auto& body = message.body();
+         body.data = chunk->bytes.data();
+         body.size = chunk->bytes.size();
+         body.more = true;
+
+         auto [body_error, body_bytes] =
+            co_await beast_http::async_write(stream_, serializer, asio::as_tuple(use_awaitable));
+         static_cast<void>(body_bytes);
+         if (body_error && body_error != beast_http::error::need_buffer) {
+            throw boost::system::system_error{body_error};
+         }
+      }
+
+      auto& body = message.body();
+      body.data = nullptr;
+      body.size = 0;
+      body.more = false;
+      auto [final_error, final_bytes] =
+         co_await beast_http::async_write(stream_, serializer, asio::as_tuple(use_awaitable));
+      static_cast<void>(final_bytes);
+      if (final_error && final_error != beast_http::error::need_buffer) {
+         throw boost::system::system_error{final_error};
+      }
+   }
+
    route_context make_context(const request& request_value) const {
       try {
          auto context = make_route_context(request_value);

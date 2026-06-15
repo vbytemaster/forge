@@ -1,8 +1,9 @@
 # fcl_http
 
-`fcl_http` is the HTTP substrate: URL parsing, request/response aliases, routing,
-middleware, server and client/connection primitives. It uses Boost.Beast/URL
-internally but keeps FCL-owned route and lifecycle semantics.
+`fcl_http` is the HTTP substrate: URL parsing, request/response aliases,
+streaming body primitives, routing, middleware, server and client/connection
+primitives. It uses Boost.Beast/URL internally but keeps FCL-owned route and
+lifecycle semantics.
 
 Application-level server lifecycle is usually owned by
 `fcl.plugins.http_server.plugin`; use the library directly when building a custom
@@ -13,6 +14,8 @@ HTTP host or testing route/middleware behavior without the app plugin layer.
 - Build local or service HTTP APIs over Boost.Asio.
 - Share routing and middleware with WebSocket upgrade handling.
 - Use a queued per-connection HTTP client for serialized requests.
+- Publish HTTP-native stream routes when request/response bodies should not be
+  forced through a full in-memory DTO path.
 
 ## When Not To Use
 
@@ -24,6 +27,8 @@ HTTP host or testing route/middleware behavior without the app plugin layer.
 ## Public Modules
 
 - `fcl.http.types` — Beast-compatible request/response aliases.
+- `fcl.http.body`, `fcl.http.stream` — FCL-owned chunk, reader, writer and
+  stream route types.
 - `fcl.http.base_url`, `fcl.http.target`.
 - `fcl.http.router`, `fcl.http.route_context`, `fcl.http.middleware`.
 - `fcl.http.api`, `fcl.http.mapping`, `fcl.http.proxy`.
@@ -70,6 +75,50 @@ router.get("/healthz", [](fcl::http::route_context& ctx)
    co_return fcl::http::make_text_response(ctx.request, fcl::http::status::ok, "ok");
 });
 ```
+
+### Route Streaming Bodies
+
+Use stream routes for upload/download mechanics that should be visible as HTTP
+body flow, not as `FCL_API` DTO calls. The server routes after headers are read;
+middleware can reject before the body is consumed.
+
+```cpp
+import fcl.http.body;
+import fcl.http.router;
+import fcl.http.stream;
+
+router.post_stream("/upload", [](fcl::http::stream_request& req)
+   -> boost::asio::awaitable<fcl::http::stream_response> {
+   std::uint64_t received = 0;
+   while (auto chunk = co_await req.body.async_read()) {
+      received += chunk->bytes.size();
+      consume_upload_chunk(chunk->bytes);
+   }
+
+   co_return fcl::http::stream_response::buffered(
+      fcl::http::make_text_response(req.context.request, fcl::http::status::ok, "stored"));
+});
+
+router.get_stream("/download", [](fcl::http::stream_request& req)
+   -> boost::asio::awaitable<fcl::http::stream_response> {
+   auto source = open_chunk_source(req.context.request);
+   auto head = fcl::http::response{fcl::http::status::ok, req.context.request.version()};
+   head.set(fcl::http::field::content_type, "application/octet-stream");
+
+   co_return fcl::http::stream_response{
+      .head = std::move(head),
+      .body = [source = std::move(source)]() mutable
+         -> boost::asio::awaitable<std::optional<fcl::http::body_chunk>> {
+         co_return co_await source.next_chunk();
+      },
+   };
+});
+```
+
+Stream routes currently provide FCL-owned body readers and response body
+sources. Higher-level file/range/upload helpers are separate follow-up layers;
+do not hand-roll downstream object-storage gateway policy or raw router
+mutation in this library.
 
 ### Mount API Bindings
 
@@ -290,8 +339,9 @@ router.websocket("/events", [](std::shared_ptr<fcl::websocket::connection> ws) {
 
 Client requests are serialized through a per-connection queue. Retry behavior is
 restricted to safe/idempotent cases covered by tests. Middleware can
-short-circuit requests and exceptions become typed HTTP responses at the route
-boundary.
+short-circuit stream routes after headers and before body consumption.
+Exceptions become typed HTTP responses at the route boundary, and stream body
+limits/timeouts apply while chunks are read.
 
 ## Risks And Anti-Patterns
 
@@ -306,6 +356,8 @@ boundary.
   `fcl::api::error_payload`.
 - Do not force all typed APIs into a single generic RPC endpoint; use native HTTP route/status
   mapping where HTTP is the transport.
+- Do not force file upload/download through `FCL_API`; use stream routes and the
+  future file/upload helper layers.
 - Do not hide server bind/TLS/lifecycle in `fcl.http.api`; the API builder owns
   route mapping, API middleware, status projection and error payloads only.
 - Do not add HTTP API builder options unless they change runtime behavior and
@@ -324,5 +376,5 @@ boundary.
 ## Tests
 
 `test_fcl_http_websocket` covers base URL and target parsing, async router and
-middleware behavior, typed HTTP API mapping, client/server roundtrip, reconnects
-and WebSocket upgrade.
+middleware behavior, stream request/response bodies, typed HTTP API mapping,
+client/server roundtrip, reconnects and WebSocket upgrade.

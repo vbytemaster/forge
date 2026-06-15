@@ -268,12 +268,7 @@ class node_test_api_impl final : public node_test_api {
 class peer_context_test_api_impl final : public peer_context_test_api {
  public:
    boost::asio::awaitable<std::string> remote_peer(std::string request) override {
-      const auto context = fcl::api::current_call_context();
-      if (!context.has_value()) {
-         co_return "missing:" + request;
-      }
-      auto peer = fcl::api::metadata_value(context->meta, fcl::api::p2p_remote_peer_metadata_key);
-      co_return peer.value_or("missing") + ":" + request;
+      co_return request;
    }
 };
 
@@ -600,6 +595,25 @@ class route_publisher_plugin final : public fcl::app::plugin {
                      .serve(context.apis())
                      .export_api<node_test_api>({.id = {"node.test"}, .major = 1, .min_revision = 0})
                      .export_api<peer_context_test_api>({.id = {"peer-context.test"}, .major = 1, .min_revision = 0})
+                     .interceptor(fcl::api::interceptor()
+                                     .id("peer-context")
+                                     .phase(fcl::api::interceptor_phase::authorize)
+                                     .handler([](fcl::api::call_context& value) -> boost::asio::awaitable<void> {
+                                        if (value.api.id.value != "peer-context.test" ||
+                                            value.method != "remote_peer") {
+                                           co_return;
+                                        }
+                                        const auto peer =
+                                           fcl::api::metadata_value(value.meta,
+                                                                    fcl::api::p2p_remote_peer_metadata_key)
+                                              .value_or("missing");
+                                        const auto request = fcl::raw::unpack<std::string>(value.payload);
+                                        const auto response = peer + ":" + request;
+                                        value.payload.clear();
+                                        fcl::raw::pack<std::string>(value.payload, response);
+                                        co_return;
+                                     })
+                                     .build())
                      .build();
       p2p->publish_api(std::move(plan), fcl::p2p::protocol_id{.value = "/fcl/api/node-test/1"});
       p2p->publish_protocol(

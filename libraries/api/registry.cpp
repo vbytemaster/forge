@@ -11,7 +11,6 @@ module;
 
 module fcl.api.registry;
 
-import fcl.api.context;
 import fcl.raw.raw;
 
 namespace fcl::api {
@@ -33,17 +32,6 @@ namespace {
    auto response = make_response_base(request, frame_kind::error);
    fcl::raw::pack(response.payload, payload);
    return response;
-}
-
-[[nodiscard]] call_context make_context(const frame& value) {
-   return call_context{
-       .id = value.id,
-       .api = value.api,
-       .method = value.method,
-       .meta = value.meta,
-       .codec = value.codec,
-       .kind = value.kind,
-   };
 }
 
 } // namespace
@@ -88,7 +76,6 @@ boost::asio::awaitable<frame> registry::dispatch(frame request) const {
    }
 
    try {
-      auto current_scope = call_context_scope{make_context(request)};
       response.payload = co_await method->raw_invoker(entry->implementation, std::move(request.payload));
       co_return response;
    } catch (const fcl::exceptions::base& error) {
@@ -171,7 +158,6 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_many(frame request
    }
 
    try {
-      auto current_scope = call_context_scope{make_context(request)};
       auto items = co_await method->raw_stream_invoker(entry->implementation, std::move(request.payload));
       auto responses = std::vector<frame>{};
       responses.reserve(items.size() + 1);

@@ -30,6 +30,7 @@ namespace {
        .api = value.api,
        .method = value.method,
        .meta = value.meta,
+       .payload = value.payload,
        .codec = value.codec,
        .kind = value.kind,
    };
@@ -257,8 +258,8 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_many(frame req
       }
    }
    request.meta = context.meta;
+   request.payload = context.payload;
 
-   auto current_scope = call_context_scope{context};
    auto responses = co_await local->dispatch_many(std::move(request));
 
    for (auto& response : responses) {
@@ -317,8 +318,8 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::ve
       }
    }
    frames.front().meta = context.meta;
+   frames.front().payload = context.payload;
 
-   auto current_scope = call_context_scope{context};
    auto responses = co_await local->dispatch_stream(std::move(frames));
 
    for (auto& response : responses) {

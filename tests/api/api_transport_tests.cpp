@@ -107,19 +107,6 @@ class cache_impl final : public cache_api {
    }
 };
 
-class context_cache_impl final : public cache_api {
- public:
-   boost::asio::awaitable<protocol::chunk> read(protocol::read_chunk) override {
-      const auto context = fcl::api::current_call_context();
-      if (!context.has_value()) {
-         co_return protocol::chunk{.bytes = "no-context"};
-      }
-
-      const auto peer = fcl::api::metadata_value(context->meta, fcl::api::p2p_remote_peer_metadata_key);
-      co_return protocol::chunk{.bytes = peer.value_or("no-remote-peer")};
-   }
-};
-
 struct gated_state {
    std::mutex mutex;
    std::size_t active = 0;
@@ -1003,8 +990,25 @@ BOOST_AUTO_TEST_CASE(api_transport_serve_stream_overwrites_reserved_metadata_wit
    model->reads.push_back(pack_api_frame(request));
 
    auto registry = fcl::api::registry{};
-   registry.install<cache_api>(cache_api::describe(), std::make_shared<context_cache_impl>());
-   auto plan = fcl::api::binding().serve(registry).build();
+   registry.install<cache_api>(cache_api::describe(), std::make_shared<cache_impl>());
+   auto observed_peer = std::make_shared<std::string>();
+   auto observed_payload = std::make_shared<std::string>();
+   auto plan = fcl::api::binding()
+                  .serve(registry)
+                  .interceptor(fcl::api::interceptor()
+                                  .id("trusted-peer")
+                                  .phase(fcl::api::interceptor_phase::authorize)
+                                  .handler([observed_peer, observed_payload](fcl::api::call_context& context)
+                                               -> boost::asio::awaitable<void> {
+                                     *observed_peer = fcl::api::metadata_value(
+                                                        context.meta, fcl::api::p2p_remote_peer_metadata_key)
+                                                        .value_or("no-remote-peer");
+                                     *observed_payload =
+                                        fcl::raw::unpack<protocol::read_chunk>(context.payload).ref;
+                                     co_return;
+                                  })
+                                  .build())
+                  .build();
 
    fcl::asio::blocking::run(
       runtime, fcl::api::transport::serve_stream(
@@ -1015,8 +1019,9 @@ BOOST_AUTO_TEST_CASE(api_transport_serve_stream_overwrites_reserved_metadata_wit
    BOOST_REQUIRE_EQUAL(model->writes.size(), 1U);
    const auto response = unpack_written_frame(model->writes.front());
    BOOST_CHECK(response.kind == fcl::api::frame_kind::response);
-   BOOST_TEST(fcl::raw::unpack<protocol::chunk>(response.payload).bytes == "trusted-peer");
-   BOOST_TEST(!fcl::api::current_call_context().has_value());
+   BOOST_TEST(fcl::raw::unpack<protocol::chunk>(response.payload).bytes == "context:ok");
+   BOOST_TEST(*observed_peer == "trusted-peer");
+   BOOST_TEST(*observed_payload == "context");
 }
 
 BOOST_AUTO_TEST_CASE(api_transport_serve_stream_without_trusted_peer_has_no_remote_peer_context) {
@@ -1025,8 +1030,22 @@ BOOST_AUTO_TEST_CASE(api_transport_serve_stream_without_trusted_peer_has_no_remo
    model->reads.push_back(pack_api_frame(read_request(14, "context")));
 
    auto registry = fcl::api::registry{};
-   registry.install<cache_api>(cache_api::describe(), std::make_shared<context_cache_impl>());
-   auto plan = fcl::api::binding().serve(registry).build();
+   registry.install<cache_api>(cache_api::describe(), std::make_shared<cache_impl>());
+   auto observed_peer = std::make_shared<std::string>();
+   auto plan = fcl::api::binding()
+                  .serve(registry)
+                  .interceptor(fcl::api::interceptor()
+                                  .id("trusted-peer")
+                                  .phase(fcl::api::interceptor_phase::authorize)
+                                  .handler([observed_peer](fcl::api::call_context& context)
+                                               -> boost::asio::awaitable<void> {
+                                     *observed_peer = fcl::api::metadata_value(
+                                                        context.meta, fcl::api::p2p_remote_peer_metadata_key)
+                                                        .value_or("no-remote-peer");
+                                     co_return;
+                                  })
+                                  .build())
+                  .build();
 
    fcl::asio::blocking::run(runtime, fcl::api::transport::serve_stream(make_stream(model), std::move(plan),
                                                                        fcl::api::transport::options{}));
@@ -1034,8 +1053,8 @@ BOOST_AUTO_TEST_CASE(api_transport_serve_stream_without_trusted_peer_has_no_remo
    BOOST_REQUIRE_EQUAL(model->writes.size(), 1U);
    const auto response = unpack_written_frame(model->writes.front());
    BOOST_CHECK(response.kind == fcl::api::frame_kind::response);
-   BOOST_TEST(fcl::raw::unpack<protocol::chunk>(response.payload).bytes == "no-remote-peer");
-   BOOST_TEST(!fcl::api::current_call_context().has_value());
+   BOOST_TEST(fcl::raw::unpack<protocol::chunk>(response.payload).bytes == "context:ok");
+   BOOST_TEST(*observed_peer == "no-remote-peer");
 }
 
 BOOST_AUTO_TEST_CASE(api_transport_serve_session_accepts_streams) {

@@ -611,6 +611,40 @@ BOOST_AUTO_TEST_CASE(binding_plan_runs_interceptors_in_deterministic_order) {
    BOOST_TEST(*trace == "observe>authz>");
 }
 
+BOOST_AUTO_TEST_CASE(binding_plan_interceptor_sees_request_payload) {
+   auto runtime = fcl::asio::runtime{};
+   auto registry = fcl::api::registry{};
+   registry.install<cache_api>(cache_api::describe(), std::make_shared<cache_impl>());
+
+   auto observed = std::make_shared<std::string>();
+   auto plan = fcl::api::binding()
+                   .serve(registry)
+                   .interceptor(fcl::api::interceptor()
+                                    .id("payload")
+                                    .phase(fcl::api::interceptor_phase::authorize)
+                                    .handler([observed](fcl::api::call_context& context)
+                                                 -> boost::asio::awaitable<void> {
+                                       *observed = fcl::raw::unpack<protocol::read_chunk>(context.payload).ref;
+                                       co_return;
+                                    })
+                                    .build())
+                   .build();
+
+   const auto request = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 18},
+       .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
+       .method = "read",
+       .codec = {.value = "fcl.raw"},
+       .payload = pack_api_payload(protocol::read_chunk{.ref = "payload-visible"}),
+   };
+
+   const auto response = fcl::asio::blocking::run(runtime, plan.dispatch(request));
+
+   BOOST_CHECK(response.kind == fcl::api::frame_kind::response);
+   BOOST_TEST(*observed == "payload-visible");
+}
+
 BOOST_AUTO_TEST_CASE(binding_plan_dispatches_server_stream_as_item_and_end_frames) {
    auto runtime = fcl::asio::runtime{};
    auto registry = fcl::api::registry{};

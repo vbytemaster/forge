@@ -228,6 +228,7 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_api_resolver/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_diagnostics/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_pubsub/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/plugins/http_server/include"
 )
 
 if(FCL_ENABLE_TUI AND FCL_TUI_NOTCURSES_TARGET)
@@ -396,6 +397,7 @@ set(
    fcl_plugin_p2p_api_resolver
    fcl_plugin_p2p_diagnostics
    fcl_plugin_p2p_pubsub
+   fcl_plugin_http_server
    fcl_plugins
 )
 
@@ -466,6 +468,7 @@ install(
              plugins/p2p_api_resolver/include/fcl
              plugins/p2p_diagnostics/include/fcl
              plugins/p2p_pubsub/include/fcl
+             plugins/http_server/include/fcl
    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
 )
 

@@ -5,10 +5,9 @@ streaming body primitives, routing, middleware, server and client/connection
 primitives. It uses Boost.Beast/URL internally but keeps FCL-owned route and
 lifecycle semantics.
 
-Application-level server lifecycle is library-owned in this slice. The official
-HTTP server plugin is parked until the typed HTTP binding surface is stable; use
-the library directly when building an HTTP host or testing route/middleware
-behavior.
+Application-level server lifecycle can be owned directly with `fcl::http::server`
+or composed through the official `fcl.plugins.http_server` plugin. The library
+still owns HTTP mechanics; the plugin owns app lifecycle/config composition.
 
 ## When To Use
 

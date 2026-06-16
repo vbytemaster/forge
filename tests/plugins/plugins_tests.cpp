@@ -121,6 +121,10 @@ import fcl.plugins.p2p_node.types;
 import fcl.plugins.p2p_node.exceptions;
 import fcl.plugins.p2p_node.api;
 import fcl.plugins.p2p_node.plugin;
+import fcl.plugins.http_server.types;
+import fcl.plugins.http_server.exceptions;
+import fcl.plugins.http_server.api;
+import fcl.plugins.http_server.plugin;
 import fcl.program_options;
 import fcl.raw.raw;
 import fcl.schema.diagnostic;
@@ -238,6 +242,7 @@ using plugin_test_contract::scripted_resolver_api;
 using plugin_test_contract::http_cache_api;
 
 namespace signature_provider = fcl::plugins::signature_provider;
+namespace http_server = fcl::plugins::http_server;
 
 struct plugin_log {
    std::vector<std::string> entries;
@@ -366,6 +371,152 @@ class http_cache_api_impl final : public http_cache_api {
    boost::asio::awaitable<http_chunk> write(http_write_request request) override {
       co_return http_chunk{.bytes = request.ref + ":" + request.bytes};
    }
+};
+
+struct http_publish_state {
+   std::string base_path;
+   std::vector<std::string> middleware_events;
+   bool short_circuit = false;
+};
+
+class http_cache_publisher_plugin final : public fcl::app::plugin {
+ public:
+   explicit http_cache_publisher_plugin(std::shared_ptr<http_publish_state> state) : state_{std::move(state)} {}
+
+   [[nodiscard]] fcl::app::plugin_id id() const override {
+      return fcl::app::plugin_id{.value = "http-cache-publisher"};
+   }
+
+   [[nodiscard]] std::string version() const override {
+      return "1";
+   }
+
+   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+      auto http = context.apis().get<http_server::api>(http_server::api::ref());
+      co_await http->publish<http_cache_api>(http_server::publish_options{.base_path = state_->base_path});
+   }
+
+   boost::asio::awaitable<void> startup() override {
+      co_return;
+   }
+
+   boost::asio::awaitable<void> shutdown() override {
+      co_return;
+   }
+
+ private:
+   std::shared_ptr<http_publish_state> state_;
+};
+
+class http_middleware_plugin final : public fcl::app::plugin {
+ public:
+   explicit http_middleware_plugin(std::shared_ptr<http_publish_state> state) : state_{std::move(state)} {}
+
+   [[nodiscard]] fcl::app::plugin_id id() const override {
+      return fcl::app::plugin_id{.value = "http-middleware"};
+   }
+
+   [[nodiscard]] std::string version() const override {
+      return "1";
+   }
+
+   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+      auto http = context.apis().get<http_server::api>(http_server::api::ref());
+      auto state = state_;
+      co_await http->use(fcl::http::middleware_descriptor{
+         .id = "security",
+         .phase = fcl::http::middleware_phase::security,
+         .order = 10,
+         .path_prefix = "/api",
+         .handler = [state](fcl::http::route_context& context_value,
+                            fcl::http::next_handler next) -> boost::asio::awaitable<fcl::http::response> {
+            state->middleware_events.push_back("security");
+            if (state->short_circuit &&
+                context_value.request.find(fcl::http::field::authorization) == context_value.request.end()) {
+               co_return fcl::http::make_text_response(context_value.request, fcl::http::status::unauthorized,
+                                                       "missing authorization");
+            }
+            co_return co_await next();
+         },
+      });
+      co_await http->use(fcl::http::middleware_descriptor{
+         .id = "before",
+         .phase = fcl::http::middleware_phase::before_handler,
+         .order = 20,
+         .path_prefix = "/api",
+         .handler = [state](fcl::http::route_context&,
+                            fcl::http::next_handler next) -> boost::asio::awaitable<fcl::http::response> {
+            state->middleware_events.push_back("before");
+            auto response = co_await next();
+            response.set(fcl::http::field::server, "fcl-test");
+            co_return response;
+         },
+      });
+   }
+
+   boost::asio::awaitable<void> startup() override {
+      co_return;
+   }
+
+   boost::asio::awaitable<void> shutdown() override {
+      co_return;
+   }
+
+ private:
+   std::shared_ptr<http_publish_state> state_;
+};
+
+class duplicate_http_cache_publisher_plugin final : public fcl::app::plugin {
+ public:
+   [[nodiscard]] fcl::app::plugin_id id() const override {
+      return fcl::app::plugin_id{.value = "duplicate-http-cache-publisher"};
+   }
+
+   [[nodiscard]] std::string version() const override {
+      return "1";
+   }
+
+   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+      auto http = context.apis().get<http_server::api>(http_server::api::ref());
+      co_await http->publish<http_cache_api>(http_server::publish_options{.base_path = "/api"});
+      co_await http->publish<http_cache_api>(http_server::publish_options{.base_path = "/api"});
+   }
+
+   boost::asio::awaitable<void> startup() override {
+      co_return;
+   }
+
+   boost::asio::awaitable<void> shutdown() override {
+      co_return;
+   }
+};
+
+class late_http_publish_plugin final : public fcl::app::plugin {
+ public:
+   [[nodiscard]] fcl::app::plugin_id id() const override {
+      return fcl::app::plugin_id{.value = "late-http-publisher"};
+   }
+
+   [[nodiscard]] std::string version() const override {
+      return "1";
+   }
+
+   boost::asio::awaitable<void> startup() override {
+      auto http = context_->apis().get<http_server::api>(http_server::api::ref());
+      co_await http->publish<http_cache_api>(http_server::publish_options{.base_path = "/late"});
+   }
+
+   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+      context_ = &context;
+      co_return;
+   }
+
+   boost::asio::awaitable<void> shutdown() override {
+      co_return;
+   }
+
+ private:
+   fcl::app::plugin_context* context_ = nullptr;
 };
 
 class temp_directory {
@@ -1176,6 +1327,80 @@ class scripted_resolver_application final : public fcl::app::application_shell {
    std::shared_ptr<scripted_resolver_state> state_;
 };
 
+class http_server_application final : public fcl::app::application_shell {
+ public:
+   http_server_application(std::shared_ptr<http_publish_state> state, bool middleware = false)
+       : state_{std::move(state)}, middleware_{middleware} {}
+
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(http_server::descriptor());
+      if (middleware_) {
+         registry.register_plugin(fcl::app::plugin_descriptor{
+            .id = fcl::app::plugin_id{.value = "http-middleware"},
+            .dependencies = {fcl::app::plugin_id{.value = "fcl.http_server"}},
+            .factory = [state = state_] {
+               return std::make_unique<http_middleware_plugin>(state);
+            },
+         });
+      }
+      registry.register_plugin(fcl::app::plugin_descriptor{
+         .id = fcl::app::plugin_id{.value = "http-cache-publisher"},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.http_server"}},
+         .factory = [state = state_] {
+            return std::make_unique<http_cache_publisher_plugin>(state);
+         },
+      });
+   }
+
+   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+      context.apis().install<http_cache_api>(http_cache_api::describe(), std::make_shared<http_cache_api_impl>());
+      co_return;
+   }
+
+ private:
+   std::shared_ptr<http_publish_state> state_;
+   bool middleware_ = false;
+};
+
+class duplicate_http_server_application final : public fcl::app::application_shell {
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(http_server::descriptor());
+      registry.register_plugin(fcl::app::plugin_descriptor{
+         .id = fcl::app::plugin_id{.value = "duplicate-http-cache-publisher"},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.http_server"}},
+         .factory = [] {
+            return std::make_unique<duplicate_http_cache_publisher_plugin>();
+         },
+      });
+   }
+
+   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+      context.apis().install<http_cache_api>(http_cache_api::describe(), std::make_shared<http_cache_api_impl>());
+      co_return;
+   }
+};
+
+class late_http_server_application final : public fcl::app::application_shell {
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(http_server::descriptor());
+      registry.register_plugin(fcl::app::plugin_descriptor{
+         .id = fcl::app::plugin_id{.value = "late-http-publisher"},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.http_server"}},
+         .factory = [] {
+            return std::make_unique<late_http_publish_plugin>();
+         },
+      });
+   }
+
+   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+      context.apis().install<http_cache_api>(http_cache_api::describe(), std::make_shared<http_cache_api_impl>());
+      co_return;
+   }
+};
+
 [[nodiscard]] const fcl::config::field_descriptor& require_field(const fcl::config::component_descriptor& descriptor,
                                                                  std::string_view name) {
    const auto found = std::ranges::find_if(descriptor.fields, [&](const auto& field) {
@@ -1266,6 +1491,143 @@ static_assert(fcl::api::local_interface<signature_provider::api>);
 static_assert(!fcl::api::remote_interface<signature_provider::api>);
 
 } // namespace
+
+BOOST_AUTO_TEST_CASE(http_server_config_is_described_from_schema) {
+   auto plugin = http_server::plugin{};
+   const auto descriptor = plugin.describe_config();
+   BOOST_REQUIRE(descriptor.has_value());
+   BOOST_TEST(descriptor->section == "http-server");
+
+   const auto& bind_address = require_field(*descriptor, "bind-address");
+   BOOST_TEST(bind_address.has_default);
+   BOOST_TEST(std::get<std::string>(bind_address.default_value.storage) == "127.0.0.1");
+
+   const auto& port = require_field(*descriptor, "port");
+   BOOST_TEST(port.has_default);
+   BOOST_TEST(std::get<std::uint64_t>(port.default_value.storage) == 0U);
+
+   const auto& base_path = require_field(*descriptor, "api-base-path");
+   BOOST_TEST(base_path.has_default);
+   BOOST_TEST(std::get<std::string>(base_path.default_value.storage) == "/");
+
+   const auto& body_limit = require_field(*descriptor, "max-request-body-bytes");
+   BOOST_TEST(body_limit.has_default);
+   BOOST_TEST(std::get<std::uint64_t>(body_limit.default_value.storage) == 16U * 1024U * 1024U);
+
+   BOOST_TEST(require_field(*descriptor, "max-header-bytes").has_default);
+   BOOST_TEST(require_field(*descriptor, "read-timeout-ms").has_default);
+   BOOST_TEST(require_field(*descriptor, "idle-timeout-ms").has_default);
+}
+
+BOOST_AUTO_TEST_CASE(http_server_rejects_invalid_schema_config) {
+   auto plugin = http_server::plugin{};
+   auto document = fcl::config::document{};
+   document.set("http-server.port", std::uint64_t{70000});
+
+   auto runtime = fcl::asio::runtime{};
+   BOOST_CHECK_THROW(
+      fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "http-server"})),
+      http_server::exceptions::invalid_config);
+}
+
+BOOST_AUTO_TEST_CASE(http_server_plugin_publishes_typed_api_under_configured_base_path) {
+   const auto port = reserve_loopback_port();
+   auto state = std::make_shared<http_publish_state>();
+   auto app = http_server_application{state};
+   auto config = fcl::config::document{};
+   config.set("http-server.port", std::uint64_t{port});
+   config.set("http-server.api-base-path", std::string{"/api"});
+
+   app.configure(config);
+   fcl::asio::blocking::run(app.runtime(), app.startup());
+
+   auto client = fcl::http::client{app.runtime(), fcl::http::parse_base_url("http://127.0.0.1:" +
+                                                                            std::to_string(port) + "/api")};
+   auto cache = fcl::asio::blocking::run(app.runtime(), fcl::http::remote<http_cache_api>(client));
+   const auto chunk = fcl::asio::blocking::run(
+      app.runtime(), cache->read(http_read_request{.ref = "alpha", .offset = 7, .limit = 9}));
+   BOOST_TEST(chunk.bytes == "alpha:7:9");
+
+   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(http_server_plugin_uses_publish_base_path_override) {
+   const auto port = reserve_loopback_port();
+   auto state = std::make_shared<http_publish_state>();
+   state->base_path = "/custom";
+   auto app = http_server_application{state};
+   auto config = fcl::config::document{};
+   config.set("http-server.port", std::uint64_t{port});
+   config.set("http-server.api-base-path", std::string{"/api"});
+
+   app.configure(config);
+   fcl::asio::blocking::run(app.runtime(), app.startup());
+
+   auto client = fcl::http::client{app.runtime(), fcl::http::parse_base_url("http://127.0.0.1:" +
+                                                                            std::to_string(port) + "/custom")};
+   auto cache = fcl::asio::blocking::run(app.runtime(), fcl::http::remote<http_cache_api>(client));
+   const auto chunk = fcl::asio::blocking::run(
+      app.runtime(), cache->write(http_write_request{.ref = "beta", .bytes = "payload"}));
+   BOOST_TEST(chunk.bytes == "beta:payload");
+
+   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(http_server_plugin_applies_middleware_order_and_short_circuit) {
+   const auto port = reserve_loopback_port();
+   auto state = std::make_shared<http_publish_state>();
+   state->short_circuit = true;
+   auto app = http_server_application{state, true};
+   auto config = fcl::config::document{};
+   config.set("http-server.port", std::uint64_t{port});
+   config.set("http-server.api-base-path", std::string{"/api"});
+
+   app.configure(config);
+   fcl::asio::blocking::run(app.runtime(), app.startup());
+
+   auto client = fcl::http::client{app.runtime(), fcl::http::parse_base_url("http://127.0.0.1:" +
+                                                                            std::to_string(port))};
+   const auto denied = fcl::asio::blocking::run(
+      app.runtime(), client.async_get("/api/cache/chunks/secure?offset=1&limit=1"));
+   BOOST_TEST(static_cast<unsigned>(denied.result()) == static_cast<unsigned>(fcl::http::status::unauthorized));
+   BOOST_TEST(state->middleware_events == (std::vector<std::string>{"security"}),
+              boost::test_tools::per_element());
+
+   auto request = fcl::http::request{};
+   request.method(fcl::http::method::get);
+   request.target("/api/cache/chunks/secure?offset=1&limit=1");
+   request.version(11);
+   request.set(fcl::http::field::authorization, "Bearer test");
+   const auto allowed = fcl::asio::blocking::run(app.runtime(), client.async_request(std::move(request)));
+   BOOST_TEST(static_cast<unsigned>(allowed.result()) == static_cast<unsigned>(fcl::http::status::ok));
+   BOOST_TEST(std::string{allowed[fcl::http::field::server]} == "fcl-test");
+   BOOST_TEST(state->middleware_events ==
+                 (std::vector<std::string>{"security", "security", "before"}),
+              boost::test_tools::per_element());
+
+   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(http_server_plugin_rejects_duplicate_publication_on_startup) {
+   const auto port = reserve_loopback_port();
+   auto app = duplicate_http_server_application{};
+   auto config = fcl::config::document{};
+   config.set("http-server.port", std::uint64_t{port});
+
+   app.configure(config);
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.startup()), fcl::http::exceptions::conflict);
+}
+
+BOOST_AUTO_TEST_CASE(http_server_plugin_rejects_late_publication_after_startup_closed) {
+   const auto port = reserve_loopback_port();
+   auto app = late_http_server_application{};
+   auto config = fcl::config::document{};
+   config.set("http-server.port", std::uint64_t{port});
+
+   app.configure(config);
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.startup()),
+                     http_server::exceptions::publication_closed);
+}
 
 BOOST_AUTO_TEST_CASE(signature_provider_config_is_redacted_and_local_only) {
    auto plugin = signature_provider::plugin{};

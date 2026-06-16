@@ -3,6 +3,7 @@ add_subdirectory(p2p_node)
 add_subdirectory(p2p_api_resolver)
 add_subdirectory(p2p_diagnostics)
 add_subdirectory(p2p_pubsub)
+add_subdirectory(http_server)
 
 add_library(fcl_plugins STATIC plugins.cpp)
 
@@ -15,4 +16,5 @@ target_link_libraries(
       fcl_plugin_p2p_api_resolver
       fcl_plugin_p2p_diagnostics
       fcl_plugin_p2p_pubsub
+      fcl_plugin_http_server
 )

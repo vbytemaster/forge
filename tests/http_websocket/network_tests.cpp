@@ -1712,6 +1712,53 @@ BOOST_AUTO_TEST_CASE(http_stream_route_writes_chunked_response_body) {
    fcl::asio::blocking::run(runtime, server.async_stop());
 }
 
+BOOST_AUTO_TEST_CASE(http_stream_route_response_passes_through_after_middleware) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto invoked = std::make_shared<std::atomic<unsigned>>(0);
+   auto produced = std::make_shared<std::atomic<unsigned>>(0);
+
+   auto router = fcl::http::router{};
+   router.use([](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
+      auto result = co_await next();
+      result.set(field::server, "fcl-stream");
+      result.set("X-Stream-Middleware", context.parsed_target.path);
+      co_return result;
+   });
+   router.get_stream("/download", [invoked, produced](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      invoked->fetch_add(1);
+      auto chunks = std::make_shared<std::vector<std::string>>(std::vector<std::string>{"alpha", "omega"});
+      auto index = std::make_shared<std::size_t>(0);
+      auto reply = response{status::ok, request_value.context.request.version()};
+      reply.set(field::content_type, "application/octet-stream");
+      co_return stream_response{
+          .head = std::move(reply),
+          .body =
+             [chunks, index, produced]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
+                if (*index == chunks->size()) {
+                   co_return std::nullopt;
+                }
+                produced->fetch_add(1);
+                co_return make_body_chunk((*chunks)[(*index)++]);
+             },
+      };
+   });
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   const auto response = fcl::asio::blocking::run(runtime, client.async_get("/download"));
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(response.body() == "alphaomega");
+   BOOST_TEST(std::string{response[field::server]} == "fcl-stream");
+   BOOST_TEST(std::string{response["X-Stream-Middleware"]} == "/download");
+   BOOST_TEST(invoked->load() == 1U);
+   BOOST_TEST(produced->load() == 2U);
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
 BOOST_AUTO_TEST_CASE(http_stream_middleware_short_circuits_before_body_read) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
    auto invoked = std::make_shared<std::atomic<bool>>(false);

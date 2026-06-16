@@ -31,6 +31,7 @@ config decode_config(const fcl::config::component_view& view) {
       }
       FCL_THROW_EXCEPTION(exceptions::invalid_config, message);
    }
+   decoded.value.api_base_path = normalize_base_path(decoded.value.api_base_path);
    return std::move(decoded.value);
 }
 

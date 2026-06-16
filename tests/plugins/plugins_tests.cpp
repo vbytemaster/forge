@@ -1530,6 +1530,24 @@ BOOST_AUTO_TEST_CASE(http_server_rejects_invalid_schema_config) {
       http_server::exceptions::invalid_config);
 }
 
+BOOST_AUTO_TEST_CASE(http_server_plugin_rejects_invalid_api_base_path_during_configure) {
+   auto runtime = fcl::asio::runtime{};
+
+   auto empty = http_server::plugin{};
+   auto empty_document = fcl::config::document{};
+   empty_document.set("http-server.api-base-path", std::string{});
+   BOOST_CHECK_THROW(
+      fcl::asio::blocking::run(runtime, empty.configure(fcl::config::component_view{empty_document, "http-server"})),
+      http_server::exceptions::invalid_config);
+
+   auto relative = http_server::plugin{};
+   auto relative_document = fcl::config::document{};
+   relative_document.set("http-server.api-base-path", std::string{"api"});
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(
+                        runtime, relative.configure(fcl::config::component_view{relative_document, "http-server"})),
+                     http_server::exceptions::invalid_config);
+}
+
 BOOST_AUTO_TEST_CASE(http_server_plugin_publishes_typed_api_under_configured_base_path) {
    const auto port = reserve_loopback_port();
    auto state = std::make_shared<http_publish_state>();

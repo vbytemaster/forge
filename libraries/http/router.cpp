@@ -3,6 +3,7 @@ module;
 #include <cstdint>
 #include <algorithm>
 #include <coroutine>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -410,15 +411,18 @@ boost::asio::awaitable<stream_response> router::handle_stream(stream_request& re
             }
 
             context.route_params = std::move(params);
-            auto gate = co_await run_middleware_chain(
+            auto result = std::optional<stream_response>{};
+            auto head = co_await run_middleware_chain(
                matching_middlewares(middlewares_, context.parsed_target), context,
-               [](route_context& route_context_value) -> boost::asio::awaitable<response> {
-                  co_return make_text_response(route_context_value.request, status::continue_, "");
+               [&request, &route, &result](route_context&) -> boost::asio::awaitable<response> {
+                  result = co_await route.handler(request);
+                  co_return std::move(result->head);
                });
-            if (gate.result() != status::continue_) {
-               co_return stream_response::buffered(std::move(gate));
+            if (!result.has_value()) {
+               co_return stream_response::buffered(std::move(head));
             }
-            co_return co_await route.handler(request);
+            result->head = std::move(head);
+            co_return std::move(*result);
          }
       }
 

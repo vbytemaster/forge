@@ -1784,6 +1784,78 @@ BOOST_AUTO_TEST_CASE(server_async_stop_cancels_active_keep_alive_sessions) {
    BOOST_TEST(requests->load() == 1U);
 }
 
+BOOST_AUTO_TEST_CASE(server_stop_waits_for_executor_work_before_returning) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto mutex = std::mutex{};
+   auto ready = std::condition_variable{};
+   auto release = std::condition_variable{};
+   auto handler_started = false;
+   auto handler_released = false;
+
+   auto server = fcl::http::server{
+      runtime,
+      server_config{.read_timeout = std::chrono::seconds{5}, .idle_timeout = std::chrono::seconds{5}},
+      [&](route_context& context) -> boost::asio::awaitable<response> {
+         {
+            auto lock = std::unique_lock{mutex};
+            handler_started = true;
+            ready.notify_all();
+            release.wait(lock, [&] { return handler_released; });
+         }
+         co_return make_text_response(context.request, status::ok, "released");
+      },
+   };
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(std::chrono::seconds{2});
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
+   asio::write(stream.socket(), asio::buffer(std::string{
+      "GET /blocked HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Connection: keep-alive\r\n"
+      "\r\n"}));
+
+   {
+      auto lock = std::unique_lock{mutex};
+      BOOST_REQUIRE(ready.wait_for(lock, std::chrono::seconds{2}, [&] { return handler_started; }));
+   }
+
+   auto stop_returned = std::atomic_bool{false};
+   auto stop_thread = std::thread{[&] {
+      server.stop();
+      stop_returned.store(true);
+   }};
+
+   std::this_thread::sleep_for(std::chrono::milliseconds{100});
+   BOOST_TEST(!stop_returned.load());
+
+   {
+      const auto lock = std::scoped_lock{mutex};
+      handler_released = true;
+   }
+   release.notify_all();
+   stop_thread.join();
+   BOOST_TEST(stop_returned.load());
+
+   auto buffer = beast::flat_buffer{};
+   auto response_value = response{};
+   auto read_error = boost::system::error_code{};
+   stream.expires_after(std::chrono::milliseconds{500});
+   boost::beast::http::read(stream, buffer, response_value, read_error);
+   if (!read_error) {
+      asio::write(stream.socket(), asio::buffer(std::string{
+         "GET /after-stop HTTP/1.1\r\n"
+         "Host: 127.0.0.1\r\n"
+         "\r\n"}), read_error);
+      auto after_stop = response{};
+      stream.expires_after(std::chrono::milliseconds{500});
+      boost::beast::http::read(stream, buffer, after_stop, read_error);
+   }
+   BOOST_TEST(read_error != boost::system::error_code{});
+}
+
 BOOST_AUTO_TEST_CASE(http_stream_route_reads_large_request_body_in_chunks) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
    auto total_bytes = std::make_shared<std::atomic<std::size_t>>(0);
@@ -2451,6 +2523,38 @@ BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_applies_file_limit_per_part) {
    BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, file_limited.async_read_multipart(
                                                     "multipart/form-data; boundary=demo")),
                      exceptions::payload_too_large);
+}
+
+BOOST_AUTO_TEST_CASE(http_upload_reader_parses_spooled_multipart_without_full_body_materialization) {
+   auto files = temp_directory{};
+   auto runtime = fcl::asio::runtime{};
+   const auto content = std::string{"0123456789abcdef0123456789abcdef"};
+   auto reader = upload_reader{
+      make_body_reader({
+         "--demo\r\nContent-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n",
+         "Content-Type: text/plain\r\n\r\n0123456789",
+         "abcdef0123456789",
+         "abcdef\r\n--demo--\r\n",
+      }),
+      upload_options{.memory_threshold_bytes = 8,
+                     .max_file_bytes = 1024,
+                     .max_field_bytes = 1024,
+                     .max_total_bytes = 1024,
+                     .spool_directory = files.path()}};
+
+   const auto form = fcl::asio::blocking::run(
+      runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
+
+   BOOST_REQUIRE_EQUAL(form.files.size(), 1U);
+   const auto& file = form.files.front();
+   BOOST_TEST(file.name == "file");
+   BOOST_REQUIRE(file.filename.has_value());
+   BOOST_TEST(*file.filename == "chunk.txt");
+   BOOST_TEST(!file.in_memory());
+   BOOST_REQUIRE(file.spool.has_value());
+   BOOST_TEST(std::filesystem::is_regular_file(file.spool->path()));
+   BOOST_TEST(file.size == content.size());
+   BOOST_TEST(file.text() == content);
 }
 
 BOOST_AUTO_TEST_CASE(http_upload_file_exposes_safe_filename_without_path_segments) {

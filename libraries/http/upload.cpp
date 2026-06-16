@@ -61,12 +61,6 @@ std::string text_from_bytes(const std::vector<std::byte>& bytes) {
    return std::string{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
 }
 
-std::vector<std::byte> bytes_from_text(std::string_view text) {
-   auto bytes = std::vector<std::byte>(text.size());
-   std::memcpy(bytes.data(), text.data(), text.size());
-   return bytes;
-}
-
 std::string read_file_text(const std::filesystem::path& path) {
    auto input = std::ifstream{path, std::ios::binary};
    if (!input) {
@@ -260,90 +254,22 @@ class upload_spool_writer {
 
 namespace {
 
-upload_part store_part(std::string name, std::optional<std::string> filename, std::string content_type,
-                       std::vector<std::pair<std::string, std::string>> headers, std::string_view bytes,
-                       const upload_options& options) {
-   if (filename.has_value() && bytes.size() > options.max_file_bytes) {
-      throw exceptions::payload_too_large{"multipart file exceeds upload limit"};
+void append_text_bytes(std::vector<std::byte>& target, std::string_view text) {
+   if (text.empty()) {
+      return;
    }
-   if (!filename.has_value() && bytes.size() > options.max_field_bytes) {
-      throw exceptions::payload_too_large{"multipart field exceeds upload limit"};
-   }
-
-   auto part = upload_part{
-      .name = std::move(name),
-      .filename = std::move(filename),
-      .content_type = std::move(content_type),
-      .headers = std::move(headers),
-      .memory = {},
-      .spool = std::nullopt,
-      .size = static_cast<std::uint64_t>(bytes.size()),
-   };
-
-   if (bytes.size() <= options.memory_threshold_bytes) {
-      part.memory = bytes_from_text(bytes);
-      return part;
-   }
-
-   auto writer = upload_spool_writer{options};
-   const auto part_bytes = bytes_from_text(bytes);
-   writer.write(part_bytes);
-   part.spool = writer.finish();
-   return part;
+   const auto old_size = target.size();
+   target.resize(old_size + text.size());
+   std::memcpy(target.data() + old_size, text.data(), text.size());
 }
 
-std::optional<std::size_t> find_next_multipart_delimiter(std::string_view body, std::string_view delimiter,
-                                                         std::size_t offset);
+struct multipart_delimiter {
+   std::size_t position = 0;
+   bool closing = false;
+};
 
-multipart_form parse_multipart_body(std::string_view body, std::string_view boundary, const upload_options& options) {
-   const auto delimiter = std::string{"--"} + std::string{boundary};
-   auto position = std::size_t{0};
-   if (!body.starts_with(delimiter)) {
-      throw exceptions::bad_request{"multipart body does not start with boundary"};
-   }
-   position += delimiter.size();
-
-   auto form = multipart_form{};
-   while (true) {
-      if (body.substr(position, 2) == "--") {
-         position += 2U;
-         if (body.substr(position, 2) == "\r\n") {
-            position += 2U;
-         }
-         if (position != body.size()) {
-            throw exceptions::bad_request{"unexpected multipart trailer"};
-         }
-         return form;
-      }
-      if (body.substr(position, 2) != "\r\n") {
-         throw exceptions::bad_request{"malformed multipart boundary"};
-      }
-      position += 2U;
-
-      const auto header_end = body.find("\r\n\r\n", position);
-      if (header_end == std::string_view::npos) {
-         throw exceptions::bad_request{"multipart part headers are incomplete"};
-      }
-      auto headers = parse_headers(body.substr(position, header_end - position));
-      const auto meta = parse_content_disposition(headers);
-      auto content_type = header_value(headers, "content-type").value_or("application/octet-stream");
-      const auto content_start = header_end + 4U;
-      const auto next_boundary = find_next_multipart_delimiter(body, delimiter, content_start);
-      if (!next_boundary.has_value()) {
-         throw exceptions::bad_request{"multipart closing boundary is missing"};
-      }
-      auto content = body.substr(content_start, *next_boundary - content_start);
-      auto part = store_part(meta.name, meta.filename, std::move(content_type), std::move(headers), content, options);
-      if (part.filename.has_value()) {
-         form.files.push_back(part);
-      }
-      form.parts.push_back(std::move(part));
-      position = *next_boundary + 2U + delimiter.size();
-   }
-}
-
-std::optional<std::size_t> find_next_multipart_delimiter(std::string_view body, std::string_view delimiter,
-                                                         std::size_t offset) {
+std::optional<multipart_delimiter> find_next_multipart_delimiter(std::string_view body, std::string_view delimiter,
+                                                                 std::size_t offset, bool eof) {
    const auto marker = std::string{"\r\n"} + std::string{delimiter};
    while (true) {
       const auto candidate = body.find(marker, offset);
@@ -352,49 +278,255 @@ std::optional<std::size_t> find_next_multipart_delimiter(std::string_view body, 
       }
 
       const auto suffix = candidate + marker.size();
+      if (!eof && suffix >= body.size()) {
+         return std::nullopt;
+      }
       if (body.substr(suffix, 2U) == "\r\n") {
-         return candidate;
+         return multipart_delimiter{.position = candidate, .closing = false};
       }
       if (body.substr(suffix, 2U) == "--") {
          const auto after_close = suffix + 2U;
-         if (after_close == body.size() || body.substr(after_close, 2U) == "\r\n") {
-            return candidate;
+         if (body.substr(after_close, 2U) == "\r\n" || (eof && after_close == body.size())) {
+            return multipart_delimiter{.position = candidate, .closing = true};
+         }
+         if (!eof && after_close >= body.size()) {
+            return std::nullopt;
          }
       }
       offset = candidate + 1U;
    }
 }
 
-boost::asio::awaitable<upload_part> read_total_limited_body(body_reader& body, const upload_options& options) {
-   auto memory = std::vector<std::byte>{};
-   auto total = std::uint64_t{0};
-   auto writer = std::optional<upload_spool_writer>{};
+class multipart_part_builder {
+ public:
+   multipart_part_builder(disposition meta, std::string content_type,
+                          std::vector<std::pair<std::string, std::string>> headers, const upload_options& options)
+      : name_(std::move(meta.name)), filename_(std::move(meta.filename)), content_type_(std::move(content_type)),
+        headers_(std::move(headers)), options_(options) {}
 
-   while (auto chunk = co_await body.async_read()) {
-      total += chunk->bytes.size();
-      if (total > options.max_total_bytes) {
-         throw exceptions::payload_too_large{"upload exceeds configured total limit"};
+   void append(std::string_view bytes) {
+      size_ += bytes.size();
+      if (filename_.has_value() && size_ > options_.max_file_bytes) {
+         throw exceptions::payload_too_large{"multipart file exceeds upload limit"};
+      }
+      if (!filename_.has_value() && size_ > options_.max_field_bytes) {
+         throw exceptions::payload_too_large{"multipart field exceeds upload limit"};
+      }
+      if (bytes.empty()) {
+         return;
       }
 
-      if (!writer.has_value() && memory.size() + chunk->bytes.size() <= options.memory_threshold_bytes) {
-         memory.insert(memory.end(), chunk->bytes.begin(), chunk->bytes.end());
-         continue;
+      if (!writer_.has_value() && memory_.size() + bytes.size() <= options_.memory_threshold_bytes) {
+         append_text_bytes(memory_, bytes);
+         return;
       }
 
-      if (!writer.has_value()) {
-         writer.emplace(options);
-         writer->write(memory);
-         memory.clear();
+      if (!writer_.has_value()) {
+         writer_.emplace(options_);
+         writer_->write(memory_);
+         memory_.clear();
       }
-      writer->write(chunk->bytes);
+      writer_->write(reinterpret_cast<const std::byte*>(bytes.data()), bytes.size());
    }
 
-   if (writer.has_value()) {
-      co_return upload_part{.memory = {}, .spool = writer->finish(), .size = total};
+   upload_part finish() {
+      auto part = upload_part{
+         .name = std::move(name_),
+         .filename = std::move(filename_),
+         .content_type = std::move(content_type_),
+         .headers = std::move(headers_),
+         .memory = std::move(memory_),
+         .spool = std::nullopt,
+         .size = size_,
+      };
+      if (writer_.has_value()) {
+         part.memory.clear();
+         part.spool = writer_->finish();
+      }
+      return part;
    }
 
-   co_return upload_part{.memory = std::move(memory), .spool = std::nullopt, .size = total};
-}
+ private:
+   std::string name_;
+   std::optional<std::string> filename_;
+   std::string content_type_;
+   std::vector<std::pair<std::string, std::string>> headers_;
+   const upload_options& options_;
+   std::vector<std::byte> memory_;
+   std::optional<upload_spool_writer> writer_;
+   std::uint64_t size_ = 0;
+};
+
+class multipart_stream_parser {
+ public:
+   multipart_stream_parser(std::string boundary, const upload_options& options)
+      : delimiter_(std::string{"--"} + std::move(boundary)), options_(options) {}
+
+   boost::asio::awaitable<multipart_form> parse(body_reader& body) {
+      while (auto chunk = co_await body.async_read()) {
+         total_ += chunk->bytes.size();
+         if (total_ > options_.max_total_bytes) {
+            throw exceptions::payload_too_large{"upload exceeds configured total limit"};
+         }
+         buffer_.append(reinterpret_cast<const char*>(chunk->bytes.data()), chunk->bytes.size());
+         process(false);
+      }
+
+      process(true);
+      if (state_ != state::done) {
+         throw exceptions::bad_request{"multipart closing boundary is missing"};
+      }
+      co_return std::move(form_);
+   }
+
+ private:
+   enum class state {
+      first_boundary,
+      headers,
+      content,
+      done,
+   };
+
+   void process(bool eof) {
+      while (true) {
+         switch (state_) {
+         case state::first_boundary:
+            if (!consume_first_boundary(eof)) {
+               return;
+            }
+            break;
+         case state::headers:
+            if (!consume_headers()) {
+               return;
+            }
+            break;
+         case state::content:
+            if (!consume_content(eof)) {
+               return;
+            }
+            break;
+         case state::done:
+            if (!buffer_.empty()) {
+               throw exceptions::bad_request{"unexpected multipart trailer"};
+            }
+            return;
+         }
+      }
+   }
+
+   bool consume_first_boundary(bool eof) {
+      if (buffer_.size() < delimiter_.size()) {
+         if (eof) {
+            throw exceptions::bad_request{"multipart body does not start with boundary"};
+         }
+         return false;
+      }
+      if (!std::string_view{buffer_}.starts_with(delimiter_)) {
+         throw exceptions::bad_request{"multipart body does not start with boundary"};
+      }
+      if (buffer_.size() < delimiter_.size() + 2U) {
+         if (eof) {
+            throw exceptions::bad_request{"malformed multipart boundary"};
+         }
+         return false;
+      }
+
+      const auto suffix = std::string_view{buffer_}.substr(delimiter_.size(), 2U);
+      if (suffix == "--") {
+         buffer_.erase(0, delimiter_.size() + 2U);
+         consume_optional_closing_crlf(eof);
+         state_ = state::done;
+         return true;
+      }
+      if (suffix != "\r\n") {
+         throw exceptions::bad_request{"malformed multipart boundary"};
+      }
+      buffer_.erase(0, delimiter_.size() + 2U);
+      state_ = state::headers;
+      return true;
+   }
+
+   void consume_optional_closing_crlf(bool eof) {
+      if (buffer_.empty()) {
+         return;
+      }
+      if (buffer_.starts_with("\r\n")) {
+         buffer_.erase(0, 2U);
+      }
+      if (eof && !buffer_.empty()) {
+         throw exceptions::bad_request{"unexpected multipart trailer"};
+      }
+   }
+
+   bool consume_headers() {
+      const auto header_end = buffer_.find("\r\n\r\n");
+      if (header_end == std::string::npos) {
+         return false;
+      }
+
+      auto headers = parse_headers(std::string_view{buffer_}.substr(0, header_end));
+      auto meta = parse_content_disposition(headers);
+      auto content_type = header_value(headers, "content-type").value_or("application/octet-stream");
+      current_.emplace(std::move(meta), std::move(content_type), std::move(headers), options_);
+      buffer_.erase(0, header_end + 4U);
+      state_ = state::content;
+      return true;
+   }
+
+   bool consume_content(bool eof) {
+      auto delimiter = find_next_multipart_delimiter(buffer_, delimiter_, 0, eof);
+      if (!delimiter.has_value()) {
+         if (eof) {
+            throw exceptions::bad_request{"multipart closing boundary is missing"};
+         }
+         flush_safe_content_prefix();
+         return false;
+      }
+
+      current_->append(std::string_view{buffer_}.substr(0, delimiter->position));
+      auto part = current_->finish();
+      if (part.filename.has_value()) {
+         form_.files.push_back(part);
+      }
+      form_.parts.push_back(std::move(part));
+      current_.reset();
+
+      buffer_.erase(0, delimiter->position + 2U + delimiter_.size());
+      if (delimiter->closing) {
+         if (!buffer_.starts_with("--")) {
+            throw exceptions::bad_request{"malformed multipart boundary"};
+         }
+         buffer_.erase(0, 2U);
+         consume_optional_closing_crlf(eof);
+         state_ = state::done;
+      } else {
+         if (!buffer_.starts_with("\r\n")) {
+            throw exceptions::bad_request{"malformed multipart boundary"};
+         }
+         buffer_.erase(0, 2U);
+         state_ = state::headers;
+      }
+      return true;
+   }
+
+   void flush_safe_content_prefix() {
+      const auto tail_size = delimiter_.size() + 6U;
+      if (buffer_.size() <= tail_size) {
+         return;
+      }
+      const auto flush_size = buffer_.size() - tail_size;
+      current_->append(std::string_view{buffer_}.substr(0, flush_size));
+      buffer_.erase(0, flush_size);
+   }
+
+   std::string delimiter_;
+   const upload_options& options_;
+   multipart_form form_;
+   std::string buffer_;
+   std::optional<multipart_part_builder> current_;
+   std::uint64_t total_ = 0;
+   state state_ = state::first_boundary;
+};
 
 } // namespace
 
@@ -488,8 +620,8 @@ boost::asio::awaitable<multipart_form> upload_reader::async_read_multipart(std::
       throw exceptions::bad_request{"multipart boundary is missing"};
    }
 
-   auto part = co_await read_total_limited_body(body_, options_);
-   co_return parse_multipart_body(part.text(), *boundary, options_);
+   auto parser = multipart_stream_parser{*boundary, options_};
+   co_return co_await parser.parse(body_);
 }
 
 std::optional<std::string> multipart_boundary(std::string_view content_type) {

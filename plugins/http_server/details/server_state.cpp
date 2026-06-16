@@ -62,9 +62,6 @@ boost::asio::awaitable<void> stop_server(plugin::impl& state) {
 void request_server_stop(plugin::impl& state) noexcept {
    auto lock = std::scoped_lock{state.mutex};
    state.stopping = true;
-   if (state.server) {
-      state.server->stop();
-   }
 }
 
 } // namespace fcl::plugins::http_server

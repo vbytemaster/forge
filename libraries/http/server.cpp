@@ -2,8 +2,11 @@ module;
 
 #include <coroutine>
 #include <algorithm>
+#include <condition_variable>
+#include <exception>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -535,7 +538,31 @@ void server::stop() {
       return;
    }
 
-   asio::dispatch(impl_->acceptor.get_executor(), [impl = impl_.get()] { impl->stop_on_executor(); });
+   struct stop_state {
+      std::mutex mutex;
+      std::condition_variable ready;
+      bool done = false;
+      std::exception_ptr error;
+   };
+
+   auto state = std::make_shared<stop_state>();
+   asio::co_spawn(
+      impl_->acceptor.get_executor(),
+      impl_->async_stop_on_executor(),
+      [state](std::exception_ptr error) {
+         {
+            const auto lock = std::scoped_lock{state->mutex};
+            state->error = std::move(error);
+            state->done = true;
+         }
+         state->ready.notify_all();
+      });
+
+   auto lock = std::unique_lock{state->mutex};
+   state->ready.wait(lock, [&] { return state->done; });
+   if (state->error) {
+      std::rethrow_exception(state->error);
+   }
 }
 
 boost::asio::awaitable<void> server::async_start() {

@@ -165,9 +165,44 @@ template <typename Request>
       FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API route must start with /");
    }
 
+   auto normalize_path = [](std::string_view path) {
+      auto output = std::string{};
+      output.reserve(path.size());
+      for (auto offset = std::size_t{0}; offset < path.size();) {
+         if (path[offset] == '/') {
+            output.push_back('/');
+            ++offset;
+            continue;
+         }
+
+         const auto separator = path.find('/', offset);
+         const auto end = separator == std::string_view::npos ? path.size() : separator;
+         const auto segment = path.substr(offset, end - offset);
+         if (segment.find('{') != std::string_view::npos || segment.find('}') != std::string_view::npos) {
+            if (segment.size() <= 2U || segment.front() != '{' || segment.back() != '}') {
+               FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                                   "HTTP API path placeholders must occupy a complete segment");
+            }
+            const auto name = segment.substr(1U, segment.size() - 2U);
+            for (const auto value : name) {
+               if (std::isalnum(static_cast<unsigned char>(value)) == 0 && value != '_') {
+                  FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                                      "HTTP API path placeholder name is invalid");
+               }
+            }
+            output.push_back(':');
+            output += name;
+         } else {
+            output += segment;
+         }
+         offset = end;
+      }
+      return output;
+   };
+
    const auto query_start = target.find('?');
    auto parsed = parsed_api_route{
-       .path = std::string{target.substr(0, query_start)},
+       .path = normalize_path(target.substr(0, query_start)),
    };
    if (query_start == std::string_view::npos) {
       return parsed;

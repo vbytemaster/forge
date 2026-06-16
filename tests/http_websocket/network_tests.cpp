@@ -277,7 +277,7 @@ FCL_HTTP_API(::fcl::http::test_api::macro_cache,
              FCL_HTTP_PUT(write, "/cache/chunks/:ref", created))
 
 FCL_HTTP_API(::fcl::http::test_api::search_api,
-             FCL_HTTP_GET(search, "/search/:term?page_size={limit}"))
+             FCL_HTTP_GET(search, "/search/{term}?page_size={limit}"))
 
 FCL_HTTP_API(::fcl::http::test_api::object_api,
              FCL_HTTP_PUT(put_object, "/objects/:collection/:key", created,
@@ -1638,6 +1638,100 @@ BOOST_AUTO_TEST_CASE(server_rejects_request_body_over_configured_limit) {
    BOOST_TEST(!invoked->load());
 
    fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(server_keep_alive_gap_uses_idle_timeout) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto requests = std::make_shared<std::atomic<unsigned>>(0);
+   auto server = fcl::http::server{
+      runtime,
+      server_config{.read_timeout = std::chrono::seconds{2}, .idle_timeout = std::chrono::milliseconds{50}},
+      [requests](route_context& context) -> boost::asio::awaitable<response> {
+         requests->fetch_add(1);
+         co_return make_text_response(context.request, status::ok, "ok");
+      },
+   };
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(std::chrono::seconds{2});
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
+
+   asio::write(stream.socket(), asio::buffer(std::string{
+      "GET /first HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Connection: keep-alive\r\n"
+      "\r\n"}));
+   auto buffer = beast::flat_buffer{};
+   auto first = response{};
+   boost::beast::http::read(stream, buffer, first);
+   BOOST_TEST(first.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(first.keep_alive());
+
+   std::this_thread::sleep_for(std::chrono::milliseconds{150});
+   auto write_error = boost::system::error_code{};
+   asio::write(stream.socket(), asio::buffer(std::string{
+      "GET /second HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Connection: keep-alive\r\n"
+      "\r\n"}), write_error);
+
+   auto read_error = boost::system::error_code{};
+   auto second = response{};
+   stream.expires_after(std::chrono::milliseconds{500});
+   boost::beast::http::read(stream, buffer, second, read_error);
+
+   BOOST_TEST(read_error != boost::system::error_code{});
+   BOOST_TEST(requests->load() == 1U);
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(server_async_stop_cancels_active_keep_alive_sessions) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto requests = std::make_shared<std::atomic<unsigned>>(0);
+   auto server = fcl::http::server{
+      runtime,
+      server_config{.read_timeout = std::chrono::seconds{5}, .idle_timeout = std::chrono::seconds{5}},
+      [requests](route_context& context) -> boost::asio::awaitable<response> {
+         requests->fetch_add(1);
+         co_return make_text_response(context.request, status::ok, "ok");
+      },
+   };
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(std::chrono::seconds{2});
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
+
+   asio::write(stream.socket(), asio::buffer(std::string{
+      "GET /first HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Connection: keep-alive\r\n"
+      "\r\n"}));
+   auto buffer = beast::flat_buffer{};
+   auto first = response{};
+   boost::beast::http::read(stream, buffer, first);
+   BOOST_TEST(first.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(first.keep_alive());
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+
+   auto write_error = boost::system::error_code{};
+   asio::write(stream.socket(), asio::buffer(std::string{
+      "GET /second HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "\r\n"}), write_error);
+
+   auto read_error = boost::system::error_code{};
+   auto second = response{};
+   stream.expires_after(std::chrono::milliseconds{500});
+   boost::beast::http::read(stream, buffer, second, read_error);
+
+   BOOST_TEST(read_error != boost::system::error_code{});
+   BOOST_TEST(requests->load() == 1U);
 }
 
 BOOST_AUTO_TEST_CASE(http_stream_route_reads_large_request_body_in_chunks) {

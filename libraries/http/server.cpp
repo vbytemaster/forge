@@ -138,17 +138,30 @@ class server_session : public std::enable_shared_from_this<server_session> {
        : runtime_{runtime}, stream_(std::move(stream)), config_(std::move(config)), handler_(std::move(handler)),
          router_(std::move(router_value)) {}
 
+   void cancel() {
+      auto self = shared_from_this();
+      asio::dispatch(stream_.get_executor(), [self] { self->cancel_on_executor(); });
+   }
+
+   awaitable<void> async_cancel() {
+      auto self = shared_from_this();
+      static_cast<void>(self);
+      co_await asio::dispatch(stream_.get_executor(), use_awaitable);
+      cancel_on_executor();
+   }
+
    awaitable<void> run() {
       auto self = shared_from_this();
       static_cast<void>(self);
 
+      auto first_request = true;
       for (;;) {
          buffer_.consume(buffer_.size());
          auto parser = beast_http::request_parser<beast_http::buffer_body>{};
          parser.body_limit(config_.max_request_body_bytes);
          parser.header_limit(static_cast<std::uint32_t>(
             std::min<std::uint64_t>(config_.max_header_bytes, std::numeric_limits<std::uint32_t>::max())));
-         stream_.expires_after(config_.read_timeout);
+         stream_.expires_after(first_request ? config_.read_timeout : config_.idle_timeout);
          auto [read_error, bytes] =
              co_await beast_http::async_read_header(stream_, buffer_, parser, asio::as_tuple(use_awaitable));
          static_cast<void>(bytes);
@@ -177,6 +190,7 @@ class server_session : public std::enable_shared_from_this<server_session> {
          if (read_error) {
             throw boost::system::system_error{read_error};
          }
+         first_request = false;
 
          auto request_value = make_header_request(parser);
          auto context_storage = std::optional<route_context>{};
@@ -345,6 +359,13 @@ class server_session : public std::enable_shared_from_this<server_session> {
       co_return true;
    }
 
+   void cancel_on_executor() {
+      auto ignored = boost::system::error_code{};
+      stream_.socket().cancel(ignored);
+      stream_.socket().shutdown(tcp::socket::shutdown_both, ignored);
+      stream_.socket().close(ignored);
+   }
+
    fcl::asio::runtime& runtime_;
    beast::tcp_stream stream_;
    server_config config_;
@@ -381,6 +402,7 @@ struct server::impl {
 
          auto client = std::make_shared<detail::server_session>(runtime, beast::tcp_stream{std::move(socket)}, config,
                                                                 handler, router_value);
+         remember_session(client);
          asio::co_spawn(session_strand, client->run(), [](std::exception_ptr error) {
             if (error) {
                try {
@@ -397,7 +419,50 @@ struct server::impl {
    server_handler handler;
    std::shared_ptr<router> router_value;
    tcp::acceptor acceptor;
+   std::vector<std::weak_ptr<detail::server_session>> sessions;
    bool started = false;
+
+   void prune_sessions() {
+      sessions.erase(std::remove_if(sessions.begin(), sessions.end(),
+                                    [](const std::weak_ptr<detail::server_session>& session) {
+                                       return session.expired();
+                                    }),
+                     sessions.end());
+   }
+
+   void remember_session(const std::shared_ptr<detail::server_session>& session) {
+      prune_sessions();
+      sessions.push_back(session);
+   }
+
+   std::vector<std::shared_ptr<detail::server_session>> active_sessions() {
+      auto active = std::vector<std::shared_ptr<detail::server_session>>{};
+      for (const auto& session : sessions) {
+         if (auto locked = session.lock()) {
+            active.push_back(std::move(locked));
+         }
+      }
+      sessions.clear();
+      sessions.reserve(active.size());
+      for (const auto& session : active) {
+         sessions.push_back(session);
+      }
+      return active;
+   }
+
+   void cancel_sessions() {
+      for (auto& session : active_sessions()) {
+         session->cancel();
+      }
+      sessions.clear();
+   }
+
+   awaitable<void> async_cancel_sessions() {
+      for (auto& session : active_sessions()) {
+         co_await session->async_cancel();
+      }
+      sessions.clear();
+   }
 
    void start_on_executor() {
       if (started) {
@@ -430,7 +495,19 @@ struct server::impl {
       auto ignored = boost::system::error_code{};
       acceptor.cancel(ignored);
       acceptor.close(ignored);
+      cancel_sessions();
       started = false;
+   }
+
+   awaitable<void> async_stop_on_executor() {
+      if (!started) {
+         co_return;
+      }
+      auto ignored = boost::system::error_code{};
+      acceptor.cancel(ignored);
+      acceptor.close(ignored);
+      started = false;
+      co_await async_cancel_sessions();
    }
 };
 
@@ -471,7 +548,7 @@ boost::asio::awaitable<void> server::async_stop() {
       co_return;
    }
    co_await asio::dispatch(impl_->acceptor.get_executor(), use_awaitable);
-   impl_->stop_on_executor();
+   co_await impl_->async_stop_on_executor();
 }
 
 std::uint16_t server::port() const {

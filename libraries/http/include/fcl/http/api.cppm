@@ -52,7 +52,7 @@ enum class api_error_profile {
 };
 
 struct api_route_options {
-   std::vector<std::string> query;
+   std::vector<api_field_binding> query;
    std::vector<api_field_binding> headers;
    std::vector<api_field_binding> forms;
    std::optional<std::string> body_stream_field;
@@ -272,15 +272,16 @@ class api_builder {
          return route->second;
       }
 
-      const auto configured =
-          std::find_if(options.query.begin(), options.query.end(),
-                       [&](const std::string& query_name) { return std::string_view{query_name} == name; });
+      const auto configured = std::find_if(options.query.begin(), options.query.end(),
+                                           [&](const api_field_binding& binding) {
+                                              return std::string_view{binding.field} == name;
+                                           });
       if (configured == options.query.end()) {
          return std::nullopt;
       }
 
       for (const auto& query : context.parsed_target.query_params) {
-         if (query.key == name) {
+         if (query.key == configured->name) {
             return query.has_value ? std::string_view{query.value} : std::string_view{"true"};
          }
       }

@@ -206,7 +206,7 @@ class server_session : public std::enable_shared_from_this<server_session> {
             stream_.expires_after(config_.idle_timeout);
             auto response_value = co_await router_->handle_stream(stream_request_value);
             response_value.head.version(request_value.version());
-            response_value.head.keep_alive(request_value.keep_alive());
+            response_value.head.keep_alive(request_value.keep_alive() && parser.is_done());
             co_await write_stream_response(response_value);
             if (!response_value.head.keep_alive()) {
                break;

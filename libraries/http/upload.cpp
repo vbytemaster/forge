@@ -335,6 +335,37 @@ multipart_form parse_multipart_body(std::string_view body, std::string_view boun
    }
 }
 
+boost::asio::awaitable<upload_part> read_total_limited_body(body_reader& body, const upload_options& options) {
+   auto memory = std::vector<std::byte>{};
+   auto total = std::uint64_t{0};
+   auto writer = std::optional<upload_spool_writer>{};
+
+   while (auto chunk = co_await body.async_read()) {
+      total += chunk->bytes.size();
+      if (total > options.max_total_bytes) {
+         throw exceptions::payload_too_large{"upload exceeds configured total limit"};
+      }
+
+      if (!writer.has_value() && memory.size() + chunk->bytes.size() <= options.memory_threshold_bytes) {
+         memory.insert(memory.end(), chunk->bytes.begin(), chunk->bytes.end());
+         continue;
+      }
+
+      if (!writer.has_value()) {
+         writer.emplace(options);
+         writer->write(memory);
+         memory.clear();
+      }
+      writer->write(chunk->bytes);
+   }
+
+   if (writer.has_value()) {
+      co_return upload_part{.memory = {}, .spool = writer->finish(), .size = total};
+   }
+
+   co_return upload_part{.memory = std::move(memory), .spool = std::nullopt, .size = total};
+}
+
 } // namespace
 
 upload_spool::upload_spool(std::shared_ptr<state> state_value) : state_(std::move(state_value)) {}
@@ -420,7 +451,7 @@ boost::asio::awaitable<multipart_form> upload_reader::async_read_multipart(std::
       throw exceptions::bad_request{"multipart boundary is missing"};
    }
 
-   auto part = co_await async_read();
+   auto part = co_await read_total_limited_body(body_, options_);
    co_return parse_multipart_body(part.text(), *boundary, options_);
 }
 

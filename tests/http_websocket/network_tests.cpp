@@ -112,6 +112,15 @@ struct macro_chunk {
    std::string bytes;
 };
 
+struct search_request {
+   std::string term;
+   std::uint32_t limit = 0;
+};
+
+struct search_response {
+   std::string value;
+};
+
 struct object_put_request {
    std::string collection;
    std::string key;
@@ -159,6 +168,8 @@ BOOST_DESCRIBE_STRUCT(api_chunk, (), (bytes))
 BOOST_DESCRIBE_STRUCT(macro_read_request, (), (ref, offset, limit))
 BOOST_DESCRIBE_STRUCT(macro_write_request, (), (ref, bytes))
 BOOST_DESCRIBE_STRUCT(macro_chunk, (), (bytes))
+BOOST_DESCRIBE_STRUCT(search_request, (), (term, limit))
+BOOST_DESCRIBE_STRUCT(search_response, (), (value))
 BOOST_DESCRIBE_STRUCT(object_put_request, (), (collection, key, content_type, digest, body))
 BOOST_DESCRIBE_STRUCT(object_put_response, (), (bytes, content_type, content_md5))
 BOOST_DESCRIBE_STRUCT(object_get_request, (), (collection, key))
@@ -183,6 +194,13 @@ class macro_cache : public fcl::api::contract<macro_cache, fcl::api::surface::lo
 
    virtual boost::asio::awaitable<macro_chunk> read(macro_read_request request) = 0;
    virtual boost::asio::awaitable<macro_chunk> write(macro_write_request request) = 0;
+};
+
+class search_api : public fcl::api::contract<search_api> {
+ public:
+   virtual ~search_api() = default;
+
+   virtual boost::asio::awaitable<search_response> search(search_request request) = 0;
 };
 
 class object_api : public fcl::api::contract<object_api> {
@@ -223,6 +241,9 @@ class patch_api : public fcl::api::contract<patch_api> {
 FCL_API(::fcl::http::test_api::macro_cache, FCL_API_CONTRACT("cache.macro", 1, 0), FCL_API_METHOD(read),
         FCL_API_METHOD(write))
 
+FCL_API(::fcl::http::test_api::search_api, FCL_API_CONTRACT("search", 1, 0),
+        FCL_API_METHOD_TYPED(search, ::fcl::http::test_api::search_request, ::fcl::http::test_api::search_response))
+
 FCL_API(::fcl::http::test_api::object_api, FCL_API_CONTRACT("object", 1, 0),
         FCL_API_METHOD_TYPED(put_object, ::fcl::http::test_api::object_put_request,
                              ::fcl::http::test_api::object_put_response),
@@ -245,6 +266,9 @@ FCL_API(::fcl::http::test_api::patch_api, FCL_API_CONTRACT("patch", 1, 0),
 FCL_HTTP_API(::fcl::http::test_api::macro_cache,
              FCL_HTTP_GET(read, "/cache/chunks/:ref?offset={offset}&limit={limit}"),
              FCL_HTTP_PUT(write, "/cache/chunks/:ref", created))
+
+FCL_HTTP_API(::fcl::http::test_api::search_api,
+             FCL_HTTP_GET(search, "/search/:term?page_size={limit}"))
 
 FCL_HTTP_API(::fcl::http::test_api::object_api,
              FCL_HTTP_PUT(put_object, "/objects/:collection/:key", created,
@@ -315,6 +339,9 @@ using test_api::macro_cache;
 using test_api::macro_chunk;
 using test_api::macro_read_request;
 using test_api::macro_write_request;
+using test_api::search_api;
+using test_api::search_request;
+using test_api::search_response;
 using test_api::control_api;
 using test_api::control_patch_request;
 using test_api::control_request;
@@ -387,6 +414,13 @@ class macro_cache_impl final : public macro_cache {
 
    boost::asio::awaitable<macro_chunk> write(macro_write_request request) override {
       co_return macro_chunk{.bytes = request.ref + ":" + request.bytes};
+   }
+};
+
+class search_api_impl final : public search_api {
+ public:
+   boost::asio::awaitable<search_response> search(search_request request) override {
+      co_return search_response{.value = request.term + ":" + std::to_string(request.limit)};
    }
 };
 
@@ -546,7 +580,8 @@ class temp_directory {
    std::filesystem::path path_;
 };
 
-response raw_http_exchange(std::uint16_t port, std::string request_text) {
+response raw_http_exchange(std::uint16_t port, std::string request_text,
+                           std::chrono::milliseconds hold_after_read = std::chrono::milliseconds{0}) {
    auto io_context = asio::io_context{};
    auto stream = beast::tcp_stream{io_context};
    stream.expires_after(std::chrono::seconds{2});
@@ -556,6 +591,9 @@ response raw_http_exchange(std::uint16_t port, std::string request_text) {
    auto buffer = beast::flat_buffer{};
    auto response_value = response{};
    boost::beast::http::read(stream, buffer, response_value);
+   if (hold_after_read.count() != 0) {
+      std::this_thread::sleep_for(hold_after_read);
+   }
    return response_value;
 }
 
@@ -905,7 +943,8 @@ BOOST_AUTO_TEST_CASE(http_api_binding_populates_get_request_from_route_and_query
    auto binding = fcl::http::api()
                       .use(fcl::api::binding().serve(apis).build())
                       .get<&api_cache::routed_read, api_routed_read_chunk, api_chunk>(
-                          "/cache/chunks/:ref", {.query = {"offset", "limit"}})
+                          "/cache/chunks/:ref",
+                          {.query = {{.field = "offset", .name = "offset"}, {.field = "limit", .name = "limit"}}})
                       .build();
    router.mount(binding);
 
@@ -1007,6 +1046,36 @@ BOOST_AUTO_TEST_CASE(http_api_macro_get_maps_route_and_query) {
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
    BOOST_REQUIRE(unpacked.ok());
    BOOST_TEST(unpacked.value.bytes == "abc:7:4096");
+}
+
+BOOST_AUTO_TEST_CASE(http_api_query_template_preserves_wire_alias) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<search_api>(search_api::describe(), std::make_shared<search_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<search_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   const auto port = wait_for_port(server);
+   auto connection = fcl::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
+   auto request_value = make_request(method::get, "/search/cache?page_size=25");
+   const auto response = fcl::asio::blocking::run(runtime, connection.async_request(std::move(request_value)));
+   const auto decoded = fcl::json::read<search_response>(response.body());
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_REQUIRE(decoded.ok());
+   BOOST_TEST(decoded.value.value == "cache:25");
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
+   auto search = fcl::asio::blocking::run(runtime, fcl::http::remote<search_api>(client));
+   const auto remote_response =
+      fcl::asio::blocking::run(runtime, search->search(search_request{.term = "remote", .limit = 17}));
+   BOOST_TEST(remote_response.value == "remote:17");
+
+   server.stop();
 }
 
 BOOST_AUTO_TEST_CASE(http_api_macro_put_rejects_body_route_disagreement) {
@@ -1651,6 +1720,52 @@ BOOST_AUTO_TEST_CASE(http_stream_middleware_short_circuits_before_body_read) {
    fcl::asio::blocking::run(runtime, server.async_stop());
 }
 
+BOOST_AUTO_TEST_CASE(http_stream_short_circuit_closes_connection_with_unread_body) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto upload_invoked = std::make_shared<std::atomic<bool>>(false);
+   auto ok_requests = std::make_shared<std::atomic<unsigned>>(0);
+
+   auto router = fcl::http::router{};
+   router.use([](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
+      static_cast<void>(next);
+      if (context.parsed_target.path == "/upload") {
+         co_return make_text_response(context.request, status::unauthorized, "blocked");
+      }
+      co_return co_await next();
+   });
+   router.post_stream("/upload", [upload_invoked](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      static_cast<void>(request_value);
+      upload_invoked->store(true);
+      co_return stream_response::buffered(response{status::ok, 11});
+   });
+   router.get("/ok", [ok_requests](route_context& context) -> boost::asio::awaitable<response> {
+      ok_requests->fetch_add(1);
+      co_return make_text_response(context.request, status::ok, "ok");
+   });
+
+   auto server = fcl::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   const auto unread_body = std::string{"GET /ok HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"};
+   const auto response = raw_http_exchange(
+      server.port(),
+      "POST /upload HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Content-Length: " +
+         std::to_string(unread_body.size()) + "\r\n"
+         "\r\n" +
+         unread_body,
+      std::chrono::milliseconds{100});
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::unauthorized));
+   BOOST_TEST(response.body() == "blocked");
+   BOOST_TEST(!response.keep_alive());
+   BOOST_TEST(!upload_invoked->load());
+   BOOST_TEST(ok_requests->load() == 0U);
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
 BOOST_AUTO_TEST_CASE(http_stream_body_limit_fires_during_stream_read) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
    auto invoked = std::make_shared<std::atomic<bool>>(false);
@@ -1919,6 +2034,42 @@ BOOST_AUTO_TEST_CASE(http_upload_reader_enforces_file_and_total_limits) {
                   "--demo--\r\n"};
    auto file_limited = upload_reader{make_body_reader({body}),
                                      upload_options{.memory_threshold_bytes = 64, .max_file_bytes = 4,
+                                                    .max_total_bytes = 1024}};
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, file_limited.async_read_multipart(
+                                                    "multipart/form-data; boundary=demo")),
+                     exceptions::payload_too_large);
+}
+
+BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_applies_file_limit_per_part) {
+   auto runtime = fcl::asio::runtime{};
+   const auto two_files =
+      std::string{"--demo\r\n"
+                  "Content-Disposition: form-data; name=\"first\"; filename=\"first.txt\"\r\n"
+                  "\r\n"
+                  "12345\r\n"
+                  "--demo\r\n"
+                  "Content-Disposition: form-data; name=\"second\"; filename=\"second.txt\"\r\n"
+                  "\r\n"
+                  "abcde\r\n"
+                  "--demo--\r\n"};
+   auto reader = upload_reader{make_body_reader({two_files}),
+                               upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 5,
+                                              .max_total_bytes = 1024}};
+
+   const auto form = fcl::asio::blocking::run(
+      runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
+   BOOST_REQUIRE_EQUAL(form.files.size(), 2U);
+   BOOST_TEST(form.files[0].text() == "12345");
+   BOOST_TEST(form.files[1].text() == "abcde");
+
+   const auto oversized_file =
+      std::string{"--demo\r\n"
+                  "Content-Disposition: form-data; name=\"file\"; filename=\"large.txt\"\r\n"
+                  "\r\n"
+                  "123456\r\n"
+                  "--demo--\r\n"};
+   auto file_limited = upload_reader{make_body_reader({oversized_file}),
+                                     upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 5,
                                                     .max_total_bytes = 1024}};
    BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, file_limited.async_read_multipart(
                                                     "multipart/form-data; boundary=demo")),

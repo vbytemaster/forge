@@ -77,7 +77,7 @@ class api_route_builder {
 
 struct parsed_api_route {
    std::string path;
-   std::vector<std::string> query;
+   std::vector<api_field_binding> query;
 };
 
 template <typename Interface> struct http_api_traits;
@@ -182,7 +182,10 @@ template <typename Request>
       const auto equals = part.find('=');
       if (equals != std::string_view::npos && equals + 2U <= part.size() && part[equals + 1U] == '{' &&
           part.back() == '}') {
-         parsed.query.emplace_back(part.substr(equals + 2U, part.size() - equals - 3U));
+         parsed.query.push_back(api_field_binding{
+            .field = std::string{part.substr(equals + 2U, part.size() - equals - 3U)},
+            .name = std::string{part.substr(0, equals)},
+         });
       }
       if (separator == std::string_view::npos) {
          break;

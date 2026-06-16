@@ -223,13 +223,14 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/stcp/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/p2p/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/app/include"
-   "${CMAKE_CURRENT_SOURCE_DIR}/plugins/signature_provider/include"
-   "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_node/include"
-   "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_api_resolver/include"
-   "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_diagnostics/include"
-   "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_pubsub/include"
-   "${CMAKE_CURRENT_SOURCE_DIR}/plugins/http_server/include"
 )
+
+set(FCL_PLUGIN_SIGNATURE_PROVIDER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/signature_provider/include")
+set(FCL_PLUGIN_P2P_NODE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_node/include")
+set(FCL_PLUGIN_P2P_API_RESOLVER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_api_resolver/include")
+set(FCL_PLUGIN_P2P_DIAGNOSTICS_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_diagnostics/include")
+set(FCL_PLUGIN_P2P_PUBSUB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_pubsub/include")
+set(FCL_PLUGIN_HTTP_SERVER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/http_server/include")
 
 if(FCL_ENABLE_TUI AND FCL_TUI_NOTCURSES_TARGET)
    list(APPEND FCL_SOURCE_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/libraries/tui/include")

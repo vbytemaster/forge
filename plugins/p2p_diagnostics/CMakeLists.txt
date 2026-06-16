@@ -1,15 +1,17 @@
 add_library(
    fcl_plugin_p2p_diagnostics STATIC
       plugin.cpp
-      details/api_facade.cpp
-      details/config.cpp
-      details/state.cpp
+      api_facade.cpp
+      config.cpp
+      state.cpp
 )
 fcl_target_modules_at(fcl_plugin_p2p_diagnostics plugins/p2p_diagnostics)
 
 target_include_directories(
    fcl_plugin_p2p_diagnostics
-   PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS}
+   PUBLIC
+      ${FCL_PUBLIC_INCLUDE_DIRS}
+      "$<BUILD_INTERFACE:${FCL_PLUGIN_P2P_DIAGNOSTICS_INCLUDE_DIR}>"
    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 )
 

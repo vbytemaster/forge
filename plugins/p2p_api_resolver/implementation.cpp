@@ -67,7 +67,6 @@ import fcl.p2p.api;
 import fcl.plugins.p2p_node.types;
 import fcl.plugins.p2p_node.exceptions;
 import fcl.plugins.p2p_node.api;
-import fcl.plugins.p2p_node.plugin;
 import fcl.plugins.p2p_api_resolver.api;
 import fcl.plugins.p2p_api_resolver.exceptions;
 import fcl.plugins.p2p_api_resolver.types;

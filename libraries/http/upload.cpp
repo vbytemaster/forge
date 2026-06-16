@@ -348,8 +348,14 @@ std::optional<std::size_t> find_next_multipart_delimiter(std::string_view body, 
       }
 
       const auto suffix = candidate + marker.size();
-      if (body.substr(suffix, 2U) == "\r\n" || body.substr(suffix, 2U) == "--") {
+      if (body.substr(suffix, 2U) == "\r\n") {
          return candidate;
+      }
+      if (body.substr(suffix, 2U) == "--") {
+         const auto after_close = suffix + 2U;
+         if (after_close == body.size() || body.substr(after_close, 2U) == "\r\n") {
+            return candidate;
+         }
       }
       offset = candidate + 1U;
    }

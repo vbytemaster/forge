@@ -2019,6 +2019,39 @@ BOOST_AUTO_TEST_CASE(http_upload_reader_rejects_malformed_multipart_boundary) {
                      exceptions::bad_request);
 }
 
+BOOST_AUTO_TEST_CASE(http_upload_reader_accepts_boundary_like_bytes_inside_file_content) {
+   auto runtime = fcl::asio::runtime{};
+   const auto content = std::string{"alpha\r\n--demo-not-a-delimiter\r\nomega"};
+   const auto body =
+      std::string{"--demo\r\n"
+                  "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
+                  "Content-Type: text/plain\r\n"
+                  "\r\n"} +
+      content +
+      "\r\n--demo--\r\n";
+   auto reader = upload_reader{make_body_reader({body}),
+                               upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 1024,
+                                              .max_total_bytes = 1024}};
+
+   const auto form = fcl::asio::blocking::run(
+      runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
+
+   BOOST_REQUIRE_EQUAL(form.files.size(), 1U);
+   BOOST_TEST(form.files.front().text() == content);
+
+   auto malformed = upload_reader{
+      make_body_reader({"--demo\r\n"
+                        "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
+                        "\r\n"
+                        "alpha\r\n"
+                        "--demo-not-a-delimiter\r\n"
+                        "omega\r\n"}),
+      upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 1024, .max_total_bytes = 1024}};
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, malformed.async_read_multipart(
+                                                    "multipart/form-data; boundary=demo")),
+                     exceptions::bad_request);
+}
+
 BOOST_AUTO_TEST_CASE(http_upload_reader_enforces_file_and_total_limits) {
    auto runtime = fcl::asio::runtime{};
    auto total_limited = upload_reader{make_body_reader({"123", "45"}),

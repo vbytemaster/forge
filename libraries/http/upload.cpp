@@ -288,6 +288,9 @@ upload_part store_part(std::string name, std::optional<std::string> filename, st
    return part;
 }
 
+std::optional<std::size_t> find_next_multipart_delimiter(std::string_view body, std::string_view delimiter,
+                                                         std::size_t offset);
+
 multipart_form parse_multipart_body(std::string_view body, std::string_view boundary, const upload_options& options) {
    const auto delimiter = std::string{"--"} + std::string{boundary};
    auto position = std::size_t{0};
@@ -321,17 +324,34 @@ multipart_form parse_multipart_body(std::string_view body, std::string_view boun
       const auto meta = parse_content_disposition(headers);
       auto content_type = header_value(headers, "content-type").value_or("application/octet-stream");
       const auto content_start = header_end + 4U;
-      const auto next_boundary = body.find(std::string{"\r\n"} + delimiter, content_start);
-      if (next_boundary == std::string_view::npos) {
+      const auto next_boundary = find_next_multipart_delimiter(body, delimiter, content_start);
+      if (!next_boundary.has_value()) {
          throw exceptions::bad_request{"multipart closing boundary is missing"};
       }
-      auto content = body.substr(content_start, next_boundary - content_start);
+      auto content = body.substr(content_start, *next_boundary - content_start);
       auto part = store_part(meta.name, meta.filename, std::move(content_type), std::move(headers), content, options);
       if (part.filename.has_value()) {
          form.files.push_back(part);
       }
       form.parts.push_back(std::move(part));
-      position = next_boundary + 2U + delimiter.size();
+      position = *next_boundary + 2U + delimiter.size();
+   }
+}
+
+std::optional<std::size_t> find_next_multipart_delimiter(std::string_view body, std::string_view delimiter,
+                                                         std::size_t offset) {
+   const auto marker = std::string{"\r\n"} + std::string{delimiter};
+   while (true) {
+      const auto candidate = body.find(marker, offset);
+      if (candidate == std::string_view::npos) {
+         return std::nullopt;
+      }
+
+      const auto suffix = candidate + marker.size();
+      if (body.substr(suffix, 2U) == "\r\n" || body.substr(suffix, 2U) == "--") {
+         return candidate;
+      }
+      offset = candidate + 1U;
    }
 }
 

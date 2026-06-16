@@ -683,8 +683,8 @@ class api_builder {
             default:
                FCL_THROW_EXCEPTION(fcl::http::exceptions::method_not_allowed, "unsupported HTTP API stream route verb");
             }
-	         } else {
-	            auto handler = [plan, options, name](route_context& context) -> boost::asio::awaitable<response> {
+            } else {
+               auto handler = [plan, options, name](route_context& context) -> boost::asio::awaitable<response> {
                if (plan.local == nullptr) {
                   FCL_THROW_EXCEPTION(fcl::api::exceptions::incompatible_version,
                                       "HTTP API binding has no local registry");

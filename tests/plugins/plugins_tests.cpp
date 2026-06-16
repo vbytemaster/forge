@@ -25,7 +25,9 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -131,6 +133,13 @@ import fcl.schema.diagnostic;
 import fcl.schema.value_kind;
 import fcl.schema.object;
 import fcl.schema.enums;
+
+template <typename T>
+concept accepts_raw_http_binding = requires(T& api, fcl::http::api_binding binding) {
+   api.publish(std::move(binding), fcl::plugins::http_server::publish_options{});
+};
+
+static_assert(!accepts_raw_http_binding<fcl::plugins::http_server::api>);
 
 struct pubsub_payload {
    std::string text;

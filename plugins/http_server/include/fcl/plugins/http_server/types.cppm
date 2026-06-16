@@ -7,9 +7,11 @@ module;
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
 
 export module fcl.plugins.http_server.types;
 
+import fcl.api.binding;
 import fcl.api.registry;
 import fcl.http.api;
 import fcl.schema.diagnostic;
@@ -33,9 +35,39 @@ struct publish_options {
    std::string base_path;
 };
 
-struct publication {
-   std::function<fcl::http::api_binding(const fcl::api::registry&)> build;
-   publish_options options;
+class publication {
+ public:
+   publication(const publication&) = default;
+   publication(publication&&) noexcept = default;
+   publication& operator=(const publication&) = default;
+   publication& operator=(publication&&) noexcept = default;
+
+   template <typename Interface> [[nodiscard]] static publication typed(publish_options options = {}) {
+      return publication{
+         [](const fcl::api::registry& apis) {
+            auto plan = fcl::api::binding().serve(apis).build();
+            return fcl::http::api().use(std::move(plan)).bind<Interface>().build();
+         },
+         std::move(options),
+      };
+   }
+
+   [[nodiscard]] fcl::http::api_binding build(const fcl::api::registry& apis) const {
+      return build_(apis);
+   }
+
+   [[nodiscard]] const publish_options& options() const noexcept {
+      return options_;
+   }
+
+ private:
+   using factory_result = fcl::http::api_binding;
+   using binding_factory = std::function<factory_result(const fcl::api::registry&)>;
+
+   publication(binding_factory build, publish_options options) : build_{std::move(build)}, options_{std::move(options)} {}
+
+   binding_factory build_;
+   publish_options options_;
 };
 
 BOOST_DESCRIBE_STRUCT(config, (),

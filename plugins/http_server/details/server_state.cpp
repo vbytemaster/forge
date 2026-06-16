@@ -37,11 +37,8 @@ boost::asio::awaitable<void> start_server(plugin::impl& state) {
       router.use(std::move(descriptor));
    }
    for (auto& value : snapshot.publications) {
-      if (!value.build) {
-         FCL_THROW_EXCEPTION(exceptions::startup_failed, "HTTP server publication has no binding factory");
-      }
       auto binding = value.build(*state.apis);
-      binding.mount(router, resolve_base_path(state.settings, value.options.base_path));
+      binding.mount(router, resolve_base_path(state.settings, value.options().base_path));
    }
 
    auto server = std::make_unique<fcl::http::server>(*state.runtime, to_server_config(state.settings), std::move(router));

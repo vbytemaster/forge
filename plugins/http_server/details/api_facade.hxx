@@ -7,7 +7,6 @@ class plugin::api_impl final : public api {
    explicit api_impl(std::shared_ptr<plugin::impl> impl);
 
    boost::asio::awaitable<void> publish(publication value) override;
-   boost::asio::awaitable<void> publish(fcl::http::api_binding binding, publish_options options) override;
    boost::asio::awaitable<void> use(fcl::http::middleware_descriptor descriptor) override;
 
  private:

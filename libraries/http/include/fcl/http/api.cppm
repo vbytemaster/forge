@@ -62,10 +62,6 @@ struct api_route_options {
 
 class api_binding {
  public:
-   using mount_step = std::function<void(router&, std::string_view)>;
-
-   explicit api_binding(std::vector<mount_step> steps) : steps_{std::move(steps)} {}
-
    void mount(router& target, std::string_view base_path = {}) const {
       for (const auto& step : steps_) {
          step(target, base_path);
@@ -73,13 +69,17 @@ class api_binding {
    }
 
  private:
-   std::vector<mount_step> steps_;
+   friend class api_builder;
+
+   using mount_action = std::function<void(router&, std::string_view)>;
+
+   explicit api_binding(std::vector<mount_action> steps) : steps_{std::move(steps)} {}
+
+   std::vector<mount_action> steps_;
 };
 
 class api_builder {
  public:
-   using mount_step = api_binding::mount_step;
-
    api_builder() = default;
    explicit api_builder(router& target) : target_{&target} {}
 
@@ -146,6 +146,8 @@ class api_builder {
    }
 
  private:
+   using mount_action = api_binding::mount_action;
+
    template <typename T> struct is_optional : std::false_type {};
    template <typename T> struct is_optional<std::optional<T>> : std::true_type {
       using value_type = T;
@@ -623,8 +625,8 @@ class api_builder {
    }
 
    template <auto Method, typename Request, typename Response>
-   [[nodiscard]] mount_step make_step(method verb, std::string path, api_route_options options,
-                                      std::string explicit_name) {
+   [[nodiscard]] mount_action make_step(method verb, std::string path, api_route_options options,
+                                        std::string explicit_name) {
       using interface_type = typename method_class<decltype(Method)>::type;
       auto plan = plan_;
       auto name = explicit_name.empty() ? method_name<interface_type, Request, Response>() : std::move(explicit_name);
@@ -752,7 +754,7 @@ class api_builder {
 
    router* target_ = nullptr;
    fcl::api::binding_plan plan_;
-   std::vector<mount_step> steps_;
+   std::vector<mount_action> steps_;
 };
 
 [[nodiscard]] inline api_builder api(router& target) {

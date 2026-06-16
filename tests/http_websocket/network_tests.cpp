@@ -12,12 +12,14 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #include <boost/asio/awaitable.hpp>
@@ -78,6 +80,9 @@ namespace asio = boost::asio;
 namespace beast = boost::beast;
 namespace beast_websocket = boost::beast::websocket;
 using tcp = asio::ip::tcp;
+
+using raw_mount_step = std::function<void(fcl::http::router&, std::string_view)>;
+static_assert(!std::is_constructible_v<fcl::http::api_binding, std::vector<raw_mount_step>>);
 
 namespace api_errors {
 

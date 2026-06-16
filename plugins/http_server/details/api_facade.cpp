@@ -29,17 +29,6 @@ boost::asio::awaitable<void> plugin::api_impl::publish(publication value) {
    co_return;
 }
 
-boost::asio::awaitable<void> plugin::api_impl::publish(fcl::http::api_binding binding, publish_options options) {
-   auto shared = std::make_shared<fcl::http::api_binding>(std::move(binding));
-   impl_->add(publication{
-      .build = [shared](const fcl::api::registry&) {
-         return *shared;
-      },
-      .options = std::move(options),
-   });
-   co_return;
-}
-
 boost::asio::awaitable<void> plugin::api_impl::use(fcl::http::middleware_descriptor descriptor) {
    impl_->add(std::move(descriptor));
    co_return;

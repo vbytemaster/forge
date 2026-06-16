@@ -1,7 +1,15 @@
-add_library(fcl_plugin_p2p_pubsub STATIC plugin.cpp)
+add_library(
+   fcl_plugin_p2p_pubsub STATIC
+      plugin.cpp
+      details/implementation.cpp
+)
 fcl_target_modules_at(fcl_plugin_p2p_pubsub plugins/p2p_pubsub)
 
-target_include_directories(fcl_plugin_p2p_pubsub PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+target_include_directories(
+   fcl_plugin_p2p_pubsub
+   PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS}
+   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+)
 
 target_link_libraries(
    fcl_plugin_p2p_pubsub PUBLIC

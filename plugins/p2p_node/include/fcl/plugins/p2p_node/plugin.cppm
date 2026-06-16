@@ -21,6 +21,7 @@ import fcl.app.plugin;
 import fcl.app.plugin_context;
 import fcl.app.plugin_registry;
 import fcl.config.component;
+import fcl.plugins.p2p_node.types;
 
 export namespace fcl::plugins::p2p_node {
 
@@ -47,6 +48,9 @@ class plugin final : public fcl::app::plugin {
    class api_impl;
    class diagnostics_source_impl;
    class pubsub_source_impl;
+
+   friend void apply_config(impl&, const config&);
+
    std::shared_ptr<impl> impl_;
 };
 

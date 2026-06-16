@@ -46,6 +46,9 @@ class plugin final : public fcl::app::plugin {
  private:
    struct impl;
    class api_impl;
+
+   friend void apply_config(impl&, fcl::config::component_view);
+
    std::shared_ptr<impl> impl_;
 };
 

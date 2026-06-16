@@ -39,6 +39,24 @@ namespace {
           (method->kind == method_kind::client_stream || method->kind == method_kind::bidirectional_stream);
 }
 
+[[nodiscard]] bool reserved_metadata_key(std::string_view key) noexcept {
+   return key.starts_with(fcl::api::trusted_metadata_prefix);
+}
+
+void apply_remote_metadata_boundary(frame& value, const metadata& trusted) {
+   auto merged = metadata{};
+   merged.reserve(value.meta.size() + trusted.size());
+   for (auto& entry : value.meta) {
+      if (!reserved_metadata_key(entry.key)) {
+         merged.push_back(std::move(entry));
+      }
+   }
+   for (const auto& entry : trusted) {
+      merged.push_back(entry);
+   }
+   value.meta = std::move(merged);
+}
+
 } // namespace
 
 struct frame_dispatcher::impl {
@@ -64,6 +82,7 @@ boost::asio::awaitable<std::vector<frame>> frame_dispatcher::dispatch(frame valu
    if (!impl_) {
       FCL_THROW_EXCEPTION(exceptions::protocol_error, "invalid API frame dispatcher");
    }
+   apply_remote_metadata_boundary(value, impl_->options.trusted_metadata);
    if (value.codec != impl_->options.codec) {
       FCL_THROW_EXCEPTION(exceptions::codec_failed, "API frame codec is not accepted",
                           fcl::exceptions::ctx("codec", value.codec.value));

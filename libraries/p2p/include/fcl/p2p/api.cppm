@@ -58,7 +58,14 @@ class api_binding {
 
    boost::asio::awaitable<void> accept(node::incoming_protocol_stream stream) const {
       validate_stream(stream);
-      co_await fcl::api::transport::serve_stream(std::move(stream.stream).into_transport_stream(), plan_, options_);
+      auto trusted = fcl::api::metadata{
+         fcl::api::metadata_entry{
+            .key = std::string{fcl::api::p2p_remote_peer_metadata_key},
+            .value = stream.session.remote_peer.to_string(),
+         },
+      };
+      co_await fcl::api::transport::serve_stream(std::move(stream.stream).into_transport_stream(), plan_, options_,
+                                                 std::move(trusted));
    }
 
    boost::asio::awaitable<void> serve(node::incoming_protocol_stream stream) const {

@@ -40,7 +40,7 @@ range_request parse_range_header(std::string_view value, std::uint64_t size) {
    }
    value.remove_prefix(prefix.size());
    if (value.find(',') != std::string_view::npos) {
-      return {.present = true, .satisfiable = false};
+      return {.present = false, .satisfiable = true};
    }
 
    const auto separator = value.find('-');
@@ -96,6 +96,14 @@ range_response resolve_range(std::optional<std::string_view> header, std::uint64
    }
 
    const auto parsed = parse_range_header(*header, size);
+   if (!parsed.present) {
+      return {
+          .partial = false,
+          .satisfiable = true,
+          .bytes = {.first = 0, .last = size == 0 ? 0 : size - 1U},
+          .total_size = size,
+      };
+   }
    if (!parsed.satisfiable) {
       return {
           .partial = false,

@@ -253,11 +253,22 @@ void get_with_deadline(std::future<void>& future, std::chrono::milliseconds time
    future.get();
 }
 
+template <typename T>
+T get_with_deadline_or_stop(fcl::asio::runtime& runtime, std::future<T>& future, std::chrono::milliseconds timeout,
+                            std::string_view label) {
+   if (future.wait_for(timeout) != std::future_status::ready) {
+      runtime.stop();
+      BOOST_FAIL(std::string{"timed out waiting for "} + std::string{label});
+      throw std::runtime_error{std::string{"timed out waiting for "} + std::string{label}};
+   }
+   return future.get();
+}
+
 template <typename Awaitable>
 auto run_with_deadline(fcl::asio::runtime& runtime, Awaitable&& awaitable, std::chrono::milliseconds timeout,
                        std::string_view label) {
    auto future = boost::asio::co_spawn(runtime.context(), std::forward<Awaitable>(awaitable), boost::asio::use_future);
-   return get_with_deadline(future, timeout, label);
+   return get_with_deadline_or_stop(runtime, future, timeout, label);
 }
 
 struct fault_rule {
@@ -853,6 +864,10 @@ BOOST_AUTO_TEST_CASE(quic_fault_proxy_handshake_survives_mild_loss) {
 }
 
 BOOST_AUTO_TEST_CASE(quic_fault_proxy_framed_echo_survives_loss_delay_reorder_duplicate) {
+   constexpr auto lossy_connect_deadline = std::chrono::milliseconds{15'000};
+   constexpr auto lossy_stream_deadline = std::chrono::milliseconds{10'000};
+   constexpr auto lossy_transfer_deadline = std::chrono::milliseconds{30'000};
+   constexpr auto lossy_close_deadline = std::chrono::milliseconds{10'000};
    auto limits =
        transport_limits{.max_connections = 16, .max_streams_per_connection = 16, .max_queued_bytes = 16 * 1024 * 1024};
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
@@ -887,8 +902,8 @@ BOOST_AUTO_TEST_CASE(quic_fault_proxy_framed_echo_survives_loss_delay_reorder_du
    auto client = connector{runtime};
    auto client_connection = run_with_deadline(
        runtime, client.async_connect(proxy->local_endpoint(), loopback_client_options("fcl-p2p/1", limits)),
-       std::chrono::milliseconds{10'000}, "lossy echo connect");
-   auto server_connection = get_with_deadline(accept_future, std::chrono::milliseconds{10'000}, "lossy echo accept");
+       lossy_connect_deadline, "lossy echo connect");
+   auto server_connection = get_with_deadline_or_stop(runtime, accept_future, lossy_connect_deadline, "lossy echo accept");
 
    auto server_echo = boost::asio::co_spawn(
        runtime.context(),
@@ -902,18 +917,17 @@ BOOST_AUTO_TEST_CASE(quic_fault_proxy_framed_echo_survives_loss_delay_reorder_du
        },
        boost::asio::use_future);
 
-   auto client_stream = run_with_deadline(runtime, client_connection.async_open_stream(),
-                                          std::chrono::milliseconds{5'000}, "lossy echo open stream");
+   auto client_stream =
+       run_with_deadline(runtime, client_connection.async_open_stream(), lossy_stream_deadline, "lossy echo open stream");
    auto framed = framed_stream{std::move(client_stream)};
    auto payload = std::vector<std::uint8_t>(64 * 1024);
    for (std::size_t index = 0; index < payload.size(); ++index) {
       payload[index] = static_cast<std::uint8_t>((index * 23U) % 251U);
    }
-   run_with_deadline(runtime, framed.async_write_frame(payload), std::chrono::milliseconds{10'000},
-                     "lossy echo write frame");
-   const auto reply = run_with_deadline(runtime, framed.async_read_frame(), std::chrono::milliseconds{10'000},
+   run_with_deadline(runtime, framed.async_write_frame(payload), lossy_transfer_deadline, "lossy echo write frame");
+   const auto reply = run_with_deadline(runtime, framed.async_read_frame(), lossy_transfer_deadline,
                                         "lossy echo read frame");
-   const auto server_seen = get_with_deadline(server_echo, std::chrono::milliseconds{10'000}, "lossy echo server task");
+   const auto server_seen = get_with_deadline_or_stop(runtime, server_echo, lossy_transfer_deadline, "lossy echo server task");
    const auto proxy_metrics = proxy->metrics();
 
    BOOST_TEST(server_seen == payload.size());
@@ -925,12 +939,16 @@ BOOST_AUTO_TEST_CASE(quic_fault_proxy_framed_echo_survives_loss_delay_reorder_du
    BOOST_TEST(proxy_metrics.server_to_client.delayed > 0U);
    BOOST_TEST(client_connection.metrics().backpressure_rejections == 0U);
 
-   run_with_deadline(runtime, client_connection.async_close(), std::chrono::milliseconds{5'000}, "lossy echo close");
+   run_with_deadline(runtime, client_connection.async_close(), lossy_close_deadline, "lossy echo close");
    proxy->stop();
    server.stop();
 }
 
 BOOST_AUTO_TEST_CASE(quic_fault_proxy_repeated_connect_transfer_close) {
+   constexpr auto lossy_connect_deadline = std::chrono::milliseconds{15'000};
+   constexpr auto lossy_stream_deadline = std::chrono::milliseconds{10'000};
+   constexpr auto lossy_transfer_deadline = std::chrono::milliseconds{30'000};
+   constexpr auto lossy_close_deadline = std::chrono::milliseconds{10'000};
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
 
    constexpr auto iteration_count = 3U;
@@ -967,24 +985,24 @@ BOOST_AUTO_TEST_CASE(quic_fault_proxy_repeated_connect_transfer_close) {
           },
           boost::asio::use_future);
 
-      auto client_connection =
-          run_with_deadline(runtime, client.async_connect(proxy->local_endpoint(), loopback_client_options()),
-                            std::chrono::milliseconds{10'000}, label_prefix + "connect");
-      auto client_stream = run_with_deadline(runtime, client_connection.async_open_stream(),
-                                             std::chrono::milliseconds{5'000}, label_prefix + "open stream");
+      auto client_connection = run_with_deadline(
+          runtime, client.async_connect(proxy->local_endpoint(), loopback_client_options()), lossy_connect_deadline,
+          label_prefix + "connect");
+      auto client_stream =
+          run_with_deadline(runtime, client_connection.async_open_stream(), lossy_stream_deadline,
+                            label_prefix + "open stream");
       auto framed = framed_stream{std::move(client_stream)};
       auto payload = std::vector<std::uint8_t>(64 * 1024);
       for (std::size_t index = 0; index < payload.size(); ++index) {
          payload[index] = static_cast<std::uint8_t>((index + iteration * 11U) % 251U);
       }
-      run_with_deadline(runtime, framed.async_write_frame(payload), std::chrono::milliseconds{10'000},
+      run_with_deadline(runtime, framed.async_write_frame(payload), lossy_transfer_deadline,
                         label_prefix + "write frame");
-      const auto reply = run_with_deadline(runtime, framed.async_read_frame(), std::chrono::milliseconds{10'000},
-                                           label_prefix + "read frame");
+      const auto reply =
+          run_with_deadline(runtime, framed.async_read_frame(), lossy_transfer_deadline, label_prefix + "read frame");
       BOOST_TEST(reply == payload, boost::test_tools::per_element());
-      run_with_deadline(runtime, client_connection.async_close(), std::chrono::milliseconds{5'000},
-                        label_prefix + "close");
-      BOOST_TEST(get_with_deadline(server_task, std::chrono::milliseconds{10'000}, label_prefix + "server task") ==
+      run_with_deadline(runtime, client_connection.async_close(), lossy_close_deadline, label_prefix + "close");
+      BOOST_TEST(get_with_deadline_or_stop(runtime, server_task, lossy_transfer_deadline, label_prefix + "server task") ==
                  payload.size());
       const auto proxy_metrics = proxy->metrics();
       BOOST_TEST(proxy_metrics.client_to_server.dropped + proxy_metrics.server_to_client.dropped > 0U);

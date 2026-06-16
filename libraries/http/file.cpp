@@ -5,7 +5,6 @@ module;
 #include <coroutine>
 #include <ctime>
 #include <filesystem>
-#include <functional>
 #include <fstream>
 #include <iomanip>
 #include <memory>
@@ -43,9 +42,10 @@ std::string http_date(std::filesystem::file_time_type value) {
    return output.str();
 }
 
-std::string strong_etag(std::uintmax_t size, std::string_view modified) {
+std::string file_etag(std::uintmax_t size, std::filesystem::file_time_type modified) {
+   const auto ticks = std::chrono::duration_cast<std::chrono::nanoseconds>(modified.time_since_epoch()).count();
    auto output = std::ostringstream{};
-   output << '"' << std::hex << size << '-' << std::hash<std::string_view>{}(modified) << '"';
+   output << "W/\"" << size << '-' << ticks << '"';
    return output.str();
 }
 
@@ -62,6 +62,10 @@ bool same_header_value(std::optional<std::string_view> left, std::string_view ri
 }
 
 std::vector<std::string> split_relative_path(std::string_view value) {
+   if (value.find('\\') != std::string_view::npos) {
+      throw exceptions::forbidden{"unsafe static file path"};
+   }
+
    auto segments = std::vector<std::string>{};
    auto start = std::size_t{0};
    while (start <= value.size()) {
@@ -82,7 +86,8 @@ std::vector<std::string> split_relative_path(std::string_view value) {
 
 std::filesystem::path resolve_child(const std::filesystem::path& root, std::string_view relative_path,
                                     symlink_policy symlinks) {
-   if (relative_path.empty() || relative_path.front() == '/') {
+   const auto relative = std::filesystem::path{relative_path};
+   if (relative_path.empty() || relative_path.front() == '/' || relative.is_absolute()) {
       throw exceptions::forbidden{"unsafe static file path"};
    }
 
@@ -94,6 +99,27 @@ std::filesystem::path resolve_child(const std::filesystem::path& root, std::stri
       }
    }
    return current;
+}
+
+bool path_contains(const std::filesystem::path& root, const std::filesystem::path& child) {
+   auto root_it = root.begin();
+   auto child_it = child.begin();
+   for (; root_it != root.end(); ++root_it, ++child_it) {
+      if (child_it == child.end() || *root_it != *child_it) {
+         return false;
+      }
+   }
+   return true;
+}
+
+std::filesystem::path resolve_contained_child(const std::filesystem::path& root, std::string_view relative_path,
+                                              symlink_policy symlinks) {
+   const auto candidate = resolve_child(root, relative_path, symlinks);
+   const auto canonical = std::filesystem::weakly_canonical(candidate);
+   if (!path_contains(root, canonical)) {
+      throw exceptions::forbidden{"static file path escapes root"};
+   }
+   return canonical;
 }
 
 stream_response not_modified_response(const request& request_value, const std::string& etag_value,
@@ -124,7 +150,7 @@ stream_response make_file_stream(const request& request_value, const std::filesy
    const auto file_size = std::filesystem::file_size(path);
    const auto modified = std::filesystem::last_write_time(path);
    const auto modified_value = http_date(modified);
-   const auto etag_value = strong_etag(file_size, modified_value);
+   const auto etag_value = file_etag(file_size, modified);
    if (options.etag) {
       reply.set(field::etag, etag_value);
    }
@@ -210,7 +236,7 @@ const std::filesystem::path& static_file_root::root() const noexcept {
 boost::asio::awaitable<stream_response> static_file_root::serve(stream_request& request_value,
                                                                 std::string_view relative_path) const {
    try {
-      auto resolved = resolve_child(root_, relative_path, options_.symlinks);
+      auto resolved = resolve_contained_child(root_, relative_path, options_.symlinks);
       co_return co_await file_response{.path = std::move(resolved), .options = options_}.to_stream_response(
          request_value.context.request);
    } catch (const exceptions::forbidden&) {

@@ -93,8 +93,17 @@ boost::asio::awaitable<void> write_transport_frame(fcl::transport::stream& strea
 } // namespace
 
 boost::asio::awaitable<void> serve_stream(fcl::transport::stream stream, binding_plan plan, options value) {
-   auto dispatcher = frame_dispatcher{
-       std::move(plan), dispatch_options{.codec = value.codec, .max_inflight = value.max_inflight, .deadline = value.deadline}};
+   co_await serve_stream(std::move(stream), std::move(plan), value, {});
+}
+
+boost::asio::awaitable<void> serve_stream(fcl::transport::stream stream, binding_plan plan, options value,
+                                         fcl::api::metadata trusted_metadata) {
+   auto dispatcher = frame_dispatcher{std::move(plan), dispatch_options{
+                                                          .codec = value.codec,
+                                                          .max_inflight = value.max_inflight,
+                                                          .deadline = value.deadline,
+                                                          .trusted_metadata = std::move(trusted_metadata),
+                                                       }};
    auto buffer = std::vector<std::uint8_t>{};
    auto consumed = std::size_t{0};
 

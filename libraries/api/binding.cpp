@@ -9,7 +9,9 @@ module;
 #include <coroutine>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 module fcl.api.binding;
 
@@ -28,6 +30,7 @@ namespace {
        .api = value.api,
        .method = value.method,
        .meta = value.meta,
+       .payload = value.payload,
        .codec = value.codec,
        .kind = value.kind,
    };
@@ -254,6 +257,8 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_many(frame req
          co_await step.handler(context);
       }
    }
+   request.meta = context.meta;
+   request.payload = context.payload;
 
    auto responses = co_await local->dispatch_many(std::move(request));
 
@@ -312,6 +317,8 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::ve
          co_await step.handler(context);
       }
    }
+   frames.front().meta = context.meta;
+   frames.front().payload = context.payload;
 
    auto responses = co_await local->dispatch_stream(std::move(frames));
 

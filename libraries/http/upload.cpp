@@ -1,6 +1,7 @@
 module;
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
@@ -265,6 +266,9 @@ upload_part store_part(std::string name, std::optional<std::string> filename, st
    if (filename.has_value() && bytes.size() > options.max_file_bytes) {
       throw exceptions::payload_too_large{"multipart file exceeds upload limit"};
    }
+   if (!filename.has_value() && bytes.size() > options.max_field_bytes) {
+      throw exceptions::payload_too_large{"multipart field exceeds upload limit"};
+   }
 
    auto part = upload_part{
       .name = std::move(name),
@@ -428,6 +432,13 @@ std::string upload_part::text() const {
    return text_from_bytes(memory);
 }
 
+std::optional<std::string> upload_part::safe_filename() const {
+   if (!filename.has_value()) {
+      return std::nullopt;
+   }
+   return sanitize_upload_filename(*filename);
+}
+
 std::optional<std::string> multipart_form::field(std::string_view name) const {
    for (const auto& part : parts) {
       if (!part.filename.has_value() && part.name == name) {
@@ -499,6 +510,32 @@ std::optional<std::string> multipart_boundary(std::string_view content_type) {
       return value;
    }
    return std::nullopt;
+}
+
+std::optional<std::string> sanitize_upload_filename(std::string_view filename) {
+   auto basename = filename;
+   if (const auto slash = basename.find_last_of("/\\"); slash != std::string_view::npos) {
+      basename.remove_prefix(slash + 1U);
+   }
+   if (basename.empty() || basename == "." || basename == "..") {
+      return std::nullopt;
+   }
+
+   auto output = std::string{};
+   output.reserve(basename.size());
+   for (const auto value : basename) {
+      const auto c = static_cast<unsigned char>(value);
+      if (std::isalnum(c) || value == '.' || value == '_' || value == '-') {
+         output.push_back(value);
+      } else {
+         output.push_back('_');
+      }
+   }
+
+   if (output.empty() || output == "." || output == "..") {
+      return std::nullopt;
+   }
+   return output;
 }
 
 } // namespace fcl::http

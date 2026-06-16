@@ -20,6 +20,7 @@ export namespace fcl::http {
 struct upload_options {
    std::uint64_t memory_threshold_bytes = 1 * 1024 * 1024;
    std::uint64_t max_file_bytes = 64 * 1024 * 1024;
+   std::uint64_t max_field_bytes = 1 * 1024 * 1024;
    std::uint64_t max_total_bytes = 128 * 1024 * 1024;
    std::filesystem::path spool_directory;
    std::string spool_prefix = "fcl-http-upload-";
@@ -57,6 +58,7 @@ struct upload_part {
 
    [[nodiscard]] bool in_memory() const noexcept;
    [[nodiscard]] std::string text() const;
+   [[nodiscard]] std::optional<std::string> safe_filename() const;
 };
 
 struct multipart_form {
@@ -79,5 +81,6 @@ class upload_reader {
 };
 
 [[nodiscard]] std::optional<std::string> multipart_boundary(std::string_view content_type);
+[[nodiscard]] std::optional<std::string> sanitize_upload_filename(std::string_view filename);
 
 } // namespace fcl::http

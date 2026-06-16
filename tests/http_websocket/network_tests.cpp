@@ -21,6 +21,8 @@
 #include <vector>
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -63,6 +65,8 @@ import fcl.http.target;
 import fcl.http.types;
 import fcl.http.upload;
 import fcl.json;
+import fcl.raw.raw;
+import fcl.websocket.api;
 import fcl.websocket.client;
 import fcl.websocket.connection;
 import fcl.websocket.exceptions;
@@ -357,6 +361,23 @@ using test_api::patch_api;
 
 [[nodiscard]] fcl::api::descriptor api_cache_descriptor() {
    return api_cache::describe();
+}
+
+[[nodiscard]] std::string pack_websocket_api_frame(const fcl::api::frame& frame) {
+   auto out = fcl::api::bytes{};
+   fcl::raw::pack(out, frame);
+   return {out.begin(), out.end()};
+}
+
+[[nodiscard]] fcl::api::frame unpack_websocket_api_frame(const std::string& value) {
+   const auto bytes = fcl::api::bytes{value.begin(), value.end()};
+   return fcl::raw::unpack<fcl::api::frame>(bytes);
+}
+
+template <typename T> [[nodiscard]] fcl::api::bytes pack_api_payload(const T& value) {
+   auto out = fcl::api::bytes{};
+   fcl::raw::pack(out, value);
+   return out;
 }
 
 class throwing_api_cache final : public api_cache {
@@ -1854,6 +1875,35 @@ BOOST_AUTO_TEST_CASE(http_static_file_root_serves_byte_range) {
    fcl::asio::blocking::run(runtime, server.async_stop());
 }
 
+BOOST_AUTO_TEST_CASE(http_static_file_root_ignores_unsupported_multi_range) {
+   auto files = temp_directory{};
+   files.write("chunk.bin", "0123456789");
+   auto root = std::make_shared<static_file_root>(files.path());
+
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto router = fcl::http::router{};
+   router.get_stream("/files/:name", [root](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      co_return co_await root->serve(request_value, *request_value.context.route_param("name"));
+   });
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   auto connection = fcl::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto request_value = make_request(method::get, "/files/chunk.bin");
+   request_value.set(field::range, "bytes=0-1,4-5");
+
+   const auto response = fcl::asio::blocking::run(runtime, connection.async_request(std::move(request_value)));
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(response.body() == "0123456789");
+   const auto has_content_range = response.find(field::content_range) != response.end();
+   BOOST_TEST(!has_content_range);
+   BOOST_TEST(response[field::content_length] == "10");
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
 BOOST_AUTO_TEST_CASE(http_static_file_root_rejects_invalid_range) {
    auto files = temp_directory{};
    files.write("chunk.bin", "0123456789");
@@ -1877,6 +1927,36 @@ BOOST_AUTO_TEST_CASE(http_static_file_root_rejects_invalid_range) {
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::range_not_satisfiable));
    BOOST_TEST(response.body().empty());
    BOOST_TEST(response[field::content_range] == "bytes */10");
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_static_file_root_uses_deterministic_weak_etag) {
+   auto files = temp_directory{};
+   files.write("chunk.bin", "0123456789");
+   auto root = std::make_shared<static_file_root>(files.path());
+
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto router = fcl::http::router{};
+   router.get_stream("/files/:name", [root](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      co_return co_await root->serve(request_value, *request_value.context.route_param("name"));
+   });
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   auto connection = fcl::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   const auto first = fcl::asio::blocking::run(runtime, connection.async_request(make_request(method::get, "/files/chunk.bin")));
+
+   BOOST_TEST(first.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(std::string{first[field::etag]}.starts_with("W/\""));
+
+   auto conditional = make_request(method::get, "/files/chunk.bin");
+   conditional.set(field::if_none_match, first[field::etag]);
+   const auto second = fcl::asio::blocking::run(runtime, connection.async_request(std::move(conditional)));
+
+   BOOST_TEST(second.result_int() == static_cast<unsigned>(status::not_modified));
+   BOOST_TEST(second[field::etag] == first[field::etag]);
 
    fcl::asio::blocking::run(runtime, server.async_stop());
 }
@@ -1932,6 +2012,36 @@ BOOST_AUTO_TEST_CASE(http_static_file_root_rejects_traversal_and_symlink) {
    if (!symlink_error) {
       const auto symlink = fcl::asio::blocking::run(runtime, root.serve(stream_request_value, "link.bin"));
       BOOST_TEST(symlink.head.result_int() == static_cast<unsigned>(status::forbidden));
+   }
+
+   std::error_code ignored;
+   std::filesystem::remove(outside, ignored);
+}
+
+BOOST_AUTO_TEST_CASE(http_static_file_root_rejects_backslash_and_symlink_escape_when_following) {
+   auto files = temp_directory{};
+   files.write("visible.bin", "visible");
+   auto outside = std::filesystem::temp_directory_path() / "fcl-http-follow-outside-secret.bin";
+   {
+      auto output = std::ofstream{outside, std::ios::binary};
+      output << "secret";
+   }
+   const auto link = files.path() / "follow.bin";
+   std::error_code symlink_error;
+   std::filesystem::create_symlink(outside, link, symlink_error);
+
+   auto runtime = fcl::asio::runtime{};
+   auto root = static_file_root{files.path(), file_options{.symlinks = symlink_policy::follow}};
+   auto request_value = make_request(method::get, "/files/follow.bin");
+   auto context = make_route_context(request_value);
+   auto stream_request_value = stream_request{.context = context, .body = body_reader{}};
+
+   const auto backslash = fcl::asio::blocking::run(runtime, root.serve(stream_request_value, "..\\secret.bin"));
+   BOOST_TEST(backslash.head.result_int() == static_cast<unsigned>(status::forbidden));
+
+   if (!symlink_error) {
+      const auto escaped = fcl::asio::blocking::run(runtime, root.serve(stream_request_value, "follow.bin"));
+      BOOST_TEST(escaped.head.result_int() == static_cast<unsigned>(status::forbidden));
    }
 
    std::error_code ignored;
@@ -2094,6 +2204,23 @@ BOOST_AUTO_TEST_CASE(http_upload_reader_enforces_file_and_total_limits) {
                      exceptions::payload_too_large);
 }
 
+BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_limits_non_file_fields) {
+   auto runtime = fcl::asio::runtime{};
+   const auto body =
+      std::string{"--demo\r\n"
+                  "Content-Disposition: form-data; name=\"notes\"\r\n"
+                  "\r\n"
+                  "123456\r\n"
+                  "--demo--\r\n"};
+   auto reader = upload_reader{make_body_reader({body}),
+                               upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 1024,
+                                              .max_field_bytes = 5, .max_total_bytes = 1024}};
+
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, reader.async_read_multipart(
+                                                    "multipart/form-data; boundary=demo")),
+                     exceptions::payload_too_large);
+}
+
 BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_applies_file_limit_per_part) {
    auto runtime = fcl::asio::runtime{};
    const auto two_files =
@@ -2128,6 +2255,33 @@ BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_applies_file_limit_per_part) {
    BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, file_limited.async_read_multipart(
                                                     "multipart/form-data; boundary=demo")),
                      exceptions::payload_too_large);
+}
+
+BOOST_AUTO_TEST_CASE(http_upload_file_exposes_safe_filename_without_path_segments) {
+   auto runtime = fcl::asio::runtime{};
+   const auto body =
+      std::string{"--demo\r\n"
+                  "Content-Disposition: form-data; name=\"file\"; filename=\"..\\\\secret file.txt\"\r\n"
+                  "Content-Type: text/plain\r\n"
+                  "\r\n"
+                  "payload\r\n"
+                  "--demo--\r\n"};
+   auto reader = upload_reader{make_body_reader({body}),
+                               upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 1024,
+                                              .max_total_bytes = 1024}};
+
+   const auto form = fcl::asio::blocking::run(
+      runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
+
+   BOOST_REQUIRE_EQUAL(form.files.size(), 1U);
+   BOOST_REQUIRE(form.files.front().filename.has_value());
+   const auto raw_has_separator = form.files.front().filename->find('\\') != std::string::npos;
+   BOOST_TEST(raw_has_separator);
+   const auto safe = form.files.front().safe_filename();
+   BOOST_REQUIRE(safe.has_value());
+   BOOST_TEST(*safe == "secret_file.txt");
+   BOOST_TEST(safe->find('/') == std::string::npos);
+   BOOST_TEST(safe->find('\\') == std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(connection_reconnects_after_connection_close) {
@@ -2278,6 +2432,92 @@ BOOST_AUTO_TEST_CASE(websocket_echo_shares_server_port) {
    BOOST_TEST(received == "hello");
    fcl::asio::blocking::run(runtime, connection->close());
 
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(websocket_api_binding_strips_reserved_metadata) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+
+   auto registry = fcl::api::registry{};
+   registry.install<api_cache>(api_cache::describe(), std::make_shared<routed_api_cache>());
+
+   auto observed_peer = std::make_shared<std::string>();
+   auto observed_public = std::make_shared<std::string>();
+   auto plan = fcl::api::binding()
+                  .serve(registry)
+                  .interceptor(fcl::api::interceptor()
+                                  .id("websocket-metadata")
+                                  .phase(fcl::api::interceptor_phase::authorize)
+                                  .handler([observed_peer, observed_public](fcl::api::call_context& context)
+                                               -> boost::asio::awaitable<void> {
+                                     *observed_peer = fcl::api::metadata_value(
+                                                        context.meta,
+                                                        fcl::api::p2p_remote_peer_metadata_key)
+                                                        .value_or("missing");
+                                     *observed_public =
+                                        fcl::api::metadata_value(context.meta, "x-client-trace")
+                                           .value_or("missing");
+                                     co_return;
+                                  })
+                                  .build())
+                  .build();
+
+   auto binding = fcl::websocket::api().use(std::move(plan)).build();
+   auto router = fcl::http::router{};
+   router.websocket("/api", [&runtime, binding = std::move(binding)](fcl::websocket::connection::ptr connection) mutable {
+      boost::asio::co_spawn(runtime.context(), binding.accept(std::move(connection)), boost::asio::detached);
+   });
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   const auto port = wait_for_port(server);
+   auto ws_client = fcl::websocket::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
+   auto connection = ws_client.connect("/api");
+
+   auto response_mutex = std::mutex{};
+   auto response_cv = std::condition_variable{};
+   auto response = std::string{};
+   auto response_ready = false;
+   connection->on_message([&](fcl::websocket::connection&, std::string message) -> boost::asio::awaitable<void> {
+      {
+         const auto lock = std::scoped_lock{response_mutex};
+         response = std::move(message);
+         response_ready = true;
+      }
+      response_cv.notify_all();
+      co_return;
+   });
+
+   auto request = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 71},
+       .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
+       .method = "read",
+       .meta =
+          {
+             {.key = std::string{fcl::api::p2p_remote_peer_metadata_key}, .value = "spoofed-peer"},
+             {.key = "x-client-trace", .value = "trace-2"},
+       },
+       .codec = {.value = "fcl.raw"},
+       .payload = pack_api_payload(api_read_chunk{}),
+   };
+
+   fcl::asio::blocking::run(runtime, connection->send(pack_websocket_api_frame(request)));
+
+   {
+      auto lock = std::unique_lock{response_mutex};
+      BOOST_CHECK(response_cv.wait_for(lock, std::chrono::seconds{2}, [&response_ready] {
+         return response_ready;
+      }));
+   }
+
+   const auto frame = unpack_websocket_api_frame(response);
+   BOOST_CHECK(frame.kind == fcl::api::frame_kind::response);
+   BOOST_TEST(*observed_peer == "missing");
+   BOOST_TEST(*observed_public == "trace-2");
+
+   fcl::asio::blocking::run(runtime, connection->close());
    server.stop();
 }
 

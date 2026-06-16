@@ -611,6 +611,40 @@ BOOST_AUTO_TEST_CASE(binding_plan_runs_interceptors_in_deterministic_order) {
    BOOST_TEST(*trace == "observe>authz>");
 }
 
+BOOST_AUTO_TEST_CASE(binding_plan_interceptor_sees_request_payload) {
+   auto runtime = fcl::asio::runtime{};
+   auto registry = fcl::api::registry{};
+   registry.install<cache_api>(cache_api::describe(), std::make_shared<cache_impl>());
+
+   auto observed = std::make_shared<std::string>();
+   auto plan = fcl::api::binding()
+                   .serve(registry)
+                   .interceptor(fcl::api::interceptor()
+                                    .id("payload")
+                                    .phase(fcl::api::interceptor_phase::authorize)
+                                    .handler([observed](fcl::api::call_context& context)
+                                                 -> boost::asio::awaitable<void> {
+                                       *observed = fcl::raw::unpack<protocol::read_chunk>(context.payload).ref;
+                                       co_return;
+                                    })
+                                    .build())
+                   .build();
+
+   const auto request = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 18},
+       .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
+       .method = "read",
+       .codec = {.value = "fcl.raw"},
+       .payload = pack_api_payload(protocol::read_chunk{.ref = "payload-visible"}),
+   };
+
+   const auto response = fcl::asio::blocking::run(runtime, plan.dispatch(request));
+
+   BOOST_CHECK(response.kind == fcl::api::frame_kind::response);
+   BOOST_TEST(*observed == "payload-visible");
+}
+
 BOOST_AUTO_TEST_CASE(binding_plan_dispatches_server_stream_as_item_and_end_frames) {
    auto runtime = fcl::asio::runtime{};
    auto registry = fcl::api::registry{};
@@ -767,6 +801,156 @@ BOOST_AUTO_TEST_CASE(api_dispatcher_clears_grouped_stream_on_cancel) {
    BOOST_TEST(responses.empty());
    BOOST_TEST(dispatcher.grouped_calls() == 1U);
    BOOST_TEST(dispatcher.active_calls() == 1U);
+}
+
+BOOST_AUTO_TEST_CASE(api_dispatcher_strips_reserved_metadata_before_interceptors) {
+   auto runtime = fcl::asio::runtime{};
+   auto registry = fcl::api::registry{};
+   registry.install<cache_api>(cache_api::describe(), std::make_shared<cache_impl>());
+
+   auto observed_reserved = std::make_shared<std::string>();
+   auto observed_public = std::make_shared<std::string>();
+   auto plan = fcl::api::binding()
+                  .serve(registry)
+                  .interceptor(fcl::api::interceptor()
+                                  .id("metadata")
+                                  .phase(fcl::api::interceptor_phase::authorize)
+                                  .handler([observed_reserved, observed_public](
+                                              fcl::api::call_context& context)
+                                               -> boost::asio::awaitable<void> {
+                                     *observed_reserved = fcl::api::metadata_value(
+                                                             context.meta,
+                                                             fcl::api::p2p_remote_peer_metadata_key)
+                                                             .value_or("missing");
+                                     *observed_public =
+                                        fcl::api::metadata_value(context.meta, "x-client-trace")
+                                           .value_or("missing");
+                                     co_return;
+                                  })
+                                  .build())
+                  .build();
+   auto dispatcher = fcl::api::frame_dispatcher{std::move(plan)};
+   auto request = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 49},
+       .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
+       .method = "read",
+       .meta =
+          {
+             {.key = std::string{fcl::api::p2p_remote_peer_metadata_key}, .value = "spoofed"},
+             {.key = "x-client-trace", .value = "trace-1"},
+          },
+       .codec = {.value = "fcl.raw"},
+       .payload = pack_api_payload(protocol::read_chunk{.ref = "metadata"}),
+   };
+
+   const auto responses = fcl::asio::blocking::run(runtime, dispatcher.dispatch(std::move(request)));
+
+   BOOST_REQUIRE_EQUAL(responses.size(), 1U);
+   BOOST_CHECK(responses.front().kind == fcl::api::frame_kind::response);
+   BOOST_TEST(*observed_reserved == "missing");
+   BOOST_TEST(*observed_public == "trace-1");
+}
+
+BOOST_AUTO_TEST_CASE(api_dispatcher_injects_trusted_metadata_after_scrub) {
+   auto runtime = fcl::asio::runtime{};
+   auto registry = fcl::api::registry{};
+   registry.install<cache_api>(cache_api::describe(), std::make_shared<cache_impl>());
+
+   auto observed = std::make_shared<std::string>();
+   auto plan = fcl::api::binding()
+                  .serve(registry)
+                  .interceptor(fcl::api::interceptor()
+                                  .id("trusted")
+                                  .phase(fcl::api::interceptor_phase::authorize)
+                                  .handler([observed](fcl::api::call_context& context)
+                                               -> boost::asio::awaitable<void> {
+                                     *observed = fcl::api::metadata_value(
+                                                    context.meta,
+                                                    fcl::api::p2p_remote_peer_metadata_key)
+                                                    .value_or("missing");
+                                     co_return;
+                                  })
+                                  .build())
+                  .build();
+   auto dispatcher = fcl::api::frame_dispatcher{
+       std::move(plan),
+       fcl::api::dispatch_options{
+          .trusted_metadata =
+             {{.key = std::string{fcl::api::p2p_remote_peer_metadata_key}, .value = "trusted"}},
+       },
+   };
+   auto request = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 50},
+       .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
+       .method = "read",
+       .meta = {{.key = std::string{fcl::api::p2p_remote_peer_metadata_key}, .value = "spoofed"}},
+       .codec = {.value = "fcl.raw"},
+       .payload = pack_api_payload(protocol::read_chunk{.ref = "trusted"}),
+   };
+
+   const auto responses = fcl::asio::blocking::run(runtime, dispatcher.dispatch(std::move(request)));
+
+   BOOST_REQUIRE_EQUAL(responses.size(), 1U);
+   BOOST_CHECK(responses.front().kind == fcl::api::frame_kind::response);
+   BOOST_TEST(*observed == "trusted");
+}
+
+BOOST_AUTO_TEST_CASE(api_dispatcher_sanitizes_grouped_stream_metadata) {
+   auto runtime = fcl::asio::runtime{};
+   auto registry = fcl::api::registry{};
+   auto descriptor = fcl::api::define<cache_api>({.id = {"cache"}, .version = {.major = 1, .revision = 8}})
+                         .client_stream<&cache_api::upload, protocol::read_chunk, protocol::chunk>("upload")
+                         .build();
+   registry.install<cache_api>(std::move(descriptor), std::make_shared<cache_impl>());
+
+   auto observed = std::make_shared<std::string>();
+   auto plan = fcl::api::binding()
+                  .serve(registry)
+                  .interceptor(fcl::api::interceptor()
+                                  .id("stream-metadata")
+                                  .phase(fcl::api::interceptor_phase::authorize)
+                                  .handler([observed](fcl::api::call_context& context)
+                                               -> boost::asio::awaitable<void> {
+                                     *observed = fcl::api::metadata_value(
+                                                    context.meta,
+                                                    fcl::api::p2p_remote_peer_metadata_key)
+                                                    .value_or("missing");
+                                     co_return;
+                                  })
+                                  .build())
+                  .build();
+   auto dispatcher = fcl::api::frame_dispatcher{
+       std::move(plan),
+       fcl::api::dispatch_options{
+          .trusted_metadata =
+             {{.key = std::string{fcl::api::p2p_remote_peer_metadata_key}, .value = "trusted-stream"}},
+       },
+   };
+   auto start = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 51},
+       .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
+       .method = "upload",
+       .meta = {{.key = std::string{fcl::api::p2p_remote_peer_metadata_key}, .value = "spoofed-stream"}},
+       .codec = {.value = "fcl.raw"},
+   };
+   auto item = start;
+   item.kind = fcl::api::frame_kind::stream_item;
+   item.payload = pack_api_payload(protocol::read_chunk{.ref = "a"});
+   auto end = start;
+   end.kind = fcl::api::frame_kind::stream_end;
+
+   auto responses = fcl::asio::blocking::run(runtime, dispatcher.dispatch(start));
+   BOOST_TEST(responses.empty());
+   responses = fcl::asio::blocking::run(runtime, dispatcher.dispatch(item));
+   BOOST_TEST(responses.empty());
+   responses = fcl::asio::blocking::run(runtime, dispatcher.dispatch(end));
+
+   BOOST_REQUIRE_EQUAL(responses.size(), 1U);
+   BOOST_CHECK(responses.front().kind == fcl::api::frame_kind::response);
+   BOOST_TEST(*observed == "trusted-stream");
 }
 
 BOOST_AUTO_TEST_CASE(api_dispatcher_observes_grouped_stream_end_before_dispatch) {

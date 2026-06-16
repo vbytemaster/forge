@@ -138,11 +138,12 @@ router.post_stream("/upload", [](fcl::http::stream_request& req)
    -> boost::asio::awaitable<fcl::http::stream_response> {
    auto reader = fcl::http::upload_reader{
       std::move(req.body),
-      fcl::http::upload_options{
-         .memory_threshold_bytes = 1 * 1024 * 1024,
-         .max_file_bytes = 64 * 1024 * 1024,
-         .max_total_bytes = 128 * 1024 * 1024,
-      },
+         fcl::http::upload_options{
+            .memory_threshold_bytes = 1 * 1024 * 1024,
+            .max_file_bytes = 64 * 1024 * 1024,
+            .max_field_bytes = 1 * 1024 * 1024,
+            .max_total_bytes = 128 * 1024 * 1024,
+         },
    };
 
    auto part = co_await reader.async_read();
@@ -156,6 +157,12 @@ router.post_stream("/upload", [](fcl::http::stream_request& req)
 `async_read_multipart(content_type)` parses browser-style form uploads into
 fields and file parts. It is not an object-storage multipart workflow; object
 storage state machines belong above `fcl_http`.
+
+Multipart limits are separate: `max_total_bytes` bounds the whole envelope,
+`max_file_bytes` bounds each file part, and `max_field_bytes` bounds each
+non-file field. `upload_part::filename` is untrusted client metadata; use
+`safe_filename()` as a conservative basename or apply a stricter product policy
+before using any uploaded name in a filesystem path.
 
 ### Serve Static Files And Ranges
 

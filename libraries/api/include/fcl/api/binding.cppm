@@ -16,6 +16,7 @@ module;
 
 export module fcl.api.binding;
 
+export import fcl.api.context;
 export import fcl.api.registry;
 
 export namespace fcl::api {
@@ -27,15 +28,6 @@ enum class interceptor_phase : std::uint8_t {
    before_call = 4,
    after_call = 5,
    error = 6,
-};
-
-struct call_context {
-   call_id id;
-   api_ref api;
-   std::string method;
-   metadata meta;
-   codec_id codec;
-   frame_kind kind = frame_kind::request;
 };
 
 using interceptor_handler = std::function<boost::asio::awaitable<void>(call_context&)>;

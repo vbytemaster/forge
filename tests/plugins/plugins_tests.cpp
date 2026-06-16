@@ -184,6 +184,13 @@ class node_test_api
    virtual boost::asio::awaitable<int> ping(int request) = 0;
 };
 
+class peer_context_test_api
+    : public fcl::api::contract<peer_context_test_api, fcl::api::surface::local | fcl::api::surface::remote> {
+ public:
+   virtual ~peer_context_test_api() = default;
+   virtual boost::asio::awaitable<std::string> remote_peer(std::string request) = 0;
+};
+
 class receipt_test_api
     : public fcl::api::contract<receipt_test_api, fcl::api::surface::local | fcl::api::surface::remote> {
  public:
@@ -210,6 +217,8 @@ class scripted_resolver_api
 } // namespace plugin_test_contract
 
 FCL_API(::plugin_test_contract::node_test_api, FCL_API_CONTRACT("node.test", 1, 0), FCL_API_METHOD(ping))
+FCL_API(::plugin_test_contract::peer_context_test_api, FCL_API_CONTRACT("peer-context.test", 1, 0),
+        FCL_API_METHOD(remote_peer))
 FCL_API(::plugin_test_contract::receipt_test_api, FCL_API_CONTRACT("receipt.test", 1, 0), FCL_API_METHOD(apply))
 FCL_API(::plugin_test_contract::http_cache_api, FCL_API_CONTRACT("cache", 1, 0), FCL_API_METHOD(read),
         FCL_API_METHOD(write))
@@ -223,6 +232,7 @@ FCL_HTTP_API(::plugin_test_contract::http_cache_api,
 namespace {
 
 using plugin_test_contract::node_test_api;
+using plugin_test_contract::peer_context_test_api;
 using plugin_test_contract::receipt_test_api;
 using plugin_test_contract::scripted_resolver_api;
 using plugin_test_contract::http_cache_api;
@@ -304,6 +314,13 @@ class node_test_api_impl final : public node_test_api {
  public:
    boost::asio::awaitable<int> ping(int request) override {
       co_return request + 1;
+   }
+};
+
+class peer_context_test_api_impl final : public peer_context_test_api {
+ public:
+   boost::asio::awaitable<std::string> remote_peer(std::string request) override {
+      co_return request;
    }
 };
 
@@ -668,6 +685,26 @@ class route_publisher_plugin final : public fcl::app::plugin {
       auto plan = fcl::api::binding()
                      .serve(context.apis())
                      .export_api<node_test_api>({.id = {"node.test"}, .major = 1, .min_revision = 0})
+                     .export_api<peer_context_test_api>({.id = {"peer-context.test"}, .major = 1, .min_revision = 0})
+                     .interceptor(fcl::api::interceptor()
+                                     .id("peer-context")
+                                     .phase(fcl::api::interceptor_phase::authorize)
+                                     .handler([](fcl::api::call_context& value) -> boost::asio::awaitable<void> {
+                                        if (value.api.id.value != "peer-context.test" ||
+                                            value.method != "remote_peer") {
+                                           co_return;
+                                        }
+                                        const auto peer =
+                                           fcl::api::metadata_value(value.meta,
+                                                                    fcl::api::p2p_remote_peer_metadata_key)
+                                              .value_or("missing");
+                                        const auto request = fcl::raw::unpack<std::string>(value.payload);
+                                        const auto response = peer + ":" + request;
+                                        value.payload.clear();
+                                        fcl::raw::pack<std::string>(value.payload, response);
+                                        co_return;
+                                     })
+                                     .build())
                      .build();
       p2p->publish_api(std::move(plan), fcl::p2p::protocol_id{.value = "/fcl/api/node-test/1"});
       p2p->publish_protocol(
@@ -932,6 +969,8 @@ class p2p_plugin_application final : public fcl::app::application_shell {
 
    boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
       context.apis().install<node_test_api>(node_test_api::describe(), std::make_shared<node_test_api_impl>());
+      context.apis().install<peer_context_test_api>(peer_context_test_api::describe(),
+                                                    std::make_shared<peer_context_test_api_impl>());
       co_return;
    }
 
@@ -1011,6 +1050,8 @@ class resolver_plugin_application final : public fcl::app::application_shell {
 
    boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
       context.apis().install<node_test_api>(node_test_api::describe(), std::make_shared<node_test_api_impl>());
+      context.apis().install<peer_context_test_api>(peer_context_test_api::describe(),
+                                                    std::make_shared<peer_context_test_api_impl>());
       co_return;
    }
 };
@@ -1039,6 +1080,8 @@ class duplicate_resolver_plugin_application final : public fcl::app::application
 
    boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
       context.apis().install<node_test_api>(node_test_api::describe(), std::make_shared<node_test_api_impl>());
+      context.apis().install<peer_context_test_api>(peer_context_test_api::describe(),
+                                                    std::make_shared<peer_context_test_api_impl>());
       co_return;
    }
 };
@@ -1059,6 +1102,8 @@ class resolver_custom_transport_application final : public fcl::app::application
 
    boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
       context.apis().install<node_test_api>(node_test_api::describe(), std::make_shared<node_test_api_impl>());
+      context.apis().install<peer_context_test_api>(peer_context_test_api::describe(),
+                                                    std::make_shared<peer_context_test_api_impl>());
       co_return;
    }
 };
@@ -1676,6 +1721,15 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_opens_remote_api_over_p2p_stream) {
                                         fcl::p2p::protocol_id{.value = "/fcl/api/node-test/1"}));
    const auto response = fcl::asio::blocking::run(client.runtime(), remote->ping(41));
    BOOST_TEST(response == 42);
+
+   auto context_remote = fcl::asio::blocking::run(
+      client.runtime(),
+      client_p2p->remote<peer_context_test_api>(server_p2p->local_peer(),
+                                                fcl::p2p::protocol_id{.value = "/fcl/api/node-test/1"}));
+   const auto observed_peer = fcl::asio::blocking::run(client.runtime(), context_remote->remote_peer("probe"));
+   BOOST_REQUIRE(observed_peer.ends_with(":probe"));
+   const auto observed_peer_id = fcl::p2p::peer_id::from_string(observed_peer.substr(0, observed_peer.size() - 6));
+   BOOST_TEST(fcl::p2p::valid_peer_id(observed_peer_id));
 
    fcl::asio::blocking::run(client.runtime(), client.shutdown());
    fcl::asio::blocking::run(server.runtime(), server.shutdown());

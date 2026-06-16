@@ -90,6 +90,10 @@ class upload_file {
       return part_.filename;
    }
 
+   [[nodiscard]] std::optional<std::string> safe_filename() const {
+      return part_.safe_filename();
+   }
+
    [[nodiscard]] const std::string& content_type() const noexcept {
       return part_.content_type;
    }

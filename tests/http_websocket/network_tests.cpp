@@ -237,6 +237,14 @@ class control_api : public fcl::api::contract<control_api> {
    virtual boost::asio::awaitable<fcl::http::empty_response> head(control_request request) = 0;
 };
 
+class alias_api : public fcl::api::contract<alias_api> {
+ public:
+   virtual ~alias_api() = default;
+
+   virtual boost::asio::awaitable<control_response> current(control_request request) = 0;
+   virtual boost::asio::awaitable<control_response> legacy(control_request request) = 0;
+};
+
 class patch_api : public fcl::api::contract<patch_api> {
  public:
    virtual ~patch_api() = default;
@@ -268,6 +276,12 @@ FCL_API(::fcl::http::test_api::control_api, FCL_API_CONTRACT("control", 1, 0),
         FCL_API_METHOD_TYPED(bytes, ::fcl::http::test_api::control_request, ::fcl::http::bytes_response),
         FCL_API_METHOD_TYPED(head, ::fcl::http::test_api::control_request, ::fcl::http::empty_response))
 
+FCL_API(::fcl::http::test_api::alias_api, FCL_API_CONTRACT("alias", 1, 0),
+        FCL_API_METHOD_TYPED(current, ::fcl::http::test_api::control_request,
+                             ::fcl::http::test_api::control_response),
+        FCL_API_METHOD_TYPED(legacy, ::fcl::http::test_api::control_request,
+                             ::fcl::http::test_api::control_response))
+
 FCL_API(::fcl::http::test_api::patch_api, FCL_API_CONTRACT("patch", 1, 0),
         FCL_API_METHOD_TYPED(patch, ::fcl::http::test_api::control_patch_request,
                              ::fcl::http::test_api::control_response))
@@ -296,6 +310,10 @@ FCL_HTTP_API(::fcl::http::test_api::form_api,
 FCL_HTTP_API(::fcl::http::test_api::control_api,
              FCL_HTTP_GET(bytes, "/controls/:id/bytes"),
              FCL_HTTP_HEAD(head, "/controls/:id"))
+
+FCL_HTTP_API(::fcl::http::test_api::alias_api,
+             FCL_HTTP_GET(current, "/aliases/:id/current"),
+             FCL_HTTP_GET(legacy, "/aliases/:id"))
 
 FCL_HTTP_API(::fcl::http::test_api::patch_api,
              FCL_HTTP_PATCH(patch, "/controls/:id", ok))
@@ -352,6 +370,7 @@ using test_api::search_api;
 using test_api::search_request;
 using test_api::search_response;
 using test_api::control_api;
+using test_api::alias_api;
 using test_api::control_patch_request;
 using test_api::control_request;
 using test_api::control_response;
@@ -515,6 +534,17 @@ class control_api_impl final : public control_api {
 
    boost::asio::awaitable<fcl::http::empty_response> head(control_request) override {
       co_return fcl::http::empty_response{.status_code = status::no_content};
+   }
+};
+
+class alias_api_impl final : public alias_api {
+ public:
+   boost::asio::awaitable<control_response> current(control_request request) override {
+      co_return control_response{.value = "current:" + request.id};
+   }
+
+   boost::asio::awaitable<control_response> legacy(control_request request) override {
+      co_return control_response{.value = "legacy:" + request.id};
    }
 };
 
@@ -1229,6 +1259,26 @@ BOOST_AUTO_TEST_CASE(typed_http_client_supports_native_bytes_and_empty_responses
    BOOST_TEST(head.status_code == status::no_content);
 
    server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_api_preserves_explicit_method_name_for_same_dto_methods) {
+   auto runtime = fcl::asio::runtime{};
+   auto apis = fcl::api::registry{};
+   apis.install<alias_api>(alias_api::describe(), std::make_shared<alias_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<alias_api>().build();
+   router.mount(binding);
+
+   auto request = make_request(method::get, "/aliases/abc");
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+   const auto response = handle(router, context);
+   const auto decoded = fcl::json::read<control_response>(response.body());
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_REQUIRE(decoded.ok());
+   BOOST_TEST(decoded.value.value == "legacy:abc");
 }
 
 BOOST_AUTO_TEST_CASE(http_api_special_types_support_streaming_put_and_file_get) {

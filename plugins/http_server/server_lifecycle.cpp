@@ -21,8 +21,8 @@ import fcl.plugins.http_server.exceptions;
 import fcl.plugins.http_server.types;
 
 #include "details/config.hxx"
-#include "details/state.hxx"
-#include "details/server_state.hxx"
+#include "details/plugin_impl.hxx"
+#include "details/server_lifecycle.hxx"
 
 namespace fcl::plugins::http_server {
 

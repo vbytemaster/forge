@@ -45,9 +45,9 @@ class plugin final : public fcl::app::plugin {
 
  private:
    struct impl;
-   class api_impl;
-   class diagnostics_source_impl;
-   class pubsub_source_impl;
+   class node_api;
+   class diagnostics_source_adapter;
+   class pubsub_source_adapter;
 
    friend void apply_config(impl&, const config&);
 

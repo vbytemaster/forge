@@ -12,7 +12,7 @@ import fcl.plugins.p2p_diagnostics.exceptions;
 import fcl.plugins.p2p_diagnostics.types;
 
 #include "details/config.hxx"
-#include "details/state.hxx"
+#include "details/plugin_impl.hxx"
 
 namespace fcl::plugins::p2p_diagnostics {
 

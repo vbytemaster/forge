@@ -23,7 +23,7 @@ import fcl.plugins.signature_provider.api;
 import fcl.plugins.signature_provider.exceptions;
 import fcl.plugins.signature_provider.types;
 
-#include "details/state.hxx"
+#include "details/plugin_impl.hxx"
 
 namespace fcl::plugins::signature_provider {
 namespace {

@@ -1,9 +1,9 @@
 add_library(
    fcl_plugin_signature_provider STATIC
       plugin.cpp
-      api_facade.cpp
+      signing_api.cpp
       config.cpp
-      state.cpp
+      plugin_impl.cpp
 )
 fcl_target_modules_at(fcl_plugin_signature_provider plugins/signature_provider)
 

@@ -1,7 +1,11 @@
 add_library(
    fcl_plugin_p2p_api_resolver STATIC
       plugin.cpp
-      implementation.cpp
+      config.cpp
+      descriptor_projection.cpp
+      plugin_impl.cpp
+      protocol.cpp
+      resolver_api.cpp
 )
 fcl_target_modules_at(fcl_plugin_p2p_api_resolver plugins/p2p_api_resolver)
 

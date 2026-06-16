@@ -49,9 +49,9 @@ import fcl.schema.value_kind;
 import fcl.schema.object;
 import fcl.schema.enums;
 
-#include "details/state.hxx"
 #include "details/config.hxx"
-#include "details/api_facade.hxx"
+#include "details/plugin_impl.hxx"
+#include "details/signing_api.hxx"
 
 namespace fcl::plugins::signature_provider {
 
@@ -102,7 +102,7 @@ boost::asio::awaitable<void> plugin::configure(fcl::config::component_view view)
 }
 
 boost::asio::awaitable<void> plugin::provide(fcl::api::provider& provider) {
-   provider.install<api>(std::make_shared<api_impl>(impl_));
+   provider.install<api>(std::make_shared<signing_api>(impl_));
    co_return;
 }
 

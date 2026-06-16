@@ -23,10 +23,10 @@ import fcl.plugins.http_server.api;
 import fcl.plugins.http_server.exceptions;
 import fcl.plugins.http_server.types;
 
-#include "details/api_facade.hxx"
 #include "details/config.hxx"
-#include "details/server_state.hxx"
-#include "details/state.hxx"
+#include "details/plugin_impl.hxx"
+#include "details/publication_api.hxx"
+#include "details/server_lifecycle.hxx"
 
 namespace fcl::plugins::http_server {
 
@@ -52,7 +52,7 @@ boost::asio::awaitable<void> plugin::configure(fcl::config::component_view view)
 }
 
 boost::asio::awaitable<void> plugin::provide(fcl::api::provider& provider) {
-   provider.install<api>(std::make_shared<api_impl>(impl_));
+   provider.install<api>(std::make_shared<publication_api>(impl_));
    co_return;
 }
 

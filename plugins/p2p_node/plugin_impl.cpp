@@ -23,7 +23,7 @@ import fcl.p2p.scoring;
 import fcl.plugins.p2p_node.exceptions;
 import fcl.plugins.p2p_node.types;
 
-#include "details/state.hxx"
+#include "details/plugin_impl.hxx"
 #include "details/config.hxx"
 
 namespace fcl::plugins::p2p_node {

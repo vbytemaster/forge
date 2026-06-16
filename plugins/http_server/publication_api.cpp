@@ -17,19 +17,19 @@ import fcl.http.server;
 import fcl.plugins.http_server.api;
 import fcl.plugins.http_server.types;
 
-#include "details/state.hxx"
-#include "details/api_facade.hxx"
+#include "details/plugin_impl.hxx"
+#include "details/publication_api.hxx"
 
 namespace fcl::plugins::http_server {
 
-plugin::api_impl::api_impl(std::shared_ptr<plugin::impl> impl) : impl_{std::move(impl)} {}
+plugin::publication_api::publication_api(std::shared_ptr<plugin::impl> impl) : impl_{std::move(impl)} {}
 
-boost::asio::awaitable<void> plugin::api_impl::publish(publication value) {
+boost::asio::awaitable<void> plugin::publication_api::publish(publication value) {
    impl_->add(std::move(value));
    co_return;
 }
 
-boost::asio::awaitable<void> plugin::api_impl::use(fcl::http::middleware_descriptor descriptor) {
+boost::asio::awaitable<void> plugin::publication_api::use(fcl::http::middleware_descriptor descriptor) {
    impl_->add(std::move(descriptor));
    co_return;
 }

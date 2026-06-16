@@ -64,9 +64,11 @@ import fcl.plugins.p2p_node.api;
 import fcl.plugins.p2p_node.exceptions;
 import fcl.plugins.p2p_node.types;
 
-#include "details/state.hxx"
 #include "details/config.hxx"
-#include "details/api_facade.hxx"
+#include "details/diagnostics_source.hxx"
+#include "details/node_api.hxx"
+#include "details/plugin_impl.hxx"
+#include "details/pubsub_source.hxx"
 
 namespace fcl::plugins::p2p_node {
 
@@ -92,9 +94,9 @@ boost::asio::awaitable<void> plugin::configure(fcl::config::component_view view)
 }
 
 boost::asio::awaitable<void> plugin::provide(fcl::api::provider& provider) {
-   provider.install<api>(std::make_shared<api_impl>(impl_));
-   provider.install<diagnostics_source>(std::make_shared<diagnostics_source_impl>(impl_));
-   provider.install<pubsub_source>(std::make_shared<pubsub_source_impl>(impl_));
+   provider.install<api>(std::make_shared<node_api>(impl_));
+   provider.install<diagnostics_source>(std::make_shared<diagnostics_source_adapter>(impl_));
+   provider.install<pubsub_source>(std::make_shared<pubsub_source_adapter>(impl_));
    co_return;
 }
 

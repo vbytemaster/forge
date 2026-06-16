@@ -1,17 +1,10 @@
 #pragma once
 
+#include "config.hxx"
+
 namespace fcl::plugins::p2p_node {
 
 [[nodiscard]] fcl::p2p::peer_id default_test_peer();
-
-struct parsed_policy {
-   fcl::p2p::path::policy path{};
-   bool relay_client_enabled = true;
-   bool relay_server_enabled = false;
-   bool relay_public_allowed = false;
-   std::chrono::milliseconds relay_reservation_ttl{60'000};
-   std::size_t relay_max_candidates = 4;
-};
 
 struct plugin::impl : public std::enable_shared_from_this<plugin::impl> {
    fcl::p2p::node::options options{

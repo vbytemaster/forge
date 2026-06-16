@@ -1,10 +1,10 @@
 add_library(
    fcl_plugin_http_server STATIC
    plugin.cpp
-   api_facade.cpp
+   publication_api.cpp
    config.cpp
-   server_state.cpp
-   state.cpp
+   server_lifecycle.cpp
+   plugin_impl.cpp
 )
 fcl_target_modules_at(fcl_plugin_http_server plugins/http_server)
 

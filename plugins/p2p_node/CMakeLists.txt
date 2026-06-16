@@ -1,9 +1,11 @@
 add_library(
    fcl_plugin_p2p_node STATIC
       plugin.cpp
-      api_facade.cpp
+      node_api.cpp
+      diagnostics_source.cpp
+      pubsub_source.cpp
       config.cpp
-      state.cpp
+      plugin_impl.cpp
 )
 fcl_target_modules_at(fcl_plugin_p2p_node plugins/p2p_node)
 

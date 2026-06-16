@@ -18,38 +18,38 @@ import fcl.plugins.p2p_diagnostics.exceptions;
 import fcl.plugins.p2p_diagnostics.types;
 
 #include "details/config.hxx"
-#include "details/state.hxx"
-#include "details/api_facade.hxx"
+#include "details/diagnostics_api.hxx"
+#include "details/plugin_impl.hxx"
 
 namespace fcl::plugins::p2p_diagnostics {
 
-plugin::api_impl::api_impl(std::shared_ptr<plugin::impl> impl) : impl_{std::move(impl)} {}
+plugin::diagnostics_api::diagnostics_api(std::shared_ptr<plugin::impl> impl) : impl_{std::move(impl)} {}
 
-fcl::p2p::diagnostics::snapshot plugin::api_impl::snapshot() const {
+fcl::p2p::diagnostics::snapshot plugin::diagnostics_api::snapshot() const {
    return impl_->snapshot();
 }
 
-fcl::p2p::diagnostics::snapshot plugin::api_impl::snapshot(fcl::p2p::diagnostics::options options) const {
+fcl::p2p::diagnostics::snapshot plugin::diagnostics_api::snapshot(fcl::p2p::diagnostics::options options) const {
    return impl_->require_source().snapshot(options);
 }
 
-fcl::p2p::diagnostics::network_state plugin::api_impl::network() const {
+fcl::p2p::diagnostics::network_state plugin::diagnostics_api::network() const {
    return impl_->snapshot().network;
 }
 
-fcl::p2p::resource_manager::snapshot plugin::api_impl::resources() const {
+fcl::p2p::resource_manager::snapshot plugin::diagnostics_api::resources() const {
    return impl_->snapshot().resources;
 }
 
-fcl::p2p::pubsub::snapshot plugin::api_impl::pubsub() const {
+fcl::p2p::pubsub::snapshot plugin::diagnostics_api::pubsub() const {
    return impl_->snapshot().pubsub;
 }
 
-std::vector<fcl::p2p::diagnostics::peer> plugin::api_impl::peers(filter value) const {
+std::vector<fcl::p2p::diagnostics::peer> plugin::diagnostics_api::peers(filter value) const {
    return filter_peers(impl_->snapshot(), value);
 }
 
-fcl::p2p::diagnostics::peer plugin::api_impl::peer(fcl::p2p::peer_id value) const {
+fcl::p2p::diagnostics::peer plugin::diagnostics_api::peer(fcl::p2p::peer_id value) const {
    auto values = peers(filter{.peer = std::move(value), .limit = 1});
    if (values.empty()) {
       FCL_THROW_EXCEPTION(exceptions::not_found, "P2P diagnostics peer was not found");

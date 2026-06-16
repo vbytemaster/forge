@@ -59,8 +59,8 @@ import fcl.plugins.p2p_diagnostics.exceptions;
 import fcl.plugins.p2p_diagnostics.types;
 
 #include "details/config.hxx"
-#include "details/state.hxx"
-#include "details/api_facade.hxx"
+#include "details/diagnostics_api.hxx"
+#include "details/plugin_impl.hxx"
 
 namespace fcl::plugins::p2p_diagnostics {
 
@@ -87,7 +87,7 @@ boost::asio::awaitable<void> plugin::configure(fcl::config::component_view view)
 }
 
 boost::asio::awaitable<void> plugin::provide(fcl::api::provider& provider) {
-   provider.install<api>(std::make_shared<api_impl>(impl_));
+   provider.install<api>(std::make_shared<diagnostics_api>(impl_));
    co_return;
 }
 

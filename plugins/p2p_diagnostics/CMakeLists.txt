@@ -1,9 +1,9 @@
 add_library(
    fcl_plugin_p2p_diagnostics STATIC
       plugin.cpp
-      api_facade.cpp
+      diagnostics_api.cpp
       config.cpp
-      state.cpp
+      plugin_impl.cpp
 )
 fcl_target_modules_at(fcl_plugin_p2p_diagnostics plugins/p2p_diagnostics)
 

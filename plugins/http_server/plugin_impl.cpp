@@ -16,7 +16,7 @@ import fcl.http.server;
 import fcl.plugins.http_server.exceptions;
 import fcl.plugins.http_server.types;
 
-#include "details/state.hxx"
+#include "details/plugin_impl.hxx"
 
 namespace fcl::plugins::http_server {
 

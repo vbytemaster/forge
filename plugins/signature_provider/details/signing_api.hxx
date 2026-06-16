@@ -2,9 +2,9 @@
 
 namespace fcl::plugins::signature_provider {
 
-class plugin::api_impl final : public api {
+class plugin::signing_api final : public api {
  public:
-   explicit api_impl(std::shared_ptr<impl> state);
+   explicit signing_api(std::shared_ptr<impl> state);
 
    boost::asio::awaitable<response> sign(request value) override;
 

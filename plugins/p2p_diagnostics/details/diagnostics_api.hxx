@@ -2,9 +2,9 @@
 
 namespace fcl::plugins::p2p_diagnostics {
 
-class plugin::api_impl final : public api {
+class plugin::diagnostics_api final : public api {
  public:
-   explicit api_impl(std::shared_ptr<plugin::impl> impl);
+   explicit diagnostics_api(std::shared_ptr<plugin::impl> impl);
 
    fcl::p2p::diagnostics::snapshot snapshot() const override;
    fcl::p2p::diagnostics::snapshot snapshot(fcl::p2p::diagnostics::options options) const override;

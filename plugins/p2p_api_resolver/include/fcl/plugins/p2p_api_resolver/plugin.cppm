@@ -66,8 +66,8 @@ class plugin final : public fcl::app::plugin {
 
  private:
    struct impl;
-   class protocol_impl;
-   class api_impl;
+   class resolver_protocol_service;
+   class resolver_api;
    std::shared_ptr<impl> impl_;
 };
 

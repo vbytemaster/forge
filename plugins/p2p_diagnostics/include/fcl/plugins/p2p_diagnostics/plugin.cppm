@@ -44,7 +44,7 @@ class plugin final : public fcl::app::plugin {
 
  private:
    struct impl;
-   class api_impl;
+   class diagnostics_api;
    std::shared_ptr<impl> impl_;
 };
 

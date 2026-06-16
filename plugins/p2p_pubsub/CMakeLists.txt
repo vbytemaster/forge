@@ -1,7 +1,11 @@
 add_library(
    fcl_plugin_p2p_pubsub STATIC
       plugin.cpp
-      implementation.cpp
+      config.cpp
+      join_flow.cpp
+      message_projection.cpp
+      plugin_impl.cpp
+      subscription_api.cpp
 )
 fcl_target_modules_at(fcl_plugin_p2p_pubsub plugins/p2p_pubsub)
 

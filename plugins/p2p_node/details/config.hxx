@@ -2,6 +2,15 @@
 
 namespace fcl::plugins::p2p_node {
 
+struct parsed_policy {
+   fcl::p2p::path::policy path{};
+   bool relay_client_enabled = true;
+   bool relay_server_enabled = false;
+   bool relay_public_allowed = false;
+   std::chrono::milliseconds relay_reservation_ttl{60'000};
+   std::size_t relay_max_candidates = 4;
+};
+
 [[nodiscard]] fcl::p2p::peer_id default_test_peer();
 [[nodiscard]] std::chrono::milliseconds to_ms(std::uint64_t value);
 [[nodiscard]] config decode_config(const fcl::config::component_view& view);

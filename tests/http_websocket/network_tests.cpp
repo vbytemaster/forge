@@ -174,6 +174,17 @@ struct control_response {
    std::string value;
 };
 
+struct default_header_request {
+   fcl::http::header<std::string> request_id;
+   fcl::http::body_stream body;
+};
+
+struct default_header_response {
+   std::string request_id;
+   std::string body;
+   bool present = false;
+};
+
 struct json_stream_request {
    std::string id;
    std::string value;
@@ -195,6 +206,8 @@ BOOST_DESCRIBE_STRUCT(form_submit_response, (), (summary))
 BOOST_DESCRIBE_STRUCT(control_request, (), (id))
 BOOST_DESCRIBE_STRUCT(control_patch_request, (), (id, value))
 BOOST_DESCRIBE_STRUCT(control_response, (), (value))
+BOOST_DESCRIBE_STRUCT(default_header_request, (), (request_id, body))
+BOOST_DESCRIBE_STRUCT(default_header_response, (), (request_id, body, present))
 BOOST_DESCRIBE_STRUCT(json_stream_request, (), (id, value))
 
 class api_cache : public fcl::api::contract<api_cache, fcl::api::surface::local | fcl::api::surface::remote> {
@@ -269,6 +282,13 @@ class patch_api : public fcl::api::contract<patch_api> {
    virtual boost::asio::awaitable<control_response> patch(control_patch_request request) = 0;
 };
 
+class default_header_api : public fcl::api::contract<default_header_api> {
+ public:
+   virtual ~default_header_api() = default;
+
+   virtual boost::asio::awaitable<default_header_response> echo(default_header_request request) = 0;
+};
+
 class json_stream_api : public fcl::api::contract<json_stream_api> {
  public:
    virtual ~json_stream_api() = default;
@@ -314,6 +334,10 @@ FCL_API(::fcl::http::test_api::alias_api, FCL_API_CONTRACT("alias", 1, 0),
 FCL_API(::fcl::http::test_api::patch_api, FCL_API_CONTRACT("patch", 1, 0),
         FCL_API_METHOD_TYPED(patch, ::fcl::http::test_api::control_patch_request,
                              ::fcl::http::test_api::control_response))
+
+FCL_API(::fcl::http::test_api::default_header_api, FCL_API_CONTRACT("default-header", 1, 0),
+        FCL_API_METHOD_TYPED(echo, ::fcl::http::test_api::default_header_request,
+                             ::fcl::http::test_api::default_header_response))
 
 FCL_API(::fcl::http::test_api::json_stream_api, FCL_API_CONTRACT("json-stream", 1, 0),
         FCL_API_METHOD_TYPED(stream, ::fcl::http::test_api::json_stream_request,
@@ -369,6 +393,9 @@ FCL_HTTP_API(::fcl::http::test_api::alias_api,
 
 FCL_HTTP_API(::fcl::http::test_api::patch_api,
              FCL_HTTP_PATCH(patch, "/controls/:id", ok))
+
+FCL_HTTP_API(::fcl::http::test_api::default_header_api,
+             FCL_HTTP_PUT(echo, "/headers/default", ok, FCL_HTTP_BODY_STREAM(body)))
 
 FCL_HTTP_API(::fcl::http::test_api::json_stream_api,
              FCL_HTTP_POST(stream, "/json-stream/:id", ok, FCL_HTTP_RESPONSE_STREAM))
@@ -429,6 +456,9 @@ using test_api::alias_api;
 using test_api::control_patch_request;
 using test_api::control_request;
 using test_api::control_response;
+using test_api::default_header_api;
+using test_api::default_header_request;
+using test_api::default_header_response;
 using test_api::form_api;
 using test_api::form_submit_request;
 using test_api::form_submit_response;
@@ -523,6 +553,18 @@ class search_api_impl final : public search_api {
  public:
    boost::asio::awaitable<search_response> search(search_request request) override {
       co_return search_response{.value = request.term + ":" + std::to_string(request.limit)};
+   }
+};
+
+class default_header_api_impl final : public default_header_api {
+ public:
+   boost::asio::awaitable<default_header_response> echo(default_header_request request) override {
+      auto body = co_await request.body.async_read_all();
+      co_return default_header_response{
+         .request_id = request.request_id.value,
+         .body = std::move(body),
+         .present = request.request_id.present,
+      };
    }
 };
 
@@ -1303,6 +1345,35 @@ BOOST_AUTO_TEST_CASE(http_api_query_template_preserves_wire_alias) {
    const auto remote_response =
       fcl::asio::blocking::run(runtime, search->search(search_request{.term = "remote", .limit = 17}));
    BOOST_TEST(remote_response.value == "remote:17");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_typed_proxy_sends_default_mapped_header_fields) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<default_header_api>(default_header_api::describe(), std::make_shared<default_header_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<default_header_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto headers = fcl::asio::blocking::run(runtime, fcl::http::remote<default_header_api>(client));
+
+   const auto response = fcl::asio::blocking::run(
+      runtime,
+      headers->echo(default_header_request{
+         .request_id = fcl::http::header<std::string>{.value = "trace-123", .present = true},
+         .body = fcl::http::body_stream{make_body_reader({"payload"})},
+      }));
+
+   BOOST_TEST(response.present);
+   BOOST_TEST(response.request_id == "trace-123");
+   BOOST_TEST(response.body == "payload");
 
    server.stop();
 }
@@ -2344,6 +2415,35 @@ BOOST_AUTO_TEST_CASE(server_stop_called_from_runtime_worker_does_not_deadlock) {
 
    BOOST_REQUIRE(stopped_future.wait_for(std::chrono::seconds{2}) == std::future_status::ready);
    fcl::asio::blocking::run(runtime, server->async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(server_accept_loop_survives_runtime_worker_stop_and_server_destruction) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto server = std::make_shared<std::optional<fcl::http::server>>();
+   server->emplace(
+      runtime,
+      server_config{},
+      [](route_context& context) -> boost::asio::awaitable<response> {
+         co_return make_text_response(context.request, status::ok, "unused");
+      });
+   fcl::asio::blocking::run(runtime, (*server)->async_start());
+
+   auto stopped = std::make_shared<std::promise<void>>();
+   auto stopped_future = stopped->get_future();
+   asio::post(runtime.context(), [server, stopped] {
+      (*server)->stop();
+      server->reset();
+      stopped->set_value();
+   });
+
+   BOOST_REQUIRE(stopped_future.wait_for(std::chrono::seconds{2}) == std::future_status::ready);
+
+   auto drained = std::make_shared<std::promise<void>>();
+   auto drained_future = drained->get_future();
+   asio::post(runtime.context(), [drained] {
+      drained->set_value();
+   });
+   BOOST_REQUIRE(drained_future.wait_for(std::chrono::seconds{2}) == std::future_status::ready);
 }
 
 BOOST_AUTO_TEST_CASE(server_start_waits_for_executor_work_before_returning) {

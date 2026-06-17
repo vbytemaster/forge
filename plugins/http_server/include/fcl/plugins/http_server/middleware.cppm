@@ -120,7 +120,6 @@ class middleware_response {
 
    void set_content_type(std::string value) {
       content_type_ = std::move(value);
-      stream_token_.clear();
    }
 
  private:

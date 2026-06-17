@@ -137,17 +137,39 @@ namespace detail {
    };
 }
 
+[[nodiscard]] inline std::string default_header_name(std::string_view field_name) {
+   auto output = std::string{};
+   output.reserve(field_name.size());
+   for (const auto character : field_name) {
+      output.push_back(character == '_' ? '-' : character);
+   }
+   return output;
+}
+
+[[nodiscard]] inline std::string route_header_name(const api_route& route, std::string_view field_name) {
+   const auto matched = std::find_if(route.headers.begin(), route.headers.end(), [&](const api_field_binding& binding) {
+      return binding.field == field_name;
+   });
+   if (matched != route.headers.end()) {
+      return matched->name;
+   }
+   return default_header_name(field_name);
+}
+
 template <typename Request>
 void apply_route_headers(request& target, const api_route& route, const Request& value) {
    if constexpr (fcl::reflect::is_described_object_v<Request>) {
       fcl::reflect::for_each_member<Request>([&](const char* field_name, auto member) {
          using member_type = std::remove_cvref_t<decltype(value.*member)>;
          if constexpr (detail::is_header<member_type>::value) {
-            const auto matched = std::find_if(route.headers.begin(), route.headers.end(), [&](const api_field_binding& binding) {
-               return binding.field == field_name;
-            });
-            if (matched != route.headers.end() && (value.*member).present) {
-               target.set(matched->name, (value.*member).value);
+            const auto& header = value.*member;
+            if (header.present) {
+               auto encoded = field_to_text(header.value);
+               if (!encoded.has_value()) {
+                  FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                                      "HTTP API header value cannot be encoded as text");
+               }
+               target.set(route_header_name(route, field_name), std::move(*encoded));
             }
          }
       });

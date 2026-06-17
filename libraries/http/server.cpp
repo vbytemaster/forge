@@ -386,7 +386,7 @@ using tcp = asio::ip::tcp;
 using asio::awaitable;
 using asio::use_awaitable;
 
-struct server::impl {
+struct server::impl : std::enable_shared_from_this<server::impl> {
    impl(fcl::asio::runtime& runtime_value, server_config config_value, server_handler handler_value,
         std::shared_ptr<router> router_value)
        : runtime(runtime_value), config(std::move(config_value)), handler(std::move(handler_value)),
@@ -486,14 +486,20 @@ struct server::impl {
       started = true;
       stopped.store(false, std::memory_order_release);
 
-      asio::co_spawn(acceptor.get_executor(), accept_loop(), [](std::exception_ptr error) {
-         if (error) {
-            try {
-               std::rethrow_exception(error);
-            } catch (const std::exception&) {
+      auto self = shared_from_this();
+      asio::co_spawn(
+         acceptor_executor,
+         [self]() -> awaitable<void> {
+            co_await self->accept_loop();
+         }(),
+         [](std::exception_ptr error) {
+            if (error) {
+               try {
+                  std::rethrow_exception(error);
+               } catch (const std::exception&) {
+               }
             }
-         }
-      });
+         });
    }
 
    void stop_on_executor() {

@@ -421,6 +421,7 @@ struct http_publish_state {
    bool short_circuit = false;
    bool replace_stream_after_next = false;
    bool empty_replace_stream_after_next = false;
+   bool set_stream_content_type_after_next = false;
    std::atomic<unsigned> stream_calls = 0;
    std::atomic<unsigned> stream_chunks = 0;
 };
@@ -560,6 +561,9 @@ class http_middleware_plugin final : public fcl::app::plugin {
                response.set_status(fcl::http::status::forbidden);
                response.clear_body();
                co_return response;
+            }
+            if (state->set_stream_content_type_after_next) {
+               response.set_content_type("application/x-ndjson");
             }
             response.set_header("Server", "fcl-test");
             co_return response;
@@ -1797,6 +1801,44 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_preserves_stream_framing_through_middlew
 
    BOOST_TEST(static_cast<unsigned>(response.result()) == static_cast<unsigned>(fcl::http::status::ok));
    BOOST_TEST(response.body() == "stream:alpha:payload");
+   BOOST_TEST(std::string{response[fcl::http::field::server]} == "fcl-test");
+   const auto has_content_length = response.find(fcl::http::field::content_length) != response.end();
+   BOOST_TEST(!has_content_length);
+   BOOST_TEST(std::string{response[fcl::http::field::transfer_encoding]} == "chunked");
+   const auto has_stream_token = response.find("X-FCL-Stream-Token") != response.end();
+   BOOST_TEST(!has_stream_token);
+   BOOST_TEST(state->stream_calls.load() == 1U);
+   BOOST_TEST(state->stream_chunks.load() == 3U);
+
+   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(http_server_plugin_stream_middleware_content_type_preserves_stream) {
+   const auto port = reserve_loopback_port();
+   auto state = std::make_shared<http_publish_state>();
+   state->base_path = "/api";
+   state->set_stream_content_type_after_next = true;
+   auto app = http_stream_server_application{state};
+   auto config = fcl::config::document{};
+   config.set("http-server.port", std::uint64_t{port});
+   config.set("http-server.api-base-path", std::string{"/api"});
+
+   app.configure(config);
+   fcl::asio::blocking::run(app.runtime(), app.startup());
+
+   auto client = fcl::http::client{app.runtime(), fcl::http::parse_base_url("http://127.0.0.1:" +
+                                                                            std::to_string(port))};
+   auto request = fcl::http::request{};
+   request.method(fcl::http::method::get);
+   request.target("/api/stream/alpha");
+   request.version(11);
+   request.set(fcl::http::field::authorization, "Bearer test");
+
+   const auto response = fcl::asio::blocking::run(app.runtime(), client.async_request(std::move(request)));
+
+   BOOST_TEST(static_cast<unsigned>(response.result()) == static_cast<unsigned>(fcl::http::status::ok));
+   BOOST_TEST(response.body() == "stream:alpha:payload");
+   BOOST_TEST(std::string{response[fcl::http::field::content_type]} == "application/x-ndjson");
    BOOST_TEST(std::string{response[fcl::http::field::server]} == "fcl-test");
    const auto has_content_length = response.find(fcl::http::field::content_length) != response.end();
    BOOST_TEST(!has_content_length);

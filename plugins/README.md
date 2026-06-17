@@ -83,6 +83,7 @@ Typed API publication is the primary path:
 
 ```cpp
 import fcl.plugins.http_server.api;
+import fcl.plugins.http_server.middleware;
 import fcl.plugins.http_server.plugin;
 
 class cache_publisher final : public fcl::app::plugin {
@@ -98,21 +99,21 @@ class cache_publisher final : public fcl::app::plugin {
 };
 ```
 
-Middleware uses the `fcl_http` descriptor directly; the plugin does not define a
-parallel middleware model:
+Middleware uses plugin-owned typed request/response wrappers. The bridge to
+`fcl_http` router internals stays private to the plugin:
 
 ```cpp
-co_await http->use(fcl::http::middleware_descriptor{
+co_await http->use(fcl::plugins::http_server::middleware_descriptor{
    .id = "auth",
-   .phase = fcl::http::middleware_phase::security,
+   .phase = fcl::plugins::http_server::middleware_phase::security,
    .order = 10,
    .path_prefix = "/api",
-   .handler = [](fcl::http::route_context& ctx,
-                 fcl::http::next_handler next)
-      -> boost::asio::awaitable<fcl::http::response> {
-      if (ctx.request.find(fcl::http::field::authorization) == ctx.request.end()) {
-         co_return fcl::http::make_text_response(
-            ctx.request, fcl::http::status::unauthorized, "missing authorization");
+   .handler = [](const fcl::plugins::http_server::middleware_request& request,
+                 fcl::plugins::http_server::middleware_next next)
+      -> boost::asio::awaitable<fcl::plugins::http_server::middleware_response> {
+      if (!request.header("Authorization").has_value()) {
+         co_return fcl::plugins::http_server::middleware_response::text(
+            fcl::http::status::unauthorized, "missing authorization");
       }
       co_return co_await next();
    },
@@ -120,8 +121,9 @@ co_await http->use(fcl::http::middleware_descriptor{
 ```
 
 Publishing after server startup throws `publication_closed`. The plugin does not
-expose raw `get`/`post` route mutation, diagnostics/status APIs, file/upload
-publishers, TLS/auth/CORS policy or S3 semantics.
+expose raw `get`/`post` route mutation, raw `fcl::http::middleware_descriptor`,
+diagnostics/status APIs, file/upload publishers, TLS/auth/CORS policy or S3
+semantics.
 
 ## Signature Provider Plugin
 

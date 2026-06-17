@@ -2,6 +2,7 @@ add_library(
    fcl_plugin_http_server STATIC
    plugin.cpp
    publisher_api.cpp
+   middleware_bridge.cpp
    config.cpp
    server_lifecycle.cpp
    plugin_impl.cpp

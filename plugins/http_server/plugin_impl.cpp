@@ -12,9 +12,9 @@ module fcl.plugins.http_server.plugin;
 import fcl.api.registry;
 import fcl.asio.runtime;
 import fcl.http.api;
-import fcl.http.middleware;
 import fcl.http.server;
 import fcl.plugins.http_server.exceptions;
+import fcl.plugins.http_server.middleware;
 import fcl.plugins.http_server.types;
 
 #include "details/plugin_impl.hxx"
@@ -29,7 +29,7 @@ void plugin::impl::add(pending_api_binding value) {
    api_bindings.push_back(std::move(value));
 }
 
-void plugin::impl::add(fcl::http::middleware_descriptor value) {
+void plugin::impl::add(middleware_descriptor value) {
    auto lock = std::scoped_lock{mutex};
    if (publication_closed) {
       FCL_THROW_EXCEPTION(exceptions::publication_closed, "HTTP server publication is closed");

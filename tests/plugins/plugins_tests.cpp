@@ -78,7 +78,7 @@ import fcl.http.file;
 import fcl.http.mapping;
 import fcl.http.middleware;
 import fcl.http.proxy;
-import fcl.http.route_context;
+import fcl.http.router;
 import fcl.http.stream;
 import fcl.http.types;
 import fcl.http.upload;
@@ -126,6 +126,7 @@ import fcl.plugins.p2p_node.api;
 import fcl.plugins.p2p_node.plugin;
 import fcl.plugins.http_server.types;
 import fcl.plugins.http_server.exceptions;
+import fcl.plugins.http_server.middleware;
 import fcl.plugins.http_server.api;
 import fcl.plugins.http_server.plugin;
 import fcl.program_options;
@@ -140,7 +141,16 @@ concept accepts_raw_http_binding = requires(T& api, fcl::http::api_binding bindi
    api.publish(std::move(binding), fcl::plugins::http_server::publish_options{});
 };
 
+namespace raw_http = fcl::http;
+using raw_http_middleware = raw_http::middleware_descriptor;
+
+template <typename T>
+concept accepts_raw_http_middleware = requires(T& api, raw_http_middleware descriptor) {
+   api.use(std::move(descriptor));
+};
+
 static_assert(!accepts_raw_http_binding<fcl::plugins::http_server::api>);
+static_assert(!accepts_raw_http_middleware<fcl::plugins::http_server::api>);
 
 struct pubsub_payload {
    std::string text;
@@ -433,32 +443,31 @@ class http_middleware_plugin final : public fcl::app::plugin {
    boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
       auto http = context.apis().get<http_server::api>(http_server::api::ref());
       auto state = state_;
-      co_await http->use(fcl::http::middleware_descriptor{
+      co_await http->use(http_server::middleware_descriptor{
          .id = "security",
-         .phase = fcl::http::middleware_phase::security,
+         .phase = http_server::middleware_phase::security,
          .order = 10,
          .path_prefix = "/api",
-         .handler = [state](fcl::http::route_context& context_value,
-                            fcl::http::next_handler next) -> boost::asio::awaitable<fcl::http::response> {
+         .handler = [state](const http_server::middleware_request& request,
+                            http_server::middleware_next next) -> boost::asio::awaitable<http_server::middleware_response> {
             state->middleware_events.push_back("security");
-            if (state->short_circuit &&
-                context_value.request.find(fcl::http::field::authorization) == context_value.request.end()) {
-               co_return fcl::http::make_text_response(context_value.request, fcl::http::status::unauthorized,
-                                                       "missing authorization");
+            if (state->short_circuit && !request.header("Authorization").has_value()) {
+               co_return http_server::middleware_response::text(fcl::http::status::unauthorized,
+                                                               "missing authorization");
             }
             co_return co_await next();
          },
       });
-      co_await http->use(fcl::http::middleware_descriptor{
+      co_await http->use(http_server::middleware_descriptor{
          .id = "before",
-         .phase = fcl::http::middleware_phase::before_handler,
+         .phase = http_server::middleware_phase::before_handler,
          .order = 20,
          .path_prefix = "/api",
-         .handler = [state](fcl::http::route_context&,
-                            fcl::http::next_handler next) -> boost::asio::awaitable<fcl::http::response> {
+         .handler = [state](const http_server::middleware_request&,
+                            http_server::middleware_next next) -> boost::asio::awaitable<http_server::middleware_response> {
             state->middleware_events.push_back("before");
             auto response = co_await next();
-            response.set(fcl::http::field::server, "fcl-test");
+            response.set_header("Server", "fcl-test");
             co_return response;
          },
       });

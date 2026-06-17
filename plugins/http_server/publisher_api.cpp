@@ -11,10 +11,10 @@ module fcl.plugins.http_server.plugin;
 import fcl.api.registry;
 import fcl.asio.runtime;
 import fcl.http.api;
-import fcl.http.middleware;
 import fcl.http.server;
 import fcl.plugins.http_server.api;
 import fcl.plugins.http_server.exceptions;
+import fcl.plugins.http_server.middleware;
 import fcl.plugins.http_server.types;
 
 #include "details/plugin_impl.hxx"
@@ -37,7 +37,7 @@ boost::asio::awaitable<void> plugin::publisher_api::publish_binding(fcl::http::a
    co_return;
 }
 
-boost::asio::awaitable<void> plugin::publisher_api::use(fcl::http::middleware_descriptor descriptor) {
+boost::asio::awaitable<void> plugin::publisher_api::use(middleware_descriptor descriptor) {
    impl_->add(std::move(descriptor));
    co_return;
 }

@@ -9,7 +9,7 @@ struct pending_api_binding {
 
 struct startup_snapshot {
    std::vector<pending_api_binding> api_bindings;
-   std::vector<fcl::http::middleware_descriptor> middleware;
+   std::vector<middleware_descriptor> middleware;
 };
 
 struct plugin::impl {
@@ -18,13 +18,13 @@ struct plugin::impl {
    fcl::asio::runtime* runtime = nullptr;
    const fcl::api::registry* apis = nullptr;
    std::vector<pending_api_binding> api_bindings;
-   std::vector<fcl::http::middleware_descriptor> middleware;
+   std::vector<middleware_descriptor> middleware;
    std::unique_ptr<fcl::http::server> server;
    bool publication_closed = false;
    bool stopping = false;
 
    void add(pending_api_binding value);
-   void add(fcl::http::middleware_descriptor value);
+   void add(middleware_descriptor value);
    [[nodiscard]] startup_snapshot close_publication();
    void reset_runtime() noexcept;
 };

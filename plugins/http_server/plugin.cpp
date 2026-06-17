@@ -18,10 +18,10 @@ import fcl.asio.runtime;
 import fcl.config.component;
 import fcl.config.decode;
 import fcl.http.api;
-import fcl.http.middleware;
 import fcl.http.server;
 import fcl.plugins.http_server.api;
 import fcl.plugins.http_server.exceptions;
+import fcl.plugins.http_server.middleware;
 import fcl.plugins.http_server.types;
 
 #include "details/config.hxx"

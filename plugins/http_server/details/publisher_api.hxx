@@ -9,7 +9,7 @@ class plugin::publisher_api final : public api {
    [[nodiscard]] const fcl::api::registry& registry() const override;
    boost::asio::awaitable<void> publish_binding(fcl::http::api_binding binding,
                                                 publish_options options) override;
-   boost::asio::awaitable<void> use(fcl::http::middleware_descriptor descriptor) override;
+   boost::asio::awaitable<void> use(middleware_descriptor descriptor) override;
 
  private:
    std::shared_ptr<plugin::impl> impl_;

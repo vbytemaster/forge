@@ -18,9 +18,11 @@ import fcl.http.middleware;
 import fcl.http.router;
 import fcl.http.server;
 import fcl.plugins.http_server.exceptions;
+import fcl.plugins.http_server.middleware;
 import fcl.plugins.http_server.types;
 
 #include "details/config.hxx"
+#include "details/middleware_bridge.hxx"
 #include "details/plugin_impl.hxx"
 #include "details/server_lifecycle.hxx"
 
@@ -34,7 +36,7 @@ boost::asio::awaitable<void> start_server(plugin::impl& state) {
    auto snapshot = state.close_publication();
    auto router = fcl::http::router{};
    for (auto& descriptor : snapshot.middleware) {
-      router.use(std::move(descriptor));
+      router.use(to_http_middleware(std::move(descriptor)));
    }
    for (auto& value : snapshot.api_bindings) {
       value.binding.mount(router, resolve_base_path(state.settings, value.options.base_path));

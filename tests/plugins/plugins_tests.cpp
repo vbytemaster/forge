@@ -1762,6 +1762,21 @@ BOOST_AUTO_TEST_CASE(signature_provider_rejects_malformed_private_key_without_le
       });
 }
 
+BOOST_AUTO_TEST_CASE(signature_provider_rejects_empty_private_key_through_schema) {
+   auto plugin = signature_provider::plugin{};
+   auto document = signer_config({key_entry("provider", "", "fcl", {"storage.receipt"})});
+
+   auto runtime = fcl::asio::runtime{};
+   BOOST_CHECK_EXCEPTION(
+      fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "signature-provider"})),
+      signature_provider::exceptions::invalid_config,
+      [](const auto& error) {
+         const auto text = std::string{error.what()};
+         return text.find("signature-provider.keys[0].private-key") != std::string::npos &&
+                text.find("schema.non_empty") != std::string::npos;
+      });
+}
+
 BOOST_AUTO_TEST_CASE(signature_provider_requires_explicit_non_empty_purposes) {
    const auto key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::secp256k1::private_key_shim>();
    const auto private_key = fcl::crypto::asymmetric::encoding::fcl().format(key);

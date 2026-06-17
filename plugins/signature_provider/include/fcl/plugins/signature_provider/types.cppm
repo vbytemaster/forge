@@ -99,6 +99,7 @@ export template <> struct fcl::schema::rules<fcl::plugins::signature_provider::k
       schema.field<&fcl::plugins::signature_provider::key::id>("id").required().non_empty();
       schema.field<&fcl::plugins::signature_provider::key::private_key>("private-key")
          .required()
+         .non_empty()
          .secret()
          .description("Private key material in one of the configured input profiles");
       schema.field<&fcl::plugins::signature_provider::key::input_profile>("input-profile").default_value("fcl");

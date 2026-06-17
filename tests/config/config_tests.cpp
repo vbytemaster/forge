@@ -74,7 +74,7 @@ template <> struct fcl::schema::rules<nested_key_config> {
    [[nodiscard]] static fcl::schema::object_schema<nested_key_config> define() {
       auto schema = fcl::schema::object<nested_key_config>();
       schema.field<&nested_key_config::id>("id").required().non_empty();
-      schema.field<&nested_key_config::private_key>("private-key").required().secret();
+      schema.field<&nested_key_config::private_key>("private-key").required().non_empty().secret();
       schema.field<&nested_key_config::input_profile>("input-profile").default_value("fcl");
       schema.field<&nested_key_config::purposes>("purposes").min_items(1).each_non_empty();
       return schema;
@@ -221,7 +221,7 @@ BOOST_AUTO_TEST_CASE(config_decodes_nested_object_lists_with_item_defaults_and_p
 BOOST_AUTO_TEST_CASE(config_nested_object_list_validators_report_stable_diagnostics) {
    auto invalid = fcl::config::value::object_type{};
    invalid["id"] = fcl::config::value{""};
-   invalid["private-key"] = fcl::config::value{std::uint64_t{42}};
+   invalid["private-key"] = fcl::config::value{""};
    invalid["purposes"] = fcl::config::value::array_type{fcl::config::value{""}};
 
    auto duplicate = fcl::config::value::object_type{};
@@ -243,7 +243,7 @@ BOOST_AUTO_TEST_CASE(config_nested_object_list_validators_report_stable_diagnost
    const auto decoded = fcl::config::decode<nested_signer_config>(doc, "signature-provider");
    BOOST_TEST(!decoded.ok());
    BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "signature-provider.keys[0].id", "schema.non_empty"));
-   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "signature-provider.keys[0].private-key", "config.type"));
+   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "signature-provider.keys[0].private-key", "schema.non_empty"));
    BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "signature-provider.keys[0].purposes[0]", "schema.non_empty"));
    BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "signature-provider.keys", "schema.unique"));
 }

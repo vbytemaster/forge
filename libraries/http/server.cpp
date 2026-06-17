@@ -390,7 +390,8 @@ struct server::impl {
    impl(fcl::asio::runtime& runtime_value, server_config config_value, server_handler handler_value,
         std::shared_ptr<router> router_value)
        : runtime(runtime_value), config(std::move(config_value)), handler(std::move(handler_value)),
-         router_value(std::move(router_value)), acceptor(asio::make_strand(runtime.context())) {}
+         router_value(std::move(router_value)), acceptor_executor(asio::make_strand(runtime.context())),
+         acceptor(acceptor_executor) {}
 
    awaitable<void> accept_loop() {
       for (;;) {
@@ -422,6 +423,7 @@ struct server::impl {
    server_config config;
    server_handler handler;
    std::shared_ptr<router> router_value;
+   asio::strand<asio::io_context::executor_type> acceptor_executor;
    tcp::acceptor acceptor;
    std::vector<std::weak_ptr<detail::server_session>> sessions;
    std::atomic_bool stopped = true;
@@ -521,10 +523,10 @@ struct server::impl {
 };
 
 server::server(fcl::asio::runtime& runtime, server_config config, server_handler handler)
-    : impl_(std::make_unique<impl>(runtime, std::move(config), std::move(handler), nullptr)) {}
+    : impl_(std::make_shared<impl>(runtime, std::move(config), std::move(handler), nullptr)) {}
 
 server::server(fcl::asio::runtime& runtime, server_config config, router router_value)
-    : impl_(std::make_unique<impl>(runtime, std::move(config), server_handler{},
+    : impl_(std::make_shared<impl>(runtime, std::move(config), server_handler{},
                                    std::make_shared<router>(std::move(router_value)))) {}
 
 server::~server() {
@@ -542,7 +544,8 @@ void server::start() {
    };
 
    auto state = std::make_shared<start_state>();
-   asio::dispatch(impl_->acceptor.get_executor(), [impl = impl_.get(), state] {
+   auto impl = impl_;
+   asio::dispatch(impl->acceptor_executor, [impl, state] {
       auto error = std::exception_ptr{};
       try {
          impl->start_on_executor();
@@ -569,8 +572,15 @@ void server::stop() {
       return;
    }
 
-   if (impl_->runtime.context().get_executor().running_in_this_thread()) {
-      impl_->stop_on_executor();
+   auto impl = impl_;
+   if (impl->acceptor_executor.running_in_this_thread()) {
+      impl->stop_on_executor();
+      return;
+   }
+   if (impl->runtime.context().get_executor().running_in_this_thread()) {
+      asio::post(impl->acceptor_executor, [impl] {
+         impl->stop_on_executor();
+      });
       return;
    }
 
@@ -583,8 +593,10 @@ void server::stop() {
 
    auto state = std::make_shared<stop_state>();
    asio::co_spawn(
-      impl_->acceptor.get_executor(),
-      impl_->async_stop_on_executor(),
+      impl->acceptor_executor,
+      [impl]() -> awaitable<void> {
+         co_await impl->async_stop_on_executor();
+      }(),
       [state](std::exception_ptr error) {
          {
             const auto lock = std::scoped_lock{state->mutex};
@@ -602,16 +614,18 @@ void server::stop() {
 }
 
 boost::asio::awaitable<void> server::async_start() {
-   co_await asio::dispatch(impl_->acceptor.get_executor(), use_awaitable);
-   impl_->start_on_executor();
+   auto impl = impl_;
+   co_await asio::dispatch(impl->acceptor_executor, use_awaitable);
+   impl->start_on_executor();
 }
 
 boost::asio::awaitable<void> server::async_stop() {
    if (!impl_) {
       co_return;
    }
-   co_await asio::dispatch(impl_->acceptor.get_executor(), use_awaitable);
-   co_await impl_->async_stop_on_executor();
+   auto impl = impl_;
+   co_await asio::dispatch(impl->acceptor_executor, use_awaitable);
+   co_await impl->async_stop_on_executor();
 }
 
 std::uint16_t server::port() const {

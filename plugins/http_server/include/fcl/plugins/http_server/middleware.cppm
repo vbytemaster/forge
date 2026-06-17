@@ -67,32 +67,67 @@ struct middleware_request {
 
 class middleware_response {
  public:
-   fcl::http::status status = fcl::http::status::ok;
-   std::vector<header_entry> headers;
-   std::string body;
-   std::string content_type = "text/plain";
-
    [[nodiscard]] static middleware_response text(fcl::http::status status_value,
                                                  std::string body_value,
                                                  std::string content_type_value = "text/plain") {
       auto result = middleware_response{};
-      result.status = status_value;
-      result.body = std::move(body_value);
-      result.content_type = std::move(content_type_value);
+      result.status_ = status_value;
+      result.body_ = std::move(body_value);
+      result.content_type_ = std::move(content_type_value);
       return result;
    }
 
+   [[nodiscard]] fcl::http::status status() const noexcept {
+      return status_;
+   }
+
+   [[nodiscard]] const std::vector<header_entry>& headers() const noexcept {
+      return headers_;
+   }
+
+   [[nodiscard]] const std::string& body() const noexcept {
+      return body_;
+   }
+
+   [[nodiscard]] const std::string& content_type() const noexcept {
+      return content_type_;
+   }
+
    void set_header(std::string name, std::string value) {
-      for (auto& entry : headers) {
+      for (auto& entry : headers_) {
          if (header_name_equal(entry.name, name)) {
             entry.value = std::move(value);
             return;
          }
       }
-      headers.push_back(header_entry{.name = std::move(name), .value = std::move(value)});
+      headers_.push_back(header_entry{.name = std::move(name), .value = std::move(value)});
+   }
+
+   void set_status(fcl::http::status value) noexcept {
+      status_ = value;
+      stream_token_.clear();
+   }
+
+   void set_body(std::string value) {
+      body_ = std::move(value);
+      stream_token_.clear();
+   }
+
+   void clear_body() {
+      body_.clear();
+      stream_token_.clear();
+   }
+
+   void set_content_type(std::string value) {
+      content_type_ = std::move(value);
+      stream_token_.clear();
    }
 
  private:
+   fcl::http::status status_ = fcl::http::status::ok;
+   std::vector<header_entry> headers_;
+   std::string body_;
+   std::string content_type_ = "text/plain";
    std::string stream_token_;
 
    friend struct detail::middleware_bridge_access;
@@ -101,6 +136,26 @@ class middleware_response {
 namespace detail {
 
 struct middleware_bridge_access {
+   static void set_status(middleware_response& value, fcl::http::status status) noexcept {
+      value.status_ = status;
+   }
+
+   static void set_body(middleware_response& value, std::string body) {
+      value.body_ = std::move(body);
+   }
+
+   [[nodiscard]] static std::string take_body(middleware_response& value) {
+      return std::move(value.body_);
+   }
+
+   static void set_content_type(middleware_response& value, std::string content_type) {
+      value.content_type_ = std::move(content_type);
+   }
+
+   static std::vector<header_entry>& headers(middleware_response& value) noexcept {
+      return value.headers_;
+   }
+
    static void set_stream_token(middleware_response& value, std::string token) {
       value.stream_token_ = std::move(token);
    }

@@ -55,11 +55,11 @@ constexpr std::string_view stream_token_header = "X-FCL-Stream-Token";
 
 [[nodiscard]] middleware_response make_response(fcl::http::response value) {
    auto result = middleware_response{};
-   result.status = value.result();
-   result.body = std::move(value.body());
+   detail::middleware_bridge_access::set_status(result, value.result());
+   detail::middleware_bridge_access::set_body(result, std::move(value.body()));
    for (const auto& header : value) {
       if (header.name() == fcl::http::field::content_type) {
-         result.content_type = std::string{header.value()};
+         detail::middleware_bridge_access::set_content_type(result, std::string{header.value()});
          continue;
       }
       if (header.name() == fcl::http::field::content_length ||
@@ -70,16 +70,18 @@ constexpr std::string_view stream_token_header = "X-FCL-Stream-Token";
          detail::middleware_bridge_access::set_stream_token(result, std::string{header.value()});
          continue;
       }
-      result.headers.push_back(header_entry{.name = std::string{header.name_string()},
-                                           .value = std::string{header.value()}});
+      detail::middleware_bridge_access::headers(result).push_back(
+         header_entry{.name = std::string{header.name_string()}, .value = std::string{header.value()}});
    }
    return result;
 }
 
 [[nodiscard]] fcl::http::response make_http_response(const fcl::http::request& source, middleware_response value) {
-   auto result = fcl::http::make_text_response(source, value.status, std::move(value.body),
-                                               value.content_type.empty() ? "text/plain" : value.content_type);
-   for (auto& header : value.headers) {
+   auto content_type = value.content_type().empty() ? std::string{"text/plain"} : std::string{value.content_type()};
+   auto result = fcl::http::make_text_response(source, value.status(),
+                                               detail::middleware_bridge_access::take_body(value),
+                                               std::move(content_type));
+   for (const auto& header : value.headers()) {
       if (header_name_equal(header.name, "Content-Length") || header_name_equal(header.name, "Transfer-Encoding")) {
          continue;
       }

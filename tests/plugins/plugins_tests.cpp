@@ -420,6 +420,7 @@ struct http_publish_state {
    std::vector<std::string> middleware_events;
    bool short_circuit = false;
    bool replace_stream_after_next = false;
+   bool empty_replace_stream_after_next = false;
    std::atomic<unsigned> stream_calls = 0;
    std::atomic<unsigned> stream_chunks = 0;
 };
@@ -554,6 +555,11 @@ class http_middleware_plugin final : public fcl::app::plugin {
             auto response = co_await next();
             if (state->replace_stream_after_next) {
                co_return http_server::middleware_response::text(fcl::http::status::forbidden, "blocked");
+            }
+            if (state->empty_replace_stream_after_next) {
+               response.set_status(fcl::http::status::forbidden);
+               response.clear_body();
+               co_return response;
             }
             response.set_header("Server", "fcl-test");
             co_return response;
@@ -1828,6 +1834,41 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_stream_middleware_replacement_does_not_l
 
    BOOST_TEST(static_cast<unsigned>(response.result()) == static_cast<unsigned>(fcl::http::status::forbidden));
    BOOST_TEST(response.body() == "blocked");
+   const auto has_transfer_encoding = response.find(fcl::http::field::transfer_encoding) != response.end();
+   const auto has_stream_token = response.find("X-FCL-Stream-Token") != response.end();
+   BOOST_TEST(!has_transfer_encoding);
+   BOOST_TEST(!has_stream_token);
+   BOOST_TEST(state->stream_calls.load() == 1U);
+   BOOST_TEST(state->stream_chunks.load() == 0U);
+
+   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(http_server_plugin_empty_stream_middleware_replacement_clears_hidden_token) {
+   const auto port = reserve_loopback_port();
+   auto state = std::make_shared<http_publish_state>();
+   state->base_path = "/api";
+   state->empty_replace_stream_after_next = true;
+   auto app = http_stream_server_application{state};
+   auto config = fcl::config::document{};
+   config.set("http-server.port", std::uint64_t{port});
+   config.set("http-server.api-base-path", std::string{"/api"});
+
+   app.configure(config);
+   fcl::asio::blocking::run(app.runtime(), app.startup());
+
+   auto client = fcl::http::client{app.runtime(), fcl::http::parse_base_url("http://127.0.0.1:" +
+                                                                            std::to_string(port))};
+   auto request = fcl::http::request{};
+   request.method(fcl::http::method::get);
+   request.target("/api/stream/alpha");
+   request.version(11);
+   request.set(fcl::http::field::authorization, "Bearer test");
+
+   const auto response = fcl::asio::blocking::run(app.runtime(), client.async_request(std::move(request)));
+
+   BOOST_TEST(static_cast<unsigned>(response.result()) == static_cast<unsigned>(fcl::http::status::forbidden));
+   BOOST_TEST(response.body().empty());
    const auto has_transfer_encoding = response.find(fcl::http::field::transfer_encoding) != response.end();
    const auto has_stream_token = response.find("X-FCL-Stream-Token") != response.end();
    BOOST_TEST(!has_transfer_encoding);

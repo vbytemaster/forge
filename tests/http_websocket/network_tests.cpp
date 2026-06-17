@@ -2326,7 +2326,7 @@ BOOST_AUTO_TEST_CASE(server_stop_without_start_returns_without_executor_state_ra
 }
 
 BOOST_AUTO_TEST_CASE(server_stop_called_from_runtime_worker_does_not_deadlock) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
    auto server = std::make_shared<fcl::http::server>(
       runtime,
       server_config{},
@@ -2343,6 +2343,7 @@ BOOST_AUTO_TEST_CASE(server_stop_called_from_runtime_worker_does_not_deadlock) {
    });
 
    BOOST_REQUIRE(stopped_future.wait_for(std::chrono::seconds{2}) == std::future_status::ready);
+   fcl::asio::blocking::run(runtime, server->async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(server_start_waits_for_executor_work_before_returning) {

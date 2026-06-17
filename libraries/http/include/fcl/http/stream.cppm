@@ -32,7 +32,6 @@ struct stream_response {
 };
 
 struct streaming_response_options {
-   status status_code = status::ok;
    std::string content_type = "application/octet-stream";
    stream_response::body_source body;
 };
@@ -43,7 +42,6 @@ class streaming_response {
 
    [[nodiscard]] static streaming_response from_source(streaming_response_options options) {
       auto result = streaming_response{};
-      result.head_.result(options.status_code);
       result.head_.version(11);
       result.head_.set(field::content_type, options.content_type);
       result.source_ = std::move(options.body);

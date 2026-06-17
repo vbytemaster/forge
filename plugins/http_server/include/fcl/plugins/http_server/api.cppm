@@ -3,8 +3,6 @@ module;
 #include <boost/asio/awaitable.hpp>
 #include <fcl/api/macros.hpp>
 
-#include <memory>
-#include <typeindex>
 #include <utility>
 
 export module fcl.plugins.http_server.api;
@@ -31,23 +29,18 @@ class api : public fcl::api::contract<api, fcl::api::surface::local> {
    virtual boost::asio::awaitable<void> use(fcl::http::middleware_descriptor descriptor) = 0;
 
    template <typename Interface> boost::asio::awaitable<void> publish(publish_options options = {}) {
-      co_await publish_typed(std::type_index{typeid(Interface)}, std::move(options), &build_binding<Interface>);
+      co_await publish_binding(build_binding<Interface>(registry()), std::move(options));
    }
 
  private:
-   using opaque_binding = std::shared_ptr<void>;
-   using binding_factory = opaque_binding (*)(const fcl::api::registry&);
-
-   template <typename Interface> static opaque_binding build_binding(const fcl::api::registry& registry) {
+   template <typename Interface> static fcl::http::api_binding build_binding(const fcl::api::registry& registry) {
       auto plan = fcl::api::binding().serve(registry).build();
-      auto binding = fcl::http::api().use(std::move(plan)).bind<Interface>().build();
-      return std::make_shared<decltype(binding)>(std::move(binding));
+      return fcl::http::api().use(std::move(plan)).bind<Interface>().build();
    }
 
    [[nodiscard]] virtual const fcl::api::registry& registry() const = 0;
-   virtual boost::asio::awaitable<void> publish_typed(std::type_index interface_type,
-                                                      publish_options options,
-                                                      binding_factory factory) = 0;
+   virtual boost::asio::awaitable<void> publish_binding(fcl::http::api_binding binding,
+                                                        publish_options options) = 0;
 };
 
 } // namespace fcl::plugins::http_server

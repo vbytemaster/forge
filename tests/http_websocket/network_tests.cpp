@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -1445,6 +1446,98 @@ BOOST_AUTO_TEST_CASE(http_api_special_types_support_streaming_put_and_file_get) 
    BOOST_TEST(head_response.body().empty());
    BOOST_TEST(head_response[field::content_length] == std::to_string(96U * 1024U));
    BOOST_TEST(head_response[field::accept_ranges] == "bytes");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_typed_streaming_client_rejects_oversized_error_body) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto emitted = std::make_shared<std::atomic<unsigned>>(0);
+
+   auto router = fcl::http::router{};
+   router.get_stream("/objects/:collection/:key/stream",
+                     [emitted](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      auto chunks = std::make_shared<std::vector<std::string>>(
+         std::vector<std::string>{std::string(40 * 1024, 'a'), std::string(40 * 1024, 'b')});
+      auto index = std::make_shared<std::size_t>(0);
+      auto reply = response{status::bad_request, request_value.context.request.version()};
+      reply.set(field::content_type, "application/json");
+      co_return stream_response{
+         .head = std::move(reply),
+         .body =
+            [chunks, index, emitted]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
+               if (*index == chunks->size()) {
+                  co_return std::nullopt;
+               }
+               emitted->fetch_add(1);
+               co_return make_body_chunk((*chunks)[(*index)++]);
+            },
+      };
+   });
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto object = fcl::asio::blocking::run(runtime, fcl::http::remote<object_api>(client));
+
+   BOOST_CHECK_THROW(
+      fcl::asio::blocking::run(
+         runtime,
+         object->stream_object(object_get_request{.collection = "cache", .key = "chunk.bin"})),
+      fcl::http::exceptions::payload_too_large);
+   BOOST_TEST(emitted->load() == 2U);
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_file_response_save_to_reports_write_failures) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto files = temp_directory{};
+
+   auto directory_target = files.path() / "directory-target";
+   std::filesystem::create_directories(directory_target);
+   auto failing = fcl::http::file_response::from_body(response{status::ok, 11}, make_body_reader({"payload"}));
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, failing.save_to(directory_target)),
+                     fcl::http::exceptions::internal);
+
+   auto saved = files.path() / "saved.txt";
+   auto valid = fcl::http::file_response::from_body(response{status::ok, 11}, make_body_reader({"alpha", "omega"}));
+   fcl::asio::blocking::run(runtime, valid.save_to(saved));
+   auto input = std::ifstream{saved, std::ios::binary};
+   auto bytes = std::string{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+   BOOST_TEST(bytes == "alphaomega");
+}
+
+BOOST_AUTO_TEST_CASE(http_streaming_response_status_is_owned_by_route_mapping) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto files = temp_directory{};
+   std::filesystem::create_directories(files.path() / "cache");
+   auto output = std::ofstream{files.path() / "cache" / "chunk.bin", std::ios::binary};
+   output << "alpha";
+   output.close();
+
+   auto apis = fcl::api::registry{};
+   apis.install<object_api>(object_api::describe(), std::make_shared<object_api_impl>(files.path()));
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api()
+                     .use(fcl::api::binding().serve(apis).build())
+                     .get<&object_api::stream_object, object_get_request, fcl::http::streaming_response>(
+                        "/objects/:collection/:key/status-stream",
+                        fcl::http::api_route_options{.response_stream = true,
+                                                      .success_status = status::accepted})
+                     .build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   const auto response = fcl::asio::blocking::run(runtime, client.async_get("/objects/cache/chunk.bin/status-stream"));
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::accepted));
+   BOOST_TEST(response.body() == "alpha");
 
    server.stop();
 }

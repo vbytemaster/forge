@@ -181,8 +181,18 @@ request make_client_request(client& target, const api_route& route, Request& val
    return request_value;
 }
 
-boost::asio::awaitable<std::string> read_all(body_reader& body) {
-   co_return co_await body.async_read_all();
+inline constexpr auto max_stream_error_body_bytes = std::uint64_t{64U * 1024U};
+
+boost::asio::awaitable<std::string> read_bounded_error_body(body_reader& body) {
+   auto output = std::string{};
+   while (auto chunk = co_await body.async_read()) {
+      if (chunk->bytes.size() > max_stream_error_body_bytes - output.size()) {
+         FCL_THROW_EXCEPTION(fcl::http::exceptions::payload_too_large,
+                             "HTTP API error response body exceeds the streaming client limit");
+      }
+      output.append(reinterpret_cast<const char*>(chunk->bytes.data()), chunk->bytes.size());
+   }
+   co_return output;
 }
 
 template <typename Request, typename Response>
@@ -207,7 +217,7 @@ boost::asio::awaitable<Response> call(client& target, const fcl::api::descriptor
          ? co_await target.async_stream_request(std::move(request_value), std::move(*body))
          : co_await target.async_stream_request(std::move(request_value));
       if (response_value.head.result_int() < 200U || response_value.head.result_int() >= 300U) {
-         response_value.head.body() = co_await read_all(response_value.body);
+         response_value.head.body() = co_await read_bounded_error_body(response_value.body);
          auto error = parse_error_payload(response_value.head);
          fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
       }

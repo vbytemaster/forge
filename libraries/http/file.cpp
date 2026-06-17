@@ -1,5 +1,7 @@
 module;
 
+#include <fcl/exceptions/macros.hpp>
+
 #include <algorithm>
 #include <chrono>
 #include <coroutine>
@@ -21,6 +23,7 @@ module fcl.http.file;
 
 import fcl.http.body;
 import fcl.http.exceptions;
+import fcl.exceptions;
 import fcl.http.range;
 import fcl.http.types;
 
@@ -59,6 +62,12 @@ std::optional<std::string_view> header_value(const request& request_value, field
 
 bool same_header_value(std::optional<std::string_view> left, std::string_view right) {
    return left.has_value() && *left == right;
+}
+
+void throw_file_write_failed(const std::filesystem::path& target, std::string_view phase) {
+   FCL_THROW_EXCEPTION(exceptions::internal, "failed to save HTTP file response",
+                       fcl::exceptions::ctx("path", target.string()),
+                       fcl::exceptions::ctx("phase", std::string{phase}));
 }
 
 std::vector<std::string> split_relative_path(std::string_view value) {
@@ -227,8 +236,22 @@ boost::asio::awaitable<stream_response> file_response::materialize(const request
 
 boost::asio::awaitable<void> file_response::save_to(const std::filesystem::path& target) {
    auto output = std::ofstream{target, std::ios::binary | std::ios::trunc};
+   if (!output) {
+      throw_file_write_failed(target, "open");
+   }
    while (auto chunk = co_await body_.async_read()) {
       output.write(reinterpret_cast<const char*>(chunk->bytes.data()), static_cast<std::streamsize>(chunk->bytes.size()));
+      if (!output) {
+         throw_file_write_failed(target, "write");
+      }
+   }
+   output.flush();
+   if (!output) {
+      throw_file_write_failed(target, "flush");
+   }
+   output.close();
+   if (!output) {
+      throw_file_write_failed(target, "close");
    }
 }
 

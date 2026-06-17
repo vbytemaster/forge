@@ -526,11 +526,34 @@ server::~server() {
 }
 
 void server::start() {
-   if (impl_->started) {
-      return;
-   }
+   struct start_state {
+      std::mutex mutex;
+      std::condition_variable ready;
+      bool done = false;
+      std::exception_ptr error;
+   };
 
-   asio::dispatch(impl_->acceptor.get_executor(), [impl = impl_.get()] { impl->start_on_executor(); });
+   auto state = std::make_shared<start_state>();
+   asio::dispatch(impl_->acceptor.get_executor(), [impl = impl_.get(), state] {
+      auto error = std::exception_ptr{};
+      try {
+         impl->start_on_executor();
+      } catch (...) {
+         error = std::current_exception();
+      }
+      {
+         const auto lock = std::scoped_lock{state->mutex};
+         state->error = std::move(error);
+         state->done = true;
+      }
+      state->ready.notify_all();
+   });
+
+   auto lock = std::unique_lock{state->mutex};
+   state->ready.wait(lock, [&] { return state->done; });
+   if (state->error) {
+      std::rethrow_exception(state->error);
+   }
 }
 
 void server::stop() {

@@ -959,6 +959,26 @@ BOOST_AUTO_TEST_CASE(router_maps_typed_http_exception_to_native_json_response) {
    BOOST_TEST(response.body().find("chunk not found") != std::string::npos);
 }
 
+BOOST_AUTO_TEST_CASE(router_escapes_control_bytes_in_exception_json) {
+   auto router = fcl::http::router{};
+   router.get("/bad", [](route_context&) -> boost::asio::awaitable<response> {
+      auto message = std::string{"invalid"};
+      message.push_back('\x01');
+      message.push_back('\b');
+      message += "field";
+      FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, message);
+   });
+
+   auto request = make_request(method::get, "/bad");
+   auto context = make_route_context(request);
+   const auto response = handle(router, context);
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::bad_request));
+   BOOST_TEST(response[field::content_type] == "application/json");
+   BOOST_TEST(response.body().find("\\u0001") != std::string::npos);
+   BOOST_TEST(response.body().find("\\u0008") != std::string::npos);
+}
+
 BOOST_AUTO_TEST_CASE(router_rejects_duplicate_routes_before_serving) {
    auto router = fcl::http::router{};
    router.get("/items", [](route_context& context) -> boost::asio::awaitable<response> {
@@ -971,6 +991,33 @@ BOOST_AUTO_TEST_CASE(router_rejects_duplicate_routes_before_serving) {
                      co_return make_text_response(context.request, status::ok, "two");
                   }),
        fcl::http::exceptions::conflict);
+}
+
+BOOST_AUTO_TEST_CASE(router_rejects_duplicate_buffered_and_stream_routes) {
+   auto router = fcl::http::router{};
+   router.get("/items", [](route_context& context) -> boost::asio::awaitable<response> {
+      co_return make_text_response(context.request, status::ok, "buffered");
+   });
+
+   BOOST_CHECK_THROW(
+      router.get_stream("/items",
+                        [](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+                           co_return stream_response::buffered(
+                              make_text_response(request_value.context.request, status::ok, "stream"));
+                        }),
+      fcl::http::exceptions::conflict);
+
+   auto reverse = fcl::http::router{};
+   reverse.post_stream("/upload", [](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      co_return stream_response::buffered(make_text_response(request_value.context.request, status::ok, "stream"));
+   });
+
+   BOOST_CHECK_THROW(
+      reverse.post("/upload",
+                   [](route_context& context) -> boost::asio::awaitable<response> {
+                      co_return make_text_response(context.request, status::ok, "buffered");
+                   }),
+      fcl::http::exceptions::conflict);
 }
 
 BOOST_AUTO_TEST_CASE(http_api_binding_maps_custom_exception_to_native_status) {
@@ -1889,6 +1936,60 @@ BOOST_AUTO_TEST_CASE(server_stop_waits_for_executor_work_before_returning) {
       boost::beast::http::read(stream, buffer, after_stop, read_error);
    }
    BOOST_TEST(read_error != boost::system::error_code{});
+}
+
+BOOST_AUTO_TEST_CASE(server_start_waits_for_executor_work_before_returning) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto mutex = std::mutex{};
+   auto ready = std::condition_variable{};
+   auto release = std::condition_variable{};
+   auto blocker_started = false;
+   auto blocker_released = false;
+
+   asio::post(runtime.context(), [&] {
+      auto lock = std::unique_lock{mutex};
+      blocker_started = true;
+      ready.notify_all();
+      release.wait(lock, [&] { return blocker_released; });
+   });
+
+   {
+      auto lock = std::unique_lock{mutex};
+      BOOST_REQUIRE(ready.wait_for(lock, std::chrono::seconds{2}, [&] { return blocker_started; }));
+   }
+
+   auto server = fcl::http::server{
+      runtime,
+      server_config{},
+      [](route_context& context) -> boost::asio::awaitable<response> {
+         co_return make_text_response(context.request, status::ok, "started");
+      },
+   };
+
+   auto start_returned = std::atomic_bool{false};
+   auto start_thread = std::thread{[&] {
+      server.start();
+      start_returned.store(true);
+   }};
+
+   std::this_thread::sleep_for(std::chrono::milliseconds{100});
+   BOOST_TEST(!start_returned.load());
+
+   {
+      const auto lock = std::scoped_lock{mutex};
+      blocker_released = true;
+   }
+   release.notify_all();
+   start_thread.join();
+   BOOST_TEST(start_returned.load());
+
+   const auto port = wait_for_port(server);
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
+   const auto response = fcl::asio::blocking::run(runtime, client.async_get("/started"));
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(response.body() == "started");
+
+   server.stop();
 }
 
 BOOST_AUTO_TEST_CASE(http_stream_route_reads_large_request_body_in_chunks) {

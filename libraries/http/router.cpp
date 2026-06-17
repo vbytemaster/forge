@@ -30,9 +30,11 @@ namespace fcl::http {
 namespace {
 
 std::string json_escape(std::string_view value) {
+   constexpr auto hex = std::string_view{"0123456789abcdef"};
    auto output = std::string{};
    output.reserve(value.size() + 8U);
    for (const auto character : value) {
+      const auto byte = static_cast<unsigned char>(character);
       switch (character) {
       case '\\':
          output += "\\\\";
@@ -40,17 +42,14 @@ std::string json_escape(std::string_view value) {
       case '"':
          output += "\\\"";
          break;
-      case '\n':
-         output += "\\n";
-         break;
-      case '\r':
-         output += "\\r";
-         break;
-      case '\t':
-         output += "\\t";
-         break;
       default:
-         output.push_back(character);
+         if (byte < 0x20U) {
+            output += "\\u00";
+            output.push_back(hex[(byte >> 4U) & 0x0fU]);
+            output.push_back(hex[byte & 0x0fU]);
+         } else {
+            output.push_back(character);
+         }
          break;
       }
    }
@@ -472,6 +471,11 @@ void router::add_route(method verb, std::string path, route_handler handler) {
          throw exceptions::conflict{"duplicate HTTP route"};
       }
    }
+   for (const auto& route : stream_routes_) {
+      if (route.verb == verb && route.path == path) {
+         throw exceptions::conflict{"duplicate HTTP route"};
+      }
+   }
    routes_.push_back(route_entry{
        .verb = verb,
        .path = std::move(path),
@@ -483,6 +487,11 @@ void router::add_route(method verb, std::string path, route_handler handler) {
 
 void router::add_stream_route(method verb, std::string path, stream_route_handler handler) {
    auto segments = split_route_path(path);
+   for (const auto& route : routes_) {
+      if (route.verb == verb && route.path == path) {
+         throw exceptions::conflict{"duplicate HTTP stream route"};
+      }
+   }
    for (const auto& route : stream_routes_) {
       if (route.verb == verb && route.path == path) {
          throw exceptions::conflict{"duplicate HTTP stream route"};

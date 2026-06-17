@@ -133,6 +133,32 @@ BOOST_AUTO_TEST_CASE(config_document_paths_merge_and_decode) {
    BOOST_TEST(decoded.value.tags[1] == "beta");
 }
 
+BOOST_AUTO_TEST_CASE(config_decode_rejects_integer_overflow_before_range_validation) {
+   auto numeric = fcl::config::document{};
+   numeric.set("http.bind-port", 70000);
+   const auto decoded_numeric = fcl::config::decode<http_config>(numeric, "http");
+
+   BOOST_TEST(!decoded_numeric.ok());
+   BOOST_TEST(has_diagnostic(decoded_numeric.diagnostics.entries, "http.bind-port", "config.type"));
+   BOOST_TEST(decoded_numeric.value.bind_port == 8080U);
+
+   auto text = fcl::config::document{};
+   text.set("http.bind-port", std::string{"70000"});
+   const auto decoded_text = fcl::config::decode<http_config>(text, "http");
+
+   BOOST_TEST(!decoded_text.ok());
+   BOOST_TEST(has_diagnostic(decoded_text.diagnostics.entries, "http.bind-port", "config.type"));
+   BOOST_TEST(decoded_text.value.bind_port == 8080U);
+
+   auto trailing = fcl::config::document{};
+   trailing.set("http.bind-port", std::string{"123abc"});
+   const auto decoded_trailing = fcl::config::decode<http_config>(trailing, "http");
+
+   BOOST_TEST(!decoded_trailing.ok());
+   BOOST_TEST(has_diagnostic(decoded_trailing.diagnostics.entries, "http.bind-port", "config.type"));
+   BOOST_TEST(decoded_trailing.value.bind_port == 8080U);
+}
+
 BOOST_AUTO_TEST_CASE(config_document_erase_and_rename_nested_keys) {
    auto doc = fcl::config::document{};
    doc.set("http.bind-port", 8080);

@@ -2,10 +2,12 @@ module;
 
 #include <any>
 #include <algorithm>
+#include <charconv>
 #include <concepts>
 #include <cstdint>
 #include <cctype>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -13,6 +15,7 @@ module;
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
 #include <typeindex>
 #include <variant>
@@ -28,6 +31,9 @@ export namespace fcl::schema {
 
 template <typename T> struct rules;
 template <typename T> struct member_pointer_traits;
+
+template <typename Target> [[nodiscard]] Target checked_integral_from_signed(std::int64_t value);
+template <typename Target> [[nodiscard]] Target checked_integral_from_unsigned(std::uint64_t value);
 
 template <typename Object, typename Member> struct member_pointer_traits<Member Object::*> {
    using object_type = Object;
@@ -74,38 +80,38 @@ template <typename T> [[nodiscard]] T cast_any_to(const std::any& value) {
       }
    } else if constexpr (std::integral<clean_type> && !std::same_as<clean_type, bool>) {
       if (value.type() == typeid(int)) {
-         return static_cast<clean_type>(std::any_cast<int>(value));
+         return checked_integral_from_signed<clean_type>(std::any_cast<int>(value));
       }
       if (value.type() == typeid(unsigned int)) {
-         return static_cast<clean_type>(std::any_cast<unsigned int>(value));
+         return checked_integral_from_unsigned<clean_type>(std::any_cast<unsigned int>(value));
       }
       if (value.type() == typeid(long)) {
-         return static_cast<clean_type>(std::any_cast<long>(value));
+         return checked_integral_from_signed<clean_type>(std::any_cast<long>(value));
       }
       if (value.type() == typeid(unsigned long)) {
-         return static_cast<clean_type>(std::any_cast<unsigned long>(value));
+         return checked_integral_from_unsigned<clean_type>(std::any_cast<unsigned long>(value));
       }
       if (value.type() == typeid(long long)) {
-         return static_cast<clean_type>(std::any_cast<long long>(value));
+         return checked_integral_from_signed<clean_type>(std::any_cast<long long>(value));
       }
       if (value.type() == typeid(unsigned long long)) {
-         return static_cast<clean_type>(std::any_cast<unsigned long long>(value));
+         return checked_integral_from_unsigned<clean_type>(std::any_cast<unsigned long long>(value));
       }
       if (value.type() == typeid(std::int64_t)) {
-         return static_cast<clean_type>(std::any_cast<std::int64_t>(value));
+         return checked_integral_from_signed<clean_type>(std::any_cast<std::int64_t>(value));
       }
       if (value.type() == typeid(std::uint64_t)) {
-         return static_cast<clean_type>(std::any_cast<std::uint64_t>(value));
+         return checked_integral_from_unsigned<clean_type>(std::any_cast<std::uint64_t>(value));
       }
    } else if constexpr (std::floating_point<clean_type>) {
       if (value.type() == typeid(float)) {
-         return static_cast<clean_type>(std::any_cast<float>(value));
+         return static_cast<T>(std::any_cast<float>(value));
       }
       if (value.type() == typeid(double)) {
-         return static_cast<clean_type>(std::any_cast<double>(value));
+         return static_cast<T>(std::any_cast<double>(value));
       }
       if (value.type() == typeid(long double)) {
-         return static_cast<clean_type>(std::any_cast<long double>(value));
+         return static_cast<T>(std::any_cast<long double>(value));
       }
    }
    return std::any_cast<clean_type>(value);
@@ -157,6 +163,52 @@ template <typename T> [[nodiscard]] T cast_any_to(const std::any& value) {
       return true;
    }
    return false;
+}
+
+template <typename Target> [[nodiscard]] Target checked_integral_from_signed(std::int64_t value) {
+   if constexpr (std::signed_integral<Target>) {
+      if (value < static_cast<std::int64_t>((std::numeric_limits<Target>::min)()) ||
+          value > static_cast<std::int64_t>((std::numeric_limits<Target>::max)())) {
+         throw std::invalid_argument{"config integer is outside target type range"};
+      }
+   } else {
+      if (value < 0 ||
+          static_cast<std::uint64_t>(value) > static_cast<std::uint64_t>((std::numeric_limits<Target>::max)())) {
+         throw std::invalid_argument{"config integer is outside target type range"};
+      }
+   }
+   return static_cast<Target>(value);
+}
+
+template <typename Target> [[nodiscard]] Target checked_integral_from_unsigned(std::uint64_t value) {
+   if constexpr (std::signed_integral<Target>) {
+      if (value > static_cast<std::uint64_t>((std::numeric_limits<Target>::max)())) {
+         throw std::invalid_argument{"config integer is outside target type range"};
+      }
+   } else {
+      if (value > static_cast<std::uint64_t>((std::numeric_limits<Target>::max)())) {
+         throw std::invalid_argument{"config integer is outside target type range"};
+      }
+   }
+   return static_cast<Target>(value);
+}
+
+template <typename Value>
+[[nodiscard]] Value parse_integral_text(std::string_view text) {
+   if (text.empty()) {
+      throw std::invalid_argument{"config integer has invalid syntax"};
+   }
+   auto value = Value{};
+   const auto* first = text.data();
+   const auto* last = text.data() + text.size();
+   const auto [next, error] = std::from_chars(first, last, value);
+   if (error == std::errc::result_out_of_range) {
+      throw std::invalid_argument{"config integer is outside target type range"};
+   }
+   if (error != std::errc{} || next != last) {
+      throw std::invalid_argument{"config integer has invalid syntax"};
+   }
+   return value;
 }
 
 template <typename T>
@@ -584,36 +636,36 @@ template <typename T>
       }
    } else if constexpr (std::signed_integral<clean_type> && !std::same_as<clean_type, bool>) {
       if (const auto* value = std::get_if<std::int64_t>(&input.storage)) {
-         return static_cast<clean_type>(*value);
+         return checked_integral_from_signed<clean_type>(*value);
       }
       if (const auto* value = std::get_if<std::uint64_t>(&input.storage)) {
-         return static_cast<clean_type>(*value);
+         return checked_integral_from_unsigned<clean_type>(*value);
       }
       if (const auto* text = std::get_if<std::string>(&input.storage)) {
-         return static_cast<clean_type>(std::stoll(*text));
+         return checked_integral_from_signed<clean_type>(parse_integral_text<std::int64_t>(*text));
       }
    } else if constexpr (std::unsigned_integral<clean_type> && !std::same_as<clean_type, bool>) {
       if (const auto* value = std::get_if<std::uint64_t>(&input.storage)) {
-         return static_cast<clean_type>(*value);
+         return checked_integral_from_unsigned<clean_type>(*value);
       }
       if (const auto* value = std::get_if<std::int64_t>(&input.storage); value && *value >= 0) {
-         return static_cast<clean_type>(*value);
+         return checked_integral_from_signed<clean_type>(*value);
       }
       if (const auto* text = std::get_if<std::string>(&input.storage)) {
-         return static_cast<clean_type>(std::stoull(*text));
+         return checked_integral_from_unsigned<clean_type>(parse_integral_text<std::uint64_t>(*text));
       }
    } else if constexpr (std::floating_point<clean_type>) {
       if (const auto* value = std::get_if<double>(&input.storage)) {
-         return static_cast<clean_type>(*value);
+         return static_cast<T>(*value);
       }
       if (const auto* value = std::get_if<std::int64_t>(&input.storage)) {
-         return static_cast<clean_type>(*value);
+         return static_cast<T>(*value);
       }
       if (const auto* value = std::get_if<std::uint64_t>(&input.storage)) {
-         return static_cast<clean_type>(*value);
+         return static_cast<T>(*value);
       }
       if (const auto* text = std::get_if<std::string>(&input.storage)) {
-         return static_cast<clean_type>(std::stod(*text));
+         return static_cast<T>(std::stod(*text));
       }
    } else if constexpr (std::same_as<clean_type, std::string>) {
       if (const auto* value = std::get_if<std::string>(&input.storage)) {

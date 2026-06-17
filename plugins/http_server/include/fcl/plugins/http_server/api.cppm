@@ -3,6 +3,7 @@ module;
 #include <boost/asio/awaitable.hpp>
 #include <fcl/api/macros.hpp>
 
+#include <memory>
 #include <utility>
 
 export module fcl.plugins.http_server.api;
@@ -29,18 +30,28 @@ class api : public fcl::api::contract<api, fcl::api::surface::local> {
    virtual boost::asio::awaitable<void> use(middleware_descriptor descriptor) = 0;
 
    template <typename Interface> boost::asio::awaitable<void> publish(publish_options options = {}) {
-      co_await publish_binding(build_binding<Interface>(registry()), std::move(options));
+      co_await publish(std::make_unique<typed_binding_spec<Interface>>(), std::move(options));
    }
+
+ protected:
+   class binding_spec {
+    public:
+      virtual ~binding_spec() = default;
+      [[nodiscard]] virtual fcl::http::api_binding build(const fcl::api::registry& registry) const = 0;
+   };
 
  private:
-   template <typename Interface> static fcl::http::api_binding build_binding(const fcl::api::registry& registry) {
-      auto plan = fcl::api::binding().serve(registry).build();
-      return fcl::http::api().use(std::move(plan)).bind<Interface>().build();
-   }
+   template <typename Interface> class typed_binding_spec final : public binding_spec {
+    public:
+      [[nodiscard]] fcl::http::api_binding build(const fcl::api::registry& registry) const override {
+         auto plan = fcl::api::binding().serve(registry).build();
+         return fcl::http::api().use(std::move(plan)).bind<Interface>().build();
+      }
+   };
 
    [[nodiscard]] virtual const fcl::api::registry& registry() const = 0;
-   virtual boost::asio::awaitable<void> publish_binding(fcl::http::api_binding binding,
-                                                        publish_options options) = 0;
+   virtual boost::asio::awaitable<void> publish(std::unique_ptr<binding_spec> binding,
+                                                publish_options options) = 0;
 };
 
 } // namespace fcl::plugins::http_server

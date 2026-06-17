@@ -2,6 +2,7 @@ module;
 
 #include <concepts>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -74,6 +75,28 @@ class component_view {
    }
 
  private:
+   template <typename Target, typename Source> [[nodiscard]] static Target checked_integral_cast(Source value) {
+      using limits = std::numeric_limits<Target>;
+      if constexpr (std::signed_integral<Source> && std::signed_integral<Target>) {
+         if (value < static_cast<Source>(limits::min()) || value > static_cast<Source>(limits::max())) {
+            throw std::invalid_argument{"config value has incompatible type"};
+         }
+      } else if constexpr (std::signed_integral<Source> && std::unsigned_integral<Target>) {
+         if (value < 0 || static_cast<std::uint64_t>(value) > limits::max()) {
+            throw std::invalid_argument{"config value has incompatible type"};
+         }
+      } else if constexpr (std::unsigned_integral<Source> && std::signed_integral<Target>) {
+         if (value > static_cast<std::uint64_t>(limits::max())) {
+            throw std::invalid_argument{"config value has incompatible type"};
+         }
+      } else {
+         if (value > limits::max()) {
+            throw std::invalid_argument{"config value has incompatible type"};
+         }
+      }
+      return static_cast<Target>(value);
+   }
+
    template <typename T> [[nodiscard]] static T convert_value(const value& input) {
       using clean_type = std::remove_cvref_t<T>;
       if constexpr (std::same_as<clean_type, bool>) {
@@ -82,17 +105,17 @@ class component_view {
          }
       } else if constexpr (std::signed_integral<clean_type>) {
          if (const auto* signed_value = std::get_if<std::int64_t>(&input.storage)) {
-            return static_cast<clean_type>(*signed_value);
+            return checked_integral_cast<clean_type>(*signed_value);
          }
          if (const auto* unsigned_value = std::get_if<std::uint64_t>(&input.storage)) {
-            return static_cast<clean_type>(*unsigned_value);
+            return checked_integral_cast<clean_type>(*unsigned_value);
          }
       } else if constexpr (std::unsigned_integral<clean_type>) {
          if (const auto* unsigned_value = std::get_if<std::uint64_t>(&input.storage)) {
-            return static_cast<clean_type>(*unsigned_value);
+            return checked_integral_cast<clean_type>(*unsigned_value);
          }
          if (const auto* signed_value = std::get_if<std::int64_t>(&input.storage)) {
-            return static_cast<clean_type>(*signed_value);
+            return checked_integral_cast<clean_type>(*signed_value);
          }
       } else if constexpr (std::floating_point<clean_type>) {
          if (const auto* double_value = std::get_if<double>(&input.storage)) {

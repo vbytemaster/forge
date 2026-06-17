@@ -31,9 +31,9 @@ const fcl::api::registry& plugin::publisher_api::registry() const {
    return *impl_->apis;
 }
 
-boost::asio::awaitable<void> plugin::publisher_api::publish_binding(fcl::http::api_binding binding,
-                                                                    publish_options options) {
-   impl_->add(pending_api_binding{.binding = std::move(binding), .options = std::move(options)});
+boost::asio::awaitable<void> plugin::publisher_api::publish(std::unique_ptr<binding_spec> binding,
+                                                            publish_options options) {
+   impl_->add(pending_api_binding{.binding = binding->build(registry()), .options = std::move(options)});
    co_return;
 }
 

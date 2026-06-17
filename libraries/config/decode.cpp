@@ -3,9 +3,13 @@ module;
 #include <algorithm>
 #include <any>
 #include <cctype>
+#include <charconv>
 #include <cstdint>
+#include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -66,6 +70,28 @@ schema::input_value to_schema_value(const value& input) {
    return schema::input_value{};
 }
 
+std::optional<std::int64_t> parse_signed_integer(std::string_view input) {
+   auto parsed = std::int64_t{};
+   const auto* first = input.data();
+   const auto* last = input.data() + input.size();
+   const auto [ptr, ec] = std::from_chars(first, last, parsed);
+   if (ec != std::errc{} || ptr != last) {
+      return std::nullopt;
+   }
+   return parsed;
+}
+
+std::optional<std::uint64_t> parse_unsigned_integer(std::string_view input) {
+   auto parsed = std::uint64_t{};
+   const auto* first = input.data();
+   const auto* last = input.data() + input.size();
+   const auto [ptr, ec] = std::from_chars(first, last, parsed);
+   if (ec != std::errc{} || ptr != last) {
+      return std::nullopt;
+   }
+   return parsed;
+}
+
 std::any value_to_any(const value& input, schema::value_kind kind) {
    switch (kind) {
    case schema::value_kind::boolean:
@@ -84,10 +110,15 @@ std::any value_to_any(const value& input, schema::value_kind kind) {
          return *signed_value;
       }
       if (const auto* unsigned_value = std::get_if<std::uint64_t>(&input.storage)) {
+         if (*unsigned_value > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+            break;
+         }
          return static_cast<std::int64_t>(*unsigned_value);
       }
       if (const auto* string_value = std::get_if<std::string>(&input.storage)) {
-         return static_cast<std::int64_t>(std::stoll(*string_value));
+         if (const auto parsed = parse_signed_integer(*string_value)) {
+            return *parsed;
+         }
       }
       break;
    case schema::value_kind::unsigned_integer:
@@ -101,7 +132,9 @@ std::any value_to_any(const value& input, schema::value_kind kind) {
          return static_cast<std::uint64_t>(*signed_value);
       }
       if (const auto* string_value = std::get_if<std::string>(&input.storage)) {
-         return static_cast<std::uint64_t>(std::stoull(*string_value));
+         if (const auto parsed = parse_unsigned_integer(*string_value)) {
+            return *parsed;
+         }
       }
       break;
    case schema::value_kind::floating:

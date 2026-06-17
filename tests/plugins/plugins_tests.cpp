@@ -13,8 +13,11 @@
 #include <fcl/http/macros.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -71,6 +74,8 @@ import fcl.crypto.sha256;
 import fcl.env;
 import fcl.http.api;
 import fcl.http.base_url;
+import fcl.http.binding;
+import fcl.http.body;
 import fcl.http.client;
 import fcl.http.connection;
 import fcl.http.exceptions;
@@ -195,9 +200,14 @@ struct http_chunk {
    std::string bytes;
 };
 
+struct http_stream_read_request {
+   std::string ref;
+};
+
 BOOST_DESCRIBE_STRUCT(http_read_request, (), (ref, offset, limit))
 BOOST_DESCRIBE_STRUCT(http_write_request, (), (ref, bytes))
 BOOST_DESCRIBE_STRUCT(http_chunk, (), (bytes))
+BOOST_DESCRIBE_STRUCT(http_stream_read_request, (), (ref))
 
 namespace plugin_test_contract {
 
@@ -230,6 +240,13 @@ class http_cache_api
    virtual boost::asio::awaitable<http_chunk> write(http_write_request request) = 0;
 };
 
+class http_stream_api
+    : public fcl::api::contract<http_stream_api, fcl::api::surface::local | fcl::api::surface::remote> {
+ public:
+   virtual ~http_stream_api() = default;
+   virtual boost::asio::awaitable<fcl::http::streaming_response> download(http_stream_read_request request) = 0;
+};
+
 class scripted_resolver_api
     : public fcl::api::contract<scripted_resolver_api, fcl::api::surface::local | fcl::api::surface::remote> {
  public:
@@ -246,12 +263,16 @@ FCL_API(::plugin_test_contract::peer_context_test_api, FCL_API_CONTRACT("peer-co
 FCL_API(::plugin_test_contract::receipt_test_api, FCL_API_CONTRACT("receipt.test", 1, 0), FCL_API_METHOD(apply))
 FCL_API(::plugin_test_contract::http_cache_api, FCL_API_CONTRACT("cache", 1, 0), FCL_API_METHOD(read),
         FCL_API_METHOD(write))
+FCL_API(::plugin_test_contract::http_stream_api, FCL_API_CONTRACT("stream-cache", 1, 0),
+        FCL_API_METHOD_TYPED(download, ::http_stream_read_request, ::fcl::http::streaming_response))
 FCL_API(::plugin_test_contract::scripted_resolver_api,
         FCL_API_CONTRACT("fcl.plugins.p2p_api_resolver.protocol", 1, 0), FCL_API_METHOD(query))
 
 FCL_HTTP_API(::plugin_test_contract::http_cache_api,
              FCL_HTTP_GET(read, "/cache/chunks/:ref?offset={offset}&limit={limit}"),
              FCL_HTTP_PUT(write, "/cache/chunks/:ref", created))
+FCL_HTTP_API(::plugin_test_contract::http_stream_api,
+             FCL_HTTP_GET(download, "/stream/:ref", FCL_HTTP_RESPONSE_STREAM))
 
 namespace {
 
@@ -260,6 +281,7 @@ using plugin_test_contract::peer_context_test_api;
 using plugin_test_contract::receipt_test_api;
 using plugin_test_contract::scripted_resolver_api;
 using plugin_test_contract::http_cache_api;
+using plugin_test_contract::http_stream_api;
 
 namespace signature_provider = fcl::plugins::signature_provider;
 namespace http_server = fcl::plugins::http_server;
@@ -397,6 +419,39 @@ struct http_publish_state {
    std::string base_path;
    std::vector<std::string> middleware_events;
    bool short_circuit = false;
+   std::atomic<unsigned> stream_calls = 0;
+   std::atomic<unsigned> stream_chunks = 0;
+};
+
+class http_stream_api_impl final : public http_stream_api {
+ public:
+   explicit http_stream_api_impl(std::shared_ptr<http_publish_state> state) : state_{std::move(state)} {}
+
+   boost::asio::awaitable<fcl::http::streaming_response> download(http_stream_read_request request) override {
+      state_->stream_calls.fetch_add(1);
+      auto chunks = std::make_shared<std::vector<std::string>>(
+         std::vector<std::string>{"stream:", request.ref, ":payload"});
+      auto index = std::make_shared<std::size_t>(0);
+      auto state = state_;
+      co_return fcl::http::streaming_response::from_source(
+         fcl::http::streaming_response_options{
+            .content_type = "text/plain",
+            .body =
+               [chunks, index, state]() mutable -> boost::asio::awaitable<std::optional<fcl::http::body_chunk>> {
+                  if (*index == chunks->size()) {
+                     co_return std::nullopt;
+                  }
+                  const auto& text = (*chunks)[(*index)++];
+                  auto bytes = std::vector<std::byte>(text.size());
+                  std::memcpy(bytes.data(), text.data(), text.size());
+                  state->stream_chunks.fetch_add(1);
+                  co_return fcl::http::body_chunk{.bytes = std::move(bytes)};
+               },
+         });
+   }
+
+ private:
+   std::shared_ptr<http_publish_state> state_;
 };
 
 class http_cache_publisher_plugin final : public fcl::app::plugin {
@@ -414,6 +469,35 @@ class http_cache_publisher_plugin final : public fcl::app::plugin {
    boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
       auto http = context.apis().get<http_server::api>(http_server::api::ref());
       co_await http->publish<http_cache_api>(http_server::publish_options{.base_path = state_->base_path});
+   }
+
+   boost::asio::awaitable<void> startup() override {
+      co_return;
+   }
+
+   boost::asio::awaitable<void> shutdown() override {
+      co_return;
+   }
+
+ private:
+   std::shared_ptr<http_publish_state> state_;
+};
+
+class http_stream_publisher_plugin final : public fcl::app::plugin {
+ public:
+   explicit http_stream_publisher_plugin(std::shared_ptr<http_publish_state> state) : state_{std::move(state)} {}
+
+   [[nodiscard]] fcl::app::plugin_id id() const override {
+      return fcl::app::plugin_id{.value = "http-stream-publisher"};
+   }
+
+   [[nodiscard]] std::string version() const override {
+      return "1";
+   }
+
+   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+      auto http = context.apis().get<http_server::api>(http_server::api::ref());
+      co_await http->publish<http_stream_api>(http_server::publish_options{.base_path = state_->base_path});
    }
 
    boost::asio::awaitable<void> startup() override {
@@ -1382,6 +1466,40 @@ class http_server_application final : public fcl::app::application_shell {
    bool middleware_ = false;
 };
 
+class http_stream_server_application final : public fcl::app::application_shell {
+ public:
+   explicit http_stream_server_application(std::shared_ptr<http_publish_state> state)
+       : state_{std::move(state)} {}
+
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(http_server::descriptor());
+      registry.register_plugin(fcl::app::plugin_descriptor{
+         .id = fcl::app::plugin_id{.value = "http-middleware"},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.http_server"}},
+         .factory = [state = state_] {
+            return std::make_unique<http_middleware_plugin>(state);
+         },
+      });
+      registry.register_plugin(fcl::app::plugin_descriptor{
+         .id = fcl::app::plugin_id{.value = "http-stream-publisher"},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.http_server"}},
+         .factory = [state = state_] {
+            return std::make_unique<http_stream_publisher_plugin>(state);
+         },
+      });
+   }
+
+   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+      context.apis().install<http_stream_api>(http_stream_api::describe(),
+                                              std::make_shared<http_stream_api_impl>(state_));
+      co_return;
+   }
+
+ private:
+   std::shared_ptr<http_publish_state> state_;
+};
+
 class duplicate_http_server_application final : public fcl::app::application_shell {
  protected:
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
@@ -1641,6 +1759,40 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_applies_middleware_order_and_short_circu
    BOOST_TEST(state->middleware_events ==
                  (std::vector<std::string>{"security", "security", "before"}),
               boost::test_tools::per_element());
+
+   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(http_server_plugin_preserves_stream_framing_through_middleware) {
+   const auto port = reserve_loopback_port();
+   auto state = std::make_shared<http_publish_state>();
+   state->base_path = "/api";
+   auto app = http_stream_server_application{state};
+   auto config = fcl::config::document{};
+   config.set("http-server.port", std::uint64_t{port});
+   config.set("http-server.api-base-path", std::string{"/api"});
+
+   app.configure(config);
+   fcl::asio::blocking::run(app.runtime(), app.startup());
+
+   auto client = fcl::http::client{app.runtime(), fcl::http::parse_base_url("http://127.0.0.1:" +
+                                                                            std::to_string(port))};
+   auto request = fcl::http::request{};
+   request.method(fcl::http::method::get);
+   request.target("/api/stream/alpha");
+   request.version(11);
+   request.set(fcl::http::field::authorization, "Bearer test");
+
+   const auto response = fcl::asio::blocking::run(app.runtime(), client.async_request(std::move(request)));
+
+   BOOST_TEST(static_cast<unsigned>(response.result()) == static_cast<unsigned>(fcl::http::status::ok));
+   BOOST_TEST(response.body() == "stream:alpha:payload");
+   BOOST_TEST(std::string{response[fcl::http::field::server]} == "fcl-test");
+   const auto has_content_length = response.find(fcl::http::field::content_length) != response.end();
+   BOOST_TEST(!has_content_length);
+   BOOST_TEST(std::string{response[fcl::http::field::transfer_encoding]} == "chunked");
+   BOOST_TEST(state->stream_calls.load() == 1U);
+   BOOST_TEST(state->stream_chunks.load() == 3U);
 
    fcl::asio::blocking::run(app.runtime(), app.shutdown());
 }

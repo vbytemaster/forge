@@ -1,7 +1,9 @@
 #include <boost/describe.hpp>
 #include <boost/test/unit_test.hpp>
 
+#include <any>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -159,6 +161,34 @@ BOOST_AUTO_TEST_CASE(config_decode_rejects_integer_overflow_before_range_validat
    BOOST_TEST(decoded_trailing.value.bind_port == 8080U);
 }
 
+BOOST_AUTO_TEST_CASE(config_value_to_any_rejects_integer_overflow_and_trailing_junk) {
+   BOOST_CHECK_THROW(
+      static_cast<void>(fcl::config::value_to_any(
+         fcl::config::value{std::numeric_limits<std::uint64_t>::max()},
+         fcl::schema::value_kind::signed_integer)),
+      std::invalid_argument);
+
+   BOOST_CHECK_THROW(
+      static_cast<void>(fcl::config::value_to_any(fcl::config::value{std::string{"123abc"}},
+                                                 fcl::schema::value_kind::signed_integer)),
+      std::invalid_argument);
+
+   BOOST_CHECK_THROW(
+      static_cast<void>(fcl::config::value_to_any(fcl::config::value{std::int64_t{-1}},
+                                                 fcl::schema::value_kind::unsigned_integer)),
+      std::invalid_argument);
+
+   BOOST_CHECK_THROW(
+      static_cast<void>(fcl::config::value_to_any(fcl::config::value{std::string{"123abc"}},
+                                                 fcl::schema::value_kind::unsigned_integer)),
+      std::invalid_argument);
+
+   const auto valid = fcl::config::value_to_any(fcl::config::value{std::string{"123"}},
+                                                fcl::schema::value_kind::unsigned_integer);
+   BOOST_REQUIRE(valid.has_value());
+   BOOST_TEST(std::any_cast<std::uint64_t>(valid) == 123U);
+}
+
 BOOST_AUTO_TEST_CASE(config_document_erase_and_rename_nested_keys) {
    auto doc = fcl::config::document{};
    doc.set("http.bind-port", 8080);
@@ -222,6 +252,17 @@ BOOST_AUTO_TEST_CASE(config_registry_supports_empty_component_sections) {
    BOOST_TEST(decoded.value.log_level == "debug");
    BOOST_REQUIRE_EQUAL(registry.components().front().fields.size(), 1U);
    BOOST_TEST(registry.components().front().fields.front().has_default);
+}
+
+BOOST_AUTO_TEST_CASE(config_component_view_rejects_integer_overflow) {
+   auto doc = fcl::config::document{};
+   doc.set("http.small", std::uint64_t{70000});
+   doc.set("http.negative", std::int64_t{-1});
+
+   const auto view = fcl::config::component_view{doc, "http"};
+   BOOST_CHECK_THROW(static_cast<void>(view.get_or<std::uint16_t>("small", 0)), std::invalid_argument);
+   BOOST_CHECK_THROW(static_cast<void>(view.get_or<std::uint16_t>("negative", 0)), std::invalid_argument);
+   BOOST_TEST(view.get_or<std::uint16_t>("missing", 42) == 42U);
 }
 
 BOOST_AUTO_TEST_CASE(config_decodes_nested_object_lists_with_item_defaults_and_paths) {

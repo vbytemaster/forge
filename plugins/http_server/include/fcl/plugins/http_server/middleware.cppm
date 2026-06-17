@@ -90,7 +90,8 @@ class middleware_response {
    }
 
    [[nodiscard]] const std::string& content_type() const noexcept {
-      return content_type_;
+      static const auto empty = std::string{};
+      return content_type_.has_value() ? *content_type_ : empty;
    }
 
    void set_header(std::string name, std::string value) {
@@ -126,7 +127,7 @@ class middleware_response {
    fcl::http::status status_ = fcl::http::status::ok;
    std::vector<header_entry> headers_;
    std::string body_;
-   std::string content_type_ = "text/plain";
+   std::optional<std::string> content_type_;
    std::string stream_token_;
 
    friend struct detail::middleware_bridge_access;
@@ -149,6 +150,11 @@ struct middleware_bridge_access {
 
    static void set_content_type(middleware_response& value, std::string content_type) {
       value.content_type_ = std::move(content_type);
+   }
+
+   [[nodiscard]] static const std::optional<std::string>& content_type(
+      const middleware_response& value) noexcept {
+      return value.content_type_;
    }
 
    static std::vector<header_entry>& headers(middleware_response& value) noexcept {

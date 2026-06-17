@@ -2446,6 +2446,26 @@ BOOST_AUTO_TEST_CASE(server_accept_loop_survives_runtime_worker_stop_and_server_
    BOOST_REQUIRE(drained_future.wait_for(std::chrono::seconds{2}) == std::future_status::ready);
 }
 
+BOOST_AUTO_TEST_CASE(server_stop_after_runtime_stop_returns_without_waiting) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto server = std::make_unique<fcl::http::server>(
+      runtime,
+      server_config{},
+      [](route_context& context) -> boost::asio::awaitable<response> {
+         co_return make_text_response(context.request, status::ok, "unused");
+      });
+   fcl::asio::blocking::run(runtime, server->async_start());
+
+   runtime.stop();
+
+   const auto started = std::chrono::steady_clock::now();
+   server->stop();
+   const auto elapsed = std::chrono::steady_clock::now() - started;
+
+   BOOST_TEST(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() < 500);
+   server.reset();
+}
+
 BOOST_AUTO_TEST_CASE(server_start_waits_for_executor_work_before_returning) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
    auto mutex = std::mutex{};

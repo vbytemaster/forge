@@ -77,10 +77,12 @@ constexpr std::string_view stream_token_header = "X-FCL-Stream-Token";
 }
 
 [[nodiscard]] fcl::http::response make_http_response(const fcl::http::request& source, middleware_response value) {
-   auto content_type = value.content_type().empty() ? std::string{"text/plain"} : std::string{value.content_type()};
-   auto result = fcl::http::make_text_response(source, value.status(),
-                                               detail::middleware_bridge_access::take_body(value),
-                                               std::move(content_type));
+   auto result = fcl::http::response{value.status(), source.version()};
+   if (const auto& content_type = detail::middleware_bridge_access::content_type(value);
+       content_type.has_value() && !content_type->empty()) {
+      result.set(fcl::http::field::content_type, *content_type);
+   }
+   result.body() = detail::middleware_bridge_access::take_body(value);
    for (const auto& header : value.headers()) {
       if (header_name_equal(header.name, "Content-Length") || header_name_equal(header.name, "Transfer-Encoding")) {
          continue;

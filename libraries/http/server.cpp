@@ -147,6 +147,10 @@ class server_session : public std::enable_shared_from_this<server_session> {
       asio::dispatch(stream_.get_executor(), [self] { self->cancel_on_executor(); });
    }
 
+   void cancel_after_runtime_stopped() {
+      cancel_on_executor();
+   }
+
    awaitable<void> async_cancel() {
       auto self = shared_from_this();
       static_cast<void>(self);
@@ -464,6 +468,13 @@ struct server::impl : std::enable_shared_from_this<server::impl> {
       sessions.clear();
    }
 
+   void cancel_sessions_after_runtime_stopped() {
+      for (auto& session : active_sessions()) {
+         session->cancel_after_runtime_stopped();
+      }
+      sessions.clear();
+   }
+
    awaitable<void> async_cancel_sessions() {
       for (auto& session : active_sessions()) {
          co_await session->async_cancel();
@@ -510,6 +521,15 @@ struct server::impl : std::enable_shared_from_this<server::impl> {
       acceptor.cancel(ignored);
       acceptor.close(ignored);
       cancel_sessions();
+      started = false;
+      stopped.store(true, std::memory_order_release);
+   }
+
+   void stop_after_runtime_stopped() {
+      auto ignored = boost::system::error_code{};
+      acceptor.cancel(ignored);
+      acceptor.close(ignored);
+      cancel_sessions_after_runtime_stopped();
       started = false;
       stopped.store(true, std::memory_order_release);
    }
@@ -579,6 +599,10 @@ void server::stop() {
    }
 
    auto impl = impl_;
+   if (impl->runtime.context().stopped()) {
+      impl->stop_after_runtime_stopped();
+      return;
+   }
    if (impl->acceptor_executor.running_in_this_thread()) {
       impl->stop_on_executor();
       return;

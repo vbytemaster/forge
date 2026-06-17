@@ -676,6 +676,7 @@ class api_builder {
          return make_text_response(request_value, value.status_code, std::move(body), value.content_type);
       } else if constexpr (detail::is_empty_response_v<Response>) {
          auto output = response{value.status_code, request_value.version()};
+         output.prepare_payload();
          output.keep_alive(request_value.keep_alive());
          return output;
       } else {

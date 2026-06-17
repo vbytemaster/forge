@@ -571,6 +571,18 @@ void server::start() {
 
    auto state = std::make_shared<start_state>();
    auto impl = impl_;
+   if (impl->runtime.context().stopped()) {
+      FCL_THROW_EXCEPTION(exceptions::internal, "HTTP server cannot start after runtime stop");
+   }
+   if (impl->acceptor_executor.running_in_this_thread()) {
+      impl->start_on_executor();
+      return;
+   }
+   if (impl->runtime.context().get_executor().running_in_this_thread()) {
+      FCL_THROW_EXCEPTION(exceptions::internal,
+                          "HTTP server synchronous start cannot run on a runtime worker; use async_start()");
+   }
+
    asio::dispatch(impl->acceptor_executor, [impl, state] {
       auto error = std::exception_ptr{};
       try {

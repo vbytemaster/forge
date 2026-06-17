@@ -264,6 +264,7 @@ class control_api : public fcl::api::contract<control_api> {
    virtual ~control_api() = default;
 
    virtual boost::asio::awaitable<fcl::http::bytes_response> bytes(control_request request) = 0;
+   virtual boost::asio::awaitable<fcl::http::empty_response> accepted(control_request request) = 0;
    virtual boost::asio::awaitable<fcl::http::empty_response> head(control_request request) = 0;
 };
 
@@ -323,6 +324,7 @@ FCL_API(::fcl::http::test_api::form_api, FCL_API_CONTRACT("form", 1, 0),
 
 FCL_API(::fcl::http::test_api::control_api, FCL_API_CONTRACT("control", 1, 0),
         FCL_API_METHOD_TYPED(bytes, ::fcl::http::test_api::control_request, ::fcl::http::bytes_response),
+        FCL_API_METHOD_TYPED(accepted, ::fcl::http::test_api::control_request, ::fcl::http::empty_response),
         FCL_API_METHOD_TYPED(head, ::fcl::http::test_api::control_request, ::fcl::http::empty_response))
 
 FCL_API(::fcl::http::test_api::alias_api, FCL_API_CONTRACT("alias", 1, 0),
@@ -385,6 +387,7 @@ FCL_HTTP_API(::fcl::http::test_api::form_api,
 
 FCL_HTTP_API(::fcl::http::test_api::control_api,
              FCL_HTTP_GET(bytes, "/controls/:id/bytes"),
+             FCL_HTTP_GET(accepted, "/controls/:id/accepted"),
              FCL_HTTP_HEAD(head, "/controls/:id"))
 
 FCL_HTTP_API(::fcl::http::test_api::alias_api,
@@ -698,6 +701,10 @@ class control_api_impl final : public control_api {
          .bytes = std::move(bytes),
          .content_type = "application/control",
       };
+   }
+
+   boost::asio::awaitable<fcl::http::empty_response> accepted(control_request) override {
+      co_return fcl::http::empty_response{.status_code = status::accepted};
    }
 
    boost::asio::awaitable<fcl::http::empty_response> head(control_request) override {
@@ -1521,6 +1528,58 @@ BOOST_AUTO_TEST_CASE(typed_http_client_supports_native_bytes_and_empty_responses
 
    auto head = fcl::asio::blocking::run(runtime, control->head(control_request{.id = "abc"}));
    BOOST_TEST(head.status_code == status::no_content);
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_empty_response_frames_keep_alive_body_capable_status) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<control_api>(control_api::describe(), std::make_shared<control_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<control_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(std::chrono::seconds{2});
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
+
+   asio::write(stream.socket(), asio::buffer(std::string{
+      "GET /controls/abc/accepted HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Connection: keep-alive\r\n"
+      "\r\n"}));
+
+   auto buffer = beast::flat_buffer{};
+   auto first_parser = boost::beast::http::response_parser<string_body>{};
+   first_parser.skip(true);
+   auto read_error = boost::system::error_code{};
+   stream.expires_after(std::chrono::milliseconds{500});
+   boost::beast::http::read_header(stream, buffer, first_parser, read_error);
+
+   BOOST_REQUIRE_MESSAGE(!read_error, read_error.message());
+   const auto& first = first_parser.get();
+   BOOST_TEST(first.result_int() == static_cast<unsigned>(status::accepted));
+   BOOST_TEST(first.keep_alive());
+   BOOST_TEST(first[field::content_length] == "0");
+   BOOST_TEST(first[field::content_type].empty());
+
+   asio::write(stream.socket(), asio::buffer(std::string{
+      "GET /controls/abc/bytes HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Connection: close\r\n"
+      "\r\n"}));
+
+   auto second = response{};
+   stream.expires_after(std::chrono::seconds{2});
+   boost::beast::http::read(stream, buffer, second);
+   BOOST_TEST(second.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(second.body() == "bytes:abc");
 
    server.stop();
 }
@@ -2518,6 +2577,39 @@ BOOST_AUTO_TEST_CASE(server_start_waits_for_executor_work_before_returning) {
    BOOST_TEST(response.body() == "started");
 
    server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(server_start_called_from_runtime_worker_fails_without_deadlock) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto server = std::make_shared<fcl::http::server>(
+      runtime,
+      server_config{},
+      [](route_context& context) -> boost::asio::awaitable<response> {
+         co_return make_text_response(context.request, status::ok, "unused");
+      });
+
+   auto result = std::make_shared<std::promise<std::exception_ptr>>();
+   auto future = result->get_future();
+   asio::post(runtime.context(), [server, result] {
+      try {
+         server->start();
+         result->set_value(nullptr);
+      } catch (...) {
+         result->set_value(std::current_exception());
+      }
+   });
+
+   BOOST_REQUIRE(future.wait_for(std::chrono::seconds{2}) == std::future_status::ready);
+   auto error = future.get();
+   BOOST_REQUIRE(error != nullptr);
+
+   try {
+      std::rethrow_exception(error);
+   } catch (const fcl::http::exceptions::internal& value) {
+      BOOST_TEST(std::string{value.what()}.find("async_start") != std::string::npos);
+   } catch (...) {
+      BOOST_FAIL("server::start() threw an unexpected exception type");
+   }
 }
 
 BOOST_AUTO_TEST_CASE(http_stream_route_reads_large_request_body_in_chunks) {

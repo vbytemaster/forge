@@ -5,6 +5,7 @@ module;
 #include <memory>
 #include <mutex>
 #include <string>
+#include <typeindex>
 #include <utility>
 #include <vector>
 

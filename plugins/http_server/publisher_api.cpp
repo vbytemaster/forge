@@ -5,6 +5,7 @@ module;
 
 #include <memory>
 #include <mutex>
+#include <typeindex>
 #include <utility>
 #include <vector>
 
@@ -33,9 +34,13 @@ const fcl::api::registry& plugin::publisher_api::registry() const {
    return *impl_->apis;
 }
 
-boost::asio::awaitable<void> plugin::publisher_api::publish_binding(fcl::http::api_binding binding,
-                                                                    publish_options options) {
-   impl_->add(pending_api_binding{.binding = std::move(binding), .options = std::move(options)});
+boost::asio::awaitable<void> plugin::publisher_api::publish_typed(
+   std::type_index interface_type,
+   publish_options options,
+   std::shared_ptr<void> (*factory)(const fcl::api::registry&)) {
+   static_cast<void>(interface_type);
+   auto binding = std::static_pointer_cast<fcl::http::api_binding>(factory(registry()));
+   impl_->add(pending_api_binding{.binding = std::move(*binding), .options = std::move(options)});
    co_return;
 }
 

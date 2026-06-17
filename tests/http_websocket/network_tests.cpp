@@ -222,6 +222,13 @@ class object_api : public fcl::api::contract<object_api> {
    virtual boost::asio::awaitable<fcl::http::empty_response> delete_object(object_get_request request) = 0;
 };
 
+class file_only_api : public fcl::api::contract<file_only_api> {
+ public:
+   virtual ~file_only_api() = default;
+
+   virtual boost::asio::awaitable<fcl::http::file_response> download(object_get_request request) = 0;
+};
+
 class form_api : public fcl::api::contract<form_api> {
  public:
    virtual ~form_api() = default;
@@ -267,6 +274,9 @@ FCL_API(::fcl::http::test_api::object_api, FCL_API_CONTRACT("object", 1, 0),
         FCL_API_METHOD_TYPED(get_object, ::fcl::http::test_api::object_get_request, ::fcl::http::file_response),
         FCL_API_METHOD_TYPED(head_object, ::fcl::http::test_api::object_get_request, ::fcl::http::file_response),
         FCL_API_METHOD_TYPED(delete_object, ::fcl::http::test_api::object_get_request, ::fcl::http::empty_response))
+
+FCL_API(::fcl::http::test_api::file_only_api, FCL_API_CONTRACT("file-only", 1, 0),
+        FCL_API_METHOD_TYPED(download, ::fcl::http::test_api::object_get_request, ::fcl::http::file_response))
 
 FCL_API(::fcl::http::test_api::form_api, FCL_API_CONTRACT("form", 1, 0),
         FCL_API_METHOD_TYPED(submit, ::fcl::http::test_api::form_submit_request,
@@ -1329,6 +1339,31 @@ BOOST_AUTO_TEST_CASE(http_api_special_types_support_streaming_put_and_file_get) 
    BOOST_TEST(head_response[field::accept_ranges] == "bytes");
 
    server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_api_response_file_option_is_required_for_file_response_routes) {
+   auto apis = fcl::api::registry{};
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api()
+                     .use(fcl::api::binding().serve(apis).build())
+                     .get<&test_api::file_only_api::download, object_get_request, fcl::http::file_response>(
+                        "/objects/:collection/:key")
+                     .build();
+
+   BOOST_CHECK_THROW(router.mount(binding), fcl::http::exceptions::bad_request);
+}
+
+BOOST_AUTO_TEST_CASE(http_api_response_file_option_rejects_non_file_responses) {
+   auto apis = fcl::api::registry{};
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api()
+                     .use(fcl::api::binding().serve(apis).build())
+                     .get<&api_cache::read, api_read_chunk, api_chunk>(
+                        "/cache/chunks/:ref",
+                        fcl::http::api_route_options{.response_file = true})
+                     .build();
+
+   BOOST_CHECK_THROW(router.mount(binding), fcl::http::exceptions::bad_request);
 }
 
 BOOST_AUTO_TEST_CASE(http_api_stream_route_does_not_shadow_regular_route_with_same_path) {

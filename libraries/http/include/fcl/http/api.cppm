@@ -56,6 +56,7 @@ struct api_route_options {
    std::vector<api_field_binding> headers;
    std::vector<api_field_binding> forms;
    std::optional<std::string> body_stream_field;
+   bool response_file = false;
    status success_status = status::ok;
    api_error_profile error_profile = api_error_profile::json;
 };
@@ -121,6 +122,7 @@ class api_builder {
             .headers = value.headers,
             .forms = value.forms,
             .body_stream_field = value.body_stream_field,
+            .response_file = value.response_file,
             .success_status = value.success_status,
          },
          value.method_name));
@@ -624,6 +626,21 @@ class api_builder {
       return stream_response::buffered(std::move(value));
    }
 
+   template <typename Response> static void validate_response_file_option(const api_route_options& options) {
+      constexpr auto response_is_file = std::is_same_v<std::remove_cvref_t<Response>, file_response>;
+      if constexpr (response_is_file) {
+         if (!options.response_file) {
+            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                                "HTTP API file response route requires FCL_HTTP_RESPONSE_FILE");
+         }
+      } else {
+         if (options.response_file) {
+            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                                "FCL_HTTP_RESPONSE_FILE requires fcl::http::file_response");
+         }
+      }
+   }
+
    template <auto Method, typename Request, typename Response>
    [[nodiscard]] mount_action make_step(method verb, std::string path, api_route_options options,
                                         std::string explicit_name) {
@@ -632,6 +649,7 @@ class api_builder {
       auto name = explicit_name.empty() ? method_name<interface_type, Request, Response>() : std::move(explicit_name);
       return [plan = std::move(plan), verb, path = std::move(path), options = std::move(options),
               name = std::move(name)](router& target, std::string_view base_path) {
+         validate_response_file_option<Response>(options);
          auto mounted_path = join_path(base_path, path);
          if constexpr (detail::request_needs_stream_v<Request> || detail::response_needs_stream_v<Response>) {
             auto stream_handler = [plan, options, name](stream_request& request_value)

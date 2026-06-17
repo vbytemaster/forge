@@ -11,6 +11,7 @@ export module fcl.http.connection;
 
 import fcl.asio.runtime;
 import fcl.http.base_url;
+import fcl.http.body;
 import fcl.http.types;
 
 export namespace fcl::http {
@@ -39,6 +40,11 @@ struct connection_metrics {
    std::size_t queue_depth = 0;
 };
 
+struct response_stream {
+   response head;
+   body_reader body;
+};
+
 class connection {
  public:
    connection(fcl::asio::runtime& runtime, base_url endpoint);
@@ -48,6 +54,14 @@ class connection {
    connection& operator=(const connection&) = delete;
 
    boost::asio::awaitable<response> async_request(fcl::http::request request_value, request_options options = {});
+   boost::asio::awaitable<response> async_streaming_request(fcl::http::request request_value,
+                                                            body_reader body,
+                                                            request_options options = {});
+   boost::asio::awaitable<response_stream> async_stream_request(fcl::http::request request_value,
+                                                                request_options options = {});
+   boost::asio::awaitable<response_stream> async_stream_request(fcl::http::request request_value,
+                                                                body_reader body,
+                                                                request_options options = {});
    [[nodiscard]] connection_metrics metrics() const;
 
  private:

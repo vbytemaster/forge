@@ -44,6 +44,8 @@ import fcl.http.types;
 import fcl.http.upload;
 import fcl.json;
 import fcl.reflect.reflect;
+import fcl.schema.diagnostic;
+import fcl.schema.object;
 
 export namespace fcl::http {
 
@@ -57,6 +59,7 @@ struct api_route_options {
    std::vector<api_field_binding> forms;
    std::optional<std::string> body_stream_field;
    bool response_file = false;
+   bool response_stream = false;
    status success_status = status::ok;
    api_error_profile error_profile = api_error_profile::json;
 };
@@ -123,6 +126,7 @@ class api_builder {
             .forms = value.forms,
             .body_stream_field = value.body_stream_field,
             .response_file = value.response_file,
+            .response_stream = value.response_stream,
             .success_status = value.success_status,
          },
          value.method_name));
@@ -488,7 +492,27 @@ class api_builder {
    }
 
    template <typename Request>
+   static void validate_request_schema(const Request& request, std::string_view base_path = "http.request") {
+      const auto rules = fcl::schema::rules<Request>::define();
+      auto diagnostics = rules.validate(request, base_path);
+      const auto error = std::find_if(diagnostics.begin(), diagnostics.end(), [](const fcl::schema::diagnostic& entry) {
+         return entry.level == fcl::schema::severity::error;
+      });
+      if (error != diagnostics.end()) {
+         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                             std::string{error->path} + ": " + error->code + ": " + error->message);
+      }
+   }
+
+   template <typename Request>
    [[nodiscard]] static Request make_request_from_http(const route_context& context, const api_route_options& options) {
+      return make_request_from_http<Request>(context, options, true);
+   }
+
+   template <typename Request>
+   [[nodiscard]] static Request make_request_from_http(const route_context& context,
+                                                       const api_route_options& options,
+                                                       bool validate_schema) {
       auto request = Request{};
       const auto has_body = uses_request_body(context.request.method()) && !context.request.body().empty();
       if constexpr (!detail::request_needs_stream_v<Request>) {
@@ -530,13 +554,16 @@ class api_builder {
          });
       }
       bind_headers(request, context, options);
+      if (validate_schema) {
+         validate_request_schema(request);
+      }
       return request;
    }
 
    template <typename Request>
    static boost::asio::awaitable<Request> make_request_from_stream(stream_request& stream,
                                                                    const api_route_options& options) {
-      auto request = make_request_from_http<Request>(stream.context, options);
+      auto request = make_request_from_http<Request>(stream.context, options, false);
       if constexpr (fcl::reflect::is_described_object_v<Request>) {
          auto needs_multipart = false;
          auto needs_bytes = false;
@@ -561,6 +588,7 @@ class api_builder {
             bind_body_stream(request, std::move(stream.body), options);
          }
       }
+      validate_request_schema(request);
       co_return request;
    }
 
@@ -608,7 +636,9 @@ class api_builder {
                                                                                status success_status,
                                                                                Response value) {
       if constexpr (std::is_same_v<std::remove_cvref_t<Response>, file_response>) {
-         co_return co_await value.to_stream_response(request_value);
+         co_return co_await value.materialize(request_value);
+      } else if constexpr (detail::is_streaming_response_v<Response>) {
+         co_return std::move(value).materialize(request_value, success_status);
       } else if constexpr (detail::is_stream_response_v<Response>) {
          co_return std::move(value);
       } else {
@@ -628,6 +658,7 @@ class api_builder {
 
    template <typename Response> static void validate_response_file_option(const api_route_options& options) {
       constexpr auto response_is_file = std::is_same_v<std::remove_cvref_t<Response>, file_response>;
+      constexpr auto response_is_stream = detail::is_streaming_response_v<Response>;
       if constexpr (response_is_file) {
          if (!options.response_file) {
             FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
@@ -637,6 +668,17 @@ class api_builder {
          if (options.response_file) {
             FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
                                 "FCL_HTTP_RESPONSE_FILE requires fcl::http::file_response");
+         }
+      }
+      if constexpr (response_is_stream) {
+         if (!options.response_stream) {
+            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                                "HTTP API streaming response route requires FCL_HTTP_RESPONSE_STREAM");
+         }
+      } else {
+         if (options.response_stream) {
+            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                                "FCL_HTTP_RESPONSE_STREAM requires fcl::http::streaming_response");
          }
       }
    }

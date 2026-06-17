@@ -212,14 +212,24 @@ stream_response make_file_stream(const request& request_value, const std::filesy
 
 } // namespace
 
-boost::asio::awaitable<stream_response> file_response::to_stream_response(const request& request_value) const {
-   if (!std::filesystem::is_regular_file(path)) {
+boost::asio::awaitable<stream_response> file_response::materialize(const request& request_value) const {
+   if (!server_path_) {
+      co_return stream_response::buffered(head_);
+   }
+   if (!std::filesystem::is_regular_file(path_)) {
       co_return stream_response::buffered(make_text_response(request_value, status::not_found, "not found"));
    }
 
-   const auto size = static_cast<std::uint64_t>(std::filesystem::file_size(path));
+   const auto size = static_cast<std::uint64_t>(std::filesystem::file_size(path_));
    auto range_value = resolve_range(header_value(request_value, field::range), size);
-   co_return make_file_stream(request_value, path, options, std::move(range_value));
+   co_return make_file_stream(request_value, path_, options_, std::move(range_value));
+}
+
+boost::asio::awaitable<void> file_response::save_to(const std::filesystem::path& target) {
+   auto output = std::ofstream{target, std::ios::binary | std::ios::trunc};
+   while (auto chunk = co_await body_.async_read()) {
+      output.write(reinterpret_cast<const char*>(chunk->bytes.data()), static_cast<std::streamsize>(chunk->bytes.size()));
+   }
 }
 
 static_file_root::static_file_root(std::filesystem::path root, file_options options)
@@ -237,8 +247,7 @@ boost::asio::awaitable<stream_response> static_file_root::serve(stream_request& 
                                                                 std::string_view relative_path) const {
    try {
       auto resolved = resolve_contained_child(root_, relative_path, options_.symlinks);
-      co_return co_await file_response{.path = std::move(resolved), .options = options_}.to_stream_response(
-         request_value.context.request);
+      co_return co_await file_response::from_path(std::move(resolved), options_).materialize(request_value.context.request);
    } catch (const exceptions::forbidden&) {
       co_return stream_response::buffered(make_text_response(request_value.context.request, status::forbidden,
                                                             "forbidden"));

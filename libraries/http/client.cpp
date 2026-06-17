@@ -39,6 +39,23 @@ boost::asio::awaitable<response> client::async_request(fcl::http::request reques
    co_return co_await connection_.async_request(std::move(request_value), options);
 }
 
+boost::asio::awaitable<response> client::async_streaming_request(fcl::http::request request_value,
+                                                                 body_reader body,
+                                                                 request_options options) {
+   co_return co_await connection_.async_streaming_request(std::move(request_value), std::move(body), options);
+}
+
+boost::asio::awaitable<response_stream> client::async_stream_request(fcl::http::request request_value,
+                                                                     request_options options) {
+   co_return co_await connection_.async_stream_request(std::move(request_value), options);
+}
+
+boost::asio::awaitable<response_stream> client::async_stream_request(fcl::http::request request_value,
+                                                                     body_reader body,
+                                                                     request_options options) {
+   co_return co_await connection_.async_stream_request(std::move(request_value), std::move(body), options);
+}
+
 boost::asio::awaitable<response> client::async_send(method verb, std::string_view path, std::string body,
                                                     std::string_view content_type, request_options options) {
    co_return co_await async_request(make_request(verb, endpoint_, path, std::move(body), content_type), options);
@@ -52,6 +69,10 @@ boost::asio::awaitable<response> client::async_post_json(std::string_view path, 
                                                          request_options options) {
    co_return co_await async_request(make_request(method::post, endpoint_, path, std::move(body), "application/json"),
                                     options);
+}
+
+std::string client::make_target(std::string_view path) const {
+   return endpoint_.make_target(path);
 }
 
 connection_metrics client::metrics() const {

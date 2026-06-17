@@ -37,6 +37,7 @@ struct api_route {
    std::vector<api_field_binding> forms;
    std::optional<std::string> body_stream_field;
    bool response_file = false;
+   bool response_stream = false;
 };
 
 class api_route_builder {
@@ -64,6 +65,11 @@ class api_route_builder {
 
    api_route_builder&& response_file() && {
       route_.response_file = true;
+      return std::move(*this);
+   }
+
+   api_route_builder&& response_stream() && {
+      route_.response_stream = true;
       return std::move(*this);
    }
 

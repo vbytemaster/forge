@@ -53,6 +53,10 @@ class body_stream {
       co_return co_await reader_.async_read_all();
    }
 
+   [[nodiscard]] body_reader release_reader() noexcept {
+      return std::move(reader_);
+   }
+
    [[nodiscard]] std::uint64_t bytes_read() const noexcept {
       return reader_.bytes_read();
    }
@@ -150,6 +154,9 @@ template <typename T>
 inline constexpr auto is_stream_response_v = std::is_same_v<std::remove_cvref_t<T>, stream_response>;
 
 template <typename T>
+inline constexpr auto is_streaming_response_v = std::is_same_v<std::remove_cvref_t<T>, streaming_response>;
+
+template <typename T>
 inline constexpr auto is_bytes_response_v = std::is_same_v<std::remove_cvref_t<T>, bytes_response>;
 
 template <typename T>
@@ -179,7 +186,8 @@ inline constexpr auto request_needs_stream_v = request_needs_stream<T>::value;
 
 template <typename T>
 inline constexpr auto response_needs_stream_v = std::is_same_v<std::remove_cvref_t<T>, file_response> ||
-                                                is_stream_response_v<T>;
+                                                is_stream_response_v<T> ||
+                                                is_streaming_response_v<T>;
 
 } // namespace detail
 
@@ -237,6 +245,14 @@ template <typename Stream> Stream& operator<<(Stream& stream, const stream_respo
 
 template <typename Stream> Stream& operator>>(Stream& stream, stream_response&) {
    FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error, "HTTP stream responses are HTTP-only and cannot use generic binary serialization");
+}
+
+template <typename Stream> Stream& operator<<(Stream& stream, const streaming_response&) {
+   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error, "HTTP streaming responses are HTTP-only and cannot use generic binary serialization");
+}
+
+template <typename Stream> Stream& operator>>(Stream& stream, streaming_response&) {
+   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error, "HTTP streaming responses are HTTP-only and cannot use generic binary serialization");
 }
 
 template <typename Stream> Stream& operator<<(Stream& stream, const bytes_response&) {

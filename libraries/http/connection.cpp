@@ -8,6 +8,7 @@ module;
 #include <optional>
 #include <mutex>
 #include <utility>
+#include <vector>
 
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/awaitable.hpp>
@@ -29,6 +30,7 @@ module;
 module fcl.http.connection;
 
 import fcl.asio.runtime;
+import fcl.http.body;
 import fcl.http.exceptions;
 
 namespace fcl::http {
@@ -36,6 +38,7 @@ namespace {
 
 namespace asio = boost::asio;
 namespace beast = boost::beast;
+namespace beast_http = boost::beast::http;
 using tcp = asio::ip::tcp;
 using asio::awaitable;
 using asio::use_awaitable;
@@ -61,6 +64,121 @@ bool idempotent_method(method method_value) {
 void ensure_host_header(request& request_value, const base_url& endpoint) {
    if (request_value.find(field::host) == request_value.end()) {
       request_value.set(field::host, endpoint.host);
+   }
+}
+
+response make_header_response(const beast_http::response_parser<beast_http::buffer_body>& parser) {
+   const auto& source = parser.get();
+   auto output = response{source.result(), source.version()};
+   output.keep_alive(source.keep_alive());
+   for (const auto& field_value : source) {
+      output.insert(field_value.name_string(), field_value.value());
+   }
+   return output;
+}
+
+template <typename Stream> class beast_response_body_source final : public body_reader::source {
+ public:
+   beast_response_body_source(Stream stream, beast::flat_buffer buffer,
+                              std::shared_ptr<beast_http::response_parser<beast_http::buffer_body>> parser,
+                              std::chrono::milliseconds timeout)
+       : stream_(std::move(stream)), buffer_(std::move(buffer)), parser_(std::move(parser)), timeout_(timeout) {}
+
+   ~beast_response_body_source() override {
+      auto ignored = boost::system::error_code{};
+      beast::get_lowest_layer(stream_).socket().shutdown(tcp::socket::shutdown_both, ignored);
+      beast::get_lowest_layer(stream_).socket().close(ignored);
+   }
+
+   awaitable<std::optional<body_chunk>> async_read() override {
+      if (parser_->is_done()) {
+         co_return std::nullopt;
+      }
+
+      for (;;) {
+         auto storage = std::vector<std::byte>(64U * 1024U);
+         auto& body = parser_->get().body();
+         body.data = storage.data();
+         body.size = storage.size();
+
+         beast::get_lowest_layer(stream_).expires_after(timeout_);
+         auto [read_error, bytes] =
+            co_await beast_http::async_read_some(stream_, buffer_, *parser_, asio::as_tuple(use_awaitable));
+         static_cast<void>(bytes);
+
+         const auto produced = storage.size() - body.size;
+         if (read_error == beast_http::error::need_buffer) {
+            read_error = {};
+         }
+         if (read_error) {
+            throw boost::system::system_error{read_error};
+         }
+
+         bytes_read_ += produced;
+         if (produced != 0U) {
+            storage.resize(produced);
+            co_return body_chunk{.bytes = std::move(storage)};
+         }
+         if (parser_->is_done()) {
+            co_return std::nullopt;
+         }
+      }
+   }
+
+   [[nodiscard]] std::uint64_t bytes_read() const noexcept override {
+      return bytes_read_;
+   }
+
+ private:
+   Stream stream_;
+   beast::flat_buffer buffer_;
+   std::shared_ptr<beast_http::response_parser<beast_http::buffer_body>> parser_;
+   std::chrono::milliseconds timeout_;
+   std::uint64_t bytes_read_ = 0;
+};
+
+template <typename Stream>
+awaitable<void> write_streaming_request(Stream& stream,
+                                        const request& request_value,
+                                        body_reader& body,
+                                        std::chrono::milliseconds timeout) {
+   auto message = beast_http::request<beast_http::buffer_body>{request_value.method(), request_value.target(),
+                                                               request_value.version()};
+   for (const auto& field_value : request_value) {
+      message.set(field_value.name_string(), field_value.value());
+   }
+   message.keep_alive(request_value.keep_alive());
+   message.chunked(true);
+
+   auto serializer = beast_http::request_serializer<beast_http::buffer_body>{message};
+   serializer.split(true);
+   beast::get_lowest_layer(stream).expires_after(timeout);
+   co_await beast_http::async_write_header(stream, serializer, use_awaitable);
+
+   while (auto chunk = co_await body.async_read()) {
+      auto& body_value = message.body();
+      body_value.data = chunk->bytes.data();
+      body_value.size = chunk->bytes.size();
+      body_value.more = true;
+      beast::get_lowest_layer(stream).expires_after(timeout);
+      auto [body_error, body_bytes] =
+         co_await beast_http::async_write(stream, serializer, asio::as_tuple(use_awaitable));
+      static_cast<void>(body_bytes);
+      if (body_error && body_error != beast_http::error::need_buffer) {
+         throw boost::system::system_error{body_error};
+      }
+   }
+
+   auto& body_value = message.body();
+   body_value.data = nullptr;
+   body_value.size = 0;
+   body_value.more = false;
+   beast::get_lowest_layer(stream).expires_after(timeout);
+   auto [final_error, final_bytes] =
+      co_await beast_http::async_write(stream, serializer, asio::as_tuple(use_awaitable));
+   static_cast<void>(final_bytes);
+   if (final_error && final_error != beast_http::error::need_buffer) {
+      throw boost::system::system_error{final_error};
    }
 }
 
@@ -210,6 +328,158 @@ struct connection::impl {
       }
       record_status(response_value);
       co_return response_value;
+   }
+
+   awaitable<response> do_plain_streaming_request(fcl::http::request request_value,
+                                                  body_reader body,
+                                                  std::chrono::milliseconds timeout) {
+      auto results = co_await resolver.async_resolve(endpoint.host, endpoint.port, use_awaitable);
+      auto stream = beast::tcp_stream{strand};
+      stream.expires_after(timeout);
+      co_await stream.async_connect(results, use_awaitable);
+
+      ensure_host_header(request_value, endpoint);
+      co_await write_streaming_request(stream, request_value, body, timeout);
+
+      auto stream_buffer = beast::flat_buffer{};
+      auto response_value = response{};
+      stream.expires_after(timeout);
+      co_await beast_http::async_read(stream, stream_buffer, response_value, use_awaitable);
+      record_status(response_value);
+      co_return response_value;
+   }
+
+   awaitable<response> do_tls_streaming_request(fcl::http::request request_value,
+                                                body_reader body,
+                                                std::chrono::milliseconds timeout) {
+      auto results = co_await resolver.async_resolve(endpoint.host, endpoint.port, use_awaitable);
+      auto stream = beast::ssl_stream<beast::tcp_stream>{strand, ssl_context};
+      if (!SSL_set_tlsext_host_name(stream.native_handle(), endpoint.host.c_str())) {
+         throw exceptions::internal{"failed to configure TLS host name"};
+      }
+      stream.set_verify_callback(asio::ssl::host_name_verification(endpoint.host));
+
+      beast::get_lowest_layer(stream).expires_after(timeout);
+      co_await beast::get_lowest_layer(stream).async_connect(results, use_awaitable);
+      co_await stream.async_handshake(asio::ssl::stream_base::client, use_awaitable);
+
+      ensure_host_header(request_value, endpoint);
+      co_await write_streaming_request(stream, request_value, body, timeout);
+
+      auto stream_buffer = beast::flat_buffer{};
+      auto response_value = response{};
+      beast::get_lowest_layer(stream).expires_after(timeout);
+      co_await beast_http::async_read(stream, stream_buffer, response_value, use_awaitable);
+      record_status(response_value);
+      co_return response_value;
+   }
+
+   awaitable<response_stream> do_plain_stream_request(fcl::http::request request_value,
+                                                      std::optional<body_reader> body,
+                                                      std::chrono::milliseconds timeout) {
+      auto results = co_await resolver.async_resolve(endpoint.host, endpoint.port, use_awaitable);
+      auto stream = beast::tcp_stream{strand};
+      stream.expires_after(timeout);
+      co_await stream.async_connect(results, use_awaitable);
+
+      ensure_host_header(request_value, endpoint);
+      if (body.has_value()) {
+         co_await write_streaming_request(stream, request_value, *body, timeout);
+      } else {
+         stream.expires_after(timeout);
+         co_await beast_http::async_write(stream, request_value, use_awaitable);
+      }
+
+      auto stream_buffer = beast::flat_buffer{};
+      auto parser = std::make_shared<beast_http::response_parser<beast_http::buffer_body>>();
+      if (request_value.method() == method::head) {
+         parser->skip(true);
+      }
+      stream.expires_after(timeout);
+      co_await beast_http::async_read_header(stream, stream_buffer, *parser, use_awaitable);
+      auto head = make_header_response(*parser);
+      record_status(head);
+      auto source = std::make_shared<beast_response_body_source<beast::tcp_stream>>(
+         std::move(stream), std::move(stream_buffer), std::move(parser), timeout);
+      co_return response_stream{.head = std::move(head), .body = body_reader{std::move(source)}};
+   }
+
+   awaitable<response_stream> do_tls_stream_request(fcl::http::request request_value,
+                                                    std::optional<body_reader> body,
+                                                    std::chrono::milliseconds timeout) {
+      auto results = co_await resolver.async_resolve(endpoint.host, endpoint.port, use_awaitable);
+      auto stream = beast::ssl_stream<beast::tcp_stream>{strand, ssl_context};
+      if (!SSL_set_tlsext_host_name(stream.native_handle(), endpoint.host.c_str())) {
+         throw exceptions::internal{"failed to configure TLS host name"};
+      }
+      stream.set_verify_callback(asio::ssl::host_name_verification(endpoint.host));
+
+      beast::get_lowest_layer(stream).expires_after(timeout);
+      co_await beast::get_lowest_layer(stream).async_connect(results, use_awaitable);
+      co_await stream.async_handshake(asio::ssl::stream_base::client, use_awaitable);
+
+      ensure_host_header(request_value, endpoint);
+      if (body.has_value()) {
+         co_await write_streaming_request(stream, request_value, *body, timeout);
+      } else {
+         beast::get_lowest_layer(stream).expires_after(timeout);
+         co_await beast_http::async_write(stream, request_value, use_awaitable);
+      }
+
+      auto stream_buffer = beast::flat_buffer{};
+      auto parser = std::make_shared<beast_http::response_parser<beast_http::buffer_body>>();
+      if (request_value.method() == method::head) {
+         parser->skip(true);
+      }
+      beast::get_lowest_layer(stream).expires_after(timeout);
+      co_await beast_http::async_read_header(stream, stream_buffer, *parser, use_awaitable);
+      auto head = make_header_response(*parser);
+      record_status(head);
+      auto source = std::make_shared<beast_response_body_source<beast::ssl_stream<beast::tcp_stream>>>(
+         std::move(stream), std::move(stream_buffer), std::move(parser), timeout);
+      co_return response_stream{.head = std::move(head), .body = body_reader{std::move(source)}};
+   }
+
+   awaitable<response> streaming_request(fcl::http::request request_value, body_reader body, request_options options) {
+      record_started();
+      try {
+         if (endpoint.secure()) {
+            auto result = co_await do_tls_streaming_request(std::move(request_value), std::move(body), options.timeout);
+            record_completed();
+            co_return result;
+         }
+         auto result = co_await do_plain_streaming_request(std::move(request_value), std::move(body), options.timeout);
+         record_completed();
+         co_return result;
+      } catch (const boost::system::system_error& error) {
+         record_system_error(error.code());
+         throw;
+      } catch (...) {
+         record_failed();
+         throw;
+      }
+   }
+
+   awaitable<response_stream> stream_request(fcl::http::request request_value,
+                                             std::optional<body_reader> body,
+                                             request_options options) {
+      record_started();
+      try {
+         if (endpoint.secure()) {
+            auto result = co_await do_tls_stream_request(std::move(request_value), std::move(body), options.timeout);
+            record_completed();
+            co_return result;
+         }
+         auto result = co_await do_plain_stream_request(std::move(request_value), std::move(body), options.timeout);
+         record_completed();
+         co_return result;
+      } catch (const boost::system::system_error& error) {
+         record_system_error(error.code());
+         throw;
+      } catch (...) {
+         record_failed();
+         throw;
+      }
    }
 
    awaitable<void> process_request(std::shared_ptr<queued_request> operation) {
@@ -427,6 +697,26 @@ boost::asio::awaitable<response> connection::async_request(fcl::http::request re
       static_cast<void>(error);
    }
    co_return operation->take_result();
+}
+
+boost::asio::awaitable<response> connection::async_streaming_request(fcl::http::request request_value,
+                                                                     body_reader body,
+                                                                     request_options options) {
+   co_await asio::dispatch(impl_->strand, use_awaitable);
+   co_return co_await impl_->streaming_request(std::move(request_value), std::move(body), options);
+}
+
+boost::asio::awaitable<response_stream> connection::async_stream_request(fcl::http::request request_value,
+                                                                         request_options options) {
+   co_await asio::dispatch(impl_->strand, use_awaitable);
+   co_return co_await impl_->stream_request(std::move(request_value), std::nullopt, options);
+}
+
+boost::asio::awaitable<response_stream> connection::async_stream_request(fcl::http::request request_value,
+                                                                         body_reader body,
+                                                                         request_options options) {
+   co_await asio::dispatch(impl_->strand, use_awaitable);
+   co_return co_await impl_->stream_request(std::move(request_value), std::move(body), options);
 }
 
 connection_metrics connection::metrics() const {

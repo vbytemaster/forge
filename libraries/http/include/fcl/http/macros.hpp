@@ -18,6 +18,7 @@
 #define FCL_HTTP_DETAIL_OPTION_APPLY_body_stream(OPTION)                                                            \
    .body_stream(BOOST_PP_STRINGIZE(BOOST_PP_TUPLE_ELEM(3, 1, OPTION)))
 #define FCL_HTTP_DETAIL_OPTION_APPLY_response_file(OPTION) .response_file()
+#define FCL_HTTP_DETAIL_OPTION_APPLY_response_stream(OPTION) .response_stream()
 #define FCL_HTTP_DETAIL_OPTION_APPLY(r, DATA, OPTION)                                                               \
    BOOST_PP_CAT(FCL_HTTP_DETAIL_OPTION_APPLY_, FCL_HTTP_DETAIL_OPTION_KIND(OPTION))(OPTION)
 #define FCL_HTTP_DETAIL_OPTIONS(...)                                                                                \
@@ -52,6 +53,7 @@
 #define FCL_HTTP_FORM(FIELD, NAME) (form, FIELD, NAME)
 #define FCL_HTTP_BODY_STREAM(FIELD) (body_stream, FIELD, _)
 #define FCL_HTTP_RESPONSE_FILE (response_file, _, _)
+#define FCL_HTTP_RESPONSE_STREAM (response_stream, _, _)
 
 #define FCL_HTTP_DETAIL_METHOD(ROUTE) BOOST_PP_TUPLE_ELEM(2, 0, ROUTE)
 #define FCL_HTTP_DETAIL_ROUTE_VALUE(ROUTE) BOOST_PP_TUPLE_ELEM(2, 1, ROUTE)

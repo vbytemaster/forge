@@ -3,6 +3,7 @@ module;
 #include <boost/asio/awaitable.hpp>
 #include <fcl/exceptions/macros.hpp>
 
+#include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <cstring>
@@ -11,6 +12,7 @@ module;
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -20,12 +22,16 @@ import fcl.api.connection;
 import fcl.api.descriptor;
 import fcl.api.error_projection;
 export import fcl.api.handle;
+import fcl.http.body;
 import fcl.http.binding;
 export import fcl.http.client;
 import fcl.http.exceptions;
+import fcl.http.file;
 export import fcl.http.mapping;
+import fcl.http.stream;
 import fcl.http.types;
 import fcl.json;
+import fcl.reflect.reflect;
 
 export namespace fcl::http {
 
@@ -131,36 +137,101 @@ namespace detail {
    };
 }
 
+template <typename Request>
+void apply_route_headers(request& target, const api_route& route, const Request& value) {
+   if constexpr (fcl::reflect::is_described_object_v<Request>) {
+      fcl::reflect::for_each_member<Request>([&](const char* field_name, auto member) {
+         using member_type = std::remove_cvref_t<decltype(value.*member)>;
+         if constexpr (detail::is_header<member_type>::value) {
+            const auto matched = std::find_if(route.headers.begin(), route.headers.end(), [&](const api_field_binding& binding) {
+               return binding.field == field_name;
+            });
+            if (matched != route.headers.end() && (value.*member).present) {
+               target.set(matched->name, (value.*member).value);
+            }
+         }
+      });
+   }
+}
+
+template <typename Request>
+std::optional<body_reader> take_body_stream(Request& value, const api_route& route) {
+   auto result = std::optional<body_reader>{};
+   if constexpr (fcl::reflect::is_described_object_v<Request>) {
+      fcl::reflect::for_each_member<Request>([&](const char* field_name, auto member) {
+         using member_type = std::remove_cvref_t<decltype(value.*member)>;
+         if constexpr (detail::is_body_stream_v<member_type>) {
+            if (!result.has_value() &&
+                (!route.body_stream_field.has_value() || *route.body_stream_field == field_name)) {
+               result = (value.*member).release_reader();
+            }
+         }
+      });
+   }
+   return result;
+}
+
+template <typename Request>
+request make_client_request(client& target, const api_route& route, Request& value) {
+   auto request_value = request{};
+   request_value.method(route.verb);
+   request_value.target(target.make_target(render_route_target(route, value)));
+   request_value.version(11);
+   apply_route_headers(request_value, route, value);
+   return request_value;
+}
+
+boost::asio::awaitable<std::string> read_all(body_reader& body) {
+   co_return co_await body.async_read_all();
+}
+
 template <typename Request, typename Response>
 boost::asio::awaitable<Response> call(client& target, const fcl::api::descriptor& descriptor,
                                       const api_route& route, Request value) {
-   auto body = std::string{};
-   auto content_type = std::string_view{};
-   if (uses_request_body(route.verb)) {
+   if constexpr (detail::response_needs_stream_v<Response>) {
+      auto request_value = make_client_request(target, route, value);
+      auto body = std::optional<body_reader>{};
       if constexpr (detail::request_needs_stream_v<Request>) {
-         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
-                             "typed HTTP client streaming request writer is not available for this API method");
-      } else {
+         body = take_body_stream(value, route);
+      } else if (uses_request_body(route.verb)) {
          auto encoded = fcl::json::write(value);
          if (!encoded.ok()) {
             FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API request cannot be encoded as JSON");
          }
-         body = std::move(encoded.text);
-         content_type = "application/json";
+         request_value.body() = std::move(encoded.text);
+         request_value.set(field::content_type, "application/json");
+         request_value.prepare_payload();
       }
-   }
 
-   auto response_value =
-       co_await target.async_send(route.verb, render_route_target(route, value), std::move(body), content_type);
-   if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
-      auto error = parse_error_payload(response_value);
-      fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
-   }
-
-   if constexpr (detail::response_needs_stream_v<Response>) {
-      FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
-                          "typed HTTP client streaming response reader is not available for this API method");
+      auto response_value = body.has_value()
+         ? co_await target.async_stream_request(std::move(request_value), std::move(*body))
+         : co_await target.async_stream_request(std::move(request_value));
+      if (response_value.head.result_int() < 200U || response_value.head.result_int() >= 300U) {
+         response_value.head.body() = co_await read_all(response_value.body);
+         auto error = parse_error_payload(response_value.head);
+         fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
+      }
+      if constexpr (std::is_same_v<std::remove_cvref_t<Response>, file_response>) {
+         co_return file_response::from_body(std::move(response_value.head), std::move(response_value.body));
+      } else {
+         co_return streaming_response::from_body(std::move(response_value.head), std::move(response_value.body));
+      }
    } else if constexpr (detail::is_bytes_response_v<Response>) {
+      auto request_value = make_client_request(target, route, value);
+      if (uses_request_body(route.verb)) {
+         auto encoded = fcl::json::write(value);
+         if (!encoded.ok()) {
+            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API request cannot be encoded as JSON");
+         }
+         request_value.body() = std::move(encoded.text);
+         request_value.set(field::content_type, "application/json");
+         request_value.prepare_payload();
+      }
+      auto response_value = co_await target.async_request(std::move(request_value));
+      if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
+         auto error = parse_error_payload(response_value);
+         fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
+      }
       auto bytes = std::vector<std::byte>(response_value.body().size());
       if (!bytes.empty()) {
          std::memcpy(bytes.data(), response_value.body().data(), response_value.body().size());
@@ -175,8 +246,60 @@ boost::asio::awaitable<Response> call(client& target, const fcl::api::descriptor
          .status_code = response_value.result(),
       };
    } else if constexpr (detail::is_empty_response_v<Response>) {
+      auto request_value = make_client_request(target, route, value);
+      if (uses_request_body(route.verb)) {
+         auto encoded = fcl::json::write(value);
+         if (!encoded.ok()) {
+            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API request cannot be encoded as JSON");
+         }
+         request_value.body() = std::move(encoded.text);
+         request_value.set(field::content_type, "application/json");
+         request_value.prepare_payload();
+      }
+      auto response_value = co_await target.async_request(std::move(request_value));
+      if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
+         auto error = parse_error_payload(response_value);
+         fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
+      }
       co_return Response{.status_code = response_value.result()};
    } else {
+      auto request_value = make_client_request(target, route, value);
+      if (uses_request_body(route.verb)) {
+         if constexpr (detail::request_needs_stream_v<Request>) {
+            auto body = take_body_stream(value, route);
+            if (!body.has_value()) {
+               FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                                   "HTTP API streaming request body is not bound");
+            }
+            auto response_value = co_await target.async_streaming_request(std::move(request_value), std::move(*body));
+            if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
+               auto error = parse_error_payload(response_value);
+               fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
+            }
+            auto decoded =
+               fcl::json::read<Response>(response_value.body(),
+                                          fcl::json::read_options{.source_name = "http.response",
+                                                                  .unknown_fields =
+                                                                     fcl::json::unknown_field_policy::error});
+            if (!decoded.ok()) {
+               FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API response JSON is invalid");
+            }
+            co_return std::move(decoded.value);
+         } else {
+            auto encoded = fcl::json::write(value);
+            if (!encoded.ok()) {
+               FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API request cannot be encoded as JSON");
+            }
+            request_value.body() = std::move(encoded.text);
+            request_value.set(field::content_type, "application/json");
+            request_value.prepare_payload();
+         }
+      }
+      auto response_value = co_await target.async_request(std::move(request_value));
+      if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
+         auto error = parse_error_payload(response_value);
+         fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
+      }
       auto decoded = fcl::json::read<Response>(response_value.body(),
                                                fcl::json::read_options{.source_name = "http.response",
                                                                        .unknown_fields =

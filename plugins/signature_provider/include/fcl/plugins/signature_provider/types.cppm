@@ -11,6 +11,10 @@ export module fcl.plugins.signature_provider.types;
 
 import fcl.crypto.asymmetric;
 import fcl.crypto.sha256;
+import fcl.schema.diagnostic;
+import fcl.schema.value_kind;
+import fcl.schema.object;
+import fcl.schema.enums;
 
 export namespace fcl::plugins::signature_provider {
 
@@ -88,3 +92,35 @@ BOOST_DESCRIBE_STRUCT(options, (), (purpose, required_algorithm, output_profile)
 BOOST_DESCRIBE_STRUCT(response, (), (key_id, algorithm, output_profile, public_key, signature))
 
 } // namespace fcl::plugins::signature_provider
+
+export template <> struct fcl::schema::rules<fcl::plugins::signature_provider::key> {
+   [[nodiscard]] static fcl::schema::object_schema<fcl::plugins::signature_provider::key> define() {
+      auto schema = fcl::schema::object<fcl::plugins::signature_provider::key>();
+      schema.field<&fcl::plugins::signature_provider::key::id>("id").required().non_empty();
+      schema.field<&fcl::plugins::signature_provider::key::private_key>("private-key")
+         .required()
+         .secret()
+         .description("Private key material in one of the configured input profiles");
+      schema.field<&fcl::plugins::signature_provider::key::input_profile>("input-profile").default_value("fcl");
+      schema.field<&fcl::plugins::signature_provider::key::purposes>("purposes")
+         .min_items(1)
+         .each_non_empty()
+         .description("Allowed signature purposes for this key");
+      return schema;
+   }
+};
+
+export template <> struct fcl::schema::rules<fcl::plugins::signature_provider::config> {
+   [[nodiscard]] static fcl::schema::object_schema<fcl::plugins::signature_provider::config> define() {
+      auto schema = fcl::schema::object<fcl::plugins::signature_provider::config>();
+      schema.field<&fcl::plugins::signature_provider::config::keys>("keys")
+         .items<fcl::plugins::signature_provider::key>()
+         .secret()
+         .unique_by<&fcl::plugins::signature_provider::key::id>()
+         .description("Local signature provider key entries");
+      schema.field<&fcl::plugins::signature_provider::config::default_output_profile>("default-output-profile")
+         .default_value("fcl")
+         .description("Default signature text encoding profile");
+      return schema;
+   }
+};

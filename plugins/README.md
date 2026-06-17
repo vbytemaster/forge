@@ -137,9 +137,10 @@ what a signed payload means. It only enforces configured key ids, allowed
 purposes, required algorithms and output profiles.
 
 Config section `signature-provider` owns local key material. The structured
-`keys` field is secret/redacted and is not accepted through generated CLI or
-environment-variable helpers; load it from a protected config source before
-handing the document to the application.
+`keys` field is decoded through nested `fcl_schema` rules, remains
+secret/redacted as one object-list field, and is not accepted through generated
+CLI or environment-variable helpers; load it from a protected config source
+before handing the document to the application.
 
 ```yaml
 signature-provider:

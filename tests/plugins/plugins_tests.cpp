@@ -62,6 +62,7 @@ import fcl.asio.runtime;
 import fcl.config.component;
 import fcl.config.document;
 import fcl.config.value;
+import fcl.config.decode;
 import fcl.crypto.asymmetric;
 import fcl.crypto.ed25519;
 import fcl.crypto.p256;
@@ -1682,6 +1683,24 @@ BOOST_AUTO_TEST_CASE(signature_provider_config_is_redacted_and_local_only) {
    const auto* text = std::get_if<std::string>(&value->storage);
    BOOST_REQUIRE(text != nullptr);
    BOOST_TEST(*text == "<redacted>");
+}
+
+BOOST_AUTO_TEST_CASE(signature_provider_config_decodes_through_public_schema) {
+   const auto key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::secp256k1::private_key_shim>();
+   const auto document = signer_config(
+      {key_entry("provider",
+                 fcl::crypto::asymmetric::encoding::fcl().format(key),
+                 "fcl",
+                 {"storage.receipt"})});
+
+   const auto decoded = fcl::config::decode<signature_provider::config>(document, "signature-provider");
+   BOOST_TEST(decoded.ok());
+   BOOST_REQUIRE_EQUAL(decoded.value.keys.size(), 1U);
+   BOOST_TEST(decoded.value.keys.front().id == "provider");
+   BOOST_TEST(decoded.value.keys.front().input_profile == "fcl");
+   BOOST_REQUIRE_EQUAL(decoded.value.keys.front().purposes.size(), 1U);
+   BOOST_TEST(decoded.value.keys.front().purposes.front() == "storage.receipt");
+   BOOST_TEST(decoded.value.default_output_profile == "fcl");
 }
 
 BOOST_AUTO_TEST_CASE(signature_provider_structured_keys_are_not_cli_or_env_fields) {

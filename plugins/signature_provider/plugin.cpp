@@ -32,6 +32,7 @@ import fcl.app.plugin;
 import fcl.app.plugin_context;
 import fcl.app.plugin_registry;
 import fcl.config.component;
+import fcl.config.decode;
 import fcl.config.document;
 import fcl.config.value;
 import fcl.crypto.asymmetric;
@@ -75,25 +76,7 @@ std::string plugin::version() const {
 }
 
 std::optional<fcl::config::component_descriptor> plugin::describe_config() const {
-   return fcl::config::component_descriptor{
-      .section = "signature-provider",
-      .fields =
-         {
-            fcl::config::field_descriptor{
-               .name = "keys",
-               .kind = fcl::schema::value_kind::object_list,
-               .secret = true,
-               .description = "Local signer key entries. Private keys are redacted as a whole.",
-            },
-            fcl::config::field_descriptor{
-               .name = "default-output-profile",
-               .kind = fcl::schema::value_kind::string,
-               .has_default = true,
-               .default_value = fcl::config::value{"fcl"},
-               .description = "Default signer text encoding profile",
-            },
-         },
-   };
+   return fcl::config::describe_component<config>("signature-provider");
 }
 
 boost::asio::awaitable<void> plugin::configure(fcl::config::component_view view) {

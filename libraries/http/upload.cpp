@@ -461,10 +461,19 @@ class multipart_stream_parser {
    bool consume_headers() {
       const auto header_end = buffer_.find("\r\n\r\n");
       if (header_end == std::string::npos) {
+         if (buffer_.size() > options_.max_part_header_bytes + 4U) {
+            throw exceptions::payload_too_large{"multipart part headers exceed upload limit"};
+         }
          return false;
+      }
+      if (header_end > options_.max_part_header_bytes) {
+         throw exceptions::payload_too_large{"multipart part headers exceed upload limit"};
       }
 
       auto headers = parse_headers(std::string_view{buffer_}.substr(0, header_end));
+      if (headers.size() > options_.max_part_headers) {
+         throw exceptions::payload_too_large{"multipart part header count exceeds upload limit"};
+      }
       auto meta = parse_content_disposition(headers);
       auto content_type = header_value(headers, "content-type").value_or("application/octet-stream");
       current_.emplace(std::move(meta), std::move(content_type), std::move(headers), options_);
@@ -485,10 +494,7 @@ class multipart_stream_parser {
 
       current_->append(std::string_view{buffer_}.substr(0, delimiter->position));
       auto part = current_->finish();
-      if (part.filename.has_value()) {
-         form_.files.push_back(part);
-      }
-      form_.parts.push_back(std::move(part));
+      record_part(std::move(part));
       current_.reset();
 
       buffer_.erase(0, delimiter->position + 2U + delimiter_.size());
@@ -509,6 +515,26 @@ class multipart_stream_parser {
       return true;
    }
 
+   void record_part(upload_part part) {
+      if (parts_ >= options_.max_parts) {
+         throw exceptions::payload_too_large{"multipart part count exceeds upload limit"};
+      }
+      ++parts_;
+      if (part.filename.has_value()) {
+         if (files_ >= options_.max_files) {
+            throw exceptions::payload_too_large{"multipart file count exceeds upload limit"};
+         }
+         ++files_;
+         form_.files.push_back(part);
+      } else {
+         if (fields_ >= options_.max_fields) {
+            throw exceptions::payload_too_large{"multipart field count exceeds upload limit"};
+         }
+         ++fields_;
+      }
+      form_.parts.push_back(std::move(part));
+   }
+
    void flush_safe_content_prefix() {
       const auto tail_size = delimiter_.size() + 6U;
       if (buffer_.size() <= tail_size) {
@@ -525,6 +551,9 @@ class multipart_stream_parser {
    std::string buffer_;
    std::optional<multipart_part_builder> current_;
    std::uint64_t total_ = 0;
+   std::uint64_t parts_ = 0;
+   std::uint64_t files_ = 0;
+   std::uint64_t fields_ = 0;
    state state_ = state::first_boundary;
 };
 

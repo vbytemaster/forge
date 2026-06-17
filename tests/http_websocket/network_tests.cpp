@@ -2310,6 +2310,20 @@ BOOST_AUTO_TEST_CASE(server_stop_waits_for_executor_work_before_returning) {
    BOOST_TEST(read_error != boost::system::error_code{});
 }
 
+BOOST_AUTO_TEST_CASE(server_stop_without_start_returns_without_executor_state_race) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto server = fcl::http::server{
+      runtime,
+      server_config{},
+      [](route_context& context) -> boost::asio::awaitable<response> {
+         co_return make_text_response(context.request, status::ok, "unused");
+      },
+   };
+
+   server.stop();
+   server.stop();
+}
+
 BOOST_AUTO_TEST_CASE(server_start_waits_for_executor_work_before_returning) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
    auto mutex = std::mutex{};
@@ -2993,6 +3007,141 @@ BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_limits_non_file_fields) {
                                               .max_field_bytes = 5, .max_total_bytes = 1024}};
 
    BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, reader.async_read_multipart(
+                                                    "multipart/form-data; boundary=demo")),
+                     exceptions::payload_too_large);
+}
+
+BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_accepts_configured_count_limits) {
+   auto runtime = fcl::asio::runtime{};
+   const auto body =
+      std::string{"--demo\r\n"
+                  "Content-Disposition: form-data; name=\"first\"\r\n"
+                  "\r\n"
+                  "1\r\n"
+                  "--demo\r\n"
+                  "Content-Disposition: form-data; name=\"second\"\r\n"
+                  "\r\n"
+                  "2\r\n"
+                  "--demo\r\n"
+                  "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
+                  "\r\n"
+                  "abc\r\n"
+                  "--demo--\r\n"};
+   auto reader = upload_reader{make_body_reader({body}),
+                               upload_options{.memory_threshold_bytes = 256,
+                                              .max_file_bytes = 8,
+                                              .max_field_bytes = 8,
+                                              .max_total_bytes = 1024,
+                                              .max_parts = 3,
+                                              .max_files = 1,
+                                              .max_fields = 2}};
+
+   const auto form = fcl::asio::blocking::run(
+      runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
+
+   BOOST_REQUIRE_EQUAL(form.parts.size(), 3U);
+   BOOST_REQUIRE_EQUAL(form.files.size(), 1U);
+   const auto first = form.field("first");
+   const auto second = form.field("second");
+   BOOST_REQUIRE(first.has_value());
+   BOOST_REQUIRE(second.has_value());
+   BOOST_TEST(*first == "1");
+   BOOST_TEST(*second == "2");
+}
+
+BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_enforces_part_file_field_count_limits) {
+   auto runtime = fcl::asio::runtime{};
+   const auto two_fields =
+      std::string{"--demo\r\n"
+                  "Content-Disposition: form-data; name=\"first\"\r\n"
+                  "\r\n"
+                  "1\r\n"
+                  "--demo\r\n"
+                  "Content-Disposition: form-data; name=\"second\"\r\n"
+                  "\r\n"
+                  "2\r\n"
+                  "--demo--\r\n"};
+   auto part_limited = upload_reader{make_body_reader({two_fields}),
+                                     upload_options{.memory_threshold_bytes = 256,
+                                                    .max_file_bytes = 8,
+                                                    .max_field_bytes = 8,
+                                                    .max_total_bytes = 1024,
+                                                    .max_parts = 1,
+                                                    .max_files = 1,
+                                                    .max_fields = 2}};
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, part_limited.async_read_multipart(
+                                                    "multipart/form-data; boundary=demo")),
+                     exceptions::payload_too_large);
+
+   auto field_limited = upload_reader{make_body_reader({two_fields}),
+                                      upload_options{.memory_threshold_bytes = 256,
+                                                     .max_file_bytes = 8,
+                                                     .max_field_bytes = 8,
+                                                     .max_total_bytes = 1024,
+                                                     .max_parts = 2,
+                                                     .max_files = 1,
+                                                     .max_fields = 1}};
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, field_limited.async_read_multipart(
+                                                    "multipart/form-data; boundary=demo")),
+                     exceptions::payload_too_large);
+
+   const auto two_files =
+      std::string{"--demo\r\n"
+                  "Content-Disposition: form-data; name=\"first\"; filename=\"first.txt\"\r\n"
+                  "\r\n"
+                  "a\r\n"
+                  "--demo\r\n"
+                  "Content-Disposition: form-data; name=\"second\"; filename=\"second.txt\"\r\n"
+                  "\r\n"
+                  "b\r\n"
+                  "--demo--\r\n"};
+   auto file_limited = upload_reader{make_body_reader({two_files}),
+                                     upload_options{.memory_threshold_bytes = 256,
+                                                    .max_file_bytes = 8,
+                                                    .max_field_bytes = 8,
+                                                    .max_total_bytes = 1024,
+                                                    .max_parts = 2,
+                                                    .max_files = 1,
+                                                    .max_fields = 1}};
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, file_limited.async_read_multipart(
+                                                    "multipart/form-data; boundary=demo")),
+                     exceptions::payload_too_large);
+}
+
+BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_enforces_part_header_limits) {
+   auto runtime = fcl::asio::runtime{};
+   const auto extra_header =
+      std::string{"--demo\r\n"
+                  "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
+                  "X-Test: value\r\n"
+                  "\r\n"
+                  "abc\r\n"
+                  "--demo--\r\n"};
+   auto count_limited = upload_reader{make_body_reader({extra_header}),
+                                      upload_options{.memory_threshold_bytes = 256,
+                                                     .max_file_bytes = 8,
+                                                     .max_field_bytes = 8,
+                                                     .max_total_bytes = 1024,
+                                                     .max_parts = 1,
+                                                     .max_files = 1,
+                                                     .max_fields = 0,
+                                                     .max_part_headers = 1,
+                                                     .max_part_header_bytes = 1024}};
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, count_limited.async_read_multipart(
+                                                    "multipart/form-data; boundary=demo")),
+                     exceptions::payload_too_large);
+
+   auto bytes_limited = upload_reader{make_body_reader({extra_header}),
+                                      upload_options{.memory_threshold_bytes = 256,
+                                                     .max_file_bytes = 8,
+                                                     .max_field_bytes = 8,
+                                                     .max_total_bytes = 1024,
+                                                     .max_parts = 1,
+                                                     .max_files = 1,
+                                                     .max_fields = 0,
+                                                     .max_part_headers = 8,
+                                                     .max_part_header_bytes = 16}};
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, bytes_limited.async_read_multipart(
                                                     "multipart/form-data; boundary=demo")),
                      exceptions::payload_too_large);
 }

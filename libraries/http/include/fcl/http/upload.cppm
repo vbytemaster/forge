@@ -24,6 +24,11 @@ struct upload_options {
    std::uint64_t max_total_bytes = 128 * 1024 * 1024;
    std::filesystem::path spool_directory;
    std::string spool_prefix = "fcl-http-upload-";
+   std::uint64_t max_parts = 1024;
+   std::uint64_t max_files = 128;
+   std::uint64_t max_fields = 1024;
+   std::uint64_t max_part_headers = 64;
+   std::uint64_t max_part_header_bytes = 16 * 1024;
 };
 
 class upload_spool {

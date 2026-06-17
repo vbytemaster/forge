@@ -81,6 +81,17 @@ class streaming_response {
          head_.keep_alive(request_value.keep_alive());
          return stream_response{.head = std::move(head_), .body = std::move(source_)};
       }
+      if (reader_.valid()) {
+         head_.version(request_value.version());
+         head_.keep_alive(request_value.keep_alive());
+         auto reader = std::move(reader_);
+         return stream_response{.head = std::move(head_),
+                                .body =
+                                   [reader = std::move(reader)]() mutable
+                                      -> boost::asio::awaitable<std::optional<body_chunk>> {
+                                      co_return co_await reader.async_read();
+                                   }};
+      }
       return stream_response::buffered(std::move(head_));
    }
 

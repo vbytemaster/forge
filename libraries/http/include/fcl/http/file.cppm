@@ -70,7 +70,7 @@ struct file_response {
 
    boost::asio::awaitable<void> save_to(const std::filesystem::path& target);
 
-   [[nodiscard]] boost::asio::awaitable<stream_response> materialize(const request& request_value) const;
+   [[nodiscard]] boost::asio::awaitable<stream_response> materialize(const request& request_value) &&;
 
  private:
    std::filesystem::path path_;

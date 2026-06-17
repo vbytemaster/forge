@@ -221,9 +221,21 @@ stream_response make_file_stream(const request& request_value, const std::filesy
 
 } // namespace
 
-boost::asio::awaitable<stream_response> file_response::materialize(const request& request_value) const {
+boost::asio::awaitable<stream_response> file_response::materialize(const request& request_value) && {
    if (!server_path_) {
-      co_return stream_response::buffered(head_);
+      if (!body_.valid()) {
+         co_return stream_response::buffered(std::move(head_));
+      }
+      head_.version(request_value.version());
+      head_.keep_alive(request_value.keep_alive());
+      auto reader = std::move(body_);
+      co_return stream_response{
+         .head = std::move(head_),
+         .body =
+            [reader = std::move(reader)]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
+               co_return co_await reader.async_read();
+            },
+      };
    }
    if (!std::filesystem::is_regular_file(path_)) {
       co_return stream_response::buffered(make_text_response(request_value, status::not_found, "not found"));

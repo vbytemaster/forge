@@ -2,6 +2,7 @@ module;
 
 #include <coroutine>
 #include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <exception>
 #include <limits>
@@ -423,6 +424,7 @@ struct server::impl {
    std::shared_ptr<router> router_value;
    tcp::acceptor acceptor;
    std::vector<std::weak_ptr<detail::server_session>> sessions;
+   std::atomic_bool stopped = true;
    bool started = false;
 
    void prune_sessions() {
@@ -480,6 +482,7 @@ struct server::impl {
       acceptor.bind(endpoint);
       acceptor.listen(asio::socket_base::max_listen_connections);
       started = true;
+      stopped.store(false, std::memory_order_release);
 
       asio::co_spawn(acceptor.get_executor(), accept_loop(), [](std::exception_ptr error) {
          if (error) {
@@ -500,10 +503,12 @@ struct server::impl {
       acceptor.close(ignored);
       cancel_sessions();
       started = false;
+      stopped.store(true, std::memory_order_release);
    }
 
    awaitable<void> async_stop_on_executor() {
       if (!started) {
+         stopped.store(true, std::memory_order_release);
          co_return;
       }
       auto ignored = boost::system::error_code{};
@@ -511,6 +516,7 @@ struct server::impl {
       acceptor.close(ignored);
       started = false;
       co_await async_cancel_sessions();
+      stopped.store(true, std::memory_order_release);
    }
 };
 
@@ -522,7 +528,9 @@ server::server(fcl::asio::runtime& runtime, server_config config, router router_
                                    std::make_shared<router>(std::move(router_value)))) {}
 
 server::~server() {
-   stop();
+   if (impl_ && !impl_->stopped.load(std::memory_order_acquire)) {
+      stop();
+   }
 }
 
 void server::start() {
@@ -557,7 +565,7 @@ void server::start() {
 }
 
 void server::stop() {
-   if (!impl_ || !impl_->started) {
+   if (!impl_) {
       return;
    }
 

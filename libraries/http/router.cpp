@@ -121,6 +121,36 @@ fcl::api::error_payload http_error_payload(const fcl::exceptions::base& error) {
    };
 }
 
+struct stream_transfer_framing {
+   std::optional<std::string> content_length;
+   std::optional<std::string> transfer_encoding;
+};
+
+std::optional<std::string> header_value(const response& value, field name) {
+   if (const auto found = value.find(name); found != value.end()) {
+      return std::string{found->value()};
+   }
+   return std::nullopt;
+}
+
+stream_transfer_framing capture_stream_transfer_framing(const response& value) {
+   return stream_transfer_framing{
+      .content_length = header_value(value, field::content_length),
+      .transfer_encoding = header_value(value, field::transfer_encoding),
+   };
+}
+
+void restore_stream_transfer_framing(response& value, const stream_transfer_framing& framing) {
+   value.erase(field::content_length);
+   value.erase(field::transfer_encoding);
+   if (framing.content_length.has_value()) {
+      value.set(field::content_length, *framing.content_length);
+   }
+   if (framing.transfer_encoding.has_value()) {
+      value.set(field::transfer_encoding, *framing.transfer_encoding);
+   }
+}
+
 std::string render_error_payload(const fcl::api::error_payload& payload) {
    auto output = std::string{};
    output += "{\"error\":\"";
@@ -411,14 +441,19 @@ boost::asio::awaitable<stream_response> router::handle_stream(stream_request& re
 
             context.route_params = std::move(params);
             auto result = std::optional<stream_response>{};
+            auto framing = stream_transfer_framing{};
             auto head = co_await run_middleware_chain(
                matching_middlewares(middlewares_, context.parsed_target), context,
-               [&request, &route, &result](route_context&) -> boost::asio::awaitable<response> {
+               [&request, &route, &result, &framing](route_context&) -> boost::asio::awaitable<response> {
                   result = co_await route.handler(request);
+                  framing = capture_stream_transfer_framing(result->head);
                   co_return std::move(result->head);
                });
             if (!result.has_value()) {
                co_return stream_response::buffered(std::move(head));
+            }
+            if (result->body) {
+               restore_stream_transfer_framing(head, framing);
             }
             result->head = std::move(head);
             co_return std::move(*result);

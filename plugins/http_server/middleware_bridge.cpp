@@ -19,6 +19,8 @@ import fcl.plugins.http_server.middleware;
 namespace fcl::plugins::http_server {
 namespace {
 
+constexpr std::string_view stream_token_header = "X-FCL-Stream-Token";
+
 [[nodiscard]] fcl::http::middleware_phase to_http_phase(middleware_phase value) noexcept {
    switch (value) {
    case middleware_phase::request_context:
@@ -52,26 +54,26 @@ namespace {
 }
 
 [[nodiscard]] middleware_response make_response(fcl::http::response value) {
-   auto headers = std::vector<header_entry>{};
-   auto content_type = std::string{};
+   auto result = middleware_response{};
+   result.status = value.result();
+   result.body = std::move(value.body());
    for (const auto& header : value) {
       if (header.name() == fcl::http::field::content_type) {
-         content_type = std::string{header.value()};
+         result.content_type = std::string{header.value()};
          continue;
       }
       if (header.name() == fcl::http::field::content_length ||
           header.name() == fcl::http::field::transfer_encoding) {
          continue;
       }
-      headers.push_back(header_entry{.name = std::string{header.name_string()},
-                                     .value = std::string{header.value()}});
+      if (header_name_equal(header.name_string(), stream_token_header)) {
+         detail::middleware_bridge_access::set_stream_token(result, std::string{header.value()});
+         continue;
+      }
+      result.headers.push_back(header_entry{.name = std::string{header.name_string()},
+                                           .value = std::string{header.value()}});
    }
-   return middleware_response{
-      .status = value.result(),
-      .headers = std::move(headers),
-      .body = std::move(value.body()),
-      .content_type = std::move(content_type),
-   };
+   return result;
 }
 
 [[nodiscard]] fcl::http::response make_http_response(const fcl::http::request& source, middleware_response value) {
@@ -82,6 +84,11 @@ namespace {
          continue;
       }
       result.set(std::string_view{header.name}, std::string_view{header.value});
+   }
+   if (!result.body().empty()) {
+      result.erase(stream_token_header);
+   } else if (const auto& token = detail::middleware_bridge_access::stream_token(value); !token.empty()) {
+      result.set(stream_token_header, token);
    }
    result.prepare_payload();
    result.keep_alive(source.keep_alive());

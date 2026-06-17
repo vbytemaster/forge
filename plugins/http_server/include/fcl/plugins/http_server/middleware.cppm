@@ -17,6 +17,10 @@ import fcl.http.types;
 
 export namespace fcl::plugins::http_server {
 
+namespace detail {
+struct middleware_bridge_access;
+}
+
 enum class middleware_phase {
    request_context = 1,
    security = 2,
@@ -61,7 +65,8 @@ struct middleware_request {
    }
 };
 
-struct middleware_response {
+class middleware_response {
+ public:
    fcl::http::status status = fcl::http::status::ok;
    std::vector<header_entry> headers;
    std::string body;
@@ -70,10 +75,11 @@ struct middleware_response {
    [[nodiscard]] static middleware_response text(fcl::http::status status_value,
                                                  std::string body_value,
                                                  std::string content_type_value = "text/plain") {
-      return middleware_response{.status = status_value,
-                                 .headers = {},
-                                 .body = std::move(body_value),
-                                 .content_type = std::move(content_type_value)};
+      auto result = middleware_response{};
+      result.status = status_value;
+      result.body = std::move(body_value);
+      result.content_type = std::move(content_type_value);
+      return result;
    }
 
    void set_header(std::string name, std::string value) {
@@ -85,7 +91,26 @@ struct middleware_response {
       }
       headers.push_back(header_entry{.name = std::move(name), .value = std::move(value)});
    }
+
+ private:
+   std::string stream_token_;
+
+   friend struct detail::middleware_bridge_access;
 };
+
+namespace detail {
+
+struct middleware_bridge_access {
+   static void set_stream_token(middleware_response& value, std::string token) {
+      value.stream_token_ = std::move(token);
+   }
+
+   [[nodiscard]] static const std::string& stream_token(const middleware_response& value) noexcept {
+      return value.stream_token_;
+   }
+};
+
+} // namespace detail
 
 using middleware_next = std::function<boost::asio::awaitable<middleware_response>()>;
 using middleware_handler =

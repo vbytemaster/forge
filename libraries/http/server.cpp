@@ -569,6 +569,11 @@ void server::stop() {
       return;
    }
 
+   if (impl_->runtime.context().get_executor().running_in_this_thread()) {
+      impl_->stop_on_executor();
+      return;
+   }
+
    struct stop_state {
       std::mutex mutex;
       std::condition_variable ready;

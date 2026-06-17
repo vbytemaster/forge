@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <iterator>
 #include <memory>
 #include <mutex>
@@ -2324,6 +2325,26 @@ BOOST_AUTO_TEST_CASE(server_stop_without_start_returns_without_executor_state_ra
    server.stop();
 }
 
+BOOST_AUTO_TEST_CASE(server_stop_called_from_runtime_worker_does_not_deadlock) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto server = std::make_shared<fcl::http::server>(
+      runtime,
+      server_config{},
+      [](route_context& context) -> boost::asio::awaitable<response> {
+         co_return make_text_response(context.request, status::ok, "unused");
+      });
+   fcl::asio::blocking::run(runtime, server->async_start());
+
+   auto stopped = std::make_shared<std::promise<void>>();
+   auto stopped_future = stopped->get_future();
+   asio::post(runtime.context(), [server, stopped] {
+      server->stop();
+      stopped->set_value();
+   });
+
+   BOOST_REQUIRE(stopped_future.wait_for(std::chrono::seconds{2}) == std::future_status::ready);
+}
+
 BOOST_AUTO_TEST_CASE(server_start_waits_for_executor_work_before_returning) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
    auto mutex = std::mutex{};
@@ -2496,8 +2517,57 @@ BOOST_AUTO_TEST_CASE(http_stream_route_response_passes_through_after_middleware)
    BOOST_TEST(response.body() == "alphaomega");
    BOOST_TEST(std::string{response[field::server]} == "fcl-stream");
    BOOST_TEST(std::string{response["X-Stream-Middleware"]} == "/download");
+   const auto has_stream_token = response.find("X-FCL-Stream-Token") != response.end();
+   BOOST_TEST(!has_stream_token);
    BOOST_TEST(invoked->load() == 1U);
    BOOST_TEST(produced->load() == 2U);
+
+   fcl::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_stream_middleware_replacement_does_not_leak_original_body) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto invoked = std::make_shared<std::atomic<unsigned>>(0);
+   auto produced = std::make_shared<std::atomic<unsigned>>(0);
+
+   auto router = fcl::http::router{};
+   router.use([](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
+      static_cast<void>(co_await next());
+      co_return make_text_response(context.request, status::forbidden, "blocked");
+   });
+   router.get_stream("/download", [invoked, produced](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      invoked->fetch_add(1);
+      auto chunks = std::make_shared<std::vector<std::string>>(std::vector<std::string>{"secret", "-stream"});
+      auto index = std::make_shared<std::size_t>(0);
+      auto reply = response{status::ok, request_value.context.request.version()};
+      reply.set(field::content_type, "application/octet-stream");
+      co_return stream_response{
+          .head = std::move(reply),
+          .body =
+             [chunks, index, produced]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
+                if (*index == chunks->size()) {
+                   co_return std::nullopt;
+                }
+                produced->fetch_add(1);
+                co_return make_body_chunk((*chunks)[(*index)++]);
+             },
+      };
+   });
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   fcl::asio::blocking::run(runtime, server.async_start());
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   const auto response = fcl::asio::blocking::run(runtime, client.async_get("/download"));
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::forbidden));
+   BOOST_TEST(response.body() == "blocked");
+   const auto has_transfer_encoding = response.find(field::transfer_encoding) != response.end();
+   const auto has_stream_token = response.find("X-FCL-Stream-Token") != response.end();
+   BOOST_TEST(!has_transfer_encoding);
+   BOOST_TEST(!has_stream_token);
+   BOOST_TEST(invoked->load() == 1U);
+   BOOST_TEST(produced->load() == 0U);
 
    fcl::asio::blocking::run(runtime, server.async_stop());
 }

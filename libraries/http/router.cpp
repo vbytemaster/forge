@@ -2,6 +2,7 @@ module;
 
 #include <cstdint>
 #include <algorithm>
+#include <atomic>
 #include <coroutine>
 #include <optional>
 #include <stdexcept>
@@ -131,6 +132,26 @@ std::optional<std::string> header_value(const response& value, field name) {
       return std::string{found->value()};
    }
    return std::nullopt;
+}
+
+constexpr std::string_view stream_token_header = "X-FCL-Stream-Token";
+
+std::string make_stream_token() {
+   static auto next_token = std::atomic<std::uint64_t>{0};
+   return std::to_string(next_token.fetch_add(1, std::memory_order_relaxed) + 1U);
+}
+
+void mark_stream_head(response& value, std::string_view token) {
+   value.set(stream_token_header, token);
+}
+
+[[nodiscard]] bool stream_token_matches(const response& value, std::string_view token) {
+   const auto found = value.find(stream_token_header);
+   return found != value.end() && found->value() == token;
+}
+
+void clear_stream_token(response& value) {
+   value.erase(stream_token_header);
 }
 
 stream_transfer_framing capture_stream_transfer_framing(const response& value) {
@@ -442,14 +463,23 @@ boost::asio::awaitable<stream_response> router::handle_stream(stream_request& re
             context.route_params = std::move(params);
             auto result = std::optional<stream_response>{};
             auto framing = stream_transfer_framing{};
+            auto stream_token = make_stream_token();
             auto head = co_await run_middleware_chain(
                matching_middlewares(middlewares_, context.parsed_target), context,
-               [&request, &route, &result, &framing](route_context&) -> boost::asio::awaitable<response> {
+               [&request, &route, &result, &framing, &stream_token](route_context&) -> boost::asio::awaitable<response> {
                   result = co_await route.handler(request);
                   framing = capture_stream_transfer_framing(result->head);
+                  mark_stream_head(result->head, stream_token);
                   co_return std::move(result->head);
                });
             if (!result.has_value()) {
+               clear_stream_token(head);
+               co_return stream_response::buffered(std::move(head));
+            }
+            const auto preserve_stream_body =
+               static_cast<bool>(result->body) && stream_token_matches(head, stream_token) && head.body().empty();
+            clear_stream_token(head);
+            if (!preserve_stream_body) {
                co_return stream_response::buffered(std::move(head));
             }
             if (result->body) {

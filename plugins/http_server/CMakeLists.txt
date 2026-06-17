@@ -1,7 +1,7 @@
 add_library(
    fcl_plugin_http_server STATIC
    plugin.cpp
-   publication_api.cpp
+   publisher_api.cpp
    config.cpp
    server_lifecycle.cpp
    plugin_impl.cpp

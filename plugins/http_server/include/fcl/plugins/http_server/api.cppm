@@ -15,6 +15,8 @@ import fcl.api.handle;
 import fcl.api.connection;
 import fcl.api.registry;
 import fcl.api.dispatcher;
+import fcl.api.binding;
+import fcl.http.api;
 import fcl.http.middleware;
 import fcl.plugins.http_server.types;
 
@@ -27,11 +29,15 @@ class api : public fcl::api::contract<api, fcl::api::surface::local> {
    virtual boost::asio::awaitable<void> use(fcl::http::middleware_descriptor descriptor) = 0;
 
    template <typename Interface> boost::asio::awaitable<void> publish(publish_options options = {}) {
-      co_await publish(publication::typed<Interface>(std::move(options)));
+      auto plan = fcl::api::binding().serve(registry()).build();
+      auto binding = fcl::http::api().use(std::move(plan)).bind<Interface>().build();
+      co_await publish_binding(std::move(binding), std::move(options));
    }
 
  private:
-   virtual boost::asio::awaitable<void> publish(publication value) = 0;
+   [[nodiscard]] virtual const fcl::api::registry& registry() const = 0;
+   virtual boost::asio::awaitable<void> publish_binding(fcl::http::api_binding binding,
+                                                        publish_options options) = 0;
 };
 
 } // namespace fcl::plugins::http_server

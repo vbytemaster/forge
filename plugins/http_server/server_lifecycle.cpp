@@ -36,9 +36,8 @@ boost::asio::awaitable<void> start_server(plugin::impl& state) {
    for (auto& descriptor : snapshot.middleware) {
       router.use(std::move(descriptor));
    }
-   for (auto& value : snapshot.publications) {
-      auto binding = value.build(*state.apis);
-      binding.mount(router, resolve_base_path(state.settings, value.options().base_path));
+   for (auto& value : snapshot.api_bindings) {
+      value.binding.mount(router, resolve_base_path(state.settings, value.options.base_path));
    }
 
    auto server = std::make_unique<fcl::http::server>(*state.runtime, to_server_config(state.settings), std::move(router));

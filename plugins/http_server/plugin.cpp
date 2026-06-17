@@ -25,7 +25,7 @@ import fcl.plugins.http_server.types;
 
 #include "details/config.hxx"
 #include "details/plugin_impl.hxx"
-#include "details/publication_api.hxx"
+#include "details/publisher_api.hxx"
 #include "details/server_lifecycle.hxx"
 
 namespace fcl::plugins::http_server {
@@ -52,7 +52,7 @@ boost::asio::awaitable<void> plugin::configure(fcl::config::component_view view)
 }
 
 boost::asio::awaitable<void> plugin::provide(fcl::api::provider& provider) {
-   provider.install<api>(std::make_shared<publication_api>(impl_));
+   provider.install<api>(std::make_shared<publisher_api>(impl_));
    co_return;
 }
 

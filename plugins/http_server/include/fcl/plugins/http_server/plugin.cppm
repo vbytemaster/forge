@@ -44,7 +44,7 @@ class plugin final : public fcl::app::plugin {
 
  private:
    struct impl;
-   class publication_api;
+   class publisher_api;
 
    friend boost::asio::awaitable<void> start_server(impl&);
    friend boost::asio::awaitable<void> stop_server(impl&);

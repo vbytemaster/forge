@@ -59,9 +59,9 @@ compose through `fcl_plugin_p2p_node`.
 ## HTTP Server Plugin
 
 `http_server` owns one configured `fcl_http::server` lifecycle and exposes a
-local-only typed publication API. Application plugins contribute
+local-only typed publish API. Application plugins contribute
 `FCL_HTTP_API` interfaces through `publish<Interface>()` and middleware before
-startup; the server plugin mounts them under the configured or per-publication
+startup; the server plugin mounts them under the configured or per-publish
 base path and then starts the HTTP server. Direct `fcl::http::router` or
 `fcl::http::api_binding` mounting belongs to applications that intentionally own
 the low-level `fcl_http` server, not to the official plugin surface.

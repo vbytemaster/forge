@@ -6,8 +6,8 @@ diagnostics. It is not a full business validation framework.
 
 ## When To Use
 
-- A typed config struct needs defaults, required fields, aliases, ranges or
-  secret/deprecated metadata.
+- A typed config struct needs defaults, required fields, aliases, ranges,
+  nested object-list rules or secret/deprecated metadata.
 - JSON/YAML/CLI decoding must return path-aware diagnostics instead of throwing
   generic parser errors.
 - A library wants to publish its config contract without depending on a parser.
@@ -84,6 +84,52 @@ rules.apply_defaults(config);
 auto diagnostics = rules.validate(config, "http");
 ```
 
+### Nested Object Lists
+
+Use nested schemas for structured config fields such as local key entries. The
+outer field stays one `object_list` for config registry, CLI and environment
+adapters; nested fields still receive typed decode and indexed diagnostics.
+
+```cpp
+struct key_config {
+   std::string id;
+   std::string private_key;
+   std::string input_profile = "fcl";
+   std::vector<std::string> purposes;
+};
+
+struct signer_config {
+   std::vector<key_config> keys;
+};
+
+BOOST_DESCRIBE_STRUCT(key_config, (), (id, private_key, input_profile, purposes))
+BOOST_DESCRIBE_STRUCT(signer_config, (), (keys))
+
+template <>
+struct fcl::schema::rules<key_config> {
+   static auto define() {
+      auto schema = fcl::schema::object<key_config>();
+      schema.field<&key_config::id>("id").required().non_empty();
+      schema.field<&key_config::private_key>("private-key").required().secret();
+      schema.field<&key_config::input_profile>("input-profile").default_value("fcl");
+      schema.field<&key_config::purposes>("purposes").min_items(1).each_non_empty();
+      return schema;
+   }
+};
+
+template <>
+struct fcl::schema::rules<signer_config> {
+   static auto define() {
+      auto schema = fcl::schema::object<signer_config>();
+      schema.field<&signer_config::keys>("keys")
+         .items<key_config>()
+         .secret()
+         .unique_by<&key_config::id>();
+      return schema;
+   }
+};
+```
+
 ### Convert Described Enums
 
 ```cpp
@@ -112,6 +158,9 @@ Diagnostics carry:
   validation. Schema validates local value shape before application checks run.
 - Do not hide parser-specific decisions in schema metadata. JSON, YAML, env and
   CLI adapters each own their source diagnostics.
+- Do not use nested object-list fields as generated CLI/environment fields.
+  Keep the top-level object-list secret or source it from a protected config
+  document.
 - Do not mark a field `secret()` and then print the raw document. Redaction is an
   explicit config/log/UI step.
 
@@ -126,5 +175,6 @@ Diagnostics carry:
 
 ## Tests
 
-`test_fcl_schema` covers field traversal, defaults, range validation, secret and
-deprecated metadata, and enum string/int conversion.
+`test_fcl_schema` and `test_fcl_config` cover field traversal, defaults, range
+validation, nested object-list decode, secret/deprecated metadata, and enum
+string/int conversion.

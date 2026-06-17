@@ -1,15 +1,21 @@
 module;
 
 #include <any>
+#include <algorithm>
 #include <concepts>
 #include <cstdint>
+#include <cctype>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <typeindex>
+#include <variant>
 #include <utility>
 #include <vector>
 
@@ -20,11 +26,38 @@ import fcl.schema.value_kind;
 
 export namespace fcl::schema {
 
+template <typename T> struct rules;
 template <typename T> struct member_pointer_traits;
 
 template <typename Object, typename Member> struct member_pointer_traits<Member Object::*> {
    using object_type = Object;
    using member_type = Member;
+};
+
+struct input_value {
+   using array_type = std::vector<input_value>;
+   using object_type = std::map<std::string, input_value>;
+   using storage_type =
+      std::variant<std::monostate, bool, std::int64_t, std::uint64_t, double, std::string, array_type, object_type>;
+
+   storage_type storage;
+
+   input_value() = default;
+   input_value(bool input) : storage{input} {}
+   input_value(std::int64_t input) : storage{input} {}
+   input_value(std::uint64_t input) : storage{input} {}
+   input_value(double input) : storage{input} {}
+   input_value(std::string input) : storage{std::move(input)} {}
+   input_value(array_type input) : storage{std::move(input)} {}
+   input_value(object_type input) : storage{std::move(input)} {}
+
+   [[nodiscard]] const array_type* as_array() const noexcept {
+      return std::get_if<array_type>(&storage);
+   }
+
+   [[nodiscard]] const object_type* as_object() const noexcept {
+      return std::get_if<object_type>(&storage);
+   }
 };
 
 template <typename T> [[nodiscard]] T cast_any_to(const std::any& value) {
@@ -78,6 +111,62 @@ template <typename T> [[nodiscard]] T cast_any_to(const std::any& value) {
    return std::any_cast<clean_type>(value);
 }
 
+[[nodiscard]] inline std::string append_path(std::string_view base_path, std::string_view field) {
+   auto output = std::string{base_path};
+   if (!output.empty()) {
+      output += ".";
+   }
+   output += field;
+   return output;
+}
+
+[[nodiscard]] inline std::string append_index(std::string_view base_path, std::size_t index) {
+   auto output = std::string{base_path};
+   output += "[";
+   output += std::to_string(index);
+   output += "]";
+   return output;
+}
+
+[[nodiscard]] inline diagnostic make_path_error(std::string path, std::string code, std::string message) {
+   return diagnostic{
+      .path = std::move(path),
+      .code = std::move(code),
+      .level = severity::error,
+      .message = std::move(message),
+   };
+}
+
+[[nodiscard]] inline diagnostic make_path_warning(std::string path, std::string code, std::string message) {
+   return diagnostic{
+      .path = std::move(path),
+      .code = std::move(code),
+      .level = severity::warning,
+      .message = std::move(message),
+   };
+}
+
+[[nodiscard]] inline bool parse_bool_text(std::string text, bool& output) {
+   std::ranges::transform(text, text.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+   if (text == "true" || text == "1" || text == "yes" || text == "on") {
+      output = true;
+      return true;
+   }
+   if (text == "false" || text == "0" || text == "no" || text == "off") {
+      output = false;
+      return true;
+   }
+   return false;
+}
+
+template <typename T>
+[[nodiscard]] T cast_input_to(const input_value& input, std::string_view path, std::vector<diagnostic>& diagnostics);
+
+template <typename T>
+[[nodiscard]] std::vector<T> decode_object_list(const input_value& input,
+                                                std::string_view path,
+                                                std::vector<diagnostic>& diagnostics);
+
 template <typename T> struct field_rule {
    std::string name;
    std::vector<std::string> aliases;
@@ -92,9 +181,14 @@ template <typename T> struct field_rule {
    std::any default_value;
    std::optional<long double> minimum;
    std::optional<long double> maximum;
+   bool nested_object_list = false;
+   std::type_index item_type = std::type_index{typeid(void)};
    std::function<void(T&)> apply_default;
    std::function<void(T&, const std::any&)> assign_any;
+   std::function<void(T&, const input_value&, std::string_view, std::vector<diagnostic>&)> assign_input;
    std::function<std::any(const T&)> read_any;
+   std::function<std::optional<std::size_t>(const T&)> read_size;
+   std::vector<std::function<void(const T&, std::string_view, std::vector<diagnostic>&)>> validators;
 };
 
 template <typename T> class field_builder;
@@ -114,7 +208,18 @@ template <typename T> class object_schema {
       rule.kind = member_kind<member_type>::value;
       rule.type = std::type_index{typeid(member_type)};
       rule.assign_any = [](T& object, const std::any& value) { object.*Member = cast_any_to<member_type>(value); };
+      rule.assign_input = [](T& object, const input_value& value, std::string_view path,
+                             std::vector<diagnostic>& diagnostics) {
+         try {
+            object.*Member = cast_input_to<member_type>(value, path, diagnostics);
+         } catch (const std::exception& error) {
+            diagnostics.push_back(make_path_error(std::string{path}, "config.type", error.what()));
+         }
+      };
       rule.read_any = [](const T& object) -> std::any { return object.*Member; };
+      if constexpr (is_vector<member_type>::value) {
+         rule.read_size = [](const T& object) -> std::optional<std::size_t> { return (object.*Member).size(); };
+      }
       rule.apply_default = [state = fields_, index = fields_->size()](T& object) {
          const auto& self = (*state)[index];
          if (self.has_default) {
@@ -136,43 +241,95 @@ template <typename T> class object_schema {
       }
    }
 
+   [[nodiscard]] std::vector<diagnostic> decode_object(const input_value::object_type& input,
+                                                       std::string_view base_path,
+                                                       T& output) const {
+      auto result = std::vector<diagnostic>{};
+      auto known_fields = std::set<std::string>{};
+      for (const auto& field : *fields_) {
+         known_fields.insert(field.name);
+         known_fields.insert(field.aliases.begin(), field.aliases.end());
+      }
+
+      for (const auto& [name, ignored] : input) {
+         if (!known_fields.contains(name)) {
+            result.push_back(make_path_warning(append_path(base_path, name), "config.unknown", "unknown config field"));
+         }
+      }
+
+      for (const auto& field : *fields_) {
+         auto field_path = append_path(base_path, field.name);
+         const auto* found = [&]() -> const input_value* {
+            if (const auto exact = input.find(field.name); exact != input.end()) {
+               return &exact->second;
+            }
+            for (const auto& alias : field.aliases) {
+               if (const auto alias_entry = input.find(alias); alias_entry != input.end()) {
+                  field_path = append_path(base_path, alias);
+                  return &alias_entry->second;
+               }
+            }
+            return nullptr;
+         }();
+
+         if (!found) {
+            if (field.required) {
+               result.push_back(
+                  make_path_error(std::move(field_path), "config.required", "required config field is missing"));
+            }
+            continue;
+         }
+
+         if (field.deprecated) {
+            result.push_back(make_path_warning(
+               field_path,
+               "config.deprecated",
+               field.deprecated_message.empty() ? "deprecated config field" : field.deprecated_message));
+         }
+
+         field.assign_input(output, *found, field_path, result);
+      }
+
+      auto validation = validate(output, base_path);
+      result.insert(result.end(), validation.begin(), validation.end());
+      return result;
+   }
+
    [[nodiscard]] std::vector<diagnostic> validate(const T& object, std::string_view base_path = {}) const {
       auto result = std::vector<diagnostic>{};
       for (const auto& field : *fields_) {
-         if (!field.minimum && !field.maximum) {
-            continue;
-         }
-
-         auto numeric = std::optional<long double>{};
-         try {
-            switch (field.kind) {
-            case value_kind::signed_integer:
-               numeric = static_cast<long double>(std::any_cast<std::int64_t>(coerce_signed(field.read_any(object))));
-               break;
-            case value_kind::unsigned_integer:
-               numeric =
-                   static_cast<long double>(std::any_cast<std::uint64_t>(coerce_unsigned(field.read_any(object))));
-               break;
-            case value_kind::floating:
-               numeric = std::any_cast<long double>(coerce_floating(field.read_any(object)));
-               break;
-            default:
-               break;
+         if (field.minimum || field.maximum) {
+            auto numeric = std::optional<long double>{};
+            try {
+               switch (field.kind) {
+               case value_kind::signed_integer:
+                  numeric =
+                      static_cast<long double>(std::any_cast<std::int64_t>(coerce_signed(field.read_any(object))));
+                  break;
+               case value_kind::unsigned_integer:
+                  numeric =
+                      static_cast<long double>(std::any_cast<std::uint64_t>(coerce_unsigned(field.read_any(object))));
+                  break;
+               case value_kind::floating:
+                  numeric = std::any_cast<long double>(coerce_floating(field.read_any(object)));
+                  break;
+               default:
+                  break;
+               }
+            } catch (...) {
+               result.push_back(
+                   make_error(base_path, field.name, "schema.type", "value cannot be inspected for range validation"));
             }
-         } catch (...) {
-            result.push_back(
-                make_error(base_path, field.name, "schema.type", "value cannot be inspected for range validation"));
-            continue;
-         }
 
-         if (!numeric) {
-            continue;
+            if (numeric && field.minimum && *numeric < *field.minimum) {
+               result.push_back(make_error(base_path, field.name, "schema.range", "value is below the allowed minimum"));
+            }
+            if (numeric && field.maximum && *numeric > *field.maximum) {
+               result.push_back(make_error(base_path, field.name, "schema.range", "value is above the allowed maximum"));
+            }
          }
-         if (field.minimum && *numeric < *field.minimum) {
-            result.push_back(make_error(base_path, field.name, "schema.range", "value is below the allowed minimum"));
-         }
-         if (field.maximum && *numeric > *field.maximum) {
-            result.push_back(make_error(base_path, field.name, "schema.range", "value is above the allowed maximum"));
+         for (const auto& validator : field.validators) {
+            validator(object, base_path, result);
          }
       }
       return result;
@@ -292,6 +449,109 @@ template <typename T> class field_builder {
       return *this;
    }
 
+   template <typename Item> field_builder& items() {
+      current().nested_object_list = true;
+      current().item_type = std::type_index{typeid(Item)};
+      return *this;
+   }
+
+   field_builder& non_empty() {
+      current().validators.push_back([state = schema_.fields_, index = index_](
+                                        const T& object, std::string_view base_path,
+                                        std::vector<diagnostic>& diagnostics) {
+         const auto& field = (*state)[index];
+         if (field.kind != value_kind::string) {
+            return;
+         }
+         const auto any_value = field.read_any(object);
+         const auto& value = std::any_cast<const std::string&>(any_value);
+         if (value.empty()) {
+            diagnostics.push_back(
+               make_path_error(append_path(base_path, field.name), "schema.non_empty", "value must not be empty"));
+         }
+      });
+      return *this;
+   }
+
+   field_builder& min_items(std::size_t count) {
+      current().validators.push_back([state = schema_.fields_, index = index_, count](
+                                        const T& object, std::string_view base_path,
+                                        std::vector<diagnostic>& diagnostics) {
+         const auto& field = (*state)[index];
+         if (!field.read_size) {
+            return;
+         }
+         const auto size = field.read_size(object);
+         if (size && *size < count) {
+            diagnostics.push_back(make_path_error(append_path(base_path, field.name),
+                                                 "schema.min_items",
+                                                 "list has fewer items than allowed"));
+         }
+      });
+      return *this;
+   }
+
+   field_builder& max_items(std::size_t count) {
+      current().validators.push_back([state = schema_.fields_, index = index_, count](
+                                        const T& object, std::string_view base_path,
+                                        std::vector<diagnostic>& diagnostics) {
+         const auto& field = (*state)[index];
+         if (!field.read_size) {
+            return;
+         }
+         const auto size = field.read_size(object);
+         if (size && *size > count) {
+            diagnostics.push_back(make_path_error(append_path(base_path, field.name),
+                                                 "schema.max_items",
+                                                 "list has more items than allowed"));
+         }
+      });
+      return *this;
+   }
+
+   field_builder& each_non_empty() {
+      current().validators.push_back([state = schema_.fields_, index = index_](
+                                        const T& object, std::string_view base_path,
+                                        std::vector<diagnostic>& diagnostics) {
+         const auto& field = (*state)[index];
+         if (field.kind != value_kind::string_list) {
+            return;
+         }
+         const auto any_value = field.read_any(object);
+         const auto& values = std::any_cast<const std::vector<std::string>&>(any_value);
+         for (std::size_t i = 0; i < values.size(); ++i) {
+            if (values[i].empty()) {
+               diagnostics.push_back(make_path_error(append_index(append_path(base_path, field.name), i),
+                                                    "schema.non_empty",
+                                                    "list item must not be empty"));
+            }
+         }
+      });
+      return *this;
+   }
+
+   template <auto Member> field_builder& unique_by() {
+      using item_type = typename member_pointer_traits<decltype(Member)>::object_type;
+      using member_type = std::remove_cvref_t<typename member_pointer_traits<decltype(Member)>::member_type>;
+      current().validators.push_back([state = schema_.fields_, index = index_](
+                                        const T& object, std::string_view base_path,
+                                        std::vector<diagnostic>& diagnostics) {
+         const auto& field = (*state)[index];
+         const auto any_value = field.read_any(object);
+         const auto& values = std::any_cast<const std::vector<item_type>&>(any_value);
+         auto seen = std::set<member_type>{};
+         for (const auto& item : values) {
+            if (!seen.insert(item.*Member).second) {
+               diagnostics.push_back(make_path_error(append_path(base_path, field.name),
+                                                    "schema.unique",
+                                                    "list items must be unique"));
+               return;
+            }
+         }
+      });
+      return *this;
+   }
+
    template <auto Member> field_builder field(std::string name) {
       return schema_.template field<Member>(std::move(name));
    }
@@ -308,6 +568,105 @@ template <typename T> class field_builder {
    object_schema<T> schema_;
    std::size_t index_ = 0;
 };
+
+template <typename T>
+[[nodiscard]] T cast_input_to(const input_value& input, std::string_view path, std::vector<diagnostic>& diagnostics) {
+   using clean_type = std::remove_cvref_t<T>;
+   if constexpr (std::same_as<clean_type, bool>) {
+      if (const auto* value = std::get_if<bool>(&input.storage)) {
+         return *value;
+      }
+      if (const auto* text = std::get_if<std::string>(&input.storage)) {
+         auto parsed = false;
+         if (parse_bool_text(*text, parsed)) {
+            return parsed;
+         }
+      }
+   } else if constexpr (std::signed_integral<clean_type> && !std::same_as<clean_type, bool>) {
+      if (const auto* value = std::get_if<std::int64_t>(&input.storage)) {
+         return static_cast<clean_type>(*value);
+      }
+      if (const auto* value = std::get_if<std::uint64_t>(&input.storage)) {
+         return static_cast<clean_type>(*value);
+      }
+      if (const auto* text = std::get_if<std::string>(&input.storage)) {
+         return static_cast<clean_type>(std::stoll(*text));
+      }
+   } else if constexpr (std::unsigned_integral<clean_type> && !std::same_as<clean_type, bool>) {
+      if (const auto* value = std::get_if<std::uint64_t>(&input.storage)) {
+         return static_cast<clean_type>(*value);
+      }
+      if (const auto* value = std::get_if<std::int64_t>(&input.storage); value && *value >= 0) {
+         return static_cast<clean_type>(*value);
+      }
+      if (const auto* text = std::get_if<std::string>(&input.storage)) {
+         return static_cast<clean_type>(std::stoull(*text));
+      }
+   } else if constexpr (std::floating_point<clean_type>) {
+      if (const auto* value = std::get_if<double>(&input.storage)) {
+         return static_cast<clean_type>(*value);
+      }
+      if (const auto* value = std::get_if<std::int64_t>(&input.storage)) {
+         return static_cast<clean_type>(*value);
+      }
+      if (const auto* value = std::get_if<std::uint64_t>(&input.storage)) {
+         return static_cast<clean_type>(*value);
+      }
+      if (const auto* text = std::get_if<std::string>(&input.storage)) {
+         return static_cast<clean_type>(std::stod(*text));
+      }
+   } else if constexpr (std::same_as<clean_type, std::string>) {
+      if (const auto* value = std::get_if<std::string>(&input.storage)) {
+         return *value;
+      }
+   } else if constexpr (std::same_as<clean_type, std::vector<std::string>>) {
+      if (const auto* values = input.as_array()) {
+         auto output = std::vector<std::string>{};
+         output.reserve(values->size());
+         for (std::size_t i = 0; i < values->size(); ++i) {
+            if (const auto* text = std::get_if<std::string>(&(*values)[i].storage)) {
+               output.push_back(*text);
+               continue;
+            }
+            diagnostics.push_back(make_path_error(append_index(path, i), "config.type", "list entry is not a string"));
+         }
+         return output;
+      }
+   } else if constexpr (is_vector<clean_type>::value) {
+      using item_type = typename vector_item<clean_type>::type;
+      return decode_object_list<item_type>(input, path, diagnostics);
+   }
+
+   throw std::invalid_argument{"config value has incompatible type"};
+}
+
+template <typename T>
+[[nodiscard]] std::vector<T> decode_object_list(const input_value& input,
+                                                std::string_view path,
+                                                std::vector<diagnostic>& diagnostics) {
+   const auto* values = input.as_array();
+   if (!values) {
+      throw std::invalid_argument{"config value has incompatible type"};
+   }
+
+   auto output = std::vector<T>{};
+   output.reserve(values->size());
+   const auto nested_rules = rules<T>::define();
+   for (std::size_t i = 0; i < values->size(); ++i) {
+      const auto item_path = append_index(path, i);
+      const auto* object = (*values)[i].as_object();
+      if (!object) {
+         diagnostics.push_back(make_path_error(item_path, "config.type", "list entry is not an object"));
+         continue;
+      }
+      auto item = T{};
+      nested_rules.apply_defaults(item);
+      auto nested = nested_rules.decode_object(*object, item_path, item);
+      diagnostics.insert(diagnostics.end(), nested.begin(), nested.end());
+      output.push_back(std::move(item));
+   }
+   return output;
+}
 
 template <typename T> [[nodiscard]] object_schema<T> object() {
    return object_schema<T>{};

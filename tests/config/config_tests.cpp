@@ -31,10 +31,24 @@ struct flat_config {
    std::string log_level;
 };
 
+struct nested_key_config {
+   std::string id;
+   std::string private_key;
+   std::string input_profile = "fcl";
+   std::vector<std::string> purposes;
+};
+
+struct nested_signer_config {
+   std::vector<nested_key_config> keys;
+   std::string default_output_profile = "fcl";
+};
+
 } // namespace
 
 BOOST_DESCRIBE_STRUCT(http_config, (), (bind_port, bind_host, tls_enabled, tags, token))
 BOOST_DESCRIBE_STRUCT(flat_config, (), (log_level))
+BOOST_DESCRIBE_STRUCT(nested_key_config, (), (id, private_key, input_profile, purposes))
+BOOST_DESCRIBE_STRUCT(nested_signer_config, (), (keys, default_output_profile))
 
 template <> struct fcl::schema::rules<http_config> {
    [[nodiscard]] static fcl::schema::object_schema<http_config> define() {
@@ -55,6 +69,38 @@ template <> struct fcl::schema::rules<flat_config> {
       return schema;
    }
 };
+
+template <> struct fcl::schema::rules<nested_key_config> {
+   [[nodiscard]] static fcl::schema::object_schema<nested_key_config> define() {
+      auto schema = fcl::schema::object<nested_key_config>();
+      schema.field<&nested_key_config::id>("id").required().non_empty();
+      schema.field<&nested_key_config::private_key>("private-key").required().secret();
+      schema.field<&nested_key_config::input_profile>("input-profile").default_value("fcl");
+      schema.field<&nested_key_config::purposes>("purposes").min_items(1).each_non_empty();
+      return schema;
+   }
+};
+
+template <> struct fcl::schema::rules<nested_signer_config> {
+   [[nodiscard]] static fcl::schema::object_schema<nested_signer_config> define() {
+      auto schema = fcl::schema::object<nested_signer_config>();
+      schema.field<&nested_signer_config::keys>("keys")
+         .items<nested_key_config>()
+         .secret()
+         .unique_by<&nested_key_config::id>()
+         .description("Configured local signing keys");
+      schema.field<&nested_signer_config::default_output_profile>("default-output-profile").default_value("fcl");
+      return schema;
+   }
+};
+
+[[nodiscard]] bool has_diagnostic(const std::vector<fcl::schema::diagnostic>& entries,
+                                  std::string_view path,
+                                  std::string_view code) {
+   return std::ranges::any_of(entries, [&](const fcl::schema::diagnostic& entry) {
+      return entry.path == path && entry.code == code;
+   });
+}
 
 BOOST_AUTO_TEST_CASE(config_key_path_splits_dotted_keys) {
    auto segments = fcl::config::key_path{.value = "http.bind-port"}.segments();
@@ -150,6 +196,65 @@ BOOST_AUTO_TEST_CASE(config_registry_supports_empty_component_sections) {
    BOOST_TEST(decoded.value.log_level == "debug");
    BOOST_REQUIRE_EQUAL(registry.components().front().fields.size(), 1U);
    BOOST_TEST(registry.components().front().fields.front().has_default);
+}
+
+BOOST_AUTO_TEST_CASE(config_decodes_nested_object_lists_with_item_defaults_and_paths) {
+   auto key = fcl::config::value::object_type{};
+   key["id"] = fcl::config::value{"provider"};
+   key["private-key"] = fcl::config::value{"PVT_FAKE"};
+   key["purposes"] = fcl::config::value::array_type{fcl::config::value{"storage.receipt"}};
+   key["unknown"] = fcl::config::value{"ignored"};
+
+   auto doc = fcl::config::document{};
+   doc.set("signature-provider.keys", fcl::config::value::array_type{fcl::config::value{key}});
+
+   const auto decoded = fcl::config::decode<nested_signer_config>(doc, "signature-provider");
+   BOOST_TEST(decoded.ok());
+   BOOST_REQUIRE_EQUAL(decoded.value.keys.size(), 1U);
+   BOOST_TEST(decoded.value.keys.front().id == "provider");
+   BOOST_TEST(decoded.value.keys.front().private_key == "PVT_FAKE");
+   BOOST_TEST(decoded.value.keys.front().input_profile == "fcl");
+   BOOST_TEST(decoded.value.default_output_profile == "fcl");
+   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "signature-provider.keys[0].unknown", "config.unknown"));
+}
+
+BOOST_AUTO_TEST_CASE(config_nested_object_list_validators_report_stable_diagnostics) {
+   auto invalid = fcl::config::value::object_type{};
+   invalid["id"] = fcl::config::value{""};
+   invalid["private-key"] = fcl::config::value{std::uint64_t{42}};
+   invalid["purposes"] = fcl::config::value::array_type{fcl::config::value{""}};
+
+   auto duplicate = fcl::config::value::object_type{};
+   duplicate["id"] = fcl::config::value{"duplicate"};
+   duplicate["private-key"] = fcl::config::value{"PVT_ONE"};
+   duplicate["purposes"] = fcl::config::value::array_type{fcl::config::value{"storage.receipt"}};
+
+   auto duplicate_two = duplicate;
+   duplicate_two["private-key"] = fcl::config::value{"PVT_TWO"};
+
+   auto doc = fcl::config::document{};
+   doc.set("signature-provider.keys",
+           fcl::config::value::array_type{
+              fcl::config::value{invalid},
+              fcl::config::value{duplicate},
+              fcl::config::value{duplicate_two},
+           });
+
+   const auto decoded = fcl::config::decode<nested_signer_config>(doc, "signature-provider");
+   BOOST_TEST(!decoded.ok());
+   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "signature-provider.keys[0].id", "schema.non_empty"));
+   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "signature-provider.keys[0].private-key", "config.type"));
+   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "signature-provider.keys[0].purposes[0]", "schema.non_empty"));
+   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "signature-provider.keys", "schema.unique"));
+}
+
+BOOST_AUTO_TEST_CASE(config_describes_secret_object_list_without_nested_env_fields) {
+   const auto descriptor = fcl::config::describe_component<nested_signer_config>("signature-provider");
+   BOOST_REQUIRE_EQUAL(descriptor.fields.size(), 2U);
+   BOOST_TEST(descriptor.fields[0].name == "keys");
+   BOOST_TEST(static_cast<int>(descriptor.fields[0].kind) == static_cast<int>(fcl::schema::value_kind::object_list));
+   BOOST_TEST(descriptor.fields[0].secret);
+   BOOST_TEST(descriptor.fields[1].name == "default-output-profile");
 }
 
 BOOST_AUTO_TEST_CASE(config_migration_chain_updates_document_version) {

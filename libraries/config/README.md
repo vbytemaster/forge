@@ -101,6 +101,11 @@ if (!decoded.ok()) {
 }
 ```
 
+Nested object lists are decoded through `fcl_schema` rules too. Diagnostics use
+indexed paths such as `signature-provider.keys[0].private-key`, while the config
+registry still sees `signature-provider.keys` as one object-list field for
+redaction and source-adapter policy.
+
 ### Redact Secrets Before Output
 
 ```cpp
@@ -160,6 +165,10 @@ or other operator-provided secrets.
 
 ### Configure A Component View
 
+Plugins should usually pass a component view into `fcl::config::decode<T>()`.
+Use direct `component_view::try_get()` / `get_or()` only for rare adapter code,
+not as a second parser beside schema rules.
+
 ```cpp
 import fcl.config.key_path;
 import fcl.config.value;
@@ -169,8 +178,7 @@ import fcl.config.decode;
 import fcl.config.migration;
 
 auto view = fcl::config::component_view{merged, "http"};
-auto host = view.get_or<std::string>("bind-host", "127.0.0.1");
-auto port = view.get_or<std::uint16_t>("bind-port", 8080);
+auto decoded = fcl::config::decode<http_config>(view.source(), view.section());
 ```
 
 ### Migrate Before Typed Decode
@@ -224,6 +232,9 @@ if (!migrated.ok()) {
   deterministic conflict rule.
 - Do not bypass `component_registry` for plugin config collection; duplicate
   fields/aliases must be detected before runtime startup.
+- Do not hand-parse official plugin config from `component_view` when the data
+  can be described as typed schema fields. Add schema support first, then decode
+  through `fcl::config::decode<T>()`.
 - Do not make a second generic config document/parser layer in a consuming
   application. Use `fcl_yaml`, `fcl_json`, `fcl_env` or `fcl_program_options` as
   source adapters over this document model.

@@ -24,6 +24,7 @@ import fcl.schema.enums;
 export namespace fcl::config {
 
 [[nodiscard]] bool parse_bool_text(std::string text, bool& output);
+[[nodiscard]] schema::input_value to_schema_value(const value& input);
 [[nodiscard]] std::any value_to_any(const value& input, schema::value_kind kind);
 [[nodiscard]] value any_to_value(schema::value_kind kind, const std::any& input);
 
@@ -138,16 +139,7 @@ template <typename T> [[nodiscard]] decode_result<T> decode(const document& sour
          });
       }
 
-      try {
-         field.assign_any(result.value, value_to_any(*found, field.kind));
-      } catch (const std::exception& error) {
-         result.diagnostics.entries.push_back(schema::diagnostic{
-             .path = std::move(field_path),
-             .code = "config.type",
-             .level = schema::severity::error,
-             .message = error.what(),
-         });
-      }
+      field.assign_input(result.value, to_schema_value(*found), field_path, result.diagnostics.entries);
    }
 
    auto validation = rules.validate(result.value, section);

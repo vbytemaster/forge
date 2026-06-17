@@ -21,6 +21,16 @@ enum class value_kind {
 
 template <typename T> struct dependent_false : std::false_type {};
 
+template <typename T> struct is_vector : std::false_type {};
+
+template <typename T, typename Allocator> struct is_vector<std::vector<T, Allocator>> : std::true_type {};
+
+template <typename T> struct vector_item;
+
+template <typename T, typename Allocator> struct vector_item<std::vector<T, Allocator>> {
+   using type = T;
+};
+
 template <typename T> struct member_kind {
    static constexpr value_kind value = [] {
       using clean_type = std::remove_cvref_t<T>;
@@ -36,6 +46,8 @@ template <typename T> struct member_kind {
          return value_kind::string;
       } else if constexpr (std::same_as<clean_type, std::vector<std::string>>) {
          return value_kind::string_list;
+      } else if constexpr (is_vector<clean_type>::value) {
+         return value_kind::object_list;
       } else {
          static_assert(dependent_false<clean_type>::value, "unsupported FCL schema field type");
       }

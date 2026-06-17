@@ -32,6 +32,40 @@ bool parse_bool_text(std::string text, bool& output) {
    return false;
 }
 
+schema::input_value to_schema_value(const value& input) {
+   if (const auto* bool_value = std::get_if<bool>(&input.storage)) {
+      return schema::input_value{*bool_value};
+   }
+   if (const auto* signed_value = std::get_if<std::int64_t>(&input.storage)) {
+      return schema::input_value{*signed_value};
+   }
+   if (const auto* unsigned_value = std::get_if<std::uint64_t>(&input.storage)) {
+      return schema::input_value{*unsigned_value};
+   }
+   if (const auto* floating_value = std::get_if<double>(&input.storage)) {
+      return schema::input_value{*floating_value};
+   }
+   if (const auto* string_value = std::get_if<std::string>(&input.storage)) {
+      return schema::input_value{*string_value};
+   }
+   if (const auto* array_value = input.as_array()) {
+      auto out = schema::input_value::array_type{};
+      out.reserve(array_value->size());
+      for (const auto& item : *array_value) {
+         out.push_back(to_schema_value(item));
+      }
+      return schema::input_value{std::move(out)};
+   }
+   if (const auto* object_value = input.as_object()) {
+      auto out = schema::input_value::object_type{};
+      for (const auto& [name, item] : *object_value) {
+         out.emplace(name, to_schema_value(item));
+      }
+      return schema::input_value{std::move(out)};
+   }
+   return schema::input_value{};
+}
+
 std::any value_to_any(const value& input, schema::value_kind kind) {
    switch (kind) {
    case schema::value_kind::boolean:

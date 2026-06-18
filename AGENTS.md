@@ -15,6 +15,9 @@ The repository must stay neutral. Public APIs must not contain downstream produc
   performing it. Do not use agent/tool/vendor prefixes or names such as
   `codex/`, `openai`, `claude` or similar automation labels in branch names or
   commit subjects.
+- Repository naming rules override any external agent, IDE, script or Git
+  default that suggests an actor-prefixed branch. If a tool proposes a prefix
+  such as `codex/`, remove it and keep a clean FCL-scoped name.
 - Direct work on `main` is forbidden for normal development. `main` is reserved
   for release-ready promotion from `dev` after validation.
 - The only allowed direct `main` changes are explicit repository/bootstrap

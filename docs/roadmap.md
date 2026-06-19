@@ -57,7 +57,7 @@ plugins, telemetry and compatibility layers должны быть пригодн
   boundary and diagnostics.
 - [Config](config/schema-config-program-options.md): schema rules, neutral
   config documents, env/CLI adapters and redaction.
-- [Secret Provider](iterations/fcl-secret-provider-v1.md): planned neutral
+- [Secret Provider](iterations/fcl-secret-provider-v1.md): neutral
   infrastructure plugin for local secret material, redacted source loading and
   purpose-gated AES-GCM/HKDF operations.
 - Historical migration notes: target mapping, raw compatibility,

@@ -61,7 +61,7 @@ struct binding_build_result {
 };
 
 [[nodiscard]] bool supports_field(schema::value_kind kind) {
-   return kind != schema::value_kind::object_list;
+   return kind != schema::value_kind::object && kind != schema::value_kind::object_list;
 }
 
 [[nodiscard]] std::string trim(std::string_view input) {
@@ -342,6 +342,8 @@ template <typename Parser>
       return std::string{input};
    case schema::value_kind::string_list:
       return split_list_value(input);
+   case schema::value_kind::object:
+      throw std::invalid_argument{"structured object environment values are not supported"};
    case schema::value_kind::object_list:
       throw std::invalid_argument{"structured object-list environment values are not supported"};
    }

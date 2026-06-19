@@ -47,7 +47,8 @@ Accepted patterns:
 - Kubo/IPFS keystore: keys are addressed by stable refs and raw key output is
   not part of normal status/config flows.
 - Kubernetes Secrets: environment variables and mounted files are valid secret
-  delivery mechanisms for daemons.
+  delivery mechanisms for daemons; env still enters through FCL config loading,
+  not through a secret-provider environment parser.
 - SOPS: encrypted config/files are useful for CI/CD and GitOps delivery.
 - AWS KMS envelope encryption: data keys and wrapping keys are separate; local
   code should be able to unwrap/decrypt through an explicit boundary.
@@ -59,7 +60,8 @@ Rejected shortcuts:
 - A product-specific `workspace_vault` or `storlane_vault` in FCL.
 - A daemon-global magic singleton reachable outside `fcl_api`.
 - Raw secret bytes in generated config, status, logs or diagnostics.
-- Product plugins parsing secret-bearing environment variables directly.
+- Product plugins or `secret_provider` parsing secret-bearing environment
+  variables directly.
 - Reimplementing AES-GCM, HKDF or scrypt inside the plugin instead of using
   `fcl_crypto`.
 - Treating Kubernetes Secret, GitLab CI variable or `.env` as a crypto boundary;
@@ -115,26 +117,25 @@ Example:
 secret-provider:
   secrets:
     - id: service/session-key
-      kind: symmetric-key
-      encoding: hex
       source:
-        type: env
-        name: SERVICE_SESSION_KEY
+        type: value
+        encoding: hex
+        value: "${SERVICE_SESSION_KEY}"
       purposes:
         - api.payload.decrypt
       operations:
-        - decrypt-aes-gcm
-        - derive-hkdf-sha256
+        - decrypt_aes_gcm
+        - derive_hkdf_sha256
       allow-raw-export: false
 ```
 
 Supported v1 source types:
 
-- `inline`: development/test and explicitly allowed deployments only;
-- `env`: process environment through FCL config/env loading;
+- `value`: bytes supplied by FCL config sources; CI/CD may populate this via
+  the existing FCL env config path;
 - `file`: mounted secret file such as `/run/secrets/...`;
-- `encrypted-file`: local encrypted secret store unlocked by passphrase from
-  env or file, using FCL crypto primitives.
+- `encrypted_file`: local encrypted secret store unlocked by passphrase from
+  a redacted config value or passphrase file, using FCL crypto primitives.
 
 Deferred source types:
 
@@ -170,8 +171,8 @@ These are new source backends, not changes to consumer APIs.
 
 1. Add `secret_provider` public DTOs, config schema and exceptions.
 2. Add the local-only API and plugin descriptor.
-3. Implement source loading for `inline`, `env` and `file` with redaction tests.
-4. Implement `encrypted-file` source with AES-GCM and scrypt/HKDF primitives
+3. Implement source loading for `value` and `file` with redaction tests.
+4. Implement `encrypted_file` source with AES-GCM and scrypt/HKDF primitives
    from `fcl_crypto`.
 5. Implement purpose and operation enforcement.
 6. Implement AES-GCM encrypt/decrypt, HKDF-SHA256 derive and gated raw export.
@@ -183,8 +184,8 @@ These are new source backends, not changes to consumer APIs.
 Unit tests:
 
 - descriptor/config defaults and generated config redaction;
-- inline/env/file sources load only through schema-described config;
-- encrypted-file roundtrip, wrong passphrase, wrong AAD, wrong tag and corrupt
+- value/file sources load only through schema-described config;
+- encrypted_file roundtrip, wrong passphrase, wrong AAD, wrong tag and corrupt
   ciphertext fail typed;
 - unknown secret id, denied purpose and denied operation fail typed;
 - `allow-raw-export=false` rejects `get_bytes`;
@@ -212,12 +213,12 @@ Validation:
 
 ```bash
 cmake --build build/fcl-debug -j 1 \
-  --target fcl_plugin_secret_provider test_fcl_plugins \
+  --target fcl_plugin_secret_provider test_fcl_secret_provider test_fcl_plugins \
            test_fcl_crypto test_fcl_config test_fcl_env \
            test_fcl_package_plugin_secret_provider
 
 ctest --test-dir build/fcl-debug --output-on-failure \
-  -R "^(test_fcl_plugins|test_fcl_crypto|test_fcl_config|test_fcl_env|test_fcl_package_plugin_secret_provider)$" \
+  -R "^(test_fcl_plugins|test_fcl_secret_provider|test_fcl_crypto|test_fcl_config|test_fcl_env|test_fcl_package_plugin_secret_provider)$" \
   --timeout 300
 
 git diff --check
@@ -225,7 +226,7 @@ git diff --check
 
 ## Acceptance Criteria
 
-- Products can configure secrets through FCL config/env/file sources without
+- Products can configure secrets through FCL config/env/file delivery without
   every product plugin parsing those sources directly.
 - Consumers call operations by `secret_id` and `purpose`.
 - Raw secret export is opt-in per secret and denied by default.

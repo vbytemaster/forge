@@ -1,0 +1,171 @@
+module;
+
+#include <fcl/exceptions/macros.hpp>
+
+#include <array>
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <span>
+#include <string>
+#include <utility>
+
+module fcl.plugins.secret_provider.types;
+
+import fcl.crypto.aes;
+import fcl.crypto.kdf;
+import fcl.crypto.random;
+import fcl.crypto.types;
+import fcl.exceptions;
+
+namespace fcl::plugins::secret_provider {
+namespace {
+
+constexpr auto magic = std::array<std::uint8_t, 8>{'F', 'C', 'L', 'S', 'E', 'C', '1', 0};
+
+void append_u64(fcl::crypto::bytes& out, std::uint64_t value) {
+   for (auto i = 0U; i < 8U; ++i) {
+      out.push_back(static_cast<std::uint8_t>((value >> (i * 8U)) & 0xffU));
+   }
+}
+
+[[nodiscard]] std::uint64_t read_u64(const fcl::crypto::bytes& input, std::size_t& offset) {
+   if (input.size() - offset < 8U) {
+      FCL_THROW("encrypted secret file is truncated");
+   }
+   auto value = std::uint64_t{0};
+   for (auto i = 0U; i < 8U; ++i) {
+      value |= static_cast<std::uint64_t>(input[offset++]) << (i * 8U);
+   }
+   return value;
+}
+
+void append_bytes(fcl::crypto::bytes& out, std::span<const std::uint8_t> value) {
+   out.insert(out.end(), value.begin(), value.end());
+}
+
+[[nodiscard]] fcl::crypto::bytes read_bytes(const fcl::crypto::bytes& input, std::size_t& offset, std::uint64_t size) {
+   if (size > static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)()) || input.size() - offset < size) {
+      FCL_THROW("encrypted secret file is truncated");
+   }
+   auto output = fcl::crypto::bytes{input.begin() + static_cast<std::ptrdiff_t>(offset),
+                                    input.begin() + static_cast<std::ptrdiff_t>(offset + size)};
+   offset += static_cast<std::size_t>(size);
+   return output;
+}
+
+[[nodiscard]] fcl::crypto::aes256_key derive_file_key(const std::string& passphrase,
+                                                       const fcl::crypto::bytes& salt,
+                                                       std::uint64_t n,
+                                                       std::uint64_t r,
+                                                       std::uint64_t p,
+                                                       std::uint64_t max_memory_bytes) {
+   return fcl::crypto::make_aes256_key(fcl::crypto::derive_scrypt({
+      .password = passphrase,
+      .salt = salt,
+      .n = n,
+      .r = r,
+      .p = p,
+      .max_memory_bytes = max_memory_bytes,
+      .output_size = fcl::crypto::aes256_key_size,
+   }));
+}
+
+[[nodiscard]] fcl::crypto::bytes make_header(std::uint64_t n,
+                                             std::uint64_t r,
+                                             std::uint64_t p,
+                                             std::uint64_t max_memory_bytes,
+                                             const fcl::crypto::bytes& salt,
+                                             const fcl::crypto::bytes& nonce,
+                                             std::uint64_t ciphertext_size) {
+   auto header = fcl::crypto::bytes{};
+   append_bytes(header, magic);
+   append_u64(header, n);
+   append_u64(header, r);
+   append_u64(header, p);
+   append_u64(header, max_memory_bytes);
+   append_u64(header, salt.size());
+   append_u64(header, nonce.size());
+   append_u64(header, ciphertext_size);
+   append_bytes(header, salt);
+   append_bytes(header, nonce);
+   return header;
+}
+
+} // namespace
+
+fcl::crypto::bytes encrypt_secret_file(encrypted_file_encrypt_request request) {
+   if (request.passphrase.empty() || request.plaintext.empty()) {
+      FCL_THROW("encrypted secret file requires passphrase and plaintext");
+   }
+   if (request.salt.empty()) {
+      request.salt = fcl::crypto::random_bytes(16);
+   }
+   if (request.nonce.empty()) {
+      request.nonce = fcl::crypto::random_bytes(fcl::crypto::aes_gcm_nonce_size);
+   }
+
+   const auto header = make_header(request.scrypt_n,
+                                   request.scrypt_r,
+                                   request.scrypt_p,
+                                   request.scrypt_max_memory_bytes,
+                                   request.salt,
+                                   request.nonce,
+                                   request.plaintext.size());
+   auto encrypted = fcl::crypto::encrypt_aes256_gcm({
+      .key = derive_file_key(request.passphrase,
+                             request.salt,
+                             request.scrypt_n,
+                             request.scrypt_r,
+                             request.scrypt_p,
+                             request.scrypt_max_memory_bytes),
+      .nonce = request.nonce,
+      .plaintext = std::move(request.plaintext),
+      .aad = header,
+   });
+
+   auto output = header;
+   append_bytes(output, encrypted.tag);
+   append_bytes(output, encrypted.ciphertext);
+   return output;
+}
+
+fcl::crypto::bytes decrypt_secret_file(const fcl::crypto::bytes& container,
+                                       const std::string& passphrase,
+                                       std::uint64_t max_plaintext_bytes) {
+   if (container.size() < magic.size() || !std::equal(magic.begin(), magic.end(), container.begin())) {
+      FCL_THROW("encrypted secret file has invalid magic");
+   }
+   auto offset = magic.size();
+   const auto n = read_u64(container, offset);
+   const auto r = read_u64(container, offset);
+   const auto p = read_u64(container, offset);
+   const auto max_memory_bytes = read_u64(container, offset);
+   const auto salt_size = read_u64(container, offset);
+   const auto nonce_size = read_u64(container, offset);
+   const auto ciphertext_size = read_u64(container, offset);
+   if (ciphertext_size > max_plaintext_bytes) {
+      FCL_THROW("encrypted secret file plaintext exceeds configured limit");
+   }
+   auto salt = read_bytes(container, offset, salt_size);
+   auto nonce = read_bytes(container, offset, nonce_size);
+   auto tag = read_bytes(container, offset, fcl::crypto::aes_gcm_tag_size);
+   auto ciphertext = read_bytes(container, offset, ciphertext_size);
+   if (offset != container.size()) {
+      FCL_THROW("encrypted secret file has trailing bytes");
+   }
+   auto header = make_header(n, r, p, max_memory_bytes, salt, nonce, ciphertext_size);
+   return fcl::crypto::decrypt_aes256_gcm({
+      .key = derive_file_key(passphrase, salt, n, r, p, max_memory_bytes),
+      .encrypted =
+         fcl::crypto::aes256_gcm_ciphertext{
+            .nonce = std::move(nonce),
+            .tag = std::move(tag),
+            .ciphertext = std::move(ciphertext),
+         },
+      .aad = std::move(header),
+   });
+}
+
+} // namespace fcl::plugins::secret_provider

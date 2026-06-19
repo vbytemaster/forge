@@ -279,6 +279,14 @@ add_executable(
 target_link_libraries(test_fcl_plugins fcl Boost::included_unit_test_framework)
 add_test(NAME test_fcl_plugins COMMAND test_fcl_plugins WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+add_executable(
+   test_fcl_secret_provider
+   unit/main.cpp
+   plugins/secret_provider_tests.cpp
+)
+target_link_libraries(test_fcl_secret_provider fcl Boost::included_unit_test_framework)
+add_test(NAME test_fcl_secret_provider COMMAND test_fcl_secret_provider WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
 if(TARGET fcl_tui)
    add_executable(
       test_fcl_tui
@@ -394,6 +402,17 @@ add_custom_target(
       --build-generator ${CMAKE_GENERATOR}
       --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
       --test-command fcl_package_plugin_signature_provider
+   DEPENDS test_fcl_package_install
+)
+add_custom_target(
+   test_fcl_package_plugin_secret_provider
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugin_secret_provider
+      ${CMAKE_BINARY_DIR}/fcl-package-plugin-secret-provider
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command fcl_package_plugin_secret_provider
    DEPENDS test_fcl_package_install
 )
 add_custom_target(
@@ -528,6 +547,17 @@ add_test(
       --test-command fcl_package_plugin_signature_provider
 )
 set_tests_properties(test_fcl_package_plugin_signature_provider PROPERTIES DEPENDS test_fcl_package_install)
+add_test(
+   NAME test_fcl_package_plugin_secret_provider
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugin_secret_provider
+      ${CMAKE_BINARY_DIR}/fcl-package-plugin-secret-provider
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command fcl_package_plugin_secret_provider
+)
+set_tests_properties(test_fcl_package_plugin_secret_provider PROPERTIES DEPENDS test_fcl_package_install)
 add_test(
    NAME test_fcl_package_plugin_http_server
    COMMAND ${CMAKE_CTEST_COMMAND}

@@ -2,6 +2,7 @@ module;
 
 #include <any>
 #include <algorithm>
+#include <boost/describe.hpp>
 #include <charconv>
 #include <concepts>
 #include <cstdint>
@@ -26,6 +27,7 @@ export module fcl.schema.object;
 
 import fcl.schema.diagnostic;
 import fcl.schema.value_kind;
+import fcl.schema.enums;
 
 export namespace fcl::schema {
 
@@ -671,6 +673,23 @@ template <typename T>
       if (const auto* value = std::get_if<std::string>(&input.storage)) {
          return *value;
       }
+   } else if constexpr (std::is_enum_v<clean_type>) {
+      if (const auto* text = std::get_if<std::string>(&input.storage)) {
+         auto parsed = clean_type{};
+         if (enum_from_string(*text, parsed)) {
+            return parsed;
+         }
+         diagnostics.push_back(make_path_error(std::string{path}, "config.enum", "unknown enum value"));
+         return {};
+      }
+      if (const auto* value = std::get_if<std::int64_t>(&input.storage)) {
+         auto parsed = clean_type{};
+         if (enum_from_int(*value, parsed)) {
+            return parsed;
+         }
+         diagnostics.push_back(make_path_error(std::string{path}, "config.enum", "unknown enum value"));
+         return {};
+      }
    } else if constexpr (std::same_as<clean_type, std::vector<std::string>>) {
       if (const auto* values = input.as_array()) {
          auto output = std::vector<std::string>{};
@@ -684,9 +703,45 @@ template <typename T>
          }
          return output;
       }
+   } else if constexpr (is_vector_enum<clean_type>::value) {
+      using enum_type = typename vector_item<clean_type>::type;
+      if (const auto* values = input.as_array()) {
+         auto output = clean_type{};
+         output.reserve(values->size());
+         for (std::size_t i = 0; i < values->size(); ++i) {
+            auto parsed = enum_type{};
+            if (const auto* text = std::get_if<std::string>(&(*values)[i].storage)) {
+               if (enum_from_string(*text, parsed)) {
+                  output.push_back(parsed);
+                  continue;
+               }
+               diagnostics.push_back(make_path_error(append_index(path, i), "config.enum", "unknown enum value"));
+               continue;
+            }
+            if (const auto* value = std::get_if<std::int64_t>(&(*values)[i].storage)) {
+               if (enum_from_int(*value, parsed)) {
+                  output.push_back(parsed);
+                  continue;
+               }
+               diagnostics.push_back(make_path_error(append_index(path, i), "config.enum", "unknown enum value"));
+               continue;
+            }
+            diagnostics.push_back(make_path_error(append_index(path, i), "config.type", "list entry is not an enum"));
+         }
+         return output;
+      }
    } else if constexpr (is_vector<clean_type>::value) {
       using item_type = typename vector_item<clean_type>::type;
       return decode_object_list<item_type>(input, path, diagnostics);
+   } else if constexpr (boost::describe::has_describe_members<clean_type>::value) {
+      if (const auto* object = input.as_object()) {
+         auto output = clean_type{};
+         const auto nested_rules = rules<clean_type>::define();
+         nested_rules.apply_defaults(output);
+         auto nested = nested_rules.decode_object(*object, path, output);
+         diagnostics.insert(diagnostics.end(), nested.begin(), nested.end());
+         return output;
+      }
    }
 
    throw std::invalid_argument{"config value has incompatible type"};

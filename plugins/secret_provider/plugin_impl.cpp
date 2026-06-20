@@ -15,6 +15,7 @@ import fcl.crypto.aes;
 import fcl.crypto.kdf;
 import fcl.crypto.random;
 import fcl.crypto.secret_bytes;
+import fcl.crypto.types;
 import fcl.exceptions;
 import fcl.plugins.secret_provider.exceptions;
 import fcl.plugins.secret_provider.types;
@@ -61,6 +62,10 @@ void require_size(std::uint64_t actual, std::uint64_t limit, const char* label) 
    }
 }
 
+[[nodiscard]] fcl::crypto::bytes copy_for_explicit_raw_export(const fcl::crypto::secret_bytes& material) {
+   return material.copy();
+}
+
 template <typename Secret>
 [[nodiscard]] fcl::crypto::aes256_key aes_key_from_secret(const Secret& secret) {
    try {
@@ -101,17 +106,17 @@ get_result plugin::impl::get_bytes(get_request value) const {
    }
    return get_result{
       .secret_id = secret.id,
-      .bytes = secret.material.copy(),
+      .bytes = copy_for_explicit_raw_export(secret.material),
    };
 }
 
 derive_result plugin::impl::derive_hkdf_sha256(derive_request value) const {
    const auto& secret = find_secret(secrets, value.secret_id);
    require_allowed(secret, value.purpose, operation::derive_hkdf_sha256);
-   auto output = fcl::crypto::derive_hkdf_sha256(fcl::crypto::hkdf_sha256_request{
-      .secret = secret.material.copy(),
-      .salt = std::move(value.salt),
-      .info = std::move(value.info),
+   auto output = fcl::crypto::derive_hkdf_sha256(fcl::crypto::hkdf_sha256_span_request{
+      .secret = secret.material.span(),
+      .salt = value.salt,
+      .info = value.info,
       .output_size = static_cast<std::size_t>(value.output_size),
    });
    return derive_result{.secret_id = secret.id, .bytes = std::move(output)};

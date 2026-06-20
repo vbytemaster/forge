@@ -3,6 +3,7 @@ module;
 #include <fcl/exceptions/macros.hpp>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 
 export module fcl.crypto.kdf;
@@ -37,6 +38,13 @@ struct hkdf_sha256_request {
    std::size_t output_size = default_derived_key_size;
 };
 
+struct hkdf_sha256_span_request {
+   std::span<const std::uint8_t> secret;
+   std::span<const std::uint8_t> salt;
+   std::span<const std::uint8_t> info;
+   std::size_t output_size = default_derived_key_size;
+};
+
 struct scrypt_request {
    std::string password;
    bytes salt;
@@ -48,6 +56,7 @@ struct scrypt_request {
 };
 
 [[nodiscard]] bytes derive_hkdf_sha256(const hkdf_sha256_request& request);
+[[nodiscard]] bytes derive_hkdf_sha256(const hkdf_sha256_span_request& request);
 [[nodiscard]] bytes derive_scrypt(const scrypt_request& request);
 
 } // namespace fcl::crypto

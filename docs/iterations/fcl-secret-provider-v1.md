@@ -9,9 +9,9 @@ purpose policy once, while product plugins call a narrow local API by
 `secret_id` and `purpose` instead of parsing environment variables, files or
 inline secret fields themselves.
 
-This block does not add downstream product, control-plane, account or storage
+This block does not add downstream product, control-plane, account or resource
 semantics to FCL. Downstream products decide which secret ids and purpose names
-mean "manifest decrypt", "chunk key derivation" or any other product capability.
+mean "payload decrypt", "data-key derivation" or any other product capability.
 
 ## Problem
 
@@ -160,7 +160,7 @@ These are new source backends, not changes to consumer APIs.
 `secret_provider` does not own:
 
 - product authority, grants, ACLs or tenant semantics;
-- chain, storage, account or deployment decisions;
+- chain, data-plane, account or deployment decisions;
 - remote KMS protocols in v1;
 - a wallet UI;
 - a daemon-global singleton outside the application plugin registry;

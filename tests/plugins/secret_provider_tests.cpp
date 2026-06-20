@@ -318,6 +318,39 @@ BOOST_AUTO_TEST_CASE(secret_provider_hkdf_and_aes_gcm_are_purpose_gated) try {
 }
 FCL_LOG_AND_RETHROW();
 
+BOOST_AUTO_TEST_CASE(secret_provider_hkdf_invalid_output_size_maps_to_invalid_secret) try {
+   auto plugin = secret_provider::plugin{};
+   auto runtime = fcl::asio::runtime{};
+   auto api = configured_api(runtime,
+                             plugin,
+                             provider_config({secret_entry(
+                                "data-key",
+                                source_value("derive-secret"),
+                                {"data-key.derivation"},
+                                {"derive_hkdf_sha256"})}));
+
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+                                              api->derive_hkdf_sha256(secret_provider::derive_request{
+                                                 .secret_id = "data-key",
+                                                 .purpose = "data-key.derivation",
+                                                 .salt = bytes("salt"),
+                                                 .info = bytes("info"),
+                                                 .output_size = 0,
+                                              })),
+                     secret_provider::exceptions::invalid_secret);
+
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+                                              api->derive_hkdf_sha256(secret_provider::derive_request{
+                                                 .secret_id = "data-key",
+                                                 .purpose = "data-key.derivation",
+                                                 .salt = bytes("salt"),
+                                                 .info = bytes("info"),
+                                                 .output_size = 255U * 32U + 1U,
+                                              })),
+                     secret_provider::exceptions::invalid_secret);
+}
+FCL_LOG_AND_RETHROW();
+
 BOOST_AUTO_TEST_CASE(secret_provider_encrypt_aes_gcm_maps_malformed_nonce) try {
    const auto key = std::string(32, 'K');
    auto plugin = secret_provider::plugin{};
@@ -459,6 +492,33 @@ BOOST_AUTO_TEST_CASE(secret_provider_encrypted_file_roundtrips_and_rejects_wrong
                                           true)}),
             "secret-provider"})),
       secret_provider::exceptions::invalid_secret);
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(secret_provider_encrypted_file_plaintext_limit_is_size_limit_exceeded) try {
+   const auto path = std::filesystem::temp_directory_path() / "fcl-secret-provider-encrypted-source-too-large.bin";
+   const auto container = secret_provider::encrypt_secret_file(secret_provider::encrypted_file_encrypt_request{
+      .plaintext = bytes("encrypted-secret"),
+      .passphrase = "correct horse battery staple",
+      .salt = bytes("0123456789abcdef"),
+      .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+      .scrypt_n = 1024,
+      .scrypt_max_memory_bytes = 8ULL * 1024ULL * 1024ULL,
+   });
+   write_secret_file(path, container);
+
+   auto document = provider_config({secret_entry("encrypted",
+                                                source_encrypted_file(path, "correct horse battery staple"),
+                                                {"payload.decrypt"},
+                                                {"get_bytes"},
+                                                true)});
+   document.set("secret-provider.default-max-plaintext-bytes", fcl::config::value{4U});
+
+   auto plugin = secret_provider::plugin{};
+   auto runtime = fcl::asio::runtime{};
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(
+                        runtime, plugin.configure(fcl::config::component_view{document, "secret-provider"})),
+                     secret_provider::exceptions::size_limit_exceeded);
 }
 FCL_LOG_AND_RETHROW();
 

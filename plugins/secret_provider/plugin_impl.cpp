@@ -86,6 +86,11 @@ template <typename Secret>
                        fcl::exceptions::ctx("secret_id", secret_id));
 }
 
+[[noreturn]] void throw_malformed_hkdf_request(const std::string& secret_id) {
+   FCL_THROW_EXCEPTION(exceptions::invalid_secret, "HKDF request is malformed",
+                       fcl::exceptions::ctx("secret_id", secret_id));
+}
+
 [[noreturn]] void throw_malformed_aes_gcm_parameter(
    const fcl::exceptions::runtime_coded_exception<fcl::crypto::aes::exceptions::code>& error,
    const std::string& secret_id) {
@@ -94,6 +99,17 @@ template <typename Secret>
       throw_malformed_aes_gcm_nonce(secret_id);
    case fcl::crypto::aes::exceptions::code::invalid_tag:
       throw_malformed_aes_gcm_tag(secret_id);
+   default:
+      throw;
+   }
+}
+
+[[noreturn]] void throw_malformed_hkdf_parameter(
+   const fcl::exceptions::runtime_coded_exception<fcl::crypto::kdf::exceptions::code>& error,
+   const std::string& secret_id) {
+   switch (error.value()) {
+   case fcl::crypto::kdf::exceptions::code::invalid_options:
+      throw_malformed_hkdf_request(secret_id);
    default:
       throw;
    }
@@ -136,13 +152,19 @@ get_result plugin::impl::get_bytes(get_request value) const {
 derive_result plugin::impl::derive_hkdf_sha256(derive_request value) const {
    const auto& secret = find_secret(secrets, value.secret_id);
    require_allowed(secret, value.purpose, operation::derive_hkdf_sha256);
-   auto output = fcl::crypto::derive_hkdf_sha256(fcl::crypto::hkdf_sha256_span_request{
-      .secret = secret.material.span(),
-      .salt = value.salt,
-      .info = value.info,
-      .output_size = static_cast<std::size_t>(value.output_size),
-   });
-   return derive_result{.secret_id = secret.id, .bytes = std::move(output)};
+   try {
+      auto output = fcl::crypto::derive_hkdf_sha256(fcl::crypto::hkdf_sha256_span_request{
+         .secret = secret.material.span(),
+         .salt = value.salt,
+         .info = value.info,
+         .output_size = static_cast<std::size_t>(value.output_size),
+      });
+      return derive_result{.secret_id = secret.id, .bytes = std::move(output)};
+   } catch (const fcl::crypto::kdf::exceptions::invalid_options&) {
+      throw_malformed_hkdf_request(secret.id);
+   } catch (const fcl::exceptions::runtime_coded_exception<fcl::crypto::kdf::exceptions::code>& error) {
+      throw_malformed_hkdf_parameter(error, secret.id);
+   }
 }
 
 aead_encrypt_result plugin::impl::encrypt_aes_gcm(aead_encrypt_request value) const {

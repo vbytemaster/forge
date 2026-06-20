@@ -7,6 +7,7 @@ module;
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <source_location>
 #include <string>
 #include <string_view>
 
@@ -127,6 +128,14 @@ fcl::crypto::secret_bytes load_secret_material(const secret_entry& entry,
       try {
          decrypt_limits.max_plaintext_bytes = max_plaintext_bytes;
          material = decrypt_secret_file(container, passphrase, decrypt_limits);
+      } catch (const exceptions::size_limit_exceeded&) {
+         fcl::exceptions::capture_and_rethrow("encrypted secret file source",
+                                              std::source_location::current(),
+                                              fcl::exceptions::ctx("secret_id", entry.id));
+      } catch (const exceptions::invalid_secret&) {
+         fcl::exceptions::capture_and_rethrow("encrypted secret file source",
+                                              std::source_location::current(),
+                                              fcl::exceptions::ctx("secret_id", entry.id));
       } catch (const std::exception&) {
          FCL_THROW_EXCEPTION(exceptions::invalid_secret, "encrypted secret file cannot be decrypted",
                              fcl::exceptions::ctx("secret_id", entry.id));

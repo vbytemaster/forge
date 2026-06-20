@@ -169,7 +169,9 @@ fcl::crypto::bytes decrypt_secret_file(const fcl::crypto::bytes& container,
    const auto ciphertext_size = read_u64(container, offset);
    validate_scrypt_limits(n, r, p, max_memory_bytes, limits);
    if (ciphertext_size > limits.max_plaintext_bytes) {
-      FCL_THROW("encrypted secret file plaintext exceeds configured limit");
+      FCL_THROW_EXCEPTION(exceptions::size_limit_exceeded, "encrypted secret file plaintext exceeds configured limit",
+                          fcl::exceptions::ctx("size", ciphertext_size),
+                          fcl::exceptions::ctx("max", limits.max_plaintext_bytes));
    }
    auto salt = read_bytes(container, offset, salt_size);
    auto nonce = read_bytes(container, offset, nonce_size);

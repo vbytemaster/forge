@@ -264,12 +264,12 @@ router.mount(binding);
 HTTP stays HTTP: route/path/status semantics remain native. The transport does
 not wrap typed calls in a message-frame body.
 
-### FastAPI-Style Parameters
+### FastAPI-Style DTO Parameters
 
-For endpoint-shaped APIs, the C++ method may use several arguments. The
-argument names live in `FCL_API_METHOD(...)`; HTTP parameter categories come
-from FCL HTTP wrapper types, following the FastAPI `Query` / `Header` / `Body`
-model without copying Python syntax.
+For production HTTP endpoints, prefer one described request DTO. FastAPI-style
+parameter categories live as DTO fields, not as a long positional method
+signature. This keeps call sites readable, keeps validation paths named, and
+keeps the HTTP-specific surface out of `fcl_api`.
 
 ```cpp
 struct write_payload {
@@ -283,57 +283,72 @@ struct write_receipt {
 BOOST_DESCRIBE_STRUCT(write_payload, (), (bytes))
 BOOST_DESCRIBE_STRUCT(write_receipt, (), (id))
 
+struct put_object_request {
+   std::string bucket;
+   std::string key;
+   fcl::http::query<std::uint32_t> ttl;
+   fcl::http::header<std::string> request_id;
+   fcl::http::body<write_payload> body;
+};
+
+BOOST_DESCRIBE_STRUCT(put_object_request, (), (bucket, key, ttl, request_id, body))
+
 class object_api : public fcl::api::contract<object_api> {
  public:
    virtual ~object_api() = default;
 
    virtual boost::asio::awaitable<write_receipt>
-   put_object(
-      std::string bucket,
-      std::string key,
-      fcl::http::query<std::uint32_t> ttl,
-      fcl::http::header<std::string> request_id,
-      fcl::http::body<write_payload> body) = 0;
+   put_object(put_object_request request) = 0;
 };
 
 FCL_API(
    object_api,
    FCL_API_CONTRACT("object", 1, 0),
-   FCL_API_METHOD(put_object, bucket, key, ttl, request_id, body))
+   FCL_API_METHOD(put_object))
 
 FCL_HTTP_API(
    object_api,
-   FCL_HTTP_PUT(put_object, "/objects/:bucket/:key?ttl={ttl}", created))
+   FCL_HTTP_PUT(put_object, "/objects/:bucket/:key?ttl={ttl}", created,
+      FCL_HTTP_HEADER(request_id, "X-Request-Id")))
 ```
 
 Server binding fills `bucket` and `key` from path placeholders, `ttl` from the
-query string, `request_id` from the default header name `request-id`, and
-`body` from a JSON request body. The route macro does not repeat per-argument
-mapping. If a wire header name must differ from the argument name, use
-`FCL_HTTP_HEADER(argument, "Wire-Name")`.
+query string, `request_id` from `X-Request-Id`, and `body` from a JSON request
+body. If a wire header or form name must differ from the DTO field name, use
+the existing route options such as `FCL_HTTP_HEADER(field, "Wire-Name")` or
+`FCL_HTTP_FORM(field, "wire-name")`.
 
 The same typed client call builds the HTTP request:
 
 ```cpp
 auto objects = co_await fcl::http::remote<object_api>(client);
-auto receipt = co_await objects->put_object(
-   "cache",
-   "chunk-1",
-   fcl::http::query<std::uint32_t>{.value = 3600, .present = true},
-   fcl::http::header<std::string>{.value = "trace-123", .present = true},
-   fcl::http::body<write_payload>{.value = {.bytes = "payload"}, .present = true});
+auto receipt = co_await objects->put_object({
+   .bucket = "cache",
+   .key = "chunk-1",
+   .ttl = {.value = 3600, .present = true},
+   .request_id = {.value = "trace-123", .present = true},
+   .body = {.value = {.bytes = "payload"}, .present = true},
+});
 ```
 
 HTTP-only special request types include `query<T>`, `header<T>`, `cookie<T>`,
 `body<T>`, `form<T>`, `form_field<T>`, `upload_file`, `body_bytes` and
-`body_stream`. The typed HTTP client supports JSON/body-bytes/body-stream
-calls without routing these wrappers through `fcl.raw`; browser-style
-multipart client construction for `form<T>`, `form_field<T>` and `upload_file`
-belongs to explicit HTTP multipart support, not generic API frame
-serialization. Special return types remain `file_response`,
-`streaming_response`, `bytes_response` and `empty_response`. Background task
-injection is intentionally out of scope; application runtime and plugin layers
-own background work.
+`body_stream`, and they are supported as fields of a described request DTO.
+The typed HTTP client supports JSON, raw bytes, streaming body and browser-style
+multipart DTO fields without routing these wrappers through `fcl.raw`.
+
+HTTP positional methods remain available only as small routing sugar: scalar,
+string, enum and optional arguments may bind to route path/query placeholders,
+and at most one remaining described DTO argument may become the JSON body for a
+body-capable route. HTTP wrappers such as `query<T>`, `header<T>`,
+`body_stream`, `form<T>` and `upload_file` are not allowed in positional HTTP
+signatures. Multi-argument APIs remain first-class for local, WebSocket, QUIC,
+P2P, TCP and STCP bindings where there is no HTTP parameter model.
+
+Special return types remain `file_response`, `streaming_response`,
+`bytes_response` and `empty_response`. Background task injection is
+intentionally out of scope; application runtime and plugin layers own
+background work.
 
 ### Add Middleware
 

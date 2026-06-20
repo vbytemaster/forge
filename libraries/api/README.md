@@ -87,7 +87,10 @@ FCL_API(
 The argument names are metadata, not type declarations. Existing
 `FCL_API_METHOD(read)` one-request DTO methods keep their old source and wire
 shape. Positional methods are new declarations and use an internal argument-pack
-payload for frame transports.
+payload for frame transports. HTTP-specific request wrappers are not part of
+`fcl_api`; `fcl_http` supports them as fields of described request DTOs and
+keeps HTTP positional methods limited to path/query routing plus an optional
+single JSON DTO body.
 
 If a C++ interface has overloads or local convenience helpers with the same
 method name, use the typed method macro to select the wire method explicitly:

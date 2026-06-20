@@ -352,6 +352,14 @@ class positional_checked_body_api : public fcl::api::contract<positional_checked
    write(std::string ref, positional_ref_payload payload) = 0;
 };
 
+class positional_streaming_body_api : public fcl::api::contract<positional_streaming_body_api> {
+ public:
+   virtual ~positional_streaming_body_api() = default;
+
+   virtual boost::asio::awaitable<fcl::http::streaming_response>
+   write(std::string ref, positional_body_payload payload) = 0;
+};
+
 class positional_stream_api : public fcl::api::contract<positional_stream_api> {
  public:
    virtual ~positional_stream_api() = default;
@@ -480,6 +488,10 @@ FCL_API(::fcl::http::test_api::positional_ambiguous_body_api,
 FCL_API(::fcl::http::test_api::positional_checked_body_api, FCL_API_CONTRACT("http.positional.checked-body", 1, 0),
         FCL_API_METHOD(write, ref, payload))
 
+FCL_API(::fcl::http::test_api::positional_streaming_body_api,
+        FCL_API_CONTRACT("http.positional.streaming-body", 1, 0),
+        FCL_API_METHOD(write, ref, payload))
+
 FCL_API(::fcl::http::test_api::positional_stream_api, FCL_API_CONTRACT("http.positional.stream", 1, 0),
         FCL_API_METHOD(write, ref, body))
 
@@ -601,6 +613,9 @@ FCL_HTTP_API(::fcl::http::test_api::positional_ambiguous_body_api,
 
 FCL_HTTP_API(::fcl::http::test_api::positional_checked_body_api,
              FCL_HTTP_POST(write, "/checked/:ref", created))
+
+FCL_HTTP_API(::fcl::http::test_api::positional_streaming_body_api,
+             FCL_HTTP_POST(write, "/stream-plain/:ref", ok, FCL_HTTP_RESPONSE_STREAM))
 
 FCL_HTTP_API(::fcl::http::test_api::positional_stream_api,
              FCL_HTTP_PUT(write, "/streams/:ref", ok))
@@ -741,6 +756,7 @@ using test_api::positional_query_append_api;
 using test_api::positional_ref_payload;
 using test_api::positional_single_query_api;
 using test_api::positional_scalar_body_api;
+using test_api::positional_streaming_body_api;
 using test_api::positional_stream_api;
 
 [[nodiscard]] fcl::api::descriptor api_cache_descriptor() {
@@ -897,6 +913,28 @@ class positional_checked_body_api_impl final : public positional_checked_body_ap
    boost::asio::awaitable<positional_body_response>
    write(std::string ref, positional_ref_payload payload) override {
       co_return positional_body_response{.summary = std::move(ref) + ":" + payload.ref + ":" + payload.value};
+   }
+};
+
+class positional_streaming_body_api_impl final : public positional_streaming_body_api {
+ public:
+   boost::asio::awaitable<fcl::http::streaming_response>
+   write(std::string ref, positional_body_payload payload) override {
+      auto text = std::make_shared<std::string>(std::move(ref) + ":" + payload.value);
+      co_return fcl::http::streaming_response::from_source(
+         fcl::http::streaming_response_options{
+            .content_type = "text/plain",
+            .body =
+               [text, sent = false]() mutable -> boost::asio::awaitable<std::optional<fcl::http::body_chunk>> {
+                  if (sent) {
+                     co_return std::nullopt;
+                  }
+                  sent = true;
+                  auto bytes = std::vector<std::byte>(text->size());
+                  std::memcpy(bytes.data(), text->data(), text->size());
+                  co_return fcl::http::body_chunk{.bytes = std::move(bytes)};
+               },
+         });
    }
 };
 
@@ -2015,6 +2053,35 @@ BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_roundtrips_without_body_w
       api->write("chunk-plain", positional_body_payload{.value = "payload"}));
 
    BOOST_TEST(response.summary == "chunk-plain:payload");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_positional_stream_response_decodes_ordinary_dto_body) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<positional_streaming_body_api>(positional_streaming_body_api::describe(),
+                                               std::make_shared<positional_streaming_body_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding =
+      fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_streaming_body_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<positional_streaming_body_api>(client));
+
+   auto response = fcl::asio::blocking::run(
+      runtime,
+      api->write("chunk-stream", positional_body_payload{.value = "payload"}));
+   auto text = fcl::asio::blocking::run(runtime, response.body().async_read_all());
+
+   BOOST_TEST(response.status_code() == status::ok);
+   BOOST_TEST(response.content_type() == "text/plain");
+   BOOST_TEST(text == "chunk-stream:payload");
 
    server.stop();
 }

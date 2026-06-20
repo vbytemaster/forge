@@ -23,10 +23,31 @@ import fcl.http.stream;
 import fcl.http.types;
 import fcl.http.upload;
 import fcl.reflect.reflect;
+import fcl.raw.raw;
 
 export namespace fcl::http {
 
 template <typename T> struct header {
+   T value{};
+   bool present = false;
+};
+
+template <typename T> struct query {
+   T value{};
+   bool present = false;
+};
+
+template <typename T> struct cookie {
+   T value{};
+   bool present = false;
+};
+
+template <typename T> struct body {
+   T value{};
+   bool present = false;
+};
+
+template <typename T> struct form {
    T value{};
    bool present = false;
 };
@@ -136,6 +157,26 @@ template <typename T> struct is_header<header<T>> : std::true_type {
    using value_type = T;
 };
 
+template <typename T> struct is_query : std::false_type {};
+template <typename T> struct is_query<query<T>> : std::true_type {
+   using value_type = T;
+};
+
+template <typename T> struct is_cookie : std::false_type {};
+template <typename T> struct is_cookie<cookie<T>> : std::true_type {
+   using value_type = T;
+};
+
+template <typename T> struct is_body : std::false_type {};
+template <typename T> struct is_body<body<T>> : std::true_type {
+   using value_type = T;
+};
+
+template <typename T> struct is_form : std::false_type {};
+template <typename T> struct is_form<form<T>> : std::true_type {
+   using value_type = T;
+};
+
 template <typename T> struct is_form_field : std::false_type {};
 template <typename T> struct is_form_field<form_field<T>> : std::true_type {
    using value_type = T;
@@ -191,20 +232,88 @@ inline constexpr auto response_needs_stream_v = std::is_same_v<std::remove_cvref
 
 } // namespace detail
 
-template <typename Stream, typename T> Stream& operator<<(Stream& stream, const header<T>&) {
-   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error, "HTTP header fields are HTTP-only and cannot use generic binary serialization");
+template <typename Stream, typename T> Stream& operator<<(Stream& stream, const header<T>& value) {
+   static_cast<void>(stream);
+   static_cast<void>(value);
+   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
+                       "HTTP headers are HTTP-only and cannot use generic binary serialization");
 }
 
-template <typename Stream, typename T> Stream& operator>>(Stream& stream, header<T>&) {
-   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error, "HTTP header fields are HTTP-only and cannot use generic binary serialization");
+template <typename Stream, typename T> Stream& operator>>(Stream& stream, header<T>& value) {
+   static_cast<void>(stream);
+   static_cast<void>(value);
+   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
+                       "HTTP headers are HTTP-only and cannot use generic binary serialization");
 }
 
-template <typename Stream, typename T> Stream& operator<<(Stream& stream, const form_field<T>&) {
-   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error, "HTTP form fields are HTTP-only and cannot use generic binary serialization");
+template <typename Stream, typename T> Stream& operator<<(Stream& stream, const query<T>& value) {
+   static_cast<void>(stream);
+   static_cast<void>(value);
+   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
+                       "HTTP query parameters are HTTP-only and cannot use generic binary serialization");
 }
 
-template <typename Stream, typename T> Stream& operator>>(Stream& stream, form_field<T>&) {
-   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error, "HTTP form fields are HTTP-only and cannot use generic binary serialization");
+template <typename Stream, typename T> Stream& operator>>(Stream& stream, query<T>& value) {
+   static_cast<void>(stream);
+   static_cast<void>(value);
+   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
+                       "HTTP query parameters are HTTP-only and cannot use generic binary serialization");
+}
+
+template <typename Stream, typename T> Stream& operator<<(Stream& stream, const cookie<T>& value) {
+   static_cast<void>(stream);
+   static_cast<void>(value);
+   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
+                       "HTTP cookies are HTTP-only and cannot use generic binary serialization");
+}
+
+template <typename Stream, typename T> Stream& operator>>(Stream& stream, cookie<T>& value) {
+   static_cast<void>(stream);
+   static_cast<void>(value);
+   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
+                       "HTTP cookies are HTTP-only and cannot use generic binary serialization");
+}
+
+template <typename Stream, typename T> Stream& operator<<(Stream& stream, const body<T>& value) {
+   static_cast<void>(stream);
+   static_cast<void>(value);
+   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
+                       "HTTP bodies are HTTP-only and cannot use generic binary serialization");
+}
+
+template <typename Stream, typename T> Stream& operator>>(Stream& stream, body<T>& value) {
+   static_cast<void>(stream);
+   static_cast<void>(value);
+   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
+                       "HTTP bodies are HTTP-only and cannot use generic binary serialization");
+}
+
+template <typename Stream, typename T> Stream& operator<<(Stream& stream, const form<T>& value) {
+   static_cast<void>(stream);
+   static_cast<void>(value);
+   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
+                       "HTTP form fields are HTTP-only and cannot use generic binary serialization");
+}
+
+template <typename Stream, typename T> Stream& operator>>(Stream& stream, form<T>& value) {
+   static_cast<void>(stream);
+   static_cast<void>(value);
+   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
+                       "HTTP form fields are HTTP-only and cannot use generic binary serialization");
+}
+
+template <typename Stream, typename T> Stream& operator<<(Stream& stream, const form_field<T>& value) {
+   static_cast<void>(stream);
+   static_cast<void>(value);
+   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
+                       "HTTP form fields are HTTP-only and cannot use generic binary serialization");
+}
+
+template <typename Stream, typename T> Stream& operator>>(Stream& stream, form_field<T>& value) {
+   static_cast<void>(stream);
+   static_cast<void>(value);
+   FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
+                       "HTTP form fields are HTTP-only and cannot use generic binary serialization");
 }
 
 template <typename Stream> Stream& operator<<(Stream& stream, const body_stream&) {

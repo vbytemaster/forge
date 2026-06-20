@@ -16,6 +16,7 @@ module;
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <typeindex>
 #include <type_traits>
 #include <utility>
@@ -163,6 +164,7 @@ class api_builder {
       template <typename Descriptor>
       using fn = std::bool_constant<
          detail::is_form_field<std::remove_cvref_t<decltype(std::declval<Object>().*Descriptor::pointer)>>::value ||
+         detail::is_form<std::remove_cvref_t<decltype(std::declval<Object>().*Descriptor::pointer)>>::value ||
          detail::is_upload_file_v<std::remove_cvref_t<decltype(std::declval<Object>().*Descriptor::pointer)>>>;
    };
 
@@ -337,10 +339,50 @@ class api_builder {
       return std::nullopt;
    }
 
+   [[nodiscard]] static std::optional<std::string_view> query_value(const route_context& context,
+                                                                    const api_route_options& options,
+                                                                    std::string_view name) {
+      auto wire_name = std::string{name};
+      const auto configured = std::find_if(options.query.begin(), options.query.end(),
+                                           [&](const api_field_binding& binding) {
+                                              return std::string_view{binding.field} == name;
+                                           });
+      if (configured != options.query.end()) {
+         wire_name = configured->name;
+      }
+
+      for (const auto& query : context.parsed_target.query_params) {
+         if (query.key == wire_name) {
+            return query.has_value ? std::string_view{query.value} : std::string_view{"true"};
+         }
+      }
+      return std::nullopt;
+   }
+
    template <typename T> static void assign_from_text(T& target, std::string_view value, std::string_view field) {
       using clean = std::remove_cvref_t<T>;
       if constexpr (detail::is_header<clean>::value) {
          typename detail::is_header<clean>::value_type parsed{};
+         assign_from_text(parsed, value, field);
+         target.value = std::move(parsed);
+         target.present = true;
+      } else if constexpr (detail::is_query<clean>::value) {
+         typename detail::is_query<clean>::value_type parsed{};
+         assign_from_text(parsed, value, field);
+         target.value = std::move(parsed);
+         target.present = true;
+      } else if constexpr (detail::is_cookie<clean>::value) {
+         typename detail::is_cookie<clean>::value_type parsed{};
+         assign_from_text(parsed, value, field);
+         target.value = std::move(parsed);
+         target.present = true;
+      } else if constexpr (detail::is_body<clean>::value) {
+         typename detail::is_body<clean>::value_type parsed{};
+         assign_from_text(parsed, value, field);
+         target.value = std::move(parsed);
+         target.present = true;
+      } else if constexpr (detail::is_form<clean>::value) {
+         typename detail::is_form<clean>::value_type parsed{};
          assign_from_text(parsed, value, field);
          target.value = std::move(parsed);
          target.present = true;
@@ -447,6 +489,42 @@ class api_builder {
       return std::nullopt;
    }
 
+   [[nodiscard]] static std::optional<std::string_view> cookie_value(const request& request_value,
+                                                                     std::string_view name) {
+      const auto header = header_value(request_value, "Cookie");
+      if (!header.has_value()) {
+         return std::nullopt;
+      }
+
+      auto text = *header;
+      while (!text.empty()) {
+         while (!text.empty() && (text.front() == ' ' || text.front() == '\t' || text.front() == ';')) {
+            text.remove_prefix(1U);
+         }
+         const auto separator = text.find(';');
+         const auto pair = text.substr(0, separator);
+         const auto equals = pair.find('=');
+         if (equals != std::string_view::npos) {
+            auto key = pair.substr(0, equals);
+            auto value = pair.substr(equals + 1U);
+            while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) {
+               key.remove_suffix(1U);
+            }
+            while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
+               value.remove_prefix(1U);
+            }
+            if (key == name) {
+               return value;
+            }
+         }
+         if (separator == std::string_view::npos) {
+            break;
+         }
+         text.remove_prefix(separator + 1U);
+      }
+      return std::nullopt;
+   }
+
    [[nodiscard]] static std::string mapped_name_or_default(const std::vector<api_field_binding>& bindings,
                                                            std::string_view field,
                                                            std::string (*default_name)(std::string_view)) {
@@ -545,6 +623,214 @@ class api_builder {
       }
    }
 
+   template <typename Value>
+   static void validate_bound_value_schema(const Value& value, std::string_view base_path) {
+      if constexpr (fcl::reflect::is_described_object_v<Value>) {
+         validate_request_schema(value, base_path);
+      } else {
+         static_cast<void>(value);
+         static_cast<void>(base_path);
+      }
+   }
+
+   template <typename T>
+   static constexpr auto positional_argument_needs_stream_v =
+      detail::is_body_stream_v<std::remove_cvref_t<T>> ||
+      detail::is_body_bytes_v<std::remove_cvref_t<T>> ||
+      detail::is_upload_file_v<std::remove_cvref_t<T>> ||
+      detail::is_form_field<std::remove_cvref_t<T>>::value ||
+      detail::is_form<std::remove_cvref_t<T>>::value;
+
+   template <typename Tuple, std::size_t... Index>
+   static consteval bool tuple_needs_stream(std::index_sequence<Index...>) {
+      return (positional_argument_needs_stream_v<std::tuple_element_t<Index, Tuple>> || ...);
+   }
+
+   template <typename Tuple>
+   static constexpr auto tuple_needs_stream_v =
+      tuple_needs_stream<Tuple>(std::make_index_sequence<std::tuple_size_v<Tuple>>{});
+
+   [[nodiscard]] static std::string argument_name(const fcl::api::method_descriptor& method_descriptor,
+                                                  std::size_t index) {
+      if (index >= method_descriptor.argument_names.size()) {
+         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                             "HTTP API positional method argument name is missing",
+                             fcl::exceptions::ctx("method", method_descriptor.name));
+      }
+      return method_descriptor.argument_names[index];
+   }
+
+   [[nodiscard]] static std::string diagnostic_message(const std::vector<fcl::schema::diagnostic>& diagnostics,
+                                                       std::string_view fallback) {
+      const auto error = std::find_if(diagnostics.begin(), diagnostics.end(), [](const fcl::schema::diagnostic& entry) {
+         return entry.level == fcl::schema::severity::error;
+      });
+      if (error == diagnostics.end()) {
+         return std::string{fallback};
+      }
+      return std::string{error->path} + ": " + error->code + ": " + error->message;
+   }
+
+   template <typename T>
+   [[nodiscard]] static T decode_json_value(std::string_view body, std::string_view source_name) {
+      auto decoded = fcl::json::read<T>(body,
+                                        fcl::json::read_options{.source_name = std::string{source_name},
+                                                                .unknown_fields =
+                                                                   fcl::json::unknown_field_policy::error});
+      if (!decoded.ok()) {
+         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                             diagnostic_message(decoded.diagnostics, "HTTP API JSON request body is invalid"));
+      }
+      return std::move(decoded.value);
+   }
+
+   template <typename Argument>
+   [[nodiscard]] static Argument make_positional_argument_from_http(const route_context& context,
+                                                                   const api_route_options& options,
+                                                                   std::string_view name) {
+      using clean = std::remove_cvref_t<Argument>;
+      auto result = clean{};
+      if constexpr (detail::is_header<clean>::value) {
+         const auto header_name = mapped_name_or_default(options.headers, name, header_name_from_field);
+         if (auto value = header_value(context.request, header_name); value.has_value()) {
+            assign_from_text(result, *value, name);
+         }
+      } else if constexpr (detail::is_query<clean>::value) {
+         if (auto value = query_value(context, options, name); value.has_value()) {
+            assign_from_text(result, *value, name);
+         }
+      } else if constexpr (detail::is_cookie<clean>::value) {
+         if (auto value = cookie_value(context.request, name); value.has_value()) {
+            assign_from_text(result, *value, name);
+         }
+      } else if constexpr (detail::is_body<clean>::value) {
+         if (!context.request.body().empty()) {
+            const auto content_type = context.request.find(field::content_type);
+            if (content_type == context.request.end() || !is_json_content_type(std::string_view{content_type->value()})) {
+               FCL_THROW_EXCEPTION(fcl::http::exceptions::unsupported_media_type,
+                                   "HTTP API request body must be application/json");
+            }
+            using value_type = typename detail::is_body<clean>::value_type;
+            result.value = decode_json_value<value_type>(context.request.body(), "http.request.body");
+            validate_bound_value_schema(result.value, "http.request.body");
+            result.present = true;
+         }
+      } else if constexpr (detail::is_form<clean>::value || detail::is_form_field<clean>::value ||
+                           detail::is_upload_file_v<clean> || detail::is_body_bytes_v<clean> ||
+                           detail::is_body_stream_v<clean>) {
+         static_cast<void>(context);
+         static_cast<void>(options);
+      } else if (auto value = route_value(context, options, name); value.has_value()) {
+         assign_from_text(result, *value, name);
+      }
+      return result;
+   }
+
+   template <typename Tuple, std::size_t... Index>
+   [[nodiscard]] static Tuple make_positional_arguments_from_http(const route_context& context,
+                                                                 const api_route_options& options,
+                                                                 const fcl::api::method_descriptor& method_descriptor,
+                                                                 std::index_sequence<Index...>) {
+      return Tuple{make_positional_argument_from_http<std::tuple_element_t<Index, Tuple>>(
+         context, options, argument_name(method_descriptor, Index))...};
+   }
+
+   template <typename Tuple>
+   [[nodiscard]] static Tuple make_positional_arguments_from_http(const route_context& context,
+                                                                 const api_route_options& options,
+                                                                 const fcl::api::method_descriptor& method_descriptor) {
+      return make_positional_arguments_from_http<Tuple>(
+         context, options, method_descriptor, std::make_index_sequence<std::tuple_size_v<Tuple>>{});
+   }
+
+   template <typename Argument>
+   static boost::asio::awaitable<Argument> make_positional_argument_from_stream(stream_request& stream,
+                                                                               const api_route_options& options,
+                                                                               const multipart_form* form,
+                                                                               std::string_view name) {
+      using clean = std::remove_cvref_t<Argument>;
+      if constexpr (detail::is_body_stream_v<clean>) {
+         co_return body_stream{std::move(stream.body)};
+      } else if constexpr (detail::is_body_bytes_v<clean>) {
+         auto text = co_await stream.body.async_read_all();
+         auto bytes = std::vector<std::byte>(text.size());
+         std::memcpy(bytes.data(), text.data(), text.size());
+         co_return body_bytes{.bytes = std::move(bytes)};
+      } else if constexpr (detail::is_form<clean>::value || detail::is_form_field<clean>::value) {
+         auto result = clean{};
+         if (form != nullptr) {
+            const auto form_name = mapped_name_or_default(options.forms, name, identity_name);
+            if (auto value = form->field(form_name); value.has_value()) {
+               assign_from_text(result, *value, name);
+            }
+         }
+         co_return result;
+      } else if constexpr (detail::is_upload_file_v<clean>) {
+         if (form != nullptr) {
+            const auto form_name = mapped_name_or_default(options.forms, name, identity_name);
+            for (const auto& file : form->files) {
+               if (file.name == form_name) {
+                  co_return upload_file{file};
+               }
+            }
+         }
+         co_return upload_file{};
+      } else if constexpr (detail::is_body<clean>::value) {
+         auto result = clean{};
+         auto text = co_await stream.body.async_read_all();
+         if (!text.empty()) {
+            const auto content_type = stream.context.request.find(field::content_type);
+            if (content_type == stream.context.request.end() ||
+                !is_json_content_type(std::string_view{content_type->value()})) {
+               FCL_THROW_EXCEPTION(fcl::http::exceptions::unsupported_media_type,
+                                   "HTTP API request body must be application/json");
+            }
+            using value_type = typename detail::is_body<clean>::value_type;
+            result.value = decode_json_value<value_type>(text, "http.request.body");
+            validate_bound_value_schema(result.value, "http.request.body");
+            result.present = true;
+         }
+         co_return result;
+      } else {
+         co_return make_positional_argument_from_http<Argument>(stream.context, options, name);
+      }
+   }
+
+   template <typename Tuple, std::size_t... Index>
+   static boost::asio::awaitable<Tuple> make_positional_arguments_from_stream_impl(
+      stream_request& stream,
+      const api_route_options& options,
+      const fcl::api::method_descriptor& method_descriptor,
+      const multipart_form* form,
+      std::index_sequence<Index...>) {
+      co_return Tuple{co_await make_positional_argument_from_stream<std::tuple_element_t<Index, Tuple>>(
+         stream, options, form, argument_name(method_descriptor, Index))...};
+   }
+
+   template <typename Tuple>
+   static boost::asio::awaitable<Tuple> make_positional_arguments_from_stream(
+      stream_request& stream,
+      const api_route_options& options,
+      const fcl::api::method_descriptor& method_descriptor) {
+      auto form = std::optional<multipart_form>{};
+      if constexpr (tuple_needs_stream_v<Tuple>) {
+         constexpr auto multipart_needed = []<std::size_t... Index>(std::index_sequence<Index...>) consteval {
+            return ((detail::is_form<std::remove_cvref_t<std::tuple_element_t<Index, Tuple>>>::value ||
+                     detail::is_form_field<std::remove_cvref_t<std::tuple_element_t<Index, Tuple>>>::value ||
+                     detail::is_upload_file_v<std::remove_cvref_t<std::tuple_element_t<Index, Tuple>>>) || ...);
+         }(std::make_index_sequence<std::tuple_size_v<Tuple>>{});
+         if constexpr (multipart_needed) {
+            const auto content_type = stream.context.request.find(field::content_type);
+            auto reader = upload_reader{std::move(stream.body)};
+            form = co_await reader.async_read_multipart(
+               content_type == stream.context.request.end() ? std::string_view{} : std::string_view{content_type->value()});
+         }
+      }
+      co_return co_await make_positional_arguments_from_stream_impl<Tuple>(
+         stream, options, method_descriptor, form.has_value() ? &*form : nullptr,
+         std::make_index_sequence<std::tuple_size_v<Tuple>>{});
+   }
+
    template <typename Request>
    [[nodiscard]] static Request decode_json_request_body(std::string_view body) {
       auto decoded = fcl::json::read<Request>(body,
@@ -552,7 +838,8 @@ class api_builder {
                                                                       .unknown_fields =
                                                                          fcl::json::unknown_field_policy::error});
       if (!decoded.ok()) {
-         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API JSON request body is invalid");
+         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                             diagnostic_message(decoded.diagnostics, "HTTP API JSON request body is invalid"));
       }
       return std::move(decoded.value);
    }
@@ -709,6 +996,16 @@ class api_builder {
       co_return co_await std::invoke(Method, *implementation.shared(), std::move(request));
    }
 
+   template <auto Method, typename Interface, typename Tuple, typename Response>
+   static boost::asio::awaitable<Response> invoke_local_arguments(const fcl::api::binding_plan& plan, Tuple arguments) {
+      auto implementation = plan.local->get<Interface>(Interface::ref());
+      co_return co_await std::apply(
+         [&](auto&&... args) {
+            return std::invoke(Method, *implementation.shared(), std::forward<decltype(args)>(args)...);
+         },
+         std::move(arguments));
+   }
+
    static stream_response buffered(response value) {
       return stream_response::buffered(std::move(value));
    }
@@ -744,13 +1041,15 @@ class api_builder {
    [[nodiscard]] mount_action make_step(method verb, std::string path, api_route_options options,
                                         std::string explicit_name) {
       using interface_type = typename method_class<decltype(Method)>::type;
+      using argument_tuple = fcl::api::method_argument_tuple_t<Method>;
       auto plan = plan_;
       auto name = explicit_name.empty() ? method_name<interface_type, Request, Response>() : std::move(explicit_name);
       return [plan = std::move(plan), verb, path = std::move(path), options = std::move(options),
               name = std::move(name)](router& target, std::string_view base_path) {
          validate_response_file_option<Response>(options);
          auto mounted_path = join_path(base_path, path);
-         if constexpr (detail::request_needs_stream_v<Request> || detail::response_needs_stream_v<Response>) {
+         if constexpr (detail::request_needs_stream_v<Request> || tuple_needs_stream_v<argument_tuple> ||
+                       detail::response_needs_stream_v<Response>) {
             auto stream_handler = [plan, options, name](stream_request& request_value)
                -> boost::asio::awaitable<stream_response> {
                if (plan.local == nullptr) {
@@ -760,10 +1059,35 @@ class api_builder {
                const auto api_descriptor = interface_type::describe();
                const auto* method_descriptor = fcl::api::find_method(api_descriptor, name);
                try {
-                  auto request = co_await make_request_from_stream<Request>(request_value, options);
-                  auto result = co_await invoke_local<Method, interface_type, Request, Response>(plan, std::move(request));
-                  co_return co_await make_success_stream_response(request_value.context.request, options.success_status,
-                                                                  std::move(result));
+                  if constexpr (fcl::api::method_argument_count_v<Method> != 1U) {
+                     if (method_descriptor == nullptr || method_descriptor->argument_names.empty()) {
+                        FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                                            "HTTP API positional method is missing argument metadata");
+                     }
+                     auto arguments =
+                        co_await make_positional_arguments_from_stream<argument_tuple>(request_value, options,
+                                                                                       *method_descriptor);
+                     auto value = co_await invoke_local_arguments<Method, interface_type, argument_tuple, Response>(
+                        plan, std::move(arguments));
+                     co_return co_await make_success_stream_response(request_value.context.request, options.success_status,
+                                                                     std::move(value));
+                  } else {
+                     if (method_descriptor != nullptr && !method_descriptor->argument_names.empty()) {
+                        auto arguments =
+                           co_await make_positional_arguments_from_stream<argument_tuple>(request_value, options,
+                                                                                          *method_descriptor);
+                        auto value = co_await invoke_local_arguments<Method, interface_type, argument_tuple, Response>(
+                           plan, std::move(arguments));
+                        co_return co_await make_success_stream_response(request_value.context.request,
+                                                                        options.success_status, std::move(value));
+                     } else {
+                        auto request = co_await make_request_from_stream<Request>(request_value, options);
+                        auto value =
+                           co_await invoke_local<Method, interface_type, Request, Response>(plan, std::move(request));
+                        co_return co_await make_success_stream_response(request_value.context.request,
+                                                                        options.success_status, std::move(value));
+                     }
+                  }
                } catch (const fcl::http::exceptions::unsupported_media_type& error) {
                   co_return buffered(make_text_response(
                      request_value.context.request, status::unsupported_media_type,
@@ -811,10 +1135,30 @@ class api_builder {
                const auto api_descriptor = interface_type::describe();
                const auto* method_descriptor = fcl::api::find_method(api_descriptor, name);
                try {
-                  auto request = make_request_from_http<Request>(context, options);
-                  auto result =
-                     co_await invoke_local<Method, interface_type, Request, Response>(plan, std::move(request));
-                  co_return make_success_response(context.request, options.success_status, result);
+                  if constexpr (fcl::api::method_argument_count_v<Method> != 1U) {
+                     if (method_descriptor == nullptr || method_descriptor->argument_names.empty()) {
+                        FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                                            "HTTP API positional method is missing argument metadata");
+                     }
+                     auto arguments = make_positional_arguments_from_http<argument_tuple>(context, options,
+                                                                                         *method_descriptor);
+                     auto value = co_await invoke_local_arguments<Method, interface_type, argument_tuple, Response>(
+                        plan, std::move(arguments));
+                     co_return make_success_response(context.request, options.success_status, value);
+                  } else {
+                     if (method_descriptor != nullptr && !method_descriptor->argument_names.empty()) {
+                        auto arguments = make_positional_arguments_from_http<argument_tuple>(context, options,
+                                                                                            *method_descriptor);
+                        auto value = co_await invoke_local_arguments<Method, interface_type, argument_tuple, Response>(
+                           plan, std::move(arguments));
+                        co_return make_success_response(context.request, options.success_status, value);
+                     } else {
+                        auto request = make_request_from_http<Request>(context, options);
+                        auto value =
+                           co_await invoke_local<Method, interface_type, Request, Response>(plan, std::move(request));
+                        co_return make_success_response(context.request, options.success_status, value);
+                     }
+                  }
                } catch (const fcl::http::exceptions::unsupported_media_type& error) {
                   co_return make_text_response(context.request, status::unsupported_media_type,
                                                std::string{"{\"error\":\"unsupported_media_type\",\"message\":\""} +

@@ -21,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <type_traits>
 #include <vector>
 
@@ -133,6 +134,18 @@ struct search_response {
    std::string value;
 };
 
+struct positional_http_response {
+   std::string value;
+};
+
+struct positional_body_payload {
+   std::string value;
+};
+
+struct positional_body_response {
+   std::string summary;
+};
+
 struct object_put_request {
    std::string collection;
    std::string key;
@@ -198,6 +211,9 @@ BOOST_DESCRIBE_STRUCT(macro_write_request, (), (ref, bytes))
 BOOST_DESCRIBE_STRUCT(macro_chunk, (), (bytes))
 BOOST_DESCRIBE_STRUCT(search_request, (), (term, limit))
 BOOST_DESCRIBE_STRUCT(search_response, (), (value))
+BOOST_DESCRIBE_STRUCT(positional_http_response, (), (value))
+BOOST_DESCRIBE_STRUCT(positional_body_payload, (), (value))
+BOOST_DESCRIBE_STRUCT(positional_body_response, (), (summary))
 BOOST_DESCRIBE_STRUCT(object_put_request, (), (collection, key, content_type, digest, body))
 BOOST_DESCRIBE_STRUCT(object_put_response, (), (bytes, content_type, content_md5))
 BOOST_DESCRIBE_STRUCT(object_get_request, (), (collection, key))
@@ -219,6 +235,14 @@ class api_cache : public fcl::api::contract<api_cache, fcl::api::surface::local 
    virtual boost::asio::awaitable<api_chunk> write(api_chunk request) = 0;
 };
 
+class websocket_positional_api
+    : public fcl::api::contract<websocket_positional_api, fcl::api::surface::local | fcl::api::surface::remote> {
+ public:
+   virtual ~websocket_positional_api() = default;
+
+   virtual boost::asio::awaitable<api_chunk> join(std::string left, std::string right) = 0;
+};
+
 class macro_cache : public fcl::api::contract<macro_cache, fcl::api::surface::local | fcl::api::surface::remote> {
  public:
    virtual ~macro_cache() = default;
@@ -232,6 +256,41 @@ class search_api : public fcl::api::contract<search_api> {
    virtual ~search_api() = default;
 
    virtual boost::asio::awaitable<search_response> search(search_request request) = 0;
+};
+
+class positional_http_api : public fcl::api::contract<positional_http_api> {
+ public:
+   virtual ~positional_http_api() = default;
+
+   virtual boost::asio::awaitable<positional_http_response>
+   read(std::string ref,
+        fcl::http::query<std::uint32_t> limit,
+        fcl::http::header<std::string> request_id,
+        fcl::http::cookie<std::string> session) = 0;
+};
+
+class positional_body_api : public fcl::api::contract<positional_body_api> {
+ public:
+   virtual ~positional_body_api() = default;
+
+   virtual boost::asio::awaitable<positional_body_response>
+   write(std::string ref, fcl::http::body<positional_body_payload> payload) = 0;
+};
+
+class positional_single_query_api : public fcl::api::contract<positional_single_query_api> {
+ public:
+   virtual ~positional_single_query_api() = default;
+
+   virtual boost::asio::awaitable<positional_http_response>
+   read(fcl::http::query<std::uint32_t> limit) = 0;
+};
+
+class positional_stream_api : public fcl::api::contract<positional_stream_api> {
+ public:
+   virtual ~positional_stream_api() = default;
+
+   virtual boost::asio::awaitable<positional_body_response>
+   write(std::string ref, fcl::http::body_stream body) = 0;
 };
 
 class object_api : public fcl::api::contract<object_api> {
@@ -303,8 +362,23 @@ class json_stream_api : public fcl::api::contract<json_stream_api> {
 FCL_API(::fcl::http::test_api::macro_cache, FCL_API_CONTRACT("cache.macro", 1, 0), FCL_API_METHOD(read),
         FCL_API_METHOD(write))
 
+FCL_API(::fcl::http::test_api::websocket_positional_api, FCL_API_CONTRACT("websocket.positional", 1, 0),
+        FCL_API_METHOD(join, left, right))
+
 FCL_API(::fcl::http::test_api::search_api, FCL_API_CONTRACT("search", 1, 0),
         FCL_API_METHOD_TYPED(search, ::fcl::http::test_api::search_request, ::fcl::http::test_api::search_response))
+
+FCL_API(::fcl::http::test_api::positional_http_api, FCL_API_CONTRACT("http.positional", 1, 0),
+        FCL_API_METHOD(read, ref, limit, request_id, session))
+
+FCL_API(::fcl::http::test_api::positional_body_api, FCL_API_CONTRACT("http.positional.body", 1, 0),
+        FCL_API_METHOD(write, ref, payload))
+
+FCL_API(::fcl::http::test_api::positional_single_query_api, FCL_API_CONTRACT("http.positional.single-query", 1, 0),
+        FCL_API_METHOD(read, limit))
+
+FCL_API(::fcl::http::test_api::positional_stream_api, FCL_API_CONTRACT("http.positional.stream", 1, 0),
+        FCL_API_METHOD(write, ref, body))
 
 FCL_API(::fcl::http::test_api::object_api, FCL_API_CONTRACT("object", 1, 0),
         FCL_API_METHOD_TYPED(put_object, ::fcl::http::test_api::object_put_request,
@@ -354,6 +428,14 @@ template <> struct fcl::schema::rules<::fcl::http::test_api::search_request> {
    }
 };
 
+template <> struct fcl::schema::rules<::fcl::http::test_api::positional_body_payload> {
+   [[nodiscard]] static fcl::schema::object_schema<::fcl::http::test_api::positional_body_payload> define() {
+      auto schema = fcl::schema::object<::fcl::http::test_api::positional_body_payload>();
+      schema.field<&::fcl::http::test_api::positional_body_payload::value>("value").required().non_empty();
+      return schema;
+   }
+};
+
 template <> struct fcl::schema::rules<::fcl::http::test_api::json_stream_request> {
    [[nodiscard]] static fcl::schema::object_schema<::fcl::http::test_api::json_stream_request> define() {
       auto schema = fcl::schema::object<::fcl::http::test_api::json_stream_request>();
@@ -369,6 +451,18 @@ FCL_HTTP_API(::fcl::http::test_api::macro_cache,
 
 FCL_HTTP_API(::fcl::http::test_api::search_api,
              FCL_HTTP_GET(search, "/search/{term}?page_size={limit}"))
+
+FCL_HTTP_API(::fcl::http::test_api::positional_http_api,
+             FCL_HTTP_GET(read, "/objects/:ref?limit={limit}"))
+
+FCL_HTTP_API(::fcl::http::test_api::positional_body_api,
+             FCL_HTTP_POST(write, "/objects/:ref", ok))
+
+FCL_HTTP_API(::fcl::http::test_api::positional_single_query_api,
+             FCL_HTTP_GET(read, "/single?limit={limit}"))
+
+FCL_HTTP_API(::fcl::http::test_api::positional_stream_api,
+             FCL_HTTP_PUT(write, "/streams/:ref", ok))
 
 FCL_HTTP_API(::fcl::http::test_api::object_api,
              FCL_HTTP_PUT(put_object, "/objects/:collection/:key", created,
@@ -446,6 +540,7 @@ namespace api_errors = test_api::api_errors;
 using test_api::api_cache;
 using test_api::api_chunk;
 using test_api::api_read_chunk;
+using test_api::websocket_positional_api;
 using test_api::api_routed_read_chunk;
 using test_api::macro_cache;
 using test_api::macro_chunk;
@@ -472,6 +567,13 @@ using test_api::object_get_request;
 using test_api::object_put_request;
 using test_api::object_put_response;
 using test_api::patch_api;
+using test_api::positional_http_api;
+using test_api::positional_http_response;
+using test_api::positional_body_api;
+using test_api::positional_body_payload;
+using test_api::positional_body_response;
+using test_api::positional_single_query_api;
+using test_api::positional_stream_api;
 
 [[nodiscard]] fcl::api::descriptor api_cache_descriptor() {
    return api_cache::describe();
@@ -489,9 +591,7 @@ using test_api::patch_api;
 }
 
 template <typename T> [[nodiscard]] fcl::api::bytes pack_api_payload(const T& value) {
-   auto out = fcl::api::bytes{};
-   fcl::raw::pack(out, value);
-   return out;
+   return fcl::api::pack_body(value);
 }
 
 class throwing_api_cache final : public api_cache {
@@ -522,6 +622,13 @@ class routed_api_cache final : public api_cache {
 
    boost::asio::awaitable<api_chunk> write(api_chunk request) override {
       co_return request;
+   }
+};
+
+class websocket_positional_impl final : public websocket_positional_api {
+ public:
+   boost::asio::awaitable<api_chunk> join(std::string left, std::string right) override {
+      co_return api_chunk{.bytes = std::move(left) + ":" + std::move(right) + ":ws"};
    }
 };
 
@@ -556,6 +663,48 @@ class search_api_impl final : public search_api {
  public:
    boost::asio::awaitable<search_response> search(search_request request) override {
       co_return search_response{.value = request.term + ":" + std::to_string(request.limit)};
+   }
+};
+
+class positional_http_api_impl final : public positional_http_api {
+ public:
+   boost::asio::awaitable<positional_http_response>
+   read(std::string ref,
+        fcl::http::query<std::uint32_t> limit,
+        fcl::http::header<std::string> request_id,
+        fcl::http::cookie<std::string> session) override {
+      const auto limit_text = limit.present ? std::to_string(limit.value) : std::string{"missing-limit"};
+      const auto request_text = request_id.present ? request_id.value : std::string{"missing-request"};
+      const auto session_text = session.present ? session.value : std::string{"missing-session"};
+      co_return positional_http_response{.value = std::move(ref) + ":" + limit_text + ":" + request_text + ":" +
+                                                  session_text};
+   }
+};
+
+class positional_body_api_impl final : public positional_body_api {
+ public:
+   boost::asio::awaitable<positional_body_response>
+   write(std::string ref, fcl::http::body<positional_body_payload> payload) override {
+      const auto body = payload.present ? payload.value.value : std::string{"missing-body"};
+      co_return positional_body_response{.summary = std::move(ref) + ":" + body};
+   }
+};
+
+class positional_single_query_api_impl final : public positional_single_query_api {
+ public:
+   boost::asio::awaitable<positional_http_response>
+   read(fcl::http::query<std::uint32_t> limit) override {
+      const auto limit_text = limit.present ? std::to_string(limit.value) : std::string{"missing-limit"};
+      co_return positional_http_response{.value = "single:" + limit_text};
+   }
+};
+
+class positional_stream_api_impl final : public positional_stream_api {
+ public:
+   boost::asio::awaitable<positional_body_response>
+   write(std::string ref, fcl::http::body_stream body) override {
+      auto text = co_await body.async_read_all();
+      co_return positional_body_response{.summary = std::move(ref) + ":" + std::move(text)};
    }
 };
 
@@ -1383,6 +1532,152 @@ BOOST_AUTO_TEST_CASE(http_typed_proxy_sends_default_mapped_header_fields) {
    BOOST_TEST(response.body == "payload");
 
    server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_positional_api_binds_path_query_and_header_parameters) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<positional_http_api>(positional_http_api::describe(), std::make_shared<positional_http_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_http_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<positional_http_api>(client));
+
+   const auto response = fcl::asio::blocking::run(
+      runtime,
+      api->read("chunk-1",
+                fcl::http::query<std::uint32_t>{.value = 9, .present = true},
+                fcl::http::header<std::string>{.value = "trace-123", .present = true},
+                fcl::http::cookie<std::string>{.value = "session-7", .present = true}));
+
+   BOOST_TEST(response.value == "chunk-1:9:trace-123:session-7");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_positional_api_binds_json_body_parameter) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<positional_body_api>(positional_body_api::describe(), std::make_shared<positional_body_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_body_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<positional_body_api>(client));
+
+   const auto response = fcl::asio::blocking::run(
+      runtime,
+      api->write("chunk-2", fcl::http::body<positional_body_payload>{
+                                .value = positional_body_payload{.value = "payload"},
+                                .present = true,
+                             }));
+
+   BOOST_TEST(response.summary == "chunk-2:payload");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_positional_api_validates_json_body_parameter_schema) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<positional_body_api>(positional_body_api::describe(), std::make_shared<positional_body_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_body_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   const auto body = std::string{R"({"value":""})"};
+   auto response = raw_http_exchange(
+      server.port(),
+      "POST /objects/chunk-3 HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: " +
+         std::to_string(body.size()) + "\r\n\r\n" + body);
+
+   BOOST_TEST(response.result_int() == 422U);
+   BOOST_TEST(response.body().find("validation_error") != std::string::npos);
+   BOOST_TEST(response.body().find("schema.non_empty") != std::string::npos);
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_positional_api_binds_single_query_parameter) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<positional_single_query_api>(positional_single_query_api::describe(),
+                                             std::make_shared<positional_single_query_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding =
+      fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_single_query_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<positional_single_query_api>(client));
+
+   const auto response = fcl::asio::blocking::run(
+      runtime,
+      api->read(fcl::http::query<std::uint32_t>{.value = 42, .present = true}));
+
+   BOOST_TEST(response.value == "single:42");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_positional_api_sends_stream_body_without_raw_serialization) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<positional_stream_api>(positional_stream_api::describe(),
+                                       std::make_shared<positional_stream_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding =
+      fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_stream_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<positional_stream_api>(client));
+
+   const auto response = fcl::asio::blocking::run(
+      runtime,
+      api->write("chunk-3", fcl::http::body_stream{make_body_reader({"stream-", "payload"})}));
+
+   BOOST_TEST(response.summary == "chunk-3:stream-payload");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_parameter_wrappers_reject_generic_raw_serialization) {
+   BOOST_CHECK_THROW(
+      (void)fcl::api::pack_body(fcl::http::query<std::uint32_t>{.value = 7, .present = true}),
+      fcl::api::exceptions::protocol_error);
+   BOOST_CHECK_THROW(
+      (void)fcl::api::pack_body(fcl::http::header<std::string>{.value = "trace", .present = true}),
+      fcl::api::exceptions::protocol_error);
+   BOOST_CHECK_THROW(
+      (void)fcl::api::pack_body(fcl::http::body<positional_body_payload>{
+         .value = positional_body_payload{.value = "payload"},
+         .present = true,
+      }),
+      fcl::api::exceptions::protocol_error);
 }
 
 BOOST_AUTO_TEST_CASE(http_api_validates_schema_after_route_and_query_binding) {
@@ -3756,6 +4051,66 @@ BOOST_AUTO_TEST_CASE(websocket_api_binding_strips_reserved_metadata) {
    BOOST_CHECK(frame.kind == fcl::api::frame_kind::response);
    BOOST_TEST(*observed_peer == "missing");
    BOOST_TEST(*observed_public == "trace-2");
+
+   fcl::asio::blocking::run(runtime, connection->close());
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(websocket_api_binding_dispatches_positional_method) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+
+   auto registry = fcl::api::registry{};
+   registry.install<websocket_positional_api>(websocket_positional_api::describe(),
+                                              std::make_shared<websocket_positional_impl>());
+   auto binding = fcl::websocket::api().use(fcl::api::binding().serve(registry).build()).build();
+
+   auto router = fcl::http::router{};
+   router.websocket("/api", [&runtime, binding = std::move(binding)](fcl::websocket::connection::ptr connection) mutable {
+      boost::asio::co_spawn(runtime.context(), binding.accept(std::move(connection)), boost::asio::detached);
+   });
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   const auto port = wait_for_port(server);
+   auto ws_client = fcl::websocket::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
+   auto connection = ws_client.connect("/api");
+
+   auto response_mutex = std::mutex{};
+   auto response_cv = std::condition_variable{};
+   auto response = std::string{};
+   auto response_ready = false;
+   connection->on_message([&](fcl::websocket::connection&, std::string message) -> boost::asio::awaitable<void> {
+      {
+         const auto lock = std::scoped_lock{response_mutex};
+         response = std::move(message);
+         response_ready = true;
+      }
+      response_cv.notify_all();
+      co_return;
+   });
+
+   auto request = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 72},
+       .api = {.id = {"websocket.positional"}, .major = 1, .min_revision = 0},
+       .method = "join",
+       .codec = {.value = "fcl.raw"},
+       .payload = pack_api_payload(std::make_tuple(std::string{"left"}, std::string{"right"})),
+   };
+
+   fcl::asio::blocking::run(runtime, connection->send(pack_websocket_api_frame(request)));
+
+   {
+      auto lock = std::unique_lock{response_mutex};
+      BOOST_CHECK(response_cv.wait_for(lock, std::chrono::seconds{2}, [&response_ready] {
+         return response_ready;
+      }));
+   }
+
+   const auto frame = unpack_websocket_api_frame(response);
+   BOOST_CHECK(frame.kind == fcl::api::frame_kind::response);
+   BOOST_TEST(fcl::api::unpack_body<api_chunk>(frame.payload).bytes == "left:right:ws");
 
    fcl::asio::blocking::run(runtime, connection->close());
    server.stop();

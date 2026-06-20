@@ -7,6 +7,8 @@
 #include <boost/preprocessor/variadic/to_seq.hpp>
 
 #include <memory>
+#include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -68,14 +70,54 @@
                           ::fcl::api::method_response_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>(                \
       FCL_HTTP_DETAIL_ROUTE(ROUTE));
 
+#define FCL_HTTP_DETAIL_ROUTE_CALL(r, INTERFACE, ROUTE)                                                             \
+   ::fcl::http::detail::make_route_call<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE),                                  \
+                                        ::fcl::api::method_request_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>,     \
+                                        ::fcl::api::method_response_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>(   \
+      FCL_HTTP_DETAIL_ROUTE(ROUTE)),
+
+#define FCL_HTTP_DETAIL_ROUTE_API_PROXY_SUPPORTED(r, INTERFACE, ROUTE)                                              \
+   && ::fcl::http::detail::route_can_use_api_proxy_v<                                                               \
+         &INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE),                                                                \
+         ::fcl::api::method_request_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>,                                   \
+         ::fcl::api::method_response_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>
+
+#define FCL_HTTP_DETAIL_PROXY_USING(r, INTERFACE, ROUTE) using INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE);
+
 #define FCL_HTTP_DETAIL_PROXY_METHOD(r, INTERFACE, ROUTE)                                                           \
    boost::asio::awaitable<::fcl::api::method_response_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>                 \
    FCL_HTTP_DETAIL_METHOD(ROUTE)(                                                                                   \
-      ::fcl::api::method_request_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)> request) override {                   \
-      co_return co_await ::fcl::http::detail::call<                                                                 \
-         ::fcl::api::method_request_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>,                                   \
-         ::fcl::api::method_response_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>(                                 \
-         *client_, ::fcl::api::api_traits<INTERFACE>::describe(), FCL_HTTP_DETAIL_ROUTE(ROUTE), std::move(request)); \
+      ::fcl::api::method_request_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)> request) {                            \
+      if constexpr (::fcl::api::method_argument_count_v<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)> == 1U) {         \
+         using request_type =                                                                                        \
+            std::remove_cvref_t<::fcl::api::method_request_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>;           \
+         if constexpr (::fcl::http::detail::is_header<request_type>::value ||                                       \
+                       ::fcl::http::detail::is_query<request_type>::value ||                                        \
+                       ::fcl::http::detail::is_cookie<request_type>::value ||                                       \
+                       ::fcl::http::detail::is_body<request_type>::value ||                                         \
+                       ::fcl::http::detail::is_form<request_type>::value ||                                         \
+                       ::fcl::http::detail::is_form_field<request_type>::value ||                                   \
+                       ::fcl::http::detail::is_body_stream_v<request_type> ||                                       \
+                       ::fcl::http::detail::is_body_bytes_v<request_type> ||                                        \
+                       ::fcl::http::detail::is_upload_file_v<request_type>) {                                       \
+            auto arguments = std::make_tuple(std::move(request));                                                   \
+            co_return co_await ::fcl::http::detail::call_arguments<decltype(arguments),                             \
+               ::fcl::api::method_response_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>(                           \
+               *client_, ::fcl::api::api_traits<INTERFACE>::describe(), FCL_HTTP_DETAIL_ROUTE(ROUTE),               \
+               std::move(arguments),                                                                                \
+               ::fcl::http::detail::argument_names_for(::fcl::api::api_traits<INTERFACE>::describe(),               \
+                                                       BOOST_PP_STRINGIZE(FCL_HTTP_DETAIL_METHOD(ROUTE))));         \
+         } else {                                                                                                   \
+            co_return co_await ::fcl::http::detail::call<                                                           \
+               ::fcl::api::method_request_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>,                             \
+               ::fcl::api::method_response_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>(                           \
+               *client_, ::fcl::api::api_traits<INTERFACE>::describe(), FCL_HTTP_DETAIL_ROUTE(ROUTE),               \
+               std::move(request));                                                                                 \
+         }                                                                                                          \
+      } else {                                                                                                      \
+         FCL_THROW_EXCEPTION(::fcl::http::exceptions::bad_request,                                                   \
+                             "HTTP positional proxy requires fcl::api remote proxy");                              \
+      }                                                                                                             \
    }
 
 #define FCL_HTTP_API(INTERFACE, ...)                                                                                \
@@ -92,10 +134,21 @@
          BOOST_PP_SEQ_FOR_EACH(FCL_HTTP_DETAIL_BIND_ROUTE, INTERFACE, BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__))        \
          return builder;                                                                                            \
       }                                                                                                             \
+      static constexpr bool use_api_proxy = true                                                                     \
+         BOOST_PP_SEQ_FOR_EACH(FCL_HTTP_DETAIL_ROUTE_API_PROXY_SUPPORTED, INTERFACE,                                \
+                               BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__));                                               \
+      static std::shared_ptr<::fcl::api::remote_invoker> make_invoker(client& value) {                              \
+         return ::fcl::http::detail::make_route_invoker(                                                            \
+            value, ::fcl::api::api_traits<INTERFACE>::describe(),                                                    \
+            std::vector<::fcl::http::detail::route_call>{                                                           \
+               BOOST_PP_SEQ_FOR_EACH(FCL_HTTP_DETAIL_ROUTE_CALL, INTERFACE, BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__))  \
+            });                                                                                                     \
+      }                                                                                                             \
    };                                                                                                               \
-   template <> class proxy<INTERFACE> final : public INTERFACE {                                                    \
+   template <> class proxy<INTERFACE> : public INTERFACE {                                                          \
     public:                                                                                                         \
       explicit proxy(client& value) : client_(&value) {}                                                            \
+      BOOST_PP_SEQ_FOR_EACH(FCL_HTTP_DETAIL_PROXY_USING, INTERFACE, BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__))          \
       BOOST_PP_SEQ_FOR_EACH(FCL_HTTP_DETAIL_PROXY_METHOD, INTERFACE, BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__))         \
     private:                                                                                                        \
       client* client_;                                                                                              \

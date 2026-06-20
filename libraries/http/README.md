@@ -264,6 +264,77 @@ router.mount(binding);
 HTTP stays HTTP: route/path/status semantics remain native. The transport does
 not wrap typed calls in a message-frame body.
 
+### FastAPI-Style Parameters
+
+For endpoint-shaped APIs, the C++ method may use several arguments. The
+argument names live in `FCL_API_METHOD(...)`; HTTP parameter categories come
+from FCL HTTP wrapper types, following the FastAPI `Query` / `Header` / `Body`
+model without copying Python syntax.
+
+```cpp
+struct write_payload {
+   std::string bytes;
+};
+
+struct write_receipt {
+   std::string id;
+};
+
+BOOST_DESCRIBE_STRUCT(write_payload, (), (bytes))
+BOOST_DESCRIBE_STRUCT(write_receipt, (), (id))
+
+class object_api : public fcl::api::contract<object_api> {
+ public:
+   virtual ~object_api() = default;
+
+   virtual boost::asio::awaitable<write_receipt>
+   put_object(
+      std::string bucket,
+      std::string key,
+      fcl::http::query<std::uint32_t> ttl,
+      fcl::http::header<std::string> request_id,
+      fcl::http::body<write_payload> body) = 0;
+};
+
+FCL_API(
+   object_api,
+   FCL_API_CONTRACT("object", 1, 0),
+   FCL_API_METHOD(put_object, bucket, key, ttl, request_id, body))
+
+FCL_HTTP_API(
+   object_api,
+   FCL_HTTP_PUT(put_object, "/objects/:bucket/:key?ttl={ttl}", created))
+```
+
+Server binding fills `bucket` and `key` from path placeholders, `ttl` from the
+query string, `request_id` from the default header name `request-id`, and
+`body` from a JSON request body. The route macro does not repeat per-argument
+mapping. If a wire header name must differ from the argument name, use
+`FCL_HTTP_HEADER(argument, "Wire-Name")`.
+
+The same typed client call builds the HTTP request:
+
+```cpp
+auto objects = co_await fcl::http::remote<object_api>(client);
+auto receipt = co_await objects->put_object(
+   "cache",
+   "chunk-1",
+   fcl::http::query<std::uint32_t>{.value = 3600, .present = true},
+   fcl::http::header<std::string>{.value = "trace-123", .present = true},
+   fcl::http::body<write_payload>{.value = {.bytes = "payload"}, .present = true});
+```
+
+HTTP-only special request types include `query<T>`, `header<T>`, `cookie<T>`,
+`body<T>`, `form<T>`, `form_field<T>`, `upload_file`, `body_bytes` and
+`body_stream`. The typed HTTP client supports JSON/body-bytes/body-stream
+calls without routing these wrappers through `fcl.raw`; browser-style
+multipart client construction for `form<T>`, `form_field<T>` and `upload_file`
+belongs to explicit HTTP multipart support, not generic API frame
+serialization. Special return types remain `file_response`,
+`streaming_response`, `bytes_response` and `empty_response`. Background task
+injection is intentionally out of scope; application runtime and plugin layers
+own background work.
+
 ### Add Middleware
 
 Low-level middleware can be installed directly on a router:

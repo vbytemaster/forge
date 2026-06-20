@@ -63,6 +63,32 @@ BOOST_DESCRIBE_STRUCT(protocol::read_chunk, (), (ref, offset, limit))
 FCL_DECLARE_SERIALIZATION(protocol::read_chunk)
 ```
 
+For new APIs that are more naturally expressed as several C++ arguments,
+`FCL_API_METHOD(method, arg...)` records positional argument names while the
+types are still deduced from the C++ method signature:
+
+```cpp
+class object_api : public fcl::api::contract<
+   object_api,
+   fcl::api::surface::local | fcl::api::surface::remote> {
+ public:
+   virtual ~object_api() = default;
+
+   virtual boost::asio::awaitable<write_receipt>
+   put_object(bucket_name bucket, object_key key, chunk_ref body) = 0;
+};
+
+FCL_API(
+   object_api,
+   FCL_API_CONTRACT("object", 1, 0),
+   FCL_API_METHOD(put_object, bucket, key, body))
+```
+
+The argument names are metadata, not type declarations. Existing
+`FCL_API_METHOD(read)` one-request DTO methods keep their old source and wire
+shape. Positional methods are new declarations and use an internal argument-pack
+payload for frame transports.
+
 If a C++ interface has overloads or local convenience helpers with the same
 method name, use the typed method macro to select the wire method explicitly:
 

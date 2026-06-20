@@ -7,6 +7,7 @@ Local guides:
 
 - [HTTP README](../../libraries/http/README.md)
 - [WebSocket README](../../libraries/websocket/README.md)
+- [HTTP FastAPI-style parameters](http-fastapi-style-parameters.md)
 - [HTTP files and S3 readiness](http-files-and-s3.md)
 
 ## Задача

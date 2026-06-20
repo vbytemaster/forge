@@ -650,6 +650,20 @@ class api_builder {
    static constexpr auto tuple_needs_stream_v =
       tuple_needs_stream<Tuple>(std::make_index_sequence<std::tuple_size_v<Tuple>>{});
 
+   template <typename T>
+   static constexpr auto is_plain_json_body_argument_v =
+      fcl::reflect::is_described_object_v<std::remove_cvref_t<T>> &&
+      !detail::request_needs_stream_v<std::remove_cvref_t<T>> &&
+      !detail::is_header<std::remove_cvref_t<T>>::value &&
+      !detail::is_query<std::remove_cvref_t<T>>::value &&
+      !detail::is_cookie<std::remove_cvref_t<T>>::value &&
+      !detail::is_body<std::remove_cvref_t<T>>::value &&
+      !detail::is_form<std::remove_cvref_t<T>>::value &&
+      !detail::is_form_field<std::remove_cvref_t<T>>::value &&
+      !detail::is_body_stream_v<std::remove_cvref_t<T>> &&
+      !detail::is_body_bytes_v<std::remove_cvref_t<T>> &&
+      !detail::is_upload_file_v<std::remove_cvref_t<T>>;
+
    [[nodiscard]] static std::string argument_name(const fcl::api::method_descriptor& method_descriptor,
                                                   std::size_t index) {
       if (index >= method_descriptor.argument_names.size()) {
@@ -685,9 +699,68 @@ class api_builder {
    }
 
    template <typename Argument>
+   [[nodiscard]] static bool positional_plain_json_body_candidate(const route_context& context,
+                                                                  const api_route_options& options,
+                                                                  std::string_view name) {
+      if constexpr (is_plain_json_body_argument_v<Argument>) {
+         return uses_request_body(context.request.method()) && !context.request.body().empty() &&
+                !route_value(context, options, name).has_value();
+      } else {
+         static_cast<void>(context);
+         static_cast<void>(options);
+         static_cast<void>(name);
+         return false;
+      }
+   }
+
+   template <typename Tuple, std::size_t... Index>
+   [[nodiscard]] static std::size_t positional_plain_json_body_candidate_count(
+      const route_context& context,
+      const api_route_options& options,
+      const fcl::api::method_descriptor& method_descriptor,
+      std::index_sequence<Index...>) {
+      auto count = std::size_t{0};
+      ((count += positional_plain_json_body_candidate<std::tuple_element_t<Index, Tuple>>(
+           context, options, argument_name(method_descriptor, Index))
+            ? 1U
+            : 0U),
+       ...);
+      return count;
+   }
+
+   template <typename Tuple>
+   [[nodiscard]] static std::size_t positional_plain_json_body_candidate_count(
+      const route_context& context,
+      const api_route_options& options,
+      const fcl::api::method_descriptor& method_descriptor) {
+      return positional_plain_json_body_candidate_count<Tuple>(
+         context, options, method_descriptor, std::make_index_sequence<std::tuple_size_v<Tuple>>{});
+   }
+
+   template <typename Value>
+   static void require_body_route_consistency(const Value& value,
+                                              const route_context& context,
+                                              const api_route_options& options) {
+      if constexpr (fcl::reflect::is_described_object_v<Value>) {
+         fcl::reflect::for_each_member<Value>([&](const char* name, auto member) {
+            if (auto route = route_value(context, options, name); route.has_value()) {
+               auto expected = std::remove_cvref_t<decltype(value.*member)>{};
+               assign_from_text(expected, *route, name);
+               require_equal(value.*member, expected, name);
+            }
+         });
+      } else {
+         static_cast<void>(value);
+         static_cast<void>(context);
+         static_cast<void>(options);
+      }
+   }
+
+   template <typename Argument>
    [[nodiscard]] static Argument make_positional_argument_from_http(const route_context& context,
                                                                    const api_route_options& options,
-                                                                   std::string_view name) {
+                                                                   std::string_view name,
+                                                                   bool decode_plain_json_body = false) {
       using clean = std::remove_cvref_t<Argument>;
       auto result = clean{};
       if constexpr (detail::is_header<clean>::value) {
@@ -722,6 +795,18 @@ class api_builder {
          static_cast<void>(options);
       } else if (auto value = route_value(context, options, name); value.has_value()) {
          assign_from_text(result, *value, name);
+      } else if constexpr (is_plain_json_body_argument_v<clean>) {
+         if (decode_plain_json_body) {
+            const auto content_type = context.request.find(field::content_type);
+            if (content_type == context.request.end() ||
+                !is_json_content_type(std::string_view{content_type->value()})) {
+               FCL_THROW_EXCEPTION(fcl::http::exceptions::unsupported_media_type,
+                                   "HTTP API request body must be application/json");
+            }
+            result = decode_json_value<clean>(context.request.body(), "http.request.body");
+            validate_bound_value_schema(result, "http.request.body");
+            require_body_route_consistency(result, context, options);
+         }
       }
       return result;
    }
@@ -731,8 +816,18 @@ class api_builder {
                                                                  const api_route_options& options,
                                                                  const fcl::api::method_descriptor& method_descriptor,
                                                                  std::index_sequence<Index...>) {
+      const auto body_candidates =
+         positional_plain_json_body_candidate_count<Tuple>(context, options, method_descriptor);
+      if (body_candidates > 1U) {
+         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                             "HTTP API request has multiple positional body candidates");
+      }
       return Tuple{make_positional_argument_from_http<std::tuple_element_t<Index, Tuple>>(
-         context, options, argument_name(method_descriptor, Index))...};
+         context,
+         options,
+         argument_name(method_descriptor, Index),
+         positional_plain_json_body_candidate<std::tuple_element_t<Index, Tuple>>(
+            context, options, argument_name(method_descriptor, Index)))...};
    }
 
    template <typename Tuple>

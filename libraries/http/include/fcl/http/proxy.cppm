@@ -4,6 +4,7 @@ module;
 #include <fcl/exceptions/macros.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstddef>
 #include <cstring>
@@ -224,9 +225,39 @@ template <typename Tuple>
 }
 
 template <typename Tuple>
-[[nodiscard]] std::string render_route_target(const api_route& route,
-                                              const Tuple& arguments,
-                                              const std::vector<std::string>& names) {
+struct rendered_route_target {
+   std::string target;
+   std::array<bool, std::tuple_size_v<Tuple>> consumed{};
+};
+
+template <std::size_t Size>
+void mark_argument_consumed(std::array<bool, Size>& consumed,
+                            const std::vector<std::string>& names,
+                            std::string_view name) {
+   for (auto index = std::size_t{0}; index != consumed.size() && index != names.size(); ++index) {
+      if (names[index] == name) {
+         consumed[index] = true;
+         return;
+      }
+   }
+}
+
+[[nodiscard]] inline std::string route_query_name(const api_route& route, std::string_view field_name) {
+   const auto parsed = parse_route_template(route.target);
+   const auto matched = std::find_if(parsed.query.begin(), parsed.query.end(), [&](const api_field_binding& binding) {
+      return binding.field == field_name;
+   });
+   if (matched != parsed.query.end()) {
+      return matched->name;
+   }
+   return std::string{field_name};
+}
+
+template <typename Tuple>
+[[nodiscard]] rendered_route_target<Tuple> render_route_target(const api_route& route,
+                                                              const Tuple& arguments,
+                                                              const std::vector<std::string>& names) {
+   auto result = rendered_route_target<Tuple>{};
    auto output = std::string{};
    output.reserve(route.target.size() + 32U);
 
@@ -246,18 +277,18 @@ template <typename Tuple>
             ++index;
             continue;
          }
-         output += percent_encode(require_tuple_argument_text(arguments, names,
-                                                              std::string_view{route.target}.substr(index + 1U,
-                                                                                                    end - index - 1U)));
+         const auto field_name = std::string_view{route.target}.substr(index + 1U, end - index - 1U);
+         output += percent_encode(require_tuple_argument_text(arguments, names, field_name));
+         mark_argument_consumed(result.consumed, names, field_name);
          index = end;
          continue;
       }
       if (current == '{') {
          const auto end = route.target.find('}', index + 1U);
          if (end != std::string::npos) {
-            output += percent_encode(require_tuple_argument_text(arguments, names,
-                                                                 std::string_view{route.target}.substr(index + 1U,
-                                                                                                       end - index - 1U)));
+            const auto field_name = std::string_view{route.target}.substr(index + 1U, end - index - 1U);
+            output += percent_encode(require_tuple_argument_text(arguments, names, field_name));
+            mark_argument_consumed(result.consumed, names, field_name);
             index = end + 1U;
             continue;
          }
@@ -265,7 +296,42 @@ template <typename Tuple>
       output.push_back(current);
       ++index;
    }
-   return output;
+   result.target = std::move(output);
+   return result;
+}
+
+template <typename Tuple>
+void append_unconsumed_query_arguments(std::string& target,
+                                       const api_route& route,
+                                       const Tuple& arguments,
+                                       const std::vector<std::string>& names,
+                                       const std::array<bool, std::tuple_size_v<Tuple>>& consumed) {
+   [&]<std::size_t... Index>(std::index_sequence<Index...>) {
+      (([&] {
+          if constexpr (Index < std::tuple_size_v<Tuple>) {
+             if (Index >= names.size() || consumed[Index]) {
+                return;
+             }
+             const auto& argument = std::get<Index>(arguments);
+             using argument_type = std::remove_cvref_t<decltype(argument)>;
+             if constexpr (detail::is_query<argument_type>::value) {
+                if (!argument.present) {
+                   return;
+                }
+                auto encoded = field_to_text(argument.value);
+                if (!encoded.has_value()) {
+                   FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                                       "HTTP API query value cannot be encoded as text");
+                }
+                target.push_back(target.find('?') == std::string::npos ? '?' : '&');
+                target += percent_encode(route_query_name(route, names[Index]));
+                target.push_back('=');
+                target += percent_encode(*encoded);
+             }
+          }
+       }()),
+       ...);
+   }(std::make_index_sequence<std::tuple_size_v<Tuple>>{});
 }
 
 template <typename Tuple>
@@ -337,8 +403,21 @@ void apply_route_cookies(request& target,
    }
 }
 
+template <typename T>
+inline constexpr auto is_http_parameter_v =
+   is_header<std::remove_cvref_t<T>>::value ||
+   is_query<std::remove_cvref_t<T>>::value ||
+   is_cookie<std::remove_cvref_t<T>>::value ||
+   is_body<std::remove_cvref_t<T>>::value ||
+   is_form<std::remove_cvref_t<T>>::value ||
+   is_form_field<std::remove_cvref_t<T>>::value ||
+   is_body_stream_v<std::remove_cvref_t<T>> ||
+   is_body_bytes_v<std::remove_cvref_t<T>> ||
+   is_upload_file_v<std::remove_cvref_t<T>>;
+
 template <typename Tuple>
-std::optional<std::string> positional_json_body(const Tuple& arguments) {
+std::optional<std::string> positional_json_body(const Tuple& arguments,
+                                                const std::array<bool, std::tuple_size_v<Tuple>>& consumed) {
    auto result = std::optional<std::string>{};
    [&]<std::size_t... Index>(std::index_sequence<Index...>) {
       (([&] {
@@ -358,11 +437,63 @@ std::optional<std::string> positional_json_body(const Tuple& arguments) {
                                     "HTTP API request body cannot be encoded as JSON");
              }
              result = std::move(encoded.text);
+          } else if constexpr (fcl::reflect::is_described_object_v<argument_type> &&
+                               !detail::request_needs_stream_v<argument_type> &&
+                               !is_http_parameter_v<argument_type>) {
+             if (consumed[Index]) {
+                return;
+             }
+             if (result.has_value()) {
+                FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                                    "HTTP API request has multiple positional body candidates");
+             }
+             auto encoded = fcl::json::write(argument);
+             if (!encoded.ok()) {
+                FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                                    "HTTP API request body cannot be encoded as JSON");
+             }
+             result = std::move(encoded.text);
           }
        }()),
        ...);
    }(std::make_index_sequence<std::tuple_size_v<Tuple>>{});
    return result;
+}
+
+template <typename Tuple>
+std::size_t positional_plain_json_body_candidate_count(const std::array<bool, std::tuple_size_v<Tuple>>& consumed) {
+   auto count = std::size_t{0};
+   [&]<std::size_t... Index>(std::index_sequence<Index...>) {
+      (([&] {
+          using argument_type = std::remove_cvref_t<std::tuple_element_t<Index, Tuple>>;
+          if constexpr (fcl::reflect::is_described_object_v<argument_type> &&
+                        !detail::request_needs_stream_v<argument_type> &&
+                        !is_http_parameter_v<argument_type>) {
+             if (!consumed[Index]) {
+                ++count;
+             }
+          }
+       }()),
+       ...);
+   }(std::make_index_sequence<std::tuple_size_v<Tuple>>{});
+   return count;
+}
+
+template <typename Tuple>
+consteval std::size_t positional_explicit_body_source_count() {
+   auto count = std::size_t{0};
+   [&]<std::size_t... Index>(std::index_sequence<Index...>) {
+      (([&] {
+          using argument_type = std::remove_cvref_t<std::tuple_element_t<Index, Tuple>>;
+          if constexpr (detail::is_body<argument_type>::value ||
+                        detail::is_body_stream_v<argument_type> ||
+                        detail::is_body_bytes_v<argument_type>) {
+             ++count;
+          }
+       }()),
+       ...);
+   }(std::make_index_sequence<std::tuple_size_v<Tuple>>{});
+   return count;
 }
 
 template <typename Tuple>
@@ -426,24 +557,26 @@ void reject_unsupported_positional_client_body(const Tuple& arguments) {
    }(std::make_index_sequence<std::tuple_size_v<Tuple>>{});
 }
 
-template <typename T>
-inline constexpr auto is_http_parameter_v =
-   is_header<std::remove_cvref_t<T>>::value ||
-   is_query<std::remove_cvref_t<T>>::value ||
-   is_cookie<std::remove_cvref_t<T>>::value ||
-   is_body<std::remove_cvref_t<T>>::value ||
-   is_form<std::remove_cvref_t<T>>::value ||
-   is_form_field<std::remove_cvref_t<T>>::value ||
-   is_body_stream_v<std::remove_cvref_t<T>> ||
-   is_body_bytes_v<std::remove_cvref_t<T>> ||
-   is_upload_file_v<std::remove_cvref_t<T>>;
-
 template <typename Tuple>
-std::optional<body_reader> bind_positional_request_body(request& target, const api_route& route, Tuple& arguments) {
+std::optional<body_reader> bind_positional_request_body(request& target,
+                                                        const api_route& route,
+                                                        Tuple& arguments,
+                                                        const std::array<bool, std::tuple_size_v<Tuple>>& consumed) {
    if (!uses_request_body(route.verb)) {
       return std::nullopt;
    }
    reject_unsupported_positional_client_body(arguments);
+   constexpr auto explicit_body_sources = positional_explicit_body_source_count<Tuple>();
+   if constexpr (explicit_body_sources > 1U) {
+      FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API request has multiple body parameters");
+   }
+   const auto plain_body_candidates = positional_plain_json_body_candidate_count<Tuple>(consumed);
+   if constexpr (explicit_body_sources > 0U) {
+      if (plain_body_candidates > 0U) {
+         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
+                             "HTTP API request has explicit and inferred body parameters");
+      }
+   }
    auto stream_body = take_positional_body_stream(arguments);
    if (stream_body.has_value()) {
       return stream_body;
@@ -454,7 +587,7 @@ std::optional<body_reader> bind_positional_request_body(request& target, const a
       target.prepare_payload();
       return std::nullopt;
    }
-   auto json_body = positional_json_body(arguments);
+   auto json_body = positional_json_body(arguments, consumed);
    if (json_body.has_value()) {
       target.body() = std::move(*json_body);
       target.set(field::content_type, "application/json");
@@ -480,6 +613,12 @@ std::optional<body_reader> take_body_stream(Request& value, const api_route& rou
    return result;
 }
 
+template <typename Tuple>
+struct positional_client_request {
+   request value;
+   std::array<bool, std::tuple_size_v<Tuple>> consumed{};
+};
+
 template <typename Request>
 request make_client_request(client& target, const api_route& route, Request& value) {
    auto request_value = request{};
@@ -491,17 +630,23 @@ request make_client_request(client& target, const api_route& route, Request& val
 }
 
 template <typename Tuple>
-request make_client_request(client& target,
-                            const api_route& route,
-                            const Tuple& arguments,
-                            const std::vector<std::string>& names) {
+positional_client_request<Tuple> make_client_request(client& target,
+                                                     const api_route& route,
+                                                     const Tuple& arguments,
+                                                     const std::vector<std::string>& names) {
+   auto output = positional_client_request<Tuple>{};
+   auto rendered = render_route_target(route, arguments, names);
+   append_unconsumed_query_arguments(rendered.target, route, arguments, names, rendered.consumed);
+
    auto request_value = request{};
    request_value.method(route.verb);
-   request_value.target(target.make_target(render_route_target(route, arguments, names)));
+   request_value.target(target.make_target(rendered.target));
    request_value.version(11);
    apply_route_headers(request_value, route, arguments, names);
    apply_route_cookies(request_value, arguments, names);
-   return request_value;
+   output.value = std::move(request_value);
+   output.consumed = rendered.consumed;
+   return output;
 }
 
 inline constexpr auto max_stream_error_body_bytes = std::uint64_t{64U * 1024U};
@@ -650,12 +795,12 @@ boost::asio::awaitable<Response> call_arguments(client& target,
                                                 const api_route& route,
                                                 Tuple value,
                                                 const std::vector<std::string>& argument_names) {
-   auto request_value = make_client_request(target, route, value, argument_names);
-   auto request_body = bind_positional_request_body(request_value, route, value);
+   auto request_parts = make_client_request(target, route, value, argument_names);
+   auto request_body = bind_positional_request_body(request_parts.value, route, value, request_parts.consumed);
    if constexpr (detail::response_needs_stream_v<Response>) {
       auto response_value = request_body.has_value()
-         ? co_await target.async_stream_request(std::move(request_value), std::move(*request_body))
-         : co_await target.async_stream_request(std::move(request_value));
+         ? co_await target.async_stream_request(std::move(request_parts.value), std::move(*request_body))
+         : co_await target.async_stream_request(std::move(request_parts.value));
       if (response_value.head.result_int() < 200U || response_value.head.result_int() >= 300U) {
          response_value.head.body() = co_await read_bounded_error_body(response_value.body);
          auto error = parse_error_payload(response_value.head);
@@ -668,8 +813,8 @@ boost::asio::awaitable<Response> call_arguments(client& target,
       }
    } else {
       auto response_value = request_body.has_value()
-         ? co_await target.async_streaming_request(std::move(request_value), std::move(*request_body))
-         : co_await target.async_request(std::move(request_value));
+         ? co_await target.async_streaming_request(std::move(request_parts.value), std::move(*request_body))
+         : co_await target.async_request(std::move(request_parts.value));
       if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
          auto error = parse_error_payload(response_value);
          fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));

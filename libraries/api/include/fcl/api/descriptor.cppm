@@ -9,6 +9,7 @@ module;
 #include <string_view>
 #include <typeindex>
 #include <type_traits>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -50,25 +51,94 @@ template <typename T>
 
 template <typename T> struct method_signature;
 
-template <typename Class, typename Response, typename Request>
-struct method_signature<boost::asio::awaitable<Response> (Class::*)(Request)> {
+template <typename Class, typename Response, typename... Args>
+struct method_signature<boost::asio::awaitable<Response> (Class::*)(Args...)> {
    using class_type = Class;
-   using request_type = Request;
+   using argument_tuple = std::tuple<Args...>;
    using response_type = Response;
 };
 
-template <typename Class, typename Response, typename Request>
-struct method_signature<boost::asio::awaitable<Response> (Class::*)(Request) const> {
+template <typename Class, typename Response, typename... Args>
+struct method_signature<boost::asio::awaitable<Response> (Class::*)(Args...) const> {
    using class_type = Class;
-   using request_type = Request;
+   using argument_tuple = std::tuple<Args...>;
    using response_type = Response;
+};
+
+template <typename Tuple> struct method_payload;
+
+template <>
+struct method_payload<std::tuple<>> {
+   using type = std::tuple<>;
+};
+
+template <typename T>
+struct method_payload<std::tuple<T>> {
+   using type = T;
+};
+
+template <typename First, typename Second, typename... Rest>
+struct method_payload<std::tuple<First, Second, Rest...>> {
+   using type = std::tuple<First, Second, Rest...>;
 };
 
 template <auto Method>
-using method_request_t = typename method_signature<decltype(Method)>::request_type;
+using method_argument_tuple_t = typename method_signature<decltype(Method)>::argument_tuple;
+
+template <auto Method>
+using method_request_t = typename method_payload<method_argument_tuple_t<Method>>::type;
 
 template <auto Method>
 using method_response_t = typename method_signature<decltype(Method)>::response_type;
+
+template <auto Method, std::size_t Index>
+using method_argument_t = std::tuple_element_t<Index, method_argument_tuple_t<Method>>;
+
+template <auto Method>
+inline constexpr auto method_argument_count_v = std::tuple_size_v<method_argument_tuple_t<Method>>;
+
+namespace detail {
+
+[[nodiscard]] inline std::string_view trim_argument_name(std::string_view value) noexcept {
+   while (!value.empty() && (value.front() == ' ' || value.front() == '\t' || value.front() == '\n' ||
+                            value.front() == '\r')) {
+      value.remove_prefix(1);
+   }
+   while (!value.empty() && (value.back() == ' ' || value.back() == '\t' || value.back() == '\n' ||
+                            value.back() == '\r')) {
+      value.remove_suffix(1);
+   }
+   return value;
+}
+
+[[nodiscard]] inline std::vector<std::string> argument_names_from_macro(std::string_view value) {
+   value = trim_argument_name(value);
+   if (value.size() >= 2U && value.front() == '(' && value.back() == ')') {
+      value.remove_prefix(1);
+      value.remove_suffix(1);
+   }
+   value = trim_argument_name(value);
+   if (value.empty()) {
+      return {};
+   }
+
+   auto names = std::vector<std::string>{};
+   while (true) {
+      const auto comma = value.find(',');
+      const auto token = trim_argument_name(value.substr(0, comma));
+      if (token.empty()) {
+         throw exceptions::protocol_error{"API method argument name is empty"};
+      }
+      names.emplace_back(token);
+      if (comma == std::string_view::npos) {
+         break;
+      }
+      value.remove_prefix(comma + 1U);
+   }
+   return names;
+}
+
+} // namespace detail
 
 struct error_options {
    status status_code = status::internal;
@@ -93,6 +163,7 @@ struct method_descriptor {
    std::string deprecation_reason;
    std::type_index request_type = typeid(void);
    std::type_index response_type = typeid(void);
+   std::vector<std::string> argument_names;
    std::vector<error_descriptor> errors;
    std::function<boost::asio::awaitable<bytes>(std::shared_ptr<void>, bytes)> raw_invoker;
    std::function<boost::asio::awaitable<std::vector<bytes>>(std::shared_ptr<void>, bytes)> raw_stream_invoker;
@@ -127,7 +198,12 @@ template <typename Interface> class contract_builder {
    explicit contract_builder(descriptor value) : descriptor_(std::move(value)) {}
 
    template <auto Method> method_builder<Interface> method(std::string name) {
-      return method<Method, method_request_t<Method>, method_response_t<Method>>(std::move(name));
+      return add_deduced_method<Method>(std::move(name), {});
+   }
+
+   template <auto Method>
+   method_builder<Interface> method(std::string name, std::vector<std::string> argument_names) {
+      return add_deduced_method<Method>(std::move(name), std::move(argument_names));
    }
 
    template <auto Method, typename Request, typename Response> method_builder<Interface> method(std::string name) {
@@ -223,6 +299,49 @@ template <typename Interface> class contract_builder {
    }
 
  private:
+   template <auto Method>
+   method_builder<Interface> add_deduced_method(std::string name, std::vector<std::string> argument_names) {
+      constexpr auto argument_count = method_argument_count_v<Method>;
+      if (!argument_names.empty() && argument_names.size() != argument_count) {
+         throw exceptions::protocol_error{"API method argument name count does not match method signature: " + name};
+      }
+      if (argument_names.empty() && argument_count != 1U) {
+         throw exceptions::protocol_error{"API positional method requires argument names: " + name};
+      }
+
+      using Request = method_request_t<Method>;
+      using Response = method_response_t<Method>;
+      for (const auto& existing : descriptor_.methods) {
+         if (existing.name == name) {
+            throw exceptions::protocol_error{"duplicate API method: " + name};
+         }
+      }
+      descriptor_.methods.push_back(method_descriptor{
+          .name = std::move(name),
+          .kind = method_kind::unary,
+          .request_type = typeid(Request),
+          .response_type = typeid(Response),
+          .argument_names = std::move(argument_names),
+          .raw_invoker =
+              [](std::shared_ptr<void> implementation, bytes payload) -> boost::asio::awaitable<bytes> {
+             auto typed = std::static_pointer_cast<Interface>(std::move(implementation));
+             if constexpr (argument_count == 1U) {
+                auto request = unpack_body<Request>(payload);
+                auto response = co_await std::invoke(Method, *typed, std::move(request));
+                co_return pack_body(response);
+             } else {
+                auto request = unpack_body<method_argument_tuple_t<Method>>(payload);
+                auto invoke = [&](auto&&... args) -> boost::asio::awaitable<Response> {
+                   co_return co_await std::invoke(Method, *typed, std::forward<decltype(args)>(args)...);
+                };
+                auto response = co_await std::apply(invoke, std::move(request));
+                co_return pack_body(response);
+             }
+          },
+      });
+      return method_builder<Interface>{*this, descriptor_.methods.back()};
+   }
+
    template <auto Method, typename Request, typename Response>
    method_builder<Interface> add_method(std::string name, method_kind kind) {
       for (const auto& existing : descriptor_.methods) {

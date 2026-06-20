@@ -10,6 +10,7 @@
 #include <string>
 #include <thread>
 #include <typeindex>
+#include <tuple>
 #include <vector>
 
 import fcl.api.exceptions;
@@ -104,9 +105,7 @@ template <typename Stream> Stream& operator>>(Stream& stream, chunk& value) {
 
 template <typename T>
 fcl::api::bytes pack_api_payload(const T& value) {
-   auto out = fcl::api::bytes{};
-   fcl::raw::pack(out, value);
-   return out;
+   return fcl::api::pack_body(value);
 }
 
 class cache_api
@@ -175,6 +174,25 @@ static_assert(fcl::api::interface<remote_only_api>);
 static_assert(!fcl::api::local_interface<remote_only_api>);
 static_assert(fcl::api::remote_interface<remote_only_api>);
 static_assert(fcl::api::remote_interface<overloaded_api>);
+
+class positional_api
+    : public fcl::api::contract<positional_api, fcl::api::surface::local | fcl::api::surface::remote> {
+ public:
+   virtual ~positional_api() = default;
+
+   virtual boost::asio::awaitable<protocol::chunk> concat(std::string left, std::string right) = 0;
+   virtual boost::asio::awaitable<protocol::chunk> concat_since(std::string left, std::string right) = 0;
+   virtual boost::asio::awaitable<protocol::chunk> concat_old(std::string left, std::string right) = 0;
+};
+
+FCL_API(positional_api, FCL_API_CONTRACT("positional", 1, 2),
+        FCL_API_METHOD(concat, left, right),
+        FCL_API_METHOD_SINCE(concat_since, 2, left, right),
+        FCL_API_METHOD_DEPRECATED(concat_old, "use concat", left, right))
+
+static_assert(fcl::api::interface<positional_api>);
+static_assert(fcl::api::local_interface<positional_api>);
+static_assert(fcl::api::remote_interface<positional_api>);
 
 class cache_impl final : public cache_api {
  public:
@@ -261,6 +279,21 @@ class tracking_cache_impl final : public cache_api {
  private:
    std::shared_ptr<int> upload_calls_;
    std::shared_ptr<int> watch_calls_;
+};
+
+class positional_impl final : public positional_api {
+ public:
+   boost::asio::awaitable<protocol::chunk> concat(std::string left, std::string right) override {
+      co_return protocol::chunk{.bytes = std::move(left) + ":" + std::move(right)};
+   }
+
+   boost::asio::awaitable<protocol::chunk> concat_since(std::string left, std::string right) override {
+      co_return protocol::chunk{.bytes = std::move(left) + ":since:" + std::move(right)};
+   }
+
+   boost::asio::awaitable<protocol::chunk> concat_old(std::string left, std::string right) override {
+      co_return protocol::chunk{.bytes = std::move(left) + ":old:" + std::move(right)};
+   }
 };
 
 void build_empty_id_descriptor() {
@@ -375,6 +408,22 @@ class recording_remote_mount final : public fcl::api::remote_mount {
    std::shared_ptr<recording_invoker> invoker_;
 };
 
+class recording_positional_invoker final : public fcl::api::remote_invoker {
+ public:
+   boost::asio::awaitable<fcl::api::response> async_call(fcl::api::request value) override {
+      last = std::move(value);
+      const auto args = fcl::api::unpack_body<std::tuple<std::string, std::string>>(last.body);
+      co_return fcl::api::response{
+          .api = last.api,
+          .method = last.method,
+          .codec = last.codec,
+          .body = fcl::api::pack_body(protocol::chunk{.bytes = "remote:" + std::get<0>(args) + ":" + std::get<1>(args)}),
+      };
+   }
+
+   fcl::api::request last;
+};
+
 BOOST_AUTO_TEST_CASE(generated_api_descriptor_records_contract_and_method_metadata) {
    const auto descriptor = cache_api::describe();
 
@@ -423,6 +472,29 @@ BOOST_AUTO_TEST_CASE(generated_api_descriptor_supports_typed_overload_methods) {
    BOOST_TEST(sign_old_since->deprecation_reason == "use sign");
 }
 
+BOOST_AUTO_TEST_CASE(generated_api_descriptor_records_positional_argument_names) {
+   const auto descriptor = positional_api::describe();
+
+   BOOST_TEST(descriptor.id.value == "positional");
+   BOOST_TEST(descriptor.version.major == 1U);
+   BOOST_TEST(descriptor.version.revision == 2U);
+
+   const auto* concat = fcl::api::find_method(descriptor, "concat");
+   const auto* concat_since = fcl::api::find_method(descriptor, "concat_since");
+   const auto* concat_old = fcl::api::find_method(descriptor, "concat_old");
+   BOOST_REQUIRE(concat != nullptr);
+   BOOST_REQUIRE(concat_since != nullptr);
+   BOOST_REQUIRE(concat_old != nullptr);
+   BOOST_TEST((concat->request_type == std::type_index{typeid(std::tuple<std::string, std::string>)}));
+   BOOST_TEST((concat->response_type == std::type_index{typeid(protocol::chunk)}));
+   BOOST_REQUIRE_EQUAL(concat->argument_names.size(), 2U);
+   BOOST_TEST(concat->argument_names[0] == "left");
+   BOOST_TEST(concat->argument_names[1] == "right");
+   BOOST_TEST(concat_since->since_revision == 2U);
+   BOOST_CHECK(concat_old->deprecated);
+   BOOST_TEST(concat_old->deprecation_reason == "use concat");
+}
+
 BOOST_AUTO_TEST_CASE(generated_proxy_invokes_remote_through_typed_handle) {
    auto runtime = fcl::asio::runtime{};
    auto invoker = std::make_shared<recording_invoker>();
@@ -450,6 +522,23 @@ BOOST_AUTO_TEST_CASE(generated_proxy_invokes_typed_overload_method) {
    BOOST_TEST(invoker->last.api.major == 1U);
    BOOST_TEST(invoker->last.api.min_revision == 3U);
    BOOST_TEST(invoker->last.method == "sign");
+}
+
+BOOST_AUTO_TEST_CASE(generated_proxy_invokes_positional_method) {
+   auto runtime = fcl::asio::runtime{};
+   auto invoker = std::make_shared<recording_positional_invoker>();
+   auto handle = fcl::api::handle<positional_api>{std::make_shared<fcl::api::proxy<positional_api>>(invoker)};
+
+   const auto response = fcl::asio::blocking::run(runtime, handle->concat("a", "b"));
+
+   BOOST_TEST(response.bytes == "remote:a:b");
+   BOOST_TEST(invoker->last.api.id.value == "positional");
+   BOOST_TEST(invoker->last.api.major == 1U);
+   BOOST_TEST(invoker->last.api.min_revision == 2U);
+   BOOST_TEST(invoker->last.method == "concat");
+   const auto args = fcl::api::unpack_body<std::tuple<std::string, std::string>>(invoker->last.body);
+   BOOST_TEST(std::get<0>(args) == "a");
+   BOOST_TEST(std::get<1>(args) == "b");
 }
 
 BOOST_AUTO_TEST_CASE(generated_proxy_preserves_requested_api_revision) {
@@ -609,6 +698,27 @@ BOOST_AUTO_TEST_CASE(binding_plan_runs_interceptors_in_deterministic_order) {
 
    BOOST_CHECK(response.kind == fcl::api::frame_kind::response);
    BOOST_TEST(*trace == "observe>authz>");
+}
+
+BOOST_AUTO_TEST_CASE(binding_plan_dispatches_positional_method) {
+   auto runtime = fcl::asio::runtime{};
+   auto registry = fcl::api::registry{};
+   registry.install<positional_api>(positional_api::describe(), std::make_shared<positional_impl>());
+
+   auto plan = fcl::api::binding().serve(registry).build();
+   const auto request = fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 117},
+       .api = {.id = {"positional"}, .major = 1, .min_revision = 2},
+       .method = "concat",
+       .codec = {.value = "fcl.raw"},
+       .payload = pack_api_payload(std::make_tuple(std::string{"left"}, std::string{"right"})),
+   };
+
+   const auto response = fcl::asio::blocking::run(runtime, plan.dispatch(request));
+
+   BOOST_CHECK(response.kind == fcl::api::frame_kind::response);
+   BOOST_TEST(fcl::raw::unpack<protocol::chunk>(response.payload).bytes == "left:right");
 }
 
 BOOST_AUTO_TEST_CASE(binding_plan_interceptor_sees_request_payload) {

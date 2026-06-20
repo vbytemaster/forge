@@ -1,25 +1,40 @@
 #pragma once
 
 #include <boost/preprocessor/control/if.hpp>
+#include <boost/preprocessor/facilities/check_empty.hpp>
+#include <boost/preprocessor/logical/not.hpp>
+#include <boost/preprocessor/punctuation/comma_if.hpp>
 #include <boost/preprocessor/seq/for_each.hpp>
+#include <boost/preprocessor/seq/for_each_i.hpp>
 #include <boost/preprocessor/stringize.hpp>
 #include <boost/preprocessor/tuple/elem.hpp>
+#include <boost/preprocessor/tuple/to_seq.hpp>
 #include <boost/preprocessor/variadic/to_seq.hpp>
 
 #include <memory>
+#include <string>
 #include <utility>
+#include <vector>
 
 #define FCL_API_CONTRACT(ID, MAJOR, REVISION) (ID, MAJOR, REVISION)
 
-#define FCL_API_METHOD(NAME) (NAME, void, void, 0, 0, "", 0)
-#define FCL_API_METHOD_SINCE(NAME, REVISION) (NAME, void, void, REVISION, 0, "", 0)
-#define FCL_API_METHOD_DEPRECATED(NAME, REASON) (NAME, void, void, 0, 1, REASON, 0)
-#define FCL_API_METHOD_DEPRECATED_SINCE(NAME, REVISION, REASON) (NAME, void, void, REVISION, 1, REASON, 0)
-#define FCL_API_METHOD_TYPED(NAME, REQUEST, RESPONSE) (NAME, REQUEST, RESPONSE, 0, 0, "", 1)
-#define FCL_API_METHOD_TYPED_SINCE(NAME, REQUEST, RESPONSE, REVISION) (NAME, REQUEST, RESPONSE, REVISION, 0, "", 1)
-#define FCL_API_METHOD_TYPED_DEPRECATED(NAME, REQUEST, RESPONSE, REASON) (NAME, REQUEST, RESPONSE, 0, 1, REASON, 1)
+#define FCL_API_DETAIL_HAS_ARGS(...) BOOST_PP_NOT(BOOST_PP_CHECK_EMPTY(__VA_ARGS__))
+
+#define FCL_API_METHOD(NAME, ...)                                                                                  \
+   (NAME, void, void, 0, 0, "", 0, FCL_API_DETAIL_HAS_ARGS(__VA_ARGS__), (__VA_ARGS__))
+#define FCL_API_METHOD_SINCE(NAME, REVISION, ...)                                                                  \
+   (NAME, void, void, REVISION, 0, "", 0, FCL_API_DETAIL_HAS_ARGS(__VA_ARGS__), (__VA_ARGS__))
+#define FCL_API_METHOD_DEPRECATED(NAME, REASON, ...)                                                               \
+   (NAME, void, void, 0, 1, REASON, 0, FCL_API_DETAIL_HAS_ARGS(__VA_ARGS__), (__VA_ARGS__))
+#define FCL_API_METHOD_DEPRECATED_SINCE(NAME, REVISION, REASON, ...)                                               \
+   (NAME, void, void, REVISION, 1, REASON, 0, FCL_API_DETAIL_HAS_ARGS(__VA_ARGS__), (__VA_ARGS__))
+#define FCL_API_METHOD_TYPED(NAME, REQUEST, RESPONSE) (NAME, REQUEST, RESPONSE, 0, 0, "", 1, 0, ())
+#define FCL_API_METHOD_TYPED_SINCE(NAME, REQUEST, RESPONSE, REVISION)                                              \
+   (NAME, REQUEST, RESPONSE, REVISION, 0, "", 1, 0, ())
+#define FCL_API_METHOD_TYPED_DEPRECATED(NAME, REQUEST, RESPONSE, REASON)                                           \
+   (NAME, REQUEST, RESPONSE, 0, 1, REASON, 1, 0, ())
 #define FCL_API_METHOD_TYPED_DEPRECATED_SINCE(NAME, REQUEST, RESPONSE, REVISION, REASON)                            \
-   (NAME, REQUEST, RESPONSE, REVISION, 1, REASON, 1)
+   (NAME, REQUEST, RESPONSE, REVISION, 1, REASON, 1, 0, ())
 
 #if defined(__clang__)
 #define FCL_API_DETAIL_DIAGNOSTIC_PUSH _Pragma("clang diagnostic push") _Pragma("clang diagnostic ignored \"-Wdeprecated-declarations\"")
@@ -32,13 +47,22 @@
 #define FCL_API_DETAIL_DIAGNOSTIC_POP
 #endif
 
-#define FCL_API_DETAIL_METHOD_NAME(METHOD) BOOST_PP_TUPLE_ELEM(7, 0, METHOD)
-#define FCL_API_DETAIL_METHOD_REQUEST(METHOD) BOOST_PP_TUPLE_ELEM(7, 1, METHOD)
-#define FCL_API_DETAIL_METHOD_RESPONSE(METHOD) BOOST_PP_TUPLE_ELEM(7, 2, METHOD)
-#define FCL_API_DETAIL_METHOD_SINCE(METHOD) BOOST_PP_TUPLE_ELEM(7, 3, METHOD)
-#define FCL_API_DETAIL_METHOD_DEPRECATED(METHOD) BOOST_PP_TUPLE_ELEM(7, 4, METHOD)
-#define FCL_API_DETAIL_METHOD_REASON(METHOD) BOOST_PP_TUPLE_ELEM(7, 5, METHOD)
-#define FCL_API_DETAIL_METHOD_TYPED(METHOD) BOOST_PP_TUPLE_ELEM(7, 6, METHOD)
+#define FCL_API_DETAIL_METHOD_NAME(METHOD) BOOST_PP_TUPLE_ELEM(9, 0, METHOD)
+#define FCL_API_DETAIL_METHOD_REQUEST(METHOD) BOOST_PP_TUPLE_ELEM(9, 1, METHOD)
+#define FCL_API_DETAIL_METHOD_RESPONSE(METHOD) BOOST_PP_TUPLE_ELEM(9, 2, METHOD)
+#define FCL_API_DETAIL_METHOD_SINCE(METHOD) BOOST_PP_TUPLE_ELEM(9, 3, METHOD)
+#define FCL_API_DETAIL_METHOD_DEPRECATED(METHOD) BOOST_PP_TUPLE_ELEM(9, 4, METHOD)
+#define FCL_API_DETAIL_METHOD_REASON(METHOD) BOOST_PP_TUPLE_ELEM(9, 5, METHOD)
+#define FCL_API_DETAIL_METHOD_TYPED(METHOD) BOOST_PP_TUPLE_ELEM(9, 6, METHOD)
+#define FCL_API_DETAIL_METHOD_HAS_ARGS(METHOD) BOOST_PP_TUPLE_ELEM(9, 7, METHOD)
+#define FCL_API_DETAIL_METHOD_ARGS(METHOD) BOOST_PP_TUPLE_ELEM(9, 8, METHOD)
+
+#define FCL_API_DETAIL_ARG_NAMES_EMPTY_R(r, METHOD) std::vector<std::string>{}
+#define FCL_API_DETAIL_ARG_NAMES_NONEMPTY_R(r, METHOD)                                                            \
+   ::fcl::api::detail::argument_names_from_macro(BOOST_PP_STRINGIZE(FCL_API_DETAIL_METHOD_ARGS(METHOD)))
+#define FCL_API_DETAIL_ARG_NAMES_R(r, METHOD)                                                                      \
+   BOOST_PP_IF(FCL_API_DETAIL_METHOD_HAS_ARGS(METHOD), FCL_API_DETAIL_ARG_NAMES_NONEMPTY_R,                        \
+               FCL_API_DETAIL_ARG_NAMES_EMPTY_R)(r, METHOD)
 
 #define FCL_API_DETAIL_TYPED_METHOD_POINTER(INTERFACE, METHOD)                                                     \
    static_cast<boost::asio::awaitable<FCL_API_DETAIL_METHOD_RESPONSE(METHOD)> (INTERFACE::*)(                     \
@@ -58,7 +82,7 @@
 #define FCL_API_DETAIL_DESCRIPTOR_METHOD_DEDUCED(r, INTERFACE, METHOD)                                             \
    {                                                                                                               \
       auto method = builder.template method<&INTERFACE::FCL_API_DETAIL_METHOD_NAME(METHOD)>(                       \
-         BOOST_PP_STRINGIZE(FCL_API_DETAIL_METHOD_NAME(METHOD)));                                                  \
+         BOOST_PP_STRINGIZE(FCL_API_DETAIL_METHOD_NAME(METHOD)), FCL_API_DETAIL_ARG_NAMES_R(r, METHOD));           \
       method.since_revision(FCL_API_DETAIL_METHOD_SINCE(METHOD));                                                  \
       BOOST_PP_IF(FCL_API_DETAIL_METHOD_DEPRECATED(METHOD),                                                        \
                   method.deprecated(FCL_API_DETAIL_METHOD_REASON(METHOD));, )                                      \
@@ -80,6 +104,10 @@
                FCL_API_DETAIL_PROXY_METHOD_DEDUCED)(r, INTERFACE, METHOD)
 
 #define FCL_API_DETAIL_PROXY_METHOD_DEDUCED(r, INTERFACE, METHOD)                                                  \
+   BOOST_PP_IF(FCL_API_DETAIL_METHOD_HAS_ARGS(METHOD), FCL_API_DETAIL_PROXY_METHOD_POSITIONAL,                     \
+               FCL_API_DETAIL_PROXY_METHOD_ONE_REQUEST)(r, INTERFACE, METHOD)
+
+#define FCL_API_DETAIL_PROXY_METHOD_ONE_REQUEST(r, INTERFACE, METHOD)                                              \
    boost::asio::awaitable<                                                                                         \
       ::fcl::api::method_response_t<&INTERFACE::FCL_API_DETAIL_METHOD_NAME(METHOD)>>                               \
    FCL_API_DETAIL_METHOD_NAME(METHOD)(                                                                             \
@@ -89,6 +117,28 @@
          ::fcl::api::method_response_t<&INTERFACE::FCL_API_DETAIL_METHOD_NAME(METHOD)>>(                           \
             ::fcl::api::api_traits<INTERFACE>::describe(), this->selected_api_,                                    \
             BOOST_PP_STRINGIZE(FCL_API_DETAIL_METHOD_NAME(METHOD)), std::move(request));                           \
+   }
+
+#define FCL_API_DETAIL_PROXY_ARG_DECL(r, DATA, INDEX, ARG)                                                         \
+   BOOST_PP_COMMA_IF(INDEX)                                                                                        \
+   ::fcl::api::method_argument_t<&BOOST_PP_TUPLE_ELEM(2, 0, DATA)::FCL_API_DETAIL_METHOD_NAME(                     \
+                                    BOOST_PP_TUPLE_ELEM(2, 1, DATA)), INDEX> ARG
+#define FCL_API_DETAIL_PROXY_ARG_MOVE(r, DATA, INDEX, ARG) , std::move(ARG)
+#define FCL_API_DETAIL_PROXY_ARG_DECLS_R(r, INTERFACE, METHOD)                                                     \
+   BOOST_PP_SEQ_FOR_EACH_I_R(r, FCL_API_DETAIL_PROXY_ARG_DECL, (INTERFACE, METHOD),                                \
+                             BOOST_PP_TUPLE_TO_SEQ(FCL_API_DETAIL_METHOD_ARGS(METHOD)))
+#define FCL_API_DETAIL_PROXY_ARG_MOVES_R(r, METHOD)                                                                \
+   BOOST_PP_SEQ_FOR_EACH_I_R(r, FCL_API_DETAIL_PROXY_ARG_MOVE, _,                                                  \
+                             BOOST_PP_TUPLE_TO_SEQ(FCL_API_DETAIL_METHOD_ARGS(METHOD)))
+
+#define FCL_API_DETAIL_PROXY_METHOD_POSITIONAL(r, INTERFACE, METHOD)                                               \
+   boost::asio::awaitable<                                                                                         \
+      ::fcl::api::method_response_t<&INTERFACE::FCL_API_DETAIL_METHOD_NAME(METHOD)>>                               \
+   FCL_API_DETAIL_METHOD_NAME(METHOD)(FCL_API_DETAIL_PROXY_ARG_DECLS_R(r, INTERFACE, METHOD)) override {           \
+      co_return co_await this->invoker_->template call_arguments<                                                  \
+         ::fcl::api::method_response_t<&INTERFACE::FCL_API_DETAIL_METHOD_NAME(METHOD)>>(                           \
+            ::fcl::api::api_traits<INTERFACE>::describe(), this->selected_api_,                                    \
+            BOOST_PP_STRINGIZE(FCL_API_DETAIL_METHOD_NAME(METHOD)) FCL_API_DETAIL_PROXY_ARG_MOVES_R(r, METHOD));   \
    }
 
 #define FCL_API_DETAIL_PROXY_METHOD_TYPED(r, INTERFACE, METHOD)                                                    \
@@ -132,8 +182,13 @@
       std::shared_ptr<remote_invoker> invoker_;                                                                    \
       api_ref selected_api_;                                                                                       \
    };                                                                                                              \
+   template <> class proxy_impl<INTERFACE, false> : public proxy_impl<INTERFACE, true> {                           \
+    public:                                                                                                        \
+      explicit proxy_impl(std::shared_ptr<remote_invoker> invoker, api_ref selected_api)                           \
+          : proxy_impl<INTERFACE, true>(std::move(invoker), std::move(selected_api)) {}                            \
+   };                                                                                                              \
    }                                                                                                               \
-   template <> class proxy<INTERFACE> final                                                                        \
+   template <> class proxy<INTERFACE>                                                                              \
        : public detail::proxy_impl<INTERFACE, remote_interface<INTERFACE>> {                                       \
     public:                                                                                                        \
       explicit proxy(std::shared_ptr<remote_invoker> invoker)                                                      \

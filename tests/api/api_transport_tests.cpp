@@ -12,6 +12,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -83,27 +84,42 @@ class cache_api
    virtual boost::asio::awaitable<chunk> read(read_chunk request) = 0;
 };
 
+class positional_api
+    : public fcl::api::contract<positional_api, fcl::api::surface::local | fcl::api::surface::remote> {
+ public:
+   virtual ~positional_api() = default;
+   virtual boost::asio::awaitable<chunk> join(std::string left, std::string right) = 0;
+};
+
 } // namespace api_transport_typed
 
 FCL_API(::api_transport_typed::cache_api, FCL_API_CONTRACT("cache", 1, 8), FCL_API_METHOD(read))
+FCL_API(::api_transport_typed::positional_api, FCL_API_CONTRACT("positional.transport", 1, 0),
+        FCL_API_METHOD(join, left, right))
 
 namespace {
 
 using bytes = std::vector<std::uint8_t>;
 namespace protocol = api_transport_typed;
 using cache_api = api_transport_typed::cache_api;
+using positional_api = api_transport_typed::positional_api;
 
 template <typename T>
 [[nodiscard]] fcl::api::bytes pack_payload(const T& value) {
-   auto out = fcl::api::bytes{};
-   fcl::raw::pack(out, value);
-   return out;
+   return fcl::api::pack_body(value);
 }
 
 class cache_impl final : public cache_api {
  public:
    boost::asio::awaitable<protocol::chunk> read(protocol::read_chunk request) override {
       co_return protocol::chunk{.bytes = request.ref + ":ok"};
+   }
+};
+
+class positional_impl final : public positional_api {
+ public:
+   boost::asio::awaitable<protocol::chunk> join(std::string left, std::string right) override {
+      co_return protocol::chunk{.bytes = std::move(left) + ":" + std::move(right) + ":ok"};
    }
 };
 
@@ -933,6 +949,36 @@ BOOST_AUTO_TEST_CASE(api_transport_connection_returns_typed_remote_handle) {
    BOOST_TEST(fcl::api::unpack_body<api_transport_typed::read_chunk>(request.payload).ref == "typed");
 }
 
+BOOST_AUTO_TEST_CASE(api_transport_connection_returns_positional_remote_handle) {
+   auto runtime = fcl::asio::runtime{};
+   auto model = std::make_shared<fake_stream>();
+   model->reads.push_back(pack_api_frame(fcl::api::frame{
+       .kind = fcl::api::frame_kind::response,
+       .id = {.value = 1},
+       .api = {.id = {"positional.transport"}, .major = 1, .min_revision = 0},
+       .method = "join",
+       .codec = {.value = "fcl.raw"},
+       .payload = fcl::api::pack_body(api_transport_typed::chunk{.bytes = "left:right:remote"}),
+   }));
+
+   auto scenario = [model]() -> boost::asio::awaitable<void> {
+      auto connection = fcl::api::transport::connection{make_stream(model), fcl::api::transport::options{}};
+      auto positional = co_await connection.get_remote_api<api_transport_typed::positional_api>();
+      const auto response = co_await positional->join("left", "right");
+
+      BOOST_TEST(response.bytes == "left:right:remote");
+   };
+
+   fcl::asio::blocking::run(runtime, scenario());
+   BOOST_REQUIRE_EQUAL(model->writes.size(), 1U);
+   const auto request = unpack_written_frame(model->writes.front());
+   BOOST_TEST(request.api.id.value == "positional.transport");
+   BOOST_TEST(request.method == "join");
+   const auto args = fcl::api::unpack_body<std::tuple<std::string, std::string>>(request.payload);
+   BOOST_TEST(std::get<0>(args) == "left");
+   BOOST_TEST(std::get<1>(args) == "right");
+}
+
 BOOST_AUTO_TEST_CASE(connection_get_remote_api_preserves_requested_revision) {
    auto runtime = fcl::asio::runtime{};
    auto model = std::make_shared<fake_stream>();
@@ -979,6 +1025,31 @@ BOOST_AUTO_TEST_CASE(api_transport_serve_stream_dispatches_requests) {
    const auto response = unpack_written_frame(model->writes.front());
    BOOST_CHECK(response.kind == fcl::api::frame_kind::response);
    BOOST_TEST(fcl::raw::unpack<protocol::chunk>(response.payload).bytes == "server:ok");
+}
+
+BOOST_AUTO_TEST_CASE(api_transport_serve_stream_dispatches_positional_requests) {
+   auto runtime = fcl::asio::runtime{};
+   auto model = std::make_shared<fake_stream>();
+   model->reads.push_back(pack_api_frame(fcl::api::frame{
+       .kind = fcl::api::frame_kind::request,
+       .id = {.value = 15},
+       .api = {.id = {"positional.transport"}, .major = 1, .min_revision = 0},
+       .method = "join",
+       .codec = {.value = "fcl.raw"},
+       .payload = fcl::api::pack_body(std::make_tuple(std::string{"server"}, std::string{"args"})),
+   }));
+
+   auto registry = fcl::api::registry{};
+   registry.install<positional_api>(positional_api::describe(), std::make_shared<positional_impl>());
+   auto plan = fcl::api::binding().serve(registry).build();
+
+   fcl::asio::blocking::run(runtime, fcl::api::transport::serve_stream(make_stream(model), std::move(plan),
+                                                                       fcl::api::transport::options{}));
+
+   BOOST_REQUIRE_EQUAL(model->writes.size(), 1U);
+   const auto response = unpack_written_frame(model->writes.front());
+   BOOST_CHECK(response.kind == fcl::api::frame_kind::response);
+   BOOST_TEST(fcl::raw::unpack<protocol::chunk>(response.payload).bytes == "server:args:ok");
 }
 
 BOOST_AUTO_TEST_CASE(api_transport_serve_stream_overwrites_reserved_metadata_with_trusted_values) {

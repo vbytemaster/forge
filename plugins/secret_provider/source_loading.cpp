@@ -88,6 +88,7 @@ namespace {
    auto output = fcl::crypto::bytes(static_cast<std::size_t>(size));
    if (!output.empty()) {
       in.read(reinterpret_cast<char*>(output.data()), static_cast<std::streamsize>(output.size()));
+      require_complete_file_read(in, output.size(), path, id);
    }
    return output;
 }

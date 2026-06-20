@@ -163,6 +163,23 @@ aead_decrypt_result plugin::impl::decrypt_aes_gcm(aead_decrypt_request value) co
       });
       require_size(plaintext.size(), secret.max_plaintext_bytes, "plaintext");
       return aead_decrypt_result{.secret_id = secret.id, .plaintext = std::move(plaintext)};
+   } catch (const fcl::crypto::aes::exceptions::invalid_nonce&) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_secret, "AES-GCM nonce is malformed",
+                          fcl::exceptions::ctx("secret_id", secret.id));
+   } catch (const fcl::crypto::aes::exceptions::invalid_tag&) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_secret, "AES-GCM tag is malformed",
+                          fcl::exceptions::ctx("secret_id", secret.id));
+   } catch (const fcl::exceptions::runtime_coded_exception<fcl::crypto::aes::exceptions::code>& error) {
+      switch (error.value()) {
+      case fcl::crypto::aes::exceptions::code::invalid_nonce:
+         FCL_THROW_EXCEPTION(exceptions::invalid_secret, "AES-GCM nonce is malformed",
+                             fcl::exceptions::ctx("secret_id", secret.id));
+      case fcl::crypto::aes::exceptions::code::invalid_tag:
+         FCL_THROW_EXCEPTION(exceptions::invalid_secret, "AES-GCM tag is malformed",
+                             fcl::exceptions::ctx("secret_id", secret.id));
+      default:
+         throw;
+      }
    } catch (const fcl::crypto::aes::exceptions::authentication_failed&) {
       FCL_THROW_EXCEPTION(exceptions::crypto_failed, "AES-GCM authentication failed",
                           fcl::exceptions::ctx("secret_id", secret.id));

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <span>
 #include <string>
 #include <string_view>
@@ -30,6 +31,8 @@ import fcl.plugins.secret_provider.plugin;
 import fcl.plugins.secret_provider.types;
 import fcl.program_options;
 import fcl.schema.value_kind;
+
+#include "details/source_loading.hxx"
 
 namespace secret_provider = fcl::plugins::secret_provider;
 
@@ -229,6 +232,16 @@ BOOST_AUTO_TEST_CASE(secret_provider_file_source_loads_bounded_secret_without_en
 }
 FCL_LOG_AND_RETHROW();
 
+BOOST_AUTO_TEST_CASE(secret_provider_file_source_rejects_short_read) try {
+   auto input = std::istringstream{"abc"};
+   auto output = fcl::crypto::bytes(5U);
+   input.read(reinterpret_cast<char*>(output.data()), static_cast<std::streamsize>(output.size()));
+
+   BOOST_CHECK_THROW(secret_provider::require_complete_file_read(input, output.size(), "/tmp/short-secret", "short"),
+                     secret_provider::exceptions::invalid_source);
+}
+FCL_LOG_AND_RETHROW();
+
 BOOST_AUTO_TEST_CASE(secret_provider_hkdf_and_aes_gcm_are_purpose_gated) try {
    const auto key = std::string(32, 'K');
    auto plugin = secret_provider::plugin{};
@@ -280,6 +293,84 @@ BOOST_AUTO_TEST_CASE(secret_provider_hkdf_and_aes_gcm_are_purpose_gated) try {
                                                  .output_size = 32,
                                               })),
                      secret_provider::exceptions::purpose_denied);
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(secret_provider_decrypt_aes_gcm_maps_malformed_parameters) try {
+   const auto key = std::string(32, 'K');
+   auto plugin = secret_provider::plugin{};
+   auto runtime = fcl::asio::runtime{};
+   auto api = configured_api(runtime,
+                             plugin,
+                             provider_config({secret_entry("data-key",
+                                                           source_value(key),
+                                                           {"payload.decrypt"},
+                                                           {"decrypt_aes_gcm"})}));
+
+   auto aes_key = fcl::crypto::make_aes256_key(std::span<const std::uint8_t>{
+      reinterpret_cast<const std::uint8_t*>(key.data()), key.size()});
+   const auto encrypted = fcl::crypto::encrypt_aes256_gcm({
+      .key = aes_key,
+      .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+      .plaintext = bytes("payload"),
+      .aad = bytes("aad"),
+   });
+
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+                                              api->decrypt_aes_gcm(secret_provider::aead_decrypt_request{
+                                                 .secret_id = "data-key",
+                                                 .purpose = "payload.decrypt",
+                                                 .nonce = {0, 1, 2},
+                                                 .tag = encrypted.tag,
+                                                 .ciphertext = encrypted.ciphertext,
+                                                 .aad = bytes("aad"),
+                                              })),
+                     secret_provider::exceptions::invalid_secret);
+
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+                                              api->decrypt_aes_gcm(secret_provider::aead_decrypt_request{
+                                                 .secret_id = "data-key",
+                                                 .purpose = "payload.decrypt",
+                                                 .nonce = encrypted.nonce,
+                                                 .tag = {0, 1, 2},
+                                                 .ciphertext = encrypted.ciphertext,
+                                                 .aad = bytes("aad"),
+                                              })),
+                     secret_provider::exceptions::invalid_secret);
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(secret_provider_decrypt_aes_gcm_keeps_authentication_failure_typed) try {
+   const auto key = std::string(32, 'K');
+   auto plugin = secret_provider::plugin{};
+   auto runtime = fcl::asio::runtime{};
+   auto api = configured_api(runtime,
+                             plugin,
+                             provider_config({secret_entry("data-key",
+                                                           source_value(key),
+                                                           {"payload.decrypt"},
+                                                           {"decrypt_aes_gcm"})}));
+
+   auto aes_key = fcl::crypto::make_aes256_key(std::span<const std::uint8_t>{
+      reinterpret_cast<const std::uint8_t*>(key.data()), key.size()});
+   auto encrypted = fcl::crypto::encrypt_aes256_gcm({
+      .key = aes_key,
+      .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+      .plaintext = bytes("payload"),
+      .aad = bytes("aad"),
+   });
+   encrypted.tag.front() ^= 0xffU;
+
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+                                              api->decrypt_aes_gcm(secret_provider::aead_decrypt_request{
+                                                 .secret_id = "data-key",
+                                                 .purpose = "payload.decrypt",
+                                                 .nonce = encrypted.nonce,
+                                                 .tag = encrypted.tag,
+                                                 .ciphertext = encrypted.ciphertext,
+                                                 .aad = bytes("aad"),
+                                              })),
+                     secret_provider::exceptions::crypto_failed);
 }
 FCL_LOG_AND_RETHROW();
 

@@ -285,6 +285,7 @@ add_executable(
    plugins/secret_provider_tests.cpp
 )
 target_link_libraries(test_fcl_secret_provider fcl Boost::included_unit_test_framework)
+target_include_directories(test_fcl_secret_provider PRIVATE ${PROJECT_SOURCE_DIR}/plugins/secret_provider)
 add_test(NAME test_fcl_secret_provider COMMAND test_fcl_secret_provider WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 if(TARGET fcl_tui)

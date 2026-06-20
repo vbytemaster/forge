@@ -151,6 +151,31 @@ struct positional_body_response {
    std::string summary;
 };
 
+struct dto_http_request {
+   std::string ref;
+   fcl::http::query<std::uint32_t> limit;
+   fcl::http::header<std::string> request_id;
+   fcl::http::cookie<std::string> session;
+   fcl::http::body<positional_body_payload> payload;
+};
+
+struct dto_bytes_request {
+   std::string ref;
+   fcl::http::body_bytes bytes;
+};
+
+struct dto_multipart_request {
+   fcl::http::form<std::string> category;
+   fcl::http::form_field<std::uint32_t> count;
+   fcl::http::upload_file file;
+};
+
+struct dto_ambiguous_body_request {
+   std::string ref;
+   fcl::http::body<positional_body_payload> payload;
+   fcl::http::body_bytes bytes;
+};
+
 struct object_put_request {
    std::string collection;
    std::string key;
@@ -220,6 +245,10 @@ BOOST_DESCRIBE_STRUCT(positional_http_response, (), (value))
 BOOST_DESCRIBE_STRUCT(positional_body_payload, (), (value))
 BOOST_DESCRIBE_STRUCT(positional_ref_payload, (), (ref, value))
 BOOST_DESCRIBE_STRUCT(positional_body_response, (), (summary))
+BOOST_DESCRIBE_STRUCT(dto_http_request, (), (ref, limit, request_id, session, payload))
+BOOST_DESCRIBE_STRUCT(dto_bytes_request, (), (ref, bytes))
+BOOST_DESCRIBE_STRUCT(dto_multipart_request, (), (category, count, file))
+BOOST_DESCRIBE_STRUCT(dto_ambiguous_body_request, (), (ref, payload, bytes))
 BOOST_DESCRIBE_STRUCT(object_put_request, (), (collection, key, content_type, digest, body))
 BOOST_DESCRIBE_STRUCT(object_put_response, (), (bytes, content_type, content_md5))
 BOOST_DESCRIBE_STRUCT(object_get_request, (), (collection, key))
@@ -331,6 +360,29 @@ class positional_stream_api : public fcl::api::contract<positional_stream_api> {
    write(std::string ref, fcl::http::body_stream body) = 0;
 };
 
+class dto_http_api : public fcl::api::contract<dto_http_api> {
+ public:
+   virtual ~dto_http_api() = default;
+
+   virtual boost::asio::awaitable<positional_body_response> write(dto_http_request request) = 0;
+   virtual boost::asio::awaitable<positional_body_response> write_bytes(dto_bytes_request request) = 0;
+   virtual boost::asio::awaitable<positional_body_response> upload(dto_multipart_request request) = 0;
+};
+
+class dto_ambiguous_body_api : public fcl::api::contract<dto_ambiguous_body_api> {
+ public:
+   virtual ~dto_ambiguous_body_api() = default;
+
+   virtual boost::asio::awaitable<positional_body_response> write(dto_ambiguous_body_request request) = 0;
+};
+
+class positional_scalar_body_api : public fcl::api::contract<positional_scalar_body_api> {
+ public:
+   virtual ~positional_scalar_body_api() = default;
+
+   virtual boost::asio::awaitable<positional_body_response> write(std::string ref, std::string payload) = 0;
+};
+
 class object_api : public fcl::api::contract<object_api> {
  public:
    virtual ~object_api() = default;
@@ -430,6 +482,23 @@ FCL_API(::fcl::http::test_api::positional_checked_body_api, FCL_API_CONTRACT("ht
 
 FCL_API(::fcl::http::test_api::positional_stream_api, FCL_API_CONTRACT("http.positional.stream", 1, 0),
         FCL_API_METHOD(write, ref, body))
+
+FCL_API(::fcl::http::test_api::dto_http_api, FCL_API_CONTRACT("http.dto", 1, 0),
+        FCL_API_METHOD_TYPED(write, ::fcl::http::test_api::dto_http_request,
+                             ::fcl::http::test_api::positional_body_response),
+        FCL_API_METHOD_TYPED(write_bytes, ::fcl::http::test_api::dto_bytes_request,
+                             ::fcl::http::test_api::positional_body_response),
+        FCL_API_METHOD_TYPED(upload, ::fcl::http::test_api::dto_multipart_request,
+                             ::fcl::http::test_api::positional_body_response))
+
+FCL_API(::fcl::http::test_api::dto_ambiguous_body_api,
+        FCL_API_CONTRACT("http.dto.ambiguous-body", 1, 0),
+        FCL_API_METHOD_TYPED(write, ::fcl::http::test_api::dto_ambiguous_body_request,
+                             ::fcl::http::test_api::positional_body_response))
+
+FCL_API(::fcl::http::test_api::positional_scalar_body_api,
+        FCL_API_CONTRACT("http.positional.scalar-body", 1, 0),
+        FCL_API_METHOD(write, ref, payload))
 
 FCL_API(::fcl::http::test_api::object_api, FCL_API_CONTRACT("object", 1, 0),
         FCL_API_METHOD_TYPED(put_object, ::fcl::http::test_api::object_put_request,
@@ -536,6 +605,21 @@ FCL_HTTP_API(::fcl::http::test_api::positional_checked_body_api,
 FCL_HTTP_API(::fcl::http::test_api::positional_stream_api,
              FCL_HTTP_PUT(write, "/streams/:ref", ok))
 
+FCL_HTTP_API(::fcl::http::test_api::dto_http_api,
+             FCL_HTTP_POST(write, "/dto/:ref?limit={limit}", created,
+                           FCL_HTTP_HEADER(request_id, "X-Request-Id")),
+             FCL_HTTP_PUT(write_bytes, "/dto-bytes/:ref", ok),
+             FCL_HTTP_POST(upload, "/dto-upload", ok,
+                           FCL_HTTP_FORM(category, "category"),
+                           FCL_HTTP_FORM(count, "count"),
+                           FCL_HTTP_FORM(file, "file")))
+
+FCL_HTTP_API(::fcl::http::test_api::dto_ambiguous_body_api,
+             FCL_HTTP_POST(write, "/dto-ambiguous/:ref", created))
+
+FCL_HTTP_API(::fcl::http::test_api::positional_scalar_body_api,
+             FCL_HTTP_POST(write, "/scalar-body/:ref", created))
+
 FCL_HTTP_API(::fcl::http::test_api::object_api,
              FCL_HTTP_PUT(put_object, "/objects/:collection/:key", created,
                            FCL_HTTP_BODY_STREAM(body),
@@ -634,6 +718,12 @@ using test_api::form_submit_request;
 using test_api::form_submit_response;
 using test_api::json_stream_api;
 using test_api::json_stream_request;
+using test_api::dto_bytes_request;
+using test_api::dto_ambiguous_body_api;
+using test_api::dto_ambiguous_body_request;
+using test_api::dto_http_api;
+using test_api::dto_http_request;
+using test_api::dto_multipart_request;
 using test_api::object_api;
 using test_api::object_get_request;
 using test_api::object_put_request;
@@ -650,6 +740,7 @@ using test_api::positional_plain_body_api;
 using test_api::positional_query_append_api;
 using test_api::positional_ref_payload;
 using test_api::positional_single_query_api;
+using test_api::positional_scalar_body_api;
 using test_api::positional_stream_api;
 
 [[nodiscard]] fcl::api::descriptor api_cache_descriptor() {
@@ -815,6 +906,55 @@ class positional_stream_api_impl final : public positional_stream_api {
    write(std::string ref, fcl::http::body_stream body) override {
       auto text = co_await body.async_read_all();
       co_return positional_body_response{.summary = std::move(ref) + ":" + std::move(text)};
+   }
+};
+
+class dto_http_api_impl final : public dto_http_api {
+ public:
+   boost::asio::awaitable<positional_body_response> write(dto_http_request request) override {
+      const auto limit = request.limit.present ? std::to_string(request.limit.value) : std::string{"missing-limit"};
+      const auto request_id = request.request_id.present ? request.request_id.value : std::string{"missing-request"};
+      const auto session = request.session.present ? request.session.value : std::string{"missing-session"};
+      const auto body = request.payload.present ? request.payload.value.value : std::string{"missing-body"};
+      co_return positional_body_response{
+         .summary = request.ref + ":" + limit + ":" + request_id + ":" + session + ":" + body,
+      };
+   }
+
+   boost::asio::awaitable<positional_body_response> write_bytes(dto_bytes_request request) override {
+      auto body = std::string{};
+      body.resize(request.bytes.bytes.size());
+      if (!request.bytes.bytes.empty()) {
+         std::memcpy(body.data(), request.bytes.bytes.data(), request.bytes.bytes.size());
+      }
+      co_return positional_body_response{.summary = request.ref + ":" + body};
+   }
+
+   boost::asio::awaitable<positional_body_response> upload(dto_multipart_request request) override {
+      const auto category = request.category.present ? request.category.value : std::string{"missing-category"};
+      const auto count = request.count.present ? std::to_string(request.count.value) : std::string{"missing-count"};
+      const auto filename = request.file.present() && request.file.part().filename.has_value()
+                               ? *request.file.part().filename
+                               : std::string{"missing-file"};
+      const auto text = request.file.present() ? request.file.part().text() : std::string{"missing-body"};
+      co_return positional_body_response{
+         .summary = category + ":" + count + ":" + filename + ":" + text,
+      };
+   }
+};
+
+class dto_ambiguous_body_api_impl final : public dto_ambiguous_body_api {
+ public:
+   boost::asio::awaitable<positional_body_response> write(dto_ambiguous_body_request request) override {
+      static_cast<void>(request);
+      co_return positional_body_response{.summary = "unexpected"};
+   }
+};
+
+class positional_scalar_body_api_impl final : public positional_scalar_body_api {
+ public:
+   boost::asio::awaitable<positional_body_response> write(std::string ref, std::string payload) override {
+      co_return positional_body_response{.summary = std::move(ref) + ":" + std::move(payload)};
    }
 };
 
@@ -1644,135 +1784,213 @@ BOOST_AUTO_TEST_CASE(http_typed_proxy_sends_default_mapped_header_fields) {
    server.stop();
 }
 
-BOOST_AUTO_TEST_CASE(http_positional_api_binds_path_query_and_header_parameters) {
+BOOST_AUTO_TEST_CASE(http_dto_parameters_bind_query_header_cookie_and_body) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<dto_http_api>(dto_http_api::describe(), std::make_shared<dto_http_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<dto_http_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<dto_http_api>(client));
+
+   const auto response = fcl::asio::blocking::run(
+      runtime,
+      api->write(dto_http_request{
+         .ref = "chunk-1",
+         .limit = fcl::http::query<std::uint32_t>{.value = 9, .present = true},
+         .request_id = fcl::http::header<std::string>{.value = "trace-123", .present = true},
+         .session = fcl::http::cookie<std::string>{.value = "session-7", .present = true},
+         .payload =
+            fcl::http::body<positional_body_payload>{
+               .value = positional_body_payload{.value = "payload"},
+               .present = true,
+            },
+      }));
+
+   BOOST_TEST(response.summary == "chunk-1:9:trace-123:session-7:payload");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_dto_body_bytes_roundtrips) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<dto_http_api>(dto_http_api::describe(), std::make_shared<dto_http_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<dto_http_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<dto_http_api>(client));
+
+   const auto text = std::string{"raw-payload"};
+   auto bytes = std::vector<std::byte>(text.size());
+   std::memcpy(bytes.data(), text.data(), text.size());
+   const auto response = fcl::asio::blocking::run(
+      runtime,
+      api->write_bytes(dto_bytes_request{
+         .ref = "chunk-bytes",
+         .bytes = fcl::http::body_bytes{.bytes = std::move(bytes)},
+      }));
+
+   BOOST_TEST(response.summary == "chunk-bytes:raw-payload");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_dto_multipart_form_and_upload_roundtrips) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<dto_http_api>(dto_http_api::describe(), std::make_shared<dto_http_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<dto_http_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto file_text = std::string{"file-content"};
+   auto file_bytes = std::vector<std::byte>(file_text.size());
+   std::memcpy(file_bytes.data(), file_text.data(), file_text.size());
+   auto part = fcl::http::upload_part{
+      .name = "file",
+      .filename = "demo.txt",
+      .content_type = "text/plain",
+      .memory = std::move(file_bytes),
+      .size = static_cast<std::uint64_t>(file_text.size()),
+   };
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<dto_http_api>(client));
+
+   const auto response = fcl::asio::blocking::run(
+      runtime,
+      api->upload(dto_multipart_request{
+         .category = fcl::http::form<std::string>{.value = "images", .present = true},
+         .count = fcl::http::form_field<std::uint32_t>{.value = 2, .present = true},
+         .file = fcl::http::upload_file{std::move(part)},
+      }));
+
+   BOOST_TEST(response.summary == "images:2:demo.txt:file-content");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_dto_body_field_reports_schema_errors) {
+   auto runtime = fcl::asio::runtime{};
+   auto apis = fcl::api::registry{};
+   apis.install<dto_http_api>(dto_http_api::describe(), std::make_shared<dto_http_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<dto_http_api>().build();
+   router.mount(binding);
+
+   auto request = make_request(method::post, "/dto/chunk-invalid?limit=7");
+   request.set(field::content_type, "application/json");
+   request.body() = R"({"value":""})";
+   request.prepare_payload();
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+
+   const auto response = handle(router, context);
+   BOOST_TEST(response.result_int() == 422U);
+   BOOST_TEST(response.body().find("validation_error") != std::string::npos);
+   BOOST_TEST(response.body().find("schema.non_empty") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(http_dto_rejects_multiple_body_sources) {
+   auto runtime = fcl::asio::runtime{};
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:9")};
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<dto_ambiguous_body_api>(client));
+
+   const auto text = std::string{"raw-payload"};
+   auto bytes = std::vector<std::byte>(text.size());
+   std::memcpy(bytes.data(), text.data(), text.size());
+
+   BOOST_CHECK_THROW(
+      fcl::asio::blocking::run(
+         runtime,
+         api->write(dto_ambiguous_body_request{
+            .ref = "chunk-1",
+            .payload =
+               fcl::http::body<positional_body_payload>{
+                  .value = positional_body_payload{.value = "json-payload"},
+                  .present = true,
+               },
+            .bytes = fcl::http::body_bytes{.bytes = std::move(bytes)},
+         })),
+      fcl::http::exceptions::bad_request);
+}
+
+BOOST_AUTO_TEST_CASE(http_positional_api_rejects_http_parameter_wrappers) {
+   auto runtime = fcl::asio::runtime{};
    auto apis = fcl::api::registry{};
    apis.install<positional_http_api>(positional_http_api::describe(), std::make_shared<positional_http_api_impl>());
 
    auto router = fcl::http::router{};
    auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_http_api>().build();
-   router.mount(binding);
 
-   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
-   server.start();
-
-   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<positional_http_api>(client));
-
-   const auto response = fcl::asio::blocking::run(
-      runtime,
-      api->read("chunk-1",
-                fcl::http::query<std::uint32_t>{.value = 9, .present = true},
-                fcl::http::header<std::string>{.value = "trace-123", .present = true},
-                fcl::http::cookie<std::string>{.value = "session-7", .present = true}));
-
-   BOOST_TEST(response.value == "chunk-1:9:trace-123:session-7");
-
-   server.stop();
+   BOOST_CHECK_THROW(router.mount(binding), fcl::http::exceptions::bad_request);
 }
 
-BOOST_AUTO_TEST_CASE(http_positional_api_binds_json_body_parameter) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+BOOST_AUTO_TEST_CASE(http_positional_body_wrapper_is_rejected) {
+   auto runtime = fcl::asio::runtime{};
    auto apis = fcl::api::registry{};
    apis.install<positional_body_api>(positional_body_api::describe(), std::make_shared<positional_body_api_impl>());
 
    auto router = fcl::http::router{};
    auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_body_api>().build();
-   router.mount(binding);
 
-   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
-   server.start();
-
-   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<positional_body_api>(client));
-
-   const auto response = fcl::asio::blocking::run(
-      runtime,
-      api->write("chunk-2", fcl::http::body<positional_body_payload>{
-                                .value = positional_body_payload{.value = "payload"},
-                                .present = true,
-                             }));
-
-   BOOST_TEST(response.summary == "chunk-2:payload");
-
-   server.stop();
+   BOOST_CHECK_THROW(router.mount(binding), fcl::http::exceptions::bad_request);
 }
 
-BOOST_AUTO_TEST_CASE(http_positional_api_validates_json_body_parameter_schema) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+BOOST_AUTO_TEST_CASE(http_positional_stream_wrapper_is_rejected) {
+   auto runtime = fcl::asio::runtime{};
    auto apis = fcl::api::registry{};
-   apis.install<positional_body_api>(positional_body_api::describe(), std::make_shared<positional_body_api_impl>());
-
-   auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_body_api>().build();
-   router.mount(binding);
-
-   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
-   server.start();
-
-   const auto body = std::string{R"({"value":""})"};
-   auto response = raw_http_exchange(
-      server.port(),
-      "POST /objects/chunk-3 HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: " +
-         std::to_string(body.size()) + "\r\n\r\n" + body);
-
-   BOOST_TEST(response.result_int() == 422U);
-   BOOST_TEST(response.body().find("validation_error") != std::string::npos);
-   BOOST_TEST(response.body().find("schema.non_empty") != std::string::npos);
-
-   server.stop();
-}
-
-BOOST_AUTO_TEST_CASE(http_positional_api_binds_single_query_parameter) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
-   auto apis = fcl::api::registry{};
-   apis.install<positional_single_query_api>(positional_single_query_api::describe(),
-                                             std::make_shared<positional_single_query_api_impl>());
+   apis.install<positional_stream_api>(positional_stream_api::describe(),
+                                       std::make_shared<positional_stream_api_impl>());
 
    auto router = fcl::http::router{};
    auto binding =
-      fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_single_query_api>().build();
-   router.mount(binding);
+      fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_stream_api>().build();
 
-   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
-   server.start();
-
-   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<positional_single_query_api>(client));
-
-   const auto response = fcl::asio::blocking::run(
-      runtime,
-      api->read(fcl::http::query<std::uint32_t>{.value = 42, .present = true}));
-
-   BOOST_TEST(response.value == "single:42");
-
-   server.stop();
+   BOOST_CHECK_THROW(router.mount(binding), fcl::http::exceptions::bad_request);
 }
 
-BOOST_AUTO_TEST_CASE(http_positional_query_argument_is_appended_when_route_has_no_query_placeholder) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+BOOST_AUTO_TEST_CASE(http_positional_client_rejects_http_parameter_wrappers) {
+   auto runtime = fcl::asio::runtime{};
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:9")};
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<positional_stream_api>(client));
+
+   BOOST_CHECK_THROW(
+      fcl::asio::blocking::run(
+         runtime,
+         api->write("chunk-3", fcl::http::body_stream{make_body_reader({"payload"})})),
+      fcl::http::exceptions::bad_request);
+}
+
+BOOST_AUTO_TEST_CASE(http_positional_unconsumed_scalar_body_is_rejected) {
+   auto runtime = fcl::asio::runtime{};
    auto apis = fcl::api::registry{};
-   apis.install<positional_query_append_api>(positional_query_append_api::describe(),
-                                             std::make_shared<positional_query_append_api_impl>());
+   apis.install<positional_scalar_body_api>(positional_scalar_body_api::describe(),
+                                            std::make_shared<positional_scalar_body_api_impl>());
 
    auto router = fcl::http::router{};
    auto binding =
-      fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_query_append_api>().build();
-   router.mount(binding);
+      fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_scalar_body_api>().build();
 
-   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
-   server.start();
-
-   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<positional_query_append_api>(client));
-
-   const auto response = fcl::asio::blocking::run(
-      runtime,
-      api->read("chunk-query", fcl::http::query<std::uint32_t>{.value = 64, .present = true}));
-
-   BOOST_TEST(response.value == "chunk-query:64");
-
-   server.stop();
+   BOOST_CHECK_THROW(router.mount(binding), fcl::http::exceptions::bad_request);
 }
 
 BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_roundtrips_without_body_wrapper) {
@@ -1802,7 +2020,7 @@ BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_roundtrips_without_body_w
 }
 
 BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_rejects_multiple_candidates) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = fcl::asio::runtime{};
    auto apis = fcl::api::registry{};
    apis.install<positional_ambiguous_body_api>(positional_ambiguous_body_api::describe(),
                                                std::make_shared<positional_ambiguous_body_api_impl>());
@@ -1810,23 +2028,8 @@ BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_rejects_multiple_candidat
    auto router = fcl::http::router{};
    auto binding =
       fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_ambiguous_body_api>().build();
-   router.mount(binding);
 
-   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
-   server.start();
-
-   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<positional_ambiguous_body_api>(client));
-
-   BOOST_CHECK_THROW(
-      fcl::asio::blocking::run(
-         runtime,
-         api->write("chunk-ambiguous",
-                    positional_body_payload{.value = "left"},
-                    positional_body_payload{.value = "right"})),
-      fcl::http::exceptions::bad_request);
-
-   server.stop();
+   BOOST_CHECK_THROW(router.mount(binding), fcl::http::exceptions::bad_request);
 }
 
 BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_reports_schema_errors) {
@@ -1877,32 +2080,6 @@ BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_rejects_route_disagreemen
    BOOST_TEST(response.result_int() == 422U);
    BOOST_TEST(response.body().find("validation_error") != std::string::npos);
    BOOST_TEST(response.body().find("disagrees") != std::string::npos);
-}
-
-BOOST_AUTO_TEST_CASE(http_positional_api_sends_stream_body_without_raw_serialization) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
-   auto apis = fcl::api::registry{};
-   apis.install<positional_stream_api>(positional_stream_api::describe(),
-                                       std::make_shared<positional_stream_api_impl>());
-
-   auto router = fcl::http::router{};
-   auto binding =
-      fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_stream_api>().build();
-   router.mount(binding);
-
-   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
-   server.start();
-
-   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<positional_stream_api>(client));
-
-   const auto response = fcl::asio::blocking::run(
-      runtime,
-      api->write("chunk-3", fcl::http::body_stream{make_body_reader({"stream-", "payload"})}));
-
-   BOOST_TEST(response.summary == "chunk-3:stream-payload");
-
-   server.stop();
 }
 
 BOOST_AUTO_TEST_CASE(http_parameter_wrappers_reject_generic_raw_serialization) {

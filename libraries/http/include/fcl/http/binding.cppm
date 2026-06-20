@@ -203,11 +203,44 @@ inline constexpr auto is_bytes_response_v = std::is_same_v<std::remove_cvref_t<T
 template <typename T>
 inline constexpr auto is_empty_response_v = std::is_same_v<std::remove_cvref_t<T>, empty_response>;
 
+template <typename T>
+inline constexpr auto is_http_parameter_v =
+   is_header<std::remove_cvref_t<T>>::value ||
+   is_query<std::remove_cvref_t<T>>::value ||
+   is_cookie<std::remove_cvref_t<T>>::value ||
+   is_body<std::remove_cvref_t<T>>::value ||
+   is_form<std::remove_cvref_t<T>>::value ||
+   is_form_field<std::remove_cvref_t<T>>::value ||
+   is_body_stream_v<std::remove_cvref_t<T>> ||
+   is_body_bytes_v<std::remove_cvref_t<T>> ||
+   is_upload_file_v<std::remove_cvref_t<T>>;
+
+template <typename Object> struct parameter_member_predicate {
+   template <typename Descriptor>
+   using fn = std::bool_constant<
+      is_http_parameter_v<std::remove_cvref_t<decltype(std::declval<Object>().*Descriptor::pointer)>>>;
+};
+
+template <typename T, bool Described = fcl::reflect::is_described_object_v<T>>
+struct request_has_http_parameter : std::bool_constant<is_http_parameter_v<T>> {};
+
+template <typename T> struct request_has_http_parameter<T, true> {
+   using members = boost::describe::describe_members<std::remove_cvref_t<T>,
+                                                     boost::describe::mod_any_access |
+                                                        boost::describe::mod_inherited>;
+   static constexpr auto value =
+      boost::mp11::mp_any_of_q<members, parameter_member_predicate<T>>::value;
+};
+
+template <typename T>
+inline constexpr auto request_has_http_parameter_v = request_has_http_parameter<T>::value;
+
 template <typename Object> struct stream_member_predicate {
    template <typename Descriptor>
    using fn = std::bool_constant<
       is_body_stream_v<std::remove_cvref_t<decltype(std::declval<Object>().*Descriptor::pointer)>> ||
       is_body_bytes_v<std::remove_cvref_t<decltype(std::declval<Object>().*Descriptor::pointer)>> ||
+      is_form<std::remove_cvref_t<decltype(std::declval<Object>().*Descriptor::pointer)>>::value ||
       is_form_field<std::remove_cvref_t<decltype(std::declval<Object>().*Descriptor::pointer)>>::value ||
       is_upload_file_v<std::remove_cvref_t<decltype(std::declval<Object>().*Descriptor::pointer)>>>;
 };

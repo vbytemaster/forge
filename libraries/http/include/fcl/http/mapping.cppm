@@ -17,6 +17,7 @@ export module fcl.http.mapping;
 
 import fcl.api.connection;
 import fcl.api.descriptor;
+import fcl.http.binding;
 import fcl.http.exceptions;
 import fcl.http.types;
 import fcl.reflect.reflect;
@@ -123,7 +124,37 @@ template <typename T> struct is_optional<std::optional<T>> : std::true_type {
 
 template <typename T> [[nodiscard]] std::optional<std::string> field_to_text(const T& value) {
    using clean = std::remove_cvref_t<T>;
-   if constexpr (is_optional<clean>::value) {
+   if constexpr (detail::is_header<clean>::value) {
+      if (!value.present) {
+         return std::nullopt;
+      }
+      return field_to_text(value.value);
+   } else if constexpr (detail::is_query<clean>::value) {
+      if (!value.present) {
+         return std::nullopt;
+      }
+      return field_to_text(value.value);
+   } else if constexpr (detail::is_cookie<clean>::value) {
+      if (!value.present) {
+         return std::nullopt;
+      }
+      return field_to_text(value.value);
+   } else if constexpr (detail::is_body<clean>::value) {
+      if (!value.present) {
+         return std::nullopt;
+      }
+      return field_to_text(value.value);
+   } else if constexpr (detail::is_form<clean>::value) {
+      if (!value.present) {
+         return std::nullopt;
+      }
+      return field_to_text(value.value);
+   } else if constexpr (detail::is_form_field<clean>::value) {
+      if (!value.present) {
+         return std::nullopt;
+      }
+      return field_to_text(value.value);
+   } else if constexpr (is_optional<clean>::value) {
       if (!value.has_value()) {
          return std::nullopt;
       }

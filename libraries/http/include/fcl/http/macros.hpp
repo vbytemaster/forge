@@ -91,15 +91,8 @@
       if constexpr (::fcl::api::method_argument_count_v<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)> == 1U) {         \
          using request_type =                                                                                        \
             std::remove_cvref_t<::fcl::api::method_request_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>;           \
-         if constexpr (::fcl::http::detail::is_header<request_type>::value ||                                       \
-                       ::fcl::http::detail::is_query<request_type>::value ||                                        \
-                       ::fcl::http::detail::is_cookie<request_type>::value ||                                       \
-                       ::fcl::http::detail::is_body<request_type>::value ||                                         \
-                       ::fcl::http::detail::is_form<request_type>::value ||                                         \
-                       ::fcl::http::detail::is_form_field<request_type>::value ||                                   \
-                       ::fcl::http::detail::is_body_stream_v<request_type> ||                                       \
-                       ::fcl::http::detail::is_body_bytes_v<request_type> ||                                        \
-                       ::fcl::http::detail::is_upload_file_v<request_type>) {                                       \
+         if constexpr (::fcl::http::detail::is_positional_http_method_v<                                            \
+                          &INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE), request_type>) {                              \
             auto arguments = std::make_tuple(std::move(request));                                                   \
             co_return co_await ::fcl::http::detail::call_arguments<decltype(arguments),                             \
                ::fcl::api::method_response_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>(                           \

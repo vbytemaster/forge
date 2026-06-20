@@ -73,12 +73,13 @@ struct secret_entry {
 
 struct config {
    std::vector<secret_entry> secrets;
-   std::uint64_t default_max_plaintext_bytes = default_max_plaintext_bytes;
-   std::uint64_t default_max_ciphertext_bytes = default_max_ciphertext_bytes;
-   std::uint64_t encrypted_file_max_scrypt_n = default_encrypted_file_max_scrypt_n;
-   std::uint64_t encrypted_file_max_scrypt_r = default_encrypted_file_max_scrypt_r;
-   std::uint64_t encrypted_file_max_scrypt_p = default_encrypted_file_max_scrypt_p;
-   std::uint64_t encrypted_file_max_scrypt_memory_bytes = default_encrypted_file_max_scrypt_memory_bytes;
+   std::uint64_t default_max_plaintext_bytes = fcl::plugins::secret_provider::default_max_plaintext_bytes;
+   std::uint64_t default_max_ciphertext_bytes = fcl::plugins::secret_provider::default_max_ciphertext_bytes;
+   std::uint64_t encrypted_file_max_scrypt_n = fcl::plugins::secret_provider::default_encrypted_file_max_scrypt_n;
+   std::uint64_t encrypted_file_max_scrypt_r = fcl::plugins::secret_provider::default_encrypted_file_max_scrypt_r;
+   std::uint64_t encrypted_file_max_scrypt_p = fcl::plugins::secret_provider::default_encrypted_file_max_scrypt_p;
+   std::uint64_t encrypted_file_max_scrypt_memory_bytes =
+      fcl::plugins::secret_provider::default_encrypted_file_max_scrypt_memory_bytes;
 };
 
 struct query {};

@@ -74,6 +74,15 @@ namespace {
    return fcl::config::value{std::move(object)};
 }
 
+[[nodiscard]] fcl::config::value source_encrypted_file_with_passphrase_file(const std::filesystem::path& path,
+                                                                            const std::filesystem::path& passphrase) {
+   auto object = fcl::config::value::object_type{};
+   object.emplace("type", fcl::config::value{"encrypted_file"});
+   object.emplace("path", fcl::config::value{path.string()});
+   object.emplace("passphrase-file", fcl::config::value{passphrase.string()});
+   return fcl::config::value{std::move(object)};
+}
+
 [[nodiscard]] fcl::config::value secret_entry(std::string id,
                                               fcl::config::value source,
                                               std::vector<std::string> purposes,
@@ -130,6 +139,19 @@ void overwrite_u64_le(fcl::crypto::bytes& value, std::size_t offset, std::uint64
 } // namespace
 
 BOOST_AUTO_TEST_SUITE(secret_provider_tests)
+
+BOOST_AUTO_TEST_CASE(secret_provider_config_direct_defaults_match_schema_constants) try {
+   const auto value = secret_provider::config{};
+
+   BOOST_TEST(value.default_max_plaintext_bytes == secret_provider::default_max_plaintext_bytes);
+   BOOST_TEST(value.default_max_ciphertext_bytes == secret_provider::default_max_ciphertext_bytes);
+   BOOST_TEST(value.encrypted_file_max_scrypt_n == secret_provider::default_encrypted_file_max_scrypt_n);
+   BOOST_TEST(value.encrypted_file_max_scrypt_r == secret_provider::default_encrypted_file_max_scrypt_r);
+   BOOST_TEST(value.encrypted_file_max_scrypt_p == secret_provider::default_encrypted_file_max_scrypt_p);
+   BOOST_TEST(value.encrypted_file_max_scrypt_memory_bytes ==
+              secret_provider::default_encrypted_file_max_scrypt_memory_bytes);
+}
+FCL_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(secret_provider_descriptor_redacts_config_and_keeps_api_local) try {
    static_assert(fcl::api::local_interface<secret_provider::api>);
@@ -437,6 +459,37 @@ BOOST_AUTO_TEST_CASE(secret_provider_encrypted_file_roundtrips_and_rejects_wrong
                                           true)}),
             "secret-provider"})),
       secret_provider::exceptions::invalid_secret);
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(secret_provider_encrypted_file_missing_passphrase_file_is_invalid_source) try {
+   const auto path = std::filesystem::temp_directory_path() / "fcl-secret-provider-encrypted-missing-passphrase.bin";
+   const auto missing_passphrase =
+      std::filesystem::temp_directory_path() / "fcl-secret-provider-missing-passphrase-file.txt";
+   std::filesystem::remove(missing_passphrase);
+   const auto container = secret_provider::encrypt_secret_file(secret_provider::encrypted_file_encrypt_request{
+      .plaintext = bytes("encrypted-secret"),
+      .passphrase = "correct horse battery staple",
+      .salt = bytes("0123456789abcdef"),
+      .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+      .scrypt_n = 1024,
+      .scrypt_max_memory_bytes = 8ULL * 1024ULL * 1024ULL,
+   });
+   write_secret_file(path, container);
+
+   auto plugin = secret_provider::plugin{};
+   auto runtime = fcl::asio::runtime{};
+   BOOST_CHECK_THROW(
+      fcl::asio::blocking::run(
+         runtime,
+         plugin.configure(fcl::config::component_view{
+            provider_config({secret_entry("encrypted",
+                                          source_encrypted_file_with_passphrase_file(path, missing_passphrase),
+                                          {"payload.decrypt"},
+                                          {"get_bytes"},
+                                          true)}),
+            "secret-provider"})),
+      secret_provider::exceptions::invalid_source);
 }
 FCL_LOG_AND_RETHROW();
 

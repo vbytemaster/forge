@@ -1,8 +1,8 @@
 module;
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <openssl/crypto.h>
 #include <span>
 #include <utility>
 
@@ -13,7 +13,9 @@ namespace fcl::crypto {
 namespace {
 
 void wipe(bytes& value) noexcept {
-   std::fill(value.begin(), value.end(), std::uint8_t{0});
+   if (!value.empty()) {
+      OPENSSL_cleanse(value.data(), value.size());
+   }
    value.clear();
    value.shrink_to_fit();
 }

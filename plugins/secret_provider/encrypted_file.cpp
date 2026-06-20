@@ -9,6 +9,7 @@ module;
 #include <limits>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 
 module fcl.plugins.secret_provider.types;
@@ -18,6 +19,7 @@ import fcl.crypto.kdf;
 import fcl.crypto.random;
 import fcl.crypto.types;
 import fcl.exceptions;
+import fcl.plugins.secret_provider.exceptions;
 
 namespace fcl::plugins::secret_provider {
 namespace {
@@ -70,6 +72,26 @@ void append_bytes(fcl::crypto::bytes& out, std::span<const std::uint8_t> value) 
       .max_memory_bytes = max_memory_bytes,
       .output_size = fcl::crypto::aes256_key_size,
    }));
+}
+
+void validate_scrypt_limit(std::string_view name, std::uint64_t value, std::uint64_t max_value) {
+   if (value == 0 || value > max_value) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_secret, "encrypted secret file scrypt parameter is outside configured limit",
+                          fcl::exceptions::ctx("parameter", name),
+                          fcl::exceptions::ctx("value", value),
+                          fcl::exceptions::ctx("max", max_value));
+   }
+}
+
+void validate_scrypt_limits(std::uint64_t n,
+                            std::uint64_t r,
+                            std::uint64_t p,
+                            std::uint64_t max_memory_bytes,
+                            encrypted_file_decrypt_limits limits) {
+   validate_scrypt_limit("n", n, limits.max_scrypt_n);
+   validate_scrypt_limit("r", r, limits.max_scrypt_r);
+   validate_scrypt_limit("p", p, limits.max_scrypt_p);
+   validate_scrypt_limit("max_memory_bytes", max_memory_bytes, limits.max_scrypt_memory_bytes);
 }
 
 [[nodiscard]] fcl::crypto::bytes make_header(std::uint64_t n,
@@ -133,7 +155,7 @@ fcl::crypto::bytes encrypt_secret_file(encrypted_file_encrypt_request request) {
 
 fcl::crypto::bytes decrypt_secret_file(const fcl::crypto::bytes& container,
                                        const std::string& passphrase,
-                                       std::uint64_t max_plaintext_bytes) {
+                                       encrypted_file_decrypt_limits limits) {
    if (container.size() < magic.size() || !std::equal(magic.begin(), magic.end(), container.begin())) {
       FCL_THROW("encrypted secret file has invalid magic");
    }
@@ -145,7 +167,8 @@ fcl::crypto::bytes decrypt_secret_file(const fcl::crypto::bytes& container,
    const auto salt_size = read_u64(container, offset);
    const auto nonce_size = read_u64(container, offset);
    const auto ciphertext_size = read_u64(container, offset);
-   if (ciphertext_size > max_plaintext_bytes) {
+   validate_scrypt_limits(n, r, p, max_memory_bytes, limits);
+   if (ciphertext_size > limits.max_plaintext_bytes) {
       FCL_THROW("encrypted secret file plaintext exceeds configured limit");
    }
    auto salt = read_bytes(container, offset, salt_size);

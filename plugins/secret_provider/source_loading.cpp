@@ -108,7 +108,8 @@ namespace {
 
 fcl::crypto::secret_bytes load_secret_material(const secret_entry& entry,
                                                std::uint64_t max_plaintext_bytes,
-                                               std::uint64_t max_ciphertext_bytes) {
+                                               std::uint64_t max_ciphertext_bytes,
+                                               encrypted_file_decrypt_limits decrypt_limits) {
    auto material = fcl::crypto::bytes{};
    switch (entry.source.type) {
    case source_type::value:
@@ -122,7 +123,8 @@ fcl::crypto::secret_bytes load_secret_material(const secret_entry& entry,
    case source_type::encrypted_file: {
       auto container = read_file(entry.source.path, max_ciphertext_bytes, entry.id);
       try {
-         material = decrypt_secret_file(container, read_passphrase(entry.source, entry.id), max_plaintext_bytes);
+         decrypt_limits.max_plaintext_bytes = max_plaintext_bytes;
+         material = decrypt_secret_file(container, read_passphrase(entry.source, entry.id), decrypt_limits);
       } catch (const std::exception&) {
          FCL_THROW_EXCEPTION(exceptions::invalid_secret, "encrypted secret file cannot be decrypted",
                              fcl::exceptions::ctx("secret_id", entry.id));

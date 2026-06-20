@@ -46,10 +46,17 @@ config decode_config(const fcl::config::component_view& view) {
 void apply_config(plugin::impl& state, fcl::config::component_view view) {
    auto decoded = decode_config(view);
    auto loaded = std::map<std::string, plugin::impl::loaded_secret>{};
+   const auto decrypt_limits = encrypted_file_decrypt_limits{
+      .max_plaintext_bytes = decoded.default_max_plaintext_bytes,
+      .max_scrypt_n = decoded.encrypted_file_max_scrypt_n,
+      .max_scrypt_r = decoded.encrypted_file_max_scrypt_r,
+      .max_scrypt_p = decoded.encrypted_file_max_scrypt_p,
+      .max_scrypt_memory_bytes = decoded.encrypted_file_max_scrypt_memory_bytes,
+   };
    for (auto& entry : decoded.secrets) {
       auto max_plaintext = resolved_limit(entry.max_plaintext_bytes, decoded.default_max_plaintext_bytes);
       auto max_ciphertext = resolved_limit(entry.max_ciphertext_bytes, decoded.default_max_ciphertext_bytes);
-      auto material = load_secret_material(entry, max_plaintext, max_ciphertext);
+      auto material = load_secret_material(entry, max_plaintext, max_ciphertext, decrypt_limits);
       loaded.emplace(entry.id,
                      plugin::impl::loaded_secret{
                         .id = entry.id,

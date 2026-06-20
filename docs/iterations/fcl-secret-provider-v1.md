@@ -9,10 +9,9 @@ purpose policy once, while product plugins call a narrow local API by
 `secret_id` and `purpose` instead of parsing environment variables, files or
 inline secret fields themselves.
 
-This block does not add Storlane, Spring, workspace, billing or storage
+This block does not add downstream product, control-plane, account or storage
 semantics to FCL. Downstream products decide which secret ids and purpose names
-mean "workspace manifest decrypt", "chunk key derivation" or any other product
-capability.
+mean "manifest decrypt", "chunk key derivation" or any other product capability.
 
 ## Problem
 
@@ -57,7 +56,7 @@ Accepted patterns:
 
 Rejected shortcuts:
 
-- A product-specific `workspace_vault` or `storlane_vault` in FCL.
+- A product-specific vault in FCL.
 - A daemon-global magic singleton reachable outside `fcl_api`.
 - Raw secret bytes in generated config, status, logs or diagnostics.
 - Product plugins or `secret_provider` parsing secret-bearing environment
@@ -160,8 +159,8 @@ These are new source backends, not changes to consumer APIs.
 
 `secret_provider` does not own:
 
-- product authority, grants, ACLs or workspace semantics;
-- Spring, blockchain, storage, billing or deployment decisions;
+- product authority, grants, ACLs or tenant semantics;
+- chain, storage, account or deployment decisions;
 - remote KMS protocols in v1;
 - a wallet UI;
 - a daemon-global singleton outside the application plugin registry;
@@ -202,7 +201,7 @@ Package tests:
 Static gates:
 
 ```bash
-rg "std::getenv|getenv\\(|OPENSSL|EVP_|private_key|workspace|spring|storlane" \
+rg "std::getenv|getenv\\(|OPENSSL|EVP_|private_key|downstream_product_term" \
   plugins/secret_provider -g "*.cpp" -g "*.cppm" -g "*.hxx"
 
 rg "secret-provider:.*value|<redacted>" docs plugins/secret_provider \
@@ -231,5 +230,5 @@ git diff --check
 - Consumers call operations by `secret_id` and `purpose`.
 - Raw secret export is opt-in per secret and denied by default.
 - Secret-bearing config and diagnostics are redacted.
-- The plugin is neutral FCL infrastructure and contains no Storlane-specific
-  names or semantics.
+- The plugin is neutral FCL infrastructure and contains no downstream
+  product-specific names or semantics.

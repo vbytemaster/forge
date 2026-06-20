@@ -92,6 +92,17 @@ namespace {
    return document;
 }
 
+void write_secret_file(const std::filesystem::path& path, const fcl::crypto::bytes& value) {
+   auto out = std::ofstream{path, std::ios::binary | std::ios::trunc};
+   out.write(reinterpret_cast<const char*>(value.data()), static_cast<std::streamsize>(value.size()));
+}
+
+void overwrite_u64_le(fcl::crypto::bytes& value, std::size_t offset, std::uint64_t replacement) {
+   for (auto i = 0U; i < 8U; ++i) {
+      value[offset + i] = static_cast<std::uint8_t>((replacement >> (i * 8U)) & 0xffU);
+   }
+}
+
 [[nodiscard]] fcl::api::handle<secret_provider::api> configured_api(fcl::asio::runtime& runtime,
                                                                     secret_provider::plugin& plugin,
                                                                     const fcl::config::document& document) {
@@ -132,6 +143,20 @@ BOOST_AUTO_TEST_CASE(secret_provider_descriptor_redacts_config_and_keeps_api_loc
    BOOST_REQUIRE(secrets != descriptor->fields.end());
    BOOST_TEST(secrets->secret);
    BOOST_TEST(static_cast<int>(secrets->kind) == static_cast<int>(fcl::schema::value_kind::object_list));
+
+   const auto has_default_field = [&](std::string_view name, std::uint64_t expected) {
+      const auto found = std::ranges::find_if(descriptor->fields, [&](const auto& field) {
+         return field.name == name;
+      });
+      BOOST_REQUIRE(found != descriptor->fields.end());
+      BOOST_TEST(found->has_default);
+      BOOST_TEST(std::get<std::uint64_t>(found->default_value.storage) == expected);
+   };
+   has_default_field("encrypted-file-max-scrypt-n", secret_provider::default_encrypted_file_max_scrypt_n);
+   has_default_field("encrypted-file-max-scrypt-r", secret_provider::default_encrypted_file_max_scrypt_r);
+   has_default_field("encrypted-file-max-scrypt-p", secret_provider::default_encrypted_file_max_scrypt_p);
+   has_default_field("encrypted-file-max-scrypt-memory-bytes",
+                     secret_provider::default_encrypted_file_max_scrypt_memory_bytes);
 
    auto registry = fcl::config::component_registry{};
    registry.add(*descriptor);
@@ -268,9 +293,7 @@ BOOST_AUTO_TEST_CASE(secret_provider_encrypted_file_roundtrips_and_rejects_wrong
       .scrypt_n = 1024,
       .scrypt_max_memory_bytes = 8ULL * 1024ULL * 1024ULL,
    });
-   auto out = std::ofstream{path, std::ios::binary | std::ios::trunc};
-   out.write(reinterpret_cast<const char*>(container.data()), static_cast<std::streamsize>(container.size()));
-   out.close();
+   write_secret_file(path, container);
 
    auto plugin = secret_provider::plugin{};
    auto runtime = fcl::asio::runtime{};
@@ -300,6 +323,58 @@ BOOST_AUTO_TEST_CASE(secret_provider_encrypted_file_roundtrips_and_rejects_wrong
                                           true)}),
             "secret-provider"})),
       secret_provider::exceptions::invalid_secret);
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(secret_provider_encrypted_file_rejects_scrypt_params_above_limits_before_kdf) try {
+   auto container = secret_provider::encrypt_secret_file(secret_provider::encrypted_file_encrypt_request{
+      .plaintext = bytes("encrypted-secret"),
+      .passphrase = "correct horse battery staple",
+      .salt = bytes("0123456789abcdef"),
+      .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+      .scrypt_n = 1024,
+      .scrypt_max_memory_bytes = 8ULL * 1024ULL * 1024ULL,
+   });
+   overwrite_u64_le(container, 8U, 2048U);
+
+   BOOST_CHECK_THROW((void)secret_provider::decrypt_secret_file(
+                        container,
+                        "correct horse battery staple",
+                        secret_provider::encrypted_file_decrypt_limits{
+                           .max_plaintext_bytes = secret_provider::default_max_plaintext_bytes,
+                           .max_scrypt_n = 1024,
+                           .max_scrypt_r = secret_provider::default_encrypted_file_max_scrypt_r,
+                           .max_scrypt_p = secret_provider::default_encrypted_file_max_scrypt_p,
+                           .max_scrypt_memory_bytes = secret_provider::default_encrypted_file_max_scrypt_memory_bytes,
+                        }),
+                     secret_provider::exceptions::invalid_secret);
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(secret_provider_config_rejects_encrypted_file_scrypt_params_above_configured_ceilings) try {
+   const auto path = std::filesystem::temp_directory_path() / "fcl-secret-provider-encrypted-source-high-scrypt.bin";
+   const auto container = secret_provider::encrypt_secret_file(secret_provider::encrypted_file_encrypt_request{
+      .plaintext = bytes("encrypted-secret"),
+      .passphrase = "correct horse battery staple",
+      .salt = bytes("0123456789abcdef"),
+      .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+      .scrypt_n = 1024,
+      .scrypt_max_memory_bytes = 8ULL * 1024ULL * 1024ULL,
+   });
+   write_secret_file(path, container);
+
+   auto document = provider_config({secret_entry("encrypted",
+                                                source_encrypted_file(path, "correct horse battery staple"),
+                                                {"payload.decrypt"},
+                                                {"get_bytes"},
+                                                true)});
+   document.set("secret-provider.encrypted-file-max-scrypt-n", fcl::config::value{512U});
+
+   auto plugin = secret_provider::plugin{};
+   auto runtime = fcl::asio::runtime{};
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(
+                        runtime, plugin.configure(fcl::config::component_view{document, "secret-provider"})),
+                     secret_provider::exceptions::invalid_secret);
 }
 FCL_LOG_AND_RETHROW();
 

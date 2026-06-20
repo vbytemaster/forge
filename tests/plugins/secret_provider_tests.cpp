@@ -296,6 +296,29 @@ BOOST_AUTO_TEST_CASE(secret_provider_hkdf_and_aes_gcm_are_purpose_gated) try {
 }
 FCL_LOG_AND_RETHROW();
 
+BOOST_AUTO_TEST_CASE(secret_provider_encrypt_aes_gcm_maps_malformed_nonce) try {
+   const auto key = std::string(32, 'K');
+   auto plugin = secret_provider::plugin{};
+   auto runtime = fcl::asio::runtime{};
+   auto api = configured_api(runtime,
+                             plugin,
+                             provider_config({secret_entry("data-key",
+                                                           source_value(key),
+                                                           {"payload.encrypt"},
+                                                           {"encrypt_aes_gcm"})}));
+
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+                                              api->encrypt_aes_gcm(secret_provider::aead_encrypt_request{
+                                                 .secret_id = "data-key",
+                                                 .purpose = "payload.encrypt",
+                                                 .nonce = {0, 1, 2},
+                                                 .plaintext = bytes("payload"),
+                                                 .aad = bytes("aad"),
+                                              })),
+                     secret_provider::exceptions::invalid_secret);
+}
+FCL_LOG_AND_RETHROW();
+
 BOOST_AUTO_TEST_CASE(secret_provider_decrypt_aes_gcm_maps_malformed_parameters) try {
    const auto key = std::string(32, 'K');
    auto plugin = secret_provider::plugin{};

@@ -26,6 +26,8 @@ namespace {
 
 constexpr auto magic = std::array<std::uint8_t, 8>{'F', 'C', 'L', 'S', 'E', 'C', '1', 0};
 
+[[noreturn]] void throw_invalid_encrypted_secret_file();
+
 void append_u64(fcl::crypto::bytes& out, std::uint64_t value) {
    for (auto i = 0U; i < 8U; ++i) {
       out.push_back(static_cast<std::uint8_t>((value >> (i * 8U)) & 0xffU));
@@ -34,7 +36,7 @@ void append_u64(fcl::crypto::bytes& out, std::uint64_t value) {
 
 [[nodiscard]] std::uint64_t read_u64(const fcl::crypto::bytes& input, std::size_t& offset) {
    if (input.size() - offset < 8U) {
-      FCL_THROW("encrypted secret file is truncated");
+      throw_invalid_encrypted_secret_file();
    }
    auto value = std::uint64_t{0};
    for (auto i = 0U; i < 8U; ++i) {
@@ -49,7 +51,7 @@ void append_bytes(fcl::crypto::bytes& out, std::span<const std::uint8_t> value) 
 
 [[nodiscard]] fcl::crypto::bytes read_bytes(const fcl::crypto::bytes& input, std::size_t& offset, std::uint64_t size) {
    if (size > static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)()) || input.size() - offset < size) {
-      FCL_THROW("encrypted secret file is truncated");
+      throw_invalid_encrypted_secret_file();
    }
    auto output = fcl::crypto::bytes{input.begin() + static_cast<std::ptrdiff_t>(offset),
                                     input.begin() + static_cast<std::ptrdiff_t>(offset + size)};
@@ -104,6 +106,17 @@ void validate_scrypt_limits(std::uint64_t n,
    case fcl::crypto::aes::exceptions::code::invalid_nonce:
    case fcl::crypto::aes::exceptions::code::invalid_tag:
    case fcl::crypto::aes::exceptions::code::authentication_failed:
+      throw_invalid_encrypted_secret_file();
+   default:
+      throw;
+   }
+}
+
+[[noreturn]] void throw_invalid_encrypted_secret_file_parameter(
+   const fcl::exceptions::runtime_coded_exception<fcl::crypto::kdf::exceptions::code>& error) {
+   switch (error.value()) {
+   case fcl::crypto::kdf::exceptions::code::invalid_options:
+   case fcl::crypto::kdf::exceptions::code::backend_error:
       throw_invalid_encrypted_secret_file();
    default:
       throw;
@@ -173,7 +186,7 @@ fcl::crypto::bytes decrypt_secret_file(const fcl::crypto::bytes& container,
                                        const std::string& passphrase,
                                        encrypted_file_decrypt_limits limits) {
    if (container.size() < magic.size() || !std::equal(magic.begin(), magic.end(), container.begin())) {
-      FCL_THROW("encrypted secret file has invalid magic");
+      throw_invalid_encrypted_secret_file();
    }
    auto offset = magic.size();
    const auto n = read_u64(container, offset);
@@ -194,7 +207,7 @@ fcl::crypto::bytes decrypt_secret_file(const fcl::crypto::bytes& container,
    auto tag = read_bytes(container, offset, fcl::crypto::aes_gcm_tag_size);
    auto ciphertext = read_bytes(container, offset, ciphertext_size);
    if (offset != container.size()) {
-      FCL_THROW("encrypted secret file has trailing bytes");
+      throw_invalid_encrypted_secret_file();
    }
    auto header = make_header(n, r, p, max_memory_bytes, salt, nonce, ciphertext_size);
    try {
@@ -214,7 +227,13 @@ fcl::crypto::bytes decrypt_secret_file(const fcl::crypto::bytes& container,
       throw_invalid_encrypted_secret_file();
    } catch (const fcl::crypto::aes::exceptions::authentication_failed&) {
       throw_invalid_encrypted_secret_file();
+   } catch (const fcl::crypto::kdf::exceptions::invalid_options&) {
+      throw_invalid_encrypted_secret_file();
+   } catch (const fcl::crypto::kdf::exceptions::backend_error&) {
+      throw_invalid_encrypted_secret_file();
    } catch (const fcl::exceptions::runtime_coded_exception<fcl::crypto::aes::exceptions::code>& error) {
+      throw_invalid_encrypted_secret_file_parameter(error);
+   } catch (const fcl::exceptions::runtime_coded_exception<fcl::crypto::kdf::exceptions::code>& error) {
       throw_invalid_encrypted_secret_file_parameter(error);
    }
 }

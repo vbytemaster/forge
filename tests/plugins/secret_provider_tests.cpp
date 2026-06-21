@@ -495,6 +495,45 @@ BOOST_AUTO_TEST_CASE(secret_provider_encrypted_file_roundtrips_and_rejects_wrong
 }
 FCL_LOG_AND_RETHROW();
 
+BOOST_AUTO_TEST_CASE(secret_provider_decrypt_secret_file_maps_crypto_failures_to_invalid_secret) try {
+   auto container = secret_provider::encrypt_secret_file(secret_provider::encrypted_file_encrypt_request{
+      .plaintext = bytes("encrypted-secret"),
+      .passphrase = "correct horse battery staple",
+      .salt = bytes("0123456789abcdef"),
+      .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+      .scrypt_n = 1024,
+      .scrypt_max_memory_bytes = 8ULL * 1024ULL * 1024ULL,
+   });
+
+   BOOST_CHECK_THROW((void)secret_provider::decrypt_secret_file(
+                        container,
+                        "wrong passphrase",
+                        secret_provider::encrypted_file_decrypt_limits{
+                           .max_plaintext_bytes = secret_provider::default_max_plaintext_bytes,
+                           .max_scrypt_n = secret_provider::default_encrypted_file_max_scrypt_n,
+                           .max_scrypt_r = secret_provider::default_encrypted_file_max_scrypt_r,
+                           .max_scrypt_p = secret_provider::default_encrypted_file_max_scrypt_p,
+                           .max_scrypt_memory_bytes = secret_provider::default_encrypted_file_max_scrypt_memory_bytes,
+                        }),
+                     secret_provider::exceptions::invalid_secret);
+
+   const auto tag_offset = 8U + (7U * 8U) + bytes("0123456789abcdef").size() + 12U;
+   container[tag_offset] ^= 0xffU;
+
+   BOOST_CHECK_THROW((void)secret_provider::decrypt_secret_file(
+                        container,
+                        "correct horse battery staple",
+                        secret_provider::encrypted_file_decrypt_limits{
+                           .max_plaintext_bytes = secret_provider::default_max_plaintext_bytes,
+                           .max_scrypt_n = secret_provider::default_encrypted_file_max_scrypt_n,
+                           .max_scrypt_r = secret_provider::default_encrypted_file_max_scrypt_r,
+                           .max_scrypt_p = secret_provider::default_encrypted_file_max_scrypt_p,
+                           .max_scrypt_memory_bytes = secret_provider::default_encrypted_file_max_scrypt_memory_bytes,
+                        }),
+                     secret_provider::exceptions::invalid_secret);
+}
+FCL_LOG_AND_RETHROW();
+
 BOOST_AUTO_TEST_CASE(secret_provider_encrypted_file_plaintext_limit_is_size_limit_exceeded) try {
    const auto path = std::filesystem::temp_directory_path() / "fcl-secret-provider-encrypted-source-too-large.bin";
    const auto container = secret_provider::encrypt_secret_file(secret_provider::encrypted_file_encrypt_request{

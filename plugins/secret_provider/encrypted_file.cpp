@@ -94,6 +94,22 @@ void validate_scrypt_limits(std::uint64_t n,
    validate_scrypt_limit("max_memory_bytes", max_memory_bytes, limits.max_scrypt_memory_bytes);
 }
 
+[[noreturn]] void throw_invalid_encrypted_secret_file() {
+   FCL_THROW_EXCEPTION(exceptions::invalid_secret, "encrypted secret file cannot be decrypted");
+}
+
+[[noreturn]] void throw_invalid_encrypted_secret_file_parameter(
+   const fcl::exceptions::runtime_coded_exception<fcl::crypto::aes::exceptions::code>& error) {
+   switch (error.value()) {
+   case fcl::crypto::aes::exceptions::code::invalid_nonce:
+   case fcl::crypto::aes::exceptions::code::invalid_tag:
+   case fcl::crypto::aes::exceptions::code::authentication_failed:
+      throw_invalid_encrypted_secret_file();
+   default:
+      throw;
+   }
+}
+
 [[nodiscard]] fcl::crypto::bytes make_header(std::uint64_t n,
                                              std::uint64_t r,
                                              std::uint64_t p,
@@ -181,16 +197,26 @@ fcl::crypto::bytes decrypt_secret_file(const fcl::crypto::bytes& container,
       FCL_THROW("encrypted secret file has trailing bytes");
    }
    auto header = make_header(n, r, p, max_memory_bytes, salt, nonce, ciphertext_size);
-   return fcl::crypto::decrypt_aes256_gcm({
-      .key = derive_file_key(passphrase, salt, n, r, p, max_memory_bytes),
-      .encrypted =
-         fcl::crypto::aes256_gcm_ciphertext{
-            .nonce = std::move(nonce),
-            .tag = std::move(tag),
-            .ciphertext = std::move(ciphertext),
-         },
-      .aad = std::move(header),
-   });
+   try {
+      return fcl::crypto::decrypt_aes256_gcm({
+         .key = derive_file_key(passphrase, salt, n, r, p, max_memory_bytes),
+         .encrypted =
+            fcl::crypto::aes256_gcm_ciphertext{
+               .nonce = std::move(nonce),
+               .tag = std::move(tag),
+               .ciphertext = std::move(ciphertext),
+            },
+         .aad = std::move(header),
+      });
+   } catch (const fcl::crypto::aes::exceptions::invalid_nonce&) {
+      throw_invalid_encrypted_secret_file();
+   } catch (const fcl::crypto::aes::exceptions::invalid_tag&) {
+      throw_invalid_encrypted_secret_file();
+   } catch (const fcl::crypto::aes::exceptions::authentication_failed&) {
+      throw_invalid_encrypted_secret_file();
+   } catch (const fcl::exceptions::runtime_coded_exception<fcl::crypto::aes::exceptions::code>& error) {
+      throw_invalid_encrypted_secret_file_parameter(error);
+   }
 }
 
 } // namespace fcl::plugins::secret_provider

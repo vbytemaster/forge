@@ -1,9 +1,9 @@
 # fcl_http
 
-`fcl_http` is the HTTP substrate: URL parsing, request/response aliases,
-streaming body primitives, routing, middleware, server and client/connection
-primitives. It uses Boost.Beast/URL internally but keeps FCL-owned route and
-lifecycle semantics.
+`fcl_http` is the HTTP substrate: URL parsing, FCL-owned request/response
+messages, streaming body primitives, routing, middleware, server and
+client/connection primitives. It uses Boost.Beast/URL internally but keeps
+FCL-owned public message, route and lifecycle semantics.
 
 Application-level server lifecycle can be owned directly with `fcl::http::server`
 or composed through the official `fcl.plugins.http_server` plugin. The library
@@ -26,7 +26,8 @@ still owns HTTP mechanics; the plugin owns app lifecycle/config composition.
 
 ## Public Modules
 
-- `fcl.http.types` — Beast-compatible request/response aliases.
+- `fcl.http.types` — FCL-owned Beast-like request/response wrappers, HTTP
+  method/status enums and endpoint DTO state.
 - `fcl.http.body`, `fcl.http.stream` — FCL-owned chunk, reader, writer and
   stream route types.
 - `fcl.http.file`, `fcl.http.range` — file responses, static roots and byte
@@ -43,6 +44,10 @@ Target: `fcl_http`.
 
 Dependencies: `fcl_asio`, `fcl_websocket`, `fcl_json`, `fcl_schema`,
 Boost.Asio, Boost.Beast, Boost.URL, OpenSSL.
+
+Boost.Beast remains the runtime donor and backend for parser/serializer/socket
+mechanics, but public HTTP APIs use `fcl::http::request` and
+`fcl::http::response` wrappers rather than Beast message aliases.
 
 ## Examples
 
@@ -78,6 +83,29 @@ router.get("/healthz", [](fcl::http::route_context& ctx)
    -> boost::asio::awaitable<fcl::http::response> {
    co_return fcl::http::make_text_response(ctx.request, fcl::http::status::ok, "ok");
 });
+```
+
+### Use Endpoint Request State
+
+Typed HTTP request DTOs may derive from `fcl::http::endpoint_request` when a
+handler needs read-only access to the incoming HTTP request or wants to add
+response metadata. The base is not described with Boost.Describe and is ignored
+by JSON/schema binding.
+
+```cpp
+struct read_request : fcl::http::endpoint_request {
+   std::string ref;
+};
+
+BOOST_DESCRIBE_STRUCT(read_request, (), (ref))
+
+boost::asio::awaitable<chunk>
+cache_impl::read(read_request request) {
+   auto trace = request.request().header("X-Trace").value_or("");
+   request.response().set("Cache-Control", "public, max-age=60");
+   request.response().set_cookie("trace", trace);
+   co_return load_chunk(request.ref);
+}
 ```
 
 ### Route Streaming Bodies

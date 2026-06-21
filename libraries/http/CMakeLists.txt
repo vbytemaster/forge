@@ -1,5 +1,6 @@
 add_library(
    fcl_http STATIC
+   types.cpp
    base_url.cpp
    target.cpp
    range.cpp

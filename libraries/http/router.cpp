@@ -26,36 +26,10 @@ import fcl.api.dispatcher;
 import fcl.http.exceptions;
 import fcl.http.stream;
 import fcl.http.target;
+import fcl.json;
 
 namespace fcl::http {
 namespace {
-
-std::string json_escape(std::string_view value) {
-   constexpr auto hex = std::string_view{"0123456789abcdef"};
-   auto output = std::string{};
-   output.reserve(value.size() + 8U);
-   for (const auto character : value) {
-      const auto byte = static_cast<unsigned char>(character);
-      switch (character) {
-      case '\\':
-         output += "\\\\";
-         break;
-      case '"':
-         output += "\\\"";
-         break;
-      default:
-         if (byte < 0x20U) {
-            output += "\\u00";
-            output.push_back(hex[(byte >> 4U) & 0x0fU]);
-            output.push_back(hex[byte & 0x0fU]);
-         } else {
-            output.push_back(character);
-         }
-         break;
-      }
-   }
-   return output;
-}
 
 std::string http_error_name(int code) {
    switch (code) {
@@ -172,24 +146,16 @@ void restore_stream_transfer_framing(response& value, const stream_transfer_fram
    }
 }
 
-std::string render_error_payload(const fcl::api::error_payload& payload) {
-   auto output = std::string{};
-   output += "{\"error\":\"";
-   output += json_escape(payload.error);
-   output += "\",\"message\":\"";
-   output += json_escape(payload.message);
-   output += "\",\"retryable\":";
-   output += payload.retryable ? "true" : "false";
-   output += ",\"identity\":{\"category\":\"";
-   output += json_escape(payload.identity.category);
-   output += "\",\"code\":";
-   output += std::to_string(payload.identity.code);
-   output += "}}";
-   return output;
+std::string encode_error_payload(const fcl::api::error_payload& payload) {
+   auto encoded = fcl::json::write(payload);
+   if (encoded.ok()) {
+      return std::move(encoded.text);
+   }
+   return fcl::json::write(fcl::api::make_internal_error_payload()).text;
 }
 
 response make_exception_response(const request& request, const fcl::exceptions::base& error) {
-   return make_text_response(request, http_status_for(error), render_error_payload(http_error_payload(error)),
+   return make_text_response(request, http_status_for(error), encode_error_payload(http_error_payload(error)),
                              "application/json");
 }
 
@@ -423,7 +389,7 @@ boost::asio::awaitable<response> router::handle(route_context& context) const {
       co_return make_exception_response(context.request, error);
    } catch (const std::exception&) {
       co_return make_text_response(context.request, status::internal_server_error,
-                                   render_error_payload(fcl::api::error_payload{
+                                   encode_error_payload(fcl::api::error_payload{
                                        .error = "internal",
                                        .message = "internal error",
                                        .identity =
@@ -499,7 +465,7 @@ boost::asio::awaitable<stream_response> router::handle_stream(stream_request& re
       co_return stream_response::buffered(make_exception_response(context.request, error));
    } catch (const std::exception&) {
       co_return stream_response::buffered(make_text_response(context.request, status::internal_server_error,
-                                                            render_error_payload(fcl::api::error_payload{
+                                                            encode_error_payload(fcl::api::error_payload{
                                                                 .error = "internal",
                                                                 .message = "internal error",
                                                                 .identity =

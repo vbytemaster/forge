@@ -8,10 +8,12 @@ module;
 #include <algorithm>
 #include <cerrno>
 #include <charconv>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -278,48 +280,12 @@ class api_builder {
       return *result;
    }
 
-   [[nodiscard]] static std::string json_escape(std::string_view value) {
-      auto output = std::string{};
-      output.reserve(value.size() + 8U);
-      for (const auto character : value) {
-         switch (character) {
-         case '\\':
-            output += "\\\\";
-            break;
-         case '"':
-            output += "\\\"";
-            break;
-         case '\n':
-            output += "\\n";
-            break;
-         case '\r':
-            output += "\\r";
-            break;
-         case '\t':
-            output += "\\t";
-            break;
-         default: {
-            const auto byte = static_cast<unsigned char>(character);
-            if (byte < 0x20U) {
-               constexpr auto* hex = "0123456789abcdef";
-               output += "\\u00";
-               output.push_back(hex[(byte >> 4U) & 0x0FU]);
-               output.push_back(hex[byte & 0x0FU]);
-            } else {
-               output.push_back(character);
-            }
-            break;
-         }
-         }
+   [[nodiscard]] static std::string encode_error_payload(const fcl::api::error_payload& error) {
+      auto encoded = fcl::json::write(error);
+      if (encoded.ok()) {
+         return std::move(encoded.text);
       }
-      return output;
-   }
-
-   [[nodiscard]] static std::string render_error(const fcl::api::error_payload& error) {
-      return std::string{"{\"error\":\""} + json_escape(error.error) + "\",\"message\":\"" +
-             json_escape(error.message) +
-             "\",\"retryable\":" + (error.retryable ? "true" : "false") + ",\"identity\":{\"category\":\"" +
-             json_escape(error.identity.category) + "\",\"code\":" + std::to_string(error.identity.code) + "}}";
+      return fcl::json::write(fcl::api::make_internal_error_payload()).text;
    }
 
    [[nodiscard]] static status http_status(fcl::api::status value) noexcept {
@@ -497,23 +463,7 @@ class api_builder {
 
    [[nodiscard]] static std::optional<std::string_view> header_value(const request& request_value,
                                                                       std::string_view name) {
-      const auto lower_name = [&] {
-         auto output = std::string{name};
-         std::transform(output.begin(), output.end(), output.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-         });
-         return output;
-      }();
-      for (const auto& field_value : request_value) {
-         auto candidate = std::string{field_value.name_string()};
-         std::transform(candidate.begin(), candidate.end(), candidate.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-         });
-         if (candidate == lower_name) {
-            return std::string_view{field_value.value().data(), field_value.value().size()};
-         }
-      }
-      return std::nullopt;
+      return request_value.header(name);
    }
 
    [[nodiscard]] static std::optional<std::string_view> cookie_value(const request& request_value,
@@ -1301,45 +1251,120 @@ class api_builder {
    }
 
    [[nodiscard]] static response make_validation_response(const request& request_value, std::string_view message) {
-      return make_text_response(
-         request_value, static_cast<status>(422),
-         std::string{"{\"error\":\"validation_error\",\"message\":\""} + json_escape(message) + "\"}",
-         "application/json");
+      return make_text_response(request_value, static_cast<status>(422),
+                                encode_error_payload(fcl::api::error_payload{
+                                   .error = "validation_error",
+                                   .message = std::string{message},
+                                   .retryable = false,
+                                   .status_code = static_cast<fcl::api::status>(422),
+                                   .identity =
+                                      {
+                                         .category = "fcl.http",
+                                         .code = 422,
+                                      },
+                                }),
+                                "application/json");
    }
 
-   template <typename Response> [[nodiscard]] static response make_success_response(const request& request_value,
-                                                                                    status success_status,
-                                                                                    const Response& value) {
+   [[nodiscard]] static bool same_header_name(std::string_view left, std::string_view right) noexcept {
+      if (left.size() != right.size()) {
+         return false;
+      }
+      for (auto index = std::size_t{0}; index != left.size(); ++index) {
+         if (std::tolower(static_cast<unsigned char>(left[index])) !=
+             std::tolower(static_cast<unsigned char>(right[index]))) {
+            return false;
+         }
+      }
+      return true;
+   }
+
+   [[nodiscard]] static bool endpoint_header_is_protocol_framing(std::string_view name) noexcept {
+      return same_header_name(name, field_name(field::content_length)) ||
+             same_header_name(name, field_name(field::transfer_encoding)) ||
+             same_header_name(name, field_name(field::content_range));
+   }
+
+   static void merge_endpoint_headers(response& target, const std::shared_ptr<endpoint_state>& state) {
+      if (!state) {
+         return;
+      }
+      const auto& endpoint_response = endpoint_state_access::response(state);
+      for (const auto& header : endpoint_response.headers()) {
+         if (endpoint_header_is_protocol_framing(header.name)) {
+            continue;
+         }
+         if (same_header_name(header.name, "Set-Cookie")) {
+            target.insert(header.name, header.text);
+            continue;
+         }
+         target.set(header.name, header.text);
+      }
+   }
+
+   template <typename Request>
+   [[nodiscard]] static std::shared_ptr<endpoint_state> make_endpoint_state(const request& request_value,
+                                                                            status success_status) {
+      if constexpr (std::is_base_of_v<endpoint_request, std::remove_cvref_t<Request>>) {
+         auto response_value = response{success_status, request_value.version()};
+         response_value.keep_alive(request_value.keep_alive());
+         return endpoint_state_access::make(request_value, std::move(response_value));
+      } else {
+         return {};
+      }
+   }
+
+   template <typename Request>
+   static void attach_endpoint_state(Request& request_value, const std::shared_ptr<endpoint_state>& state) {
+      if constexpr (std::is_base_of_v<endpoint_request, std::remove_cvref_t<Request>>) {
+         endpoint_state_access::attach(request_value, state);
+      }
+   }
+
+   template <typename Response>
+   [[nodiscard]] static response make_success_response(const request& request_value,
+                                                       status success_status,
+                                                       const Response& value,
+                                                       const std::shared_ptr<endpoint_state>& endpoint = {}) {
+      auto output = response{};
       if constexpr (detail::is_bytes_response_v<Response>) {
          auto body = std::string{reinterpret_cast<const char*>(value.bytes.data()), value.bytes.size()};
-         return make_text_response(request_value, value.status_code, std::move(body), value.content_type);
+         output = make_text_response(request_value, value.status_code, std::move(body), value.content_type);
       } else if constexpr (detail::is_empty_response_v<Response>) {
-         auto output = response{value.status_code, request_value.version()};
+         output = response{value.status_code, request_value.version()};
          output.prepare_payload();
          output.keep_alive(request_value.keep_alive());
-         return output;
       } else {
          auto encoded = fcl::json::write(value);
          if (!encoded.ok()) {
             FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API response cannot be encoded as JSON");
          }
-         return make_text_response(request_value, success_status, std::move(encoded.text), "application/json");
+         output = make_text_response(request_value, success_status, std::move(encoded.text), "application/json");
+         if (endpoint) {
+            output.result(endpoint_state_access::response(endpoint).result());
+         }
       }
+      merge_endpoint_headers(output, endpoint);
+      return output;
    }
 
    template <typename Response>
    static boost::asio::awaitable<stream_response> make_success_stream_response(const request& request_value,
                                                                                status success_status,
-                                                                               Response value) {
+                                                                               Response value,
+                                                                               const std::shared_ptr<endpoint_state>& endpoint = {}) {
+      auto output = stream_response{};
       if constexpr (std::is_same_v<std::remove_cvref_t<Response>, file_response>) {
-         co_return co_await std::move(value).materialize(request_value);
+         output = co_await std::move(value).materialize(request_value);
       } else if constexpr (detail::is_streaming_response_v<Response>) {
-         co_return std::move(value).materialize(request_value, success_status);
+         output = std::move(value).materialize(request_value, success_status);
       } else if constexpr (detail::is_stream_response_v<Response>) {
-         co_return std::move(value);
+         output = std::move(value);
       } else {
-         co_return stream_response::buffered(make_success_response(request_value, success_status, value));
+         output = stream_response::buffered(make_success_response(request_value, success_status, value, endpoint));
       }
+      merge_endpoint_headers(output.head, endpoint);
+      co_return output;
    }
 
    template <auto Method, typename Interface, typename Request, typename Response>
@@ -1434,28 +1459,40 @@ class api_builder {
                                                                      std::move(value));
                   } else {
                      auto request = co_await make_request_from_stream<Request>(request_value, options);
+                     auto endpoint = make_endpoint_state<Request>(request_value.context.request, options.success_status);
+                     attach_endpoint_state(request, endpoint);
                      auto value =
                         co_await invoke_local<Method, interface_type, Request, Response>(plan, std::move(request));
                      co_return co_await make_success_stream_response(request_value.context.request,
-                                                                     options.success_status, std::move(value));
+                                                                     options.success_status, std::move(value), endpoint);
                   }
                } catch (const fcl::http::exceptions::unsupported_media_type& error) {
-                  co_return buffered(make_text_response(
-                     request_value.context.request, status::unsupported_media_type,
-                     std::string{"{\"error\":\"unsupported_media_type\",\"message\":\""} + json_escape(error.message()) +
-                        "\"}",
-                     "application/json"));
+                  co_return buffered(make_text_response(request_value.context.request, status::unsupported_media_type,
+                                                        encode_error_payload(fcl::api::error_payload{
+                                                           .error = "unsupported_media_type",
+                                                           .message = error.message(),
+                                                           .retryable = false,
+                                                           .status_code = static_cast<fcl::api::status>(
+                                                              status::unsupported_media_type),
+                                                           .identity =
+                                                              {
+                                                                 .category = "fcl.http",
+                                                                 .code = static_cast<std::uint32_t>(
+                                                                    status::unsupported_media_type),
+                                                              },
+                                                        }),
+                                                        "application/json"));
                } catch (const fcl::http::exceptions::bad_request& error) {
                   co_return buffered(make_validation_response(request_value.context.request, error.message()));
                } catch (const fcl::exceptions::base& error) {
                   if (method_descriptor != nullptr) {
                      const auto payload = fcl::api::project_error(*method_descriptor, error);
                      co_return buffered(make_text_response(request_value.context.request, http_status(payload.status_code),
-                                                           render_error(payload), "application/json"));
+                                                           encode_error_payload(payload), "application/json"));
                   }
                   const auto payload = fcl::api::make_internal_error_payload();
                   co_return buffered(make_text_response(request_value.context.request, http_status(payload.status_code),
-                                                        render_error(payload), "application/json"));
+                                                        encode_error_payload(payload), "application/json"));
                }
             };
             switch (verb) {
@@ -1498,26 +1535,39 @@ class api_builder {
                      co_return make_success_response(context.request, options.success_status, value);
                   } else {
                      auto request = make_request_from_http<Request>(context, options);
+                     auto endpoint = make_endpoint_state<Request>(context.request, options.success_status);
+                     attach_endpoint_state(request, endpoint);
                      auto value =
                         co_await invoke_local<Method, interface_type, Request, Response>(plan, std::move(request));
-                     co_return make_success_response(context.request, options.success_status, value);
+                     co_return make_success_response(context.request, options.success_status, value, endpoint);
                   }
                } catch (const fcl::http::exceptions::unsupported_media_type& error) {
                   co_return make_text_response(context.request, status::unsupported_media_type,
-                                               std::string{"{\"error\":\"unsupported_media_type\",\"message\":\""} +
-                                                  json_escape(error.message()) + "\"}",
+                                               encode_error_payload(fcl::api::error_payload{
+                                                  .error = "unsupported_media_type",
+                                                  .message = error.message(),
+                                                  .retryable = false,
+                                                  .status_code = static_cast<fcl::api::status>(
+                                                     status::unsupported_media_type),
+                                                  .identity =
+                                                     {
+                                                        .category = "fcl.http",
+                                                        .code = static_cast<std::uint32_t>(
+                                                           status::unsupported_media_type),
+                                                     },
+                                               }),
                                                "application/json");
                } catch (const fcl::http::exceptions::bad_request& error) {
                   co_return make_validation_response(context.request, error.message());
                } catch (const fcl::exceptions::base& error) {
                   if (method_descriptor != nullptr) {
                      const auto payload = fcl::api::project_error(*method_descriptor, error);
-                     co_return make_text_response(context.request, http_status(payload.status_code), render_error(payload),
-                                                  "application/json");
+                     co_return make_text_response(context.request, http_status(payload.status_code),
+                                                  encode_error_payload(payload), "application/json");
                   }
                   const auto payload = fcl::api::make_internal_error_payload();
-                  co_return make_text_response(context.request, http_status(payload.status_code), render_error(payload),
-                                               "application/json");
+                  co_return make_text_response(context.request, http_status(payload.status_code),
+                                               encode_error_payload(payload), "application/json");
                }
             };
          switch (verb) {

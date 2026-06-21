@@ -73,6 +73,18 @@ struct multipart_form {
    [[nodiscard]] std::optional<std::string> field(std::string_view name) const;
 };
 
+struct multipart_writer_part {
+   std::string name;
+   std::optional<std::string> filename;
+   std::string content_type;
+   std::string body;
+};
+
+struct multipart_writer_result {
+   std::string content_type;
+   std::string body;
+};
+
 class upload_reader {
  public:
    explicit upload_reader(body_reader body, upload_options options = {});
@@ -87,5 +99,6 @@ class upload_reader {
 
 [[nodiscard]] std::optional<std::string> multipart_boundary(std::string_view content_type);
 [[nodiscard]] std::optional<std::string> sanitize_upload_filename(std::string_view filename);
+[[nodiscard]] multipart_writer_result write_multipart_form(std::vector<multipart_writer_part> parts);
 
 } // namespace fcl::http

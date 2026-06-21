@@ -29,7 +29,9 @@ fcl_asio::runtime
   -> fcl_websocket::client
 ```
 
-`fcl_http` owns HTTP request/response mechanics and route matching.
+`fcl_http` owns HTTP request/response mechanics and route matching. Public
+HTTP messages are `fcl::http::request` / `fcl::http::response`; Boost.Beast is
+the internal parser/serializer/socket mechanics donor.
 `fcl_websocket` owns bidirectional message connection mechanics. Product DTOs,
 authentication and business routing live above both.
 
@@ -97,7 +99,8 @@ strings or message bodies without explicit caller redaction.
 
 Accepted:
 
-- Boost.Beast request/response and close mechanics.
+- Boost.Beast parser/serializer, message behavior and close mechanics behind
+  FCL-owned request/response wrappers.
 - Per-connection serialized writes.
 - Shared HTTP Upgrade path for WebSocket.
 - Metrics snapshots for reconnect/queue behavior.

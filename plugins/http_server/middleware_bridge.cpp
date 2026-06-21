@@ -39,14 +39,35 @@ constexpr std::string_view stream_token_header = "X-FCL-Stream-Token";
    return fcl::http::middleware_phase::before_handler;
 }
 
+[[nodiscard]] std::string_view method_text(fcl::http::method value) noexcept {
+   switch (value) {
+   case fcl::http::method::delete_:
+      return "DELETE";
+   case fcl::http::method::get:
+      return "GET";
+   case fcl::http::method::head:
+      return "HEAD";
+   case fcl::http::method::options:
+      return "OPTIONS";
+   case fcl::http::method::patch:
+      return "PATCH";
+   case fcl::http::method::post:
+      return "POST";
+   case fcl::http::method::put:
+      return "PUT";
+   case fcl::http::method::unknown:
+      return "UNKNOWN";
+   }
+   return "UNKNOWN";
+}
+
 [[nodiscard]] middleware_request make_request(const fcl::http::route_context& context) {
    auto headers = std::vector<header_entry>{};
-   for (const auto& header : context.request) {
-      headers.push_back(header_entry{.name = std::string{header.name_string()},
-                                     .value = std::string{header.value()}});
+   for (const auto& header : context.request.headers()) {
+      headers.push_back(header_entry{.name = header.name, .value = header.text});
    }
    return middleware_request{
-      .method = std::string{context.request.method_string()},
+      .method = std::string{method_text(context.request.method())},
       .target = std::string{context.request.target()},
       .path = context.parsed_target.path,
       .headers = std::move(headers),
@@ -57,21 +78,21 @@ constexpr std::string_view stream_token_header = "X-FCL-Stream-Token";
    auto result = middleware_response{};
    detail::middleware_bridge_access::set_status(result, value.result());
    detail::middleware_bridge_access::set_body(result, std::move(value.body()));
-   for (const auto& header : value) {
-      if (header.name() == fcl::http::field::content_type) {
-         detail::middleware_bridge_access::set_content_type(result, std::string{header.value()});
+   for (const auto& header : value.headers()) {
+      if (header_name_equal(header.name, fcl::http::field_name(fcl::http::field::content_type))) {
+         detail::middleware_bridge_access::set_content_type(result, header.text);
          continue;
       }
-      if (header.name() == fcl::http::field::content_length ||
-          header.name() == fcl::http::field::transfer_encoding) {
+      if (header_name_equal(header.name, fcl::http::field_name(fcl::http::field::content_length)) ||
+          header_name_equal(header.name, fcl::http::field_name(fcl::http::field::transfer_encoding))) {
          continue;
       }
-      if (header_name_equal(header.name_string(), stream_token_header)) {
-         detail::middleware_bridge_access::set_stream_token(result, std::string{header.value()});
+      if (header_name_equal(header.name, stream_token_header)) {
+         detail::middleware_bridge_access::set_stream_token(result, header.text);
          continue;
       }
       detail::middleware_bridge_access::headers(result).push_back(
-         header_entry{.name = std::string{header.name_string()}, .value = std::string{header.value()}});
+         header_entry{.name = header.name, .value = header.text});
    }
    return result;
 }

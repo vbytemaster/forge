@@ -82,11 +82,88 @@ namespace test_api {
 
 namespace asio = boost::asio;
 namespace beast = boost::beast;
+namespace beast_http = boost::beast::http;
 namespace beast_websocket = boost::beast::websocket;
 using tcp = asio::ip::tcp;
 
 using raw_mount_step = std::function<void(fcl::http::router&, std::string_view)>;
 static_assert(!std::is_constructible_v<fcl::http::api_binding, std::vector<raw_mount_step>>);
+static_assert(!std::is_same_v<fcl::http::request, boost::beast::http::request<boost::beast::http::string_body>>);
+static_assert(!std::is_same_v<fcl::http::response, boost::beast::http::response<boost::beast::http::string_body>>);
+
+[[nodiscard]] method to_http_method(beast_http::verb value) noexcept {
+   switch (value) {
+   case beast_http::verb::delete_:
+      return method::delete_;
+   case beast_http::verb::get:
+      return method::get;
+   case beast_http::verb::head:
+      return method::head;
+   case beast_http::verb::options:
+      return method::options;
+   case beast_http::verb::patch:
+      return method::patch;
+   case beast_http::verb::post:
+      return method::post;
+   case beast_http::verb::put:
+      return method::put;
+   default:
+      return method::unknown;
+   }
+}
+
+[[nodiscard]] beast_http::verb to_beast_method(method value) noexcept {
+   switch (value) {
+   case method::delete_:
+      return beast_http::verb::delete_;
+   case method::get:
+      return beast_http::verb::get;
+   case method::head:
+      return beast_http::verb::head;
+   case method::options:
+      return beast_http::verb::options;
+   case method::patch:
+      return beast_http::verb::patch;
+   case method::post:
+      return beast_http::verb::post;
+   case method::put:
+      return beast_http::verb::put;
+   case method::unknown:
+      return beast_http::verb::unknown;
+   }
+   return beast_http::verb::unknown;
+}
+
+[[nodiscard]] request to_http_request(const beast_http::request<beast_http::string_body>& source) {
+   auto target = request{to_http_method(source.method()), std::string{source.target()}, source.version()};
+   target.keep_alive(source.keep_alive());
+   for (const auto& header : source) {
+      target.insert(header.name_string(), header.value());
+   }
+   target.body() = source.body();
+   return target;
+}
+
+[[nodiscard]] response to_http_response(const beast_http::response<beast_http::string_body>& source) {
+   auto target = response{static_cast<status>(source.result_int()), source.version()};
+   target.keep_alive(source.keep_alive());
+   for (const auto& header : source) {
+      target.insert(header.name_string(), header.value());
+   }
+   target.body() = source.body();
+   return target;
+}
+
+[[nodiscard]] beast_http::response<beast_http::string_body> to_beast_response(const response& source) {
+   auto target = beast_http::response<beast_http::string_body>{
+      static_cast<beast_http::status>(source.result_int()), source.version()};
+   target.keep_alive(source.keep_alive());
+   for (const auto& header : source.headers()) {
+      target.insert(header.name, header.text);
+   }
+   target.body() = source.body();
+   return target;
+}
 
 namespace api_errors {
 
@@ -233,6 +310,14 @@ struct json_stream_request {
    std::string value;
 };
 
+struct endpoint_control_request : fcl::http::endpoint_request {
+   std::string id;
+};
+
+struct endpoint_control_response {
+   std::string summary;
+};
+
 BOOST_DESCRIBE_STRUCT(api_read_chunk, (), ())
 BOOST_DESCRIBE_STRUCT(api_routed_read_chunk, (), (ref, offset, limit))
 BOOST_DESCRIBE_STRUCT(api_chunk, (), (bytes))
@@ -260,6 +345,8 @@ BOOST_DESCRIBE_STRUCT(control_response, (), (value))
 BOOST_DESCRIBE_STRUCT(default_header_request, (), (request_id, body))
 BOOST_DESCRIBE_STRUCT(default_header_response, (), (request_id, body, present))
 BOOST_DESCRIBE_STRUCT(json_stream_request, (), (id, value))
+BOOST_DESCRIBE_STRUCT(endpoint_control_request, (), (id))
+BOOST_DESCRIBE_STRUCT(endpoint_control_response, (), (summary))
 
 class api_cache : public fcl::api::contract<api_cache, fcl::api::surface::local | fcl::api::surface::remote> {
  public:
@@ -454,6 +541,16 @@ class json_stream_api : public fcl::api::contract<json_stream_api> {
    virtual boost::asio::awaitable<fcl::http::streaming_response> stream(json_stream_request request) = 0;
 };
 
+class endpoint_api : public fcl::api::contract<endpoint_api> {
+ public:
+   virtual ~endpoint_api() = default;
+
+   virtual boost::asio::awaitable<endpoint_control_response> current(endpoint_control_request request) = 0;
+   virtual boost::asio::awaitable<fcl::http::file_response> download(endpoint_control_request request) = 0;
+   virtual boost::asio::awaitable<fcl::http::streaming_response> stream(endpoint_control_request request) = 0;
+   virtual boost::asio::awaitable<fcl::http::empty_response> accepted(endpoint_control_request request) = 0;
+};
+
 } // namespace test_api
 } // namespace fcl::http
 
@@ -550,6 +647,16 @@ FCL_API(::fcl::http::test_api::default_header_api, FCL_API_CONTRACT("default-hea
 FCL_API(::fcl::http::test_api::json_stream_api, FCL_API_CONTRACT("json-stream", 1, 0),
         FCL_API_METHOD_TYPED(stream, ::fcl::http::test_api::json_stream_request,
                              ::fcl::http::streaming_response))
+
+FCL_API(::fcl::http::test_api::endpoint_api, FCL_API_CONTRACT("endpoint", 1, 0),
+        FCL_API_METHOD_TYPED(current, ::fcl::http::test_api::endpoint_control_request,
+                             ::fcl::http::test_api::endpoint_control_response),
+        FCL_API_METHOD_TYPED(download, ::fcl::http::test_api::endpoint_control_request,
+                             ::fcl::http::file_response),
+        FCL_API_METHOD_TYPED(stream, ::fcl::http::test_api::endpoint_control_request,
+                             ::fcl::http::streaming_response),
+        FCL_API_METHOD_TYPED(accepted, ::fcl::http::test_api::endpoint_control_request,
+                             ::fcl::http::empty_response))
 
 template <> struct fcl::schema::rules<::fcl::http::test_api::search_request> {
    [[nodiscard]] static fcl::schema::object_schema<::fcl::http::test_api::search_request> define() {
@@ -668,6 +775,12 @@ FCL_HTTP_API(::fcl::http::test_api::default_header_api,
 FCL_HTTP_API(::fcl::http::test_api::json_stream_api,
              FCL_HTTP_POST(stream, "/json-stream/:id", ok, FCL_HTTP_RESPONSE_STREAM))
 
+FCL_HTTP_API(::fcl::http::test_api::endpoint_api,
+             FCL_HTTP_GET(current, "/endpoint/:id"),
+             FCL_HTTP_GET(download, "/endpoint/:id/file", FCL_HTTP_RESPONSE_FILE),
+             FCL_HTTP_GET(stream, "/endpoint/:id/stream", FCL_HTTP_RESPONSE_STREAM),
+             FCL_HTTP_GET(accepted, "/endpoint/:id/accepted"))
+
 namespace fcl::api {
 
 template <> struct api_traits<::fcl::http::test_api::api_cache> {
@@ -704,6 +817,7 @@ namespace {
 
 namespace asio = boost::asio;
 namespace beast = boost::beast;
+namespace beast_http = boost::beast::http;
 namespace beast_websocket = boost::beast::websocket;
 using tcp = asio::ip::tcp;
 
@@ -733,6 +847,12 @@ using test_api::form_submit_request;
 using test_api::form_submit_response;
 using test_api::json_stream_api;
 using test_api::json_stream_request;
+using test_api::endpoint_api;
+using test_api::endpoint_control_request;
+using test_api::endpoint_control_response;
+using test_api::to_beast_response;
+using test_api::to_http_request;
+using test_api::to_http_response;
 using test_api::dto_bytes_request;
 using test_api::dto_ambiguous_body_api;
 using test_api::dto_ambiguous_body_request;
@@ -1118,6 +1238,53 @@ class json_stream_api_impl final : public json_stream_api {
    }
 };
 
+class endpoint_api_impl final : public endpoint_api {
+ public:
+   explicit endpoint_api_impl(std::filesystem::path root) : root_{std::move(root)} {}
+
+   boost::asio::awaitable<endpoint_control_response> current(endpoint_control_request request) override {
+      request.response().set("X-Endpoint-Id", request.id);
+      request.response().set_cookie("endpoint", request.id);
+      const auto trace = request.request().header("X-Trace").value_or("missing-trace");
+      co_return endpoint_control_response{
+         .summary = request.id + ":" + std::string{request.request().target()} + ":" + std::string{trace},
+      };
+   }
+
+   boost::asio::awaitable<fcl::http::file_response> download(endpoint_control_request request) override {
+      request.response().set("X-Endpoint-File", request.id);
+      co_return fcl::http::file_response::from_path(root_ / "asset.txt",
+                                                    fcl::http::file_options{.content_type = "text/plain"});
+   }
+
+   boost::asio::awaitable<fcl::http::streaming_response> stream(endpoint_control_request request) override {
+      request.response().set("X-Endpoint-Stream", request.id);
+      auto text = std::make_shared<std::string>("stream:" + request.id);
+      co_return fcl::http::streaming_response::from_source(
+         fcl::http::streaming_response_options{
+            .content_type = "text/plain",
+            .body =
+               [text, sent = false]() mutable -> boost::asio::awaitable<std::optional<fcl::http::body_chunk>> {
+                  if (sent) {
+                     co_return std::nullopt;
+                  }
+                  sent = true;
+                  auto bytes = std::vector<std::byte>(text->size());
+                  std::memcpy(bytes.data(), text->data(), text->size());
+                  co_return fcl::http::body_chunk{.bytes = std::move(bytes)};
+               },
+         });
+   }
+
+   boost::asio::awaitable<fcl::http::empty_response> accepted(endpoint_control_request request) override {
+      request.response().set("X-Endpoint-Empty", request.id);
+      co_return fcl::http::empty_response{.status_code = status::accepted};
+   }
+
+ private:
+   std::filesystem::path root_;
+};
+
 class form_api_impl final : public form_api {
  public:
    boost::asio::awaitable<form_submit_response> submit(form_submit_request request) override {
@@ -1257,12 +1424,12 @@ response raw_http_exchange(std::uint16_t port, std::string request_text,
    asio::write(stream.socket(), asio::buffer(request_text));
 
    auto buffer = beast::flat_buffer{};
-   auto response_value = response{};
-   boost::beast::http::read(stream, buffer, response_value);
+   auto beast_response = beast_http::response<beast_http::string_body>{};
+   beast_http::read(stream, buffer, beast_response);
    if (hold_after_read.count() != 0) {
       std::this_thread::sleep_for(hold_after_read);
    }
-   return response_value;
+   return to_http_response(beast_response);
 }
 
 response handle(router& target, route_context& context) {
@@ -1419,12 +1586,14 @@ class flaky_server {
          acceptor_.accept(second);
          auto stream = beast::tcp_stream{std::move(second)};
          auto buffer = beast::flat_buffer{};
-         auto request_value = request{};
-         boost::beast::http::read(stream, buffer, request_value);
+         auto beast_request = beast_http::request<beast_http::string_body>{};
+         beast_http::read(stream, buffer, beast_request);
 
+         auto request_value = to_http_request(beast_request);
          auto response_value = make_text_response(request_value, status::ok, "retry-ok");
          response_value.keep_alive(false);
-         boost::beast::http::write(stream, response_value);
+         auto beast_response = to_beast_response(response_value);
+         beast_http::write(stream, beast_response);
          auto ignored = boost::system::error_code{};
          stream.socket().shutdown(tcp::socket::shutdown_send, ignored);
       } catch (...) {
@@ -1437,6 +1606,31 @@ class flaky_server {
    std::thread worker_;
    std::uint16_t port_ = 0;
 };
+
+BOOST_AUTO_TEST_CASE(http_request_response_copy_has_value_semantics) {
+   auto original_request = make_request(method::post, "/items");
+   original_request.set(field::content_type, "application/json");
+   original_request.body() = R"({"ok":true})";
+   auto copied_request = original_request;
+   copied_request.target(std::string{"/other"});
+   copied_request.set(field::content_type, "text/plain");
+   copied_request.body() = "changed";
+
+   BOOST_TEST(original_request.target() == "/items");
+   BOOST_TEST(original_request[field::content_type] == "application/json");
+   BOOST_TEST(original_request.body() == R"({"ok":true})");
+
+   auto original_response = make_text_response(original_request, status::accepted, "accepted");
+   auto copied_response = original_response;
+   copied_response.result(status::bad_request);
+   copied_response.set("X-Copy", "yes");
+   copied_response.body() = "bad";
+
+   BOOST_TEST(original_response.result() == status::accepted);
+   const auto copy_header_absent = original_response.find("X-Copy") == original_response.end();
+   BOOST_TEST(copy_header_absent);
+   BOOST_TEST(original_response.body() == "accepted");
+}
 
 BOOST_AUTO_TEST_CASE(base_url_parses_https_origin_and_base_path) {
    const auto parsed = parse_base_url("https://node.example.com:9443/api");
@@ -1577,8 +1771,19 @@ BOOST_AUTO_TEST_CASE(router_escapes_control_bytes_in_exception_json) {
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::bad_request));
    BOOST_TEST(response[field::content_type] == "application/json");
-   BOOST_TEST(response.body().find("\\u0001") != std::string::npos);
-   BOOST_TEST(response.body().find("\\u0008") != std::string::npos);
+   const auto parsed = fcl::json::read_value(response.body());
+   BOOST_REQUIRE(parsed.ok());
+   BOOST_TEST(parsed.value.get_object()["error"].get_string() == "bad_request");
+   auto contains_raw_control = false;
+   for (const auto character : response.body()) {
+      const auto byte = static_cast<unsigned char>(character);
+      contains_raw_control = contains_raw_control || (byte < 0x20U);
+   }
+   BOOST_TEST(!contains_raw_control);
+   BOOST_TEST(response.body().find("\\u0000") != std::string::npos);
+   const auto escaped_backspace =
+       response.body().find("\\b") != std::string::npos || response.body().find("\\u0008") != std::string::npos;
+   BOOST_TEST(escaped_backspace);
 }
 
 BOOST_AUTO_TEST_CASE(router_rejects_duplicate_routes_before_serving) {
@@ -1694,10 +1899,16 @@ BOOST_AUTO_TEST_CASE(http_api_binding_escapes_json_error_fields) {
    const auto response = handle(router, context);
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::not_found));
-   BOOST_TEST(response.body().find(R"(chunk \"missing\"\n\u0008\u0000not found)") != std::string::npos);
-   BOOST_TEST(response.body().find('\n') == std::string::npos);
-   BOOST_TEST(response.body().find('\b') == std::string::npos);
-   BOOST_TEST(response.body().find('\0') == std::string::npos);
+   const auto parsed = fcl::json::read_value(response.body());
+   BOOST_REQUIRE(parsed.ok());
+   const auto& message = parsed.value.get_object()["message"].get_string();
+   BOOST_TEST(message.find("chunk \"missing\"") != std::string::npos);
+   BOOST_TEST(message.find("not found") != std::string::npos);
+   auto contains_raw_control = false;
+   for (const auto character : response.body()) {
+      contains_raw_control = contains_raw_control || static_cast<unsigned char>(character) < 0x20U;
+   }
+   BOOST_TEST(!contains_raw_control);
 }
 
 BOOST_AUTO_TEST_CASE(http_api_binding_passes_put_body_to_typed_api) {
@@ -1852,6 +2063,51 @@ BOOST_AUTO_TEST_CASE(http_dto_parameters_bind_query_header_cookie_and_body) {
       }));
 
    BOOST_TEST(response.summary == "chunk-1:9:trace-123:session-7:payload");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_endpoint_request_injects_request_and_response_state) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto directory = temp_directory{};
+   directory.write("asset.txt", "file-body");
+
+   auto apis = fcl::api::registry{};
+   apis.install<endpoint_api>(endpoint_api::describe(), std::make_shared<endpoint_api_impl>(directory.path()));
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<endpoint_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto connection = fcl::http::connection{
+      runtime,
+      parse_base_url("http://127.0.0.1:" + std::to_string(server.port())),
+   };
+
+   auto current_request = make_request(method::get, "/endpoint/abc");
+   current_request.set("X-Trace", "trace-1");
+   auto current = fcl::asio::blocking::run(runtime, connection.async_request(std::move(current_request)));
+   auto decoded = fcl::json::read<endpoint_control_response>(current.body());
+   BOOST_REQUIRE(decoded.ok());
+   BOOST_TEST(decoded.value.summary == "abc:/endpoint/abc:trace-1");
+   BOOST_TEST(current["X-Endpoint-Id"] == "abc");
+   BOOST_TEST(current["Set-Cookie"].find("endpoint=abc") != std::string::npos);
+
+   auto file = fcl::asio::blocking::run(runtime, connection.async_request(make_request(method::get, "/endpoint/abc/file")));
+   BOOST_TEST(file.body() == "file-body");
+   BOOST_TEST(file["X-Endpoint-File"] == "abc");
+
+   auto stream = fcl::asio::blocking::run(runtime, connection.async_request(make_request(method::get, "/endpoint/abc/stream")));
+   BOOST_TEST(stream.body() == "stream:abc");
+   BOOST_TEST(stream["X-Endpoint-Stream"] == "abc");
+
+   auto accepted =
+      fcl::asio::blocking::run(runtime, connection.async_request(make_request(method::get, "/endpoint/abc/accepted")));
+   BOOST_TEST(accepted.result() == status::accepted);
+   BOOST_TEST(accepted["X-Endpoint-Empty"] == "abc");
 
    server.stop();
 }
@@ -2335,7 +2591,7 @@ BOOST_AUTO_TEST_CASE(http_empty_response_frames_keep_alive_body_capable_status) 
       "\r\n"}));
 
    auto buffer = beast::flat_buffer{};
-   auto first_parser = boost::beast::http::response_parser<string_body>{};
+   auto first_parser = beast_http::response_parser<beast_http::string_body>{};
    first_parser.skip(true);
    auto read_error = boost::system::error_code{};
    stream.expires_after(std::chrono::milliseconds{500});
@@ -2345,8 +2601,8 @@ BOOST_AUTO_TEST_CASE(http_empty_response_frames_keep_alive_body_capable_status) 
    const auto& first = first_parser.get();
    BOOST_TEST(first.result_int() == static_cast<unsigned>(status::accepted));
    BOOST_TEST(first.keep_alive());
-   BOOST_TEST(first[field::content_length] == "0");
-   BOOST_TEST(first[field::content_type].empty());
+   BOOST_TEST(first["Content-Length"] == "0");
+   BOOST_TEST(first["Content-Type"].empty());
 
    asio::write(stream.socket(), asio::buffer(std::string{
       "GET /controls/abc/bytes HTTP/1.1\r\n"
@@ -2354,9 +2610,10 @@ BOOST_AUTO_TEST_CASE(http_empty_response_frames_keep_alive_body_capable_status) 
       "Connection: close\r\n"
       "\r\n"}));
 
-   auto second = response{};
+   auto beast_second = beast_http::response<beast_http::string_body>{};
    stream.expires_after(std::chrono::seconds{2});
-   boost::beast::http::read(stream, buffer, second);
+   beast_http::read(stream, buffer, beast_second);
+   auto second = to_http_response(beast_second);
    BOOST_TEST(second.result_int() == static_cast<unsigned>(status::ok));
    BOOST_TEST(second.body() == "bytes:abc");
 
@@ -3076,10 +3333,11 @@ BOOST_AUTO_TEST_CASE(server_keep_alive_gap_uses_idle_timeout) {
       "GET /first HTTP/1.1\r\n"
       "Host: 127.0.0.1\r\n"
       "Connection: keep-alive\r\n"
-      "\r\n"}));
+   "\r\n"}));
    auto buffer = beast::flat_buffer{};
-   auto first = response{};
-   boost::beast::http::read(stream, buffer, first);
+   auto beast_first = beast_http::response<beast_http::string_body>{};
+   beast_http::read(stream, buffer, beast_first);
+   auto first = to_http_response(beast_first);
    BOOST_TEST(first.result_int() == static_cast<unsigned>(status::ok));
    BOOST_TEST(first.keep_alive());
 
@@ -3092,9 +3350,9 @@ BOOST_AUTO_TEST_CASE(server_keep_alive_gap_uses_idle_timeout) {
       "\r\n"}), write_error);
 
    auto read_error = boost::system::error_code{};
-   auto second = response{};
+   auto second = beast_http::response<beast_http::string_body>{};
    stream.expires_after(std::chrono::milliseconds{500});
-   boost::beast::http::read(stream, buffer, second, read_error);
+   beast_http::read(stream, buffer, second, read_error);
 
    BOOST_TEST(read_error != boost::system::error_code{});
    BOOST_TEST(requests->load() == 1U);
@@ -3124,10 +3382,11 @@ BOOST_AUTO_TEST_CASE(server_async_stop_cancels_active_keep_alive_sessions) {
       "GET /first HTTP/1.1\r\n"
       "Host: 127.0.0.1\r\n"
       "Connection: keep-alive\r\n"
-      "\r\n"}));
+   "\r\n"}));
    auto buffer = beast::flat_buffer{};
-   auto first = response{};
-   boost::beast::http::read(stream, buffer, first);
+   auto beast_first = beast_http::response<beast_http::string_body>{};
+   beast_http::read(stream, buffer, beast_first);
+   auto first = to_http_response(beast_first);
    BOOST_TEST(first.result_int() == static_cast<unsigned>(status::ok));
    BOOST_TEST(first.keep_alive());
 
@@ -3140,9 +3399,9 @@ BOOST_AUTO_TEST_CASE(server_async_stop_cancels_active_keep_alive_sessions) {
       "\r\n"}), write_error);
 
    auto read_error = boost::system::error_code{};
-   auto second = response{};
+   auto second = beast_http::response<beast_http::string_body>{};
    stream.expires_after(std::chrono::milliseconds{500});
-   boost::beast::http::read(stream, buffer, second, read_error);
+   beast_http::read(stream, buffer, second, read_error);
 
    BOOST_TEST(read_error != boost::system::error_code{});
    BOOST_TEST(requests->load() == 1U);
@@ -3204,18 +3463,18 @@ BOOST_AUTO_TEST_CASE(server_stop_waits_for_executor_work_before_returning) {
    BOOST_TEST(stop_returned.load());
 
    auto buffer = beast::flat_buffer{};
-   auto response_value = response{};
+   auto response_value = beast_http::response<beast_http::string_body>{};
    auto read_error = boost::system::error_code{};
    stream.expires_after(std::chrono::milliseconds{500});
-   boost::beast::http::read(stream, buffer, response_value, read_error);
+   beast_http::read(stream, buffer, response_value, read_error);
    if (!read_error) {
       asio::write(stream.socket(), asio::buffer(std::string{
          "GET /after-stop HTTP/1.1\r\n"
          "Host: 127.0.0.1\r\n"
          "\r\n"}), read_error);
-      auto after_stop = response{};
+      auto after_stop = beast_http::response<beast_http::string_body>{};
       stream.expires_after(std::chrono::milliseconds{500});
-      boost::beast::http::read(stream, buffer, after_stop, read_error);
+      beast_http::read(stream, buffer, after_stop, read_error);
    }
    BOOST_TEST(read_error != boost::system::error_code{});
 }
@@ -3968,6 +4227,36 @@ BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_extracts_fields_and_files) {
    BOOST_TEST(form.files.front().content_type == "text/plain");
    BOOST_TEST(!form.files.front().in_memory());
    BOOST_TEST(form.files.front().text() == "abcdefghi");
+}
+
+BOOST_AUTO_TEST_CASE(http_multipart_writer_generates_safe_boundaries_and_quoted_headers) {
+   auto runtime = fcl::asio::runtime{};
+   const auto payload = std::string{"alpha\r\n--fcl-http-boundary\r\nomega"};
+   auto written = write_multipart_form({
+      multipart_writer_part{.name = "title", .body = payload},
+      multipart_writer_part{
+         .name = "file",
+         .filename = std::string{"..\\secret\"\r\nX-Injected: yes.txt"},
+         .content_type = "text/plain",
+         .body = "file-body",
+      },
+   });
+
+   BOOST_TEST(written.content_type.find("fcl-http-boundary") == std::string::npos);
+   BOOST_TEST(written.body.find("\r\nX-Injected:") == std::string::npos);
+
+   const auto boundary = multipart_boundary(written.content_type);
+   BOOST_REQUIRE(boundary.has_value());
+   auto reader = upload_reader{make_body_reader({written.body}), upload_options{.max_total_bytes = 4096}};
+   const auto form = fcl::asio::blocking::run(runtime, reader.async_read_multipart(written.content_type));
+
+   const auto title = form.field("title");
+   BOOST_REQUIRE(title.has_value());
+   BOOST_TEST(*title == payload);
+   BOOST_REQUIRE_EQUAL(form.files.size(), 1U);
+   BOOST_TEST(form.files.front().name == "file");
+   BOOST_TEST(form.files.front().content_type == "text/plain");
+   BOOST_TEST(form.files.front().text() == "file-body");
 }
 
 BOOST_AUTO_TEST_CASE(http_upload_reader_rejects_malformed_multipart_boundary) {

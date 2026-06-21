@@ -25,6 +25,7 @@ export module fcl.http.proxy;
 import fcl.api.connection;
 import fcl.api.descriptor;
 import fcl.api.error_projection;
+import fcl.api.types;
 export import fcl.api.handle;
 import fcl.http.body;
 import fcl.http.binding;
@@ -44,101 +45,25 @@ template <typename Interface> class proxy;
 
 namespace detail {
 
-[[nodiscard]] inline std::optional<std::string> json_string_field(std::string_view text, std::string_view field) {
-   const auto needle = std::string{"\""} + std::string{field} + "\":\"";
-   const auto start = text.find(needle);
-   if (start == std::string_view::npos) {
-      return std::nullopt;
-   }
-   auto index = start + needle.size();
-   auto output = std::string{};
-   while (index != text.size()) {
-      const auto current = text[index++];
-      if (current == '"') {
-         return output;
-      }
-      if (current != '\\' || index == text.size()) {
-         output.push_back(current);
-         continue;
-      }
-      const auto escaped = text[index++];
-      switch (escaped) {
-      case '"':
-      case '\\':
-         output.push_back(escaped);
-         break;
-      case 'n':
-         output.push_back('\n');
-         break;
-      case 'r':
-         output.push_back('\r');
-         break;
-      case 't':
-         output.push_back('\t');
-         break;
-      case 'u':
-         if (index + 4U <= text.size() && text[index] == '0' && text[index + 1U] == '0') {
-            auto value = 0U;
-            for (auto offset = 2U; offset != 4U; ++offset) {
-               const auto ch = text[index + offset];
-               value <<= 4U;
-               if (ch >= '0' && ch <= '9') {
-                  value += static_cast<unsigned>(ch - '0');
-               } else if (ch >= 'a' && ch <= 'f') {
-                  value += static_cast<unsigned>(ch - 'a' + 10);
-               } else if (ch >= 'A' && ch <= 'F') {
-                  value += static_cast<unsigned>(ch - 'A' + 10);
-               }
-            }
-            output.push_back(static_cast<char>(value));
-            index += 4U;
-         }
-         break;
-      default:
-         output.push_back(escaped);
-         break;
-      }
-   }
-   return std::nullopt;
-}
-
-[[nodiscard]] inline bool json_bool_field(std::string_view text, std::string_view field) {
-   const auto needle = std::string{"\""} + std::string{field} + "\":";
-   const auto start = text.find(needle);
-   if (start == std::string_view::npos) {
-      return false;
-   }
-   const auto value = text.substr(start + needle.size());
-   return value.starts_with("true");
-}
-
-[[nodiscard]] inline std::uint32_t json_identity_code(std::string_view text) {
-   const auto needle = std::string{"\"code\":"};
-   const auto start = text.rfind(needle);
-   if (start == std::string_view::npos) {
-      return static_cast<std::uint32_t>(fcl::api::exceptions::code::remote_internal);
-   }
-   auto index = start + needle.size();
-   auto value = std::uint32_t{0};
-   while (index != text.size() && std::isdigit(static_cast<unsigned char>(text[index])) != 0) {
-      value = (value * 10U) + static_cast<std::uint32_t>(text[index] - '0');
-      ++index;
-   }
-   return value;
-}
-
 [[nodiscard]] inline fcl::api::error_payload parse_error_payload(const response& value) {
-   const auto body = std::string_view{value.body()};
+   auto decoded = fcl::json::read<fcl::api::error_payload>(
+      value.body(), fcl::json::read_options{.source_name = "http.error",
+                                            .unknown_fields = fcl::json::unknown_field_policy::ignore});
+   if (decoded.ok()) {
+      auto payload = std::move(decoded.value);
+      payload.status_code = static_cast<fcl::api::status>(value.result_int());
+      return payload;
+   }
    return fcl::api::error_payload{
-       .error = json_string_field(body, "error").value_or("http_error"),
-       .message = json_string_field(body, "message").value_or("HTTP API request failed"),
-       .retryable = json_bool_field(body, "retryable"),
-       .status_code = static_cast<fcl::api::status>(value.result_int()),
-       .identity =
-           {
-               .category = json_string_field(body, "category").value_or("fcl.api"),
-               .code = json_identity_code(body),
-           },
+      .error = "http_error",
+      .message = value.body().empty() ? "HTTP API request failed" : value.body(),
+      .retryable = false,
+      .status_code = static_cast<fcl::api::status>(value.result_int()),
+      .identity =
+         {
+            .category = "fcl.api",
+            .code = static_cast<std::uint32_t>(fcl::api::exceptions::code::remote_internal),
+         },
    };
 }
 
@@ -743,56 +668,30 @@ std::optional<std::string> dto_json_body(Request& value) {
    return result;
 }
 
-inline void append_multipart_text(std::string& body, std::string_view value) {
-   body.append(value.data(), value.size());
-}
-
-inline void append_multipart_bytes(std::string& body, const std::vector<std::byte>& bytes) {
-   body.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-}
-
 template <typename Request>
 std::optional<std::string> dto_multipart_body(request& target, const api_route& route, const Request& value) {
-   auto body = std::string{};
-   auto has_part = false;
-   constexpr auto boundary = std::string_view{"fcl-http-boundary"};
+   auto parts = std::vector<multipart_writer_part>{};
 
    auto append_field = [&](std::string_view name, std::string_view text) {
-      has_part = true;
-      body += "--";
-      append_multipart_text(body, boundary);
-      body += "\r\nContent-Disposition: form-data; name=\"";
-      append_multipart_text(body, name);
-      body += "\"\r\n\r\n";
-      append_multipart_text(body, text);
-      body += "\r\n";
+      parts.push_back(multipart_writer_part{
+         .name = std::string{name},
+         .body = std::string{text},
+      });
    };
 
    auto append_file = [&](std::string_view name, const upload_part& part) {
-      has_part = true;
-      body += "--";
-      append_multipart_text(body, boundary);
-      body += "\r\nContent-Disposition: form-data; name=\"";
-      append_multipart_text(body, name);
-      body += "\"";
-      if (part.filename.has_value()) {
-         body += "; filename=\"";
-         append_multipart_text(body, *part.filename);
-         body += "\"";
-      }
-      body += "\r\n";
-      if (!part.content_type.empty()) {
-         body += "Content-Type: ";
-         append_multipart_text(body, part.content_type);
-         body += "\r\n";
-      }
-      body += "\r\n";
+      auto body = std::string{};
       if (!part.memory.empty()) {
-         append_multipart_bytes(body, part.memory);
+         body.assign(reinterpret_cast<const char*>(part.memory.data()), part.memory.size());
       } else {
-         append_multipart_text(body, part.text());
+         body = part.text();
       }
-      body += "\r\n";
+      parts.push_back(multipart_writer_part{
+         .name = std::string{name},
+         .filename = part.filename,
+         .content_type = part.content_type,
+         .body = std::move(body),
+      });
    };
 
    if constexpr (fcl::reflect::is_described_object_v<Request>) {
@@ -817,14 +716,12 @@ std::optional<std::string> dto_multipart_body(request& target, const api_route& 
       });
    }
 
-   if (!has_part) {
+   if (parts.empty()) {
       return std::nullopt;
    }
-   body += "--";
-   append_multipart_text(body, boundary);
-   body += "--\r\n";
-   target.set(field::content_type, std::string{"multipart/form-data; boundary="} + std::string{boundary});
-   return body;
+   auto multipart = write_multipart_form(std::move(parts));
+   target.set(field::content_type, multipart.content_type);
+   return std::move(multipart.body);
 }
 
 template <typename Request>

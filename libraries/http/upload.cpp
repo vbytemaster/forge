@@ -1,6 +1,7 @@
 module;
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cerrno>
 #include <chrono>
@@ -697,6 +698,81 @@ std::optional<std::string> sanitize_upload_filename(std::string_view filename) {
       return std::nullopt;
    }
    return output;
+}
+
+std::string quote_multipart_parameter(std::string_view value) {
+   auto output = std::string{};
+   output.reserve(value.size());
+   for (const auto character : value) {
+      if (character == '"' || character == '\\') {
+         output.push_back('\\');
+         output.push_back(character);
+      } else if (character == '\r' || character == '\n') {
+         output.push_back('_');
+      } else {
+         output.push_back(character);
+      }
+   }
+   return output;
+}
+
+bool multipart_body_contains_boundary(const std::vector<multipart_writer_part>& parts, std::string_view boundary) {
+   for (const auto& part : parts) {
+      if (part.body.find(boundary) != std::string::npos) {
+         return true;
+      }
+   }
+   return false;
+}
+
+std::string generate_multipart_boundary(const std::vector<multipart_writer_part>& parts) {
+   static auto next = std::atomic<std::uint64_t>{0};
+   for (;;) {
+      const auto value = next.fetch_add(1U, std::memory_order_relaxed) + 1U;
+      auto boundary = std::string{"fcl-http-"};
+      boundary += std::to_string(
+         static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
+      boundary += '-';
+      boundary += std::to_string(value);
+      if (!multipart_body_contains_boundary(parts, boundary)) {
+         return boundary;
+      }
+   }
+}
+
+multipart_writer_result write_multipart_form(std::vector<multipart_writer_part> parts) {
+   const auto boundary = generate_multipart_boundary(parts);
+   auto body = std::string{};
+
+   for (const auto& part : parts) {
+      body += "--";
+      body += boundary;
+      body += "\r\nContent-Disposition: form-data; name=\"";
+      body += quote_multipart_parameter(part.name);
+      body += "\"";
+      if (part.filename.has_value()) {
+         body += "; filename=\"";
+         body += quote_multipart_parameter(*part.filename);
+         body += "\"";
+      }
+      body += "\r\n";
+      if (!part.content_type.empty()) {
+         body += "Content-Type: ";
+         body += part.content_type;
+         body += "\r\n";
+      }
+      body += "\r\n";
+      body += part.body;
+      body += "\r\n";
+   }
+
+   body += "--";
+   body += boundary;
+   body += "--\r\n";
+   return multipart_writer_result{
+      .content_type = std::string{"multipart/form-data; boundary="} + boundary,
+      .body = std::move(body),
+   };
 }
 
 } // namespace fcl::http

@@ -635,7 +635,7 @@ std::optional<std::string> dto_body_bytes(Request& value) {
 }
 
 template <typename Request>
-std::optional<std::string> dto_json_body(Request& value) {
+std::optional<std::string> dto_json_body(Request& value, bool allow_whole_request_body) {
    auto result = std::optional<std::string>{};
    if constexpr (fcl::reflect::is_described_object_v<Request>) {
       fcl::reflect::for_each_member<Request>([&](const char*, auto member) {
@@ -657,7 +657,7 @@ std::optional<std::string> dto_json_body(Request& value) {
       });
    }
    if constexpr (!detail::request_has_http_parameter_v<Request>) {
-      if (!result.has_value()) {
+      if (!result.has_value() && allow_whole_request_body) {
          auto encoded = fcl::json::write(value);
          if (!encoded.ok()) {
             FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API request cannot be encoded as JSON");
@@ -743,7 +743,8 @@ std::optional<body_reader> bind_dto_request_body(request& target, const api_rout
    if (multipart_body.has_value()) {
       ++body_count;
    }
-   auto json_body = dto_json_body(value);
+   const auto allow_whole_request_body = route.verb != method::delete_;
+   auto json_body = dto_json_body(value, allow_whole_request_body);
    if (json_body.has_value()) {
       ++body_count;
    }

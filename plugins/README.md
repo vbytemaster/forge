@@ -63,7 +63,7 @@ local-only typed publish API. Application plugins contribute
 `FCL_HTTP_API` interfaces through `publish<Interface>()` and middleware before
 startup; the server plugin mounts them under the configured or per-publish
 base path and then starts the HTTP server. Direct `fcl::http::router` or
-`fcl::http::api_binding` mounting belongs to applications that intentionally own
+`fcl::http::api::binding_plan` mounting belongs to applications that intentionally own
 the low-level `fcl_http` server, not to the official plugin surface.
 
 Config section `http-server` is schema-driven:

@@ -223,7 +223,8 @@ class p2p_node {
 - API binding builders must not expose decorative options. Every public option
   such as codec, frame size, max inflight, deadline, peer policy or middleware
   must affect runtime behavior and be covered by tests.
-- HTTP-specific middleware belongs to `fcl.http.api`/router composition.
+- HTTP-specific middleware belongs to `fcl_http` router composition or the
+  `http_server` plugin facade.
   Protocol-neutral trace/authz/metrics/limits logic belongs to
   `fcl::api::interceptor(...)`.
 - Do not create `libraries/network`, legacy net-prefixed target, module, or namespace forms.

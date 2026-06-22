@@ -28,7 +28,7 @@ Use this before creating or reshaping an official FCL plugin.
 - API exposes typed local contracts only.
 - API must not become a mini plugin: no `configure`, `startup`, `shutdown`, `request_stop`, raw route mutation, raw server mutation, diagnostics/status unless that is the plugin's explicit domain.
 - Prefer `publish<Interface>()`, `remote<T>()`, `subscribe(...)`, `sign(...)` style capabilities over raw backend access.
-- Do not expose `fcl::http::router`, raw `fcl::http::api_binding` publication, `get/post/put/del` route APIs, or backend internals from infrastructure plugin APIs.
+- Do not expose `fcl::http::router`, raw `fcl::http::api::binding_plan` publication, `get/post/put/del` route APIs, or backend internals from infrastructure plugin APIs.
 - Register API contracts with `FCL_API(...)`; use `FCL_API_METHOD_TYPED(...)` for overloaded methods.
 
 ## Config

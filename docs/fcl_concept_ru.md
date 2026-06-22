@@ -609,7 +609,7 @@ import fcl.http.connection;
 import fcl.http.client;
 import fcl.http.router;
 import fcl.http.server;
-import fcl.http.api;
+import fcl.http.api.binding;
 ```
 
 Пример:

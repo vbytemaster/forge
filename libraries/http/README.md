@@ -36,9 +36,7 @@ still owns HTTP mechanics; the plugin owns app lifecycle/config composition.
   parsing.
 - `fcl.http.base_url`, `fcl.http.target`.
 - `fcl.http.router`, `fcl.http.route_context`, `fcl.http.middleware`.
-- `fcl.http.api`, `fcl.http.mapping`, `fcl.http.proxy`.
 - `fcl.http.client`, `fcl.http.connection`, `fcl.http.server`.
-- Macro header: `<fcl/http/macros.hpp>` for `FCL_HTTP_API(...)`.
 
 Target: `fcl_http`.
 
@@ -48,6 +46,11 @@ Boost.Asio, Boost.Beast, Boost.URL, OpenSSL.
 Boost.Beast remains the runtime donor and backend for parser/serializer/socket
 mechanics, but public HTTP APIs use `fcl::http::request` and
 `fcl::http::response` wrappers rather than Beast message aliases.
+
+Typed `FCL_HTTP_API(...)` route binding lives in the separate `fcl_http_api`
+target/component. Its public modules are `fcl.http.api.binding`,
+`fcl.http.api.mapping` and `fcl.http.api.proxy`; its macro header is
+`<fcl/http_api/macros.hpp>`.
 
 ## Examples
 
@@ -231,13 +234,13 @@ The binding is a composable artifact; `build()` does not mutate the router.
 
 ```cpp
 #include <fcl/api/macros.hpp>
-#include <fcl/http/macros.hpp>
+#include <fcl/http_api/macros.hpp>
 
 import fcl.api.connection;
 import fcl.api.registry;
 import fcl.api.binding;
-import fcl.http.api;
-import fcl.http.proxy;
+import fcl.http.api.binding;
+import fcl.http.api.proxy;
 import fcl.http.router;
 
 struct read_chunk {
@@ -281,7 +284,7 @@ auto plan = fcl::api::binding()
    .export_api<cache>()
    .build();
 
-auto binding = fcl::http::api()
+auto binding = fcl::http::api::binding()
    .use(plan)
    .bind<cache>()
    .build();
@@ -349,7 +352,7 @@ the existing route options such as `FCL_HTTP_HEADER(field, "Wire-Name")` or
 The same typed client call builds the HTTP request:
 
 ```cpp
-auto objects = co_await fcl::http::remote<object_api>(client);
+auto objects = co_await fcl::http::api::remote<object_api>(client);
 auto receipt = co_await objects->put_object({
    .bucket = "cache",
    .key = "chunk-1",
@@ -399,7 +402,7 @@ Typed API bindings should contribute middleware through the binding artifact so
 route plugins can be composed before the server starts:
 
 ```cpp
-auto binding = fcl::http::api()
+auto binding = fcl::http::api::binding()
    .use(plan)
    .middleware(fcl::http::middleware_descriptor{
       .id = "cache.authz",
@@ -468,10 +471,10 @@ boost::asio::awaitable<void> check_ready(fcl::http::client& client) {
 
 import fcl.api.handle;
 import fcl.http.client;
-import fcl.http.proxy;
+import fcl.http.api.proxy;
 
 boost::asio::awaitable<void> read_chunk(fcl::http::client& client) {
-   fcl::api::handle<cache> cache_api = co_await fcl::http::remote<cache>(client);
+   fcl::api::handle<cache> cache_api = co_await fcl::http::api::remote<cache>(client);
    chunk value = co_await cache_api->read({
       .ref = "abc",
       .offset = 0,
@@ -548,7 +551,7 @@ limits/timeouts apply while chunks are read.
   mapping where HTTP is the transport.
 - Do not force file upload/download through `FCL_API`; use stream routes and the
   file/upload helper layers.
-- Do not hide server bind/TLS/lifecycle in `fcl.http.api`; the API builder owns
+- Do not hide server bind/TLS/lifecycle in `fcl.http.api.binding`; the API builder owns
   route mapping, API middleware, status projection and error payloads only.
 - Do not add HTTP API builder options unless they change runtime behavior and
   have tests.

@@ -229,8 +229,9 @@ auto plan = fcl::api::binding()
    .build();
 ```
 
-HTTP-specific request middleware stays in `fcl.http.api::middleware(...)`;
-API interceptors do not parse HTTP headers, routes or upgrade state.
+HTTP-specific request middleware stays in `fcl_http` or the `http_server`
+plugin facade; API interceptors do not parse HTTP headers, routes or upgrade
+state.
 
 ## Error Payload
 
@@ -275,7 +276,7 @@ the remote category/code preserved as redacted-safe context.
 - Do not silently choose the first API implementation when version checks fail.
 - Do not expose stack traces, secrets or capture context in network payloads.
 - Do not force HTTP into a frame-only POST RPC shape; use native HTTP mapping in
-  `fcl.http.api`.
+  `fcl.http.api.binding`.
 - Do not add a builder option that only stores a flag. Any option exposed by API
   bindings must change behavior and have a test.
 

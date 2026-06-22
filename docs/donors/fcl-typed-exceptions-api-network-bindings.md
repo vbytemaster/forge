@@ -66,7 +66,7 @@ that can work both in process and over transports.
 
 ## Builder Ownership Boundary
 
-- `fcl.http.api` owns API route mapping, request/response codec, HTTP status
+- `fcl.http.api.binding` owns API route mapping, request/response codec, HTTP status
   projection, API error JSON and API middleware contributions. It does not own
   bind address, TLS certificates, server lifecycle or product auth policy.
 - `fcl.websocket.api` owns frame codec checks, max frame size, max inflight calls

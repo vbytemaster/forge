@@ -22,6 +22,7 @@ import fcl.app.plugin_context;
 import fcl.config.component;
 import fcl.config.decode;
 import fcl.exceptions;
+import fcl.p2p.identity;
 import fcl.p2p.protocol;
 import fcl.plugins.p2p_api_resolver.api;
 import fcl.plugins.p2p_api_resolver.exceptions;

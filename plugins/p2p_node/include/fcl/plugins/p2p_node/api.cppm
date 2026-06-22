@@ -23,28 +23,12 @@ import fcl.api.transport.options;
 import fcl.api.transport.client;
 import fcl.api.transport.connection;
 import fcl.api.transport.server;
-import fcl.p2p.exceptions;
 import fcl.p2p.identity;
 import fcl.p2p.endpoint;
-import fcl.p2p.envelope;
-import fcl.p2p.identify;
 import fcl.p2p.diagnostics;
-import fcl.p2p.discovery;
-import fcl.p2p.dht;
-import fcl.p2p.rendezvous;
 import fcl.p2p.pubsub;
-import fcl.p2p.reachability;
-import fcl.p2p.hole_punch;
 import fcl.p2p.protocol;
-import fcl.p2p.message;
-import fcl.p2p.scoring;
-import fcl.p2p.relay;
-import fcl.p2p.resource_manager;
-import fcl.p2p.stream;
-import fcl.p2p.negotiation;
-import fcl.p2p.peer_store;
 import fcl.p2p.node;
-import fcl.p2p.api;
 import fcl.plugins.p2p_node.types;
 
 export namespace fcl::plugins::p2p_node {

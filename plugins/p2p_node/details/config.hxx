@@ -11,7 +11,6 @@ struct parsed_policy {
    std::size_t relay_max_candidates = 4;
 };
 
-[[nodiscard]] fcl::p2p::peer_id default_test_peer();
 [[nodiscard]] std::chrono::milliseconds to_ms(std::uint64_t value);
 [[nodiscard]] config decode_config(const fcl::config::component_view& view);
 [[nodiscard]] parsed_policy parse_policy(const config& config);

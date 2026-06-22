@@ -7,6 +7,7 @@ module;
 #include <cstdint>
 #include <exception>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -65,11 +66,6 @@ namespace {
 }
 
 } // namespace
-
-fcl::p2p::peer_id default_test_peer() {
-   return fcl::p2p::make_peer_id(
-      {.type = fcl::p2p::public_key::type::ed25519, .data = std::vector<std::uint8_t>(32, 1)});
-}
 
 std::chrono::milliseconds to_ms(std::uint64_t value) {
    return std::chrono::milliseconds{static_cast<std::chrono::milliseconds::rep>(value)};
@@ -147,7 +143,8 @@ void apply_config(plugin::impl& state, const config& config) {
    }
    state.options.limits.relay.reservation_ttl = state.policy.relay_reservation_ttl;
    const auto& peer_id = config.peer_id;
-   state.options.explicit_peer_id = peer_id.empty() ? default_test_peer() : fcl::p2p::peer_id{.value = peer_id};
+   state.options.explicit_peer_id =
+      peer_id.empty() ? std::nullopt : std::make_optional(fcl::p2p::peer_id{.value = peer_id});
    state.options.limits.max_sessions = static_cast<std::size_t>(config.max_sessions);
    state.options.limits.session_low_watermark =
       std::min(state.options.limits.session_low_watermark, state.options.limits.max_sessions);

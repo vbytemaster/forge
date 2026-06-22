@@ -2442,7 +2442,7 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_publishes_safe_local_api_for_route_contribu
    auto log = plugin_log{};
    auto app = p2p_plugin_application{log};
 
-   app.configure(test_p2p_config());
+   app.configure(test_p2p_config(test_peer(18)));
    fcl::asio::blocking::run(app.runtime(), app.startup());
 
    BOOST_TEST(app.apis().describe({.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0}) != nullptr);
@@ -2457,7 +2457,7 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_publishes_safe_local_api_for_route_contribu
 BOOST_AUTO_TEST_CASE(p2p_node_plugin_rejects_duplicate_protocol_contributions_before_startup) {
    auto app = duplicate_p2p_plugin_application{};
 
-   app.configure(test_p2p_config());
+   app.configure(test_p2p_config(test_peer(19)));
    BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.initialize()),
                      fcl::plugins::p2p_node::exceptions::route_conflict);
 }
@@ -2512,6 +2512,16 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_listens_from_config_and_exposes_local_endpo
    BOOST_TEST(info.local_endpoints.size() == endpoints.size());
 
    fcl::asio::blocking::run(app.runtime(), app.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_node_plugin_without_peer_id_does_not_inject_test_peer) {
+   auto config = test_p2p_config();
+   config.set("p2p.listen", fcl::config::value::array_type{fcl::config::value{"/ip4/127.0.0.1/tcp/0"}});
+
+   auto app = p2p_only_application{};
+   app.configure(config);
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.startup()),
+                     fcl::p2p::exceptions::invalid_identity);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_node_plugin_opens_remote_api_over_p2p_stream) {

@@ -4,11 +4,8 @@
 
 namespace fcl::plugins::p2p_node {
 
-[[nodiscard]] fcl::p2p::peer_id default_test_peer();
-
 struct plugin::impl : public std::enable_shared_from_this<plugin::impl> {
    fcl::p2p::node::options options{
-      .explicit_peer_id = default_test_peer(),
       .allow_insecure_test_mode = false,
    };
    fcl::api::transport::options api_options{

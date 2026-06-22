@@ -86,6 +86,7 @@ struct engine_client_options {
    engine_security_options security{};
    std::string certificate_pem;
    std::string private_key_pem;
+   std::function<bool(std::string_view)> test_failpoint;
 };
 
 struct engine_server_options {

@@ -43,6 +43,7 @@
 #include <unordered_map>
 
 import fcl.crypto.random;
+import fcl.crypto.hex;
 import fcl.crypto.sha256;
 
 namespace fcl::quic::detail {
@@ -89,17 +90,9 @@ using stateless_reset_secret = std::array<std::uint8_t, stateless_reset_secret_s
       return out;
    }
    out += "; client_version=0x";
-   {
-      auto stream = std::ostringstream{};
-      stream << std::hex << ngtcp2_conn_get_client_chosen_version(conn);
-      out += stream.str();
-   }
+   out += fcl::crypto::itoh(ngtcp2_conn_get_client_chosen_version(conn), 8);
    out += "; negotiated_version=0x";
-   {
-      auto stream = std::ostringstream{};
-      stream << std::hex << ngtcp2_conn_get_negotiated_version(conn);
-      out += stream.str();
-   }
+   out += fcl::crypto::itoh(ngtcp2_conn_get_negotiated_version(conn), 8);
    if (const auto tls_error = ngtcp2_conn_get_tls_error(conn); tls_error != 0) {
       out += "; tls_error=";
       out += std::to_string(tls_error);
@@ -139,9 +132,8 @@ using stateless_reset_secret = std::array<std::uint8_t, stateless_reset_secret_s
    return timeout - elapsed;
 }
 
-[[nodiscard]] bool connect_failpoint_enabled(std::string_view name) {
-   const auto* value = std::getenv("STORLANE_NETWORK_QUIC_CONNECT_FAILPOINT");
-   return value != nullptr && std::string_view{value} == name;
+[[nodiscard]] bool connect_failpoint_enabled(const engine_client_options& options, std::string_view name) {
+   return options.test_failpoint && options.test_failpoint(name);
 }
 
 int accept_any_certificate_cb(int, X509_STORE_CTX*) {
@@ -441,13 +433,7 @@ std::string normalize_engine_sha256_fingerprint(std::string_view value) {
 
 std::string engine_sha256_fingerprint(std::span<const std::uint8_t> data) {
    const auto digest = fcl::crypto::sha256::hash(data).to_uint8_span();
-
-   auto out = std::ostringstream{};
-   out << std::hex << std::setfill('0');
-   for (const auto byte : digest) {
-      out << std::setw(2) << static_cast<unsigned>(byte);
-   }
-   return out.str();
+   return fcl::crypto::to_hex(digest.data(), static_cast<std::uint32_t>(digest.size()));
 }
 
 struct engine_stream::impl {
@@ -1971,7 +1957,7 @@ engine_connector::async_connect(engine_endpoint remote, engine_client_options op
       }
    });
    auto finish_connect_or_throw = [&] {
-      if (connect_failpoint_enabled("timeout_before_pre_connection_error_finish")) {
+      if (connect_failpoint_enabled(options, "timeout_before_pre_connection_error_finish")) {
          (void)active_connect->mark_timed_out();
       }
       if (!active_connect->finish()) {

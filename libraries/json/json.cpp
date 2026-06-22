@@ -70,6 +70,45 @@ template <class... Ts> struct overloaded : Ts... {
 };
 template <class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 
+[[nodiscard]] std::string escape_control_bytes_in_json_strings(std::string_view input) {
+   constexpr auto* hex = "0123456789abcdef";
+   auto output = std::string{};
+   output.reserve(input.size());
+   auto in_string = false;
+   auto escaped = false;
+
+   for (const auto character : input) {
+      const auto byte = static_cast<unsigned char>(character);
+      if (in_string && !escaped && byte < 0x20U) {
+         output += "\\u00";
+         output.push_back(hex[(byte >> 4U) & 0x0FU]);
+         output.push_back(hex[byte & 0x0FU]);
+         continue;
+      }
+
+      output.push_back(character);
+      if (!in_string) {
+         if (character == '"') {
+            in_string = true;
+         }
+         continue;
+      }
+      if (escaped) {
+         escaped = false;
+         continue;
+      }
+      if (character == '\\') {
+         escaped = true;
+         continue;
+      }
+      if (character == '"') {
+         in_string = false;
+      }
+   }
+
+   return output;
+}
+
 [[nodiscard]] schema::diagnostic make_error(std::string path, std::string code, std::string message) {
    return schema::diagnostic{
        .path = std::move(path),
@@ -302,6 +341,7 @@ template <class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
       result.diagnostics.push_back(make_error({}, "json.write", glz::format_error(error, text)));
       return result;
    }
+   text = escape_control_bytes_in_json_strings(text);
    if (text.size() > options.max_bytes) {
       result.diagnostics.push_back(make_error({}, "json.max-bytes", "JSON output exceeds configured byte limit"));
       return result;

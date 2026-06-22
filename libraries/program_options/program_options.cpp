@@ -2,10 +2,13 @@ module;
 
 #include <boost/program_options.hpp>
 
+#include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -19,6 +22,7 @@ import fcl.schema.diagnostic;
 import fcl.schema.value_kind;
 import fcl.schema.object;
 import fcl.schema.enums;
+import fcl.schema.scalar;
 
 namespace fcl::program_options {
 namespace {
@@ -69,18 +73,14 @@ void add_field_option(po::options_description& description, const std::string& n
 [[nodiscard]] config::value cli_value(schema::value_kind kind, const std::string& input) {
    switch (kind) {
    case schema::value_kind::boolean: {
-      auto parsed = false;
-      if (!config::parse_bool_text(input, parsed)) {
-         throw std::invalid_argument{"expected boolean value"};
-      }
-      return parsed;
+      return schema::parse_scalar_text<bool>(input);
    }
    case schema::value_kind::signed_integer:
-      return static_cast<std::int64_t>(std::stoll(input));
+      return schema::parse_scalar_text<std::int64_t>(input);
    case schema::value_kind::unsigned_integer:
-      return static_cast<std::uint64_t>(std::stoull(input));
+      return schema::parse_scalar_text<std::uint64_t>(input);
    case schema::value_kind::floating:
-      return std::stod(input);
+      return schema::parse_scalar_text<double>(input);
    case schema::value_kind::string:
       return input;
    case schema::value_kind::string_list:
@@ -93,7 +93,82 @@ void add_field_option(po::options_description& description, const std::string& n
    return input;
 }
 
+[[nodiscard]] std::string option_token(std::string_view argument) {
+   if (argument.size() == 2U && argument.front() == '-' && argument[1] != '-') {
+      return std::string{argument.substr(1U)};
+   }
+   if (!argument.starts_with("--")) {
+      return {};
+   }
+   argument.remove_prefix(2U);
+   const auto equals = argument.find('=');
+   if (equals != std::string_view::npos) {
+      argument = argument.substr(0, equals);
+   }
+   return std::string{argument};
+}
+
+[[nodiscard]] bool reserved_name_matches(const reserved_option& option, std::string_view name) {
+   if (option.name == name) {
+      return true;
+   }
+   return std::ranges::any_of(option.aliases, [&](const std::string& alias) { return alias == name; });
+}
+
+[[nodiscard]] const reserved_option* find_reserved(const std::vector<reserved_option>& reserved,
+                                                   std::string_view name) {
+   const auto found = std::ranges::find_if(reserved, [&](const reserved_option& option) {
+      return reserved_name_matches(option, name);
+   });
+   return found == reserved.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] std::optional<std::string> inline_value(std::string_view argument) {
+   const auto equals = argument.find('=');
+   if (equals == std::string_view::npos) {
+      return std::nullopt;
+   }
+   return std::string{argument.substr(equals + 1U)};
+}
+
+[[nodiscard]] std::string consume_required_value(int& index,
+                                                 int argc,
+                                                 const char* const* argv,
+                                                 std::string_view argument,
+                                                 const reserved_option& option) {
+   if (auto value = inline_value(argument)) {
+      return *value;
+   }
+   if (index + 1 >= argc || argv[index + 1] == nullptr) {
+      throw std::invalid_argument{"missing value for --" + option.name};
+   }
+   ++index;
+   return std::string{argv[index]};
+}
+
+void set_reserved_value(pre_scan_result& result, const reserved_option& option, std::string value) {
+   if (option.kind == schema::value_kind::string_list) {
+      auto array = config::value::array_type{};
+      if (const auto* existing = result.document.try_get(option.path); existing != nullptr) {
+         if (const auto* values = existing->as_array()) {
+            array = *values;
+         }
+      }
+      array.emplace_back(std::move(value));
+      result.document.set(option.path, std::move(array));
+   } else {
+      result.document.set(option.path, cli_value(option.kind, value));
+   }
+   if (!std::ranges::contains(result.present_paths, option.path)) {
+      result.present_paths.push_back(option.path);
+   }
+}
+
 } // namespace
+
+bool pre_scan_result::present(std::string_view path) const {
+   return std::ranges::any_of(present_paths, [&](const std::string& value) { return value == path; });
+}
 
 parse_result parse(int argc, const char* const* argv, const config::component_registry& registry) {
    auto result = parse_result{};
@@ -151,6 +226,41 @@ parse_result parse(int argc, const char* const* argv, const config::component_re
           .message = error.what(),
       });
    }
+   return result;
+}
+
+pre_scan_result pre_scan_reserved(int argc, const char* const* argv, const std::vector<reserved_option>& reserved) {
+   auto result = pre_scan_result{};
+   if (argc > 0 && argv != nullptr && argv[0] != nullptr) {
+      result.filtered_args.emplace_back(argv[0]);
+   }
+
+   for (auto index = 1; index < argc; ++index) {
+      const auto argument = std::string_view{argv[index] == nullptr ? "" : argv[index]};
+      const auto token = option_token(argument);
+      const auto* option = token.empty() ? nullptr : find_reserved(reserved, token);
+      if (option == nullptr) {
+         result.filtered_args.emplace_back(argument);
+         continue;
+      }
+
+      try {
+         if (option->kind == schema::value_kind::boolean) {
+            const auto value = inline_value(argument);
+            set_reserved_value(result, *option, value.has_value() && !value->empty() ? *value : std::string{"true"});
+         } else {
+            set_reserved_value(result, *option, consume_required_value(index, argc, argv, argument, *option));
+         }
+      } catch (const std::exception& error) {
+         result.diagnostics.push_back(schema::diagnostic{
+             .path = option->path,
+             .code = "program_options.convert",
+             .level = schema::severity::error,
+             .message = error.what(),
+         });
+      }
+   }
+
    return result;
 }
 

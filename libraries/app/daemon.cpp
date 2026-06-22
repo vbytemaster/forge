@@ -1,7 +1,5 @@
 module;
 
-#include <cstdlib>
-#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -52,156 +50,64 @@ struct parsed_cli {
    }
 };
 
-std::string_view normalize_daemon_name(std::string_view input) {
-   if (input == "h") {
-      return "help";
-   }
-   if (input.starts_with("daemon.")) {
-      input.remove_prefix(std::string_view{"daemon."}.size());
-   }
-   return input;
+const std::vector<fcl::program_options::reserved_option>& daemon_reserved_options() {
+   static const auto options = std::vector<fcl::program_options::reserved_option>{
+      {.name = "help", .path = "daemon.help", .kind = fcl::schema::value_kind::boolean, .aliases = {"h", "daemon.help"}},
+      {.name = "profile", .path = "daemon.profile", .kind = fcl::schema::value_kind::string, .aliases = {"daemon.profile"}},
+      {.name = "data-dir", .path = "daemon.data-dir", .kind = fcl::schema::value_kind::string, .aliases = {"daemon.data-dir"}},
+      {.name = "config", .path = "daemon.config", .kind = fcl::schema::value_kind::string, .aliases = {"daemon.config"}},
+      {.name = "dotenv", .path = "daemon.dotenv", .kind = fcl::schema::value_kind::string, .aliases = {"daemon.dotenv"}},
+      {.name = "runtime-threads", .path = "daemon.runtime-threads", .kind = fcl::schema::value_kind::unsigned_integer, .aliases = {"daemon.runtime-threads"}},
+      {.name = "scheduler-queue-depth", .path = "daemon.scheduler-queue-depth", .kind = fcl::schema::value_kind::unsigned_integer, .aliases = {"daemon.scheduler-queue-depth"}},
+      {.name = "shutdown-timeout-ms", .path = "daemon.shutdown-timeout-ms", .kind = fcl::schema::value_kind::unsigned_integer, .aliases = {"daemon.shutdown-timeout-ms"}},
+      {.name = "check-config", .path = "daemon.check-config", .kind = fcl::schema::value_kind::boolean, .aliases = {"daemon.check-config"}},
+      {.name = "print-effective-config", .path = "daemon.print-effective-config", .kind = fcl::schema::value_kind::boolean, .aliases = {"daemon.print-effective-config"}},
+      {.name = "configure", .path = "daemon.configure", .kind = fcl::schema::value_kind::boolean, .aliases = {"daemon.configure"}},
+   };
+   return options;
 }
 
-bool is_daemon_option(std::string_view name) {
-   name = normalize_daemon_name(name);
-   return name == "help" || name == "profile" || name == "data-dir" || name == "config" ||
-          name == "dotenv" || name == "runtime-threads" || name == "scheduler-queue-depth" ||
-          name == "shutdown-timeout-ms" || name == "check-config" || name == "print-effective-config" ||
-          name == "configure";
+bool document_bool(const fcl::config::document& document, std::string_view path) {
+   const auto* value = document.try_get(path);
+   if (!value) {
+      return false;
+   }
+   if (const auto* flag = std::get_if<bool>(&value->storage)) {
+      return *flag;
+   }
+   return false;
 }
 
-bool option_requires_value(std::string_view name) {
-   name = normalize_daemon_name(name);
-   return name == "profile" || name == "data-dir" || name == "config" || name == "dotenv" ||
-          name == "runtime-threads" ||
-          name == "scheduler-queue-depth" || name == "shutdown-timeout-ms";
-}
+parsed_cli read_daemon_cli(int argc, char** argv) {
+   auto pointers = std::vector<const char*>{};
+   pointers.reserve(static_cast<std::size_t>(std::max(argc, 0)));
+   for (auto index = 0; index < argc; ++index) {
+      pointers.push_back(argv == nullptr ? nullptr : argv[index]);
+   }
 
-std::string option_name(std::string_view argument) {
-   if (argument == "-h") {
-      return "h";
-   }
-   if (!argument.starts_with("--")) {
-      return {};
-   }
-   argument.remove_prefix(2);
-   const auto equals = argument.find('=');
-   if (equals != std::string_view::npos) {
-      argument = argument.substr(0, equals);
-   }
-   return std::string{argument};
-}
-
-std::string option_value(int& index, int argc, char** argv, std::string_view argument, std::string_view name) {
-   const auto equals = argument.find('=');
-   if (equals != std::string_view::npos) {
-      return std::string{argument.substr(equals + 1)};
-   }
-   if (index + 1 >= argc || argv[index + 1] == nullptr) {
-      throw std::invalid_argument{"missing value for --" + std::string{name}};
-   }
-   ++index;
-   return std::string{argv[index]};
-}
-
-std::uint64_t parse_unsigned_text(std::string_view input, std::string_view name) {
-   auto first = std::size_t{0};
-   while (first < input.size() && std::isspace(static_cast<unsigned char>(input[first])) != 0) {
-      ++first;
-   }
-   if (first < input.size() && input[first] == '-') {
-      throw std::invalid_argument{"negative value is not allowed for --" + std::string{name}};
-   }
-   auto parsed = std::size_t{0};
-   auto value = std::stoull(std::string{input.substr(first)}, &parsed);
-   if (parsed != input.substr(first).size()) {
-      throw std::invalid_argument{"invalid unsigned value for --" + std::string{name}};
-   }
-   return value;
-}
-
-void set_daemon_value(fcl::config::document& document, std::string_view name, std::string value) {
-   name = normalize_daemon_name(name);
-   const auto path = "daemon." + std::string{name};
-   if (name == "runtime-threads" || name == "scheduler-queue-depth" || name == "shutdown-timeout-ms") {
-      document.set(path, parse_unsigned_text(value, name));
-   } else {
-      document.set(path, std::move(value));
-   }
-}
-
-bool set_daemon_flag(fcl::config::document& document, std::string_view name, std::string_view value_text,
-                     bool implicit_value) {
-   name = normalize_daemon_name(name);
-   auto value = implicit_value;
-   if (!value_text.empty()) {
-      if (!fcl::config::parse_bool_text(std::string{value_text}, value)) {
-         throw std::invalid_argument{"expected boolean value for --" + std::string{name}};
-      }
-   }
-   document.set("daemon." + std::string{name}, value);
-   return value;
-}
-
-parsed_cli parse_daemon_cli(int argc, char** argv) {
+   auto scanned = fcl::program_options::pre_scan_reserved(static_cast<int>(pointers.size()), pointers.data(),
+                                                          daemon_reserved_options());
    auto parsed = parsed_cli{};
-   parsed.filtered_args.push_back((argc > 0 && argv != nullptr && argv[0] != nullptr) ? std::string{argv[0]} : "fcl-daemon");
-
-   for (auto index = 1; index < argc; ++index) {
-      const auto argument = std::string_view{argv[index] == nullptr ? "" : argv[index]};
-      const auto raw_name = option_name(argument);
-      if (raw_name.empty() || !is_daemon_option(raw_name)) {
-         parsed.filtered_args.emplace_back(argument);
-         continue;
-      }
-
-      try {
-         const auto name = normalize_daemon_name(raw_name);
-         const auto equals = argument.find('=');
-         if (option_requires_value(name)) {
-            auto value = option_value(index, argc, argv, argument, name);
-            set_daemon_value(parsed.document, name, std::move(value));
-            if (name == "config") {
-               parsed.config_explicit = true;
-            } else if (name == "dotenv") {
-               parsed.dotenv_explicit = true;
-            }
-         } else {
-            const auto value_text = equals == std::string_view::npos ? std::string_view{} : argument.substr(equals + 1);
-            const auto value = set_daemon_flag(parsed.document, name, value_text, true);
-            if (name == "help") {
-               parsed.help = value;
-            } else if (name == "check-config") {
-               parsed.check_config = value;
-            } else if (name == "print-effective-config") {
-               parsed.print_effective_config = value;
-            } else if (name == "configure") {
-               parsed.configure = value;
-            }
-         }
-      } catch (const std::exception& error) {
-         parsed.diagnostics.push_back(fcl::schema::diagnostic{
-             .path = "daemon." + std::string{normalize_daemon_name(raw_name)},
-             .code = "daemon.cli",
-             .level = fcl::schema::severity::error,
-             .message = error.what(),
-         });
-      }
+   parsed.document = std::move(scanned.document);
+   parsed.filtered_args = std::move(scanned.filtered_args);
+   parsed.diagnostics = std::move(scanned.diagnostics);
+   parsed.help = document_bool(parsed.document, "daemon.help");
+   parsed.check_config = document_bool(parsed.document, "daemon.check-config");
+   parsed.print_effective_config = document_bool(parsed.document, "daemon.print-effective-config");
+   parsed.configure = document_bool(parsed.document, "daemon.configure");
+   parsed.config_explicit = scanned.present("daemon.config");
+   parsed.dotenv_explicit = scanned.present("daemon.dotenv");
+   if (parsed.filtered_args.empty()) {
+      parsed.filtered_args.push_back("fcl-daemon");
    }
-
    return parsed;
 }
 
 std::filesystem::path default_data_dir(const daemon_options& options) {
    const auto name = options.default_data_dir_name.empty() ? options.name : options.default_data_dir_name;
-   if (const auto* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
-      return std::filesystem::path{home} / ".fcl" / name;
+   if (const auto home = fcl::env::home_directory()) {
+      return *home / ".fcl" / name;
    }
-#if defined(_WIN32)
-   if (const auto* profile = std::getenv("USERPROFILE"); profile != nullptr && *profile != '\0') {
-      return std::filesystem::path{profile} / ".fcl" / name;
-   }
-#endif
    return std::filesystem::temp_directory_path() / "fcl" / name;
 }
 
@@ -581,7 +487,7 @@ int run_daemon(daemon_factory make_app, int argc, char** argv, daemon_options op
    }
 
    auto diagnostics = std::vector<fcl::schema::diagnostic>{};
-   auto daemon_cli = parse_daemon_cli(argc, argv);
+   auto daemon_cli = read_daemon_cli(argc, argv);
    append_diagnostics(diagnostics, daemon_cli.diagnostics);
    if (has_errors(diagnostics)) {
       return fail_with_diagnostics(diagnostics);

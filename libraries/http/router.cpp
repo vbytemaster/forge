@@ -2,7 +2,6 @@ module;
 
 #include <cstdint>
 #include <algorithm>
-#include <atomic>
 #include <coroutine>
 #include <optional>
 #include <stdexcept>
@@ -24,38 +23,13 @@ import fcl.api.registry;
 import fcl.api.binding;
 import fcl.api.dispatcher;
 import fcl.http.exceptions;
+import fcl.http.middleware;
 import fcl.http.stream;
 import fcl.http.target;
+import fcl.json;
 
 namespace fcl::http {
 namespace {
-
-std::string json_escape(std::string_view value) {
-   constexpr auto hex = std::string_view{"0123456789abcdef"};
-   auto output = std::string{};
-   output.reserve(value.size() + 8U);
-   for (const auto character : value) {
-      const auto byte = static_cast<unsigned char>(character);
-      switch (character) {
-      case '\\':
-         output += "\\\\";
-         break;
-      case '"':
-         output += "\\\"";
-         break;
-      default:
-         if (byte < 0x20U) {
-            output += "\\u00";
-            output.push_back(hex[(byte >> 4U) & 0x0fU]);
-            output.push_back(hex[byte & 0x0fU]);
-         } else {
-            output.push_back(character);
-         }
-         break;
-      }
-   }
-   return output;
-}
 
 std::string http_error_name(int code) {
    switch (code) {
@@ -134,26 +108,6 @@ std::optional<std::string> header_value(const response& value, field name) {
    return std::nullopt;
 }
 
-constexpr std::string_view stream_token_header = "X-FCL-Stream-Token";
-
-std::string make_stream_token() {
-   static auto next_token = std::atomic<std::uint64_t>{0};
-   return std::to_string(next_token.fetch_add(1, std::memory_order_relaxed) + 1U);
-}
-
-void mark_stream_head(response& value, std::string_view token) {
-   value.set(stream_token_header, token);
-}
-
-[[nodiscard]] bool stream_token_matches(const response& value, std::string_view token) {
-   const auto found = value.find(stream_token_header);
-   return found != value.end() && found->value() == token;
-}
-
-void clear_stream_token(response& value) {
-   value.erase(stream_token_header);
-}
-
 stream_transfer_framing capture_stream_transfer_framing(const response& value) {
    return stream_transfer_framing{
       .content_length = header_value(value, field::content_length),
@@ -172,24 +126,16 @@ void restore_stream_transfer_framing(response& value, const stream_transfer_fram
    }
 }
 
-std::string render_error_payload(const fcl::api::error_payload& payload) {
-   auto output = std::string{};
-   output += "{\"error\":\"";
-   output += json_escape(payload.error);
-   output += "\",\"message\":\"";
-   output += json_escape(payload.message);
-   output += "\",\"retryable\":";
-   output += payload.retryable ? "true" : "false";
-   output += ",\"identity\":{\"category\":\"";
-   output += json_escape(payload.identity.category);
-   output += "\",\"code\":";
-   output += std::to_string(payload.identity.code);
-   output += "}}";
-   return output;
+std::string encode_error_payload(const fcl::api::error_payload& payload) {
+   auto encoded = fcl::json::write(payload);
+   if (encoded.ok()) {
+      return std::move(encoded.text);
+   }
+   return fcl::json::write(fcl::api::make_internal_error_payload()).text;
 }
 
 response make_exception_response(const request& request, const fcl::exceptions::base& error) {
-   return make_text_response(request, http_status_for(error), render_error_payload(http_error_payload(error)),
+   return make_text_response(request, http_status_for(error), encode_error_payload(http_error_payload(error)),
                              "application/json");
 }
 
@@ -381,6 +327,10 @@ void router::patch_stream(std::string path, stream_route_handler handler) {
    add_stream_route(method::patch, std::move(path), std::move(handler));
 }
 
+void router::del_stream(std::string path, stream_route_handler handler) {
+   add_stream_route(method::delete_, std::move(path), std::move(handler));
+}
+
 void router::websocket(std::string path, websocket_route_handler handler) {
    auto segments = split_route_path(path);
    websocket_routes_.push_back(websocket_route_entry{
@@ -423,7 +373,7 @@ boost::asio::awaitable<response> router::handle(route_context& context) const {
       co_return make_exception_response(context.request, error);
    } catch (const std::exception&) {
       co_return make_text_response(context.request, status::internal_server_error,
-                                   render_error_payload(fcl::api::error_payload{
+                                   encode_error_payload(fcl::api::error_payload{
                                        .error = "internal",
                                        .message = "internal error",
                                        .identity =
@@ -463,22 +413,22 @@ boost::asio::awaitable<stream_response> router::handle_stream(stream_request& re
             context.route_params = std::move(params);
             auto result = std::optional<stream_response>{};
             auto framing = stream_transfer_framing{};
-            auto stream_token = make_stream_token();
+            auto stream_state = stream_pass_through_state{};
             auto head = co_await run_middleware_chain(
                matching_middlewares(middlewares_, context.parsed_target), context,
-               [&request, &route, &result, &framing, &stream_token](route_context&) -> boost::asio::awaitable<response> {
+               [&request, &route, &result, &framing, &stream_state](route_context&) -> boost::asio::awaitable<response> {
                   result = co_await route.handler(request);
                   framing = capture_stream_transfer_framing(result->head);
-                  mark_stream_head(result->head, stream_token);
+                  stream_state = mark_stream_pass_through(result->head);
                   co_return std::move(result->head);
                });
             if (!result.has_value()) {
-               clear_stream_token(head);
+               clear_stream_pass_through(head);
                co_return stream_response::buffered(std::move(head));
             }
             const auto preserve_stream_body =
-               static_cast<bool>(result->body) && stream_token_matches(head, stream_token) && head.body().empty();
-            clear_stream_token(head);
+               static_cast<bool>(result->body) && is_stream_pass_through(head, stream_state) && head.body().empty();
+            clear_stream_pass_through(head);
             if (!preserve_stream_body) {
                co_return stream_response::buffered(std::move(head));
             }
@@ -499,7 +449,7 @@ boost::asio::awaitable<stream_response> router::handle_stream(stream_request& re
       co_return stream_response::buffered(make_exception_response(context.request, error));
    } catch (const std::exception&) {
       co_return stream_response::buffered(make_text_response(context.request, status::internal_server_error,
-                                                            render_error_payload(fcl::api::error_payload{
+                                                            encode_error_payload(fcl::api::error_payload{
                                                                 .error = "internal",
                                                                 .message = "internal error",
                                                                 .identity =

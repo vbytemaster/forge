@@ -6,7 +6,7 @@
 libp2p-compatible implementation. Compatibility means protocol compatibility:
 for each supported libp2p protocol, FCL must match the wire format, handshake,
 Peer ID, negotiation and message rules used by go-libp2p and rust-libp2p.
-`fcl::plugins::p2p_node` is the application-level host facade above that network
+`fcl::plugins::p2p::node` is the application-level host facade above that network
 layer. This note records donor patterns for addressing, discovery, reachability,
 relay, hole punching, pubsub and plugin composition without making donor repos
 or storage backends build dependencies.
@@ -49,7 +49,7 @@ or storage backends build dependencies.
 - Kubo `CoreAPI` and Boxo service split for product operations: a focused
   service API returns operation-specific results, while the host/network layer
   supplies connectivity and protocol routing. FCL maps this to typed
-  `p2p_api_resolver` remotes that return domain receipts.
+  `fcl::plugins::p2p::resolver` remotes that return domain receipts.
 - Kubo diagnostics/read-only service split: operator visibility is exposed as
   focused queries over node state, not as mutable host ownership.
 - Rust libp2p `SwarmBuilder` style composition: transports, security upgrades,
@@ -67,7 +67,7 @@ or storage backends build dependencies.
   plugin.
 - Transactional outbox pattern: durable retry can exist as an injected store
   contract in a future `p2p_delivery` plugin, but it is not part of the target
-  `p2p_node` host facade.
+  `fcl::plugins::p2p::node` host facade.
 
 ## Rejected Patterns
 
@@ -80,9 +80,9 @@ or storage backends build dependencies.
   criteria.
 - No exactly-once guarantee in the P2P plugin.
 - No storage backend inside `fcl_plugins`.
-- No product authorization or business ACK semantics inside `p2p_node`.
+- No product authorization or business ACK semantics inside `fcl::plugins::p2p::node`.
 - No IPFS/Boxo content, provider, exchange, retrieval, pinning or gateway
-  semantics inside `fcl_p2p` or `p2p_node`; those are donors for future
+  semantics inside `fcl_p2p` or `fcl::plugins::p2p::node`; those are donors for future
   product/content/storage layers.
 
 ## Donor Test Adoption
@@ -107,24 +107,24 @@ which external projects provide accepted patterns and criteria:
   Identify/Ping, persistent peer/path store, relay reservation, reachability,
   AutoRelay, hole punching, DHT/rendezvous, pubsub/gossip, scoring and low-level
   errors.
-- `fcl::plugins::p2p_node` owns application lifecycle, mounted route/API
+- `fcl::plugins::p2p::node` owns application lifecycle, mounted route/API
   contributions, config-to-node mapping, local endpoint reporting and typed
   remote API access. Durable queues, application fan-out and raw peer metrics
   are outside the target contract.
-- `p2p_api_resolver`, `p2p_diagnostics`, `p2p_pubsub` and optional
+- `fcl::plugins::p2p::resolver`, `fcl::plugins::p2p::diagnostics`, `fcl::plugins::p2p::pubsub` and optional
   `p2p_delivery` are focused friend-plugin directions. They compose through
-  `p2p_node` and `fcl_p2p` instead of reimplementing network behaviours.
-- `p2p_api_resolver` follows the libp2p Identify/protocol-listing split:
+  `fcl::plugins::p2p::node` and `fcl_p2p` instead of reimplementing network behaviours.
+- `fcl::plugins::p2p::resolver` follows the libp2p Identify/protocol-listing split:
   Identify says which protocol ids a peer supports, while the resolver provides
   FCL-specific API metadata above P2P. It sends a stable serializable
   projection, not raw runtime `fcl::api::descriptor`, and does not claim
   Go/Rust libp2p resolver interoperability.
-- `p2p_diagnostics` follows the host/service split: `fcl_p2p` owns immutable
+- `fcl::plugins::p2p::diagnostics` follows the host/service split: `fcl_p2p` owns immutable
   diagnostics snapshots of peer store, sessions, resources, relay reservations,
   connection protection and pubsub state; the plugin exposes capped in-process
   projections for operators and tests. It is not a remote diagnostics protocol
   and does not add Go/Rust libp2p wire interop claims.
-- `p2p_pubsub` follows the libp2p topic/subscription facade split:
+- `fcl::plugins::p2p::pubsub` follows the libp2p topic/subscription facade split:
   `fcl_p2p` owns GossipSub wire behaviour, mesh, scoring, heartbeat and protocol
   negotiation; the plugin owns only in-process raw/typed publish/subscribe,
   bounded local handler multiplexing, topic policy and local counters. It is not

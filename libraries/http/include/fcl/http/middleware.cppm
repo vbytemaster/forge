@@ -35,6 +35,31 @@ struct middleware_descriptor {
    middleware handler;
 };
 
+class stream_pass_through_state {
+ public:
+   [[nodiscard]] bool present() const noexcept {
+      return !token_.empty();
+   }
+
+   void clear() noexcept {
+      token_.clear();
+   }
+
+ private:
+   std::string token_;
+
+   friend stream_pass_through_state mark_stream_pass_through(response& value);
+   friend stream_pass_through_state capture_stream_pass_through(response& value);
+   friend bool is_stream_pass_through(const response& value, const stream_pass_through_state& state);
+   friend void restore_stream_pass_through(response& value, const stream_pass_through_state& state);
+};
+
+[[nodiscard]] stream_pass_through_state mark_stream_pass_through(response& value);
+[[nodiscard]] stream_pass_through_state capture_stream_pass_through(response& value);
+[[nodiscard]] bool is_stream_pass_through(const response& value, const stream_pass_through_state& state);
+void restore_stream_pass_through(response& value, const stream_pass_through_state& state);
+void clear_stream_pass_through(response& value);
+
 boost::asio::awaitable<response> run_middleware_chain(middleware_list middlewares, route_context& context,
                                                       route_handler terminal);
 

@@ -1,5 +1,7 @@
 #include <boost/test/unit_test.hpp>
 
+#include <boost/asio/awaitable.hpp>
+
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
@@ -108,7 +110,7 @@ class fake_collector {
    }
 
  private:
-   fcl::http::response handle(fcl::http::route_context& context) {
+   boost::asio::awaitable<fcl::http::response> handle(fcl::http::route_context& context) {
       auto request = collected_request{
           .target = std::string{context.request.target()},
           .body = context.request.body(),
@@ -137,7 +139,7 @@ class fake_collector {
       if (response_value.retry_after.has_value()) {
          response.set(fcl::http::field::retry_after, *response_value.retry_after);
       }
-      return response;
+      co_return response;
    }
 
    std::vector<collector_response> responses_;

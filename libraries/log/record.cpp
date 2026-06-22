@@ -19,6 +19,7 @@ module;
 module fcl.log.record;
 
 import fcl.core.chrono;
+import fcl.core.string;
 import fcl.log.exceptions;
 import fcl.log.log_message;
 
@@ -31,41 +32,10 @@ std::string sanitize_value(std::string value, bool redacted) {
    return value;
 }
 
-void append_json_string(std::ostream& out, std::string_view value) {
-   out << '"';
-   for (const char ch : value) {
-      switch (ch) {
-      case '"':
-         out << "\\\"";
-         break;
-      case '\\':
-         out << "\\\\";
-         break;
-      case '\b':
-         out << "\\b";
-         break;
-      case '\f':
-         out << "\\f";
-         break;
-      case '\n':
-         out << "\\n";
-         break;
-      case '\r':
-         out << "\\r";
-         break;
-      case '\t':
-         out << "\\t";
-         break;
-      default:
-         if (static_cast<unsigned char>(ch) < 0x20) {
-            out << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(ch) << std::dec;
-         } else {
-            out << ch;
-         }
-         break;
-      }
-   }
-   out << '"';
+void write_json_string(std::ostream& out, std::string_view value) {
+   auto escaped = std::string{value};
+   fcl::escape_str(escaped, fcl::escape_control_chars::on);
+   out << '"' << escaped << '"';
 }
 
 class locked_file {
@@ -260,43 +230,43 @@ std::string format_json_log_record(const log_record& record) {
    auto out = std::ostringstream{};
    out << '{';
    out << "\"timestamp\":";
-   append_json_string(out, fcl::chrono::to_iso_string(record.timestamp));
+   write_json_string(out, fcl::chrono::to_iso_string(record.timestamp));
    out << ",\"level\":";
-   append_json_string(out, record.level.to_string());
+   write_json_string(out, record.level.to_string());
    out << ",\"logger\":";
-   append_json_string(out, record.logger);
+   write_json_string(out, record.logger);
    out << ",\"component\":";
-   append_json_string(out, record.component);
+   write_json_string(out, record.component);
    out << ",\"message\":";
-   append_json_string(out, record.message);
+   write_json_string(out, record.message);
    out << ",\"thread_id\":";
-   append_json_string(out, record.thread_id);
+   write_json_string(out, record.thread_id);
    out << ",\"thread\":";
-   append_json_string(out, record.thread_name);
+   write_json_string(out, record.thread_name);
    out << ",\"file\":";
-   append_json_string(out, record.location.file_name());
+   write_json_string(out, record.location.file_name());
    out << ",\"line\":" << record.location.line();
    out << ",\"fields\":{";
    for (std::size_t index = 0; index < record.fields.size(); ++index) {
       if (index != 0) {
          out << ',';
       }
-      append_json_string(out, record.fields[index].key);
+      write_json_string(out, record.fields[index].key);
       out << ':';
-      append_json_string(out, sanitize_value(record.fields[index].value, record.fields[index].redacted));
+      write_json_string(out, sanitize_value(record.fields[index].value, record.fields[index].redacted));
    }
    out << '}';
    if (!record.exception_chain.empty()) {
       out << ",\"exception\":";
-      append_json_string(out, record.exception_chain);
+      write_json_string(out, record.exception_chain);
    }
    if (record.stacktrace) {
       out << ",\"stacktrace\":{\"backend\":";
-      append_json_string(out, record.stacktrace->backend);
+      write_json_string(out, record.stacktrace->backend);
       out << ",\"available\":" << (record.stacktrace->available() ? "true" : "false");
       if (!record.stacktrace->unavailable_reason.empty()) {
          out << ",\"reason\":";
-         append_json_string(out, record.stacktrace->unavailable_reason);
+         write_json_string(out, record.stacktrace->unavailable_reason);
       }
       out << ",\"frames\":[";
       for (std::size_t index = 0; index < record.stacktrace->frames.size(); ++index) {
@@ -305,9 +275,9 @@ std::string format_json_log_record(const log_record& record) {
             out << ',';
          }
          out << "{\"index\":" << frame.index << ",\"name\":";
-         append_json_string(out, frame.name);
+         write_json_string(out, frame.name);
          out << ",\"file\":";
-         append_json_string(out, frame.source_file);
+         write_json_string(out, frame.source_file);
          out << ",\"line\":" << frame.source_line << '}';
       }
       out << "]}";

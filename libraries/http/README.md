@@ -1,12 +1,12 @@
 # fcl_http
 
-`fcl_http` is the HTTP substrate: URL parsing, request/response aliases,
-streaming body primitives, routing, middleware, server and client/connection
-primitives. It uses Boost.Beast/URL internally but keeps FCL-owned route and
-lifecycle semantics.
+`fcl_http` is the HTTP substrate: URL parsing, FCL-owned request/response
+messages, streaming body primitives, routing, middleware, server and
+client/connection primitives. It uses Boost.Beast/URL internally but keeps
+FCL-owned public message, route and lifecycle semantics.
 
 Application-level server lifecycle can be owned directly with `fcl::http::server`
-or composed through the official `fcl.plugins.http_server` plugin. The library
+or composed through the official `fcl.plugins.http.server` plugin. The library
 still owns HTTP mechanics; the plugin owns app lifecycle/config composition.
 
 ## When To Use
@@ -26,7 +26,8 @@ still owns HTTP mechanics; the plugin owns app lifecycle/config composition.
 
 ## Public Modules
 
-- `fcl.http.types` — Beast-compatible request/response aliases.
+- `fcl.http.types` — FCL-owned Beast-like request/response wrappers, HTTP
+  method/status enums and endpoint DTO state.
 - `fcl.http.body`, `fcl.http.stream` — FCL-owned chunk, reader, writer and
   stream route types.
 - `fcl.http.file`, `fcl.http.range` — file responses, static roots and byte
@@ -35,14 +36,21 @@ still owns HTTP mechanics; the plugin owns app lifecycle/config composition.
   parsing.
 - `fcl.http.base_url`, `fcl.http.target`.
 - `fcl.http.router`, `fcl.http.route_context`, `fcl.http.middleware`.
-- `fcl.http.api`, `fcl.http.mapping`, `fcl.http.proxy`.
 - `fcl.http.client`, `fcl.http.connection`, `fcl.http.server`.
-- Macro header: `<fcl/http/macros.hpp>` for `FCL_HTTP_API(...)`.
 
 Target: `fcl_http`.
 
 Dependencies: `fcl_asio`, `fcl_websocket`, `fcl_json`, `fcl_schema`,
 Boost.Asio, Boost.Beast, Boost.URL, OpenSSL.
+
+Boost.Beast remains the runtime donor and backend for parser/serializer/socket
+mechanics, but public HTTP APIs use `fcl::http::request` and
+`fcl::http::response` wrappers rather than Beast message aliases.
+
+Typed `FCL_HTTP_API(...)` route binding lives in the separate `fcl_http_api`
+target/component. Its public modules are `fcl.http.api.binding`,
+`fcl.http.api.mapping` and `fcl.http.api.proxy`; its macro header is
+`<fcl/http_api/macros.hpp>`.
 
 ## Examples
 
@@ -78,6 +86,29 @@ router.get("/healthz", [](fcl::http::route_context& ctx)
    -> boost::asio::awaitable<fcl::http::response> {
    co_return fcl::http::make_text_response(ctx.request, fcl::http::status::ok, "ok");
 });
+```
+
+### Use Endpoint Request State
+
+Typed HTTP request DTOs may derive from `fcl::http::endpoint_request` when a
+handler needs read-only access to the incoming HTTP request or wants to add
+response metadata. The base is not described with Boost.Describe and is ignored
+by JSON/schema binding.
+
+```cpp
+struct read_request : fcl::http::endpoint_request {
+   std::string ref;
+};
+
+BOOST_DESCRIBE_STRUCT(read_request, (), (ref))
+
+boost::asio::awaitable<chunk>
+cache_impl::read(read_request request) {
+   auto trace = request.request().header("X-Trace").value_or("");
+   request.response().set("Cache-Control", "public, max-age=60");
+   request.response().set_cookie("trace", trace);
+   co_return load_chunk(request.ref);
+}
 ```
 
 ### Route Streaming Bodies
@@ -203,13 +234,13 @@ The binding is a composable artifact; `build()` does not mutate the router.
 
 ```cpp
 #include <fcl/api/macros.hpp>
-#include <fcl/http/macros.hpp>
+#include <fcl/http_api/macros.hpp>
 
 import fcl.api.connection;
 import fcl.api.registry;
 import fcl.api.binding;
-import fcl.http.api;
-import fcl.http.proxy;
+import fcl.http.api.binding;
+import fcl.http.api.proxy;
 import fcl.http.router;
 
 struct read_chunk {
@@ -253,7 +284,7 @@ auto plan = fcl::api::binding()
    .export_api<cache>()
    .build();
 
-auto binding = fcl::http::api()
+auto binding = fcl::http::api::binding()
    .use(plan)
    .bind<cache>()
    .build();
@@ -263,6 +294,92 @@ router.mount(binding);
 
 HTTP stays HTTP: route/path/status semantics remain native. The transport does
 not wrap typed calls in a message-frame body.
+
+### FastAPI-Style DTO Parameters
+
+For production HTTP endpoints, prefer one described request DTO. FastAPI-style
+parameter categories live as DTO fields, not as a long positional method
+signature. This keeps call sites readable, keeps validation paths named, and
+keeps the HTTP-specific surface out of `fcl_api`.
+
+```cpp
+struct write_payload {
+   std::string bytes;
+};
+
+struct write_receipt {
+   std::string id;
+};
+
+BOOST_DESCRIBE_STRUCT(write_payload, (), (bytes))
+BOOST_DESCRIBE_STRUCT(write_receipt, (), (id))
+
+struct put_object_request {
+   std::string bucket;
+   std::string key;
+   fcl::http::query<std::uint32_t> ttl;
+   fcl::http::header<std::string> request_id;
+   fcl::http::body<write_payload> body;
+};
+
+BOOST_DESCRIBE_STRUCT(put_object_request, (), (bucket, key, ttl, request_id, body))
+
+class object_api : public fcl::api::contract<object_api> {
+ public:
+   virtual ~object_api() = default;
+
+   virtual boost::asio::awaitable<write_receipt>
+   put_object(put_object_request request) = 0;
+};
+
+FCL_API(
+   object_api,
+   FCL_API_CONTRACT("object", 1, 0),
+   FCL_API_METHOD(put_object))
+
+FCL_HTTP_API(
+   object_api,
+   FCL_HTTP_PUT(put_object, "/objects/:bucket/:key?ttl={ttl}", created,
+      FCL_HTTP_HEADER(request_id, "X-Request-Id")))
+```
+
+Server binding fills `bucket` and `key` from path placeholders, `ttl` from the
+query string, `request_id` from `X-Request-Id`, and `body` from a JSON request
+body. If a wire header or form name must differ from the DTO field name, use
+the existing route options such as `FCL_HTTP_HEADER(field, "Wire-Name")` or
+`FCL_HTTP_FORM(field, "wire-name")`.
+
+The same typed client call builds the HTTP request:
+
+```cpp
+auto objects = co_await fcl::http::api::remote<object_api>(client);
+auto receipt = co_await objects->put_object({
+   .bucket = "cache",
+   .key = "chunk-1",
+   .ttl = {.value = 3600, .present = true},
+   .request_id = {.value = "trace-123", .present = true},
+   .body = {.value = {.bytes = "payload"}, .present = true},
+});
+```
+
+HTTP-only special request types include `query<T>`, `header<T>`, `cookie<T>`,
+`body<T>`, `form<T>`, `form_field<T>`, `upload_file`, `body_bytes` and
+`body_stream`, and they are supported as fields of a described request DTO.
+The typed HTTP client supports JSON, raw bytes, streaming body and browser-style
+multipart DTO fields without routing these wrappers through `fcl.raw`.
+
+HTTP positional methods remain available only as small routing sugar: scalar,
+string, enum and optional arguments may bind to route path/query placeholders,
+and at most one remaining described DTO argument may become the JSON body for a
+body-capable route. HTTP wrappers such as `query<T>`, `header<T>`,
+`body_stream`, `form<T>` and `upload_file` are not allowed in positional HTTP
+signatures. Multi-argument APIs remain first-class for local, WebSocket, QUIC,
+P2P, TCP and STCP bindings where there is no HTTP parameter model.
+
+Special return types remain `file_response`, `streaming_response`,
+`bytes_response` and `empty_response`. Background task injection is
+intentionally out of scope; application runtime and plugin layers own
+background work.
 
 ### Add Middleware
 
@@ -285,7 +402,7 @@ Typed API bindings should contribute middleware through the binding artifact so
 route plugins can be composed before the server starts:
 
 ```cpp
-auto binding = fcl::http::api()
+auto binding = fcl::http::api::binding()
    .use(plan)
    .middleware(fcl::http::middleware_descriptor{
       .id = "cache.authz",
@@ -354,10 +471,10 @@ boost::asio::awaitable<void> check_ready(fcl::http::client& client) {
 
 import fcl.api.handle;
 import fcl.http.client;
-import fcl.http.proxy;
+import fcl.http.api.proxy;
 
 boost::asio::awaitable<void> read_chunk(fcl::http::client& client) {
-   fcl::api::handle<cache> cache_api = co_await fcl::http::remote<cache>(client);
+   fcl::api::handle<cache> cache_api = co_await fcl::http::api::remote<cache>(client);
    chunk value = co_await cache_api->read({
       .ref = "abc",
       .offset = 0,
@@ -434,7 +551,7 @@ limits/timeouts apply while chunks are read.
   mapping where HTTP is the transport.
 - Do not force file upload/download through `FCL_API`; use stream routes and the
   file/upload helper layers.
-- Do not hide server bind/TLS/lifecycle in `fcl.http.api`; the API builder owns
+- Do not hide server bind/TLS/lifecycle in `fcl.http.api.binding`; the API builder owns
   route mapping, API middleware, status projection and error payloads only.
 - Do not add HTTP API builder options unless they change runtime behavior and
   have tests.

@@ -71,6 +71,7 @@ class private_key {
    [[nodiscard]] algorithm type() const noexcept;
    [[nodiscard]] public_key get_public_key() const;
    [[nodiscard]] signature sign(std::span<const std::uint8_t> message) const;
+   [[nodiscard]] signature sign_digest(const sha256& digest) const;
 
    template <typename T> [[nodiscard]] const T& as() const {
       return std::get<T>(_storage);

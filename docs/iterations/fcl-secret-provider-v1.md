@@ -2,7 +2,7 @@
 
 ## Summary
 
-Add a neutral FCL infrastructure plugin `secret_provider` for local secret
+Add a neutral FCL infrastructure plugin `secret::provider` for local secret
 material and bounded cryptographic operations. It is the symmetric/data-secret
 counterpart to `signature_provider`: products configure secret sources and
 purpose policy once, while product plugins call a narrow local API by
@@ -31,7 +31,7 @@ Without it, downstream products tend to copy one of two bad patterns:
 - one product-specific vault grows into a framework feature outside FCL and
   cannot be reused by other serious consumers.
 
-`secret_provider` closes that gap without making FCL a product vault or a cloud
+`secret::provider` closes that gap without making FCL a product vault or a cloud
 KMS wrapper.
 
 ## Donor-Derived Requirements
@@ -70,13 +70,16 @@ Rejected shortcuts:
 
 Target and package naming:
 
-- target: `fcl_plugin_secret_provider`;
-- namespace: `fcl::plugins::secret_provider`;
+- target: `fcl_plugins_secret_provider`;
+- namespace: `fcl::plugins::secret::provider`;
+- package component: `plugins_secret_provider`;
+- plugin/API id: `fcl.plugins.secret.provider`;
+- config section: `plugins.secret.provider`;
 - public modules:
-  - `fcl.plugins.secret_provider.types`;
-  - `fcl.plugins.secret_provider.api`;
-  - `fcl.plugins.secret_provider.exceptions`;
-  - `fcl.plugins.secret_provider.plugin`.
+  - `fcl.plugins.secret.provider.types`;
+  - `fcl.plugins.secret.provider.api`;
+  - `fcl.plugins.secret.provider.exceptions`;
+  - `fcl.plugins.secret.provider.plugin`.
 
 The API is local-only and intentionally operation-oriented:
 
@@ -113,19 +116,21 @@ diagnostics and exception context.
 Example:
 
 ```yaml
-secret-provider:
-  secrets:
-    - id: service/session-key
-      source:
-        type: value
-        encoding: hex
-        value: "${SERVICE_SESSION_KEY}"
-      purposes:
-        - api.payload.decrypt
-      operations:
-        - decrypt_aes_gcm
-        - derive_hkdf_sha256
-      allow-raw-export: false
+plugins:
+  secret:
+    provider:
+      secrets:
+        - id: service/session-key
+          source:
+            type: value
+            encoding: hex
+            value: "${SERVICE_SESSION_KEY}"
+          purposes:
+            - api.payload.decrypt
+          operations:
+            - decrypt_aes_gcm
+            - derive_hkdf_sha256
+          allow-raw-export: false
 ```
 
 Supported v1 source types:
@@ -147,7 +152,7 @@ These are new source backends, not changes to consumer APIs.
 
 ## Boundaries
 
-`secret_provider` owns:
+`secret::provider` owns:
 
 - config decoding and secret source loading;
 - source-specific validation;
@@ -157,7 +162,7 @@ These are new source backends, not changes to consumer APIs.
 - bounded HKDF-SHA256 derivation through `fcl_crypto`;
 - optional raw export policy.
 
-`secret_provider` does not own:
+`secret::provider` does not own:
 
 - product authority, grants, ACLs or tenant semantics;
 - chain, data-plane, account or deployment decisions;
@@ -195,16 +200,16 @@ Unit tests:
 
 Package tests:
 
-- external consumer can import `fcl.plugins.secret_provider.*`, register the
+- external consumer can import `fcl.plugins.secret.provider.*`, register the
   plugin, call `decrypt_aes_gcm` and receive typed failures.
 
 Static gates:
 
 ```bash
 rg "std::getenv|getenv\\(|OPENSSL|EVP_|private_key|downstream_product_term" \
-  plugins/secret_provider -g "*.cpp" -g "*.cppm" -g "*.hxx"
+  plugins/secret/provider -g "*.cpp" -g "*.cppm" -g "*.hxx"
 
-rg "secret-provider:.*value|<redacted>" docs plugins/secret_provider \
+rg "plugins.secret.provider:.*value|<redacted>" docs plugins/secret/provider \
   -g "*.md" -g "*.cpp" -g "*.cppm" -g "*.hxx"
 ```
 
@@ -212,12 +217,12 @@ Validation:
 
 ```bash
 cmake --build build/fcl-debug -j 1 \
-  --target fcl_plugin_secret_provider test_fcl_secret_provider test_fcl_plugins \
+  --target fcl_plugins_secret_provider test_fcl_secret_provider test_fcl_plugins \
            test_fcl_crypto test_fcl_config test_fcl_env \
-           test_fcl_package_plugin_secret_provider
+           test_fcl_package_plugins_secret_provider
 
 ctest --test-dir build/fcl-debug --output-on-failure \
-  -R "^(test_fcl_plugins|test_fcl_secret_provider|test_fcl_crypto|test_fcl_config|test_fcl_env|test_fcl_package_plugin_secret_provider)$" \
+  -R "^(test_fcl_plugins|test_fcl_secret_provider|test_fcl_crypto|test_fcl_config|test_fcl_env|test_fcl_package_plugins_secret_provider)$" \
   --timeout 300
 
 git diff --check

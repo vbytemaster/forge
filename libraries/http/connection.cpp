@@ -67,9 +67,57 @@ void ensure_host_header(request& request_value, const base_url& endpoint) {
    }
 }
 
+beast_http::verb to_beast_method(method value) noexcept {
+   switch (value) {
+   case method::delete_:
+      return beast_http::verb::delete_;
+   case method::get:
+      return beast_http::verb::get;
+   case method::head:
+      return beast_http::verb::head;
+   case method::options:
+      return beast_http::verb::options;
+   case method::patch:
+      return beast_http::verb::patch;
+   case method::post:
+      return beast_http::verb::post;
+   case method::put:
+      return beast_http::verb::put;
+   case method::unknown:
+      return beast_http::verb::unknown;
+   }
+   return beast_http::verb::unknown;
+}
+
+status to_http_status(beast_http::status value) noexcept {
+   return static_cast<status>(static_cast<unsigned>(value));
+}
+
+beast_http::request<beast_http::string_body> to_beast_request(const request& source) {
+   auto target = beast_http::request<beast_http::string_body>{to_beast_method(source.method()),
+                                                              std::string{source.target()}, source.version()};
+   for (const auto& header : source.headers()) {
+      target.insert(header.name, header.text);
+   }
+   target.keep_alive(source.keep_alive());
+   target.body() = source.body();
+   target.prepare_payload();
+   return target;
+}
+
+response to_http_response(const beast_http::response<beast_http::string_body>& source) {
+   auto target = response{to_http_status(source.result()), source.version()};
+   target.keep_alive(source.keep_alive());
+   for (const auto& header : source) {
+      target.insert(header.name_string(), header.value());
+   }
+   target.body() = source.body();
+   return target;
+}
+
 response make_header_response(const beast_http::response_parser<beast_http::buffer_body>& parser) {
    const auto& source = parser.get();
-   auto output = response{source.result(), source.version()};
+   auto output = response{to_http_status(source.result()), source.version()};
    output.keep_alive(source.keep_alive());
    for (const auto& field_value : source) {
       output.insert(field_value.name_string(), field_value.value());
@@ -142,10 +190,11 @@ awaitable<void> write_streaming_request(Stream& stream,
                                         const request& request_value,
                                         body_reader& body,
                                         std::chrono::milliseconds timeout) {
-   auto message = beast_http::request<beast_http::buffer_body>{request_value.method(), request_value.target(),
+   auto message = beast_http::request<beast_http::buffer_body>{to_beast_method(request_value.method()),
+                                                               std::string{request_value.target()},
                                                                request_value.version()};
-   for (const auto& field_value : request_value) {
-      message.set(field_value.name_string(), field_value.value());
+   for (const auto& field_value : request_value.headers()) {
+      message.set(field_value.name, field_value.text);
    }
    message.keep_alive(request_value.keep_alive());
    message.chunked(true);
@@ -284,18 +333,21 @@ struct connection::impl {
       co_await ensure_plain_connected(timeout);
 
       ensure_host_header(request_value, endpoint);
+      auto beast_request = to_beast_request(request_value);
       beast::get_lowest_layer(*plain_stream).expires_after(timeout);
-      co_await boost::beast::http::async_write(*plain_stream, request_value, use_awaitable);
+      co_await boost::beast::http::async_write(*plain_stream, beast_request, use_awaitable);
 
       buffer.consume(buffer.size());
       auto response_value = response{};
       if (request_value.method() == method::head) {
-         auto parser = boost::beast::http::response_parser<string_body>{};
+         auto parser = boost::beast::http::response_parser<beast_http::string_body>{};
          parser.skip(true);
          co_await boost::beast::http::async_read(*plain_stream, buffer, parser, use_awaitable);
-         response_value = parser.release();
+         response_value = to_http_response(parser.release());
       } else {
-         co_await boost::beast::http::async_read(*plain_stream, buffer, response_value, use_awaitable);
+         auto beast_response = beast_http::response<beast_http::string_body>{};
+         co_await boost::beast::http::async_read(*plain_stream, buffer, beast_response, use_awaitable);
+         response_value = to_http_response(beast_response);
       }
 
       if (!response_value.keep_alive()) {
@@ -309,18 +361,21 @@ struct connection::impl {
       co_await ensure_tls_connected(timeout);
 
       ensure_host_header(request_value, endpoint);
+      auto beast_request = to_beast_request(request_value);
       beast::get_lowest_layer(*tls_stream).expires_after(timeout);
-      co_await boost::beast::http::async_write(*tls_stream, request_value, use_awaitable);
+      co_await boost::beast::http::async_write(*tls_stream, beast_request, use_awaitable);
 
       buffer.consume(buffer.size());
       auto response_value = response{};
       if (request_value.method() == method::head) {
-         auto parser = boost::beast::http::response_parser<string_body>{};
+         auto parser = boost::beast::http::response_parser<beast_http::string_body>{};
          parser.skip(true);
          co_await boost::beast::http::async_read(*tls_stream, buffer, parser, use_awaitable);
-         response_value = parser.release();
+         response_value = to_http_response(parser.release());
       } else {
-         co_await boost::beast::http::async_read(*tls_stream, buffer, response_value, use_awaitable);
+         auto beast_response = beast_http::response<beast_http::string_body>{};
+         co_await boost::beast::http::async_read(*tls_stream, buffer, beast_response, use_awaitable);
+         response_value = to_http_response(beast_response);
       }
 
       if (!response_value.keep_alive()) {
@@ -342,9 +397,10 @@ struct connection::impl {
       co_await write_streaming_request(stream, request_value, body, timeout);
 
       auto stream_buffer = beast::flat_buffer{};
-      auto response_value = response{};
+      auto beast_response = beast_http::response<beast_http::string_body>{};
       stream.expires_after(timeout);
-      co_await beast_http::async_read(stream, stream_buffer, response_value, use_awaitable);
+      co_await beast_http::async_read(stream, stream_buffer, beast_response, use_awaitable);
+      auto response_value = to_http_response(beast_response);
       record_status(response_value);
       co_return response_value;
    }
@@ -367,9 +423,10 @@ struct connection::impl {
       co_await write_streaming_request(stream, request_value, body, timeout);
 
       auto stream_buffer = beast::flat_buffer{};
-      auto response_value = response{};
+      auto beast_response = beast_http::response<beast_http::string_body>{};
       beast::get_lowest_layer(stream).expires_after(timeout);
-      co_await beast_http::async_read(stream, stream_buffer, response_value, use_awaitable);
+      co_await beast_http::async_read(stream, stream_buffer, beast_response, use_awaitable);
+      auto response_value = to_http_response(beast_response);
       record_status(response_value);
       co_return response_value;
    }
@@ -386,8 +443,9 @@ struct connection::impl {
       if (body.has_value()) {
          co_await write_streaming_request(stream, request_value, *body, timeout);
       } else {
+         auto beast_request = to_beast_request(request_value);
          stream.expires_after(timeout);
-         co_await beast_http::async_write(stream, request_value, use_awaitable);
+         co_await beast_http::async_write(stream, beast_request, use_awaitable);
       }
 
       auto stream_buffer = beast::flat_buffer{};
@@ -422,8 +480,9 @@ struct connection::impl {
       if (body.has_value()) {
          co_await write_streaming_request(stream, request_value, *body, timeout);
       } else {
+         auto beast_request = to_beast_request(request_value);
          beast::get_lowest_layer(stream).expires_after(timeout);
-         co_await beast_http::async_write(stream, request_value, use_awaitable);
+         co_await beast_http::async_write(stream, beast_request, use_awaitable);
       }
 
       auto stream_buffer = beast::flat_buffer{};

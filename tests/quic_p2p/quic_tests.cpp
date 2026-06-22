@@ -182,16 +182,6 @@ generated_identity generate_test_identity(std::string_view subject_alt_name) {
    };
 }
 
-struct scoped_quic_connect_failpoint {
-   explicit scoped_quic_connect_failpoint(std::string_view name) {
-      ::setenv("STORLANE_NETWORK_QUIC_CONNECT_FAILPOINT", std::string{name}.c_str(), 1);
-   }
-
-   ~scoped_quic_connect_failpoint() {
-      ::unsetenv("STORLANE_NETWORK_QUIC_CONNECT_FAILPOINT");
-   }
-};
-
 std::vector<std::uint8_t> test_certificate_der() {
    auto bio = std::unique_ptr<BIO, bio_deleter>{
        BIO_new_mem_buf(test_certificate().data(), static_cast<int>(test_certificate().size()))};
@@ -507,13 +497,15 @@ BOOST_AUTO_TEST_CASE(quic_endpoint_rejects_non_quic_scheme) {
 BOOST_AUTO_TEST_CASE(quic_connect_timeout_wins_over_pre_connection_error_race) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
    auto client = connector{runtime};
-   auto failpoint = scoped_quic_connect_failpoint{"timeout_before_pre_connection_error_finish"};
-   static_cast<void>(failpoint);
+   auto options = loopback_client_options();
+   options.test_failpoint = [](std::string_view name) {
+      return name == "timeout_before_pre_connection_error_finish";
+   };
 
    try {
       (void)run_with_deadline(
           runtime,
-          client.async_connect(endpoint{.host = "not a valid host name", .port = 443}, loopback_client_options()),
+          client.async_connect(endpoint{.host = "not a valid host name", .port = 443}, std::move(options)),
           std::chrono::milliseconds{2'000}, "pre-connection error timeout winner");
       BOOST_FAIL("expected QUIC connect timeout");
    } catch (const fcl::exceptions::base& error) {

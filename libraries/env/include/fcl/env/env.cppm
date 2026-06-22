@@ -2,6 +2,7 @@ module;
 
 #include <algorithm>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -76,6 +77,7 @@ struct write_result {
                                         const write_options& options);
 [[nodiscard]] std::string variable_name(std::string_view section, std::string_view field,
                                         const read_options& options);
+[[nodiscard]] std::optional<std::filesystem::path> home_directory();
 
 [[nodiscard]] read_result<config::document> read_variables(const std::vector<environment_variable>& variables,
                                                            const config::component_registry& registry,

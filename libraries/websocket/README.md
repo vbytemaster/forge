@@ -112,7 +112,7 @@ router.websocket("/api", [binding](fcl::websocket::connection::ptr connection) m
 
 `fcl.websocket.api` owns API-level WebSocket binding behavior only:
 max-frame-size rejection and handoff to the shared `frame_dispatcher`. It does
-not use `fcl.api.transport`, because WebSocket messages are not
+not use `fcl.transport.api`, because WebSocket messages are not
 `transport::stream` chunks. HTTP upgrade routes, TLS verification and application
 reconnect policy stay with the transport owner.
 

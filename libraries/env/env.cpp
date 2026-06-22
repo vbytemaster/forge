@@ -36,6 +36,7 @@ import fcl.schema.diagnostic;
 import fcl.schema.value_kind;
 import fcl.schema.object;
 import fcl.schema.enums;
+import fcl.schema.scalar;
 
 namespace fcl::env {
 namespace {
@@ -291,53 +292,26 @@ void add_binding(binding_build_result& result, field_binding candidate, bool cas
    return array;
 }
 
-template <typename Parser>
-[[nodiscard]] config::value parse_number(std::string_view input, Parser parser, const char* message) {
-   auto text = std::string{input};
-   auto position = std::size_t{0};
-   auto parsed = parser(text, &position);
-   if (position != text.size()) {
-      throw std::invalid_argument{message};
+template <typename T>
+[[nodiscard]] T parse_env_scalar(std::string_view input, std::string_view message) {
+   try {
+      return schema::parse_scalar_text<T>(input);
+   } catch (const std::invalid_argument&) {
+      throw std::invalid_argument{std::string{message}};
    }
-   return parsed;
-}
-
-[[nodiscard]] bool has_negative_sign_after_ascii_space(std::string_view input) {
-   auto index = std::size_t{0};
-   while (index < input.size() && std::isspace(static_cast<unsigned char>(input[index])) != 0) {
-      ++index;
-   }
-   return index < input.size() && input[index] == '-';
 }
 
 [[nodiscard]] config::value convert_value(schema::value_kind kind, std::string_view input) {
    switch (kind) {
    case schema::value_kind::boolean: {
-      auto parsed = false;
-      if (!config::parse_bool_text(std::string{input}, parsed)) {
-         throw std::invalid_argument{"expected boolean value"};
-      }
-      return parsed;
+      return parse_env_scalar<bool>(input, "expected boolean value");
    }
    case schema::value_kind::signed_integer:
-      return parse_number(input,
-                          [](const std::string& text, std::size_t* position) {
-                             return static_cast<std::int64_t>(std::stoll(text, position));
-                          },
-                          "expected signed integer value");
+      return parse_env_scalar<std::int64_t>(input, "expected signed integer value");
    case schema::value_kind::unsigned_integer:
-      if (has_negative_sign_after_ascii_space(input)) {
-         throw std::invalid_argument{"expected unsigned integer value"};
-      }
-      return parse_number(input,
-                          [](const std::string& text, std::size_t* position) {
-                             return static_cast<std::uint64_t>(std::stoull(text, position));
-                          },
-                          "expected unsigned integer value");
+      return parse_env_scalar<std::uint64_t>(input, "expected unsigned integer value");
    case schema::value_kind::floating:
-      return parse_number(input,
-                          [](const std::string& text, std::size_t* position) { return std::stod(text, position); },
-                          "expected floating-point value");
+      return parse_env_scalar<double>(input, "expected floating point value");
    case schema::value_kind::string:
       return std::string{input};
    case schema::value_kind::string_list:
@@ -685,6 +659,18 @@ void select_value(read_result<config::document>& result, std::map<std::string, s
 }
 
 } // namespace
+
+std::optional<std::filesystem::path> home_directory() {
+   if (const auto* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
+      return std::filesystem::path{home};
+   }
+#if defined(_WIN32)
+   if (const auto* profile = std::getenv("USERPROFILE"); profile != nullptr && *profile != '\0') {
+      return std::filesystem::path{profile};
+   }
+#endif
+   return std::nullopt;
+}
 
 std::string variable_name(std::string_view section, std::string_view field, const write_options& options) {
    return env_name_for(options.prefix, section, field);

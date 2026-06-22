@@ -165,4 +165,20 @@ BOOST_AUTO_TEST_CASE(json_malformed_input_returns_fcl_diagnostic) {
    BOOST_TEST(parsed.diagnostics.front().message.find("glz::") == std::string::npos);
 }
 
+BOOST_AUTO_TEST_CASE(json_write_escapes_control_bytes_inside_strings) {
+   const auto expected = std::string{"a\x01\b\0z", 5};
+   const auto written = fcl::json::write_value(fcl::variant{fcl::mutable_variant_object{}("text", expected)});
+   BOOST_REQUIRE(written.ok());
+   BOOST_TEST(written.text.find("\\u0001") != std::string::npos);
+   const auto escaped_backspace =
+       written.text.find("\\b") != std::string::npos || written.text.find("\\u0008") != std::string::npos;
+   BOOST_TEST(escaped_backspace);
+   BOOST_TEST(written.text.find("\\u0000") != std::string::npos);
+   BOOST_TEST(written.text.find('\0') == std::string::npos);
+
+   const auto parsed = fcl::json::read_value(written.text);
+   BOOST_REQUIRE(parsed.ok());
+   BOOST_TEST(parsed.value.get_object()["text"].get_string() == expected);
+}
+
 BOOST_AUTO_TEST_SUITE_END()

@@ -1,13 +1,16 @@
 module;
 
 #include <boost/asio/awaitable.hpp>
+#include <fcl/exceptions/macros.hpp>
 
 #include <concepts>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <typeindex>
+#include <tuple>
 #include <utility>
 
 export module fcl.api.connection;
@@ -75,6 +78,24 @@ class remote_invoker {
 
    virtual boost::asio::awaitable<response> async_call(request value) = 0;
 
+   virtual bool supports_typed_arguments() const noexcept {
+      return false;
+   }
+
+   virtual boost::asio::awaitable<void> async_call_arguments(request value,
+                                                            std::type_index argument_tuple_type,
+                                                            void* argument_tuple,
+                                                            std::type_index response_type,
+                                                            void* response_storage) {
+      static_cast<void>(value);
+      static_cast<void>(argument_tuple_type);
+      static_cast<void>(argument_tuple);
+      static_cast<void>(response_type);
+      static_cast<void>(response_storage);
+      FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
+                          "remote invoker does not support typed argument calls");
+   }
+
    template <typename Request, typename Response>
    boost::asio::awaitable<Response> call(const descriptor& contract, api_ref api, std::string method, Request value) {
       auto outbound = request{
@@ -83,6 +104,44 @@ class remote_invoker {
           .codec = {.value = "fcl.raw"},
           .body = pack_body(value),
       };
+      auto inbound = co_await async_call(std::move(outbound));
+      if (inbound.error) {
+         raise_remote_error(*inbound.error, find_method(contract, inbound.method));
+      }
+      co_return unpack_body<Response>(inbound.body);
+   }
+
+   template <typename Response, typename... Args>
+   boost::asio::awaitable<Response> call_arguments(const descriptor& contract, api_ref api, std::string method,
+                                                   Args&&... args) {
+      using argument_tuple = std::tuple<std::remove_cvref_t<Args>...>;
+      if (supports_typed_arguments()) {
+         auto arguments = argument_tuple{std::forward<Args>(args)...};
+         auto output = std::optional<Response>{};
+         auto outbound = request{
+             .api = std::move(api),
+             .method = std::move(method),
+             .codec = {.value = "fcl.typed"},
+         };
+         co_await async_call_arguments(std::move(outbound), typeid(argument_tuple), &arguments, typeid(Response),
+                                       &output);
+         if (!output.has_value()) {
+            FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
+                                "typed remote invoker returned no response value");
+         }
+         co_return std::move(*output);
+      }
+
+      auto outbound = request{
+          .api = std::move(api),
+          .method = std::move(method),
+          .codec = {.value = "fcl.raw"},
+      };
+      if constexpr (sizeof...(Args) == 1U) {
+         outbound.body = pack_body((std::forward<Args>(args), ...));
+      } else {
+         outbound.body = pack_body(std::make_tuple(std::forward<Args>(args)...));
+      }
       auto inbound = co_await async_call(std::move(outbound));
       if (inbound.error) {
          raise_remote_error(*inbound.error, find_method(contract, inbound.method));

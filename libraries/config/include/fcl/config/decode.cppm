@@ -57,6 +57,8 @@ struct decode_diagnostics {
    }
 };
 
+[[nodiscard]] std::string format_decode_diagnostics(std::string_view prefix, const decode_diagnostics& diagnostics);
+
 template <typename T> struct decode_result {
    T value{};
    decode_diagnostics diagnostics;

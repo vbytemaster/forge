@@ -1,11 +1,12 @@
 module;
 #include <string.h>
 #include <boost/multiprecision/cpp_int.hpp>
-#include <boost/scoped_array.hpp>
 #include <algorithm>
+#include <cstdint>
 #include <exception>
 #include <iomanip>
 #include <limits>
+#include <span>
 #include <sstream>
 #include <string_view>
 #include <vector>
@@ -14,105 +15,10 @@ module;
 
 module fcl.variant.value;
 
+import fcl.core.encoding;
 import fcl.core.string;
 import fcl.core.utf8;
 import fcl.variant.exceptions;
-
-namespace {
-
-constexpr char base64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-std::string variant_base64_encode(const char* data, std::size_t size) {
-   std::string out;
-   out.reserve(((size + 2) / 3) * 4);
-   for (std::size_t i = 0; i < size; i += 3) {
-      const auto b0 = static_cast<unsigned char>(data[i]);
-      const auto b1 = (i + 1 < size) ? static_cast<unsigned char>(data[i + 1]) : 0;
-      const auto b2 = (i + 2 < size) ? static_cast<unsigned char>(data[i + 2]) : 0;
-      out.push_back(base64_chars[b0 >> 2]);
-      out.push_back(base64_chars[((b0 & 0x03) << 4) | (b1 >> 4)]);
-      out.push_back((i + 1 < size) ? base64_chars[((b1 & 0x0f) << 2) | (b2 >> 6)] : '=');
-      out.push_back((i + 2 < size) ? base64_chars[b2 & 0x3f] : '=');
-   }
-   return out;
-}
-
-int variant_base64_value(char c) {
-   if (c >= 'A' && c <= 'Z')
-      return c - 'A';
-   if (c >= 'a' && c <= 'z')
-      return c - 'a' + 26;
-   if (c >= '0' && c <= '9')
-      return c - '0' + 52;
-   if (c == '+')
-      return 62;
-   if (c == '/')
-      return 63;
-   if (c == '=')
-      return -2;
-   return -1;
-}
-
-std::vector<char> variant_base64_decode(std::string_view input) {
-   std::vector<char> out;
-   int val = 0;
-   int valb = -8;
-   for (char c : input) {
-      const int decoded = variant_base64_value(c);
-      if (decoded == -2) {
-         break;
-      }
-      if (decoded < 0) {
-         throw std::invalid_argument("encountered non-base64 character");
-      }
-      val = (val << 6) + decoded;
-      valb += 6;
-      if (valb >= 0) {
-         out.push_back(static_cast<char>((val >> valb) & 0xff));
-         valb -= 8;
-      }
-   }
-   return out;
-}
-
-char variant_hex_char(unsigned value) {
-   return static_cast<char>(value < 10 ? ('0' + value) : ('a' + value - 10));
-}
-
-std::string variant_to_hex(const char* data, std::size_t size) {
-   std::string out;
-   out.reserve(size * 2);
-   for (std::size_t i = 0; i < size; ++i) {
-      const auto byte = static_cast<unsigned char>(data[i]);
-      out.push_back(variant_hex_char(byte >> 4));
-      out.push_back(variant_hex_char(byte & 0x0f));
-   }
-   return out;
-}
-
-unsigned variant_from_hex_char(char c) {
-   if (c >= '0' && c <= '9')
-      return static_cast<unsigned>(c - '0');
-   if (c >= 'a' && c <= 'f')
-      return static_cast<unsigned>(c - 'a' + 10);
-   if (c >= 'A' && c <= 'F')
-      return static_cast<unsigned>(c - 'A' + 10);
-   throw std::invalid_argument("invalid hex character");
-}
-
-std::size_t variant_from_hex(std::string_view input, char* output, std::size_t output_size) {
-   const auto count = input.size() / 2;
-   if (count > output_size) {
-      throw std::out_of_range("hex output buffer too small");
-   }
-   for (std::size_t i = 0; i < count; ++i) {
-      output[i] =
-          static_cast<char>((variant_from_hex_char(input[2 * i]) << 4) | variant_from_hex_char(input[2 * i + 1]));
-   }
-   return count;
-}
-
-} // namespace
 
 namespace fcl {
 /**
@@ -196,23 +102,17 @@ variant::variant(const char* str) {
    set_variant_type(this, string_type);
 }
 
-// TODO: do a proper conversion to utf8
 variant::variant(wchar_t* str) {
-   size_t len = wcslen(str);
-   boost::scoped_array<char> buffer(new char[len]);
-   for (unsigned i = 0; i < len; ++i)
-      buffer[i] = (char)str[i];
-   *reinterpret_cast<std::string**>(this) = new std::string(buffer.get(), len);
+   auto utf8 = std::string{};
+   fcl::encodeUtf8(std::wstring{str, wcslen(str)}, &utf8);
+   *reinterpret_cast<std::string**>(this) = new std::string(std::move(utf8));
    set_variant_type(this, string_type);
 }
 
-// TODO: do a proper conversion to utf8
 variant::variant(const wchar_t* str) {
-   size_t len = wcslen(str);
-   boost::scoped_array<char> buffer(new char[len]);
-   for (unsigned i = 0; i < len; ++i)
-      buffer[i] = (char)str[i];
-   *reinterpret_cast<std::string**>(this) = new std::string(buffer.get(), len);
+   auto utf8 = std::string{};
+   fcl::encodeUtf8(std::wstring{str, wcslen(str)}, &utf8);
+   *reinterpret_cast<std::string**>(this) = new std::string(std::move(utf8));
    set_variant_type(this, string_type);
 }
 
@@ -529,7 +429,8 @@ std::string variant::as_string() const {
       return *reinterpret_cast<const bool*>(this) ? "true" : "false";
    case blob_type:
       if (get_blob().data.size())
-         return variant_base64_encode(get_blob().data.data(), get_blob().data.size());
+         return fcl::encoding::to_base64(std::span<const std::uint8_t>{
+             reinterpret_cast<const std::uint8_t*>(get_blob().data.data()), get_blob().data.size()});
       return std::string();
    case null_type:
       return std::string();
@@ -572,9 +473,16 @@ blob variant::as_blob() const {
          // pre-5.0 versions of variant added `=` to end of base64 encoded string in as_string() above.
          // Keep legacy base64_decode behavior: extra trailing `=` is accepted.
          // Other base64 decoders will not accept the extra `=`.
-         std::vector<char> b64 = variant_base64_decode(str);
-         return {std::move(b64)};
+         auto decoded = fcl::encoding::from_base64(str);
+         return {std::vector<char>{decoded.begin(), decoded.end()}};
       } catch (const std::exception&) {
+         if (str.ends_with('=')) {
+            try {
+               auto decoded = fcl::encoding::from_base64(std::string_view{str}.substr(0, str.size() - 1U));
+               return {std::vector<char>{decoded.begin(), decoded.end()}};
+            } catch (const std::exception&) {
+            }
+         }
          // unable to decode, return the raw chars
       }
       return blob({std::vector<char>(str.begin(), str.end())});
@@ -781,7 +689,8 @@ void to_variant(const std::vector<char>& var, variant& vo) {
    if (var.size() > MAX_SIZE_OF_BYTE_ARRAYS)
       throw std::out_of_range("byte array too large");
    if (var.size())
-      vo = variant(variant_to_hex(var.data(), var.size()));
+      vo = variant(fcl::encoding::to_hex(
+         std::span<const std::uint8_t>{reinterpret_cast<const std::uint8_t*>(var.data()), var.size()}));
    else
       vo = "";
 }
@@ -793,18 +702,21 @@ void from_variant(const variant& var, std::vector<char>& vo) {
       throw std::invalid_argument("the length of hex string should be even number");
    vo.resize(str.size() / 2);
    if (vo.size()) {
-      size_t r = variant_from_hex(str, vo.data(), vo.size());
+      const auto r = fcl::encoding::from_hex(
+         str, std::span<std::uint8_t>{reinterpret_cast<std::uint8_t*>(vo.data()), vo.size()});
       if (r != vo.size())
          throw fcl::variant_exceptions::decode_error{"hex decode length mismatch"};
    }
 }
 
 void to_variant(const blob& b, variant& v) {
-   v = variant(variant_base64_encode(b.data.data(), b.data.size()));
+   v = variant(fcl::encoding::to_base64(
+      std::span<const std::uint8_t>{reinterpret_cast<const std::uint8_t*>(b.data.data()), b.data.size()}));
 }
 
 void from_variant(const variant& v, blob& b) {
-   b.data = variant_base64_decode(v.as_string());
+   auto decoded = fcl::encoding::from_base64(v.as_string());
+   b.data = std::vector<char>{decoded.begin(), decoded.end()};
 }
 
 void to_variant(const UInt<8>& n, variant& v) {

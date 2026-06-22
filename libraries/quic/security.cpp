@@ -6,14 +6,13 @@ module;
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
-#include <iomanip>
 #include <span>
-#include <sstream>
 #include <string>
 #include <string_view>
 
 module fcl.quic.security;
 
+import fcl.crypto.hex;
 import fcl.crypto.sha256;
 import fcl.crypto.x509;
 
@@ -46,13 +45,7 @@ std::string normalize_sha256_fingerprint(std::string_view value) {
 
 std::string sha256_fingerprint(std::span<const std::uint8_t> data) {
    const auto digest = fcl::crypto::sha256::hash(data).to_uint8_span();
-
-   auto out = std::ostringstream{};
-   out << std::hex << std::setfill('0');
-   for (const auto byte : digest) {
-      out << std::setw(2) << static_cast<unsigned>(byte);
-   }
-   return out.str();
+   return fcl::crypto::to_hex(digest.data(), static_cast<std::uint32_t>(digest.size()));
 }
 
 std::string certificate_sha256_fingerprint_from_pem(std::string_view certificate_pem) {

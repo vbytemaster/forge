@@ -98,6 +98,22 @@ struct sign_visitor : visitor<signature::storage_type> {
    std::span<const std::uint8_t> _message;
 };
 
+struct sign_digest_visitor : visitor<signature::storage_type> {
+   explicit sign_digest_visitor(const sha256& digest) : _digest(digest) {}
+
+   template <typename KeyType> signature::storage_type operator()(const KeyType& key) const {
+      if constexpr (requires { key.sign_digest(_digest); }) {
+         return signature::storage_type(key.sign_digest(_digest));
+      } else if constexpr (requires { key.sign(_digest); }) {
+         return signature::storage_type(key.sign(_digest));
+      } else {
+         return signature::storage_type(key.sign(_digest.to_uint8_span()));
+      }
+   }
+
+   const sha256& _digest;
+};
+
 struct is_valid_visitor : public fcl::visitor<bool> {
    template <typename KeyType> bool operator()(const KeyType& key) const {
       return key.valid();
@@ -127,6 +143,10 @@ algorithm private_key::type() const noexcept {
 
 signature private_key::sign(std::span<const std::uint8_t> message) const {
    return signature(std::visit(sign_visitor(message), _storage));
+}
+
+signature private_key::sign_digest(const sha256& digest) const {
+   return signature(std::visit(sign_digest_visitor(digest), _storage));
 }
 
 bool operator==(const private_key& p1, const private_key& p2) {

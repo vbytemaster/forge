@@ -12,5 +12,6 @@ add_executable(fcl_package_plugins_component main.cpp)
 target_link_libraries(
    fcl_package_plugins_component PRIVATE
       FCL::fcl_plugins
-      FCL::fcl_plugin_p2p_node
+      FCL::fcl_plugins_p2p_node
+      FCL::fcl_plugins_secret_provider
 )

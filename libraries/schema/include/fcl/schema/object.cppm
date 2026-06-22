@@ -28,14 +28,12 @@ export module fcl.schema.object;
 import fcl.schema.diagnostic;
 import fcl.schema.value_kind;
 import fcl.schema.enums;
+import fcl.schema.scalar;
 
 export namespace fcl::schema {
 
 template <typename T> struct rules;
 template <typename T> struct member_pointer_traits;
-
-template <typename Target> [[nodiscard]] Target checked_integral_from_signed(std::int64_t value);
-template <typename Target> [[nodiscard]] Target checked_integral_from_unsigned(std::uint64_t value);
 
 template <typename Object, typename Member> struct member_pointer_traits<Member Object::*> {
    using object_type = Object;
@@ -82,28 +80,28 @@ template <typename T> [[nodiscard]] T cast_any_to(const std::any& value) {
       }
    } else if constexpr (std::integral<clean_type> && !std::same_as<clean_type, bool>) {
       if (value.type() == typeid(int)) {
-         return checked_integral_from_signed<clean_type>(std::any_cast<int>(value));
+         return checked_integral_cast<clean_type>(std::any_cast<int>(value));
       }
       if (value.type() == typeid(unsigned int)) {
-         return checked_integral_from_unsigned<clean_type>(std::any_cast<unsigned int>(value));
+         return checked_integral_cast<clean_type>(std::any_cast<unsigned int>(value));
       }
       if (value.type() == typeid(long)) {
-         return checked_integral_from_signed<clean_type>(std::any_cast<long>(value));
+         return checked_integral_cast<clean_type>(std::any_cast<long>(value));
       }
       if (value.type() == typeid(unsigned long)) {
-         return checked_integral_from_unsigned<clean_type>(std::any_cast<unsigned long>(value));
+         return checked_integral_cast<clean_type>(std::any_cast<unsigned long>(value));
       }
       if (value.type() == typeid(long long)) {
-         return checked_integral_from_signed<clean_type>(std::any_cast<long long>(value));
+         return checked_integral_cast<clean_type>(std::any_cast<long long>(value));
       }
       if (value.type() == typeid(unsigned long long)) {
-         return checked_integral_from_unsigned<clean_type>(std::any_cast<unsigned long long>(value));
+         return checked_integral_cast<clean_type>(std::any_cast<unsigned long long>(value));
       }
       if (value.type() == typeid(std::int64_t)) {
-         return checked_integral_from_signed<clean_type>(std::any_cast<std::int64_t>(value));
+         return checked_integral_cast<clean_type>(std::any_cast<std::int64_t>(value));
       }
       if (value.type() == typeid(std::uint64_t)) {
-         return checked_integral_from_unsigned<clean_type>(std::any_cast<std::uint64_t>(value));
+         return checked_integral_cast<clean_type>(std::any_cast<std::uint64_t>(value));
       }
    } else if constexpr (std::floating_point<clean_type>) {
       if (value.type() == typeid(float)) {
@@ -114,6 +112,37 @@ template <typename T> [[nodiscard]] T cast_any_to(const std::any& value) {
       }
       if (value.type() == typeid(long double)) {
          return static_cast<T>(std::any_cast<long double>(value));
+      }
+   } else if constexpr (std::is_enum_v<clean_type>) {
+      if (value.type() == typeid(std::string)) {
+         auto parsed = clean_type{};
+         if (enum_from_config_string(std::any_cast<std::string>(value), parsed)) {
+            return parsed;
+         }
+      }
+      if (value.type() == typeid(const char*)) {
+         auto parsed = clean_type{};
+         if (enum_from_config_string(std::any_cast<const char*>(value), parsed)) {
+            return parsed;
+         }
+      }
+      if (value.type() == typeid(char*)) {
+         auto parsed = clean_type{};
+         if (enum_from_config_string(std::any_cast<char*>(value), parsed)) {
+            return parsed;
+         }
+      }
+      if (value.type() == typeid(int)) {
+         auto parsed = clean_type{};
+         if (enum_from_int(static_cast<std::int64_t>(std::any_cast<int>(value)), parsed)) {
+            return parsed;
+         }
+      }
+      if (value.type() == typeid(std::int64_t)) {
+         auto parsed = clean_type{};
+         if (enum_from_int(std::any_cast<std::int64_t>(value), parsed)) {
+            return parsed;
+         }
       }
    }
    return std::any_cast<clean_type>(value);
@@ -152,65 +181,6 @@ template <typename T> [[nodiscard]] T cast_any_to(const std::any& value) {
       .level = severity::warning,
       .message = std::move(message),
    };
-}
-
-[[nodiscard]] inline bool parse_bool_text(std::string text, bool& output) {
-   std::ranges::transform(text, text.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-   if (text == "true" || text == "1" || text == "yes" || text == "on") {
-      output = true;
-      return true;
-   }
-   if (text == "false" || text == "0" || text == "no" || text == "off") {
-      output = false;
-      return true;
-   }
-   return false;
-}
-
-template <typename Target> [[nodiscard]] Target checked_integral_from_signed(std::int64_t value) {
-   if constexpr (std::signed_integral<Target>) {
-      if (value < static_cast<std::int64_t>((std::numeric_limits<Target>::min)()) ||
-          value > static_cast<std::int64_t>((std::numeric_limits<Target>::max)())) {
-         throw std::invalid_argument{"config integer is outside target type range"};
-      }
-   } else {
-      if (value < 0 ||
-          static_cast<std::uint64_t>(value) > static_cast<std::uint64_t>((std::numeric_limits<Target>::max)())) {
-         throw std::invalid_argument{"config integer is outside target type range"};
-      }
-   }
-   return static_cast<Target>(value);
-}
-
-template <typename Target> [[nodiscard]] Target checked_integral_from_unsigned(std::uint64_t value) {
-   if constexpr (std::signed_integral<Target>) {
-      if (value > static_cast<std::uint64_t>((std::numeric_limits<Target>::max)())) {
-         throw std::invalid_argument{"config integer is outside target type range"};
-      }
-   } else {
-      if (value > static_cast<std::uint64_t>((std::numeric_limits<Target>::max)())) {
-         throw std::invalid_argument{"config integer is outside target type range"};
-      }
-   }
-   return static_cast<Target>(value);
-}
-
-template <typename Value>
-[[nodiscard]] Value parse_integral_text(std::string_view text) {
-   if (text.empty()) {
-      throw std::invalid_argument{"config integer has invalid syntax"};
-   }
-   auto value = Value{};
-   const auto* first = text.data();
-   const auto* last = text.data() + text.size();
-   const auto [next, error] = std::from_chars(first, last, value);
-   if (error == std::errc::result_out_of_range) {
-      throw std::invalid_argument{"config integer is outside target type range"};
-   }
-   if (error != std::errc{} || next != last) {
-      throw std::invalid_argument{"config integer has invalid syntax"};
-   }
-   return value;
 }
 
 template <typename T>
@@ -638,23 +608,23 @@ template <typename T>
       }
    } else if constexpr (std::signed_integral<clean_type> && !std::same_as<clean_type, bool>) {
       if (const auto* value = std::get_if<std::int64_t>(&input.storage)) {
-         return checked_integral_from_signed<clean_type>(*value);
+         return checked_integral_cast<clean_type>(*value);
       }
       if (const auto* value = std::get_if<std::uint64_t>(&input.storage)) {
-         return checked_integral_from_unsigned<clean_type>(*value);
+         return checked_integral_cast<clean_type>(*value);
       }
       if (const auto* text = std::get_if<std::string>(&input.storage)) {
-         return checked_integral_from_signed<clean_type>(parse_integral_text<std::int64_t>(*text));
+         return parse_scalar_text<clean_type>(*text);
       }
    } else if constexpr (std::unsigned_integral<clean_type> && !std::same_as<clean_type, bool>) {
       if (const auto* value = std::get_if<std::uint64_t>(&input.storage)) {
-         return checked_integral_from_unsigned<clean_type>(*value);
+         return checked_integral_cast<clean_type>(*value);
       }
       if (const auto* value = std::get_if<std::int64_t>(&input.storage); value && *value >= 0) {
-         return checked_integral_from_signed<clean_type>(*value);
+         return checked_integral_cast<clean_type>(*value);
       }
       if (const auto* text = std::get_if<std::string>(&input.storage)) {
-         return checked_integral_from_unsigned<clean_type>(parse_integral_text<std::uint64_t>(*text));
+         return parse_scalar_text<clean_type>(*text);
       }
    } else if constexpr (std::floating_point<clean_type>) {
       if (const auto* value = std::get_if<double>(&input.storage)) {
@@ -668,6 +638,26 @@ template <typename T>
       }
       if (const auto* text = std::get_if<std::string>(&input.storage)) {
          return static_cast<T>(std::stod(*text));
+      }
+   } else if constexpr (std::is_enum_v<clean_type>) {
+      if (const auto* text = std::get_if<std::string>(&input.storage)) {
+         auto parsed = clean_type{};
+         if (enum_from_config_string(*text, parsed)) {
+            return parsed;
+         }
+      }
+      if (const auto* value = std::get_if<std::int64_t>(&input.storage)) {
+         auto parsed = clean_type{};
+         if (enum_from_int(*value, parsed)) {
+            return parsed;
+         }
+      }
+      if (const auto* value = std::get_if<std::uint64_t>(&input.storage);
+          value && *value <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())) {
+         auto parsed = clean_type{};
+         if (enum_from_int(static_cast<std::int64_t>(*value), parsed)) {
+            return parsed;
+         }
       }
    } else if constexpr (std::same_as<clean_type, std::string>) {
       if (const auto* value = std::get_if<std::string>(&input.storage)) {

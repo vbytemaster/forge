@@ -6,6 +6,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <optional>
 #include <vector>
 
 import fcl.config.key_path;
@@ -18,6 +19,7 @@ import fcl.schema.diagnostic;
 import fcl.schema.value_kind;
 import fcl.schema.object;
 import fcl.schema.enums;
+import fcl.schema.scalar;
 
 namespace {
 
@@ -44,6 +46,12 @@ struct nested_signer_config {
    std::vector<nested_key_config> keys;
    std::string default_output_profile = "fcl";
 };
+
+enum class scalar_test_mode : std::uint8_t {
+   fast_mode = 1,
+   safe_mode = 2,
+};
+BOOST_DESCRIBE_ENUM(scalar_test_mode, fast_mode, safe_mode)
 
 } // namespace
 
@@ -161,6 +169,22 @@ BOOST_AUTO_TEST_CASE(config_decode_rejects_integer_overflow_before_range_validat
    BOOST_TEST(decoded_trailing.value.bind_port == 8080U);
 }
 
+BOOST_AUTO_TEST_CASE(schema_scalar_text_codec_is_shared_and_checked) {
+   BOOST_TEST(fcl::schema::parse_scalar_text<std::uint16_t>("65535") == 65535U);
+   BOOST_CHECK_THROW((void)fcl::schema::parse_scalar_text<std::uint16_t>("65536"), std::invalid_argument);
+   BOOST_CHECK_THROW((void)fcl::schema::parse_scalar_text<std::uint16_t>("12tail"), std::invalid_argument);
+   BOOST_CHECK_THROW((void)fcl::schema::parse_scalar_text<std::uint16_t>("-1"), std::invalid_argument);
+
+   BOOST_TEST(fcl::schema::parse_scalar_text<bool>("yes"));
+   BOOST_CHECK_THROW((void)fcl::schema::parse_scalar_text<bool>("maybe"), std::invalid_argument);
+
+   BOOST_TEST(static_cast<int>(fcl::schema::parse_scalar_text<scalar_test_mode>("safe-mode")) ==
+              static_cast<int>(scalar_test_mode::safe_mode));
+   BOOST_TEST(fcl::schema::format_scalar_text(scalar_test_mode::fast_mode).value_or("") == "fast-mode");
+   BOOST_TEST(fcl::schema::format_scalar_text(std::optional<std::uint16_t>{7}).value_or("") == "7");
+   BOOST_TEST(!fcl::schema::format_scalar_text(std::optional<std::uint16_t>{}).has_value());
+}
+
 BOOST_AUTO_TEST_CASE(config_value_to_any_rejects_integer_overflow_and_trailing_junk) {
    BOOST_CHECK_THROW(
       static_cast<void>(fcl::config::value_to_any(
@@ -273,16 +297,16 @@ BOOST_AUTO_TEST_CASE(config_decodes_nested_object_lists_with_item_defaults_and_p
    key["unknown"] = fcl::config::value{"ignored"};
 
    auto doc = fcl::config::document{};
-   doc.set("signature-provider.keys", fcl::config::value::array_type{fcl::config::value{key}});
+   doc.set("plugins.signing.provider.keys", fcl::config::value::array_type{fcl::config::value{key}});
 
-   const auto decoded = fcl::config::decode<nested_signer_config>(doc, "signature-provider");
+   const auto decoded = fcl::config::decode<nested_signer_config>(doc, "plugins.signing.provider");
    BOOST_TEST(decoded.ok());
    BOOST_REQUIRE_EQUAL(decoded.value.keys.size(), 1U);
    BOOST_TEST(decoded.value.keys.front().id == "provider");
    BOOST_TEST(decoded.value.keys.front().private_key == "PVT_FAKE");
    BOOST_TEST(decoded.value.keys.front().input_profile == "fcl");
    BOOST_TEST(decoded.value.default_output_profile == "fcl");
-   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "signature-provider.keys[0].unknown", "config.unknown"));
+   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "plugins.signing.provider.keys[0].unknown", "config.unknown"));
 }
 
 BOOST_AUTO_TEST_CASE(config_nested_object_list_validators_report_stable_diagnostics) {
@@ -300,23 +324,45 @@ BOOST_AUTO_TEST_CASE(config_nested_object_list_validators_report_stable_diagnost
    duplicate_two["private-key"] = fcl::config::value{"PVT_TWO"};
 
    auto doc = fcl::config::document{};
-   doc.set("signature-provider.keys",
+   doc.set("plugins.signing.provider.keys",
            fcl::config::value::array_type{
               fcl::config::value{invalid},
               fcl::config::value{duplicate},
               fcl::config::value{duplicate_two},
            });
 
-   const auto decoded = fcl::config::decode<nested_signer_config>(doc, "signature-provider");
+   const auto decoded = fcl::config::decode<nested_signer_config>(doc, "plugins.signing.provider");
    BOOST_TEST(!decoded.ok());
-   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "signature-provider.keys[0].id", "schema.non_empty"));
-   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "signature-provider.keys[0].private-key", "schema.non_empty"));
-   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "signature-provider.keys[0].purposes[0]", "schema.non_empty"));
-   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "signature-provider.keys", "schema.unique"));
+   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "plugins.signing.provider.keys[0].id", "schema.non_empty"));
+   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "plugins.signing.provider.keys[0].private-key",
+                             "schema.non_empty"));
+   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "plugins.signing.provider.keys[0].purposes[0]",
+                             "schema.non_empty"));
+   BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "plugins.signing.provider.keys", "schema.unique"));
+}
+
+BOOST_AUTO_TEST_CASE(config_formats_full_decode_diagnostics) {
+   auto invalid = fcl::config::value::object_type{};
+   invalid["id"] = fcl::config::value{""};
+   invalid["private-key"] = fcl::config::value{""};
+   invalid["purposes"] = fcl::config::value::array_type{fcl::config::value{""}};
+
+   auto doc = fcl::config::document{};
+   doc.set("plugins.signing.provider.keys", fcl::config::value::array_type{fcl::config::value{invalid}});
+
+   const auto decoded = fcl::config::decode<nested_signer_config>(doc, "plugins.signing.provider");
+   BOOST_TEST(!decoded.ok());
+
+   const auto message = fcl::config::format_decode_diagnostics("invalid signature provider config",
+                                                               decoded.diagnostics);
+   BOOST_TEST(message.find("invalid signature provider config") != std::string::npos);
+   BOOST_TEST(message.find("plugins.signing.provider.keys[0].id schema.non_empty") != std::string::npos);
+   BOOST_TEST(message.find("plugins.signing.provider.keys[0].private-key schema.non_empty") != std::string::npos);
+   BOOST_TEST(message.find("plugins.signing.provider.keys[0].purposes[0] schema.non_empty") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(config_describes_secret_object_list_without_nested_env_fields) {
-   const auto descriptor = fcl::config::describe_component<nested_signer_config>("signature-provider");
+   const auto descriptor = fcl::config::describe_component<nested_signer_config>("plugins.signing.provider");
    BOOST_REQUIRE_EQUAL(descriptor.fields.size(), 2U);
    BOOST_TEST(descriptor.fields[0].name == "keys");
    BOOST_TEST(static_cast<int>(descriptor.fields[0].kind) == static_cast<int>(fcl::schema::value_kind::object_list));

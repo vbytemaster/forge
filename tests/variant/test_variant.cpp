@@ -167,7 +167,8 @@ BOOST_AUTO_TEST_CASE(variant_format_string_limited) {
       const string result = fcl::format_string(format_str, mu, true);
       const string target_result = format_prefix + a_short_list + " " + "{" + "\"b\":\"" + b_short_list +
                                    "\",\"c\":\"" + c_short_list + "\"}" + " " + "[\"" + d_short_list + "\",\"" +
-                                   e_short_list + "\"]" + " " + base64_encode(a_blob.data.data(), a_blob.data.size()) +
+                                   e_short_list + "\"]" + " " +
+                                   fcl::crypto::base64_encode(a_blob.data.data(), a_blob.data.size()) +
                                    " " + g_short_list;
 
       BOOST_CHECK_EQUAL(result, target_result);
@@ -249,6 +250,17 @@ BOOST_AUTO_TEST_CASE(variant_blob_backwards_compatibility) {
       std::string_view b64_str(b64.data(), b64.size());
       BOOST_CHECK_EQUAL(b64_str, org);
    }
+}
+
+BOOST_AUTO_TEST_CASE(variant_blob_rejects_malformed_base64_trailing_garbage) {
+   const auto malformed = std::string{"YQ==evil"};
+   const auto value = fcl::variant{malformed};
+
+   const auto blob_value = value.as_blob().data;
+   BOOST_TEST(std::string(blob_value.begin(), blob_value.end()) == malformed);
+
+   auto decoded = fcl::blob{};
+   BOOST_CHECK_THROW(fcl::from_variant(value, decoded), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_CASE(array) {

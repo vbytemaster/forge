@@ -27,7 +27,7 @@ register/discover against rust-libp2p.
 
 ## Accepted Rules
 
-- DHT and rendezvous live in `fcl_p2p`, not `fcl::plugins::p2p_node`.
+- DHT and rendezvous live in `fcl_p2p`, not `fcl::plugins::p2p::node`.
 - Public API stays owner-shaped: `dht::options`, `dht::query_result`,
   `rendezvous::options`, `rendezvous::registration`, `discovery::policy`.
 - RocksDB remains a replaceable `peer_store` backend detail and does not appear

@@ -3,6 +3,7 @@ module;
 #include <coroutine>
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <condition_variable>
 #include <exception>
 #include <limits>
@@ -11,6 +12,7 @@ module;
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -47,6 +49,19 @@ using tcp = asio::ip::tcp;
 using asio::awaitable;
 using asio::use_awaitable;
 
+bool same_header_name(std::string_view left, std::string_view right) noexcept {
+   if (left.size() != right.size()) {
+      return false;
+   }
+   for (auto index = std::size_t{0}; index != left.size(); ++index) {
+      if (std::tolower(static_cast<unsigned char>(left[index])) !=
+          std::tolower(static_cast<unsigned char>(right[index]))) {
+         return false;
+      }
+   }
+   return true;
+}
+
 stream_limits limits_from(const server_config& config) {
    return stream_limits{
        .max_body_bytes = config.max_request_body_bytes,
@@ -55,11 +70,36 @@ stream_limits limits_from(const server_config& config) {
    };
 }
 
+method to_http_method(beast_http::verb value) noexcept {
+   switch (value) {
+   case beast_http::verb::delete_:
+      return method::delete_;
+   case beast_http::verb::get:
+      return method::get;
+   case beast_http::verb::head:
+      return method::head;
+   case beast_http::verb::options:
+      return method::options;
+   case beast_http::verb::patch:
+      return method::patch;
+   case beast_http::verb::post:
+      return method::post;
+   case beast_http::verb::put:
+      return method::put;
+   default:
+      return method::unknown;
+   }
+}
+
+beast_http::status to_beast_status(status value) noexcept {
+   return static_cast<beast_http::status>(static_cast<unsigned>(value));
+}
+
 request make_header_request(const beast_http::request_parser<beast_http::buffer_body>& parser) {
    const auto& source = parser.get();
    auto request_value = request{};
-   request_value.method(source.method());
-   request_value.target(source.target());
+   request_value.method(to_http_method(source.method()));
+   request_value.target(std::string_view{source.target().data(), source.target().size()});
    request_value.version(source.version());
    request_value.keep_alive(source.keep_alive());
    for (const auto& field_value : source) {
@@ -69,9 +109,33 @@ request make_header_request(const beast_http::request_parser<beast_http::buffer_
 }
 
 void copy_headers(const response& source, beast_http::response<beast_http::buffer_body>& target) {
-   for (const auto& field_value : source) {
-      target.set(field_value.name_string(), field_value.value());
+   for (const auto& field_value : source.headers()) {
+      if (same_header_name(field_value.name, "Set-Cookie")) {
+         target.insert(field_value.name, field_value.text);
+      } else {
+         target.set(field_value.name, field_value.text);
+      }
    }
+}
+
+beast_http::response<beast_http::string_body> to_beast_response(const response& source) {
+   auto target = beast_http::response<beast_http::string_body>{to_beast_status(source.result()), source.version()};
+   for (const auto& header : source.headers()) {
+      target.insert(header.name, header.text);
+   }
+   target.keep_alive(source.keep_alive());
+   target.body() = source.body();
+   return target;
+}
+
+beast_http::request<beast_http::string_body>
+to_websocket_request(const beast_http::request<beast_http::buffer_body>& source) {
+   auto target = beast_http::request<beast_http::string_body>{source.method(), source.target(), source.version()};
+   for (const auto& header : source) {
+      target.insert(header.name_string(), header.value());
+   }
+   target.keep_alive(source.keep_alive());
+   return target;
 }
 
 class beast_body_reader_source final : public body_reader::source {
@@ -216,8 +280,8 @@ class server_session : public std::enable_shared_from_this<server_session> {
             break;
          }
          auto& context = *context_storage;
-         if (beast_websocket::is_upgrade(request_value)) {
-            if (co_await try_upgrade(request_value, context)) {
+         if (beast_websocket::is_upgrade(parser.get())) {
+            if (co_await try_upgrade(parser.get(), context)) {
                co_return;
             }
          }
@@ -270,8 +334,9 @@ class server_session : public std::enable_shared_from_this<server_session> {
 
  private:
    awaitable<void> write_response(response& response_value) {
+      auto beast_response = to_beast_response(response_value);
       auto [write_error, written] =
-          co_await beast_http::async_write(stream_, response_value, asio::as_tuple(use_awaitable));
+          co_await beast_http::async_write(stream_, beast_response, asio::as_tuple(use_awaitable));
       static_cast<void>(written);
       if (write_error) {
          throw boost::system::system_error{write_error};
@@ -284,11 +349,11 @@ class server_session : public std::enable_shared_from_this<server_session> {
          co_return;
       }
 
-      auto message = beast_http::response<beast_http::buffer_body>{response_value.head.result(),
+      auto message = beast_http::response<beast_http::buffer_body>{to_beast_status(response_value.head.result()),
                                                                    response_value.head.version()};
       copy_headers(response_value.head, message);
       message.keep_alive(response_value.head.keep_alive());
-      if (message.find(field::content_length) == message.end()) {
+      if (message.find(field_name(field::content_length)) == message.end()) {
          message.chunked(true);
       }
 
@@ -350,7 +415,7 @@ class server_session : public std::enable_shared_from_this<server_session> {
       }
    }
 
-   awaitable<bool> try_upgrade(const request& request_value, route_context& context) {
+   awaitable<bool> try_upgrade(const beast_http::request<beast_http::buffer_body>& request_value, route_context& context) {
       if (!router_) {
          co_return false;
       }
@@ -361,7 +426,8 @@ class server_session : public std::enable_shared_from_this<server_session> {
       }
 
       auto connection = fcl::websocket::connection::create(std::move(stream_));
-      co_await connection->accept(request_value);
+      auto websocket_request = to_websocket_request(request_value);
+      co_await connection->accept(websocket_request);
       (*handler)(connection);
       connection->start_read_loop();
       co_return true;

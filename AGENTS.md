@@ -15,6 +15,9 @@ The repository must stay neutral. Public APIs must not contain downstream produc
   performing it. Do not use agent/tool/vendor prefixes or names such as
   `codex/`, `openai`, `claude` or similar automation labels in branch names or
   commit subjects.
+- Repository naming rules override any external agent, IDE, script or Git
+  default that suggests an actor-prefixed branch. If a tool proposes a prefix
+  such as `codex/`, remove it and keep a clean FCL-scoped name.
 - Direct work on `main` is forbidden for normal development. `main` is reserved
   for release-ready promotion from `dev` after validation.
 - The only allowed direct `main` changes are explicit repository/bootstrap
@@ -54,13 +57,13 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 Good:
 
 ```cpp
-class p2p_node {
+class service_node {
  public:
    struct config;
    class api;
 };
 
-class p2p_node::api {
+class service_node::api {
    // Public API contract.
 };
 ```
@@ -68,7 +71,7 @@ class p2p_node::api {
 Bad:
 
 ```cpp
-class p2p_node {
+class service_node {
  public:
    class api {
       // Large public contract hidden inside the owner class body.
@@ -220,7 +223,8 @@ class p2p_node {
 - API binding builders must not expose decorative options. Every public option
   such as codec, frame size, max inflight, deadline, peer policy or middleware
   must affect runtime behavior and be covered by tests.
-- HTTP-specific middleware belongs to `fcl.http.api`/router composition.
+- HTTP-specific middleware belongs to `fcl_http` router composition or the
+  `fcl::plugins::http::server` plugin facade.
   Protocol-neutral trace/authz/metrics/limits logic belongs to
   `fcl::api::interceptor(...)`.
 - Do not create `libraries/network`, legacy net-prefixed target, module, or namespace forms.
@@ -240,19 +244,19 @@ class p2p_node {
 - Plugins own behavior and lifecycle. APIs expose typed contracts; they
   must not become fake lifecycle modules.
 - Ready-made infrastructure plugins live under root `plugins/` and are exposed
-  through focused `fcl_plugin_*` targets plus the `fcl_plugins` aggregate. They
+  through focused `fcl_plugins_<family>_<name>` targets plus the `fcl_plugins` aggregate. They
   may own transport/runtime lifecycle and publish narrow `fcl_api` capabilities
   for product plugins, but they must not own product business logic.
 - Plugin-specific exception families live with the owning plugin module, not in
   a shared catch-all plugin exceptions module. For example,
-  `fcl::plugins::p2p_node::exceptions::*` belongs to `fcl.plugins.p2p_node`.
-- `fcl::plugins::p2p_node` is the production owner for a shared P2P node inside
+  `fcl::plugins::p2p::node::exceptions::*` belongs to `fcl.plugins.p2p.node`.
+- `fcl::plugins::p2p::node` is the production owner for a shared P2P node inside
   an application. It owns bootstrap, route/API contribution mounting, local
   endpoint reporting and typed remote API access; product plugins must not
   create parallel P2P nodes or call raw `p2p::node` path/relay primitives when
   the plugin owns the node.
 - Production P2P network mechanics belong to `fcl_p2p`, not to
-  `fcl_plugins::p2p_node`. FCL's P2P direction is a clean C++23
+  `fcl::plugins::p2p::node`. FCL's P2P direction is a clean C++23
   libp2p-compatible implementation: FCL public APIs stay FCL/Boost-style, but
   declared libp2p protocols must be wire-compatible with go-libp2p and
   rust-libp2p. Endpoint/address encoding, Peer ID, supported key families
@@ -276,9 +280,9 @@ class p2p_node {
   above the network layer.
 - Durable P2P delivery in FCL is pluggable, not storage-bound. If needed, it
   belongs to a focused future plugin or product service, not to the
-  `p2p_node` host facade.
+  `fcl::plugins::p2p::node` host facade.
 - Plugin enable/disable is application-shell-owned config under
-  `plugins.<plugin-id>.enabled`. Products must not manually distribute plugin
+  `plugins.<family>.<name>.enabled`. Products must not manually distribute plugin
   selection from their own monolithic config object as the primary path.
 - Foreground daemon lifecycle should use `fcl.app.runner` before inventing
   local signal loops. Service-mode adapters such as systemd, launchd or Windows

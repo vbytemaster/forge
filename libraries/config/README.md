@@ -102,8 +102,8 @@ if (!decoded.ok()) {
 ```
 
 Nested object lists are decoded through `fcl_schema` rules too. Diagnostics use
-indexed paths such as `signature-provider.keys[0].private-key`, while the config
-registry still sees `signature-provider.keys` as one object-list field for
+indexed paths such as `plugins.signing.provider.keys[0].private-key`, while the config
+registry still sees `plugins.signing.provider.keys` as one object-list field for
 redaction and source-adapter policy.
 
 ### Redact Secrets Before Output

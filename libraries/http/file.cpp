@@ -52,16 +52,23 @@ std::string file_etag(std::uintmax_t size, std::filesystem::file_time_type modif
    return output.str();
 }
 
-std::optional<std::string_view> header_value(const request& request_value, field name) {
+std::optional<std::string> header_value(const request& request_value, field name) {
    const auto found = request_value.find(name);
    if (found == request_value.end()) {
       return std::nullopt;
    }
-   return std::string_view{found->value().data(), found->value().size()};
+   return std::string{found->value()};
 }
 
-bool same_header_value(std::optional<std::string_view> left, std::string_view right) {
+bool same_header_value(const std::optional<std::string>& left, std::string_view right) {
    return left.has_value() && *left == right;
+}
+
+std::optional<std::string_view> view_of(const std::optional<std::string>& value) {
+   if (!value.has_value()) {
+      return std::nullopt;
+   }
+   return std::string_view{*value};
 }
 
 void throw_file_write_failed(const std::filesystem::path& target, std::string_view phase) {
@@ -242,7 +249,8 @@ boost::asio::awaitable<stream_response> file_response::materialize(const request
    }
 
    const auto size = static_cast<std::uint64_t>(std::filesystem::file_size(path_));
-   auto range_value = resolve_range(header_value(request_value, field::range), size);
+   const auto range_header = header_value(request_value, field::range);
+   auto range_value = resolve_range(view_of(range_header), size);
    co_return make_file_stream(request_value, path_, options_, std::move(range_value));
 }
 

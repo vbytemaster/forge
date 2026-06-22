@@ -63,6 +63,35 @@ BOOST_DESCRIBE_STRUCT(protocol::read_chunk, (), (ref, offset, limit))
 FCL_DECLARE_SERIALIZATION(protocol::read_chunk)
 ```
 
+For new APIs that are more naturally expressed as several C++ arguments,
+`FCL_API_METHOD(method, arg...)` records positional argument names while the
+types are still deduced from the C++ method signature:
+
+```cpp
+class cache_api : public fcl::api::contract<
+   cache_api,
+   fcl::api::surface::local | fcl::api::surface::remote> {
+ public:
+   virtual ~cache_api() = default;
+
+   virtual boost::asio::awaitable<store_receipt>
+   store_chunk(cache_name cache, chunk_ref ref, chunk_bytes bytes) = 0;
+};
+
+FCL_API(
+   cache_api,
+   FCL_API_CONTRACT("cache", 1, 0),
+   FCL_API_METHOD(store_chunk, cache, ref, bytes))
+```
+
+The argument names are metadata, not type declarations. Existing
+`FCL_API_METHOD(read)` one-request DTO methods keep their old source and wire
+shape. Positional methods are new declarations and use an internal argument-pack
+payload for frame transports. HTTP-specific request wrappers are not part of
+`fcl_api`; `fcl_http` supports them as fields of described request DTOs and
+keeps HTTP positional methods limited to path/query routing plus an optional
+single JSON DTO body.
+
 If a C++ interface has overloads or local convenience helpers with the same
 method name, use the typed method macro to select the wire method explicitly:
 
@@ -162,7 +191,7 @@ return fcl::api::define<cache>({.id = {"cache.bulk"}, .version = {1, 0}})
 
 ## API Over Transport
 
-`fcl.api.transport` is the reusable binding for API-over-stream transports. It
+`fcl.transport.api` is the reusable binding for API-over-stream transports. It
 sits above `fcl_api` and `fcl_transport`, uses `fcl::transport::stream` /
 `fcl::transport::session`, and owns the shared frame read/write loop, codec
 checks, grouped stream handling, max-inflight limits, deadlines and error
@@ -200,8 +229,9 @@ auto plan = fcl::api::binding()
    .build();
 ```
 
-HTTP-specific request middleware stays in `fcl.http.api::middleware(...)`;
-API interceptors do not parse HTTP headers, routes or upgrade state.
+HTTP-specific request middleware stays in `fcl_http` or the `fcl::plugins::http::server`
+plugin facade; API interceptors do not parse HTTP headers, routes or upgrade
+state.
 
 ## Error Payload
 
@@ -246,7 +276,7 @@ the remote category/code preserved as redacted-safe context.
 - Do not silently choose the first API implementation when version checks fail.
 - Do not expose stack traces, secrets or capture context in network payloads.
 - Do not force HTTP into a frame-only POST RPC shape; use native HTTP mapping in
-  `fcl.http.api`.
+  `fcl.http.api.binding`.
 - Do not add a builder option that only stores a flag. Any option exposed by API
   bindings must change behavior and have a test.
 

@@ -288,6 +288,35 @@ BOOST_AUTO_TEST_CASE(generic_sign_verify_all_supported_algorithms) try {
 }
 FCL_LOG_AND_RETHROW();
 
+BOOST_AUTO_TEST_CASE(generic_sign_digest_all_supported_algorithms) try {
+   const auto digest = fcl::crypto::sha256::hash("fcl-crypto-digest");
+   const auto keys = std::vector<private_key>{
+      private_key::generate<secp256k1::private_key_shim>(),
+      private_key::generate<p256::private_key_shim>(),
+      private_key::generate<ed25519::private_key_shim>(),
+      private_key::generate<rsa::private_key_shim>(),
+   };
+
+   for (const auto& key : keys) {
+      const auto sig = key.sign_digest(digest);
+      const auto pub = key.get_public_key();
+      switch (key.type()) {
+      case algorithm::secp256k1:
+      case algorithm::p256:
+         {
+            const auto recovered = public_key{sig, digest, true};
+            BOOST_TEST(recovered.to_string({}) == pub.to_string({}));
+         }
+         break;
+      case algorithm::ed25519:
+      case algorithm::rsa:
+         BOOST_TEST(pub.verify(digest.to_uint8_span(), sig));
+         break;
+      }
+   }
+}
+FCL_LOG_AND_RETHROW();
+
 BOOST_AUTO_TEST_CASE(x25519_key_agreement_roundtrip) try {
    auto alice = x25519::private_key::generate();
    auto bob = x25519::private_key::generate();

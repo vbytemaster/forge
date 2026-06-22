@@ -3,7 +3,9 @@ module;
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
+#include <string_view>
 
 export module fcl.quic.options;
 
@@ -29,6 +31,7 @@ struct client_options {
    security_options security{};
    std::string certificate_pem;
    std::string private_key_pem;
+   std::function<bool(std::string_view)> test_failpoint;
 };
 
 struct server_options {

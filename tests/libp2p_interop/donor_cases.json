@@ -181,9 +181,9 @@
       "known_gap": "Live donor fixtures do not expose all pruning/protection knobs; component tests cover host policy and live interop remains the compatibility gate."
     },
     {
-      "id": "plugin.p2p_api_resolver_metadata",
+      "id": "plugin.p2p.resolver.metadata",
       "protocol": "FCL P2P API Resolver",
-      "source": "docs/donors/fcl-p2p-api-resolver-v1.md",
+      "source": "docs/donors/fcl-p2p-resolver-v1.md",
       "donor": "libp2p Identify protocol-listing, Kubo CoreAPI facade pattern, Boxo service separation and rust-libp2p behaviour composition",
       "status": "ported",
       "supported": true,
@@ -209,7 +209,7 @@
         "test_fcl_plugins p2p_diagnostics_api_rejects_facade_calls_before_initialize",
         "test_fcl_plugins p2p_diagnostics_plugin_reports_live_p2p_node_state"
       ],
-      "known_gap": "`p2p_diagnostics` is an FCL in-process operator/test API over local snapshots; no Go/Rust libp2p wire interop claim is made."
+      "known_gap": "`fcl::plugins::p2p::diagnostics` is an FCL in-process operator/test API over local snapshots; no Go/Rust libp2p wire interop claim is made."
     },
     {
       "id": "plugin.p2p_pubsub_facade",
@@ -225,7 +225,7 @@
         "test_fcl_plugins p2p_pubsub_plugin_publishes_and_subscribes_raw_and_typed_messages",
         "test_fcl_plugins p2p_pubsub_plugin_enforces_topic_policy_and_handler_bounds"
       ],
-      "known_gap": "`p2p_pubsub` is an FCL in-process plugin facade over core GossipSub; Go/Rust wire compatibility remains tracked by the core GossipSub live cases."
+      "known_gap": "`fcl::plugins::p2p::pubsub` is an FCL in-process plugin facade over core GossipSub; Go/Rust wire compatibility remains tracked by the core GossipSub live cases."
     },
     {
       "id": "interop.live_ping_identify_autonat_relay",

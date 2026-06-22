@@ -16,6 +16,7 @@ Documents below explain cross-library architecture decisions.
 | [roadmap.md](roadmap.md) | Post-1.0 direction, architecture gates and framework boundaries. |
 | [runtime/asio-app.md](runtime/asio-app.md) | Runtime ownership, bounded scheduler, plugin lifecycle and rollback. |
 | [web/http-websocket.md](web/http-websocket.md) | HTTP/WebSocket layering, routing, upgrade, retry and backpressure rules. |
+| [web/http-fastapi-style-parameters.md](web/http-fastapi-style-parameters.md) | FastAPI-style HTTP parameter binding for multi-argument FCL API methods. |
 | [web/http-files-and-s3.md](web/http-files-and-s3.md) | HTTP file upload/download gaps, Beast capabilities and S3-ready substrate plan. |
 | [network/quic-p2p.md](network/quic-p2p.md) | QUIC transport, P2P peer identity, protocol streams and failure model. |
 | [tui/notcurses-component-library.md](tui/notcurses-component-library.md) | TUI value models, deterministic rendering, navigation and Notcurses boundary. |
@@ -49,7 +50,7 @@ Each library guide must be useful without reading source first:
 - [program_options](../libraries/program_options/README.md)
 - [env](../libraries/env/README.md)
 - [api](../libraries/api/README.md)
-- [api_transport](../libraries/api_transport/README.md)
+- [transport_api](../libraries/transport_api/README.md)
 - [crypto](../libraries/crypto/README.md)
 - [log](../libraries/log/README.md)
 - [otlp](../libraries/otlp/README.md)

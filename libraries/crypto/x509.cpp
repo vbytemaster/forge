@@ -8,15 +8,14 @@ module;
 #include <openssl/pem.h>
 #include <openssl/x509.h>
 
-#include <iomanip>
 #include <memory>
-#include <sstream>
 #include <string>
 
 module fcl.crypto.x509;
 
 import fcl.crypto.asymmetric;
 import fcl.crypto.der;
+import fcl.crypto.hex;
 import fcl.crypto.sha256;
 
 namespace fcl::crypto::x509 {
@@ -71,15 +70,6 @@ using asn1_object_ptr = std::unique_ptr<ASN1_OBJECT, asn1_object_deleter>;
       FCL_THROW_EXCEPTION(exceptions::invalid_key, "failed to write X.509 certificate DER");
    }
    return out;
-}
-
-[[nodiscard]] std::string hex(std::span<const std::uint8_t> bytes_value) {
-   auto out = std::ostringstream{};
-   out << std::hex << std::setfill('0');
-   for (const auto byte : bytes_value) {
-      out << std::setw(2) << static_cast<unsigned>(byte);
-   }
-   return out.str();
 }
 
 } // namespace
@@ -153,7 +143,7 @@ bytes certificate::fingerprint_sha256() const {
 }
 
 std::string certificate::fingerprint_sha256_text() const {
-   return hex(fingerprint_sha256());
+   return fcl::crypto::to_hex(fingerprint_sha256());
 }
 
 } // namespace fcl::crypto::x509

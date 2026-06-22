@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <variant>
 #include <vector>
 
 import fcl.config.key_path;
@@ -79,6 +80,55 @@ BOOST_AUTO_TEST_CASE(program_options_reports_conversion_errors) {
    BOOST_TEST(!parsed.ok());
    BOOST_REQUIRE_EQUAL(parsed.diagnostics.size(), 1U);
    BOOST_TEST(parsed.diagnostics.front().code == "program_options.convert");
+}
+
+BOOST_AUTO_TEST_CASE(program_options_prescans_reserved_options_and_filters_application_args) {
+   const auto reserved = std::vector<fcl::program_options::reserved_option>{
+      {
+         .name = "runtime-threads",
+         .path = "daemon.runtime-threads",
+         .kind = fcl::schema::value_kind::unsigned_integer,
+      },
+      {
+         .name = "check-config",
+         .path = "daemon.check-config",
+         .kind = fcl::schema::value_kind::boolean,
+      },
+      {
+         .name = "profile",
+         .path = "daemon.profile",
+         .kind = fcl::schema::value_kind::string,
+      },
+   };
+   const char* argv[] = {
+      "testd",
+      "--runtime-threads=3",
+      "--app.value=on",
+      "--check-config",
+      "--profile",
+      "dev",
+   };
+
+   const auto parsed = fcl::program_options::pre_scan_reserved(6, argv, reserved);
+   BOOST_TEST(parsed.ok());
+   BOOST_TEST(parsed.present("daemon.runtime-threads"));
+   BOOST_TEST(parsed.present("daemon.check-config"));
+   BOOST_TEST(parsed.present("daemon.profile"));
+
+   const auto* runtime_threads = parsed.document.try_get("daemon.runtime-threads");
+   BOOST_REQUIRE(runtime_threads != nullptr);
+   BOOST_TEST(std::get<std::uint64_t>(runtime_threads->storage) == 3U);
+
+   const auto* check_config = parsed.document.try_get("daemon.check-config");
+   BOOST_REQUIRE(check_config != nullptr);
+   BOOST_TEST(std::get<bool>(check_config->storage));
+
+   const auto* profile = parsed.document.try_get("daemon.profile");
+   BOOST_REQUIRE(profile != nullptr);
+   BOOST_TEST(std::get<std::string>(profile->storage) == "dev");
+
+   const auto expected = std::vector<std::string>{"testd", "--app.value=on"};
+   BOOST_TEST(parsed.filtered_args == expected, boost::test_tools::per_element());
 }
 
 BOOST_AUTO_TEST_CASE(program_options_supports_empty_component_section_as_flat_flags) {

@@ -112,7 +112,7 @@ if (!parsed.ok()) {
 | [program_options](libraries/program_options/README.md) | `fcl_program_options` | CLI adapter from Boost.Program_options into config documents. | Boost.Program_options privately. |
 | [env](libraries/env/README.md) | `fcl_env` | Process env and explicit `.env` adapter into config documents. | `fcl_config`, `fcl_schema`. |
 | [api](libraries/api/README.md) | `fcl_api` | Typed local/remote API contracts, handles, descriptors and frame vocabulary. | `fcl_exceptions`, `fcl_raw`. |
-| [api_transport](libraries/api_transport/README.md) | `fcl_api_transport` | API frames over reusable transport streams/sessions. | `fcl_api`, `fcl_raw`, `fcl_transport`. |
+| [transport_api](libraries/transport_api/README.md) | `fcl_transport_api` | API frames over reusable transport streams/sessions. | `fcl_api`, `fcl_raw`, `fcl_transport`. |
 | [crypto](libraries/crypto/README.md) | `fcl_crypto` | Hashes, encodings, keys, signatures, OpenSSL 3.0+ crypto. | OpenSSL::Crypto, GMP, secp256k1, BLS. |
 | [log](libraries/log/README.md) | `fcl_log` | Logging core, messages, console/appender boundary. | `fcl_variant`, Boost.DLL privately. |
 | [otlp](libraries/otlp/README.md) | `fcl_otlp` | OTLP/HTTP JSON log export and crash-spool resend. | `fcl_log`, `fcl_http`, `fcl_asio`. |
@@ -127,7 +127,7 @@ if (!parsed.ok()) {
 | [quic](libraries/quic/README.md) | `fcl_quic` | QUIC endpoint, listener, connector, framed streams. | ngtcp2, OpenSSL 3.0+, Boost.Asio. |
 | [multiformats](libraries/multiformats/README.md) | `fcl_multiformats` | libp2p-compatible varint, multicodec, multihash, multibase and multiaddr. | `fcl_crypto`, `fcl_exceptions`. |
 | [p2p](libraries/p2p/README.md) | `fcl_p2p` | Peer identity, sessions, discovery, relay, DHT, rendezvous and GossipSub. | `fcl_transport`, `fcl_multiformats`, `fcl_quic`, `fcl_yamux`. |
-| [plugins](plugins/README.md) | `fcl_plugins`, `fcl_plugin_*` | Official infrastructure plugins: P2P node, API resolver, diagnostics, PubSub facade and signature provider. | `fcl_app`, `fcl_api`, focused plugin targets. |
+| [plugins](plugins/README.md) | `fcl_plugins`, `fcl_plugins_*_*` | Official infrastructure plugins: P2P node, API resolver, diagnostics, PubSub facade and signing provider. | `fcl_app`, `fcl_api`, focused plugin targets. |
 | [tui](libraries/tui/README.md) | `fcl_tui` | Terminal UI value models, render helpers, runner. | Notcurses core privately and optionally. |
 
 `find_package(FCL CONFIG REQUIRED)` is intentionally lightweight and discovers
@@ -185,7 +185,7 @@ cmake --build build/fcl-debug -j 1 \
   test_fcl_multiformats test_fcl_asio test_fcl_transport test_fcl_tcp test_fcl_stcp \
   test_fcl_yamux test_fcl_quic test_fcl_app test_fcl_schema test_fcl_config \
   test_fcl_yaml test_fcl_program_options test_fcl_env test_fcl_api \
-  test_fcl_api_transport test_fcl_http_websocket test_fcl_quic_p2p \
+  test_fcl_transport_api test_fcl_http_websocket test_fcl_quic_p2p \
   test_fcl_plugins test_fcl_otlp test_fcl_tui
 
 ctest --test-dir build/fcl-debug --output-on-failure

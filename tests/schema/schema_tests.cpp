@@ -23,6 +23,7 @@ import fcl.schema.diagnostic;
 import fcl.schema.value_kind;
 import fcl.schema.object;
 import fcl.schema.enums;
+import fcl.schema.scalar;
 
 template <> struct fcl::schema::rules<fcl_schema_tests::http_config> {
    [[nodiscard]] static fcl::schema::object_schema<fcl_schema_tests::http_config> define() {
@@ -68,4 +69,17 @@ BOOST_AUTO_TEST_CASE(schema_converts_described_enums) {
    BOOST_TEST(fcl::schema::enum_to_string(fcl::schema::severity::error).value() == "error");
    BOOST_TEST(fcl::schema::enum_from_int(0, level));
    BOOST_TEST(static_cast<int>(level) == static_cast<int>(fcl::schema::severity::info));
+}
+
+BOOST_AUTO_TEST_CASE(schema_checked_integral_cast_handles_widening_and_narrowing) {
+   BOOST_TEST(fcl::schema::checked_integral_cast<long long>(int{-1}) == -1LL);
+   BOOST_TEST(fcl::schema::checked_integral_cast<std::int64_t>(std::int32_t{-123}) == -123);
+   BOOST_TEST(fcl::schema::checked_integral_cast<long long>(std::uint32_t{123}) == 123LL);
+
+   BOOST_CHECK_THROW(static_cast<void>(fcl::schema::checked_integral_cast<std::uint8_t>(std::uint16_t{256})),
+                     std::invalid_argument);
+   BOOST_CHECK_THROW(static_cast<void>(fcl::schema::checked_integral_cast<std::int8_t>(std::int16_t{128})),
+                     std::invalid_argument);
+   BOOST_CHECK_THROW(static_cast<void>(fcl::schema::checked_integral_cast<std::uint8_t>(std::int16_t{-1})),
+                     std::invalid_argument);
 }

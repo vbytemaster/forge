@@ -8,6 +8,7 @@ configure_file(
 add_library(
    fcl_core STATIC
    chrono.cpp
+   encoding.cpp
    string.cpp
    uint128.cpp
    utf8.cpp

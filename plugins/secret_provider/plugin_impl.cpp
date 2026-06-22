@@ -171,6 +171,7 @@ aead_encrypt_result plugin::impl::encrypt_aes_gcm(aead_encrypt_request value) co
    const auto& secret = find_secret(secrets, value.secret_id);
    require_allowed(secret, value.purpose, operation::encrypt_aes_gcm);
    require_size(value.plaintext.size(), secret.max_plaintext_bytes, "plaintext");
+   require_size(value.aad.size(), secret.max_aad_bytes, "AAD");
 
    auto nonce = std::move(value.nonce);
    if (nonce.empty()) {
@@ -200,6 +201,7 @@ aead_decrypt_result plugin::impl::decrypt_aes_gcm(aead_decrypt_request value) co
    const auto& secret = find_secret(secrets, value.secret_id);
    require_allowed(secret, value.purpose, operation::decrypt_aes_gcm);
    require_size(value.ciphertext.size(), secret.max_ciphertext_bytes, "ciphertext");
+   require_size(value.aad.size(), secret.max_aad_bytes, "AAD");
 
    try {
       auto plaintext = fcl::crypto::decrypt_aes256_gcm(fcl::crypto::aes256_gcm_decrypt_request{

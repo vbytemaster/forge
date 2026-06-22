@@ -156,6 +156,7 @@ BOOST_AUTO_TEST_CASE(secret_provider_config_direct_defaults_match_schema_constan
 
    BOOST_TEST(value.default_max_plaintext_bytes == secret_provider::default_max_plaintext_bytes);
    BOOST_TEST(value.default_max_ciphertext_bytes == secret_provider::default_max_ciphertext_bytes);
+   BOOST_TEST(value.default_max_aad_bytes == secret_provider::default_max_aad_bytes);
    BOOST_TEST(value.encrypted_file_max_scrypt_n == secret_provider::default_encrypted_file_max_scrypt_n);
    BOOST_TEST(value.encrypted_file_max_scrypt_r == secret_provider::default_encrypted_file_max_scrypt_r);
    BOOST_TEST(value.encrypted_file_max_scrypt_p == secret_provider::default_encrypted_file_max_scrypt_p);
@@ -188,6 +189,7 @@ BOOST_AUTO_TEST_CASE(secret_provider_descriptor_redacts_config_and_keeps_api_loc
       BOOST_TEST(found->has_default);
       BOOST_TEST(std::get<std::uint64_t>(found->default_value.storage) == expected);
    };
+   has_default_field("default-max-aad-bytes", secret_provider::default_max_aad_bytes);
    has_default_field("encrypted-file-max-scrypt-n", secret_provider::default_encrypted_file_max_scrypt_n);
    has_default_field("encrypted-file-max-scrypt-r", secret_provider::default_encrypted_file_max_scrypt_r);
    has_default_field("encrypted-file-max-scrypt-p", secret_provider::default_encrypted_file_max_scrypt_p);
@@ -385,6 +387,29 @@ BOOST_AUTO_TEST_CASE(secret_provider_encrypt_aes_gcm_maps_malformed_nonce) try {
 }
 FCL_LOG_AND_RETHROW();
 
+BOOST_AUTO_TEST_CASE(secret_provider_encrypt_aes_gcm_rejects_oversized_aad_before_crypto) try {
+   const auto key = std::string(32, 'K');
+   auto document = provider_config({secret_entry("data-key",
+                                                source_value(key),
+                                                {"payload.encrypt"},
+                                                {"encrypt_aes_gcm"})});
+   document.set("secret-provider.default-max-aad-bytes", fcl::config::value{4U});
+
+   auto plugin = secret_provider::plugin{};
+   auto runtime = fcl::asio::runtime{};
+   auto api = configured_api(runtime, plugin, document);
+
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+                                              api->encrypt_aes_gcm(secret_provider::aead_encrypt_request{
+                                                 .secret_id = "data-key",
+                                                 .purpose = "payload.encrypt",
+                                                 .plaintext = bytes("payload"),
+                                                 .aad = bytes("oversized-aad"),
+                                              })),
+                     secret_provider::exceptions::size_limit_exceeded);
+}
+FCL_LOG_AND_RETHROW();
+
 BOOST_AUTO_TEST_CASE(secret_provider_decrypt_aes_gcm_maps_malformed_parameters) try {
    const auto key = std::string(32, 'K');
    auto plugin = secret_provider::plugin{};
@@ -426,6 +451,31 @@ BOOST_AUTO_TEST_CASE(secret_provider_decrypt_aes_gcm_maps_malformed_parameters) 
                                                  .aad = bytes("aad"),
                                               })),
                      secret_provider::exceptions::invalid_secret);
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(secret_provider_decrypt_aes_gcm_rejects_oversized_aad_before_crypto) try {
+   const auto key = std::string(32, 'K');
+   auto document = provider_config({secret_entry("data-key",
+                                                source_value(key),
+                                                {"payload.decrypt"},
+                                                {"decrypt_aes_gcm"})});
+   document.set("secret-provider.default-max-aad-bytes", fcl::config::value{4U});
+
+   auto plugin = secret_provider::plugin{};
+   auto runtime = fcl::asio::runtime{};
+   auto api = configured_api(runtime, plugin, document);
+
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+                                              api->decrypt_aes_gcm(secret_provider::aead_decrypt_request{
+                                                 .secret_id = "data-key",
+                                                 .purpose = "payload.decrypt",
+                                                 .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+                                                 .tag = std::vector<std::uint8_t>(fcl::crypto::aes_gcm_tag_size, 0),
+                                                 .ciphertext = bytes("ciphertext"),
+                                                 .aad = bytes("oversized-aad"),
+                                              })),
+                     secret_provider::exceptions::size_limit_exceeded);
 }
 FCL_LOG_AND_RETHROW();
 
@@ -619,6 +669,41 @@ BOOST_AUTO_TEST_CASE(secret_provider_encrypted_file_plaintext_limit_is_size_limi
    BOOST_CHECK_THROW(fcl::asio::blocking::run(
                         runtime, plugin.configure(fcl::config::component_view{document, "secret-provider"})),
                      secret_provider::exceptions::size_limit_exceeded);
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(secret_provider_encrypted_file_default_ciphertext_limit_allows_max_plaintext) try {
+   const auto path = std::filesystem::temp_directory_path() / "fcl-secret-provider-encrypted-source-default-limit.bin";
+   const auto passphrase = std::string{"correct horse battery staple"};
+   const auto plaintext = fcl::crypto::bytes(secret_provider::default_max_plaintext_bytes, std::uint8_t{'x'});
+   const auto container = secret_provider::encrypt_secret_file(secret_provider::encrypted_file_encrypt_request{
+      .plaintext = plaintext,
+      .passphrase = passphrase,
+      .salt = bytes("0123456789abcdef"),
+      .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+      .scrypt_n = 1024,
+      .scrypt_max_memory_bytes = 8ULL * 1024ULL * 1024ULL,
+   });
+   BOOST_TEST(container.size() > secret_provider::default_max_plaintext_bytes);
+   BOOST_TEST(container.size() <= secret_provider::default_max_ciphertext_bytes);
+   write_secret_file(path, container);
+
+   auto plugin = secret_provider::plugin{};
+   auto runtime = fcl::asio::runtime{};
+   auto api = configured_api(runtime,
+                             plugin,
+                             provider_config({secret_entry("encrypted",
+                                                           source_encrypted_file(path, passphrase),
+                                                           {"payload.decrypt"},
+                                                           {"get_bytes"},
+                                                           true)}));
+
+   const auto exported = fcl::asio::blocking::run(runtime,
+                                                 api->get_bytes(secret_provider::get_request{
+                                                    .secret_id = "encrypted",
+                                                    .purpose = "payload.decrypt",
+                                                 }));
+   BOOST_TEST(exported.bytes == plaintext);
 }
 FCL_LOG_AND_RETHROW();
 

@@ -12,6 +12,7 @@ struct plugin::impl {
       bool allow_raw_export = false;
       std::uint64_t max_plaintext_bytes = default_max_plaintext_bytes;
       std::uint64_t max_ciphertext_bytes = default_max_ciphertext_bytes;
+      std::uint64_t max_aad_bytes = default_max_aad_bytes;
    };
 
    [[nodiscard]] snapshot status(query value) const;

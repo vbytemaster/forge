@@ -17,7 +17,18 @@ import fcl.schema.enums;
 export namespace fcl::plugins::secret_provider {
 
 inline constexpr auto default_max_plaintext_bytes = std::uint64_t{1'048'576};
-inline constexpr auto default_max_ciphertext_bytes = std::uint64_t{1'048'576};
+inline constexpr auto max_aad_bytes_ceiling = std::uint64_t{2'147'483'647};
+inline constexpr auto default_max_aad_bytes = std::uint64_t{1'048'576};
+inline constexpr auto encrypted_file_v1_magic_bytes = std::uint64_t{8};
+inline constexpr auto encrypted_file_v1_u64_fields = std::uint64_t{7};
+inline constexpr auto encrypted_file_default_salt_bytes = std::uint64_t{16};
+inline constexpr auto encrypted_file_default_nonce_bytes = std::uint64_t{12};
+inline constexpr auto encrypted_file_aes_gcm_tag_bytes = std::uint64_t{16};
+inline constexpr auto encrypted_file_default_container_overhead_bytes =
+   encrypted_file_v1_magic_bytes + encrypted_file_v1_u64_fields * std::uint64_t{8} +
+   encrypted_file_default_salt_bytes + encrypted_file_default_nonce_bytes + encrypted_file_aes_gcm_tag_bytes;
+inline constexpr auto default_max_ciphertext_bytes =
+   default_max_plaintext_bytes + encrypted_file_default_container_overhead_bytes;
 inline constexpr auto default_scrypt_n = std::uint64_t{16'384};
 inline constexpr auto default_scrypt_r = std::uint64_t{8};
 inline constexpr auto default_scrypt_p = std::uint64_t{1};
@@ -69,12 +80,14 @@ struct secret_entry {
    bool allow_raw_export = false;
    std::uint64_t max_plaintext_bytes = 0;
    std::uint64_t max_ciphertext_bytes = 0;
+   std::uint64_t max_aad_bytes = 0;
 };
 
 struct config {
    std::vector<secret_entry> secrets;
    std::uint64_t default_max_plaintext_bytes = fcl::plugins::secret_provider::default_max_plaintext_bytes;
    std::uint64_t default_max_ciphertext_bytes = fcl::plugins::secret_provider::default_max_ciphertext_bytes;
+   std::uint64_t default_max_aad_bytes = fcl::plugins::secret_provider::default_max_aad_bytes;
    std::uint64_t encrypted_file_max_scrypt_n = fcl::plugins::secret_provider::default_encrypted_file_max_scrypt_n;
    std::uint64_t encrypted_file_max_scrypt_r = fcl::plugins::secret_provider::default_encrypted_file_max_scrypt_r;
    std::uint64_t encrypted_file_max_scrypt_p = fcl::plugins::secret_provider::default_encrypted_file_max_scrypt_p;
@@ -188,12 +201,14 @@ BOOST_DESCRIBE_STRUCT(secret_entry,
                        operations,
                        allow_raw_export,
                        max_plaintext_bytes,
-                       max_ciphertext_bytes))
+                       max_ciphertext_bytes,
+                       max_aad_bytes))
 BOOST_DESCRIBE_STRUCT(config,
                       (),
                       (secrets,
                        default_max_plaintext_bytes,
                        default_max_ciphertext_bytes,
+                       default_max_aad_bytes,
                        encrypted_file_max_scrypt_n,
                        encrypted_file_max_scrypt_r,
                        encrypted_file_max_scrypt_p,
@@ -252,6 +267,8 @@ export template <> struct fcl::schema::rules<fcl::plugins::secret_provider::secr
          .range(0, 1ULL << 32);
       schema.field<&fcl::plugins::secret_provider::secret_entry::max_ciphertext_bytes>("max-ciphertext-bytes")
          .range(0, 1ULL << 32);
+      schema.field<&fcl::plugins::secret_provider::secret_entry::max_aad_bytes>("max-aad-bytes")
+         .range(0, fcl::plugins::secret_provider::max_aad_bytes_ceiling);
       return schema;
    }
 };
@@ -269,6 +286,9 @@ export template <> struct fcl::schema::rules<fcl::plugins::secret_provider::conf
       schema.field<&fcl::plugins::secret_provider::config::default_max_ciphertext_bytes>("default-max-ciphertext-bytes")
          .default_value(fcl::plugins::secret_provider::default_max_ciphertext_bytes)
          .range(1, 1ULL << 32);
+      schema.field<&fcl::plugins::secret_provider::config::default_max_aad_bytes>("default-max-aad-bytes")
+         .default_value(fcl::plugins::secret_provider::default_max_aad_bytes)
+         .range(1, fcl::plugins::secret_provider::max_aad_bytes_ceiling);
       schema.field<&fcl::plugins::secret_provider::config::encrypted_file_max_scrypt_n>("encrypted-file-max-scrypt-n")
          .default_value(fcl::plugins::secret_provider::default_encrypted_file_max_scrypt_n)
          .range(1, 1ULL << 32);

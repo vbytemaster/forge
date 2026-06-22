@@ -56,6 +56,7 @@ void apply_config(plugin::impl& state, fcl::config::component_view view) {
    for (auto& entry : decoded.secrets) {
       auto max_plaintext = resolved_limit(entry.max_plaintext_bytes, decoded.default_max_plaintext_bytes);
       auto max_ciphertext = resolved_limit(entry.max_ciphertext_bytes, decoded.default_max_ciphertext_bytes);
+      auto max_aad = resolved_limit(entry.max_aad_bytes, decoded.default_max_aad_bytes);
       auto material = load_secret_material(entry, max_plaintext, max_ciphertext, decrypt_limits);
       loaded.emplace(entry.id,
                      plugin::impl::loaded_secret{
@@ -67,6 +68,7 @@ void apply_config(plugin::impl& state, fcl::config::component_view view) {
                         .allow_raw_export = entry.allow_raw_export,
                         .max_plaintext_bytes = max_plaintext,
                         .max_ciphertext_bytes = max_ciphertext,
+                        .max_aad_bytes = max_aad,
                      });
    }
    state.secrets = std::move(loaded);

@@ -19,8 +19,6 @@ import fcl.plugins.http_server.middleware;
 namespace fcl::plugins::http_server {
 namespace {
 
-constexpr std::string_view stream_token_header = "X-FCL-Stream-Token";
-
 [[nodiscard]] fcl::http::middleware_phase to_http_phase(middleware_phase value) noexcept {
    switch (value) {
    case middleware_phase::request_context:
@@ -76,24 +74,22 @@ constexpr std::string_view stream_token_header = "X-FCL-Stream-Token";
 
 [[nodiscard]] middleware_response make_response(fcl::http::response value) {
    auto result = middleware_response{};
+   auto stream_state = fcl::http::capture_stream_pass_through(value);
    detail::middleware_bridge_access::set_status(result, value.result());
    detail::middleware_bridge_access::set_body(result, std::move(value.body()));
    for (const auto& header : value.headers()) {
-      if (header_name_equal(header.name, fcl::http::field_name(fcl::http::field::content_type))) {
+      if (fcl::http::header_name_equal(header.name, fcl::http::field_name(fcl::http::field::content_type))) {
          detail::middleware_bridge_access::set_content_type(result, header.text);
          continue;
       }
-      if (header_name_equal(header.name, fcl::http::field_name(fcl::http::field::content_length)) ||
-          header_name_equal(header.name, fcl::http::field_name(fcl::http::field::transfer_encoding))) {
-         continue;
-      }
-      if (header_name_equal(header.name, stream_token_header)) {
-         detail::middleware_bridge_access::set_stream_token(result, header.text);
+      if (fcl::http::header_name_equal(header.name, fcl::http::field_name(fcl::http::field::content_length)) ||
+          fcl::http::header_name_equal(header.name, fcl::http::field_name(fcl::http::field::transfer_encoding))) {
          continue;
       }
       detail::middleware_bridge_access::headers(result).push_back(
          header_entry{.name = header.name, .value = header.text});
    }
+   detail::middleware_bridge_access::set_stream_state(result, std::move(stream_state));
    return result;
 }
 
@@ -105,15 +101,16 @@ constexpr std::string_view stream_token_header = "X-FCL-Stream-Token";
    }
    result.body() = detail::middleware_bridge_access::take_body(value);
    for (const auto& header : value.headers()) {
-      if (header_name_equal(header.name, "Content-Length") || header_name_equal(header.name, "Transfer-Encoding")) {
+      if (fcl::http::header_name_equal(header.name, "Content-Length") ||
+          fcl::http::header_name_equal(header.name, "Transfer-Encoding")) {
          continue;
       }
       result.set(std::string_view{header.name}, std::string_view{header.value});
    }
    if (!result.body().empty()) {
-      result.erase(stream_token_header);
-   } else if (const auto& token = detail::middleware_bridge_access::stream_token(value); !token.empty()) {
-      result.set(stream_token_header, token);
+      fcl::http::clear_stream_pass_through(result);
+   } else {
+      fcl::http::restore_stream_pass_through(result, detail::middleware_bridge_access::stream_state(value));
    }
    result.prepare_payload();
    result.keep_alive(source.keep_alive());

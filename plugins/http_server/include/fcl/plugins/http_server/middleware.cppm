@@ -2,7 +2,6 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-#include <cctype>
 #include <cstddef>
 #include <functional>
 #include <optional>
@@ -13,6 +12,7 @@ module;
 
 export module fcl.plugins.http_server.middleware;
 
+import fcl.http.middleware;
 import fcl.http.types;
 
 export namespace fcl::plugins::http_server {
@@ -35,20 +35,6 @@ struct header_entry {
    std::string value;
 };
 
-[[nodiscard]] inline bool header_name_equal(std::string_view lhs, std::string_view rhs) noexcept {
-   if (lhs.size() != rhs.size()) {
-      return false;
-   }
-   for (auto index = std::size_t{0}; index != lhs.size(); ++index) {
-      const auto left = static_cast<unsigned char>(lhs[index]);
-      const auto right = static_cast<unsigned char>(rhs[index]);
-      if (std::tolower(left) != std::tolower(right)) {
-         return false;
-      }
-   }
-   return true;
-}
-
 struct middleware_request {
    std::string method;
    std::string target;
@@ -57,7 +43,7 @@ struct middleware_request {
 
    [[nodiscard]] std::optional<std::string_view> header(std::string_view name) const noexcept {
       for (const auto& entry : headers) {
-         if (header_name_equal(entry.name, name)) {
+         if (fcl::http::header_name_equal(entry.name, name)) {
             return std::string_view{entry.value};
          }
       }
@@ -96,7 +82,7 @@ class middleware_response {
 
    void set_header(std::string name, std::string value) {
       for (auto& entry : headers_) {
-         if (header_name_equal(entry.name, name)) {
+         if (fcl::http::header_name_equal(entry.name, name)) {
             entry.value = std::move(value);
             return;
          }
@@ -106,17 +92,17 @@ class middleware_response {
 
    void set_status(fcl::http::status value) noexcept {
       status_ = value;
-      stream_token_.clear();
+      stream_state_.clear();
    }
 
    void set_body(std::string value) {
       body_ = std::move(value);
-      stream_token_.clear();
+      stream_state_.clear();
    }
 
    void clear_body() {
       body_.clear();
-      stream_token_.clear();
+      stream_state_.clear();
    }
 
    void set_content_type(std::string value) {
@@ -128,7 +114,7 @@ class middleware_response {
    std::vector<header_entry> headers_;
    std::string body_;
    std::optional<std::string> content_type_;
-   std::string stream_token_;
+   fcl::http::stream_pass_through_state stream_state_;
 
    friend struct detail::middleware_bridge_access;
 };
@@ -161,12 +147,13 @@ struct middleware_bridge_access {
       return value.headers_;
    }
 
-   static void set_stream_token(middleware_response& value, std::string token) {
-      value.stream_token_ = std::move(token);
+   static void set_stream_state(middleware_response& value, fcl::http::stream_pass_through_state state) {
+      value.stream_state_ = std::move(state);
    }
 
-   [[nodiscard]] static const std::string& stream_token(const middleware_response& value) noexcept {
-      return value.stream_token_;
+   [[nodiscard]] static const fcl::http::stream_pass_through_state& stream_state(
+      const middleware_response& value) noexcept {
+      return value.stream_state_;
    }
 };
 

@@ -3,6 +3,7 @@ module;
 #include <memory>
 #include <optional>
 #include <ostream>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -80,6 +81,11 @@ struct header_entry {
    }
 };
 
+[[nodiscard]] bool header_name_equal(std::string_view left, std::string_view right) noexcept;
+[[nodiscard]] std::optional<std::string_view> find_header(std::span<const header_entry> headers,
+                                                          std::string_view name) noexcept;
+void set_header(std::vector<header_entry>& headers, std::string name, std::string value);
+
 class header_iterator {
  public:
    header_iterator() = default;
@@ -122,6 +128,7 @@ class request {
    [[nodiscard]] std::string_view target() const noexcept;
    void target(std::string value);
    void target(std::string_view value);
+   void target(const char* value);
 
    [[nodiscard]] unsigned version() const noexcept;
    void version(unsigned value) noexcept;

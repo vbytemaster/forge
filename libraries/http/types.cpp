@@ -5,6 +5,7 @@ module;
 #include <memory>
 #include <optional>
 #include <ostream>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -14,20 +15,6 @@ module fcl.http.types;
 
 namespace fcl::http {
 namespace {
-
-bool header_name_equal(std::string_view left, std::string_view right) noexcept {
-   if (left.size() != right.size()) {
-      return false;
-   }
-   for (auto index = std::size_t{0}; index != left.size(); ++index) {
-      const auto lhs = static_cast<unsigned char>(left[index]);
-      const auto rhs = static_cast<unsigned char>(right[index]);
-      if (std::tolower(lhs) != std::tolower(rhs)) {
-         return false;
-      }
-   }
-   return true;
-}
 
 std::vector<header_entry>::const_iterator find_header(const std::vector<header_entry>& headers,
                                                       std::string_view name) noexcept {
@@ -49,6 +36,38 @@ bool response_status_allows_payload(status value) noexcept {
 }
 
 } // namespace
+
+bool header_name_equal(std::string_view left, std::string_view right) noexcept {
+   if (left.size() != right.size()) {
+      return false;
+   }
+   for (auto index = std::size_t{0}; index != left.size(); ++index) {
+      const auto lhs = static_cast<unsigned char>(left[index]);
+      const auto rhs = static_cast<unsigned char>(right[index]);
+      if (std::tolower(lhs) != std::tolower(rhs)) {
+         return false;
+      }
+   }
+   return true;
+}
+
+std::optional<std::string_view> find_header(std::span<const header_entry> headers, std::string_view name) noexcept {
+   const auto found = std::find_if(headers.begin(), headers.end(), [&](const header_entry& entry) {
+      return header_name_equal(entry.name, name);
+   });
+   if (found == headers.end()) {
+      return std::nullopt;
+   }
+   return std::string_view{found->text};
+}
+
+void set_header(std::vector<header_entry>& headers, std::string name, std::string value) {
+   headers.erase(std::remove_if(headers.begin(), headers.end(), [&](const header_entry& entry) {
+                    return header_name_equal(entry.name, name);
+                 }),
+                 headers.end());
+   headers.push_back(header_entry{.name = std::move(name), .text = std::move(value)});
+}
 
 struct request::state {
    fcl::http::method method_value = fcl::http::method::get;
@@ -190,6 +209,10 @@ void request::target(std::string value) {
 
 void request::target(std::string_view value) {
    state_->target_value.assign(value);
+}
+
+void request::target(const char* value) {
+   target(std::string_view{value});
 }
 
 unsigned request::version() const noexcept {

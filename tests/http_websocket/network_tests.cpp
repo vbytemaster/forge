@@ -960,6 +960,15 @@ using test_api::positional_stream_api;
    return fcl::raw::unpack<fcl::api::frame>(bytes);
 }
 
+[[nodiscard]] bool has_internal_fcl_header(const response& value) {
+   for (const auto& header : value.headers()) {
+      if (header.name.starts_with("X-FCL-")) {
+         return true;
+      }
+   }
+   return false;
+}
+
 template <typename T> [[nodiscard]] fcl::api::bytes pack_api_payload(const T& value) {
    return fcl::api::pack_body(value);
 }
@@ -3992,8 +4001,7 @@ BOOST_AUTO_TEST_CASE(http_stream_route_response_passes_through_after_middleware)
    BOOST_TEST(response.body() == "alphaomega");
    BOOST_TEST(std::string{response[field::server]} == "fcl-stream");
    BOOST_TEST(std::string{response["X-Stream-Middleware"]} == "/download");
-   const auto has_stream_token = response.find("X-FCL-Stream-Token") != response.end();
-   BOOST_TEST(!has_stream_token);
+   BOOST_TEST(!has_internal_fcl_header(response));
    BOOST_TEST(invoked->load() == 1U);
    BOOST_TEST(produced->load() == 2U);
 
@@ -4038,9 +4046,8 @@ BOOST_AUTO_TEST_CASE(http_stream_middleware_replacement_does_not_leak_original_b
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::forbidden));
    BOOST_TEST(response.body() == "blocked");
    const auto has_transfer_encoding = response.find(field::transfer_encoding) != response.end();
-   const auto has_stream_token = response.find("X-FCL-Stream-Token") != response.end();
    BOOST_TEST(!has_transfer_encoding);
-   BOOST_TEST(!has_stream_token);
+   BOOST_TEST(!has_internal_fcl_header(response));
    BOOST_TEST(invoked->load() == 1U);
    BOOST_TEST(produced->load() == 0U);
 

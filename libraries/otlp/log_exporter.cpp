@@ -2,6 +2,8 @@ module;
 
 #include <fcl/exceptions/macros.hpp>
 
+#include <boost/describe.hpp>
+
 #include <algorithm>
 #include <charconv>
 #include <chrono>
@@ -36,6 +38,7 @@ import fcl.exceptions;
 import fcl.http.base_url;
 import fcl.http.client;
 import fcl.http.types;
+import fcl.json;
 import fcl.log.log_message;
 
 namespace fcl::otlp {
@@ -51,68 +54,6 @@ constexpr auto instrumentation_scope_version = std::string_view{"1.0.0"};
 
 bool positive(std::chrono::milliseconds value) {
    return value.count() > 0;
-}
-
-void append_json_string(std::string& output, std::string_view value) {
-   output.push_back('"');
-   for (const auto ch : value) {
-      switch (ch) {
-      case '"':
-         output += "\\\"";
-         break;
-      case '\\':
-         output += "\\\\";
-         break;
-      case '\b':
-         output += "\\b";
-         break;
-      case '\f':
-         output += "\\f";
-         break;
-      case '\n':
-         output += "\\n";
-         break;
-      case '\r':
-         output += "\\r";
-         break;
-      case '\t':
-         output += "\\t";
-         break;
-      default:
-         if (static_cast<unsigned char>(ch) < 0x20) {
-            constexpr auto digits = std::string_view{"0123456789abcdef"};
-            output += "\\u00";
-            output.push_back(digits[(static_cast<unsigned char>(ch) >> 4) & 0x0f]);
-            output.push_back(digits[static_cast<unsigned char>(ch) & 0x0f]);
-         } else {
-            output.push_back(ch);
-         }
-         break;
-      }
-   }
-   output.push_back('"');
-}
-
-void append_key(std::string& output, std::string_view key) {
-   append_json_string(output, key);
-   output.push_back(':');
-}
-
-void append_string_member(std::string& output, std::string_view key, std::string_view value) {
-   append_key(output, key);
-   append_json_string(output, value);
-}
-
-void append_string_attribute(std::string& output, std::string_view key, std::string_view value, bool& first) {
-   if (!first) {
-      output.push_back(',');
-   }
-   first = false;
-   output += "{\"key\":";
-   append_json_string(output, key);
-   output += ",\"value\":{\"stringValue\":";
-   append_json_string(output, value);
-   output += "}}";
 }
 
 std::string severity_text(fcl::log_level level) {
@@ -222,6 +163,120 @@ std::chrono::milliseconds exponential_delay(const retry_policy& retry, std::uint
       delay *= 2;
    }
    return cap_delay(delay, retry.max_delay);
+}
+
+struct otlp_string_value {
+   std::string stringValue;
+};
+
+struct otlp_attribute {
+   std::string key;
+   otlp_string_value value;
+};
+
+struct otlp_resource {
+   std::vector<otlp_attribute> attributes;
+};
+
+struct otlp_scope {
+   std::string name;
+   std::string version;
+};
+
+struct otlp_log_body {
+   std::string stringValue;
+};
+
+struct otlp_log_record {
+   std::string timeUnixNano;
+   int severityNumber = 0;
+   std::string severityText;
+   otlp_log_body body;
+   std::vector<otlp_attribute> attributes;
+};
+
+struct otlp_scope_log {
+   otlp_scope scope;
+   std::vector<otlp_log_record> logRecords;
+};
+
+struct otlp_resource_log {
+   otlp_resource resource;
+   std::vector<otlp_scope_log> scopeLogs;
+};
+
+struct otlp_export_request {
+   std::vector<otlp_resource_log> resourceLogs;
+};
+
+BOOST_DESCRIBE_STRUCT(otlp_string_value, (), (stringValue))
+BOOST_DESCRIBE_STRUCT(otlp_attribute, (), (key, value))
+BOOST_DESCRIBE_STRUCT(otlp_resource, (), (attributes))
+BOOST_DESCRIBE_STRUCT(otlp_scope, (), (name, version))
+BOOST_DESCRIBE_STRUCT(otlp_log_body, (), (stringValue))
+BOOST_DESCRIBE_STRUCT(otlp_log_record, (), (timeUnixNano, severityNumber, severityText, body, attributes))
+BOOST_DESCRIBE_STRUCT(otlp_scope_log, (), (scope, logRecords))
+BOOST_DESCRIBE_STRUCT(otlp_resource_log, (), (resource, scopeLogs))
+BOOST_DESCRIBE_STRUCT(otlp_export_request, (), (resourceLogs))
+
+[[nodiscard]] otlp_attribute make_string_attribute(std::string key, std::string value) {
+   return otlp_attribute{.key = std::move(key), .value = otlp_string_value{.stringValue = std::move(value)}};
+}
+
+[[nodiscard]] std::vector<otlp_attribute> record_attributes(const fcl::log_record& record) {
+   auto attributes = std::vector<otlp_attribute>{};
+   attributes.reserve(record.fields.size() + 10);
+   attributes.push_back(make_string_attribute("logger", record.logger));
+   attributes.push_back(make_string_attribute("component", record.component));
+   attributes.push_back(make_string_attribute("thread.id", record.thread_id));
+   attributes.push_back(make_string_attribute("thread.name", record.thread_name));
+   attributes.push_back(make_string_attribute("source.file", record.location.file_name()));
+   attributes.push_back(make_string_attribute("source.function", record.location.function_name()));
+   attributes.push_back(make_string_attribute("source.line", std::to_string(record.location.line())));
+   if (!record.exception_chain.empty()) {
+      attributes.push_back(make_string_attribute("exception.chain", record.exception_chain));
+   }
+   for (const auto& field : record.fields) {
+      attributes.push_back(make_string_attribute(field.key, field.redacted ? std::string{"<redacted>"} : field.value));
+   }
+   if (record.stacktrace.has_value()) {
+      attributes.push_back(make_string_attribute("stacktrace.backend", record.stacktrace->backend));
+      if (!record.stacktrace->unavailable_reason.empty()) {
+         attributes.push_back(make_string_attribute("stacktrace.unavailable_reason", record.stacktrace->unavailable_reason));
+      }
+      auto formatted = std::string{};
+      for (const auto& frame : record.stacktrace->frames) {
+         if (!formatted.empty()) {
+            formatted.push_back('\n');
+         }
+         formatted += '#';
+         formatted += std::to_string(frame.index);
+         formatted += ' ';
+         formatted += frame.name;
+         formatted += " 0x";
+         formatted += std::to_string(frame.address);
+         if (!frame.source_file.empty()) {
+            formatted += ' ';
+            formatted += frame.source_file;
+            formatted += ':';
+            formatted += std::to_string(frame.source_line);
+         }
+      }
+      if (!formatted.empty()) {
+         attributes.push_back(make_string_attribute("stacktrace.frames", std::move(formatted)));
+      }
+   }
+   return attributes;
+}
+
+[[nodiscard]] otlp_log_record make_log_record(const fcl::log_record& record) {
+   return otlp_log_record{
+      .timeUnixNano = std::to_string(timestamp_nanos(record)),
+      .severityNumber = severity_number(record.level),
+      .severityText = severity_text(record.level),
+      .body = otlp_log_body{.stringValue = record.message},
+      .attributes = record_attributes(record),
+   };
 }
 
 } // namespace
@@ -575,91 +630,46 @@ struct log_exporter::impl : std::enable_shared_from_this<impl> {
    }
 
    std::string encode_logs(const std::vector<fcl::log_record>& records) const {
-      auto output = std::string{};
-      output.reserve(records.size() * 512 + options.resource.attributes.size() * 96);
-      output += "{\"resourceLogs\":[{\"resource\":{\"attributes\":[";
-      auto first_attribute = true;
+      auto attributes = std::vector<otlp_attribute>{};
+      attributes.reserve(options.resource.attributes.size());
       for (const auto& entry : options.resource.attributes) {
-         append_string_attribute(output, entry.key, entry.value, first_attribute);
+         attributes.push_back(make_string_attribute(entry.key, entry.value));
       }
-      output += "]},\"scopeLogs\":[{\"scope\":{";
-      append_string_member(output, "name", instrumentation_scope_name);
-      output.push_back(',');
-      append_string_member(output, "version", instrumentation_scope_version);
-      output += "},\"logRecords\":[";
 
-      auto first_record = true;
+      auto log_records = std::vector<otlp_log_record>{};
+      log_records.reserve(records.size());
       for (const auto& record : records) {
-         if (!first_record) {
-            output.push_back(',');
-         }
-         first_record = false;
-         append_record(output, record);
+         log_records.push_back(make_log_record(record));
       }
 
-      output += "]}]}]}";
-      return output;
-   }
+      auto request = otlp_export_request{
+         .resourceLogs =
+            {
+               otlp_resource_log{
+                  .resource = otlp_resource{.attributes = std::move(attributes)},
+                  .scopeLogs =
+                     {
+                        otlp_scope_log{
+                           .scope =
+                              otlp_scope{
+                                 .name = std::string{instrumentation_scope_name},
+                                 .version = std::string{instrumentation_scope_version},
+                              },
+                           .logRecords = std::move(log_records),
+                        },
+                     },
+               },
+            },
+      };
 
-   void append_record(std::string& output, const fcl::log_record& record) const {
-      output.push_back('{');
-      append_string_member(output, "timeUnixNano", std::to_string(timestamp_nanos(record)));
-      output += ",\"severityNumber\":";
-      output += std::to_string(severity_number(record.level));
-      output.push_back(',');
-      append_string_member(output, "severityText", severity_text(record.level));
-      output += ",\"body\":{\"stringValue\":";
-      append_json_string(output, record.message);
-      output += "},\"attributes\":[";
-
-      auto first_attribute = true;
-      append_string_attribute(output, "logger", record.logger, first_attribute);
-      append_string_attribute(output, "component", record.component, first_attribute);
-      append_string_attribute(output, "thread.id", record.thread_id, first_attribute);
-      append_string_attribute(output, "thread.name", record.thread_name, first_attribute);
-      append_string_attribute(output, "source.file", record.location.file_name(), first_attribute);
-      append_string_attribute(output, "source.function", record.location.function_name(), first_attribute);
-      append_string_attribute(output, "source.line", std::to_string(record.location.line()), first_attribute);
-      if (!record.exception_chain.empty()) {
-         append_string_attribute(output, "exception.chain", record.exception_chain, first_attribute);
+      auto encoded = fcl::json::write(request);
+      if (!encoded.ok()) {
+         const auto message = encoded.diagnostics.empty() ? std::string{"unknown JSON encoding error"}
+                                                          : encoded.diagnostics.front().message;
+         FCL_THROW_EXCEPTION(exceptions::export_failed, "failed to encode OTLP logs",
+                             fcl::exceptions::ctx("reason", message));
       }
-      for (const auto& field : record.fields) {
-         append_string_attribute(output, field.key, field.redacted ? std::string_view{"<redacted>"} : field.value,
-                                 first_attribute);
-      }
-      if (record.stacktrace.has_value()) {
-         append_stacktrace(output, *record.stacktrace, first_attribute);
-      }
-      output += "]}";
-   }
-
-   void append_stacktrace(std::string& output, const fcl::stacktrace_snapshot& stacktrace, bool& first_attribute) const {
-      append_string_attribute(output, "stacktrace.backend", stacktrace.backend, first_attribute);
-      if (!stacktrace.unavailable_reason.empty()) {
-         append_string_attribute(output, "stacktrace.unavailable_reason", stacktrace.unavailable_reason,
-                                 first_attribute);
-      }
-      auto formatted = std::string{};
-      for (const auto& frame : stacktrace.frames) {
-         if (!formatted.empty()) {
-            formatted.push_back('\n');
-         }
-         formatted += '#';
-         formatted += std::to_string(frame.index);
-         formatted += ' ';
-         formatted += frame.name;
-         formatted += " 0x";
-         formatted += std::to_string(frame.address);
-         if (!frame.source_file.empty()) {
-            formatted += ' ';
-            formatted += frame.source_file;
-            formatted += ':';
-            formatted += std::to_string(frame.source_line);
-         }
-      }
-      if (!formatted.empty()) {
-         append_string_attribute(output, "stacktrace", formatted, first_attribute);
-      }
+      return std::move(encoded.text);
    }
 
    void complete_waiters(std::exception_ptr error) {

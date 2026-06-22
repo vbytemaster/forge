@@ -1,7 +1,6 @@
 module;
 #include <string.h>
 #include <boost/multiprecision/cpp_int.hpp>
-#include <boost/scoped_array.hpp>
 #include <algorithm>
 #include <exception>
 #include <iomanip>
@@ -196,23 +195,17 @@ variant::variant(const char* str) {
    set_variant_type(this, string_type);
 }
 
-// TODO: do a proper conversion to utf8
 variant::variant(wchar_t* str) {
-   size_t len = wcslen(str);
-   boost::scoped_array<char> buffer(new char[len]);
-   for (unsigned i = 0; i < len; ++i)
-      buffer[i] = (char)str[i];
-   *reinterpret_cast<std::string**>(this) = new std::string(buffer.get(), len);
+   auto utf8 = std::string{};
+   fcl::encodeUtf8(std::wstring{str, wcslen(str)}, &utf8);
+   *reinterpret_cast<std::string**>(this) = new std::string(std::move(utf8));
    set_variant_type(this, string_type);
 }
 
-// TODO: do a proper conversion to utf8
 variant::variant(const wchar_t* str) {
-   size_t len = wcslen(str);
-   boost::scoped_array<char> buffer(new char[len]);
-   for (unsigned i = 0; i < len; ++i)
-      buffer[i] = (char)str[i];
-   *reinterpret_cast<std::string**>(this) = new std::string(buffer.get(), len);
+   auto utf8 = std::string{};
+   fcl::encodeUtf8(std::wstring{str, wcslen(str)}, &utf8);
+   *reinterpret_cast<std::string**>(this) = new std::string(std::move(utf8));
    set_variant_type(this, string_type);
 }
 

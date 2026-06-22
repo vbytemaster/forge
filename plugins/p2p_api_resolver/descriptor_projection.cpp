@@ -58,11 +58,6 @@ namespace {
    };
 }
 
-[[nodiscard]] bool method_compatible(const fcl::api::method_descriptor& local,
-                                     const method& remote) noexcept {
-   return local.name == remote.name && local.kind == remote.kind;
-}
-
 } // namespace
 
 std::string api_key(const fcl::api::api_id& id, std::uint16_t major) {
@@ -137,14 +132,17 @@ void validate_response(const std::vector<entry>& entries, const config& limits) 
 }
 
 void validate_descriptor_compatible(const fcl::api::descriptor& descriptor, const entry& remote) {
-   if (descriptor.id != remote.id || descriptor.version.major != remote.version.major ||
-       descriptor.version.revision > remote.version.revision) {
+   if (!fcl::api::compatible(fcl::api::descriptor{.id = remote.id, .version = remote.version},
+                             fcl::api::api_ref{.id = descriptor.id,
+                                               .major = descriptor.version.major,
+                                               .min_revision = descriptor.version.revision})) {
       FCL_THROW_EXCEPTION(exceptions::incompatible_api, "remote API version is incompatible",
                           fcl::exceptions::ctx("api", descriptor.id.value));
    }
    for (const auto& local_method : descriptor.methods) {
       const auto found = std::ranges::find_if(remote.methods, [&](const auto& candidate) {
-         return method_compatible(local_method, candidate);
+         return fcl::api::compatible(fcl::api::method_descriptor{.name = candidate.name, .kind = candidate.kind},
+                                     local_method);
       });
       if (found == remote.methods.end()) {
          FCL_THROW_EXCEPTION(exceptions::incompatible_api, "remote API method is incompatible",
@@ -158,8 +156,7 @@ std::optional<entry> select_compatible(const std::vector<entry>& entries,
                                        const fcl::api::api_ref& requested) {
    auto selected = std::optional<entry>{};
    for (const auto& entry : entries) {
-      if (entry.id != requested.id || entry.version.major != requested.major ||
-          entry.version.revision < requested.min_revision) {
+      if (!fcl::api::compatible(fcl::api::descriptor{.id = entry.id, .version = entry.version}, requested)) {
          continue;
       }
       if (!selected || entry.version.revision > selected->version.revision) {

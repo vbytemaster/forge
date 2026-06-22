@@ -181,6 +181,7 @@ struct descriptor {
 };
 
 [[nodiscard]] bool compatible(const descriptor& available, const api_ref& requested) noexcept;
+[[nodiscard]] bool compatible(const method_descriptor& available, const method_descriptor& requested) noexcept;
 [[nodiscard]] const method_descriptor* find_method(const descriptor& api, std::string_view name) noexcept;
 
 template <typename Exception>

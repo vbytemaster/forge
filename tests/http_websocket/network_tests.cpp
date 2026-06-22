@@ -300,6 +300,11 @@ struct delete_path_request : fcl::http::endpoint_request {
    std::string key;
 };
 
+struct delete_stream_request {
+   std::string ref;
+   fcl::http::body_stream body;
+};
+
 struct control_response {
    std::string value;
 };
@@ -353,6 +358,7 @@ BOOST_DESCRIBE_STRUCT(control_request, (), (id))
 BOOST_DESCRIBE_STRUCT(control_patch_request, (), (id, value))
 BOOST_DESCRIBE_STRUCT(delete_body_request, (), (ref, payload))
 BOOST_DESCRIBE_STRUCT(delete_path_request, (), (collection, key))
+BOOST_DESCRIBE_STRUCT(delete_stream_request, (), (ref, body))
 BOOST_DESCRIBE_STRUCT(control_response, (), (value))
 BOOST_DESCRIBE_STRUCT(default_header_request, (), (request_id, body))
 BOOST_DESCRIBE_STRUCT(default_header_response, (), (request_id, body, present))
@@ -553,6 +559,13 @@ class delete_path_api : public fcl::api::contract<delete_path_api> {
    virtual boost::asio::awaitable<control_response> remove(delete_path_request request) = 0;
 };
 
+class delete_stream_api : public fcl::api::contract<delete_stream_api> {
+ public:
+   virtual ~delete_stream_api() = default;
+
+   virtual boost::asio::awaitable<control_response> remove(delete_stream_request request) = 0;
+};
+
 class default_header_api : public fcl::api::contract<default_header_api> {
  public:
    virtual ~default_header_api() = default;
@@ -672,6 +685,10 @@ FCL_API(::fcl::http::test_api::delete_body_api, FCL_API_CONTRACT("delete-body", 
 
 FCL_API(::fcl::http::test_api::delete_path_api, FCL_API_CONTRACT("delete-path", 1, 0),
         FCL_API_METHOD_TYPED(remove, ::fcl::http::test_api::delete_path_request,
+                             ::fcl::http::test_api::control_response))
+
+FCL_API(::fcl::http::test_api::delete_stream_api, FCL_API_CONTRACT("delete-stream", 1, 0),
+        FCL_API_METHOD_TYPED(remove, ::fcl::http::test_api::delete_stream_request,
                              ::fcl::http::test_api::control_response))
 
 FCL_API(::fcl::http::test_api::default_header_api, FCL_API_CONTRACT("default-header", 1, 0),
@@ -809,6 +826,9 @@ FCL_HTTP_API(::fcl::http::test_api::delete_body_api,
 FCL_HTTP_API(::fcl::http::test_api::delete_path_api,
              FCL_HTTP_DELETE(remove, "/delete-path/:collection/:key", ok))
 
+FCL_HTTP_API(::fcl::http::test_api::delete_stream_api,
+             FCL_HTTP_DELETE(remove, "/delete-stream/:ref", ok))
+
 FCL_HTTP_API(::fcl::http::test_api::default_header_api,
              FCL_HTTP_PUT(echo, "/headers/default", ok, FCL_HTTP_BODY_STREAM(body)))
 
@@ -883,6 +903,8 @@ using test_api::delete_body_api;
 using test_api::delete_body_request;
 using test_api::delete_path_api;
 using test_api::delete_path_request;
+using test_api::delete_stream_api;
+using test_api::delete_stream_request;
 using test_api::default_header_api;
 using test_api::default_header_request;
 using test_api::default_header_response;
@@ -1395,6 +1417,14 @@ class delete_path_api_impl final : public delete_path_api {
          .value = request.collection + ":" + request.key + ":" +
                   (request.request().body().empty() ? "bodyless" : "body-present"),
       };
+   }
+};
+
+class delete_stream_api_impl final : public delete_stream_api {
+ public:
+   boost::asio::awaitable<control_response> remove(delete_stream_request request) override {
+      const auto payload = co_await request.body.async_read_all();
+      co_return control_response{.value = request.ref + ":" + payload};
    }
 };
 
@@ -2185,6 +2215,33 @@ BOOST_AUTO_TEST_CASE(http_typed_proxy_keeps_path_only_delete_bodyless) {
       api->remove(std::move(request)));
 
    BOOST_TEST(response.value == "cache:chunk-1:bodyless");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_delete_stream_body_route_mounts_and_reads_body) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<delete_stream_api>(delete_stream_api::describe(), std::make_shared<delete_stream_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<delete_stream_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<delete_stream_api>(client));
+
+   auto response = fcl::asio::blocking::run(
+      runtime,
+      api->remove(delete_stream_request{
+         .ref = "chunk-stream",
+         .body = fcl::http::body_stream{make_body_reader({"pay", "load"})},
+      }));
+
+   BOOST_TEST(response.value == "chunk-stream:payload");
 
    server.stop();
 }

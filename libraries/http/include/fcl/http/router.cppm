@@ -37,6 +37,7 @@ class router {
    void post_stream(std::string path, stream_route_handler handler);
    void put_stream(std::string path, stream_route_handler handler);
    void patch_stream(std::string path, stream_route_handler handler);
+   void del_stream(std::string path, stream_route_handler handler);
    void websocket(std::string path, websocket_route_handler handler);
 
    template <typename Binding> void mount(const Binding& binding) {

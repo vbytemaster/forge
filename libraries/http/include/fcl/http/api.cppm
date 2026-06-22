@@ -1511,6 +1511,9 @@ class api_builder {
             case method::patch:
                target.patch_stream(std::move(mounted_path), std::move(stream_handler));
                break;
+            case method::delete_:
+               target.del_stream(std::move(mounted_path), std::move(stream_handler));
+               break;
             default:
                FCL_THROW_EXCEPTION(fcl::http::exceptions::method_not_allowed, "unsupported HTTP API stream route verb");
             }

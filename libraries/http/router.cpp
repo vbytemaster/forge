@@ -347,6 +347,10 @@ void router::patch_stream(std::string path, stream_route_handler handler) {
    add_stream_route(method::patch, std::move(path), std::move(handler));
 }
 
+void router::del_stream(std::string path, stream_route_handler handler) {
+   add_stream_route(method::delete_, std::move(path), std::move(handler));
+}
+
 void router::websocket(std::string path, websocket_route_handler handler) {
    auto segments = split_route_path(path);
    websocket_routes_.push_back(websocket_route_entry{

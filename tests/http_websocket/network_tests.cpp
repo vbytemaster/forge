@@ -290,6 +290,11 @@ struct control_patch_request {
    std::string value;
 };
 
+struct delete_body_request {
+   std::string ref;
+   fcl::http::body<positional_body_payload> payload;
+};
+
 struct control_response {
    std::string value;
 };
@@ -341,6 +346,7 @@ BOOST_DESCRIBE_STRUCT(form_submit_request, (), (label, count))
 BOOST_DESCRIBE_STRUCT(form_submit_response, (), (summary))
 BOOST_DESCRIBE_STRUCT(control_request, (), (id))
 BOOST_DESCRIBE_STRUCT(control_patch_request, (), (id, value))
+BOOST_DESCRIBE_STRUCT(delete_body_request, (), (ref, payload))
 BOOST_DESCRIBE_STRUCT(control_response, (), (value))
 BOOST_DESCRIBE_STRUCT(default_header_request, (), (request_id, body))
 BOOST_DESCRIBE_STRUCT(default_header_response, (), (request_id, body, present))
@@ -527,6 +533,13 @@ class patch_api : public fcl::api::contract<patch_api> {
    virtual boost::asio::awaitable<control_response> patch(control_patch_request request) = 0;
 };
 
+class delete_body_api : public fcl::api::contract<delete_body_api> {
+ public:
+   virtual ~delete_body_api() = default;
+
+   virtual boost::asio::awaitable<control_response> remove(delete_body_request request) = 0;
+};
+
 class default_header_api : public fcl::api::contract<default_header_api> {
  public:
    virtual ~default_header_api() = default;
@@ -638,6 +651,10 @@ FCL_API(::fcl::http::test_api::alias_api, FCL_API_CONTRACT("alias", 1, 0),
 
 FCL_API(::fcl::http::test_api::patch_api, FCL_API_CONTRACT("patch", 1, 0),
         FCL_API_METHOD_TYPED(patch, ::fcl::http::test_api::control_patch_request,
+                             ::fcl::http::test_api::control_response))
+
+FCL_API(::fcl::http::test_api::delete_body_api, FCL_API_CONTRACT("delete-body", 1, 0),
+        FCL_API_METHOD_TYPED(remove, ::fcl::http::test_api::delete_body_request,
                              ::fcl::http::test_api::control_response))
 
 FCL_API(::fcl::http::test_api::default_header_api, FCL_API_CONTRACT("default-header", 1, 0),
@@ -769,6 +786,9 @@ FCL_HTTP_API(::fcl::http::test_api::alias_api,
 FCL_HTTP_API(::fcl::http::test_api::patch_api,
              FCL_HTTP_PATCH(patch, "/controls/:id", ok))
 
+FCL_HTTP_API(::fcl::http::test_api::delete_body_api,
+             FCL_HTTP_DELETE(remove, "/delete/:ref", ok))
+
 FCL_HTTP_API(::fcl::http::test_api::default_header_api,
              FCL_HTTP_PUT(echo, "/headers/default", ok, FCL_HTTP_BODY_STREAM(body)))
 
@@ -839,6 +859,8 @@ using test_api::alias_api;
 using test_api::control_patch_request;
 using test_api::control_request;
 using test_api::control_response;
+using test_api::delete_body_api;
+using test_api::delete_body_request;
 using test_api::default_header_api;
 using test_api::default_header_request;
 using test_api::default_header_response;
@@ -1259,6 +1281,8 @@ class endpoint_api_impl final : public endpoint_api {
 
    boost::asio::awaitable<fcl::http::streaming_response> stream(endpoint_control_request request) override {
       request.response().set("X-Endpoint-Stream", request.id);
+      request.response().set_cookie("endpoint", request.id);
+      request.response().set_cookie("stream", "yes");
       auto text = std::make_shared<std::string>("stream:" + request.id);
       co_return fcl::http::streaming_response::from_source(
          fcl::http::streaming_response_options{
@@ -1331,6 +1355,14 @@ class patch_api_impl final : public patch_api {
  public:
    boost::asio::awaitable<control_response> patch(control_patch_request request) override {
       co_return control_response{.value = request.id + ":" + request.value};
+   }
+};
+
+class delete_body_api_impl final : public delete_body_api {
+ public:
+   boost::asio::awaitable<control_response> remove(delete_body_request request) override {
+      const auto payload = request.payload.present ? request.payload.value.value : std::string{"missing"};
+      co_return control_response{.value = request.ref + ":" + payload};
    }
 };
 
@@ -2067,6 +2099,37 @@ BOOST_AUTO_TEST_CASE(http_dto_parameters_bind_query_header_cookie_and_body) {
    server.stop();
 }
 
+BOOST_AUTO_TEST_CASE(http_typed_proxy_sends_delete_json_body) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<delete_body_api>(delete_body_api::describe(), std::make_shared<delete_body_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<delete_body_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<delete_body_api>(client));
+
+   const auto response = fcl::asio::blocking::run(
+      runtime,
+      api->remove(delete_body_request{
+         .ref = "chunk-1",
+         .payload =
+            fcl::http::body<positional_body_payload>{
+               .value = positional_body_payload{.value = "payload"},
+               .present = true,
+            },
+      }));
+
+   BOOST_TEST(response.value == "chunk-1:payload");
+
+   server.stop();
+}
+
 BOOST_AUTO_TEST_CASE(http_endpoint_request_injects_request_and_response_state) {
    auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
    auto directory = temp_directory{};
@@ -2103,11 +2166,56 @@ BOOST_AUTO_TEST_CASE(http_endpoint_request_injects_request_and_response_state) {
    auto stream = fcl::asio::blocking::run(runtime, connection.async_request(make_request(method::get, "/endpoint/abc/stream")));
    BOOST_TEST(stream.body() == "stream:abc");
    BOOST_TEST(stream["X-Endpoint-Stream"] == "abc");
+   const auto stream_headers = stream.headers();
+   const auto stream_cookies = std::count_if(stream_headers.begin(), stream_headers.end(), [](const header_entry& header) {
+      return header.name == "Set-Cookie";
+   });
+   BOOST_TEST(stream_cookies == 2);
+   BOOST_TEST(std::any_of(stream_headers.begin(), stream_headers.end(), [](const header_entry& header) {
+      return header.name == "Set-Cookie" && header.text == "endpoint=abc";
+   }));
+   BOOST_TEST(std::any_of(stream_headers.begin(), stream_headers.end(), [](const header_entry& header) {
+      return header.name == "Set-Cookie" && header.text == "stream=yes";
+   }));
 
    auto accepted =
       fcl::asio::blocking::run(runtime, connection.async_request(make_request(method::get, "/endpoint/abc/accepted")));
    BOOST_TEST(accepted.result() == status::accepted);
    BOOST_TEST(accepted["X-Endpoint-Empty"] == "abc");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_endpoint_request_preserves_repeated_set_cookie_on_stream_response) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto directory = temp_directory{};
+
+   auto apis = fcl::api::registry{};
+   apis.install<endpoint_api>(endpoint_api::describe(), std::make_shared<endpoint_api_impl>(directory.path()));
+
+   auto router = fcl::http::router{};
+   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<endpoint_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto connection = fcl::http::connection{
+      runtime,
+      parse_base_url("http://127.0.0.1:" + std::to_string(server.port())),
+   };
+   auto stream = fcl::asio::blocking::run(runtime, connection.async_request(make_request(method::get, "/endpoint/abc/stream")));
+   const auto headers = stream.headers();
+
+   BOOST_TEST(std::count_if(headers.begin(), headers.end(), [](const header_entry& header) {
+                 return header.name == "Set-Cookie";
+              }) == 2);
+   BOOST_TEST(std::any_of(headers.begin(), headers.end(), [](const header_entry& header) {
+      return header.name == "Set-Cookie" && header.text == "endpoint=abc";
+   }));
+   BOOST_TEST(std::any_of(headers.begin(), headers.end(), [](const header_entry& header) {
+      return header.name == "Set-Cookie" && header.text == "stream=yes";
+   }));
 
    server.stop();
 }
@@ -4257,6 +4365,19 @@ BOOST_AUTO_TEST_CASE(http_multipart_writer_generates_safe_boundaries_and_quoted_
    BOOST_TEST(form.files.front().name == "file");
    BOOST_TEST(form.files.front().content_type == "text/plain");
    BOOST_TEST(form.files.front().text() == "file-body");
+}
+
+BOOST_AUTO_TEST_CASE(http_multipart_writer_rejects_crlf_in_content_type) {
+   BOOST_CHECK_THROW(
+      static_cast<void>(write_multipart_form({
+         multipart_writer_part{
+            .name = "file",
+            .filename = std::string{"chunk.txt"},
+            .content_type = "text/plain\r\nX-Injected: yes",
+            .body = "file-body",
+         },
+      })),
+      fcl::http::exceptions::bad_request);
 }
 
 BOOST_AUTO_TEST_CASE(http_upload_reader_rejects_malformed_multipart_boundary) {

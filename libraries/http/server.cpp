@@ -3,6 +3,7 @@ module;
 #include <coroutine>
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <condition_variable>
 #include <exception>
 #include <limits>
@@ -11,6 +12,7 @@ module;
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -46,6 +48,19 @@ namespace beast_websocket = boost::beast::websocket;
 using tcp = asio::ip::tcp;
 using asio::awaitable;
 using asio::use_awaitable;
+
+bool same_header_name(std::string_view left, std::string_view right) noexcept {
+   if (left.size() != right.size()) {
+      return false;
+   }
+   for (auto index = std::size_t{0}; index != left.size(); ++index) {
+      if (std::tolower(static_cast<unsigned char>(left[index])) !=
+          std::tolower(static_cast<unsigned char>(right[index]))) {
+         return false;
+      }
+   }
+   return true;
+}
 
 stream_limits limits_from(const server_config& config) {
    return stream_limits{
@@ -95,7 +110,11 @@ request make_header_request(const beast_http::request_parser<beast_http::buffer_
 
 void copy_headers(const response& source, beast_http::response<beast_http::buffer_body>& target) {
    for (const auto& field_value : source.headers()) {
-      target.set(field_value.name, field_value.text);
+      if (same_header_name(field_value.name, "Set-Cookie")) {
+         target.insert(field_value.name, field_value.text);
+      } else {
+         target.set(field_value.name, field_value.text);
+      }
    }
 }
 

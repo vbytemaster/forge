@@ -92,7 +92,7 @@ template <typename Interface> struct http_api_traits;
 namespace detail {
 
 [[nodiscard]] inline bool uses_request_body(method verb) noexcept {
-   return verb == method::post || verb == method::put || verb == method::patch;
+   return verb == method::post || verb == method::put || verb == method::patch || verb == method::delete_;
 }
 
 [[nodiscard]] inline bool unreserved(char value) noexcept {

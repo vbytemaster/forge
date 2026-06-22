@@ -25,6 +25,8 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
+#include <fcl/exceptions/macros.hpp>
+
 module fcl.http.upload;
 
 import fcl.http.exceptions;
@@ -725,6 +727,12 @@ bool multipart_body_contains_boundary(const std::vector<multipart_writer_part>& 
    return false;
 }
 
+bool valid_multipart_header_value(std::string_view value) noexcept {
+   return std::ranges::none_of(value, [](char character) {
+      return static_cast<unsigned char>(character) < 0x20U || character == 0x7FU;
+   });
+}
+
 std::string generate_multipart_boundary(const std::vector<multipart_writer_part>& parts) {
    static auto next = std::atomic<std::uint64_t>{0};
    for (;;) {
@@ -757,6 +765,9 @@ multipart_writer_result write_multipart_form(std::vector<multipart_writer_part> 
       }
       body += "\r\n";
       if (!part.content_type.empty()) {
+         if (!valid_multipart_header_value(part.content_type)) {
+            FCL_THROW_EXCEPTION(exceptions::bad_request, "multipart part content type contains unsafe characters");
+         }
          body += "Content-Type: ";
          body += part.content_type;
          body += "\r\n";

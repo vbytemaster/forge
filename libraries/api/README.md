@@ -68,20 +68,20 @@ For new APIs that are more naturally expressed as several C++ arguments,
 types are still deduced from the C++ method signature:
 
 ```cpp
-class object_api : public fcl::api::contract<
-   object_api,
+class cache_api : public fcl::api::contract<
+   cache_api,
    fcl::api::surface::local | fcl::api::surface::remote> {
  public:
-   virtual ~object_api() = default;
+   virtual ~cache_api() = default;
 
-   virtual boost::asio::awaitable<write_receipt>
-   put_object(bucket_name bucket, object_key key, chunk_ref body) = 0;
+   virtual boost::asio::awaitable<store_receipt>
+   store_chunk(cache_name cache, chunk_ref ref, chunk_bytes bytes) = 0;
 };
 
 FCL_API(
-   object_api,
-   FCL_API_CONTRACT("object", 1, 0),
-   FCL_API_METHOD(put_object, bucket, key, body))
+   cache_api,
+   FCL_API_CONTRACT("cache", 1, 0),
+   FCL_API_METHOD(store_chunk, cache, ref, bytes))
 ```
 
 The argument names are metadata, not type declarations. Existing

@@ -157,6 +157,15 @@ concept accepts_raw_http_middleware = requires(T& api, raw_http_middleware descr
 static_assert(!accepts_raw_http_binding<fcl::plugins::http_server::api>);
 static_assert(!accepts_raw_http_middleware<fcl::plugins::http_server::api>);
 
+[[nodiscard]] bool has_internal_fcl_header(const fcl::http::response& value) {
+   for (const auto& header : value.headers()) {
+      if (header.name.starts_with("X-FCL-")) {
+         return true;
+      }
+   }
+   return false;
+}
+
 struct pubsub_payload {
    std::string text;
    std::uint32_t value = 0;
@@ -1886,8 +1895,7 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_preserves_stream_framing_through_middlew
    const auto has_content_length = response.find(fcl::http::field::content_length) != response.end();
    BOOST_TEST(!has_content_length);
    BOOST_TEST(std::string{response[fcl::http::field::transfer_encoding]} == "chunked");
-   const auto has_stream_token = response.find("X-FCL-Stream-Token") != response.end();
-   BOOST_TEST(!has_stream_token);
+   BOOST_TEST(!has_internal_fcl_header(response));
    BOOST_TEST(state->stream_calls.load() == 1U);
    BOOST_TEST(state->stream_chunks.load() == 3U);
 
@@ -1924,8 +1932,7 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_stream_middleware_content_type_preserves
    const auto has_content_length = response.find(fcl::http::field::content_length) != response.end();
    BOOST_TEST(!has_content_length);
    BOOST_TEST(std::string{response[fcl::http::field::transfer_encoding]} == "chunked");
-   const auto has_stream_token = response.find("X-FCL-Stream-Token") != response.end();
-   BOOST_TEST(!has_stream_token);
+   BOOST_TEST(!has_internal_fcl_header(response));
    BOOST_TEST(state->stream_calls.load() == 1U);
    BOOST_TEST(state->stream_chunks.load() == 3U);
 
@@ -1957,9 +1964,8 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_preserves_absent_content_type_through_mi
    BOOST_TEST(static_cast<unsigned>(response.result()) == static_cast<unsigned>(fcl::http::status::no_content));
    BOOST_TEST(response.body().empty());
    const auto has_content_type = response.find(fcl::http::field::content_type) != response.end();
-   const auto has_stream_token = response.find("X-FCL-Stream-Token") != response.end();
    BOOST_TEST(!has_content_type);
-   BOOST_TEST(!has_stream_token);
+   BOOST_TEST(!has_internal_fcl_header(response));
    BOOST_TEST(std::string{response[fcl::http::field::server]} == "fcl-test");
 
    fcl::asio::blocking::run(app.runtime(), app.shutdown());
@@ -1991,9 +1997,8 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_stream_middleware_replacement_does_not_l
    BOOST_TEST(static_cast<unsigned>(response.result()) == static_cast<unsigned>(fcl::http::status::forbidden));
    BOOST_TEST(response.body() == "blocked");
    const auto has_transfer_encoding = response.find(fcl::http::field::transfer_encoding) != response.end();
-   const auto has_stream_token = response.find("X-FCL-Stream-Token") != response.end();
    BOOST_TEST(!has_transfer_encoding);
-   BOOST_TEST(!has_stream_token);
+   BOOST_TEST(!has_internal_fcl_header(response));
    BOOST_TEST(state->stream_calls.load() == 1U);
    BOOST_TEST(state->stream_chunks.load() == 0U);
 
@@ -2026,9 +2031,8 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_empty_stream_middleware_replacement_clea
    BOOST_TEST(static_cast<unsigned>(response.result()) == static_cast<unsigned>(fcl::http::status::forbidden));
    BOOST_TEST(response.body().empty());
    const auto has_transfer_encoding = response.find(fcl::http::field::transfer_encoding) != response.end();
-   const auto has_stream_token = response.find("X-FCL-Stream-Token") != response.end();
    BOOST_TEST(!has_transfer_encoding);
-   BOOST_TEST(!has_stream_token);
+   BOOST_TEST(!has_internal_fcl_header(response));
    BOOST_TEST(state->stream_calls.load() == 1U);
    BOOST_TEST(state->stream_chunks.load() == 0U);
 
@@ -2583,7 +2587,14 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_rejects_invalid_typed_config_before_startup
       auto config = test_p2p_config();
       config.set("p2p.path.policy", std::string{"teleport"});
       auto app = p2p_only_application{};
-      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p_node::exceptions::invalid_config);
+      BOOST_CHECK_EXCEPTION(
+         app.configure(config),
+         fcl::plugins::p2p_node::exceptions::invalid_config,
+         [](const auto& error) {
+            const auto text = std::string{error.what()};
+            return text.find("p2p.path.policy") != std::string::npos &&
+                   text.find("config.type") != std::string::npos;
+         });
    }
 
    {
@@ -2591,6 +2602,27 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_rejects_invalid_typed_config_before_startup
       config.set("p2p.path.policy", std::string{"relay-only"});
       auto app = p2p_only_application{};
       BOOST_CHECK_NO_THROW(app.configure(config));
+   }
+
+   {
+      auto config = test_p2p_config();
+      config.set("p2p.relay.trust", std::string{"public-allowed"});
+      auto app = p2p_only_application{};
+      BOOST_CHECK_NO_THROW(app.configure(config));
+   }
+
+   {
+      auto config = test_p2p_config();
+      config.set("p2p.relay.trust", std::string{"everyone"});
+      auto app = p2p_only_application{};
+      BOOST_CHECK_EXCEPTION(
+         app.configure(config),
+         fcl::plugins::p2p_node::exceptions::invalid_config,
+         [](const auto& error) {
+            const auto text = std::string{error.what()};
+            return text.find("p2p.relay.trust") != std::string::npos &&
+                   text.find("config.type") != std::string::npos;
+         });
    }
 }
 

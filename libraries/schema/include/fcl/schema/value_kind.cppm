@@ -44,6 +44,8 @@ template <typename T> struct member_kind {
          return value_kind::floating;
       } else if constexpr (std::same_as<clean_type, std::string>) {
          return value_kind::string;
+      } else if constexpr (std::is_enum_v<clean_type>) {
+         return value_kind::string;
       } else if constexpr (std::same_as<clean_type, std::vector<std::string>>) {
          return value_kind::string_list;
       } else if constexpr (is_vector<clean_type>::value) {

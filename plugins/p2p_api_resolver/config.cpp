@@ -34,12 +34,9 @@ std::chrono::milliseconds to_ms(std::uint64_t value) {
 config decode_config(const fcl::config::component_view& view) {
    auto decoded = fcl::config::decode<config>(view.source(), view.section());
    if (!decoded.ok()) {
-      auto message = std::string{"invalid P2P API resolver config"};
-      if (!decoded.diagnostics.entries.empty()) {
-         const auto& first = decoded.diagnostics.entries.front();
-         message += ": " + first.path + " " + first.code + " " + first.message;
-      }
-      FCL_THROW_EXCEPTION(exceptions::invalid_config, message);
+      FCL_THROW_EXCEPTION(exceptions::invalid_config,
+                          fcl::config::format_decode_diagnostics("invalid P2P API resolver config",
+                                                                 decoded.diagnostics));
    }
    return std::move(decoded.value);
 }
@@ -48,10 +45,6 @@ void validate_config(const config& value) {
    if (!valid_protocol(value.protocol_id)) {
       FCL_THROW_EXCEPTION(exceptions::invalid_config, "resolver protocol id is invalid",
                           fcl::exceptions::ctx("protocol", value.protocol_id));
-   }
-   if (value.cache_ttl_ms == 0 || value.query_deadline_ms == 0 || value.open_deadline_ms == 0 ||
-       value.max_cached_peers == 0 || value.max_apis_per_peer == 0 || value.max_methods_per_api == 0) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_config, "resolver limits must be positive");
    }
 }
 

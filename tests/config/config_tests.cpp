@@ -315,6 +315,26 @@ BOOST_AUTO_TEST_CASE(config_nested_object_list_validators_report_stable_diagnost
    BOOST_TEST(has_diagnostic(decoded.diagnostics.entries, "signature-provider.keys", "schema.unique"));
 }
 
+BOOST_AUTO_TEST_CASE(config_formats_full_decode_diagnostics) {
+   auto invalid = fcl::config::value::object_type{};
+   invalid["id"] = fcl::config::value{""};
+   invalid["private-key"] = fcl::config::value{""};
+   invalid["purposes"] = fcl::config::value::array_type{fcl::config::value{""}};
+
+   auto doc = fcl::config::document{};
+   doc.set("signature-provider.keys", fcl::config::value::array_type{fcl::config::value{invalid}});
+
+   const auto decoded = fcl::config::decode<nested_signer_config>(doc, "signature-provider");
+   BOOST_TEST(!decoded.ok());
+
+   const auto message = fcl::config::format_decode_diagnostics("invalid signature provider config",
+                                                               decoded.diagnostics);
+   BOOST_TEST(message.find("invalid signature provider config") != std::string::npos);
+   BOOST_TEST(message.find("signature-provider.keys[0].id schema.non_empty") != std::string::npos);
+   BOOST_TEST(message.find("signature-provider.keys[0].private-key schema.non_empty") != std::string::npos);
+   BOOST_TEST(message.find("signature-provider.keys[0].purposes[0] schema.non_empty") != std::string::npos);
+}
+
 BOOST_AUTO_TEST_CASE(config_describes_secret_object_list_without_nested_env_fields) {
    const auto descriptor = fcl::config::describe_component<nested_signer_config>("signature-provider");
    BOOST_REQUIRE_EQUAL(descriptor.fields.size(), 2U);

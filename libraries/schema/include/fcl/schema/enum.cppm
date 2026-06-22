@@ -8,6 +8,7 @@ module;
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 export module fcl.schema.enums;
 
@@ -72,6 +73,35 @@ template <typename E> [[nodiscard]] bool enum_from_string(std::string_view name,
    return matched;
 }
 
+[[nodiscard]] inline std::string config_enum_name(std::string_view value) {
+   auto output = std::string{value};
+   for (auto& ch : output) {
+      if (ch == '_') {
+         ch = '-';
+      }
+   }
+   return output;
+}
+
+[[nodiscard]] inline std::string enum_identifier(std::string_view value) {
+   auto output = std::string{value};
+   for (auto& ch : output) {
+      if (ch == '-') {
+         ch = '_';
+      }
+   }
+   return output;
+}
+
+template <typename E> [[nodiscard]] bool enum_from_config_string(std::string_view name, E& out) {
+   static_assert(std::is_enum_v<E>, "enum_from_config_string requires an enum type");
+   if (enum_from_string(name, out)) {
+      return true;
+   }
+   const auto identifier = enum_identifier(name);
+   return enum_from_string(identifier, out);
+}
+
 template <typename E> [[nodiscard]] std::optional<std::string> enum_to_string(E value) {
    static_assert(std::is_enum_v<E>, "enum_to_string requires an enum type");
    auto result = std::optional<std::string>{};
@@ -81,6 +111,15 @@ template <typename E> [[nodiscard]] std::optional<std::string> enum_to_string(E 
       }
    });
    return result;
+}
+
+template <typename E> [[nodiscard]] std::optional<std::string> enum_to_config_string(E value) {
+   static_assert(std::is_enum_v<E>, "enum_to_config_string requires an enum type");
+   auto name = enum_to_string(value);
+   if (!name) {
+      return std::nullopt;
+   }
+   return config_enum_name(*name);
 }
 
 template <typename E> [[nodiscard]] bool enum_from_int(std::int64_t value, E& out) {

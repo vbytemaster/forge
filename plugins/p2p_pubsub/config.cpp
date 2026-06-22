@@ -50,21 +50,14 @@ std::chrono::milliseconds to_ms(std::uint64_t value) {
 config decode_config(const fcl::config::component_view& view) {
    auto decoded = fcl::config::decode<config>(view.source(), view.section());
    if (!decoded.ok()) {
-      auto message = std::string{"invalid P2P PubSub config"};
-      if (!decoded.diagnostics.entries.empty()) {
-         const auto& first = decoded.diagnostics.entries.front();
-         message += ": " + first.path + " " + first.code + " " + first.message;
-      }
-      FCL_THROW_EXCEPTION(exceptions::invalid_config, message);
+      FCL_THROW_EXCEPTION(exceptions::invalid_config,
+                          fcl::config::format_decode_diagnostics("invalid P2P PubSub config",
+                                                                 decoded.diagnostics));
    }
    return std::move(decoded.value);
 }
 
 void validate_config(const config& value) {
-   if (value.max_topics == 0 || value.max_handlers_per_topic == 0 || value.max_active_handlers == 0 ||
-       value.max_message_size == 0 || value.handler_deadline_ms == 0) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_config, "P2P PubSub limits must be positive");
-   }
    validate_topic_list(value.allowed_topics, "allowed-topics");
    validate_topic_list(value.denied_topics, "denied-topics");
 }

@@ -184,6 +184,28 @@ std::any value_to_any(const value& input, schema::value_kind kind) {
    throw std::invalid_argument{"config value has incompatible type"};
 }
 
+std::string format_decode_diagnostics(std::string_view prefix, const decode_diagnostics& diagnostics) {
+   auto output = std::string{prefix};
+   if (diagnostics.entries.empty()) {
+      return output;
+   }
+
+   output += ": ";
+   auto first = true;
+   for (const auto& entry : diagnostics.entries) {
+      if (!first) {
+         output += "; ";
+      }
+      first = false;
+      output += entry.path;
+      output += " ";
+      output += entry.code;
+      output += " ";
+      output += entry.message;
+   }
+   return output;
+}
+
 value any_to_value(schema::value_kind kind, const std::any& input) {
    switch (kind) {
    case schema::value_kind::boolean:

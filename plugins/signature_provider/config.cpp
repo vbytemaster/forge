@@ -24,12 +24,9 @@ namespace fcl::plugins::signature_provider {
 config decode_config(const fcl::config::component_view& view) {
    auto decoded = fcl::config::decode<config>(view.source(), view.section());
    if (!decoded.ok()) {
-      auto message = std::string{"invalid signature provider config"};
-      if (!decoded.diagnostics.entries.empty()) {
-         const auto& first = decoded.diagnostics.entries.front();
-         message += ": " + first.path + " " + first.code + " " + first.message;
-      }
-      FCL_THROW_EXCEPTION(exceptions::invalid_config, message);
+      FCL_THROW_EXCEPTION(exceptions::invalid_config,
+                          fcl::config::format_decode_diagnostics("invalid signature provider config",
+                                                                 decoded.diagnostics));
    }
    return std::move(decoded.value);
 }

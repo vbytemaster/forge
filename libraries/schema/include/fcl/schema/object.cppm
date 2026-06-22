@@ -26,6 +26,7 @@ export module fcl.schema.object;
 
 import fcl.schema.diagnostic;
 import fcl.schema.value_kind;
+import fcl.schema.enums;
 
 export namespace fcl::schema {
 
@@ -112,6 +113,37 @@ template <typename T> [[nodiscard]] T cast_any_to(const std::any& value) {
       }
       if (value.type() == typeid(long double)) {
          return static_cast<T>(std::any_cast<long double>(value));
+      }
+   } else if constexpr (std::is_enum_v<clean_type>) {
+      if (value.type() == typeid(std::string)) {
+         auto parsed = clean_type{};
+         if (enum_from_config_string(std::any_cast<std::string>(value), parsed)) {
+            return parsed;
+         }
+      }
+      if (value.type() == typeid(const char*)) {
+         auto parsed = clean_type{};
+         if (enum_from_config_string(std::any_cast<const char*>(value), parsed)) {
+            return parsed;
+         }
+      }
+      if (value.type() == typeid(char*)) {
+         auto parsed = clean_type{};
+         if (enum_from_config_string(std::any_cast<char*>(value), parsed)) {
+            return parsed;
+         }
+      }
+      if (value.type() == typeid(int)) {
+         auto parsed = clean_type{};
+         if (enum_from_int(static_cast<std::int64_t>(std::any_cast<int>(value)), parsed)) {
+            return parsed;
+         }
+      }
+      if (value.type() == typeid(std::int64_t)) {
+         auto parsed = clean_type{};
+         if (enum_from_int(std::any_cast<std::int64_t>(value), parsed)) {
+            return parsed;
+         }
       }
    }
    return std::any_cast<clean_type>(value);
@@ -666,6 +698,26 @@ template <typename T>
       }
       if (const auto* text = std::get_if<std::string>(&input.storage)) {
          return static_cast<T>(std::stod(*text));
+      }
+   } else if constexpr (std::is_enum_v<clean_type>) {
+      if (const auto* text = std::get_if<std::string>(&input.storage)) {
+         auto parsed = clean_type{};
+         if (enum_from_config_string(*text, parsed)) {
+            return parsed;
+         }
+      }
+      if (const auto* value = std::get_if<std::int64_t>(&input.storage)) {
+         auto parsed = clean_type{};
+         if (enum_from_int(*value, parsed)) {
+            return parsed;
+         }
+      }
+      if (const auto* value = std::get_if<std::uint64_t>(&input.storage);
+          value && *value <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())) {
+         auto parsed = clean_type{};
+         if (enum_from_int(static_cast<std::int64_t>(*value), parsed)) {
+            return parsed;
+         }
       }
    } else if constexpr (std::same_as<clean_type, std::string>) {
       if (const auto* value = std::get_if<std::string>(&input.storage)) {

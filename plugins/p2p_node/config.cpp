@@ -33,36 +33,27 @@ import fcl.plugins.p2p_node.types;
 namespace fcl::plugins::p2p_node {
 namespace {
 
-void validate_relay_trust(const std::string& value) {
-   if (value == "known-only" || value == "public-allowed") {
-      return;
-   }
-   FCL_THROW_EXCEPTION(exceptions::invalid_config, "invalid P2P relay trust policy",
-                       fcl::exceptions::ctx("trust", value));
-}
-
-[[nodiscard]] fcl::p2p::path::policy parse_path_policy(const std::string& value, bool relay_client_enabled,
+[[nodiscard]] fcl::p2p::path::policy parse_path_policy(path_policy value, bool relay_client_enabled,
                                                        std::size_t relay_max_candidates) {
    if (relay_max_candidates == 0) {
       FCL_THROW_EXCEPTION(exceptions::invalid_config, "P2P relay candidate limit must be positive");
    }
-   if (value == "direct-only") {
+   switch (value) {
+   case path_policy::direct_only:
       return fcl::p2p::path::policy{
          .allow_direct = true,
          .allow_hole_punch = false,
          .allow_relay = false,
          .max_relay_candidates = relay_max_candidates,
       };
-   }
-   if (value == "direct-preferred") {
+   case path_policy::direct_preferred:
       return fcl::p2p::path::policy{
          .allow_direct = true,
          .allow_hole_punch = relay_client_enabled,
          .allow_relay = relay_client_enabled,
          .max_relay_candidates = relay_max_candidates,
       };
-   }
-   if (value == "relay-only") {
+   case path_policy::relay_only:
       return fcl::p2p::path::policy{
          .allow_direct = false,
          .allow_hole_punch = false,
@@ -70,8 +61,7 @@ void validate_relay_trust(const std::string& value) {
          .max_relay_candidates = relay_max_candidates,
       };
    }
-   FCL_THROW_EXCEPTION(exceptions::invalid_config, "invalid P2P path policy",
-                       fcl::exceptions::ctx("policy", value));
+   FCL_THROW_EXCEPTION(exceptions::invalid_config, "invalid P2P path policy");
 }
 
 } // namespace
@@ -88,24 +78,21 @@ std::chrono::milliseconds to_ms(std::uint64_t value) {
 config decode_config(const fcl::config::component_view& view) {
    auto decoded = fcl::config::decode<config>(view.source(), view.section());
    if (!decoded.ok()) {
-      auto message = std::string{"invalid P2P node config"};
-      if (!decoded.diagnostics.entries.empty()) {
-         const auto& first = decoded.diagnostics.entries.front();
-         message += ": " + first.path + " " + first.code + " " + first.message;
-      }
-      FCL_THROW_EXCEPTION(exceptions::invalid_config, message);
+      FCL_THROW_EXCEPTION(exceptions::invalid_config,
+                          fcl::config::format_decode_diagnostics("invalid P2P node config",
+                                                                 decoded.diagnostics));
    }
    return std::move(decoded.value);
 }
 
 parsed_policy parse_policy(const config& config) {
-   validate_relay_trust(config.relay_trust);
    const auto relay_max_candidates = static_cast<std::size_t>(config.relay_max_candidates);
    return parsed_policy{
       .path = parse_path_policy(config.path_policy, config.relay_client_enabled, relay_max_candidates),
       .relay_client_enabled = config.relay_client_enabled,
       .relay_server_enabled = config.relay_server_enabled,
-      .relay_public_allowed = config.relay_public_allowed || config.relay_trust == "public-allowed",
+      .relay_public_allowed =
+         config.relay_public_allowed || config.relay_trust == relay_trust_policy::public_allowed,
       .relay_reservation_ttl = to_ms(config.relay_reservation_ttl_ms),
       .relay_max_candidates = relay_max_candidates,
    };

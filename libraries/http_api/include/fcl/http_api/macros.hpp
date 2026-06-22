@@ -27,27 +27,27 @@
    __VA_OPT__(BOOST_PP_SEQ_FOR_EACH(FCL_HTTP_DETAIL_OPTION_APPLY, _, BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__)))
 
 #define FCL_HTTP_GET(NAME, TARGET, ...)                                                                             \
-   (NAME, (::fcl::http::api_route_builder{::fcl::http::method::get, BOOST_PP_STRINGIZE(NAME), TARGET,               \
+   (NAME, (::fcl::http::api::route_builder{::fcl::http::method::get, BOOST_PP_STRINGIZE(NAME), TARGET,               \
                                           ::fcl::http::status::ok} FCL_HTTP_DETAIL_OPTIONS(__VA_ARGS__))             \
              .build())
 #define FCL_HTTP_HEAD(NAME, TARGET, ...)                                                                            \
-   (NAME, (::fcl::http::api_route_builder{::fcl::http::method::head, BOOST_PP_STRINGIZE(NAME), TARGET,              \
+   (NAME, (::fcl::http::api::route_builder{::fcl::http::method::head, BOOST_PP_STRINGIZE(NAME), TARGET,              \
                                           ::fcl::http::status::ok} FCL_HTTP_DETAIL_OPTIONS(__VA_ARGS__))             \
              .build())
 #define FCL_HTTP_POST(NAME, TARGET, STATUS, ...)                                                                    \
-   (NAME, (::fcl::http::api_route_builder{::fcl::http::method::post, BOOST_PP_STRINGIZE(NAME), TARGET,              \
+   (NAME, (::fcl::http::api::route_builder{::fcl::http::method::post, BOOST_PP_STRINGIZE(NAME), TARGET,              \
                                           ::fcl::http::status::STATUS} FCL_HTTP_DETAIL_OPTIONS(__VA_ARGS__))         \
              .build())
 #define FCL_HTTP_PUT(NAME, TARGET, STATUS, ...)                                                                     \
-   (NAME, (::fcl::http::api_route_builder{::fcl::http::method::put, BOOST_PP_STRINGIZE(NAME), TARGET,               \
+   (NAME, (::fcl::http::api::route_builder{::fcl::http::method::put, BOOST_PP_STRINGIZE(NAME), TARGET,               \
                                           ::fcl::http::status::STATUS} FCL_HTTP_DETAIL_OPTIONS(__VA_ARGS__))         \
              .build())
 #define FCL_HTTP_PATCH(NAME, TARGET, STATUS, ...)                                                                   \
-   (NAME, (::fcl::http::api_route_builder{::fcl::http::method::patch, BOOST_PP_STRINGIZE(NAME), TARGET,             \
+   (NAME, (::fcl::http::api::route_builder{::fcl::http::method::patch, BOOST_PP_STRINGIZE(NAME), TARGET,             \
                                           ::fcl::http::status::STATUS} FCL_HTTP_DETAIL_OPTIONS(__VA_ARGS__))         \
              .build())
 #define FCL_HTTP_DELETE(NAME, TARGET, STATUS, ...)                                                                  \
-   (NAME, (::fcl::http::api_route_builder{::fcl::http::method::delete_, BOOST_PP_STRINGIZE(NAME), TARGET,           \
+   (NAME, (::fcl::http::api::route_builder{::fcl::http::method::delete_, BOOST_PP_STRINGIZE(NAME), TARGET,           \
                                           ::fcl::http::status::STATUS} FCL_HTTP_DETAIL_OPTIONS(__VA_ARGS__))         \
              .build())
 
@@ -71,13 +71,13 @@
       FCL_HTTP_DETAIL_ROUTE(ROUTE));
 
 #define FCL_HTTP_DETAIL_ROUTE_CALL(r, INTERFACE, ROUTE)                                                             \
-   ::fcl::http::detail::make_route_call<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE),                                  \
+   ::fcl::http::api::detail::make_route_call<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE),                                  \
                                         ::fcl::api::method_request_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>,     \
                                         ::fcl::api::method_response_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>(   \
       FCL_HTTP_DETAIL_ROUTE(ROUTE)),
 
 #define FCL_HTTP_DETAIL_ROUTE_API_PROXY_SUPPORTED(r, INTERFACE, ROUTE)                                              \
-   && ::fcl::http::detail::route_can_use_api_proxy_v<                                                               \
+   && ::fcl::http::api::detail::route_can_use_api_proxy_v<                                                               \
          &INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE),                                                                \
          ::fcl::api::method_request_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>,                                   \
          ::fcl::api::method_response_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>
@@ -91,17 +91,17 @@
       if constexpr (::fcl::api::method_argument_count_v<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)> == 1U) {         \
          using request_type =                                                                                        \
             std::remove_cvref_t<::fcl::api::method_request_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>;           \
-         if constexpr (::fcl::http::detail::is_positional_http_method_v<                                            \
+         if constexpr (::fcl::http::api::detail::is_positional_http_method_v<                                            \
                           &INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE), request_type>) {                              \
             auto arguments = std::make_tuple(std::move(request));                                                   \
-            co_return co_await ::fcl::http::detail::call_arguments<decltype(arguments),                             \
+            co_return co_await ::fcl::http::api::detail::call_arguments<decltype(arguments),                             \
                ::fcl::api::method_response_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>(                           \
                *client_, ::fcl::api::api_traits<INTERFACE>::describe(), FCL_HTTP_DETAIL_ROUTE(ROUTE),               \
                std::move(arguments),                                                                                \
-               ::fcl::http::detail::argument_names_for(::fcl::api::api_traits<INTERFACE>::describe(),               \
+               ::fcl::http::api::detail::argument_names_for(::fcl::api::api_traits<INTERFACE>::describe(),               \
                                                        BOOST_PP_STRINGIZE(FCL_HTTP_DETAIL_METHOD(ROUTE))));         \
          } else {                                                                                                   \
-            co_return co_await ::fcl::http::detail::call<                                                           \
+            co_return co_await ::fcl::http::api::detail::call<                                                           \
                ::fcl::api::method_request_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>,                             \
                ::fcl::api::method_response_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>(                           \
                *client_, ::fcl::api::api_traits<INTERFACE>::describe(), FCL_HTTP_DETAIL_ROUTE(ROUTE),               \
@@ -114,15 +114,15 @@
    }
 
 #define FCL_HTTP_API(INTERFACE, ...)                                                                                \
-   namespace fcl::http {                                                                                            \
-   template <> struct http_api_traits<INTERFACE> {                                                                  \
-      static std::vector<api_route> routes() {                                                                      \
-         return ::fcl::http::detail::validate_routes(                                                               \
+   namespace fcl::http::api {                                                                                            \
+   template <> struct traits<INTERFACE> {                                                                  \
+      static std::vector<route> routes() {                                                                      \
+         return ::fcl::http::api::detail::validate_routes(                                                               \
             ::fcl::api::api_traits<INTERFACE>::describe(),                                                          \
-            std::vector<api_route>{BOOST_PP_SEQ_FOR_EACH(FCL_HTTP_DETAIL_ROUTE_ENTRY, INTERFACE,                    \
+            std::vector<route>{BOOST_PP_SEQ_FOR_EACH(FCL_HTTP_DETAIL_ROUTE_ENTRY, INTERFACE,                    \
                                                          BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__))});                  \
       }                                                                                                             \
-      static api_builder& bind(api_builder& builder) {                                                              \
+      static binding_builder& bind(binding_builder& builder) {                                                              \
          static_cast<void>(routes());                                                                               \
          BOOST_PP_SEQ_FOR_EACH(FCL_HTTP_DETAIL_BIND_ROUTE, INTERFACE, BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__))        \
          return builder;                                                                                            \
@@ -130,20 +130,20 @@
       static constexpr bool use_api_proxy = true                                                                     \
          BOOST_PP_SEQ_FOR_EACH(FCL_HTTP_DETAIL_ROUTE_API_PROXY_SUPPORTED, INTERFACE,                                \
                                BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__));                                               \
-      static std::shared_ptr<::fcl::api::remote_invoker> make_invoker(client& value) {                              \
-         return ::fcl::http::detail::make_route_invoker(                                                            \
+      static std::shared_ptr<::fcl::api::remote_invoker> make_invoker(::fcl::http::client& value) {                              \
+         return ::fcl::http::api::detail::make_route_invoker(                                                            \
             value, ::fcl::api::api_traits<INTERFACE>::describe(),                                                    \
-            std::vector<::fcl::http::detail::route_call>{                                                           \
+            std::vector<::fcl::http::api::detail::route_call>{                                                           \
                BOOST_PP_SEQ_FOR_EACH(FCL_HTTP_DETAIL_ROUTE_CALL, INTERFACE, BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__))  \
             });                                                                                                     \
       }                                                                                                             \
    };                                                                                                               \
    template <> class proxy<INTERFACE> : public INTERFACE {                                                          \
     public:                                                                                                         \
-      explicit proxy(client& value) : client_(&value) {}                                                            \
+      explicit proxy(::fcl::http::client& value) : client_(&value) {}                                                            \
       BOOST_PP_SEQ_FOR_EACH(FCL_HTTP_DETAIL_PROXY_USING, INTERFACE, BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__))          \
       BOOST_PP_SEQ_FOR_EACH(FCL_HTTP_DETAIL_PROXY_METHOD, INTERFACE, BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__))         \
     private:                                                                                                        \
-      client* client_;                                                                                              \
+      ::fcl::http::client* client_;                                                                                              \
    };                                                                                                               \
    }

@@ -20,52 +20,26 @@ module;
 #include <utility>
 #include <vector>
 
-export module fcl.http.proxy;
+export module fcl.http.api.client_request;
 
 import fcl.api.connection;
 import fcl.api.descriptor;
-import fcl.api.error_projection;
 import fcl.api.types;
-export import fcl.api.handle;
 import fcl.http.body;
-import fcl.http.binding;
+import fcl.http.api.parameters;
 export import fcl.http.client;
 import fcl.http.exceptions;
 import fcl.http.file;
-export import fcl.http.mapping;
+export import fcl.http.api.mapping;
 import fcl.http.stream;
 import fcl.http.types;
 import fcl.http.upload;
 import fcl.json;
 import fcl.reflect.reflect;
 
-export namespace fcl::http {
-
-template <typename Interface> class proxy;
+export namespace fcl::http::api {
 
 namespace detail {
-
-[[nodiscard]] inline fcl::api::error_payload decode_error_payload(const response& value) {
-   auto decoded = fcl::json::read<fcl::api::error_payload>(
-      value.body(), fcl::json::read_options{.source_name = "http.error",
-                                            .unknown_fields = fcl::json::unknown_field_policy::ignore});
-   if (decoded.ok()) {
-      auto payload = std::move(decoded.value);
-      payload.status_code = static_cast<fcl::api::status>(value.result_int());
-      return payload;
-   }
-   return fcl::api::error_payload{
-      .error = "http_error",
-      .message = value.body().empty() ? "HTTP API request failed" : value.body(),
-      .retryable = false,
-      .status_code = static_cast<fcl::api::status>(value.result_int()),
-      .identity =
-         {
-            .category = "fcl.api",
-            .code = static_cast<std::uint32_t>(fcl::api::exceptions::code::remote_internal),
-         },
-   };
-}
 
 [[nodiscard]] inline std::string default_header_name(std::string_view field_name) {
    auto output = std::string{};
@@ -76,8 +50,8 @@ namespace detail {
    return output;
 }
 
-[[nodiscard]] inline std::string route_header_name(const api_route& route, std::string_view field_name) {
-   const auto matched = std::find_if(route.headers.begin(), route.headers.end(), [&](const api_field_binding& binding) {
+[[nodiscard]] inline std::string route_header_name(const route& route, std::string_view field_name) {
+   const auto matched = std::find_if(route.headers.begin(), route.headers.end(), [&](const field_binding& binding) {
       return binding.field == field_name;
    });
    if (matched != route.headers.end()) {
@@ -86,10 +60,10 @@ namespace detail {
    return default_header_name(field_name);
 }
 
-[[nodiscard]] inline std::string route_query_name(const api_route& route, std::string_view field_name);
+[[nodiscard]] inline std::string route_query_name(const route& route, std::string_view field_name);
 
-[[nodiscard]] inline std::string route_form_name(const api_route& route, std::string_view field_name) {
-   const auto matched = std::find_if(route.forms.begin(), route.forms.end(), [&](const api_field_binding& binding) {
+[[nodiscard]] inline std::string route_form_name(const route& route, std::string_view field_name) {
+   const auto matched = std::find_if(route.forms.begin(), route.forms.end(), [&](const field_binding& binding) {
       return binding.field == field_name;
    });
    if (matched != route.forms.end()) {
@@ -99,7 +73,7 @@ namespace detail {
 }
 
 template <typename Request>
-void apply_route_headers(request& target, const api_route& route, const Request& value) {
+void apply_route_headers(request& target, const route& route, const Request& value) {
    if constexpr (fcl::reflect::is_described_object_v<Request>) {
       fcl::reflect::for_each_member<Request>([&](const char* field_name, auto member) {
          using member_type = std::remove_cvref_t<decltype(value.*member)>;
@@ -119,14 +93,14 @@ void apply_route_headers(request& target, const api_route& route, const Request&
 }
 
 template <typename Request>
-void append_route_query_fields(std::string& target, const api_route& route, const Request& value) {
+void append_route_query_fields(std::string& target, const route& route, const Request& value) {
    if constexpr (fcl::reflect::is_described_object_v<Request>) {
       const auto parsed = parse_route_template(route.target);
       fcl::reflect::for_each_member<Request>([&](const char* field_name, auto member) {
          using member_type = std::remove_cvref_t<decltype(value.*member)>;
          if constexpr (detail::is_query<member_type>::value) {
             const auto already_rendered =
-               std::find_if(parsed.query.begin(), parsed.query.end(), [&](const api_field_binding& binding) {
+               std::find_if(parsed.query.begin(), parsed.query.end(), [&](const field_binding& binding) {
                   return binding.field == field_name;
                }) != parsed.query.end();
             const auto& query = value.*member;
@@ -237,9 +211,9 @@ void mark_argument_consumed(std::array<bool, Size>& consumed,
    }
 }
 
-[[nodiscard]] inline std::string route_query_name(const api_route& route, std::string_view field_name) {
+[[nodiscard]] inline std::string route_query_name(const route& route, std::string_view field_name) {
    const auto parsed = parse_route_template(route.target);
-   const auto matched = std::find_if(parsed.query.begin(), parsed.query.end(), [&](const api_field_binding& binding) {
+   const auto matched = std::find_if(parsed.query.begin(), parsed.query.end(), [&](const field_binding& binding) {
       return binding.field == field_name;
    });
    if (matched != parsed.query.end()) {
@@ -249,7 +223,7 @@ void mark_argument_consumed(std::array<bool, Size>& consumed,
 }
 
 template <typename Tuple>
-[[nodiscard]] rendered_route_target<Tuple> render_route_target(const api_route& route,
+[[nodiscard]] rendered_route_target<Tuple> render_route_target(const route& route,
                                                               const Tuple& arguments,
                                                               const std::vector<std::string>& names) {
    auto result = rendered_route_target<Tuple>{};
@@ -297,7 +271,7 @@ template <typename Tuple>
 
 template <typename Tuple>
 void append_unconsumed_query_arguments(std::string& target,
-                                       const api_route& route,
+                                       const route& route,
                                        const Tuple& arguments,
                                        const std::vector<std::string>& names,
                                        const std::array<bool, std::tuple_size_v<Tuple>>& consumed) {
@@ -331,7 +305,7 @@ void append_unconsumed_query_arguments(std::string& target,
 
 template <typename Tuple>
 void apply_route_headers(request& target,
-                         const api_route& route,
+                         const route& route,
                          const Tuple& arguments,
                          const std::vector<std::string>& names) {
    [&]<std::size_t... Index>(std::index_sequence<Index...>) {
@@ -558,7 +532,7 @@ void reject_http_positional_parameters(const Tuple& arguments) {
 
 template <typename Tuple>
 std::optional<body_reader> bind_positional_request_body(request& target,
-                                                        const api_route& route,
+                                                        const route& route,
                                                         Tuple& arguments,
                                                         const std::array<bool, std::tuple_size_v<Tuple>>& consumed) {
    if (!uses_request_body(route.verb)) {
@@ -596,7 +570,7 @@ std::optional<body_reader> bind_positional_request_body(request& target,
 }
 
 template <typename Request>
-std::optional<body_reader> take_body_stream(Request& value, const api_route& route) {
+std::optional<body_reader> take_body_stream(Request& value, const route& route) {
    auto result = std::optional<body_reader>{};
    if constexpr (fcl::reflect::is_described_object_v<Request>) {
       fcl::reflect::for_each_member<Request>([&](const char* field_name, auto member) {
@@ -669,7 +643,7 @@ std::optional<std::string> dto_json_body(Request& value, bool allow_whole_reques
 }
 
 template <typename Request>
-std::optional<std::string> dto_multipart_body(request& target, const api_route& route, const Request& value) {
+std::optional<std::string> dto_multipart_body(request& target, const route& route, const Request& value) {
    auto parts = std::vector<multipart_writer_part>{};
 
    auto append_field = [&](std::string_view name, std::string_view text) {
@@ -725,7 +699,7 @@ std::optional<std::string> dto_multipart_body(request& target, const api_route& 
 }
 
 template <typename Request>
-std::optional<body_reader> bind_dto_request_body(request& target, const api_route& route, Request& value) {
+std::optional<body_reader> bind_dto_request_body(request& target, const route& route, Request& value) {
    if (!uses_request_body(route.verb)) {
       return std::nullopt;
    }
@@ -774,13 +748,8 @@ struct positional_client_request {
    std::array<bool, std::tuple_size_v<Tuple>> consumed{};
 };
 
-template <auto Method, typename Request>
-inline constexpr auto is_positional_http_method_v =
-   fcl::api::method_argument_count_v<Method> != 1U ||
-   !fcl::reflect::is_described_object_v<std::remove_cvref_t<Request>>;
-
 template <typename Request>
-request make_client_request(client& target, const api_route& route, Request& value) {
+request make_client_request(client& target, const route& route, Request& value) {
    auto request_value = request{};
    request_value.method(route.verb);
    auto rendered_target = render_route_target(route, value);
@@ -794,7 +763,7 @@ request make_client_request(client& target, const api_route& route, Request& val
 
 template <typename Tuple>
 positional_client_request<Tuple> make_client_request(client& target,
-                                                     const api_route& route,
+                                                     const route& route,
                                                      const Tuple& arguments,
                                                      const std::vector<std::string>& names) {
    auto output = positional_client_request<Tuple>{};
@@ -812,311 +781,6 @@ positional_client_request<Tuple> make_client_request(client& target,
    return output;
 }
 
-inline constexpr auto max_stream_error_body_bytes = std::uint64_t{64U * 1024U};
-
-boost::asio::awaitable<std::string> read_bounded_error_body(body_reader& body) {
-   auto output = std::string{};
-   while (auto chunk = co_await body.async_read()) {
-      if (chunk->bytes.size() > max_stream_error_body_bytes - output.size()) {
-         FCL_THROW_EXCEPTION(fcl::http::exceptions::payload_too_large,
-                             "HTTP API error response body exceeds the streaming client limit");
-      }
-      output.append(reinterpret_cast<const char*>(chunk->bytes.data()), chunk->bytes.size());
-   }
-   co_return output;
-}
-
-template <typename Request, typename Response>
-boost::asio::awaitable<Response> call(client& target, const fcl::api::descriptor& descriptor,
-                                      const api_route& route, Request value) {
-   if constexpr (detail::response_needs_stream_v<Response>) {
-      auto request_value = make_client_request(target, route, value);
-      auto body = bind_dto_request_body(request_value, route, value);
-
-      auto response_value = body.has_value()
-         ? co_await target.async_stream_request(std::move(request_value), std::move(*body))
-         : co_await target.async_stream_request(std::move(request_value));
-      if (response_value.head.result_int() < 200U || response_value.head.result_int() >= 300U) {
-         response_value.head.body() = co_await read_bounded_error_body(response_value.body);
-         auto error = decode_error_payload(response_value.head);
-         fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
-      }
-      if constexpr (std::is_same_v<std::remove_cvref_t<Response>, file_response>) {
-         co_return file_response::from_body(std::move(response_value.head), std::move(response_value.body));
-      } else {
-         co_return streaming_response::from_body(std::move(response_value.head), std::move(response_value.body));
-      }
-   } else if constexpr (detail::is_bytes_response_v<Response>) {
-      auto request_value = make_client_request(target, route, value);
-      auto body = bind_dto_request_body(request_value, route, value);
-      auto response_value = body.has_value()
-         ? co_await target.async_streaming_request(std::move(request_value), std::move(*body))
-         : co_await target.async_request(std::move(request_value));
-      if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
-         auto error = decode_error_payload(response_value);
-         fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
-      }
-      auto bytes = std::vector<std::byte>(response_value.body().size());
-      if (!bytes.empty()) {
-         std::memcpy(bytes.data(), response_value.body().data(), response_value.body().size());
-      }
-      auto content_type = std::string{};
-      if (auto iterator = response_value.find(field::content_type); iterator != response_value.end()) {
-         content_type = std::string{iterator->value()};
-      }
-      co_return Response{
-         .bytes = std::move(bytes),
-         .content_type = content_type.empty() ? std::string{"application/octet-stream"} : std::move(content_type),
-         .status_code = response_value.result(),
-      };
-   } else if constexpr (detail::is_empty_response_v<Response>) {
-      auto request_value = make_client_request(target, route, value);
-      auto body = bind_dto_request_body(request_value, route, value);
-      auto response_value = body.has_value()
-         ? co_await target.async_streaming_request(std::move(request_value), std::move(*body))
-         : co_await target.async_request(std::move(request_value));
-      if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
-         auto error = decode_error_payload(response_value);
-         fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
-      }
-      co_return Response{.status_code = response_value.result()};
-   } else {
-      auto request_value = make_client_request(target, route, value);
-      auto body = bind_dto_request_body(request_value, route, value);
-      auto response_value = body.has_value()
-         ? co_await target.async_streaming_request(std::move(request_value), std::move(*body))
-         : co_await target.async_request(std::move(request_value));
-      if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
-         auto error = decode_error_payload(response_value);
-         fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
-      }
-      auto decoded = fcl::json::read<Response>(response_value.body(),
-                                               fcl::json::read_options{.source_name = "http.response",
-                                                                       .unknown_fields =
-                                                                          fcl::json::unknown_field_policy::error});
-      if (!decoded.ok()) {
-         FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API response JSON is invalid");
-      }
-      co_return std::move(decoded.value);
-   }
-}
-
-template <typename Tuple, typename Response>
-boost::asio::awaitable<Response> call_arguments(client& target,
-                                                const fcl::api::descriptor& descriptor,
-                                                const api_route& route,
-                                                Tuple value,
-                                                const std::vector<std::string>& argument_names) {
-   reject_http_positional_parameters(value);
-   auto request_parts = make_client_request(target, route, value, argument_names);
-   auto request_body = bind_positional_request_body(request_parts.value, route, value, request_parts.consumed);
-   if constexpr (detail::response_needs_stream_v<Response>) {
-      auto response_value = request_body.has_value()
-         ? co_await target.async_stream_request(std::move(request_parts.value), std::move(*request_body))
-         : co_await target.async_stream_request(std::move(request_parts.value));
-      if (response_value.head.result_int() < 200U || response_value.head.result_int() >= 300U) {
-         response_value.head.body() = co_await read_bounded_error_body(response_value.body);
-         auto error = decode_error_payload(response_value.head);
-         fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
-      }
-      if constexpr (std::is_same_v<std::remove_cvref_t<Response>, file_response>) {
-         co_return file_response::from_body(std::move(response_value.head), std::move(response_value.body));
-      } else {
-         co_return streaming_response::from_body(std::move(response_value.head), std::move(response_value.body));
-      }
-   } else {
-      auto response_value = request_body.has_value()
-         ? co_await target.async_streaming_request(std::move(request_parts.value), std::move(*request_body))
-         : co_await target.async_request(std::move(request_parts.value));
-      if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
-         auto error = decode_error_payload(response_value);
-         fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
-      }
-      if constexpr (detail::is_bytes_response_v<Response>) {
-         auto bytes = std::vector<std::byte>(response_value.body().size());
-         if (!bytes.empty()) {
-            std::memcpy(bytes.data(), response_value.body().data(), response_value.body().size());
-         }
-         auto content_type = std::string{};
-         if (auto iterator = response_value.find(field::content_type); iterator != response_value.end()) {
-            content_type = std::string{iterator->value()};
-         }
-         co_return Response{
-            .bytes = std::move(bytes),
-            .content_type = content_type.empty() ? std::string{"application/octet-stream"} : std::move(content_type),
-            .status_code = response_value.result(),
-         };
-      } else if constexpr (detail::is_empty_response_v<Response>) {
-         co_return Response{.status_code = response_value.result()};
-      } else {
-         auto decoded = fcl::json::read<Response>(
-            response_value.body(),
-            fcl::json::read_options{.source_name = "http.response",
-                                    .unknown_fields = fcl::json::unknown_field_policy::error});
-         if (!decoded.ok()) {
-            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API response JSON is invalid");
-         }
-         co_return std::move(decoded.value);
-      }
-   }
-}
-
-struct route_call {
-   std::string method;
-   std::function<boost::asio::awaitable<fcl::api::response>(client&, const fcl::api::descriptor&, fcl::api::request)>
-      handler;
-   std::function<boost::asio::awaitable<void>(client&,
-                                              const fcl::api::descriptor&,
-                                              fcl::api::request,
-                                              std::type_index,
-                                              void*,
-                                              std::type_index,
-                                              void*)>
-      typed_handler;
-};
-
-class route_invoker final : public fcl::api::remote_invoker {
- public:
-   route_invoker(client& target, fcl::api::descriptor descriptor, std::vector<route_call> routes)
-       : target_{&target}, descriptor_{std::move(descriptor)}, routes_{std::move(routes)} {}
-
-   boost::asio::awaitable<fcl::api::response> async_call(fcl::api::request value) override {
-      const auto route =
-         std::find_if(routes_.begin(), routes_.end(), [&](const route_call& candidate) {
-            return candidate.method == value.method;
-         });
-      if (route == routes_.end()) {
-         FCL_THROW_EXCEPTION(fcl::api::exceptions::method_not_found, "HTTP API route is not declared",
-                             fcl::exceptions::ctx("method", value.method));
-      }
-      co_return co_await route->handler(*target_, descriptor_, std::move(value));
-   }
-
-   bool supports_typed_arguments() const noexcept override {
-      return true;
-   }
-
-   boost::asio::awaitable<void> async_call_arguments(fcl::api::request value,
-                                                     std::type_index argument_tuple_type,
-                                                     void* argument_tuple,
-                                                     std::type_index response_type,
-                                                     void* response_storage) override {
-      const auto route =
-         std::find_if(routes_.begin(), routes_.end(), [&](const route_call& candidate) {
-            return candidate.method == value.method;
-         });
-      if (route == routes_.end()) {
-         FCL_THROW_EXCEPTION(fcl::api::exceptions::method_not_found, "HTTP API route is not declared",
-                             fcl::exceptions::ctx("method", value.method));
-      }
-      co_await route->typed_handler(*target_, descriptor_, std::move(value), argument_tuple_type, argument_tuple,
-                                    response_type, response_storage);
-   }
-
- private:
-   client* target_;
-   fcl::api::descriptor descriptor_;
-   std::vector<route_call> routes_;
-};
-
-[[nodiscard]] inline std::vector<std::string> argument_names_for(const fcl::api::descriptor& descriptor,
-                                                                 std::string_view method) {
-   const auto* value = fcl::api::find_method(descriptor, method);
-   if (value == nullptr) {
-      FCL_THROW_EXCEPTION(fcl::api::exceptions::method_not_found, "HTTP API route method is not declared",
-                          fcl::exceptions::ctx("method", std::string{method}));
-   }
-   return value->argument_names;
-}
-
-template <auto Method, typename Request, typename Response>
-route_call make_route_call(api_route route) {
-   return route_call{
-      .method = route.method_name,
-      .handler = [route](client& target,
-                         const fcl::api::descriptor& descriptor,
-                         fcl::api::request value) -> boost::asio::awaitable<fcl::api::response> {
-         auto output = fcl::api::response{
-            .api = value.api,
-            .method = value.method,
-            .codec = value.codec,
-         };
-         if constexpr (!is_positional_http_method_v<Method, Request>) {
-            if constexpr (detail::request_has_http_parameter_v<Request> ||
-                          detail::request_needs_stream_v<Request> ||
-                          detail::response_needs_stream_v<Response> ||
-                          detail::is_bytes_response_v<Response> ||
-                          detail::is_empty_response_v<Response>) {
-               FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
-                                   "HTTP parameter methods require typed HTTP invocation");
-            } else {
-               auto request_value = fcl::api::unpack_body<Request>(value.body);
-               auto response_value =
-                  co_await call<Request, Response>(target, descriptor, route, std::move(request_value));
-               output.body = fcl::api::pack_body(response_value);
-            }
-         } else {
-            using argument_tuple = fcl::api::method_argument_tuple_t<Method>;
-            auto arguments = fcl::api::unpack_body<argument_tuple>(value.body);
-            auto response_value = co_await call_arguments<argument_tuple, Response>(
-               target, descriptor, route, std::move(arguments), argument_names_for(descriptor, route.method_name));
-            output.body = fcl::api::pack_body(response_value);
-         }
-         co_return output;
-      },
-      .typed_handler =
-         [route = std::move(route)](client& target,
-                                    const fcl::api::descriptor& descriptor,
-                                    fcl::api::request value,
-                                    std::type_index argument_tuple_type,
-                                    void* argument_tuple,
-                                    std::type_index response_type,
-                                    void* response_storage) -> boost::asio::awaitable<void> {
-         using argument_tuple_t = fcl::api::method_argument_tuple_t<Method>;
-         if (argument_tuple_type != typeid(argument_tuple_t) || response_type != typeid(Response)) {
-            FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
-                                "HTTP API typed argument invocation has incompatible storage");
-         }
-         auto& arguments = *static_cast<argument_tuple_t*>(argument_tuple);
-         auto& output = *static_cast<std::optional<Response>*>(response_storage);
-         if constexpr (is_positional_http_method_v<Method, Request>) {
-            output.emplace(co_await call_arguments<argument_tuple_t, Response>(
-               target, descriptor, route, std::move(arguments), argument_names_for(descriptor, value.method)));
-         } else {
-            output.emplace(co_await call<Request, Response>(
-               target, descriptor, route, std::move(std::get<0>(arguments))));
-         }
-      },
-   };
-}
-
-inline std::shared_ptr<fcl::api::remote_invoker> make_route_invoker(client& target,
-                                                                    fcl::api::descriptor descriptor,
-                                                                    std::vector<route_call> routes) {
-   return std::make_shared<route_invoker>(target, std::move(descriptor), std::move(routes));
-}
-
-template <auto Method, typename Request, typename Response>
-inline constexpr auto route_can_use_api_proxy_v =
-   is_positional_http_method_v<Method, Request> ||
-   (!detail::request_has_http_parameter_v<Request> &&
-    !detail::request_needs_stream_v<Request> &&
-    !detail::response_needs_stream_v<Response> &&
-    !detail::is_bytes_response_v<Response> &&
-    !detail::is_empty_response_v<Response>);
-
 } // namespace detail
 
-template <typename Interface>
-boost::asio::awaitable<fcl::api::handle<Interface>> remote(client& value) {
-   if constexpr (http_api_traits<Interface>::use_api_proxy) {
-      co_return fcl::api::handle<Interface>{
-         std::make_shared<fcl::api::proxy<Interface>>(
-            http_api_traits<Interface>::make_invoker(value),
-            Interface::ref())};
-   } else {
-      co_return fcl::api::handle<Interface>{std::make_shared<proxy<Interface>>(value)};
-   }
-}
-
-} // namespace fcl::http
+} // namespace fcl::http::api

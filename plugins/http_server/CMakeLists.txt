@@ -24,6 +24,7 @@ target_link_libraries(
       fcl_config
       fcl_schema
       fcl_http
+      fcl_http_api
       fcl_asio
       fcl_exceptions
       Boost::asio

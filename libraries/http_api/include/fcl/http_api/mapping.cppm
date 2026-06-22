@@ -13,88 +13,112 @@ module;
 
 #include <fcl/exceptions/macros.hpp>
 
-export module fcl.http.mapping;
+export module fcl.http.api.mapping;
 
 import fcl.api.connection;
 import fcl.api.descriptor;
-import fcl.http.binding;
+import fcl.api.types;
+import fcl.http.api.parameters;
 import fcl.http.exceptions;
 import fcl.http.types;
 import fcl.reflect.reflect;
 import fcl.schema.scalar;
 
-export namespace fcl::http {
+export namespace fcl::http::api {
 
-struct api_field_binding {
+struct field_binding {
    std::string field;
    std::string name;
 };
 
-struct api_route {
+struct route {
    method verb = method::get;
    std::string method_name;
    std::string target;
    status success_status = status::ok;
-   std::vector<api_field_binding> headers;
-   std::vector<api_field_binding> forms;
+   std::vector<field_binding> headers;
+   std::vector<field_binding> forms;
    std::optional<std::string> body_stream_field;
    bool response_file = false;
    bool response_stream = false;
 };
 
-class api_route_builder {
+class route_builder {
  public:
-   api_route_builder(method verb, std::string method_name, std::string target, status success_status)
+   route_builder(method verb, std::string method_name, std::string target, status success_status)
        : route_{.verb = verb,
                 .method_name = std::move(method_name),
                 .target = std::move(target),
                 .success_status = success_status} {}
 
-   api_route_builder&& header(std::string field, std::string name) && {
-      route_.headers.push_back(api_field_binding{.field = std::move(field), .name = std::move(name)});
+   route_builder&& header(std::string field, std::string name) && {
+      route_.headers.push_back(field_binding{.field = std::move(field), .name = std::move(name)});
       return std::move(*this);
    }
 
-   api_route_builder&& form(std::string field, std::string name) && {
-      route_.forms.push_back(api_field_binding{.field = std::move(field), .name = std::move(name)});
+   route_builder&& form(std::string field, std::string name) && {
+      route_.forms.push_back(field_binding{.field = std::move(field), .name = std::move(name)});
       return std::move(*this);
    }
 
-   api_route_builder&& body_stream(std::string field) && {
+   route_builder&& body_stream(std::string field) && {
       route_.body_stream_field = std::move(field);
       return std::move(*this);
    }
 
-   api_route_builder&& response_file() && {
+   route_builder&& response_file() && {
       route_.response_file = true;
       return std::move(*this);
    }
 
-   api_route_builder&& response_stream() && {
+   route_builder&& response_stream() && {
       route_.response_stream = true;
       return std::move(*this);
    }
 
-   [[nodiscard]] api_route build() && {
+   [[nodiscard]] route build() && {
       return std::move(route_);
    }
 
  private:
-   api_route route_;
+   route route_;
 };
 
-struct parsed_api_route {
+struct parsed_route {
    std::string path;
-   std::vector<api_field_binding> query;
+   std::vector<field_binding> query;
 };
 
-template <typename Interface> struct http_api_traits;
+template <typename Interface> struct traits;
 
 namespace detail {
+
+using ::fcl::http::detail::is_body;
+using ::fcl::http::detail::is_body_bytes_v;
+using ::fcl::http::detail::is_body_stream_v;
+using ::fcl::http::detail::is_bytes_response_v;
+using ::fcl::http::detail::is_cookie;
+using ::fcl::http::detail::is_empty_response_v;
+using ::fcl::http::detail::is_form;
+using ::fcl::http::detail::is_form_field;
+using ::fcl::http::detail::is_header;
+using ::fcl::http::detail::is_http_parameter_v;
+using ::fcl::http::detail::is_query;
+using ::fcl::http::detail::is_stream_response_v;
+using ::fcl::http::detail::is_streaming_response_v;
+using ::fcl::http::detail::is_upload_file_v;
+using ::fcl::http::detail::request_has_http_parameter_v;
+using ::fcl::http::detail::request_needs_stream_v;
+using ::fcl::http::detail::response_needs_stream_v;
 
 [[nodiscard]] inline bool uses_request_body(method verb) noexcept {
    return verb == method::post || verb == method::put || verb == method::patch || verb == method::delete_;
 }
+
+template <auto Method, typename Request>
+inline constexpr auto is_positional_http_method_v =
+   fcl::api::method_argument_count_v<Method> != 1U ||
+   !fcl::reflect::is_described_object_v<std::remove_cvref_t<Request>>;
 
 [[nodiscard]] inline bool unreserved(char value) noexcept {
    const auto ch = static_cast<unsigned char>(value);
@@ -186,7 +210,7 @@ template <typename Request>
    return *value;
 }
 
-[[nodiscard]] inline parsed_api_route parse_route_template(std::string_view target) {
+[[nodiscard]] inline parsed_route parse_route_template(std::string_view target) {
    if (target.empty() || target.front() != '/') {
       FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API route must start with /");
    }
@@ -227,7 +251,7 @@ template <typename Request>
    };
 
    const auto query_start = target.find('?');
-   auto parsed = parsed_api_route{
+   auto parsed = parsed_route{
        .path = normalize_path(target.substr(0, query_start)),
    };
    if (query_start == std::string_view::npos) {
@@ -243,7 +267,7 @@ template <typename Request>
       const auto equals = part.find('=');
       if (equals != std::string_view::npos && equals + 2U <= part.size() && part[equals + 1U] == '{' &&
           part.back() == '}') {
-         parsed.query.push_back(api_field_binding{
+         parsed.query.push_back(field_binding{
             .field = std::string{part.substr(equals + 2U, part.size() - equals - 3U)},
             .name = std::string{part.substr(0, equals)},
          });
@@ -256,7 +280,7 @@ template <typename Request>
    return parsed;
 }
 
-template <typename Request> [[nodiscard]] std::string render_route_target(const api_route& route, const Request& request) {
+template <typename Request> [[nodiscard]] std::string render_route_target(const route& route, const Request& request) {
    auto output = std::string{};
    output.reserve(route.target.size() + 32U);
 
@@ -297,8 +321,8 @@ template <typename Request> [[nodiscard]] std::string render_route_target(const 
    return output;
 }
 
-[[nodiscard]] inline std::vector<api_route> validate_routes(const fcl::api::descriptor& descriptor,
-                                                            std::vector<api_route> routes) {
+[[nodiscard]] inline std::vector<route> validate_routes(const fcl::api::descriptor& descriptor,
+                                                            std::vector<route> routes) {
    for (const auto& route : routes) {
       if (route.method_name.empty()) {
          FCL_THROW_EXCEPTION(fcl::api::exceptions::method_not_found, "HTTP API route method is empty");
@@ -314,4 +338,4 @@ template <typename Request> [[nodiscard]] std::string render_route_target(const 
 
 } // namespace detail
 
-} // namespace fcl::http
+} // namespace fcl::http::api

@@ -10,7 +10,7 @@ module fcl.plugins.http_server.plugin;
 
 import fcl.api.registry;
 import fcl.asio.runtime;
-import fcl.http.api;
+import fcl.http.api.binding;
 import fcl.http.server;
 import fcl.plugins.http_server.api;
 import fcl.plugins.http_server.exceptions;
@@ -33,7 +33,7 @@ const fcl::api::registry& plugin::publisher_api::registry() const {
 
 boost::asio::awaitable<void> plugin::publisher_api::publish(std::unique_ptr<binding_spec> binding,
                                                             publish_options options) {
-   impl_->add(pending_api_binding{.binding = binding->build(registry()), .options = std::move(options)});
+   impl_->add(pending_binding{.binding = binding->build(registry()), .options = std::move(options)});
    co_return;
 }
 

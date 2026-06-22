@@ -17,7 +17,7 @@ import fcl.app.plugin_context;
 import fcl.asio.runtime;
 import fcl.config.component;
 import fcl.config.decode;
-import fcl.http.api;
+import fcl.http.api.binding;
 import fcl.http.server;
 import fcl.plugins.http_server.api;
 import fcl.plugins.http_server.exceptions;

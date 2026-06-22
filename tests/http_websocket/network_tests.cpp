@@ -2,7 +2,7 @@
 #include <boost/describe.hpp>
 #include <fcl/api/macros.hpp>
 #include <fcl/exceptions/macros.hpp>
-#include <fcl/http/macros.hpp>
+#include <fcl/http_api/macros.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -50,17 +50,17 @@ import fcl.api.binding;
 import fcl.api.dispatcher;
 import fcl.asio.blocking;
 import fcl.asio.runtime;
-import fcl.http.api;
+import fcl.http.api.binding;
 import fcl.http.base_url;
-import fcl.http.binding;
+import fcl.http.api.parameters;
 import fcl.http.body;
 import fcl.http.client;
 import fcl.http.connection;
 import fcl.http.exceptions;
 import fcl.http.file;
-import fcl.http.mapping;
+import fcl.http.api.mapping;
 import fcl.http.middleware;
-import fcl.http.proxy;
+import fcl.http.api.proxy;
 import fcl.http.range;
 import fcl.http.route_context;
 import fcl.http.router;
@@ -87,7 +87,7 @@ namespace beast_websocket = boost::beast::websocket;
 using tcp = asio::ip::tcp;
 
 using raw_mount_step = std::function<void(fcl::http::router&, std::string_view)>;
-static_assert(!std::is_constructible_v<fcl::http::api_binding, std::vector<raw_mount_step>>);
+static_assert(!std::is_constructible_v<fcl::http::api::binding_plan, std::vector<raw_mount_step>>);
 static_assert(!std::is_same_v<fcl::http::request, boost::beast::http::request<boost::beast::http::string_body>>);
 static_assert(!std::is_same_v<fcl::http::response, boost::beast::http::response<boost::beast::http::string_body>>);
 
@@ -1930,7 +1930,7 @@ BOOST_AUTO_TEST_CASE(router_rejects_duplicate_buffered_and_stream_routes) {
       fcl::http::exceptions::conflict);
 }
 
-BOOST_AUTO_TEST_CASE(http_api_binding_maps_custom_exception_to_native_status) {
+BOOST_AUTO_TEST_CASE(http_api_plan_maps_custom_exception_to_native_status) {
    auto runtime = fcl::asio::runtime{};
    auto apis = fcl::api::registry{};
    apis.install<api_cache>(api_cache_descriptor(), std::make_shared<throwing_api_cache>());
@@ -1938,7 +1938,7 @@ BOOST_AUTO_TEST_CASE(http_api_binding_maps_custom_exception_to_native_status) {
    auto router = fcl::http::router{};
    auto plan_builder = fcl::api::binding();
    plan_builder.serve(apis);
-   auto builder = fcl::http::api(router);
+   auto builder = fcl::http::api::binding(router);
    builder.use(std::move(plan_builder).build());
    builder.get<&api_cache::read, api_read_chunk, api_chunk>("/cache/chunks/:ref");
    auto binding = std::move(builder).build();
@@ -1957,13 +1957,13 @@ BOOST_AUTO_TEST_CASE(http_api_binding_maps_custom_exception_to_native_status) {
    BOOST_TEST(response.body().find(R"("code":1)") != std::string::npos);
 }
 
-BOOST_AUTO_TEST_CASE(http_api_binding_populates_get_request_from_route_and_query) {
+BOOST_AUTO_TEST_CASE(http_api_plan_populates_get_request_from_route_and_query) {
    auto runtime = fcl::asio::runtime{};
    auto apis = fcl::api::registry{};
    apis.install<api_cache>(api_cache_descriptor(), std::make_shared<routed_api_cache>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api()
+   auto binding = fcl::http::api::binding()
                       .use(fcl::api::binding().serve(apis).build())
                       .get<&api_cache::routed_read, api_routed_read_chunk, api_chunk>(
                           "/cache/chunks/:ref",
@@ -1983,14 +1983,14 @@ BOOST_AUTO_TEST_CASE(http_api_binding_populates_get_request_from_route_and_query
    BOOST_TEST(unpacked.value.bytes == "abc:7:4096");
 }
 
-BOOST_AUTO_TEST_CASE(http_api_binding_escapes_json_error_fields) {
+BOOST_AUTO_TEST_CASE(http_api_plan_escapes_json_error_fields) {
    auto runtime = fcl::asio::runtime{};
    auto apis = fcl::api::registry{};
    apis.install<api_cache>(api_cache_descriptor(), std::make_shared<escaping_api_cache>());
 
    auto router = fcl::http::router{};
    auto binding =
-       fcl::http::api().use(fcl::api::binding().serve(apis).build())
+       fcl::http::api::binding().use(fcl::api::binding().serve(apis).build())
            .get<&api_cache::read, api_read_chunk, api_chunk>("/cache/chunks/:ref")
            .build();
    router.mount(binding);
@@ -2014,13 +2014,13 @@ BOOST_AUTO_TEST_CASE(http_api_binding_escapes_json_error_fields) {
    BOOST_TEST(!contains_raw_control);
 }
 
-BOOST_AUTO_TEST_CASE(http_api_binding_passes_put_body_to_typed_api) {
+BOOST_AUTO_TEST_CASE(http_api_plan_passes_put_body_to_typed_api) {
    auto runtime = fcl::asio::runtime{};
    auto apis = fcl::api::registry{};
    apis.install<api_cache>(api_cache_descriptor(), std::make_shared<throwing_api_cache>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api()
+   auto binding = fcl::http::api::binding()
                       .use(fcl::api::binding().serve(apis).build())
                       .put<&api_cache::write, api_chunk, api_chunk>("/cache/chunks/:ref")
                       .build();
@@ -2043,7 +2043,7 @@ BOOST_AUTO_TEST_CASE(http_api_binding_passes_put_body_to_typed_api) {
 }
 
 BOOST_AUTO_TEST_CASE(http_api_macro_describes_routes_for_fcl_api) {
-   const auto routes = fcl::http::http_api_traits<macro_cache>::routes();
+   const auto routes = fcl::http::api::traits<macro_cache>::routes();
 
    BOOST_REQUIRE_EQUAL(routes.size(), 2U);
    BOOST_TEST(routes[0].verb == method::get);
@@ -2062,7 +2062,7 @@ BOOST_AUTO_TEST_CASE(http_api_macro_get_maps_route_and_query) {
    apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<macro_cache>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<macro_cache>().build();
    router.mount(binding);
 
    auto request = make_request(method::get, "/cache/chunks/abc?offset=7&limit=4096");
@@ -2083,7 +2083,7 @@ BOOST_AUTO_TEST_CASE(http_api_query_template_preserves_wire_alias) {
    apis.install<search_api>(search_api::describe(), std::make_shared<search_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<search_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<search_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
@@ -2099,7 +2099,7 @@ BOOST_AUTO_TEST_CASE(http_api_query_template_preserves_wire_alias) {
    BOOST_TEST(decoded.value.value == "cache:25");
 
    auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
-   auto search = fcl::asio::blocking::run(runtime, fcl::http::remote<search_api>(client));
+   auto search = fcl::asio::blocking::run(runtime, fcl::http::api::remote<search_api>(client));
    const auto remote_response =
       fcl::asio::blocking::run(runtime, search->search(search_request{.term = "remote", .limit = 17}));
    BOOST_TEST(remote_response.value == "remote:17");
@@ -2113,14 +2113,14 @@ BOOST_AUTO_TEST_CASE(http_typed_proxy_sends_default_mapped_header_fields) {
    apis.install<default_header_api>(default_header_api::describe(), std::make_shared<default_header_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<default_header_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<default_header_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
    server.start();
 
    auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   auto headers = fcl::asio::blocking::run(runtime, fcl::http::remote<default_header_api>(client));
+   auto headers = fcl::asio::blocking::run(runtime, fcl::http::api::remote<default_header_api>(client));
 
    const auto response = fcl::asio::blocking::run(
       runtime,
@@ -2142,14 +2142,14 @@ BOOST_AUTO_TEST_CASE(http_dto_parameters_bind_query_header_cookie_and_body) {
    apis.install<dto_http_api>(dto_http_api::describe(), std::make_shared<dto_http_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<dto_http_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<dto_http_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
    server.start();
 
    auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<dto_http_api>(client));
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::api::remote<dto_http_api>(client));
 
    const auto response = fcl::asio::blocking::run(
       runtime,
@@ -2176,14 +2176,14 @@ BOOST_AUTO_TEST_CASE(http_typed_proxy_sends_delete_json_body) {
    apis.install<delete_body_api>(delete_body_api::describe(), std::make_shared<delete_body_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<delete_body_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<delete_body_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
    server.start();
 
    auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<delete_body_api>(client));
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::api::remote<delete_body_api>(client));
 
    const auto response = fcl::asio::blocking::run(
       runtime,
@@ -2207,14 +2207,14 @@ BOOST_AUTO_TEST_CASE(http_typed_proxy_keeps_path_only_delete_bodyless) {
    apis.install<delete_path_api>(delete_path_api::describe(), std::make_shared<delete_path_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<delete_path_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<delete_path_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
    server.start();
 
    auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<delete_path_api>(client));
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::api::remote<delete_path_api>(client));
 
    auto request = delete_path_request{};
    request.collection = "cache";
@@ -2234,14 +2234,14 @@ BOOST_AUTO_TEST_CASE(http_delete_stream_body_route_mounts_and_reads_body) {
    apis.install<delete_stream_api>(delete_stream_api::describe(), std::make_shared<delete_stream_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<delete_stream_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<delete_stream_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
    server.start();
 
    auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<delete_stream_api>(client));
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::api::remote<delete_stream_api>(client));
 
    auto response = fcl::asio::blocking::run(
       runtime,
@@ -2264,7 +2264,7 @@ BOOST_AUTO_TEST_CASE(http_endpoint_request_injects_request_and_response_state) {
    apis.install<endpoint_api>(endpoint_api::describe(), std::make_shared<endpoint_api_impl>(directory.path()));
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<endpoint_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<endpoint_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
@@ -2319,7 +2319,7 @@ BOOST_AUTO_TEST_CASE(http_endpoint_request_preserves_repeated_set_cookie_on_stre
    apis.install<endpoint_api>(endpoint_api::describe(), std::make_shared<endpoint_api_impl>(directory.path()));
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<endpoint_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<endpoint_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
@@ -2351,14 +2351,14 @@ BOOST_AUTO_TEST_CASE(http_dto_body_bytes_roundtrips) {
    apis.install<dto_http_api>(dto_http_api::describe(), std::make_shared<dto_http_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<dto_http_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<dto_http_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
    server.start();
 
    auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<dto_http_api>(client));
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::api::remote<dto_http_api>(client));
 
    const auto text = std::string{"raw-payload"};
    auto bytes = std::vector<std::byte>(text.size());
@@ -2381,7 +2381,7 @@ BOOST_AUTO_TEST_CASE(http_dto_multipart_form_and_upload_roundtrips) {
    apis.install<dto_http_api>(dto_http_api::describe(), std::make_shared<dto_http_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<dto_http_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<dto_http_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
@@ -2399,7 +2399,7 @@ BOOST_AUTO_TEST_CASE(http_dto_multipart_form_and_upload_roundtrips) {
    };
 
    auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<dto_http_api>(client));
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::api::remote<dto_http_api>(client));
 
    const auto response = fcl::asio::blocking::run(
       runtime,
@@ -2420,7 +2420,7 @@ BOOST_AUTO_TEST_CASE(http_dto_body_field_reports_schema_errors) {
    apis.install<dto_http_api>(dto_http_api::describe(), std::make_shared<dto_http_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<dto_http_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<dto_http_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::post, "/dto/chunk-invalid?limit=7");
@@ -2439,7 +2439,7 @@ BOOST_AUTO_TEST_CASE(http_dto_body_field_reports_schema_errors) {
 BOOST_AUTO_TEST_CASE(http_dto_rejects_multiple_body_sources) {
    auto runtime = fcl::asio::runtime{};
    auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:9")};
-   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<dto_ambiguous_body_api>(client));
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::api::remote<dto_ambiguous_body_api>(client));
 
    const auto text = std::string{"raw-payload"};
    auto bytes = std::vector<std::byte>(text.size());
@@ -2466,7 +2466,7 @@ BOOST_AUTO_TEST_CASE(http_positional_api_rejects_http_parameter_wrappers) {
    apis.install<positional_http_api>(positional_http_api::describe(), std::make_shared<positional_http_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_http_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<positional_http_api>().build();
 
    BOOST_CHECK_THROW(router.mount(binding), fcl::http::exceptions::bad_request);
 }
@@ -2477,7 +2477,7 @@ BOOST_AUTO_TEST_CASE(http_positional_body_wrapper_is_rejected) {
    apis.install<positional_body_api>(positional_body_api::describe(), std::make_shared<positional_body_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_body_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<positional_body_api>().build();
 
    BOOST_CHECK_THROW(router.mount(binding), fcl::http::exceptions::bad_request);
 }
@@ -2490,7 +2490,7 @@ BOOST_AUTO_TEST_CASE(http_positional_stream_wrapper_is_rejected) {
 
    auto router = fcl::http::router{};
    auto binding =
-      fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_stream_api>().build();
+      fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<positional_stream_api>().build();
 
    BOOST_CHECK_THROW(router.mount(binding), fcl::http::exceptions::bad_request);
 }
@@ -2498,7 +2498,7 @@ BOOST_AUTO_TEST_CASE(http_positional_stream_wrapper_is_rejected) {
 BOOST_AUTO_TEST_CASE(http_positional_client_rejects_http_parameter_wrappers) {
    auto runtime = fcl::asio::runtime{};
    auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:9")};
-   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<positional_stream_api>(client));
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::api::remote<positional_stream_api>(client));
 
    BOOST_CHECK_THROW(
       fcl::asio::blocking::run(
@@ -2515,7 +2515,7 @@ BOOST_AUTO_TEST_CASE(http_positional_unconsumed_scalar_body_is_rejected) {
 
    auto router = fcl::http::router{};
    auto binding =
-      fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_scalar_body_api>().build();
+      fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<positional_scalar_body_api>().build();
 
    BOOST_CHECK_THROW(router.mount(binding), fcl::http::exceptions::bad_request);
 }
@@ -2528,14 +2528,14 @@ BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_roundtrips_without_body_w
 
    auto router = fcl::http::router{};
    auto binding =
-      fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_plain_body_api>().build();
+      fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<positional_plain_body_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
    server.start();
 
    auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<positional_plain_body_api>(client));
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::api::remote<positional_plain_body_api>(client));
 
    const auto response = fcl::asio::blocking::run(
       runtime,
@@ -2554,14 +2554,14 @@ BOOST_AUTO_TEST_CASE(http_positional_stream_response_decodes_ordinary_dto_body) 
 
    auto router = fcl::http::router{};
    auto binding =
-      fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_streaming_body_api>().build();
+      fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<positional_streaming_body_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
    server.start();
 
    auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   auto api = fcl::asio::blocking::run(runtime, fcl::http::remote<positional_streaming_body_api>(client));
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::api::remote<positional_streaming_body_api>(client));
 
    auto response = fcl::asio::blocking::run(
       runtime,
@@ -2583,7 +2583,7 @@ BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_rejects_multiple_candidat
 
    auto router = fcl::http::router{};
    auto binding =
-      fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_ambiguous_body_api>().build();
+      fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<positional_ambiguous_body_api>().build();
 
    BOOST_CHECK_THROW(router.mount(binding), fcl::http::exceptions::bad_request);
 }
@@ -2596,7 +2596,7 @@ BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_reports_schema_errors) {
 
    auto router = fcl::http::router{};
    auto binding =
-      fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_plain_body_api>().build();
+      fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<positional_plain_body_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::post, "/plain/chunk-invalid");
@@ -2621,7 +2621,7 @@ BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_rejects_route_disagreemen
 
    auto router = fcl::http::router{};
    auto binding =
-      fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<positional_checked_body_api>().build();
+      fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<positional_checked_body_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::post, "/checked/route-ref");
@@ -2659,7 +2659,7 @@ BOOST_AUTO_TEST_CASE(http_api_validates_schema_after_route_and_query_binding) {
    apis.install<search_api>(search_api::describe(), std::make_shared<search_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<search_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<search_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::get, "/search/cache?page_size=0");
@@ -2679,7 +2679,7 @@ BOOST_AUTO_TEST_CASE(http_api_macro_put_rejects_body_route_disagreement) {
    apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<macro_cache>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<macro_cache>().build();
    router.mount(binding);
 
    auto request = make_request(method::put, "/cache/chunks/abc");
@@ -2702,7 +2702,7 @@ BOOST_AUTO_TEST_CASE(http_api_macro_put_rejects_unsupported_media_type) {
    apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<macro_cache>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<macro_cache>().build();
    router.mount(binding);
 
    auto request = make_request(method::put, "/cache/chunks/abc");
@@ -2726,7 +2726,7 @@ BOOST_AUTO_TEST_CASE(http_api_macro_put_reports_invalid_json_as_validation_error
    apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<macro_cache>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<macro_cache>().build();
    router.mount(binding);
 
    auto request = make_request(method::put, "/cache/chunks/abc");
@@ -2750,7 +2750,7 @@ BOOST_AUTO_TEST_CASE(typed_http_client_supports_handle_methods) {
    apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<macro_cache>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<macro_cache>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
@@ -2759,7 +2759,7 @@ BOOST_AUTO_TEST_CASE(typed_http_client_supports_handle_methods) {
    const auto port = wait_for_port(server);
    auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
 
-   auto cache = fcl::asio::blocking::run(runtime, fcl::http::remote<macro_cache>(client));
+   auto cache = fcl::asio::blocking::run(runtime, fcl::http::api::remote<macro_cache>(client));
    auto chunk = fcl::asio::blocking::run(
       runtime, cache->read(macro_read_request{.ref = "abc", .offset = 3, .limit = 64}));
    auto receipt = fcl::asio::blocking::run(
@@ -2777,7 +2777,7 @@ BOOST_AUTO_TEST_CASE(typed_http_client_supports_native_bytes_and_empty_responses
    apis.install<control_api>(control_api::describe(), std::make_shared<control_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<control_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<control_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
@@ -2785,7 +2785,7 @@ BOOST_AUTO_TEST_CASE(typed_http_client_supports_native_bytes_and_empty_responses
 
    const auto port = wait_for_port(server);
    auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
-   auto control = fcl::asio::blocking::run(runtime, fcl::http::remote<control_api>(client));
+   auto control = fcl::asio::blocking::run(runtime, fcl::http::api::remote<control_api>(client));
 
    auto bytes = fcl::asio::blocking::run(runtime, control->bytes(control_request{.id = "abc"}));
    auto text = std::string(bytes.bytes.size(), '\0');
@@ -2806,7 +2806,7 @@ BOOST_AUTO_TEST_CASE(http_empty_response_frames_keep_alive_body_capable_status) 
    apis.install<control_api>(control_api::describe(), std::make_shared<control_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<control_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<control_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
@@ -2859,7 +2859,7 @@ BOOST_AUTO_TEST_CASE(http_api_preserves_explicit_method_name_for_same_dto_method
    apis.install<alias_api>(alias_api::describe(), std::make_shared<alias_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<alias_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<alias_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::get, "/aliases/abc");
@@ -2880,7 +2880,7 @@ BOOST_AUTO_TEST_CASE(http_api_special_types_support_streaming_put_and_file_get) 
    apis.install<object_api>(object_api::describe(), std::make_shared<object_api_impl>(files.path()));
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<object_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<object_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
@@ -2889,7 +2889,7 @@ BOOST_AUTO_TEST_CASE(http_api_special_types_support_streaming_put_and_file_get) 
    const auto port = wait_for_port(server);
    auto connection = fcl::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
    auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
-   auto object = fcl::asio::blocking::run(runtime, fcl::http::remote<object_api>(client));
+   auto object = fcl::asio::blocking::run(runtime, fcl::http::api::remote<object_api>(client));
 
    auto payload = std::string(96 * 1024, 'x');
    auto put_body = fcl::asio::blocking::run(
@@ -2961,7 +2961,7 @@ BOOST_AUTO_TEST_CASE(http_typed_streaming_client_rejects_oversized_error_body) {
    server.start();
 
    auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   auto object = fcl::asio::blocking::run(runtime, fcl::http::remote<object_api>(client));
+   auto object = fcl::asio::blocking::run(runtime, fcl::http::api::remote<object_api>(client));
 
    BOOST_CHECK_THROW(
       fcl::asio::blocking::run(
@@ -3003,12 +3003,12 @@ BOOST_AUTO_TEST_CASE(http_streaming_response_status_is_owned_by_route_mapping) {
    apis.install<object_api>(object_api::describe(), std::make_shared<object_api_impl>(files.path()));
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api()
+   auto binding = fcl::http::api::binding()
                      .use(fcl::api::binding().serve(apis).build())
                      .get<&object_api::stream_object, object_get_request, fcl::http::streaming_response>(
                         "/objects/:collection/:key/status-stream",
-                        fcl::http::api_route_options{.response_stream = true,
-                                                      .success_status = status::accepted})
+                        fcl::http::api::route_options{.response_stream = true,
+                                                       .success_status = status::accepted})
                      .build();
    router.mount(binding);
 
@@ -3030,7 +3030,7 @@ BOOST_AUTO_TEST_CASE(http_streamed_response_route_decodes_json_request_body) {
    apis.install<json_stream_api>(json_stream_api::describe(), std::make_shared<json_stream_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<json_stream_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<json_stream_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
@@ -3057,7 +3057,7 @@ BOOST_AUTO_TEST_CASE(http_streamed_response_route_rejects_json_body_path_disagre
    apis.install<json_stream_api>(json_stream_api::describe(), std::make_shared<json_stream_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<json_stream_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<json_stream_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
@@ -3090,7 +3090,7 @@ BOOST_AUTO_TEST_CASE(http_streaming_response_from_client_body_is_reserved_when_r
    auto upstream_apis = fcl::api::registry{};
    upstream_apis.install<object_api>(object_api::describe(), std::make_shared<object_api_impl>(files.path()));
    auto upstream_router = fcl::http::router{};
-   upstream_router.mount(fcl::http::api()
+   upstream_router.mount(fcl::http::api::binding()
                             .use(fcl::api::binding().serve(upstream_apis).build())
                             .bind<object_api>()
                             .build());
@@ -3099,12 +3099,12 @@ BOOST_AUTO_TEST_CASE(http_streaming_response_from_client_body_is_reserved_when_r
 
    auto upstream_client =
       fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(upstream_server.port()))};
-   auto upstream = fcl::asio::blocking::run(runtime, fcl::http::remote<object_api>(upstream_client));
+   auto upstream = fcl::asio::blocking::run(runtime, fcl::http::api::remote<object_api>(upstream_client));
 
    auto proxy_apis = fcl::api::registry{};
    proxy_apis.install<object_api>(object_api::describe(), std::make_shared<object_proxy_api_impl>(std::move(upstream)));
    auto proxy_router = fcl::http::router{};
-   proxy_router.mount(fcl::http::api().use(fcl::api::binding().serve(proxy_apis).build()).bind<object_api>().build());
+   proxy_router.mount(fcl::http::api::binding().use(fcl::api::binding().serve(proxy_apis).build()).bind<object_api>().build());
    auto proxy_server = fcl::http::server{runtime, server_config{}, std::move(proxy_router)};
    proxy_server.start();
 
@@ -3131,7 +3131,7 @@ BOOST_AUTO_TEST_CASE(http_file_response_from_client_body_is_reserved_when_re_ser
    auto upstream_apis = fcl::api::registry{};
    upstream_apis.install<object_api>(object_api::describe(), std::make_shared<object_api_impl>(files.path()));
    auto upstream_router = fcl::http::router{};
-   upstream_router.mount(fcl::http::api()
+   upstream_router.mount(fcl::http::api::binding()
                             .use(fcl::api::binding().serve(upstream_apis).build())
                             .bind<object_api>()
                             .build());
@@ -3140,12 +3140,12 @@ BOOST_AUTO_TEST_CASE(http_file_response_from_client_body_is_reserved_when_re_ser
 
    auto upstream_client =
       fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(upstream_server.port()))};
-   auto upstream = fcl::asio::blocking::run(runtime, fcl::http::remote<object_api>(upstream_client));
+   auto upstream = fcl::asio::blocking::run(runtime, fcl::http::api::remote<object_api>(upstream_client));
 
    auto proxy_apis = fcl::api::registry{};
    proxy_apis.install<object_api>(object_api::describe(), std::make_shared<object_proxy_api_impl>(std::move(upstream)));
    auto proxy_router = fcl::http::router{};
-   proxy_router.mount(fcl::http::api().use(fcl::api::binding().serve(proxy_apis).build()).bind<object_api>().build());
+   proxy_router.mount(fcl::http::api::binding().use(fcl::api::binding().serve(proxy_apis).build()).bind<object_api>().build());
    auto proxy_server = fcl::http::server{runtime, server_config{}, std::move(proxy_router)};
    proxy_server.start();
 
@@ -3163,7 +3163,7 @@ BOOST_AUTO_TEST_CASE(http_file_response_from_client_body_is_reserved_when_re_ser
 BOOST_AUTO_TEST_CASE(http_api_response_file_option_is_required_for_file_response_routes) {
    auto apis = fcl::api::registry{};
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api()
+   auto binding = fcl::http::api::binding()
                      .use(fcl::api::binding().serve(apis).build())
                      .get<&test_api::file_only_api::download, object_get_request, fcl::http::file_response>(
                         "/objects/:collection/:key")
@@ -3175,11 +3175,11 @@ BOOST_AUTO_TEST_CASE(http_api_response_file_option_is_required_for_file_response
 BOOST_AUTO_TEST_CASE(http_api_response_file_option_rejects_non_file_responses) {
    auto apis = fcl::api::registry{};
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api()
+   auto binding = fcl::http::api::binding()
                      .use(fcl::api::binding().serve(apis).build())
                      .get<&api_cache::read, api_read_chunk, api_chunk>(
                         "/cache/chunks/:ref",
-                        fcl::http::api_route_options{.response_file = true})
+                        fcl::http::api::route_options{.response_file = true})
                      .build();
 
    BOOST_CHECK_THROW(router.mount(binding), fcl::http::exceptions::bad_request);
@@ -3195,7 +3195,7 @@ BOOST_AUTO_TEST_CASE(http_api_stream_route_does_not_shadow_regular_route_with_sa
    apis.install<object_api>(object_api::describe(), std::make_shared<object_api_impl>(files.path()));
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<object_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<object_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
@@ -3219,7 +3219,7 @@ BOOST_AUTO_TEST_CASE(http_api_form_only_request_uses_multipart_binding) {
    apis.install<form_api>(form_api::describe(), std::make_shared<form_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<form_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<form_api>().build();
    router.mount(binding);
 
    auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
@@ -3254,7 +3254,7 @@ BOOST_AUTO_TEST_CASE(http_api_non_stream_head_route_is_head_only) {
    apis.install<control_api>(control_api::describe(), std::make_shared<control_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<control_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<control_api>().build();
    router.mount(binding);
 
    auto head_request = make_request(method::head, "/controls/abc");
@@ -3274,7 +3274,7 @@ BOOST_AUTO_TEST_CASE(http_api_patch_route_is_mounted) {
    apis.install<patch_api>(patch_api::describe(), std::make_shared<patch_api_impl>());
 
    auto router = fcl::http::router{};
-   auto binding = fcl::http::api().use(fcl::api::binding().serve(apis).build()).bind<patch_api>().build();
+   auto binding = fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<patch_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::patch, "/controls/abc");
@@ -3330,14 +3330,14 @@ BOOST_AUTO_TEST_CASE(middleware_runs_in_order_and_can_short_circuit) {
    BOOST_TEST(handle(short_router, secure_context).result_int() == static_cast<unsigned>(status::unauthorized));
 }
 
-BOOST_AUTO_TEST_CASE(http_api_binding_mounts_ordered_middleware_contributions) {
+BOOST_AUTO_TEST_CASE(http_api_plan_mounts_ordered_middleware_contributions) {
    auto runtime = fcl::asio::runtime{};
    auto apis = fcl::api::registry{};
    apis.install<api_cache>(api_cache_descriptor(), std::make_shared<throwing_api_cache>());
 
    auto trace = std::make_shared<std::string>();
    auto plan = fcl::api::binding().serve(apis).build();
-   auto binding = fcl::http::api()
+   auto binding = fcl::http::api::binding()
                       .use(std::move(plan))
                       .middleware(fcl::http::middleware_descriptor{
                           .id = "limits",
@@ -3382,13 +3382,13 @@ BOOST_AUTO_TEST_CASE(http_api_binding_mounts_ordered_middleware_contributions) {
    BOOST_TEST(*trace == "auth>limits><limits<auth");
 }
 
-BOOST_AUTO_TEST_CASE(http_api_binding_mounts_under_base_path) {
+BOOST_AUTO_TEST_CASE(http_api_plan_mounts_under_base_path) {
    auto runtime = fcl::asio::runtime{};
    auto apis = fcl::api::registry{};
    apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
 
    auto trace = std::make_shared<std::string>();
-   auto binding = fcl::http::api()
+   auto binding = fcl::http::api::binding()
                       .use(fcl::api::binding().serve(apis).build())
                       .middleware(fcl::http::middleware_descriptor{
                           .id = "api-limit",
@@ -3426,8 +3426,8 @@ BOOST_AUTO_TEST_CASE(http_api_binding_mounts_under_base_path) {
    BOOST_TEST(handle(router, unprefixed_context).result_int() == static_cast<unsigned>(status::not_found));
 }
 
-BOOST_AUTO_TEST_CASE(http_api_binding_rejects_duplicate_middleware_ids) {
-   auto duplicate = fcl::http::api()
+BOOST_AUTO_TEST_CASE(http_api_plan_rejects_duplicate_middleware_ids) {
+   auto duplicate = fcl::http::api::binding()
                         .middleware(fcl::http::middleware_descriptor{
                             .id = "auth",
                             .handler = [](route_context& context,

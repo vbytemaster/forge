@@ -31,6 +31,7 @@ set(
    yamux
    app
    http
+   http_api
    websocket
    quic
    p2p
@@ -126,6 +127,13 @@ macro(_fcl_add_component component)
          _fcl_add_component(json)
          _fcl_add_component(schema)
          _fcl_add_component(websocket)
+      elseif("${component}" STREQUAL "http_api")
+         _fcl_add_component(http)
+         _fcl_add_component(api)
+         _fcl_add_component(json)
+         _fcl_add_component(raw)
+         _fcl_add_component(reflect)
+         _fcl_add_component(schema)
       elseif("${component}" STREQUAL "websocket")
          _fcl_add_component(api)
          _fcl_add_component(asio)
@@ -176,6 +184,7 @@ macro(_fcl_add_component component)
          _fcl_add_component(config)
          _fcl_add_component(schema)
          _fcl_add_component(http)
+         _fcl_add_component(http_api)
       elseif("${component}" STREQUAL "plugins")
          _fcl_add_component(plugin_signature_provider)
          _fcl_add_component(plugin_p2p_node)

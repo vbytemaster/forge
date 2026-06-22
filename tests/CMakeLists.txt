@@ -387,6 +387,17 @@ add_custom_target(
    DEPENDS test_fcl_package_install
 )
 add_custom_target(
+   test_fcl_package_http_api_component
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_http_api_component
+      ${CMAKE_BINARY_DIR}/fcl-package-http-api-component
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command fcl_package_http_api_component
+   DEPENDS test_fcl_package_install
+)
+add_custom_target(
    test_fcl_package_plugin_signature_provider
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
@@ -518,6 +529,17 @@ add_test(
       --test-command fcl_package_otlp_component
 )
 set_tests_properties(test_fcl_package_otlp_component PROPERTIES DEPENDS test_fcl_package_install)
+add_test(
+   NAME test_fcl_package_http_api_component
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_http_api_component
+      ${CMAKE_BINARY_DIR}/fcl-package-http-api-component
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command fcl_package_http_api_component
+)
+set_tests_properties(test_fcl_package_http_api_component PROPERTIES DEPENDS test_fcl_package_install)
 add_test(
    NAME test_fcl_package_plugin_signature_provider
    COMMAND ${CMAKE_CTEST_COMMAND}

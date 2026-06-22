@@ -13,7 +13,7 @@ module fcl.plugins.http_server.plugin;
 
 import fcl.api.registry;
 import fcl.asio.runtime;
-import fcl.http.api;
+import fcl.http.api.binding;
 import fcl.http.middleware;
 import fcl.http.router;
 import fcl.http.server;
@@ -38,7 +38,7 @@ boost::asio::awaitable<void> start_server(plugin::impl& state) {
    for (auto& descriptor : snapshot.middleware) {
       router.use(to_http_middleware(std::move(descriptor)));
    }
-   for (auto& value : snapshot.api_bindings) {
+   for (auto& value : snapshot.bindings) {
       value.binding.mount(router, resolve_base_path(state.settings, value.options.base_path));
    }
 

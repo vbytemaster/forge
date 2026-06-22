@@ -215,6 +215,7 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/multiformats/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/asio/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/http/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/http_api/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/websocket/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/transport/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/tcp/include"
@@ -350,6 +351,7 @@ add_subdirectory(libraries/crypto)
 add_subdirectory(libraries/multiformats)
 add_subdirectory(libraries/asio)
 add_subdirectory(libraries/http)
+add_subdirectory(libraries/http_api)
 add_subdirectory(libraries/otlp)
 add_subdirectory(libraries/websocket)
 add_subdirectory(libraries/transport)
@@ -385,6 +387,7 @@ set(
    fcl_multiformats
    fcl_asio
    fcl_http
+   fcl_http_api
    fcl_websocket
    fcl_transport
    fcl_tcp
@@ -456,6 +459,7 @@ install(
              libraries/multiformats/include/fcl
              libraries/asio/include/fcl
              libraries/http/include/fcl
+             libraries/http_api/include/fcl
              libraries/websocket/include/fcl
              libraries/transport/include/fcl
              libraries/tcp/include/fcl

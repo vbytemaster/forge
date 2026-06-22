@@ -14,7 +14,7 @@ module;
 #include <utility>
 #include <vector>
 
-export module fcl.http.binding;
+export module fcl.http.api.parameters;
 
 import fcl.api.exceptions;
 import fcl.http.body;

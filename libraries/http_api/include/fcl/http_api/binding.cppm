@@ -24,7 +24,7 @@ module;
 #include <utility>
 #include <vector>
 
-export module fcl.http.api;
+export module fcl.http.api.binding;
 
 import fcl.api.exceptions;
 import fcl.api.types;
@@ -36,9 +36,9 @@ import fcl.api.registry;
 import fcl.api.binding;
 import fcl.http.exceptions;
 import fcl.http.body;
-import fcl.http.binding;
+import fcl.http.api.parameters;
 import fcl.http.file;
-export import fcl.http.mapping;
+export import fcl.http.api.mapping;
 import fcl.http.middleware;
 import fcl.http.router;
 import fcl.http.route_context;
@@ -51,24 +51,24 @@ import fcl.schema.diagnostic;
 import fcl.schema.object;
 import fcl.schema.scalar;
 
-export namespace fcl::http {
+export namespace fcl::http::api {
 
-enum class api_error_profile {
+enum class error_profile {
    json,
 };
 
-struct api_route_options {
-   std::vector<api_field_binding> query;
-   std::vector<api_field_binding> headers;
-   std::vector<api_field_binding> forms;
+struct route_options {
+   std::vector<field_binding> query;
+   std::vector<field_binding> headers;
+   std::vector<field_binding> forms;
    std::optional<std::string> body_stream_field;
    bool response_file = false;
    bool response_stream = false;
    status success_status = status::ok;
-   api_error_profile error_profile = api_error_profile::json;
+   error_profile error_profile = error_profile::json;
 };
 
-class api_binding {
+class binding_plan {
  public:
    void mount(router& target, std::string_view base_path = {}) const {
       for (const auto& step : steps_) {
@@ -77,54 +77,54 @@ class api_binding {
    }
 
  private:
-   friend class api_builder;
+   friend class binding_builder;
 
    using mount_action = std::function<void(router&, std::string_view)>;
 
-   explicit api_binding(std::vector<mount_action> steps) : steps_{std::move(steps)} {}
+   explicit binding_plan(std::vector<mount_action> steps) : steps_{std::move(steps)} {}
 
    std::vector<mount_action> steps_;
 };
 
-class api_builder {
+class binding_builder {
  public:
-   api_builder() = default;
-   explicit api_builder(router& target) : target_{&target} {}
+   binding_builder() = default;
+   explicit binding_builder(router& target) : target_{&target} {}
 
-   api_builder& use(fcl::api::binding_plan plan) {
+   binding_builder& use(fcl::api::binding_plan plan) {
       plan_ = std::move(plan);
       return *this;
    }
 
    template <auto Method, typename Request, typename Response>
-   api_builder& get(std::string path, api_route_options options = {}) {
+   binding_builder& get(std::string path, route_options options = {}) {
       steps_.push_back(make_step<Method, Request, Response>(method::get, std::move(path), std::move(options), {}));
       return *this;
    }
 
    template <auto Method, typename Request, typename Response>
-   api_builder& post(std::string path, api_route_options options = {}) {
+   binding_builder& post(std::string path, route_options options = {}) {
       steps_.push_back(make_step<Method, Request, Response>(method::post, std::move(path), std::move(options), {}));
       return *this;
    }
 
    template <auto Method, typename Request, typename Response>
-   api_builder& put(std::string path, api_route_options options = {}) {
+   binding_builder& put(std::string path, route_options options = {}) {
       steps_.push_back(make_step<Method, Request, Response>(method::put, std::move(path), std::move(options), {}));
       return *this;
    }
 
    template <auto Method, typename Request, typename Response>
-   api_builder& del(std::string path, api_route_options options = {}) {
+   binding_builder& del(std::string path, route_options options = {}) {
       steps_.push_back(make_step<Method, Request, Response>(method::delete_, std::move(path), std::move(options), {}));
       return *this;
    }
 
-   template <auto Method, typename Request, typename Response> api_builder& route(api_route value) {
+   template <auto Method, typename Request, typename Response> binding_builder& route(route value) {
       const auto parsed = detail::parse_route_template(value.target);
       steps_.push_back(make_step<Method, Request, Response>(
          value.verb, parsed.path,
-         api_route_options{
+         route_options{
             .query = parsed.query,
             .headers = value.headers,
             .forms = value.forms,
@@ -137,11 +137,11 @@ class api_builder {
       return *this;
    }
 
-   template <typename Interface> api_builder& bind() {
-      return http_api_traits<Interface>::bind(*this);
+   template <typename Interface> binding_builder& bind() {
+      return traits<Interface>::bind(*this);
    }
 
-   api_builder& middleware(middleware_descriptor descriptor) {
+   binding_builder& middleware(middleware_descriptor descriptor) {
       steps_.push_back([descriptor = std::move(descriptor)](router& target, std::string_view base_path) mutable {
          auto mounted = descriptor;
          mounted.path_prefix = join_path(base_path, mounted.path_prefix);
@@ -150,13 +150,13 @@ class api_builder {
       return *this;
    }
 
-   [[nodiscard]] api_binding build() {
+   [[nodiscard]] binding_plan build() {
       static_cast<void>(target_);
-      return api_binding{std::move(steps_)};
+      return binding_plan{std::move(steps_)};
    }
 
  private:
-   using mount_action = api_binding::mount_action;
+   using mount_action = binding_plan::mount_action;
 
    template <typename T> struct is_optional : std::false_type {};
    template <typename T> struct is_optional<std::optional<T>> : std::true_type {
@@ -311,14 +311,14 @@ class api_builder {
    }
 
    [[nodiscard]] static std::optional<std::string_view> route_value(const route_context& context,
-                                                                    const api_route_options& options,
+                                                                    const route_options& options,
                                                                     std::string_view name) {
       if (const auto route = context.route_params.find(std::string{name}); route != context.route_params.end()) {
          return route->second;
       }
 
       const auto configured = std::find_if(options.query.begin(), options.query.end(),
-                                           [&](const api_field_binding& binding) {
+                                           [&](const field_binding& binding) {
                                               return std::string_view{binding.field} == name;
                                            });
       if (configured == options.query.end()) {
@@ -334,11 +334,11 @@ class api_builder {
    }
 
    [[nodiscard]] static std::optional<std::string_view> query_value(const route_context& context,
-                                                                    const api_route_options& options,
+                                                                    const route_options& options,
                                                                     std::string_view name) {
       auto wire_name = std::string{name};
       const auto configured = std::find_if(options.query.begin(), options.query.end(),
-                                           [&](const api_field_binding& binding) {
+                                           [&](const field_binding& binding) {
                                               return std::string_view{binding.field} == name;
                                            });
       if (configured != options.query.end()) {
@@ -405,7 +405,7 @@ class api_builder {
    }
 
    template <typename Request>
-   [[nodiscard]] static Request make_request_from_route(const route_context& context, const api_route_options& options,
+   [[nodiscard]] static Request make_request_from_route(const route_context& context, const route_options& options,
                                                         bool body_decoded = false) {
       auto request = Request{};
       if constexpr (fcl::reflect::is_described_object_v<Request>) {
@@ -468,12 +468,12 @@ class api_builder {
       return std::nullopt;
    }
 
-   [[nodiscard]] static std::string mapped_name_or_default(const std::vector<api_field_binding>& bindings,
+   [[nodiscard]] static std::string mapped_name_or_default(const std::vector<field_binding>& bindings,
                                                            std::string_view field,
                                                            std::string (*default_name)(std::string_view)) {
       const auto found =
           std::find_if(bindings.begin(), bindings.end(),
-                       [&](const api_field_binding& binding) { return std::string_view{binding.field} == field; });
+                       [&](const field_binding& binding) { return std::string_view{binding.field} == field; });
       if (found != bindings.end()) {
          return found->name;
       }
@@ -485,7 +485,7 @@ class api_builder {
    }
 
    template <typename Request>
-   static void bind_headers(Request& request, const route_context& context, const api_route_options& options) {
+   static void bind_headers(Request& request, const route_context& context, const route_options& options) {
       if constexpr (fcl::reflect::is_described_object_v<Request>) {
          fcl::reflect::for_each_member<Request>([&](const char* name, auto member) {
             using member_type = std::remove_cvref_t<decltype(request.*member)>;
@@ -542,7 +542,7 @@ class api_builder {
    }
 
    template <typename Request>
-   static void bind_body_stream(Request& request, body_reader reader, const api_route_options& options) {
+   static void bind_body_stream(Request& request, body_reader reader, const route_options& options) {
       if constexpr (fcl::reflect::is_described_object_v<Request>) {
          auto bound = false;
          fcl::reflect::for_each_member<Request>([&](const char* name, auto member) {
@@ -562,7 +562,7 @@ class api_builder {
    }
 
    template <typename Request>
-   static void bind_multipart(Request& request, const multipart_form& form, const api_route_options& options) {
+   static void bind_multipart(Request& request, const multipart_form& form, const route_options& options) {
       if constexpr (fcl::reflect::is_described_object_v<Request>) {
          fcl::reflect::for_each_member<Request>([&](const char* name, auto member) {
             using member_type = std::remove_cvref_t<decltype(request.*member)>;
@@ -670,8 +670,8 @@ class api_builder {
       return false;
    }
 
-   [[nodiscard]] static bool query_uses_field(const api_route_options& options, std::string_view name) {
-      return std::find_if(options.query.begin(), options.query.end(), [&](const api_field_binding& binding) {
+   [[nodiscard]] static bool query_uses_field(const route_options& options, std::string_view name) {
+      return std::find_if(options.query.begin(), options.query.end(), [&](const field_binding& binding) {
                 return std::string_view{binding.field} == name;
              }) != options.query.end();
    }
@@ -683,7 +683,7 @@ class api_builder {
    template <typename Tuple, std::size_t... Index>
    static void validate_positional_http_arguments(method verb,
                                                   std::string_view path,
-                                                  const api_route_options& options,
+                                                  const route_options& options,
                                                   const fcl::api::method_descriptor& method_descriptor,
                                                   std::index_sequence<Index...>) {
       auto body_candidates = std::size_t{0};
@@ -720,7 +720,7 @@ class api_builder {
    template <typename Tuple>
    static void validate_positional_http_arguments(method verb,
                                                   std::string_view path,
-                                                  const api_route_options& options,
+                                                  const route_options& options,
                                                   const fcl::api::method_descriptor& method_descriptor) {
       validate_positional_http_arguments<Tuple>(
          verb, path, options, method_descriptor, std::make_index_sequence<std::tuple_size_v<Tuple>>{});
@@ -762,7 +762,7 @@ class api_builder {
 
    template <typename Argument>
    [[nodiscard]] static bool positional_plain_json_body_candidate(const route_context& context,
-                                                                  const api_route_options& options,
+                                                                  const route_options& options,
                                                                   std::string_view name) {
       if constexpr (is_plain_json_body_argument_v<Argument>) {
          return uses_request_body(context.request.method()) && !context.request.body().empty() &&
@@ -777,7 +777,7 @@ class api_builder {
 
    template <typename Argument>
    [[nodiscard]] static bool positional_stream_plain_json_body_candidate(const route_context& context,
-                                                                         const api_route_options& options,
+                                                                         const route_options& options,
                                                                          std::string_view name) {
       if constexpr (is_plain_json_body_argument_v<Argument>) {
          return uses_request_body(context.request.method()) && !route_value(context, options, name).has_value();
@@ -792,7 +792,7 @@ class api_builder {
    template <typename Tuple, std::size_t... Index>
    [[nodiscard]] static std::size_t positional_plain_json_body_candidate_count(
       const route_context& context,
-      const api_route_options& options,
+      const route_options& options,
       const fcl::api::method_descriptor& method_descriptor,
       std::index_sequence<Index...>) {
       auto count = std::size_t{0};
@@ -807,7 +807,7 @@ class api_builder {
    template <typename Tuple>
    [[nodiscard]] static std::size_t positional_plain_json_body_candidate_count(
       const route_context& context,
-      const api_route_options& options,
+      const route_options& options,
       const fcl::api::method_descriptor& method_descriptor) {
       return positional_plain_json_body_candidate_count<Tuple>(
          context, options, method_descriptor, std::make_index_sequence<std::tuple_size_v<Tuple>>{});
@@ -816,7 +816,7 @@ class api_builder {
    template <typename Tuple, std::size_t... Index>
    [[nodiscard]] static std::size_t positional_stream_plain_json_body_candidate_count(
       const route_context& context,
-      const api_route_options& options,
+      const route_options& options,
       const fcl::api::method_descriptor& method_descriptor,
       std::index_sequence<Index...>) {
       auto count = std::size_t{0};
@@ -831,7 +831,7 @@ class api_builder {
    template <typename Tuple>
    [[nodiscard]] static std::size_t positional_stream_plain_json_body_candidate_count(
       const route_context& context,
-      const api_route_options& options,
+      const route_options& options,
       const fcl::api::method_descriptor& method_descriptor) {
       return positional_stream_plain_json_body_candidate_count<Tuple>(
          context, options, method_descriptor, std::make_index_sequence<std::tuple_size_v<Tuple>>{});
@@ -840,7 +840,7 @@ class api_builder {
    template <typename Value>
    static void require_body_route_consistency(const Value& value,
                                               const route_context& context,
-                                              const api_route_options& options) {
+                                              const route_options& options) {
       if constexpr (fcl::reflect::is_described_object_v<Value>) {
          fcl::reflect::for_each_member<Value>([&](const char* name, auto member) {
             if (auto route = route_value(context, options, name); route.has_value()) {
@@ -858,7 +858,7 @@ class api_builder {
 
    template <typename Argument>
    [[nodiscard]] static Argument make_positional_argument_from_http(const route_context& context,
-                                                                   const api_route_options& options,
+                                                                   const route_options& options,
                                                                    std::string_view name,
                                                                    bool decode_plain_json_body = false) {
       using clean = std::remove_cvref_t<Argument>;
@@ -913,7 +913,7 @@ class api_builder {
 
    template <typename Tuple, std::size_t... Index>
    [[nodiscard]] static Tuple make_positional_arguments_from_http(const route_context& context,
-                                                                 const api_route_options& options,
+                                                                 const route_options& options,
                                                                  const fcl::api::method_descriptor& method_descriptor,
                                                                  std::index_sequence<Index...>) {
       const auto body_candidates =
@@ -932,7 +932,7 @@ class api_builder {
 
    template <typename Tuple>
    [[nodiscard]] static Tuple make_positional_arguments_from_http(const route_context& context,
-                                                                 const api_route_options& options,
+                                                                 const route_options& options,
                                                                  const fcl::api::method_descriptor& method_descriptor) {
       return make_positional_arguments_from_http<Tuple>(
          context, options, method_descriptor, std::make_index_sequence<std::tuple_size_v<Tuple>>{});
@@ -940,7 +940,7 @@ class api_builder {
 
    template <typename Argument>
    static boost::asio::awaitable<Argument> make_positional_argument_from_stream(stream_request& stream,
-                                                                               const api_route_options& options,
+                                                                               const route_options& options,
                                                                                const multipart_form* form,
                                                                                const std::optional<std::string>* plain_json_body,
                                                                                std::string_view name,
@@ -1011,7 +1011,7 @@ class api_builder {
    template <typename Tuple, std::size_t... Index>
    static boost::asio::awaitable<Tuple> make_positional_arguments_from_stream_impl(
       stream_request& stream,
-      const api_route_options& options,
+      const route_options& options,
       const fcl::api::method_descriptor& method_descriptor,
       const multipart_form* form,
       const std::optional<std::string>* plain_json_body,
@@ -1029,7 +1029,7 @@ class api_builder {
    template <typename Tuple>
    static boost::asio::awaitable<Tuple> make_positional_arguments_from_stream(
       stream_request& stream,
-      const api_route_options& options,
+      const route_options& options,
       const fcl::api::method_descriptor& method_descriptor) {
       auto form = std::optional<multipart_form>{};
       auto plain_json_body = std::optional<std::string>{};
@@ -1076,7 +1076,7 @@ class api_builder {
    template <typename Request>
    static void bind_route_query_headers(Request& request,
                                         const route_context& context,
-                                        const api_route_options& options,
+                                        const route_options& options,
                                         bool body_was_decoded) {
       if constexpr (fcl::reflect::is_described_object_v<Request>) {
          fcl::reflect::for_each_member<Request>([&](const char* name, auto member) {
@@ -1112,13 +1112,13 @@ class api_builder {
    }
 
    template <typename Request>
-   [[nodiscard]] static Request make_request_from_http(const route_context& context, const api_route_options& options) {
+   [[nodiscard]] static Request make_request_from_http(const route_context& context, const route_options& options) {
       return make_request_from_http<Request>(context, options, true);
    }
 
    template <typename Request>
    [[nodiscard]] static Request make_request_from_http(const route_context& context,
-                                                       const api_route_options& options,
+                                                       const route_options& options,
                                                        bool validate_schema) {
       auto request = Request{};
       const auto has_body = uses_request_body(context.request.method()) && !context.request.body().empty();
@@ -1155,7 +1155,7 @@ class api_builder {
 
    template <typename Request>
    static boost::asio::awaitable<Request> make_request_from_stream(stream_request& stream,
-                                                                   const api_route_options& options) {
+                                                                   const route_options& options) {
       auto request = make_request_from_http<Request>(stream.context, options, false);
       if constexpr (fcl::reflect::is_described_object_v<Request>) {
          if constexpr (request_body_source_count_v<Request> > 1U) {
@@ -1353,7 +1353,7 @@ class api_builder {
       return stream_response::buffered(std::move(value));
    }
 
-   template <typename Response> static void validate_response_file_option(const api_route_options& options) {
+   template <typename Response> static void validate_response_file_option(const route_options& options) {
       constexpr auto response_is_file = std::is_same_v<std::remove_cvref_t<Response>, file_response>;
       constexpr auto response_is_stream = detail::is_streaming_response_v<Response>;
       if constexpr (response_is_file) {
@@ -1381,7 +1381,7 @@ class api_builder {
    }
 
    template <auto Method, typename Request, typename Response>
-   [[nodiscard]] mount_action make_step(method verb, std::string path, api_route_options options,
+   [[nodiscard]] mount_action make_step(method verb, std::string path, route_options options,
                                         std::string explicit_name) {
       using interface_type = typename method_class<decltype(Method)>::type;
       using argument_tuple = fcl::api::method_argument_tuple_t<Method>;
@@ -1580,12 +1580,12 @@ class api_builder {
    std::vector<mount_action> steps_;
 };
 
-[[nodiscard]] inline api_builder api(router& target) {
-   return api_builder{target};
+[[nodiscard]] inline binding_builder binding(router& target) {
+   return binding_builder{target};
 }
 
-[[nodiscard]] inline api_builder api() {
-   return api_builder{};
+[[nodiscard]] inline binding_builder binding() {
+   return binding_builder{};
 }
 
-} // namespace fcl::http
+} // namespace fcl::http::api

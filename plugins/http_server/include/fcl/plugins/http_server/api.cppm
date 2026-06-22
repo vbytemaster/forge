@@ -17,7 +17,7 @@ import fcl.api.connection;
 import fcl.api.registry;
 import fcl.api.dispatcher;
 import fcl.api.binding;
-import fcl.http.api;
+import fcl.http.api.binding;
 import fcl.plugins.http_server.middleware;
 import fcl.plugins.http_server.types;
 
@@ -37,15 +37,15 @@ class api : public fcl::api::contract<api, fcl::api::surface::local> {
    class binding_spec {
     public:
       virtual ~binding_spec() = default;
-      [[nodiscard]] virtual fcl::http::api_binding build(const fcl::api::registry& registry) const = 0;
+      [[nodiscard]] virtual fcl::http::api::binding_plan build(const fcl::api::registry& registry) const = 0;
    };
 
  private:
    template <typename Interface> class typed_binding_spec final : public binding_spec {
     public:
-      [[nodiscard]] fcl::http::api_binding build(const fcl::api::registry& registry) const override {
+      [[nodiscard]] fcl::http::api::binding_plan build(const fcl::api::registry& registry) const override {
          auto plan = fcl::api::binding().serve(registry).build();
-         return fcl::http::api().use(std::move(plan)).bind<Interface>().build();
+         return fcl::http::api::binding().use(std::move(plan)).bind<Interface>().build();
       }
    };
 

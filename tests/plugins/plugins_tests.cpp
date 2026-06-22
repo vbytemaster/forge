@@ -10,7 +10,7 @@
 #include <boost/test/unit_test.hpp>
 #include <fcl/api/macros.hpp>
 #include <fcl/exceptions/macros.hpp>
-#include <fcl/http/macros.hpp>
+#include <fcl/http_api/macros.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -72,17 +72,17 @@ import fcl.crypto.p256;
 import fcl.crypto.secp256k1;
 import fcl.crypto.sha256;
 import fcl.env;
-import fcl.http.api;
+import fcl.http.api.binding;
 import fcl.http.base_url;
-import fcl.http.binding;
+import fcl.http.api.parameters;
 import fcl.http.body;
 import fcl.http.client;
 import fcl.http.connection;
 import fcl.http.exceptions;
 import fcl.http.file;
-import fcl.http.mapping;
+import fcl.http.api.mapping;
 import fcl.http.middleware;
-import fcl.http.proxy;
+import fcl.http.api.proxy;
 import fcl.http.router;
 import fcl.http.stream;
 import fcl.http.types;
@@ -142,7 +142,7 @@ import fcl.schema.object;
 import fcl.schema.enums;
 
 template <typename T>
-concept accepts_raw_http_binding = requires(T& api, fcl::http::api_binding binding) {
+concept accepts_raw_http_binding = requires(T& api, fcl::http::api::binding_plan binding) {
    api.publish(std::move(binding), fcl::plugins::http_server::publish_options{});
 };
 
@@ -1802,7 +1802,7 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_publishes_typed_api_under_configured_bas
 
    auto client = fcl::http::client{app.runtime(), fcl::http::parse_base_url("http://127.0.0.1:" +
                                                                             std::to_string(port) + "/api")};
-   auto cache = fcl::asio::blocking::run(app.runtime(), fcl::http::remote<http_cache_api>(client));
+   auto cache = fcl::asio::blocking::run(app.runtime(), fcl::http::api::remote<http_cache_api>(client));
    const auto chunk = fcl::asio::blocking::run(
       app.runtime(), cache->read(http_read_request{.ref = "alpha", .offset = 7, .limit = 9}));
    BOOST_TEST(chunk.bytes == "alpha:7:9");
@@ -1824,7 +1824,7 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_uses_publish_base_path_override) {
 
    auto client = fcl::http::client{app.runtime(), fcl::http::parse_base_url("http://127.0.0.1:" +
                                                                             std::to_string(port) + "/custom")};
-   auto cache = fcl::asio::blocking::run(app.runtime(), fcl::http::remote<http_cache_api>(client));
+   auto cache = fcl::asio::blocking::run(app.runtime(), fcl::http::api::remote<http_cache_api>(client));
    const auto chunk = fcl::asio::blocking::run(
       app.runtime(), cache->write(http_write_request{.ref = "beta", .bytes = "payload"}));
    BOOST_TEST(chunk.bytes == "beta:payload");

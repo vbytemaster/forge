@@ -201,6 +201,7 @@ aead_decrypt_result plugin::impl::decrypt_aes_gcm(aead_decrypt_request value) co
    const auto& secret = find_secret(secrets, value.secret_id);
    require_allowed(secret, value.purpose, operation::decrypt_aes_gcm);
    require_size(value.ciphertext.size(), secret.max_ciphertext_bytes, "ciphertext");
+   require_size(value.ciphertext.size(), secret.max_plaintext_bytes, "plaintext");
    require_size(value.aad.size(), secret.max_aad_bytes, "AAD");
 
    try {

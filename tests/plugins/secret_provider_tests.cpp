@@ -537,6 +537,30 @@ BOOST_AUTO_TEST_CASE(secret_provider_decrypt_aes_gcm_rejects_oversized_aad_befor
 }
 FCL_LOG_AND_RETHROW();
 
+BOOST_AUTO_TEST_CASE(secret_provider_decrypt_aes_gcm_rejects_oversized_plaintext_before_crypto) try {
+   const auto key = std::string(32, 'K');
+   auto document = provider_config({secret_entry("data-key",
+                                                source_value(key),
+                                                {"payload.decrypt"},
+                                                {"decrypt_aes_gcm"})});
+   document.set("secret-provider.default-max-plaintext-bytes", fcl::config::value{32U});
+
+   auto plugin = secret_provider::plugin{};
+   auto runtime = fcl::asio::runtime{};
+   auto api = configured_api(runtime, plugin, document);
+
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+                                              api->decrypt_aes_gcm(secret_provider::aead_decrypt_request{
+                                                 .secret_id = "data-key",
+                                                 .purpose = "payload.decrypt",
+                                                 .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+                                                 .tag = std::vector<std::uint8_t>(fcl::crypto::aes_gcm_tag_size, 0),
+                                                 .ciphertext = fcl::crypto::bytes(33U, std::uint8_t{0}),
+                                              })),
+                     secret_provider::exceptions::size_limit_exceeded);
+}
+FCL_LOG_AND_RETHROW();
+
 BOOST_AUTO_TEST_CASE(secret_provider_decrypt_aes_gcm_keeps_authentication_failure_typed) try {
    const auto key = std::string(32, 'K');
    auto plugin = secret_provider::plugin{};

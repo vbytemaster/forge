@@ -11,6 +11,7 @@
 import fcl.crypto.aes;
 import fcl.crypto.kdf;
 import fcl.crypto.random;
+import fcl.crypto.secret_bytes;
 import fcl.crypto.types;
 import fcl.exceptions;
 import fcl.raw.raw;
@@ -49,6 +50,27 @@ BOOST_AUTO_TEST_CASE(hkdf_sha256_derives_requested_material) try {
 }
 FCL_LOG_AND_RETHROW();
 
+BOOST_AUTO_TEST_CASE(hkdf_sha256_accepts_secret_span_without_owning_copy) try {
+   auto secret = fcl::crypto::secret_bytes{fcl::crypto::bytes{'s', 'e', 'c', 'r', 'e', 't'}};
+   const auto salt = fcl::crypto::bytes{'s', 'a', 'l', 't'};
+   const auto info = fcl::crypto::bytes{'i', 'n', 'f', 'o'};
+   const auto owned = fcl::crypto::derive_hkdf_sha256(fcl::crypto::hkdf_sha256_request{
+       .secret = {'s', 'e', 'c', 'r', 'e', 't'},
+       .salt = salt,
+       .info = info,
+       .output_size = 48,
+   });
+   const auto from_span = fcl::crypto::derive_hkdf_sha256(fcl::crypto::hkdf_sha256_span_request{
+       .secret = secret.span(),
+       .salt = salt,
+       .info = info,
+       .output_size = 48,
+   });
+
+   BOOST_CHECK_EQUAL_COLLECTIONS(from_span.begin(), from_span.end(), owned.begin(), owned.end());
+}
+FCL_LOG_AND_RETHROW();
+
 BOOST_AUTO_TEST_CASE(scrypt_derives_requested_material) try {
    const auto material = fcl::crypto::derive_scrypt(fcl::crypto::scrypt_request{
        .password = "correct horse battery staple",
@@ -61,6 +83,27 @@ BOOST_AUTO_TEST_CASE(scrypt_derives_requested_material) try {
    });
 
    BOOST_CHECK_EQUAL(material.size(), 32U);
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(secret_bytes_is_move_only_and_explicitly_clearable) try {
+   static_assert(!std::is_copy_constructible_v<fcl::crypto::secret_bytes>);
+   static_assert(!std::is_copy_assignable_v<fcl::crypto::secret_bytes>);
+   static_assert(std::is_move_constructible_v<fcl::crypto::secret_bytes>);
+   static_assert(std::is_move_assignable_v<fcl::crypto::secret_bytes>);
+
+   auto secret = fcl::crypto::secret_bytes{fcl::crypto::bytes{'s', 'e', 'c', 'r', 'e', 't'}};
+   const auto expected = fcl::crypto::bytes{'s', 'e', 'c', 'r', 'e', 't'};
+   BOOST_TEST(secret.size() == 6U);
+   BOOST_TEST(!secret.empty());
+   BOOST_CHECK_EQUAL_COLLECTIONS(secret.span().begin(), secret.span().end(), expected.begin(), expected.end());
+
+   auto moved = std::move(secret);
+   BOOST_TEST(moved.size() == 6U);
+   BOOST_TEST(secret.empty());
+
+   moved.clear();
+   BOOST_TEST(moved.empty());
 }
 FCL_LOG_AND_RETHROW();
 

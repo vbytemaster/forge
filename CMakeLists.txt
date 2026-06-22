@@ -226,6 +226,7 @@ set(
 )
 
 set(FCL_PLUGIN_SIGNATURE_PROVIDER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/signature_provider/include")
+set(FCL_PLUGIN_SECRET_PROVIDER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/secret_provider/include")
 set(FCL_PLUGIN_P2P_NODE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_node/include")
 set(FCL_PLUGIN_P2P_API_RESOLVER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_api_resolver/include")
 set(FCL_PLUGIN_P2P_DIAGNOSTICS_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_diagnostics/include")
@@ -394,6 +395,7 @@ set(
    fcl_p2p
    fcl_app
    fcl_plugin_signature_provider
+   fcl_plugin_secret_provider
    fcl_plugin_p2p_node
    fcl_plugin_p2p_api_resolver
    fcl_plugin_p2p_diagnostics
@@ -465,6 +467,7 @@ install(
              libraries/p2p/include/fcl
              libraries/app/include/fcl
              plugins/signature_provider/include/fcl
+             plugins/secret_provider/include/fcl
              plugins/p2p_node/include/fcl
              plugins/p2p_api_resolver/include/fcl
              plugins/p2p_diagnostics/include/fcl

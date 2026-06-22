@@ -170,6 +170,11 @@ std::any value_to_any(const value& input, schema::value_kind kind) {
          return strings;
       }
       break;
+   case schema::value_kind::object:
+      if (const auto* object = input.as_object()) {
+         return *object;
+      }
+      break;
    case schema::value_kind::object_list:
       if (const auto* array = input.as_array()) {
          for (const auto& entry : *array) {
@@ -203,6 +208,8 @@ value any_to_value(schema::value_kind kind, const std::any& input) {
       }
       return array;
    }
+   case schema::value_kind::object:
+      return schema::cast_any_to<value::object_type>(input);
    case schema::value_kind::object_list:
       return schema::cast_any_to<value::array_type>(input);
    }

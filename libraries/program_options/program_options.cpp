@@ -26,7 +26,7 @@ namespace {
 namespace po = boost::program_options;
 
 [[nodiscard]] bool supports_field(schema::value_kind kind) {
-   return kind != schema::value_kind::object_list;
+   return kind != schema::value_kind::object && kind != schema::value_kind::object_list;
 }
 
 [[nodiscard]] std::string option_name(const config::component_descriptor& component, const std::string& field) {
@@ -85,6 +85,8 @@ void add_field_option(po::options_description& description, const std::string& n
       return input;
    case schema::value_kind::string_list:
       return config::value::array_type{config::value{input}};
+   case schema::value_kind::object:
+      throw std::invalid_argument{"structured object options are not supported"};
    case schema::value_kind::object_list:
       throw std::invalid_argument{"structured object-list options are not supported"};
    }

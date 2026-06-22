@@ -29,7 +29,8 @@ Each official plugin exposes focused slice modules:
 - `fcl.plugins.<name>.exceptions` — typed exception category and aliases.
 
 Available plugin names are `http_server`, `p2p_node`, `p2p_api_resolver`,
-`p2p_diagnostics`, `p2p_pubsub` and `signature_provider`.
+`p2p_diagnostics`, `p2p_pubsub`, `secret_provider` and
+`signature_provider`.
 
 Do not import a root or per-plugin aggregate module; those files are not part of
 the public module surface. Use the explicit slice module and link the matching
@@ -47,12 +48,12 @@ auto direct = fcl::plugins::signature_provider::plugin{};
 
 Aggregate target: `fcl_plugins`.
 
-Focused targets: `fcl_plugin_http_server`, `fcl_plugin_signature_provider`,
-`fcl_plugin_p2p_node`, `fcl_plugin_p2p_api_resolver`,
+Focused targets: `fcl_plugin_http_server`, `fcl_plugin_secret_provider`,
+`fcl_plugin_signature_provider`, `fcl_plugin_p2p_node`, `fcl_plugin_p2p_api_resolver`,
 `fcl_plugin_p2p_diagnostics` and `fcl_plugin_p2p_pubsub`.
 
-Dependencies are intentionally narrow per plugin. `signature_provider` does not
-depend on P2P or HTTP; `http_server` depends on the HTTP library and app/API
+Dependencies are intentionally narrow per plugin. `signature_provider` and
+`secret_provider` do not depend on P2P or HTTP; `http_server` depends on the HTTP library and app/API
 composition, while `p2p_api_resolver`, `p2p_diagnostics` and `p2p_pubsub`
 compose through `fcl_plugin_p2p_node`.
 
@@ -171,6 +172,37 @@ auto result = co_await signatures->sign(
          fcl::plugins::signature_provider::key_algorithm::secp256k1,
       .output_profile = "fcl",
    });
+```
+
+## Secret Provider Plugin
+
+`secret_provider` publishes a local-only API for named secret operations:
+bounded raw export, HKDF-SHA256 derivation and AES-GCM encrypt/decrypt. It is
+the data-secret counterpart to `signature_provider`: application plugins ask
+for an operation by `secret_id` and `purpose` instead of parsing secret-bearing
+config, files or deployment-specific delivery details themselves.
+
+The plugin is not a wallet, cloud KMS, product vault or authorization service.
+It enforces configured purpose and operation allow-lists, redacts configured
+secret-bearing fields, loads bounded `value`, `file` and `encrypted_file`
+sources, and delegates cryptographic primitives to `fcl_crypto`.
+
+```yaml
+secret-provider:
+  secrets:
+    - id: service/session-key
+      kind: symmetric_key
+      source:
+        type: value
+        encoding: hex
+        value: "<redacted secret bytes>"
+      purposes: ["api.payload.decrypt"]
+      operations: ["decrypt_aes_gcm", "derive_hkdf_sha256"]
+      allow-raw-export: false
+```
+
+```cpp
+registry.register_plugin(fcl::plugins::secret_provider::descriptor());
 ```
 
 ## P2P Node Plugin

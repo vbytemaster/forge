@@ -333,6 +333,16 @@ struct endpoint_control_response {
    std::string summary;
 };
 
+struct stream_buffered_request : fcl::http::endpoint_request {
+   std::string id;
+   fcl::http::body_stream body;
+};
+
+struct mixed_download_request {
+   std::string collection;
+   std::string key;
+};
+
 BOOST_DESCRIBE_STRUCT(api_read_chunk, (), ())
 BOOST_DESCRIBE_STRUCT(api_routed_read_chunk, (), (ref, offset, limit))
 BOOST_DESCRIBE_STRUCT(api_chunk, (), (bytes))
@@ -365,6 +375,8 @@ BOOST_DESCRIBE_STRUCT(default_header_response, (), (request_id, body, present))
 BOOST_DESCRIBE_STRUCT(json_stream_request, (), (id, value))
 BOOST_DESCRIBE_STRUCT(endpoint_control_request, (), (id))
 BOOST_DESCRIBE_STRUCT(endpoint_control_response, (), (summary))
+BOOST_DESCRIBE_STRUCT(stream_buffered_request, (), (id, body))
+BOOST_DESCRIBE_STRUCT(mixed_download_request, (), (collection, key))
 
 class api_cache : public fcl::api::contract<api_cache, fcl::api::surface::local | fcl::api::surface::remote> {
  public:
@@ -590,6 +602,21 @@ class endpoint_api : public fcl::api::contract<endpoint_api> {
    virtual boost::asio::awaitable<fcl::http::empty_response> accepted(endpoint_control_request request) = 0;
 };
 
+class stream_buffered_api : public fcl::api::contract<stream_buffered_api> {
+ public:
+   virtual ~stream_buffered_api() = default;
+
+   virtual boost::asio::awaitable<endpoint_control_response> write(stream_buffered_request request) = 0;
+};
+
+class mixed_proxy_api : public fcl::api::contract<mixed_proxy_api> {
+ public:
+   virtual ~mixed_proxy_api() = default;
+
+   virtual boost::asio::awaitable<control_response> read(std::string collection, std::string key) = 0;
+   virtual boost::asio::awaitable<fcl::http::file_response> download(mixed_download_request request) = 0;
+};
+
 } // namespace test_api
 } // namespace fcl::http
 
@@ -708,6 +735,15 @@ FCL_API(::fcl::http::test_api::endpoint_api, FCL_API_CONTRACT("endpoint", 1, 0),
                              ::fcl::http::streaming_response),
         FCL_API_METHOD_TYPED(accepted, ::fcl::http::test_api::endpoint_control_request,
                              ::fcl::http::empty_response))
+
+FCL_API(::fcl::http::test_api::stream_buffered_api, FCL_API_CONTRACT("stream-buffered", 1, 0),
+        FCL_API_METHOD_TYPED(write, ::fcl::http::test_api::stream_buffered_request,
+                             ::fcl::http::test_api::endpoint_control_response))
+
+FCL_API(::fcl::http::test_api::mixed_proxy_api, FCL_API_CONTRACT("mixed-proxy", 1, 0),
+        FCL_API_METHOD(read, collection, key),
+        FCL_API_METHOD_TYPED(download, ::fcl::http::test_api::mixed_download_request,
+                             ::fcl::http::file_response))
 
 template <> struct fcl::schema::rules<::fcl::http::test_api::search_request> {
    [[nodiscard]] static fcl::schema::object_schema<::fcl::http::test_api::search_request> define() {
@@ -841,6 +877,13 @@ FCL_HTTP_API(::fcl::http::test_api::endpoint_api,
              FCL_HTTP_GET(stream, "/endpoint/:id/stream", FCL_HTTP_RESPONSE_STREAM),
              FCL_HTTP_GET(accepted, "/endpoint/:id/accepted"))
 
+FCL_HTTP_API(::fcl::http::test_api::stream_buffered_api,
+             FCL_HTTP_PUT(write, "/stream-buffered/:id", ok, FCL_HTTP_BODY_STREAM(body)))
+
+FCL_HTTP_API(::fcl::http::test_api::mixed_proxy_api,
+             FCL_HTTP_GET(read, "/mixed/:collection/:key"),
+             FCL_HTTP_GET(download, "/mixed/:collection/:key/file", FCL_HTTP_RESPONSE_FILE))
+
 namespace fcl::api {
 
 template <> struct api_traits<::fcl::http::test_api::api_cache> {
@@ -916,6 +959,10 @@ using test_api::json_stream_request;
 using test_api::endpoint_api;
 using test_api::endpoint_control_request;
 using test_api::endpoint_control_response;
+using test_api::stream_buffered_api;
+using test_api::stream_buffered_request;
+using test_api::mixed_download_request;
+using test_api::mixed_proxy_api;
 using test_api::to_beast_response;
 using test_api::to_http_request;
 using test_api::to_http_response;
@@ -1356,6 +1403,34 @@ class endpoint_api_impl final : public endpoint_api {
    boost::asio::awaitable<fcl::http::empty_response> accepted(endpoint_control_request request) override {
       request.response().set("X-Endpoint-Empty", request.id);
       co_return fcl::http::empty_response{.status_code = status::accepted};
+   }
+
+ private:
+   std::filesystem::path root_;
+};
+
+class stream_buffered_api_impl final : public stream_buffered_api {
+ public:
+   boost::asio::awaitable<endpoint_control_response> write(stream_buffered_request request) override {
+      const auto payload = co_await request.body.async_read_all();
+      request.response().set_cookie("endpoint", request.id);
+      request.response().set_cookie("stream", payload);
+      co_return endpoint_control_response{.summary = request.id + ":" + payload};
+   }
+};
+
+class mixed_proxy_api_impl final : public mixed_proxy_api {
+ public:
+   explicit mixed_proxy_api_impl(std::filesystem::path root) : root_{std::move(root)} {}
+
+   boost::asio::awaitable<control_response> read(std::string collection, std::string key) override {
+      co_return control_response{.value = std::move(collection) + ":" + std::move(key)};
+   }
+
+   boost::asio::awaitable<fcl::http::file_response> download(mixed_download_request request) override {
+      co_return fcl::http::file_response::from_path(
+         root_ / request.collection / request.key,
+         fcl::http::file_options{.content_type = "application/octet-stream"});
    }
 
  private:
@@ -2341,6 +2416,73 @@ BOOST_AUTO_TEST_CASE(http_endpoint_request_preserves_repeated_set_cookie_on_stre
    BOOST_TEST(std::any_of(headers.begin(), headers.end(), [](const header_entry& header) {
       return header.name == "Set-Cookie" && header.text == "stream=yes";
    }));
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_stream_path_buffered_response_merges_endpoint_headers_once) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto apis = fcl::api::registry{};
+   apis.install<stream_buffered_api>(stream_buffered_api::describe(), std::make_shared<stream_buffered_api_impl>());
+
+   auto router = fcl::http::router{};
+   auto binding =
+      fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<stream_buffered_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto connection = fcl::http::connection{
+      runtime,
+      parse_base_url("http://127.0.0.1:" + std::to_string(server.port())),
+   };
+   auto request = make_request(method::put, "/stream-buffered/abc");
+   request.body() = "payload";
+   request.set(field::content_type, "application/octet-stream");
+   request.prepare_payload();
+
+   auto response_value = fcl::asio::blocking::run(runtime, connection.async_request(std::move(request)));
+   const auto headers = response_value.headers();
+
+   BOOST_TEST(std::count_if(headers.begin(), headers.end(), [](const header_entry& header) {
+                 return header.name == "Set-Cookie";
+              }) == 2);
+   BOOST_TEST(std::any_of(headers.begin(), headers.end(), [](const header_entry& header) {
+      return header.name == "Set-Cookie" && header.text == "endpoint=abc";
+   }));
+   BOOST_TEST(std::any_of(headers.begin(), headers.end(), [](const header_entry& header) {
+      return header.name == "Set-Cookie" && header.text == "stream=payload";
+   }));
+
+   auto decoded = fcl::json::read<endpoint_control_response>(response_value.body());
+   BOOST_REQUIRE(decoded.ok());
+   BOOST_TEST(decoded.value.summary == "abc:payload");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_fallback_proxy_supports_positional_methods_in_mixed_api) {
+   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto directory = temp_directory{};
+   directory.write("catalog/alpha", "file-body");
+
+   auto apis = fcl::api::registry{};
+   apis.install<mixed_proxy_api>(mixed_proxy_api::describe(), std::make_shared<mixed_proxy_api_impl>(directory.path()));
+
+   auto router = fcl::http::router{};
+   auto binding =
+      fcl::http::api::binding().use(fcl::api::binding().serve(apis).build()).bind<mixed_proxy_api>().build();
+   router.mount(binding);
+
+   auto server = fcl::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto client = fcl::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto api = fcl::asio::blocking::run(runtime, fcl::http::api::remote<mixed_proxy_api>(client));
+
+   const auto response_value = fcl::asio::blocking::run(runtime, api->read("catalog", "alpha"));
+   BOOST_TEST(response_value.value == "catalog:alpha");
 
    server.stop();
 }

@@ -1320,6 +1320,7 @@ class binding_builder {
                                                                                Response value,
                                                                                const std::shared_ptr<endpoint_state>& endpoint = {}) {
       auto output = stream_response{};
+      auto endpoint_headers_merged = false;
       if constexpr (std::is_same_v<std::remove_cvref_t<Response>, file_response>) {
          output = co_await std::move(value).materialize(request_value);
       } else if constexpr (detail::is_streaming_response_v<Response>) {
@@ -1328,8 +1329,11 @@ class binding_builder {
          output = std::move(value);
       } else {
          output = stream_response::buffered(make_success_response(request_value, success_status, value, endpoint));
+         endpoint_headers_merged = true;
       }
-      merge_endpoint_headers(output.head, endpoint);
+      if (!endpoint_headers_merged) {
+         merge_endpoint_headers(output.head, endpoint);
+      }
       co_return output;
    }
 

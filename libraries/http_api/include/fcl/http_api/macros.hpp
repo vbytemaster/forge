@@ -82,7 +82,8 @@
          ::fcl::api::method_request_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>,                                   \
          ::fcl::api::method_response_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>
 
-#define FCL_HTTP_DETAIL_PROXY_USING(r, INTERFACE, ROUTE) using INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE);
+#define FCL_HTTP_DETAIL_PROXY_USING(r, INTERFACE, ROUTE)                                                           \
+   using ::fcl::api::proxy<INTERFACE>::FCL_HTTP_DETAIL_METHOD(ROUTE);
 
 #define FCL_HTTP_DETAIL_PROXY_METHOD(r, INTERFACE, ROUTE)                                                           \
    boost::asio::awaitable<::fcl::api::method_response_t<&INTERFACE::FCL_HTTP_DETAIL_METHOD(ROUTE)>>                 \
@@ -138,9 +139,10 @@
             });                                                                                                     \
       }                                                                                                             \
    };                                                                                                               \
-   template <> class proxy<INTERFACE> : public INTERFACE {                                                          \
+   template <> class proxy<INTERFACE> : public ::fcl::api::proxy<INTERFACE> {                                      \
     public:                                                                                                         \
-      explicit proxy(::fcl::http::client& value) : client_(&value) {}                                                            \
+      explicit proxy(::fcl::http::client& value)                                                                    \
+          : ::fcl::api::proxy<INTERFACE>(traits<INTERFACE>::make_invoker(value), INTERFACE::ref()), client_(&value) {} \
       BOOST_PP_SEQ_FOR_EACH(FCL_HTTP_DETAIL_PROXY_USING, INTERFACE, BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__))          \
       BOOST_PP_SEQ_FOR_EACH(FCL_HTTP_DETAIL_PROXY_METHOD, INTERFACE, BOOST_PP_VARIADIC_TO_SEQ(__VA_ARGS__))         \
     private:                                                                                                        \

@@ -28,6 +28,12 @@ namespace {
    return value == 0 ? fallback : value;
 }
 
+void require_aes_update_limit(std::uint64_t value, const char* label) {
+   if (value > aes_update_bytes_ceiling) {
+      FCL_THROW_EXCEPTION(exceptions::invalid_config, std::string{label} + " exceeds AES update ceiling");
+   }
+}
+
 } // namespace
 
 config decode_config(const fcl::config::component_view& view) {
@@ -45,6 +51,10 @@ config decode_config(const fcl::config::component_view& view) {
 
 void apply_config(plugin::impl& state, fcl::config::component_view view) {
    auto decoded = decode_config(view);
+   require_aes_update_limit(decoded.default_max_plaintext_bytes, "default-max-plaintext-bytes");
+   require_aes_update_limit(decoded.default_max_ciphertext_bytes, "default-max-ciphertext-bytes");
+   require_aes_update_limit(decoded.default_max_aad_bytes, "default-max-aad-bytes");
+
    auto loaded = std::map<std::string, plugin::impl::loaded_secret>{};
    const auto decrypt_limits = encrypted_file_decrypt_limits{
       .max_plaintext_bytes = decoded.default_max_plaintext_bytes,
@@ -57,6 +67,9 @@ void apply_config(plugin::impl& state, fcl::config::component_view view) {
       auto max_plaintext = resolved_limit(entry.max_plaintext_bytes, decoded.default_max_plaintext_bytes);
       auto max_ciphertext = resolved_limit(entry.max_ciphertext_bytes, decoded.default_max_ciphertext_bytes);
       auto max_aad = resolved_limit(entry.max_aad_bytes, decoded.default_max_aad_bytes);
+      require_aes_update_limit(max_plaintext, "max-plaintext-bytes");
+      require_aes_update_limit(max_ciphertext, "max-ciphertext-bytes");
+      require_aes_update_limit(max_aad, "max-aad-bytes");
       auto material = load_secret_material(entry, max_plaintext, max_ciphertext, decrypt_limits);
       loaded.emplace(entry.id,
                      plugin::impl::loaded_secret{

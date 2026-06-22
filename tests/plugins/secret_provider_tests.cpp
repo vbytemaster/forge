@@ -98,6 +98,13 @@ namespace {
    return fcl::config::value{std::move(object)};
 }
 
+[[nodiscard]] fcl::config::value secret_entry_with_limit(std::string limit_name, std::uint64_t limit) {
+   auto entry = secret_entry("data-key", source_value(std::string(32, 'K')), {"payload.encrypt"}, {"encrypt_aes_gcm"});
+   auto& object = std::get<fcl::config::value::object_type>(entry.storage);
+   object.emplace(std::move(limit_name), fcl::config::value{limit});
+   return entry;
+}
+
 [[nodiscard]] fcl::config::document provider_config(std::vector<fcl::config::value> secrets) {
    auto document = fcl::config::document{};
    document.set("secret-provider.secrets", fcl::config::value::array_type(secrets.begin(), secrets.end()));
@@ -157,6 +164,9 @@ BOOST_AUTO_TEST_CASE(secret_provider_config_direct_defaults_match_schema_constan
    BOOST_TEST(value.default_max_plaintext_bytes == secret_provider::default_max_plaintext_bytes);
    BOOST_TEST(value.default_max_ciphertext_bytes == secret_provider::default_max_ciphertext_bytes);
    BOOST_TEST(value.default_max_aad_bytes == secret_provider::default_max_aad_bytes);
+   BOOST_TEST(value.default_max_plaintext_bytes <= secret_provider::aes_update_bytes_ceiling);
+   BOOST_TEST(value.default_max_ciphertext_bytes <= secret_provider::aes_update_bytes_ceiling);
+   BOOST_TEST(value.default_max_aad_bytes <= secret_provider::aes_update_bytes_ceiling);
    BOOST_TEST(value.encrypted_file_max_scrypt_n == secret_provider::default_encrypted_file_max_scrypt_n);
    BOOST_TEST(value.encrypted_file_max_scrypt_r == secret_provider::default_encrypted_file_max_scrypt_r);
    BOOST_TEST(value.encrypted_file_max_scrypt_p == secret_provider::default_encrypted_file_max_scrypt_p);
@@ -189,6 +199,8 @@ BOOST_AUTO_TEST_CASE(secret_provider_descriptor_redacts_config_and_keeps_api_loc
       BOOST_TEST(found->has_default);
       BOOST_TEST(std::get<std::uint64_t>(found->default_value.storage) == expected);
    };
+   has_default_field("default-max-plaintext-bytes", secret_provider::default_max_plaintext_bytes);
+   has_default_field("default-max-ciphertext-bytes", secret_provider::default_max_ciphertext_bytes);
    has_default_field("default-max-aad-bytes", secret_provider::default_max_aad_bytes);
    has_default_field("encrypted-file-max-scrypt-n", secret_provider::default_encrypted_file_max_scrypt_n);
    has_default_field("encrypted-file-max-scrypt-r", secret_provider::default_encrypted_file_max_scrypt_r);
@@ -206,6 +218,52 @@ BOOST_AUTO_TEST_CASE(secret_provider_descriptor_redacts_config_and_keeps_api_loc
    const auto* text = std::get_if<std::string>(&value->storage);
    BOOST_REQUIRE(text != nullptr);
    BOOST_TEST(*text == "<redacted>");
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(secret_provider_rejects_default_payload_limits_above_aes_update_ceiling) try {
+   const auto too_large = secret_provider::aes_update_bytes_ceiling + 1U;
+
+   auto plaintext_document = provider_config(
+      {secret_entry("data-key", source_value(std::string(32, 'K')), {"payload.encrypt"}, {"encrypt_aes_gcm"})});
+   plaintext_document.set("secret-provider.default-max-plaintext-bytes", fcl::config::value{too_large});
+   auto plaintext_plugin = secret_provider::plugin{};
+   auto plaintext_runtime = fcl::asio::runtime{};
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(
+                        plaintext_runtime,
+                        plaintext_plugin.configure(fcl::config::component_view{plaintext_document, "secret-provider"})),
+                     secret_provider::exceptions::invalid_config);
+
+   auto ciphertext_document = provider_config(
+      {secret_entry("data-key", source_value(std::string(32, 'K')), {"payload.decrypt"}, {"decrypt_aes_gcm"})});
+   ciphertext_document.set("secret-provider.default-max-ciphertext-bytes", fcl::config::value{too_large});
+   auto ciphertext_plugin = secret_provider::plugin{};
+   auto ciphertext_runtime = fcl::asio::runtime{};
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(ciphertext_runtime,
+                                              ciphertext_plugin.configure(
+                                                 fcl::config::component_view{ciphertext_document, "secret-provider"})),
+                     secret_provider::exceptions::invalid_config);
+}
+FCL_LOG_AND_RETHROW();
+
+BOOST_AUTO_TEST_CASE(secret_provider_rejects_per_secret_payload_limits_above_aes_update_ceiling) try {
+   const auto too_large = secret_provider::aes_update_bytes_ceiling + 1U;
+
+   auto plaintext_plugin = secret_provider::plugin{};
+   auto plaintext_runtime = fcl::asio::runtime{};
+   const auto plaintext_document = provider_config({secret_entry_with_limit("max-plaintext-bytes", too_large)});
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(
+                        plaintext_runtime,
+                        plaintext_plugin.configure(fcl::config::component_view{plaintext_document, "secret-provider"})),
+                     secret_provider::exceptions::invalid_config);
+
+   auto ciphertext_plugin = secret_provider::plugin{};
+   auto ciphertext_runtime = fcl::asio::runtime{};
+   const auto ciphertext_document = provider_config({secret_entry_with_limit("max-ciphertext-bytes", too_large)});
+   BOOST_CHECK_THROW(fcl::asio::blocking::run(ciphertext_runtime,
+                                              ciphertext_plugin.configure(
+                                                 fcl::config::component_view{ciphertext_document, "secret-provider"})),
+                     secret_provider::exceptions::invalid_config);
 }
 FCL_LOG_AND_RETHROW();
 

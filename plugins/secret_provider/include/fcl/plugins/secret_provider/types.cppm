@@ -3,6 +3,7 @@ module;
 #include <boost/describe.hpp>
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -17,7 +18,8 @@ import fcl.schema.enums;
 export namespace fcl::plugins::secret_provider {
 
 inline constexpr auto default_max_plaintext_bytes = std::uint64_t{1'048'576};
-inline constexpr auto max_aad_bytes_ceiling = std::uint64_t{2'147'483'647};
+inline constexpr auto aes_update_bytes_ceiling = static_cast<std::uint64_t>(std::numeric_limits<int>::max());
+inline constexpr auto max_aad_bytes_ceiling = aes_update_bytes_ceiling;
 inline constexpr auto default_max_aad_bytes = std::uint64_t{1'048'576};
 inline constexpr auto encrypted_file_v1_magic_bytes = std::uint64_t{8};
 inline constexpr auto encrypted_file_v1_u64_fields = std::uint64_t{7};
@@ -264,11 +266,11 @@ export template <> struct fcl::schema::rules<fcl::plugins::secret_provider::secr
       schema.field<&fcl::plugins::secret_provider::secret_entry::allow_raw_export>("allow-raw-export")
          .default_value(false);
       schema.field<&fcl::plugins::secret_provider::secret_entry::max_plaintext_bytes>("max-plaintext-bytes")
-         .range(0, 1ULL << 32);
+         .range(0, fcl::plugins::secret_provider::aes_update_bytes_ceiling);
       schema.field<&fcl::plugins::secret_provider::secret_entry::max_ciphertext_bytes>("max-ciphertext-bytes")
-         .range(0, 1ULL << 32);
+         .range(0, fcl::plugins::secret_provider::aes_update_bytes_ceiling);
       schema.field<&fcl::plugins::secret_provider::secret_entry::max_aad_bytes>("max-aad-bytes")
-         .range(0, fcl::plugins::secret_provider::max_aad_bytes_ceiling);
+         .range(0, fcl::plugins::secret_provider::aes_update_bytes_ceiling);
       return schema;
    }
 };
@@ -282,13 +284,13 @@ export template <> struct fcl::schema::rules<fcl::plugins::secret_provider::conf
          .unique_by<&fcl::plugins::secret_provider::secret_entry::id>();
       schema.field<&fcl::plugins::secret_provider::config::default_max_plaintext_bytes>("default-max-plaintext-bytes")
          .default_value(fcl::plugins::secret_provider::default_max_plaintext_bytes)
-         .range(1, 1ULL << 32);
+         .range(1, fcl::plugins::secret_provider::aes_update_bytes_ceiling);
       schema.field<&fcl::plugins::secret_provider::config::default_max_ciphertext_bytes>("default-max-ciphertext-bytes")
          .default_value(fcl::plugins::secret_provider::default_max_ciphertext_bytes)
-         .range(1, 1ULL << 32);
+         .range(1, fcl::plugins::secret_provider::aes_update_bytes_ceiling);
       schema.field<&fcl::plugins::secret_provider::config::default_max_aad_bytes>("default-max-aad-bytes")
          .default_value(fcl::plugins::secret_provider::default_max_aad_bytes)
-         .range(1, fcl::plugins::secret_provider::max_aad_bytes_ceiling);
+         .range(1, fcl::plugins::secret_provider::aes_update_bytes_ceiling);
       schema.field<&fcl::plugins::secret_provider::config::encrypted_file_max_scrypt_n>("encrypted-file-max-scrypt-n")
          .default_value(fcl::plugins::secret_provider::default_encrypted_file_max_scrypt_n)
          .range(1, 1ULL << 32);

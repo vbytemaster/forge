@@ -47,20 +47,33 @@ template <typename Target, typename Source>
 [[nodiscard]] Target checked_integral_cast(Source value) {
    using limits = std::numeric_limits<Target>;
    if constexpr (std::signed_integral<Source> && std::signed_integral<Target>) {
-      if (value < static_cast<Source>((limits::min)()) || value > static_cast<Source>((limits::max)())) {
-         throw std::invalid_argument{"integer is outside target type range"};
+      if constexpr (std::numeric_limits<Target>::digits < std::numeric_limits<Source>::digits) {
+         const auto input = static_cast<std::intmax_t>(value);
+         if (input < static_cast<std::intmax_t>((limits::min)()) ||
+             input > static_cast<std::intmax_t>((limits::max)())) {
+            throw std::invalid_argument{"integer is outside target type range"};
+         }
       }
    } else if constexpr (std::signed_integral<Source> && std::unsigned_integral<Target>) {
-      if (value < 0 || static_cast<std::uint64_t>(value) > static_cast<std::uint64_t>((limits::max)())) {
+      if (value < 0) {
          throw std::invalid_argument{"integer is outside target type range"};
+      }
+      if constexpr (std::numeric_limits<Target>::digits < std::numeric_limits<Source>::digits) {
+         if (static_cast<std::uintmax_t>(value) > static_cast<std::uintmax_t>((limits::max)())) {
+            throw std::invalid_argument{"integer is outside target type range"};
+         }
       }
    } else if constexpr (std::unsigned_integral<Source> && std::signed_integral<Target>) {
-      if (value > static_cast<std::uint64_t>((limits::max)())) {
-         throw std::invalid_argument{"integer is outside target type range"};
+      if constexpr (std::numeric_limits<Target>::digits < std::numeric_limits<Source>::digits) {
+         if (static_cast<std::uintmax_t>(value) > static_cast<std::uintmax_t>((limits::max)())) {
+            throw std::invalid_argument{"integer is outside target type range"};
+         }
       }
    } else {
-      if (value > static_cast<std::uint64_t>((limits::max)())) {
-         throw std::invalid_argument{"integer is outside target type range"};
+      if constexpr (std::numeric_limits<Target>::digits < std::numeric_limits<Source>::digits) {
+         if (static_cast<std::uintmax_t>(value) > static_cast<std::uintmax_t>((limits::max)())) {
+            throw std::invalid_argument{"integer is outside target type range"};
+         }
       }
    }
    return static_cast<Target>(value);

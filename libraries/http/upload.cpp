@@ -702,15 +702,23 @@ std::optional<std::string> sanitize_upload_filename(std::string_view filename) {
    return output;
 }
 
+bool valid_multipart_header_value(std::string_view value) noexcept {
+   return std::ranges::none_of(value, [](char character) {
+      return static_cast<unsigned char>(character) < 0x20U || character == 0x7FU;
+   });
+}
+
 std::string quote_multipart_parameter(std::string_view value) {
+   if (!valid_multipart_header_value(value)) {
+      FCL_THROW_EXCEPTION(exceptions::bad_request, "multipart parameter contains unsafe characters");
+   }
+
    auto output = std::string{};
    output.reserve(value.size());
    for (const auto character : value) {
       if (character == '"' || character == '\\') {
          output.push_back('\\');
          output.push_back(character);
-      } else if (character == '\r' || character == '\n') {
-         output.push_back('_');
       } else {
          output.push_back(character);
       }
@@ -725,12 +733,6 @@ bool multipart_body_contains_boundary(const std::vector<multipart_writer_part>& 
       }
    }
    return false;
-}
-
-bool valid_multipart_header_value(std::string_view value) noexcept {
-   return std::ranges::none_of(value, [](char character) {
-      return static_cast<unsigned char>(character) < 0x20U || character == 0x7FU;
-   });
 }
 
 std::string generate_multipart_boundary(const std::vector<multipart_writer_part>& parts) {

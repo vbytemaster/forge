@@ -476,6 +476,13 @@ blob variant::as_blob() const {
          auto decoded = fcl::encoding::from_base64(str);
          return {std::vector<char>{decoded.begin(), decoded.end()}};
       } catch (const std::exception&) {
+         if (str.ends_with('=')) {
+            try {
+               auto decoded = fcl::encoding::from_base64(std::string_view{str}.substr(0, str.size() - 1U));
+               return {std::vector<char>{decoded.begin(), decoded.end()}};
+            } catch (const std::exception&) {
+            }
+         }
          // unable to decode, return the raw chars
       }
       return blob({std::vector<char>(str.begin(), str.end())});

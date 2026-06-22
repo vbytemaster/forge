@@ -4467,7 +4467,7 @@ BOOST_AUTO_TEST_CASE(http_multipart_writer_generates_safe_boundaries_and_quoted_
       multipart_writer_part{.name = "title", .body = payload},
       multipart_writer_part{
          .name = "file",
-         .filename = std::string{"..\\secret\"\r\nX-Injected: yes.txt"},
+         .filename = std::string{"..\\secret\"quoted.txt"},
          .content_type = "text/plain",
          .body = "file-body",
       },
@@ -4488,6 +4488,36 @@ BOOST_AUTO_TEST_CASE(http_multipart_writer_generates_safe_boundaries_and_quoted_
    BOOST_TEST(form.files.front().name == "file");
    BOOST_TEST(form.files.front().content_type == "text/plain");
    BOOST_TEST(form.files.front().text() == "file-body");
+}
+
+BOOST_AUTO_TEST_CASE(http_multipart_writer_rejects_control_bytes_in_parameters) {
+   BOOST_CHECK_THROW(
+      static_cast<void>(write_multipart_form({
+         multipart_writer_part{
+            .name = std::string{"field\r\nX-Injected: yes"},
+            .body = "value",
+         },
+      })),
+      fcl::http::exceptions::bad_request);
+
+   BOOST_CHECK_THROW(
+      static_cast<void>(write_multipart_form({
+         multipart_writer_part{
+            .name = std::string{"field\033name"},
+            .body = "value",
+         },
+      })),
+      fcl::http::exceptions::bad_request);
+
+   BOOST_CHECK_THROW(
+      static_cast<void>(write_multipart_form({
+         multipart_writer_part{
+            .name = "file",
+            .filename = std::string{"bad\0name.txt", 12},
+            .body = "file-body",
+         },
+      })),
+      fcl::http::exceptions::bad_request);
 }
 
 BOOST_AUTO_TEST_CASE(http_multipart_writer_rejects_crlf_in_content_type) {

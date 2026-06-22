@@ -37,6 +37,51 @@ int base64_value(char value) noexcept {
    return -1;
 }
 
+std::size_t base64_data_size(std::string_view input) {
+   auto padding = std::size_t{0};
+   while (padding < input.size() && input[input.size() - padding - 1U] == '=') {
+      ++padding;
+   }
+   if (padding > 2U) {
+      throw std::invalid_argument{"base64 padding is invalid"};
+   }
+
+   const auto data_size = input.size() - padding;
+   if (padding > 0U && input.size() % 4U != 0U) {
+      throw std::invalid_argument{"base64 padding is invalid"};
+   }
+
+   const auto remainder = data_size % 4U;
+   if (remainder == 1U) {
+      throw std::invalid_argument{"base64 length is invalid"};
+   }
+   if (padding == 1U && remainder != 3U) {
+      throw std::invalid_argument{"base64 padding is invalid"};
+   }
+   if (padding == 2U && remainder != 2U) {
+      throw std::invalid_argument{"base64 padding is invalid"};
+   }
+
+   for (auto index = std::size_t{0}; index < input.size(); ++index) {
+      const auto decoded = base64_value(input[index]);
+      if (decoded < 0 && decoded != -2) {
+         throw std::invalid_argument{"encountered non-base64 character"};
+      }
+      if (decoded == -2 && index < data_size) {
+         throw std::invalid_argument{"base64 padding is invalid"};
+      }
+   }
+
+   if (remainder == 2U && data_size > 0U && (base64_value(input[data_size - 1U]) & 0x0f) != 0) {
+      throw std::invalid_argument{"base64 trailing bits are non-canonical"};
+   }
+   if (remainder == 3U && data_size > 0U && (base64_value(input[data_size - 1U]) & 0x03) != 0) {
+      throw std::invalid_argument{"base64 trailing bits are non-canonical"};
+   }
+
+   return data_size;
+}
+
 char hex_char(unsigned value) noexcept {
    return static_cast<char>(value < 10 ? ('0' + value) : ('a' + value - 10));
 }
@@ -72,22 +117,20 @@ std::string to_base64(std::span<const std::uint8_t> data) {
 }
 
 std::vector<std::uint8_t> from_base64(std::string_view input) {
+   const auto data_size = base64_data_size(input);
    auto out = std::vector<std::uint8_t>{};
-   auto value = 0;
+   out.reserve((data_size * 3U) / 4U);
+   auto value = std::uint32_t{0};
    auto bits = -8;
-   for (const auto ch : input) {
+   for (auto index = std::size_t{0}; index < data_size; ++index) {
+      const auto ch = input[index];
       const auto decoded = base64_value(ch);
-      if (decoded == -2) {
-         break;
-      }
-      if (decoded < 0) {
-         throw std::invalid_argument{"encountered non-base64 character"};
-      }
-      value = (value << 6) + decoded;
+      value = (value << 6U) | static_cast<std::uint32_t>(decoded);
       bits += 6;
       if (bits >= 0) {
          out.push_back(static_cast<std::uint8_t>((value >> bits) & 0xff));
          bits -= 8;
+         value &= 0x00ffffffU;
       }
    }
    return out;
@@ -104,7 +147,10 @@ std::string to_hex(std::span<const std::uint8_t> data) {
 }
 
 std::size_t from_hex(std::string_view input, std::span<std::uint8_t> output) {
-   const auto count = input.size() / 2U;
+   if (input.size() % 2U != 0U) {
+      throw std::invalid_argument{"hex input length must be even"};
+   }
+   const auto count = input.size() / std::size_t{2};
    if (count > output.size()) {
       throw std::out_of_range{"hex output buffer too small"};
    }

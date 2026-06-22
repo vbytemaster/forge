@@ -4,6 +4,7 @@ add_executable(
    test_fcl
    unit/main.cpp
    core/test_chrono.cpp
+   core/test_encoding.cpp
    core/test_escape_str.cpp
    variant/test_static_variant.cpp
    variant/test_variant.cpp

@@ -21,6 +21,7 @@ import fcl.http.binding;
 import fcl.http.exceptions;
 import fcl.http.types;
 import fcl.reflect.reflect;
+import fcl.schema.scalar;
 
 export namespace fcl::http {
 
@@ -100,7 +101,7 @@ namespace detail {
    return std::isalnum(ch) != 0 || value == '-' || value == '.' || value == '_' || value == '~';
 }
 
-[[nodiscard]] inline std::string percent_encode(std::string_view value) {
+[[nodiscard]] inline std::string encode_uri_component(std::string_view value) {
    constexpr auto* hex = "0123456789ABCDEF";
    auto output = std::string{};
    output.reserve(value.size());
@@ -117,60 +118,48 @@ namespace detail {
    return output;
 }
 
-template <typename T> struct is_optional : std::false_type {};
-template <typename T> struct is_optional<std::optional<T>> : std::true_type {
-   using value_type = T;
-};
+[[nodiscard]] inline std::string encode_path_segment(std::string_view value) {
+   return encode_uri_component(value);
+}
 
-template <typename T> [[nodiscard]] std::optional<std::string> field_to_text(const T& value) {
+[[nodiscard]] inline std::string encode_query_component(std::string_view value) {
+   return encode_uri_component(value);
+}
+
+template <typename T> [[nodiscard]] std::optional<std::string> format_http_field(const T& value) {
    using clean = std::remove_cvref_t<T>;
    if constexpr (detail::is_header<clean>::value) {
       if (!value.present) {
          return std::nullopt;
       }
-      return field_to_text(value.value);
+      return format_http_field(value.value);
    } else if constexpr (detail::is_query<clean>::value) {
       if (!value.present) {
          return std::nullopt;
       }
-      return field_to_text(value.value);
+      return format_http_field(value.value);
    } else if constexpr (detail::is_cookie<clean>::value) {
       if (!value.present) {
          return std::nullopt;
       }
-      return field_to_text(value.value);
+      return format_http_field(value.value);
    } else if constexpr (detail::is_body<clean>::value) {
       if (!value.present) {
          return std::nullopt;
       }
-      return field_to_text(value.value);
+      return format_http_field(value.value);
    } else if constexpr (detail::is_form<clean>::value) {
       if (!value.present) {
          return std::nullopt;
       }
-      return field_to_text(value.value);
+      return format_http_field(value.value);
    } else if constexpr (detail::is_form_field<clean>::value) {
       if (!value.present) {
          return std::nullopt;
       }
-      return field_to_text(value.value);
-   } else if constexpr (is_optional<clean>::value) {
-      if (!value.has_value()) {
-         return std::nullopt;
-      }
-      return field_to_text(*value);
-   } else if constexpr (std::is_same_v<clean, std::string>) {
-      return value;
-   } else if constexpr (std::is_same_v<clean, bool>) {
-      return value ? std::string{"true"} : std::string{"false"};
-   } else if constexpr (std::is_integral_v<clean>) {
-      return std::to_string(value);
-   } else if constexpr (std::is_floating_point_v<clean>) {
-      auto stream = std::ostringstream{};
-      stream << value;
-      return stream.str();
+      return format_http_field(value.value);
    } else {
-      return std::nullopt;
+      return fcl::schema::format_scalar_text(value);
    }
 }
 
@@ -180,7 +169,7 @@ template <typename Request>
    if constexpr (fcl::reflect::is_described_object_v<Request>) {
       fcl::reflect::for_each_member<Request>([&](const char* field_name, auto member) {
          if (!result.has_value() && std::string_view{field_name} == name) {
-            result = field_to_text(request.*member);
+            result = format_http_field(request.*member);
          }
       });
    }
@@ -287,16 +276,17 @@ template <typename Request> [[nodiscard]] std::string render_route_target(const 
             ++index;
             continue;
          }
-         output += percent_encode(require_request_field(request, std::string_view{route.target}.substr(index + 1U,
-                                                                                                       end - index - 1U)));
+         output += encode_path_segment(require_request_field(request, std::string_view{route.target}.substr(index + 1U,
+                                                                                                            end - index - 1U)));
          index = end;
          continue;
       }
       if (current == '{') {
          const auto end = route.target.find('}', index + 1U);
          if (end != std::string::npos) {
-            output += percent_encode(require_request_field(request, std::string_view{route.target}.substr(index + 1U,
-                                                                                                          end - index - 1U)));
+            output += encode_query_component(require_request_field(request,
+                                                                   std::string_view{route.target}.substr(index + 1U,
+                                                                                                         end - index - 1U)));
             index = end + 1U;
             continue;
          }

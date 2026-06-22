@@ -45,7 +45,7 @@ template <typename Interface> class proxy;
 
 namespace detail {
 
-[[nodiscard]] inline fcl::api::error_payload parse_error_payload(const response& value) {
+[[nodiscard]] inline fcl::api::error_payload decode_error_payload(const response& value) {
    auto decoded = fcl::json::read<fcl::api::error_payload>(
       value.body(), fcl::json::read_options{.source_name = "http.error",
                                             .unknown_fields = fcl::json::unknown_field_policy::ignore});
@@ -106,7 +106,7 @@ void apply_route_headers(request& target, const api_route& route, const Request&
          if constexpr (detail::is_header<member_type>::value) {
             const auto& header = value.*member;
             if (header.present) {
-               auto encoded = field_to_text(header.value);
+               auto encoded = format_http_field(header.value);
                if (!encoded.has_value()) {
                   FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
                                       "HTTP API header value cannot be encoded as text");
@@ -131,15 +131,15 @@ void append_route_query_fields(std::string& target, const api_route& route, cons
                }) != parsed.query.end();
             const auto& query = value.*member;
             if (!already_rendered && query.present) {
-               auto encoded = field_to_text(query.value);
+               auto encoded = format_http_field(query.value);
                if (!encoded.has_value()) {
                   FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
                                       "HTTP API query value cannot be encoded as text");
                }
                target.push_back(target.find('?') == std::string::npos ? '?' : '&');
-               target += percent_encode(route_query_name(route, field_name));
+               target += encode_query_component(route_query_name(route, field_name));
                target.push_back('=');
-               target += percent_encode(*encoded);
+               target += encode_query_component(*encoded);
             }
          }
       });
@@ -155,7 +155,7 @@ void apply_route_cookies(request& target, const Request& value) {
          if constexpr (detail::is_cookie<member_type>::value) {
             const auto& field = value.*member;
             if (field.present) {
-               auto encoded = field_to_text(field.value);
+               auto encoded = format_http_field(field.value);
                if (!encoded.has_value()) {
                   FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
                                       "HTTP API cookie value cannot be encoded as text");
@@ -194,12 +194,12 @@ template <typename Tuple>
                         detail::is_form<argument_type>::value ||
                         detail::is_form_field<argument_type>::value) {
              if (argument.present) {
-                result = field_to_text(argument.value);
+                result = format_http_field(argument.value);
              }
           } else if constexpr (!detail::is_body_stream_v<argument_type> &&
                                !detail::is_body_bytes_v<argument_type> &&
                                !detail::is_upload_file_v<argument_type>) {
-             result = field_to_text(argument);
+             result = format_http_field(argument);
           }
        }()),
        ...);
@@ -273,7 +273,7 @@ template <typename Tuple>
             continue;
          }
          const auto field_name = std::string_view{route.target}.substr(index + 1U, end - index - 1U);
-         output += percent_encode(require_tuple_argument_text(arguments, names, field_name));
+         output += encode_path_segment(require_tuple_argument_text(arguments, names, field_name));
          mark_argument_consumed(result.consumed, names, field_name);
          index = end;
          continue;
@@ -282,7 +282,7 @@ template <typename Tuple>
          const auto end = route.target.find('}', index + 1U);
          if (end != std::string::npos) {
             const auto field_name = std::string_view{route.target}.substr(index + 1U, end - index - 1U);
-            output += percent_encode(require_tuple_argument_text(arguments, names, field_name));
+            output += encode_query_component(require_tuple_argument_text(arguments, names, field_name));
             mark_argument_consumed(result.consumed, names, field_name);
             index = end + 1U;
             continue;
@@ -313,15 +313,15 @@ void append_unconsumed_query_arguments(std::string& target,
                 if (!argument.present) {
                    return;
                 }
-                auto encoded = field_to_text(argument.value);
+                auto encoded = format_http_field(argument.value);
                 if (!encoded.has_value()) {
                    FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
                                        "HTTP API query value cannot be encoded as text");
                 }
                 target.push_back(target.find('?') == std::string::npos ? '?' : '&');
-                target += percent_encode(route_query_name(route, names[Index]));
+                target += encode_query_component(route_query_name(route, names[Index]));
                 target.push_back('=');
-                target += percent_encode(*encoded);
+                target += encode_query_component(*encoded);
              }
           }
        }()),
@@ -345,7 +345,7 @@ void apply_route_headers(request& target,
                                        "HTTP API positional header name is missing");
                 }
                 if (argument.present) {
-                   auto encoded = field_to_text(argument.value);
+                   auto encoded = format_http_field(argument.value);
                    if (!encoded.has_value()) {
                       FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
                                           "HTTP API header value cannot be encoded as text");
@@ -375,7 +375,7 @@ void apply_route_cookies(request& target,
                                        "HTTP API positional cookie name is missing");
                 }
                 if (argument.present) {
-                   auto encoded = field_to_text(argument.value);
+                   auto encoded = format_http_field(argument.value);
                    if (!encoded.has_value()) {
                       FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
                                           "HTTP API cookie value cannot be encoded as text");
@@ -700,7 +700,7 @@ std::optional<std::string> dto_multipart_body(request& target, const api_route& 
          if constexpr (detail::is_form<member_type>::value || detail::is_form_field<member_type>::value) {
             const auto& field = value.*member;
             if (field.present) {
-               auto encoded = field_to_text(field.value);
+               auto encoded = format_http_field(field.value);
                if (!encoded.has_value()) {
                   FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request,
                                       "HTTP API form value cannot be encoded as text");
@@ -838,7 +838,7 @@ boost::asio::awaitable<Response> call(client& target, const fcl::api::descriptor
          : co_await target.async_stream_request(std::move(request_value));
       if (response_value.head.result_int() < 200U || response_value.head.result_int() >= 300U) {
          response_value.head.body() = co_await read_bounded_error_body(response_value.body);
-         auto error = parse_error_payload(response_value.head);
+         auto error = decode_error_payload(response_value.head);
          fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
       }
       if constexpr (std::is_same_v<std::remove_cvref_t<Response>, file_response>) {
@@ -853,7 +853,7 @@ boost::asio::awaitable<Response> call(client& target, const fcl::api::descriptor
          ? co_await target.async_streaming_request(std::move(request_value), std::move(*body))
          : co_await target.async_request(std::move(request_value));
       if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
-         auto error = parse_error_payload(response_value);
+         auto error = decode_error_payload(response_value);
          fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
       }
       auto bytes = std::vector<std::byte>(response_value.body().size());
@@ -876,7 +876,7 @@ boost::asio::awaitable<Response> call(client& target, const fcl::api::descriptor
          ? co_await target.async_streaming_request(std::move(request_value), std::move(*body))
          : co_await target.async_request(std::move(request_value));
       if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
-         auto error = parse_error_payload(response_value);
+         auto error = decode_error_payload(response_value);
          fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
       }
       co_return Response{.status_code = response_value.result()};
@@ -887,7 +887,7 @@ boost::asio::awaitable<Response> call(client& target, const fcl::api::descriptor
          ? co_await target.async_streaming_request(std::move(request_value), std::move(*body))
          : co_await target.async_request(std::move(request_value));
       if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
-         auto error = parse_error_payload(response_value);
+         auto error = decode_error_payload(response_value);
          fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
       }
       auto decoded = fcl::json::read<Response>(response_value.body(),
@@ -916,7 +916,7 @@ boost::asio::awaitable<Response> call_arguments(client& target,
          : co_await target.async_stream_request(std::move(request_parts.value));
       if (response_value.head.result_int() < 200U || response_value.head.result_int() >= 300U) {
          response_value.head.body() = co_await read_bounded_error_body(response_value.body);
-         auto error = parse_error_payload(response_value.head);
+         auto error = decode_error_payload(response_value.head);
          fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
       }
       if constexpr (std::is_same_v<std::remove_cvref_t<Response>, file_response>) {
@@ -929,7 +929,7 @@ boost::asio::awaitable<Response> call_arguments(client& target,
          ? co_await target.async_streaming_request(std::move(request_parts.value), std::move(*request_body))
          : co_await target.async_request(std::move(request_parts.value));
       if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
-         auto error = parse_error_payload(response_value);
+         auto error = decode_error_payload(response_value);
          fcl::api::raise_remote_error(error, fcl::api::find_method(descriptor, route.method_name));
       }
       if constexpr (detail::is_bytes_response_v<Response>) {

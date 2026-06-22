@@ -49,6 +49,7 @@ import fcl.json;
 import fcl.reflect.reflect;
 import fcl.schema.diagnostic;
 import fcl.schema.object;
+import fcl.schema.scalar;
 
 export namespace fcl::http {
 
@@ -352,86 +353,51 @@ class api_builder {
       return std::nullopt;
    }
 
-   template <typename T> static void assign_from_text(T& target, std::string_view value, std::string_view field) {
+   template <typename T> static void parse_http_field(T& target, std::string_view value, std::string_view field) {
       using clean = std::remove_cvref_t<T>;
       if constexpr (detail::is_header<clean>::value) {
          typename detail::is_header<clean>::value_type parsed{};
-         assign_from_text(parsed, value, field);
+         parse_http_field(parsed, value, field);
          target.value = std::move(parsed);
          target.present = true;
       } else if constexpr (detail::is_query<clean>::value) {
          typename detail::is_query<clean>::value_type parsed{};
-         assign_from_text(parsed, value, field);
+         parse_http_field(parsed, value, field);
          target.value = std::move(parsed);
          target.present = true;
       } else if constexpr (detail::is_cookie<clean>::value) {
          typename detail::is_cookie<clean>::value_type parsed{};
-         assign_from_text(parsed, value, field);
+         parse_http_field(parsed, value, field);
          target.value = std::move(parsed);
          target.present = true;
       } else if constexpr (detail::is_body<clean>::value) {
          typename detail::is_body<clean>::value_type parsed{};
-         assign_from_text(parsed, value, field);
+         parse_http_field(parsed, value, field);
          target.value = std::move(parsed);
          target.present = true;
       } else if constexpr (detail::is_form<clean>::value) {
          typename detail::is_form<clean>::value_type parsed{};
-         assign_from_text(parsed, value, field);
+         parse_http_field(parsed, value, field);
          target.value = std::move(parsed);
          target.present = true;
       } else if constexpr (detail::is_form_field<clean>::value) {
          typename detail::is_form_field<clean>::value_type parsed{};
-         assign_from_text(parsed, value, field);
+         parse_http_field(parsed, value, field);
          target.value = std::move(parsed);
          target.present = true;
       } else if constexpr (is_optional<clean>::value) {
          typename is_optional<clean>::value_type parsed{};
-         assign_from_text(parsed, value, field);
+         parse_http_field(parsed, value, field);
          target = std::move(parsed);
-      } else if constexpr (std::is_same_v<clean, std::string>) {
-         target = std::string{value};
-      } else if constexpr (std::is_same_v<clean, bool>) {
-         if (value == "true" || value == "1" || value == "yes" || value == "on") {
-            target = true;
-         } else if (value == "false" || value == "0" || value == "no" || value == "off") {
-            target = false;
-         } else {
-            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API query boolean is invalid",
+      } else if constexpr (std::is_same_v<clean, std::string> || std::is_same_v<clean, bool> ||
+                           (std::is_integral_v<clean> && !std::is_same_v<clean, bool>) ||
+                           std::is_floating_point_v<clean> || std::is_enum_v<clean>) {
+         try {
+            target = fcl::schema::parse_scalar_text<clean>(value);
+         } catch (const std::invalid_argument&) {
+            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API field value is invalid",
                                 fcl::exceptions::ctx("field", std::string{field}));
          }
-      } else if constexpr (std::is_integral_v<clean>) {
-         if constexpr (std::is_signed_v<clean>) {
-            auto parsed = 0LL;
-            const auto* first = value.data();
-            const auto* last = value.data() + value.size();
-            const auto [ptr, ec] = std::from_chars(first, last, parsed);
-            if (ec != std::errc{} || ptr != last || parsed < std::numeric_limits<clean>::min() ||
-                parsed > std::numeric_limits<clean>::max()) {
-               FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API query integer is invalid",
-                                   fcl::exceptions::ctx("field", std::string{field}));
-            }
-            target = static_cast<clean>(parsed);
-         } else {
-            auto parsed = 0ULL;
-            const auto* first = value.data();
-            const auto* last = value.data() + value.size();
-            const auto [ptr, ec] = std::from_chars(first, last, parsed);
-            if (ec != std::errc{} || ptr != last || parsed > std::numeric_limits<clean>::max()) {
-               FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API query integer is invalid",
-                                   fcl::exceptions::ctx("field", std::string{field}));
-            }
-            target = static_cast<clean>(parsed);
-         }
-      } else if constexpr (std::is_floating_point_v<clean>) {
-         auto copy = std::string{value};
-         char* end = nullptr;
-         errno = 0;
-         const auto parsed = std::strtold(copy.c_str(), &end);
-         if (errno != 0 || end != copy.c_str() + copy.size()) {
-            FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API query number is invalid",
-                                fcl::exceptions::ctx("field", std::string{field}));
-         }
-         target = static_cast<clean>(parsed);
       } else {
          FCL_THROW_EXCEPTION(fcl::http::exceptions::bad_request, "HTTP API route field type is not supported",
                              fcl::exceptions::ctx("field", std::string{field}));
@@ -445,7 +411,7 @@ class api_builder {
       if constexpr (fcl::reflect::is_described_object_v<Request>) {
          fcl::reflect::for_each_member<Request>([&](const char* name, auto member) {
             if (auto value = route_value(context, options, name); value.has_value()) {
-               assign_from_text(request.*member, *value, name);
+               parse_http_field(request.*member, *value, name);
             }
          });
       }
@@ -526,7 +492,7 @@ class api_builder {
             if constexpr (detail::is_header<member_type>::value) {
                const auto header_name = mapped_name_or_default(options.headers, name, header_name_from_field);
                if (auto value = header_value(context.request, header_name); value.has_value()) {
-                  assign_from_text(request.*member, *value, name);
+                  parse_http_field(request.*member, *value, name);
                }
             }
          });
@@ -540,7 +506,7 @@ class api_builder {
             using member_type = std::remove_cvref_t<decltype(request.*member)>;
             if constexpr (detail::is_cookie<member_type>::value) {
                if (auto value = cookie_value(context.request, name); value.has_value()) {
-                  assign_from_text(request.*member, *value, name);
+                  parse_http_field(request.*member, *value, name);
                }
             }
          });
@@ -603,12 +569,12 @@ class api_builder {
             if constexpr (detail::is_form<member_type>::value) {
                const auto form_name = mapped_name_or_default(options.forms, name, identity_name);
                if (auto value = form.field(form_name); value.has_value()) {
-                  assign_from_text(request.*member, *value, name);
+                  parse_http_field(request.*member, *value, name);
                }
             } else if constexpr (detail::is_form_field<member_type>::value) {
                const auto form_name = mapped_name_or_default(options.forms, name, identity_name);
                if (auto value = form.field(form_name); value.has_value()) {
-                  assign_from_text(request.*member, *value, name);
+                  parse_http_field(request.*member, *value, name);
                }
             } else if constexpr (detail::is_upload_file_v<member_type>) {
                const auto form_name = mapped_name_or_default(options.forms, name, identity_name);
@@ -879,7 +845,7 @@ class api_builder {
          fcl::reflect::for_each_member<Value>([&](const char* name, auto member) {
             if (auto route = route_value(context, options, name); route.has_value()) {
                auto expected = std::remove_cvref_t<decltype(value.*member)>{};
-               assign_from_text(expected, *route, name);
+               parse_http_field(expected, *route, name);
                require_equal(value.*member, expected, name);
             }
          });
@@ -900,15 +866,15 @@ class api_builder {
       if constexpr (detail::is_header<clean>::value) {
          const auto header_name = mapped_name_or_default(options.headers, name, header_name_from_field);
          if (auto value = header_value(context.request, header_name); value.has_value()) {
-            assign_from_text(result, *value, name);
+            parse_http_field(result, *value, name);
          }
       } else if constexpr (detail::is_query<clean>::value) {
          if (auto value = query_value(context, options, name); value.has_value()) {
-            assign_from_text(result, *value, name);
+            parse_http_field(result, *value, name);
          }
       } else if constexpr (detail::is_cookie<clean>::value) {
          if (auto value = cookie_value(context.request, name); value.has_value()) {
-            assign_from_text(result, *value, name);
+            parse_http_field(result, *value, name);
          }
       } else if constexpr (detail::is_body<clean>::value) {
          if (!context.request.body().empty()) {
@@ -928,7 +894,7 @@ class api_builder {
          static_cast<void>(context);
          static_cast<void>(options);
       } else if (auto value = route_value(context, options, name); value.has_value()) {
-         assign_from_text(result, *value, name);
+         parse_http_field(result, *value, name);
       } else if constexpr (is_plain_json_body_argument_v<clean>) {
          if (decode_plain_json_body) {
             const auto content_type = context.request.find(field::content_type);
@@ -992,7 +958,7 @@ class api_builder {
          if (form != nullptr) {
             const auto form_name = mapped_name_or_default(options.forms, name, identity_name);
             if (auto value = form->field(form_name); value.has_value()) {
-               assign_from_text(result, *value, name);
+               parse_http_field(result, *value, name);
             }
          }
          co_return result;
@@ -1117,7 +1083,7 @@ class api_builder {
             using member_type = std::remove_cvref_t<decltype(request.*member)>;
             if constexpr (detail::is_query<member_type>::value) {
                if (auto value = query_value(context, options, name); value.has_value()) {
-                  assign_from_text(request.*member, *value, name);
+                  parse_http_field(request.*member, *value, name);
                }
                return;
             }
@@ -1132,7 +1098,7 @@ class api_builder {
             }
             if (auto value = route_value(context, options, name); value.has_value()) {
                auto expected = std::remove_cvref_t<decltype(request.*member)>{};
-               assign_from_text(expected, *value, name);
+               parse_http_field(expected, *value, name);
                if (body_was_decoded) {
                   require_equal(request.*member, expected, name);
                } else {

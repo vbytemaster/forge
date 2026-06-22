@@ -6,6 +6,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <optional>
 #include <vector>
 
 import fcl.config.key_path;
@@ -18,6 +19,7 @@ import fcl.schema.diagnostic;
 import fcl.schema.value_kind;
 import fcl.schema.object;
 import fcl.schema.enums;
+import fcl.schema.scalar;
 
 namespace {
 
@@ -44,6 +46,12 @@ struct nested_signer_config {
    std::vector<nested_key_config> keys;
    std::string default_output_profile = "fcl";
 };
+
+enum class scalar_test_mode : std::uint8_t {
+   fast_mode = 1,
+   safe_mode = 2,
+};
+BOOST_DESCRIBE_ENUM(scalar_test_mode, fast_mode, safe_mode)
 
 } // namespace
 
@@ -159,6 +167,22 @@ BOOST_AUTO_TEST_CASE(config_decode_rejects_integer_overflow_before_range_validat
    BOOST_TEST(!decoded_trailing.ok());
    BOOST_TEST(has_diagnostic(decoded_trailing.diagnostics.entries, "http.bind-port", "config.type"));
    BOOST_TEST(decoded_trailing.value.bind_port == 8080U);
+}
+
+BOOST_AUTO_TEST_CASE(schema_scalar_text_codec_is_shared_and_checked) {
+   BOOST_TEST(fcl::schema::parse_scalar_text<std::uint16_t>("65535") == 65535U);
+   BOOST_CHECK_THROW((void)fcl::schema::parse_scalar_text<std::uint16_t>("65536"), std::invalid_argument);
+   BOOST_CHECK_THROW((void)fcl::schema::parse_scalar_text<std::uint16_t>("12tail"), std::invalid_argument);
+   BOOST_CHECK_THROW((void)fcl::schema::parse_scalar_text<std::uint16_t>("-1"), std::invalid_argument);
+
+   BOOST_TEST(fcl::schema::parse_scalar_text<bool>("yes"));
+   BOOST_CHECK_THROW((void)fcl::schema::parse_scalar_text<bool>("maybe"), std::invalid_argument);
+
+   BOOST_TEST(static_cast<int>(fcl::schema::parse_scalar_text<scalar_test_mode>("safe-mode")) ==
+              static_cast<int>(scalar_test_mode::safe_mode));
+   BOOST_TEST(fcl::schema::format_scalar_text(scalar_test_mode::fast_mode).value_or("") == "fast-mode");
+   BOOST_TEST(fcl::schema::format_scalar_text(std::optional<std::uint16_t>{7}).value_or("") == "7");
+   BOOST_TEST(!fcl::schema::format_scalar_text(std::optional<std::uint16_t>{}).has_value());
 }
 
 BOOST_AUTO_TEST_CASE(config_value_to_any_rejects_integer_overflow_and_trailing_junk) {

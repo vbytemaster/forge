@@ -20,20 +20,17 @@ import fcl.schema.diagnostic;
 import fcl.schema.value_kind;
 import fcl.schema.object;
 import fcl.schema.enums;
+import fcl.schema.scalar;
 
 namespace fcl::config {
 
 bool parse_bool_text(std::string text, bool& output) {
-   std::ranges::transform(text, text.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-   if (text == "true" || text == "1" || text == "yes" || text == "on") {
-      output = true;
+   try {
+      output = fcl::schema::parse_scalar_text<bool>(text);
       return true;
+   } catch (const std::invalid_argument&) {
+      return false;
    }
-   if (text == "false" || text == "0" || text == "no" || text == "off") {
-      output = false;
-      return true;
-   }
-   return false;
 }
 
 schema::input_value to_schema_value(const value& input) {
@@ -70,28 +67,6 @@ schema::input_value to_schema_value(const value& input) {
    return schema::input_value{};
 }
 
-std::optional<std::int64_t> parse_signed_integer(std::string_view input) {
-   auto parsed = std::int64_t{};
-   const auto* first = input.data();
-   const auto* last = input.data() + input.size();
-   const auto [ptr, ec] = std::from_chars(first, last, parsed);
-   if (ec != std::errc{} || ptr != last) {
-      return std::nullopt;
-   }
-   return parsed;
-}
-
-std::optional<std::uint64_t> parse_unsigned_integer(std::string_view input) {
-   auto parsed = std::uint64_t{};
-   const auto* first = input.data();
-   const auto* last = input.data() + input.size();
-   const auto [ptr, ec] = std::from_chars(first, last, parsed);
-   if (ec != std::errc{} || ptr != last) {
-      return std::nullopt;
-   }
-   return parsed;
-}
-
 std::any value_to_any(const value& input, schema::value_kind kind) {
    switch (kind) {
    case schema::value_kind::boolean:
@@ -110,15 +85,10 @@ std::any value_to_any(const value& input, schema::value_kind kind) {
          return *signed_value;
       }
       if (const auto* unsigned_value = std::get_if<std::uint64_t>(&input.storage)) {
-         if (*unsigned_value > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
-            break;
-         }
-         return static_cast<std::int64_t>(*unsigned_value);
+         return fcl::schema::checked_integral_cast<std::int64_t>(*unsigned_value);
       }
       if (const auto* string_value = std::get_if<std::string>(&input.storage)) {
-         if (const auto parsed = parse_signed_integer(*string_value)) {
-            return *parsed;
-         }
+         return fcl::schema::parse_scalar_text<std::int64_t>(*string_value);
       }
       break;
    case schema::value_kind::unsigned_integer:
@@ -126,15 +96,10 @@ std::any value_to_any(const value& input, schema::value_kind kind) {
          return *unsigned_value;
       }
       if (const auto* signed_value = std::get_if<std::int64_t>(&input.storage)) {
-         if (*signed_value < 0) {
-            break;
-         }
-         return static_cast<std::uint64_t>(*signed_value);
+         return fcl::schema::checked_integral_cast<std::uint64_t>(*signed_value);
       }
       if (const auto* string_value = std::get_if<std::string>(&input.storage)) {
-         if (const auto parsed = parse_unsigned_integer(*string_value)) {
-            return *parsed;
-         }
+         return fcl::schema::parse_scalar_text<std::uint64_t>(*string_value);
       }
       break;
    case schema::value_kind::floating:
@@ -148,7 +113,7 @@ std::any value_to_any(const value& input, schema::value_kind kind) {
          return static_cast<double>(*unsigned_value);
       }
       if (const auto* string_value = std::get_if<std::string>(&input.storage)) {
-         return std::stod(*string_value);
+         return fcl::schema::parse_scalar_text<double>(*string_value);
       }
       break;
    case schema::value_kind::string:

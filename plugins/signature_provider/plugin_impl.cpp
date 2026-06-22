@@ -13,10 +13,6 @@ module;
 module fcl.plugins.signature_provider.plugin;
 
 import fcl.crypto.asymmetric;
-import fcl.crypto.ed25519;
-import fcl.crypto.p256;
-import fcl.crypto.rsa;
-import fcl.crypto.secp256k1;
 import fcl.crypto.sha256;
 import fcl.exceptions;
 import fcl.plugins.signature_provider.api;
@@ -41,23 +37,6 @@ namespace {
       return key_algorithm::rsa;
    }
    return key_algorithm::any;
-}
-
-[[nodiscard]] fcl::crypto::asymmetric::signature sign_digest(const fcl::crypto::asymmetric::private_key& key,
-                                                             const fcl::crypto::sha256& digest) {
-   using namespace fcl::crypto;
-   using storage_type = asymmetric::signature::storage_type;
-   switch (key.type()) {
-   case asymmetric::algorithm::secp256k1:
-      return asymmetric::signature{storage_type{key.as<secp256k1::private_key_shim>().sign(digest, true)}};
-   case asymmetric::algorithm::p256:
-      return asymmetric::signature{storage_type{key.as<p256::private_key_shim>().sign(digest, true)}};
-   case asymmetric::algorithm::ed25519:
-      return asymmetric::signature{storage_type{key.as<ed25519::private_key_shim>().sign(digest.to_uint8_span())}};
-   case asymmetric::algorithm::rsa:
-      return asymmetric::signature{storage_type{key.as<rsa::private_key_shim>().sign(digest.to_uint8_span())}};
-   }
-   FCL_THROW_EXCEPTION(exceptions::unsupported_algorithm, "unsupported signer key algorithm");
 }
 
 [[nodiscard]] bool purpose_allowed(const std::vector<std::string>& allowed, std::string_view value) noexcept {
@@ -124,7 +103,7 @@ response plugin::impl::sign(request value) const {
    const auto profile_name =
       value.output_profile.empty() ? std::string_view{default_output_profile} : std::string_view{value.output_profile};
    const auto& output_profile = profile_by_name(profile_name);
-   auto signature = sign_digest(key.private_key, value.digest);
+   auto signature = key.private_key.sign_digest(value.digest);
    auto text_signature = std::string{};
    auto public_key = std::string{};
    try {

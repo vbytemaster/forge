@@ -37,7 +37,7 @@ fcl_env              process env / .env -> config::document
 ## Supported v1 Behavior
 
 - `PREFIX_SECTION_FIELD` mapping with stable separator normalization.
-- Empty config sections for flat names such as `STORLANE_LOG_LEVEL`.
+- Empty config sections for flat names such as `FCL_LOG_LEVEL`.
 - Canonical field names and schema aliases.
 - Unknown prefixed variables warn by default and can become errors.
 - Canonical/alias conflicts are errors by default; canonical wins.

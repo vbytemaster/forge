@@ -100,6 +100,7 @@ namespace {
        .security = map_security(options.security),
        .certificate_pem = options.certificate_pem,
        .private_key_pem = options.private_key_pem,
+       .test_failpoint = options.test_failpoint,
    };
 }
 

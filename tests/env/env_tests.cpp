@@ -184,13 +184,13 @@ BOOST_AUTO_TEST_CASE(env_reads_dotenv_document_with_aliases_flat_fields_and_list
    const auto registry = make_registry();
    const auto input = std::string{
        "# local development overrides\n"
-       "export STORLANE_HTTP_PORT=9090\n"
-       "STORLANE_HTTP_TLS_ENABLED=yes\n"
-       "STORLANE_HTTP_TAGS=alpha\\,one,beta\n"
-       "STORLANE_LOG_LEVEL=debug\n"};
+       "export FCL_HTTP_PORT=9090\n"
+       "FCL_HTTP_TLS_ENABLED=yes\n"
+       "FCL_HTTP_TAGS=alpha\\,one,beta\n"
+       "FCL_LOG_LEVEL=debug\n"};
 
    const auto parsed = fcl::env::read_document(
-       input, registry, fcl::env::read_options{.prefix = "STORLANE", .source_name = "workspace/.env"});
+       input, registry, fcl::env::read_options{.prefix = "FCL", .source_name = "workspace/.env"});
    BOOST_TEST(parsed.ok());
 
    const auto decoded_http = fcl::config::decode<http_config>(parsed.value, "http");
@@ -210,7 +210,7 @@ BOOST_AUTO_TEST_CASE(env_reads_empty_list_value_as_empty_vector) {
    const auto registry = make_registry();
 
    const auto parsed = fcl::env::read_document(
-       "STORLANE_HTTP_TAGS=\n", registry, fcl::env::read_options{.prefix = "STORLANE"});
+       "FCL_HTTP_TAGS=\n", registry, fcl::env::read_options{.prefix = "FCL"});
    BOOST_TEST(parsed.ok());
 
    const auto decoded_http = fcl::config::decode<http_config>(parsed.value, "http");
@@ -221,12 +221,12 @@ BOOST_AUTO_TEST_CASE(env_reads_empty_list_value_as_empty_vector) {
 BOOST_AUTO_TEST_CASE(env_reports_dotenv_parse_duplicate_and_source_locations) {
    const auto registry = make_registry();
    const auto input = std::string{
-       "STORLANE_HTTP_BIND_HOST=\"127.0.0.1\"\n"
+       "FCL_HTTP_BIND_HOST=\"127.0.0.1\"\n"
        "broken line\n"
-       "STORLANE_HTTP_BIND_HOST='0.0.0.0'\n"};
+       "FCL_HTTP_BIND_HOST='0.0.0.0'\n"};
 
    const auto parsed =
-       fcl::env::read_document(input, registry, fcl::env::read_options{.prefix = "STORLANE", .source_name = ".env"});
+       fcl::env::read_document(input, registry, fcl::env::read_options{.prefix = "FCL", .source_name = ".env"});
    BOOST_TEST(!parsed.ok());
    const auto* parse_error = find_diagnostic(parsed.diagnostics, "env.parse");
    BOOST_REQUIRE(parse_error != nullptr);
@@ -245,13 +245,13 @@ BOOST_AUTO_TEST_CASE(env_reports_dotenv_parse_duplicate_and_source_locations) {
 BOOST_AUTO_TEST_CASE(env_reads_injected_environment_snapshot_without_global_mutation) {
    const auto registry = make_registry();
    const auto variables = std::vector<fcl::env::environment_variable>{
-       {.name = "STORLANE_HTTP_BIND_PORT", .value = "7777", .location = {.source = "test-env"}},
-       {.name = "STORLANE_UNKNOWN_FLAG", .value = "1", .location = {.source = "test-env"}},
+       {.name = "FCL_HTTP_BIND_PORT", .value = "7777", .location = {.source = "test-env"}},
+       {.name = "FCL_UNKNOWN_FLAG", .value = "1", .location = {.source = "test-env"}},
        {.name = "UNRELATED_HTTP_BIND_PORT", .value = "9999", .location = {.source = "test-env"}},
    };
 
    auto parsed =
-       fcl::env::read_variables(variables, registry, fcl::env::read_options{.prefix = "STORLANE"});
+       fcl::env::read_variables(variables, registry, fcl::env::read_options{.prefix = "FCL"});
    BOOST_TEST(parsed.ok());
    BOOST_REQUIRE(find_diagnostic(parsed.diagnostics, "env.unknown") != nullptr);
 
@@ -261,18 +261,18 @@ BOOST_AUTO_TEST_CASE(env_reads_injected_environment_snapshot_without_global_muta
 
    parsed = fcl::env::read_variables(
        variables, registry,
-       fcl::env::read_options{.prefix = "STORLANE", .unknown_variables = fcl::env::unknown_variable_policy::error});
+       fcl::env::read_options{.prefix = "FCL", .unknown_variables = fcl::env::unknown_variable_policy::error});
    BOOST_TEST(!parsed.ok());
 }
 
 BOOST_AUTO_TEST_CASE(env_reports_alias_conflicts_deprecated_fields_and_conversion_errors) {
    const auto registry = make_registry();
    auto parsed = fcl::env::read_document(
-       "STORLANE_HTTP_BIND_PORT=9090\n"
-       "STORLANE_HTTP_PORT=8080\n"
-       "STORLANE_HTTP_TLS_ENABLED=maybe\n"
-       "STORLANE_HTTP_LEGACY_TOKEN=old\n",
-       registry, fcl::env::read_options{.prefix = "STORLANE"});
+       "FCL_HTTP_BIND_PORT=9090\n"
+       "FCL_HTTP_PORT=8080\n"
+       "FCL_HTTP_TLS_ENABLED=maybe\n"
+       "FCL_HTTP_LEGACY_TOKEN=old\n",
+       registry, fcl::env::read_options{.prefix = "FCL"});
 
    BOOST_TEST(!parsed.ok());
    BOOST_REQUIRE(find_diagnostic(parsed.diagnostics, "env.alias_conflict") != nullptr);
@@ -288,7 +288,7 @@ BOOST_AUTO_TEST_CASE(env_reports_alias_conflicts_deprecated_fields_and_conversio
 
 BOOST_AUTO_TEST_CASE(env_typed_helpers_decode_schema_and_validate_ranges) {
    const auto parsed = fcl::env::read<http_config>(
-       "STORLANE_HTTP_BIND_PORT=0\n", "http", fcl::env::read_options{.prefix = "STORLANE"});
+       "FCL_HTTP_BIND_PORT=0\n", "http", fcl::env::read_options{.prefix = "FCL"});
    BOOST_TEST(!parsed.ok());
    BOOST_REQUIRE(find_diagnostic(parsed.diagnostics, "schema.range") != nullptr);
 }
@@ -298,7 +298,7 @@ BOOST_AUTO_TEST_CASE(env_rejects_negative_text_for_unsigned_fields_before_decode
    registry.add(fcl::config::describe_component<unsigned_counter_config>("counter"));
 
    const auto rejected = fcl::env::read_document(
-       "STORLANE_COUNTER_COUNT=-1\n", registry, fcl::env::read_options{.prefix = "STORLANE"});
+       "FCL_COUNTER_COUNT=-1\n", registry, fcl::env::read_options{.prefix = "FCL"});
    BOOST_TEST(!rejected.ok());
    const auto* convert = find_diagnostic(rejected.diagnostics, "env.convert");
    BOOST_REQUIRE(convert != nullptr);
@@ -306,7 +306,7 @@ BOOST_AUTO_TEST_CASE(env_rejects_negative_text_for_unsigned_fields_before_decode
    BOOST_TEST(convert->message.find("expected unsigned integer value") != std::string::npos);
 
    const auto accepted = fcl::env::read_document(
-       "STORLANE_COUNTER_COUNT=42\n", registry, fcl::env::read_options{.prefix = "STORLANE"});
+       "FCL_COUNTER_COUNT=42\n", registry, fcl::env::read_options{.prefix = "FCL"});
    BOOST_TEST(accepted.ok());
    const auto decoded = fcl::config::decode<unsigned_counter_config>(accepted.value, "counter");
    BOOST_TEST(decoded.ok());
@@ -320,20 +320,20 @@ BOOST_AUTO_TEST_CASE(env_writes_dotenv_and_examples_with_secret_redaction) {
    document.set("http.tags", fcl::config::value::array_type{fcl::config::value{"blue"}, fcl::config::value{"green"}});
    document.set("http.token", "secret-value");
 
-   const auto written = fcl::env::write_document(document, registry, fcl::env::write_options{.prefix = "STORLANE"});
+   const auto written = fcl::env::write_document(document, registry, fcl::env::write_options{.prefix = "FCL"});
    BOOST_TEST(written.ok());
-   BOOST_TEST(written.text.find("STORLANE_HTTP_BIND_PORT=9090") != std::string::npos);
-   BOOST_TEST(written.text.find("STORLANE_HTTP_TAGS=blue,green") != std::string::npos);
+   BOOST_TEST(written.text.find("FCL_HTTP_BIND_PORT=9090") != std::string::npos);
+   BOOST_TEST(written.text.find("FCL_HTTP_TAGS=blue,green") != std::string::npos);
    BOOST_TEST(written.text.find("secret-value") == std::string::npos);
-   BOOST_TEST(written.text.find("STORLANE_HTTP_TOKEN=<redacted>") != std::string::npos);
+   BOOST_TEST(written.text.find("FCL_HTTP_TOKEN=<redacted>") != std::string::npos);
 
-   const auto example = fcl::env::write_example(registry, fcl::env::write_options{.prefix = "STORLANE"});
+   const auto example = fcl::env::write_example(registry, fcl::env::write_options{.prefix = "FCL"});
    BOOST_TEST(example.ok());
    BOOST_TEST(example.text.find("# HTTP bind port.") != std::string::npos);
-   BOOST_TEST(example.text.find("STORLANE_HTTP_BIND_PORT=8080") != std::string::npos);
-   BOOST_TEST(example.text.find("STORLANE_HTTP_TOKEN=") != std::string::npos);
+   BOOST_TEST(example.text.find("FCL_HTTP_BIND_PORT=8080") != std::string::npos);
+   BOOST_TEST(example.text.find("FCL_HTTP_TOKEN=") != std::string::npos);
    BOOST_TEST(example.text.find("<redacted>") == std::string::npos);
-   BOOST_TEST(example.text.find("STORLANE_LOG_LEVEL=info") != std::string::npos);
+   BOOST_TEST(example.text.find("FCL_LOG_LEVEL=info") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(env_write_document_empty_list_roundtrips_as_empty_vector) {
@@ -341,12 +341,12 @@ BOOST_AUTO_TEST_CASE(env_write_document_empty_list_roundtrips_as_empty_vector) {
    auto document = fcl::config::document{};
    document.set("http.tags", fcl::config::value::array_type{});
 
-   const auto written = fcl::env::write_document(document, registry, fcl::env::write_options{.prefix = "STORLANE"});
+   const auto written = fcl::env::write_document(document, registry, fcl::env::write_options{.prefix = "FCL"});
    BOOST_TEST(written.ok());
-   BOOST_TEST(written.text.find("STORLANE_HTTP_TAGS=\n") != std::string::npos);
+   BOOST_TEST(written.text.find("FCL_HTTP_TAGS=\n") != std::string::npos);
 
    const auto parsed =
-       fcl::env::read_document(written.text, registry, fcl::env::read_options{.prefix = "STORLANE"});
+       fcl::env::read_document(written.text, registry, fcl::env::read_options{.prefix = "FCL"});
    BOOST_TEST(parsed.ok());
 
    const auto decoded_http = fcl::config::decode<http_config>(parsed.value, "http");
@@ -359,12 +359,12 @@ BOOST_AUTO_TEST_CASE(env_rejects_canonical_name_collisions_after_normalization) 
    registry.add(fcl::config::describe_component<env_name_collision_config>(""));
 
    const auto parsed = fcl::env::read_document(
-       "STORLANE_LOG_LEVEL=debug\n", registry, fcl::env::read_options{.prefix = "STORLANE"});
+       "FCL_LOG_LEVEL=debug\n", registry, fcl::env::read_options{.prefix = "FCL"});
    BOOST_TEST(!parsed.ok());
 
    const auto* conflict = find_diagnostic(parsed.diagnostics, "env.name_conflict");
    BOOST_REQUIRE(conflict != nullptr);
-   BOOST_TEST(conflict->message.find("STORLANE_LOG_LEVEL") != std::string::npos);
+   BOOST_TEST(conflict->message.find("FCL_LOG_LEVEL") != std::string::npos);
    BOOST_TEST(conflict->message.find("log-level") != std::string::npos);
    BOOST_TEST(conflict->message.find("log_level") != std::string::npos);
 }
@@ -375,12 +375,12 @@ BOOST_AUTO_TEST_CASE(env_rejects_flat_and_sectioned_name_collisions_after_normal
    registry.add(fcl::config::describe_component<flat_http_collision_config>(""));
 
    const auto parsed = fcl::env::read_document(
-       "STORLANE_HTTP_BIND_PORT=9090\n", registry, fcl::env::read_options{.prefix = "STORLANE"});
+       "FCL_HTTP_BIND_PORT=9090\n", registry, fcl::env::read_options{.prefix = "FCL"});
    BOOST_TEST(!parsed.ok());
 
    const auto* conflict = find_diagnostic(parsed.diagnostics, "env.name_conflict");
    BOOST_REQUIRE(conflict != nullptr);
-   BOOST_TEST(conflict->message.find("STORLANE_HTTP_BIND_PORT") != std::string::npos);
+   BOOST_TEST(conflict->message.find("FCL_HTTP_BIND_PORT") != std::string::npos);
    BOOST_TEST(conflict->message.find("http.bind-port") != std::string::npos);
    BOOST_TEST(conflict->message.find("http-bind-port") != std::string::npos);
 }
@@ -390,12 +390,12 @@ BOOST_AUTO_TEST_CASE(env_rejects_alias_name_collisions_after_normalization) {
    registry.add(fcl::config::describe_component<alias_collision_config>("auth"));
 
    const auto parsed = fcl::env::read_document(
-       "STORLANE_AUTH_AUTH_TOKEN=value\n", registry, fcl::env::read_options{.prefix = "STORLANE"});
+       "FCL_AUTH_AUTH_TOKEN=value\n", registry, fcl::env::read_options{.prefix = "FCL"});
    BOOST_TEST(!parsed.ok());
 
    const auto* conflict = find_diagnostic(parsed.diagnostics, "env.name_conflict");
    BOOST_REQUIRE(conflict != nullptr);
-   BOOST_TEST(conflict->message.find("STORLANE_AUTH_AUTH_TOKEN") != std::string::npos);
+   BOOST_TEST(conflict->message.find("FCL_AUTH_AUTH_TOKEN") != std::string::npos);
    BOOST_TEST(conflict->message.find("auth.token") != std::string::npos);
    BOOST_TEST(conflict->message.find("auth.auth_token") != std::string::npos);
 }
@@ -404,24 +404,24 @@ BOOST_AUTO_TEST_CASE(env_write_example_rejects_name_collisions_after_normalizati
    auto registry = fcl::config::component_registry{};
    registry.add(fcl::config::describe_component<env_name_collision_config>(""));
 
-   const auto example = fcl::env::write_example(registry, fcl::env::write_options{.prefix = "STORLANE"});
+   const auto example = fcl::env::write_example(registry, fcl::env::write_options{.prefix = "FCL"});
    BOOST_TEST(!example.ok());
 
    const auto* conflict = find_diagnostic(example.diagnostics, "env.name_conflict");
    BOOST_REQUIRE(conflict != nullptr);
-   BOOST_TEST(conflict->message.find("STORLANE_LOG_LEVEL") != std::string::npos);
+   BOOST_TEST(conflict->message.find("FCL_LOG_LEVEL") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(env_write_example_rejects_alias_name_collisions_after_normalization) {
    auto registry = fcl::config::component_registry{};
    registry.add(fcl::config::describe_component<alias_collision_config>("auth"));
 
-   const auto example = fcl::env::write_example(registry, fcl::env::write_options{.prefix = "STORLANE"});
+   const auto example = fcl::env::write_example(registry, fcl::env::write_options{.prefix = "FCL"});
    BOOST_TEST(!example.ok());
 
    const auto* conflict = find_diagnostic(example.diagnostics, "env.name_conflict");
    BOOST_REQUIRE(conflict != nullptr);
-   BOOST_TEST(conflict->message.find("STORLANE_AUTH_AUTH_TOKEN") != std::string::npos);
+   BOOST_TEST(conflict->message.find("FCL_AUTH_AUTH_TOKEN") != std::string::npos);
    BOOST_TEST(conflict->message.find("auth.token") != std::string::npos);
    BOOST_TEST(conflict->message.find("auth.auth_token") != std::string::npos);
 }
@@ -434,12 +434,12 @@ BOOST_AUTO_TEST_CASE(env_write_document_rejects_alias_name_collisions_after_norm
    document.set("auth.token", "token-value");
    document.set("auth.auth_token", "auth-token-value");
 
-   const auto written = fcl::env::write_document(document, registry, fcl::env::write_options{.prefix = "STORLANE"});
+   const auto written = fcl::env::write_document(document, registry, fcl::env::write_options{.prefix = "FCL"});
    BOOST_TEST(!written.ok());
 
    const auto* conflict = find_diagnostic(written.diagnostics, "env.name_conflict");
    BOOST_REQUIRE(conflict != nullptr);
-   BOOST_TEST(conflict->message.find("STORLANE_AUTH_AUTH_TOKEN") != std::string::npos);
+   BOOST_TEST(conflict->message.find("FCL_AUTH_AUTH_TOKEN") != std::string::npos);
    BOOST_TEST(conflict->message.find("auth.token") != std::string::npos);
    BOOST_TEST(conflict->message.find("auth.auth_token") != std::string::npos);
 }
@@ -449,7 +449,7 @@ BOOST_AUTO_TEST_CASE(env_allows_same_path_alias_duplicates_after_normalization) 
    registry.add(fcl::config::describe_component<same_path_alias_config>("auth"));
 
    const auto parsed = fcl::env::read_document(
-       "STORLANE_AUTH_AUTH_TOKEN=token-value\n", registry, fcl::env::read_options{.prefix = "STORLANE"});
+       "FCL_AUTH_AUTH_TOKEN=token-value\n", registry, fcl::env::read_options{.prefix = "FCL"});
    BOOST_TEST(parsed.ok());
    BOOST_TEST(find_diagnostic(parsed.diagnostics, "env.name_conflict") == nullptr);
 
@@ -465,23 +465,23 @@ BOOST_AUTO_TEST_CASE(env_write_paths_allow_same_path_alias_duplicates_after_norm
    auto document = fcl::config::document{};
    document.set("auth.token", "token-value");
 
-   const auto example = fcl::env::write_example(registry, fcl::env::write_options{.prefix = "STORLANE"});
+   const auto example = fcl::env::write_example(registry, fcl::env::write_options{.prefix = "FCL"});
    BOOST_TEST(example.ok());
    BOOST_TEST(find_diagnostic(example.diagnostics, "env.name_conflict") == nullptr);
 
-   const auto written = fcl::env::write_document(document, registry, fcl::env::write_options{.prefix = "STORLANE"});
+   const auto written = fcl::env::write_document(document, registry, fcl::env::write_options{.prefix = "FCL"});
    BOOST_TEST(written.ok());
    BOOST_TEST(find_diagnostic(written.diagnostics, "env.name_conflict") == nullptr);
-   BOOST_TEST(written.text.find("STORLANE_AUTH_TOKEN=token-value") != std::string::npos);
+   BOOST_TEST(written.text.find("FCL_AUTH_TOKEN=token-value") != std::string::npos);
 }
 
 #if defined(_WIN32)
 BOOST_AUTO_TEST_CASE(env_windows_process_snapshot_preserves_utf16_values_as_utf8) {
    auto registry = fcl::config::component_registry{};
    registry.add(fcl::config::describe_component<same_path_alias_config>("win"));
-   const auto variable = scoped_environment_variable{L"STORLANE_WIN_TOKEN", L"\x043A\x043B\x044E\x0447-\x2713"};
+   const auto variable = scoped_environment_variable{L"FCL_WIN_TOKEN", L"\x043A\x043B\x044E\x0447-\x2713"};
 
-   const auto parsed = fcl::env::read_process_document(registry, fcl::env::read_options{.prefix = "STORLANE"});
+   const auto parsed = fcl::env::read_process_document(registry, fcl::env::read_options{.prefix = "FCL"});
    BOOST_TEST(parsed.ok());
 
    const auto decoded = fcl::config::decode<same_path_alias_config>(parsed.value, "win");

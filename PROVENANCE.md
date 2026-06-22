@@ -67,7 +67,7 @@ this audit:
   `libraries/schema`, `libraries/transport`, `libraries/websocket`
 - `libraries/quic`, `libraries/tcp`, `libraries/stcp`, `libraries/yamux`,
   `libraries/p2p`
-- `libraries/api`, `libraries/api_transport`, `libraries/plugins`,
+- `libraries/api`, `libraries/transport_api`, `libraries/plugins`,
   `libraries/tui`
 
 If a future file-level audit proves source continuity for a specific file in

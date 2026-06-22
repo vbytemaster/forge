@@ -63,7 +63,7 @@ P2P does not promise exactly-once delivery, durable storage or product
 authorization. DHT/rendezvous discovery belongs in `fcl_p2p`; product plugins
 must not replace it with parallel discovery loops.
 
-For application/plugin composition, `fcl::plugins::p2p_node` is the production
+For application/plugin composition, `fcl::plugins::p2p::node` is the production
 host facade above `fcl_p2p`. It applies config, starts the node and mounts
 protocol/API contributions. G.2 narrows the API around typed remote access and
 local network information. Durable queues, application fan-out and read-only
@@ -89,7 +89,7 @@ over a multiaddr, not a parallel source of truth.
 Production network mechanics belong in `fcl_p2p`, not in plugin-local
 workarounds: identity, keys, endpoint/address encoding, protocol negotiation,
 Identify, Ping, peer/path store, relay, AutoNAT, DHT and pubsub. The
-`fcl::plugins::p2p_node` plugin only maps config into the node, owns application
+`fcl::plugins::p2p::node` plugin only maps config into the node, owns application
 lifecycle, mounts route/API contributions and exposes safe application APIs.
 Product extensions must not build parallel network-discovery, relay or gossip loops.
 
@@ -115,7 +115,7 @@ READMEs may link here, but must not define a second block order.
   reusable muxer because it is needed by libp2p TCP, STCP/API stacks and future
   stream-session transports.
 - Current order: `multiaddr -> fcl_transport -> tcp/stcp/yamux/quic -> p2p
-  rebase -> p2p completion -> fcl.api.transport`.
+  rebase -> p2p completion -> fcl.transport.api`.
 - Existing P2P achievements remain valid checkpoints: QUIC, Ping, Identify,
   Relay v2, AutoNAT/DCUtR, DHT/Rendezvous component layer and GossipSub v1
   proof are not discarded. They must be preserved while the substrate is
@@ -327,7 +327,7 @@ READMEs may link here, but must not define a second block order.
   `fcl_transport`.
 - E.2d is not the final content data-plane implementation. It does not claim
   kernel zero-copy, file-backed chunks, `sendfile`, content addressing or
-  `contentd` bulk-transfer readiness. Before `fcl.api.transport` or content
+  `contentd` bulk-transfer readiness. Before `fcl.transport.api` or content
   bulk workloads ship, a separate benchmark/throughput block must audit
   remaining copies, allocation counts and large-chunk behavior.
 - E.3 checkpoint: host-level multi-transport orchestration lives in private
@@ -412,7 +412,7 @@ READMEs may link here, but must not define a second block order.
   explicit as `known_gap`; they are not treated as live compatibility claims.
 - `/ws` and `/wss` remain multiaddr parse/store only. There is no P2P
   dial/listen path for browser/proxy transports in Block F.
-- `p2p_node` and focused friend plugins come after core behavior is proven.
+- `fcl::plugins::p2p::node` and focused friend plugins come after core behavior is proven.
   Plugins configure and expose the shared node; they do not implement network
   algorithms.
 
@@ -429,40 +429,40 @@ READMEs may link here, but must not define a second block order.
   codec validation, grouped stream state, max-inflight/deadline checks and
   shared error projection. It must not import `fcl_transport`, QUIC, P2P, HTTP,
   WebSocket, plugins or product layers.
-- G.1 implemented checkpoint: `fcl_api_transport` is the API-over-transport
+- G.1 implemented checkpoint: `fcl_transport_api` is the API-over-transport
   binding. It owns API frames over `transport::stream` and
   `transport::session`, a concurrent client read loop with pending call map,
   serialized writes, `serve_stream(...)`, `serve_session(...)`, bounded
   concurrency, close/cancel wakeups and typed transport API exceptions.
 - `fcl.quic.api` and `fcl.p2p.api` are policy adapters over
-  `fcl.api.transport`. QUIC policy stays in `fcl_quic`; P2P policy stays in
+  `fcl.transport.api`. QUIC policy stays in `fcl_quic`; P2P policy stays in
   `fcl_p2p` as protocol id, known-peer checks and discovery scope.
 - `fcl.websocket.api` shares `fcl::api::frame_dispatcher`, but does not import
-  `fcl.api.transport`, because WebSocket is message-oriented and not a
+  `fcl.transport.api`, because WebSocket is message-oriented and not a
   `transport::stream`.
 - HTTP remains a separate request/response binding.
-- G.2 implemented checkpoint: `fcl::plugins::p2p_node` is a narrow host facade
+- G.2 implemented checkpoint: `fcl::plugins::p2p::node` is a narrow host facade
   over `fcl_p2p`. It owns lifecycle, config-to-node mapping, local endpoint
   reporting, protocol/API route mounting and typed remote API access. Durable
   queues, application fan-out and raw network diagnostics are outside this host
   facade and move to focused plugins or product layers.
-- G.3 implemented checkpoint: `p2p_api_resolver` is a separate plugin for
+- G.3 implemented checkpoint: `fcl::plugins::p2p::resolver` is a separate plugin for
   API-over-P2P metadata discovery and compatible remote opening. Product
   plugins publish discoverable APIs through the resolver; it mounts the actual
-  API route through `p2p_node`, stores a serializable descriptor projection
+  API route through `fcl::plugins::p2p::node`, stores a serializable descriptor projection
   (API id/version, protocol id string, codec, limits, methods and errors), and
   lets clients resolve a compatible API without hardcoded product protocol ids.
   Identify continues to advertise protocol ids; the resolver adds typed FCL API
   metadata above P2P instead of expanding core Identify semantics. Its network
   metadata protocol `/fcl/api/resolver/1` is FCL-specific and does not extend
   Go/Rust libp2p support claims.
-- G.4 implemented checkpoint: `p2p_diagnostics` is a read-only in-process
+- G.4 implemented checkpoint: `fcl::plugins::p2p::diagnostics` is a read-only in-process
   plugin for peer/path/session/relay/DHT/Rendezvous/pubsub/connection-manager
   health. `fcl_p2p` owns immutable diagnostics snapshots; the plugin exposes
   capped operator/test projections through `fcl_app`. It does not add a network
   diagnostics protocol, product authorization, remediation, routing policy or
   retry decisions.
-- G.5 implemented checkpoint: `p2p_pubsub` is an in-process plugin facade over
+- G.5 implemented checkpoint: `fcl::plugins::p2p::pubsub` is an in-process plugin facade over
   core GossipSub. It offers raw and typed topic publish/subscribe, bounded
   local handlers, handler deadlines, topic allow/deny policy, deterministic
   subscriptions and capped plugin snapshots for application plugins. It is not a
@@ -501,7 +501,7 @@ READMEs may link here, but must not define a second block order.
   acknowledgement semantics.
 - H.0 implemented checkpoint: Storlane-level products do not need generic
   delivery acknowledgements for ordinary request/response work. Product plugins
-  publish typed APIs through `p2p_api_resolver`, clients resolve compatible
+  publish typed APIs through `fcl::plugins::p2p::resolver`, clients resolve compatible
   remotes without hardcoded protocol ids, and domain methods return product
   receipts with idempotency keys. The receipt proves the application-level
   operation result for that protocol; authorization, durable state and
@@ -511,7 +511,7 @@ READMEs may link here, but must not define a second block order.
   `fcl_p2p` support claims.
 
 AutoNAT, AutoRelay, DHT and pubsub algorithms must live in `fcl_p2p`.
-`fcl::plugins::p2p_node` configures and runs the shared node, then exposes the
+`fcl::plugins::p2p::node` configures and runs the shared node, then exposes the
 network capabilities through narrow application APIs. If a network behavior is
 not implemented yet, expose a typed unsupported/limited result instead of hiding
 the gap above the network layer.
@@ -544,7 +544,7 @@ Test layers:
   Identify and peer/path store behavior.
 - `interop`: FCL client/server against go-libp2p and rust-libp2p in both
   directions.
-- `plugin/system`: realistic scenarios through `fcl::plugins::p2p_node` and
+- `plugin/system`: realistic scenarios through `fcl::plugins::p2p::node` and
   small focused friend plugins, not a parallel fake test runtime.
 - `performance/stability`: latency, throughput, long sessions, reconnect, many
   peers, backpressure and peerstore recovery.
@@ -625,7 +625,7 @@ Accepted:
   rendezvous, Identify, AutoRelay and path scoring are not built twice around
   QUIC-only endpoint state.
 - `fcl_transport` as a reusable byte-stream/session substrate, not an API/RPC
-  framework. A future `fcl.api.transport` layer should sit above it and stop
+  framework. A future `fcl.transport.api` layer should sit above it and stop
   QUIC/P2P/TCP API bindings from duplicating API frame serve-loop logic.
 - TCP + Noise/TLS + Yamux direct path is accepted as the TCP compatibility
   baseline; proof is tracked in
@@ -642,7 +642,7 @@ Accepted:
   symbolication/redaction/export happens outside the crashing signal context.
 - Durable asynchronous retry as an application/plugin-level pattern, not a
   storage dependency inside `fcl_p2p`.
-- Typed request/receipt protocols over `p2p_api_resolver` as the baseline for
+- Typed request/receipt protocols over `fcl::plugins::p2p::resolver` as the baseline for
   synchronous product operations. Idempotency keys and domain receipts belong to
   the product API contract, while FCL supplies discovery, stream opening and API
   frame transport.

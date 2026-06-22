@@ -782,6 +782,19 @@ class shell_selection_application final : public fcl::app::application_shell {
    lifecycle_log* log_ = nullptr;
 };
 
+class shell_official_plugin_selection_application final : public fcl::app::application_shell {
+ public:
+   explicit shell_official_plugin_selection_application(lifecycle_log& log) : log_{&log} {}
+
+ protected:
+   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+      registry.register_plugin(descriptor("fcl.plugins.p2p.node", *log_));
+   }
+
+ private:
+   lifecycle_log* log_ = nullptr;
+};
+
 struct daemon_test_state {
    lifecycle_log log;
    std::uint16_t workers = 0;
@@ -1234,6 +1247,30 @@ BOOST_AUTO_TEST_CASE(application_shell_applies_plugin_selection_from_config) {
       "shutdown:store",
    };
    BOOST_TEST(log.entries == expected, boost::test_tools::per_element());
+}
+
+BOOST_AUTO_TEST_CASE(application_shell_uses_nested_official_plugin_selection_path) {
+   auto log = lifecycle_log{};
+   auto app = shell_official_plugin_selection_application{log};
+
+   const auto registry = app.describe_config();
+   auto found_plugins_section = false;
+   for (const auto& component : registry.components()) {
+      if (component.section == "plugins") {
+         found_plugins_section = true;
+         BOOST_REQUIRE_EQUAL(component.fields.size(), 1U);
+         BOOST_TEST(component.fields[0].name == "p2p.node.enabled");
+      }
+   }
+   BOOST_TEST(found_plugins_section);
+
+   auto document = fcl::config::document{};
+   document.set("plugins.p2p.node.enabled", false);
+   app.configure(document);
+   fcl::asio::blocking::run(app.runtime(), app.startup());
+   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+
+   BOOST_TEST(log.entries.empty());
 }
 
 BOOST_AUTO_TEST_CASE(application_shell_accepts_textual_plugin_selection_flags) {

@@ -17,11 +17,11 @@ import fcl.api.connection;
 import fcl.api.registry;
 import fcl.api.binding;
 import fcl.api.dispatcher;
-import fcl.api.transport.exceptions;
-import fcl.api.transport.options;
-import fcl.api.transport.client;
-import fcl.api.transport.connection;
-import fcl.api.transport.server;
+import fcl.transport.api.exceptions;
+import fcl.transport.api.options;
+import fcl.transport.api.client;
+import fcl.transport.api.connection;
+import fcl.transport.api.server;
 import fcl.quic.stream;
 import fcl.quic.transport;
 import fcl.transport.stream;
@@ -30,11 +30,11 @@ export namespace fcl::quic {
 
 class api_binding {
  public:
-   api_binding(fcl::api::binding_plan plan, fcl::api::transport::options options)
+   api_binding(fcl::api::binding_plan plan, fcl::transport::api::options options)
        : plan_{std::move(plan)}, options_{std::move(options)} {}
 
    boost::asio::awaitable<void> accept(fcl::transport::stream stream) const {
-      co_await fcl::api::transport::serve_stream(std::move(stream), plan_, options_);
+      co_await fcl::transport::api::serve_stream(std::move(stream), plan_, options_);
    }
 
    boost::asio::awaitable<void> accept(fcl::quic::stream stream) const {
@@ -61,13 +61,13 @@ class api_binding {
       return options_.deadline;
    }
 
-   [[nodiscard]] const fcl::api::transport::options& options() const noexcept {
+   [[nodiscard]] const fcl::transport::api::options& options() const noexcept {
       return options_;
    }
 
  private:
    fcl::api::binding_plan plan_;
-   fcl::api::transport::options options_;
+   fcl::transport::api::options options_;
 };
 
 class api_builder {
@@ -103,7 +103,7 @@ class api_builder {
 
  private:
    fcl::api::binding_plan plan_;
-   fcl::api::transport::options options_{.deadline = std::chrono::milliseconds{5000}};
+   fcl::transport::api::options options_{.deadline = std::chrono::milliseconds{5000}};
 };
 
 [[nodiscard]] inline api_builder api() {

@@ -54,7 +54,7 @@ target_link_libraries(
    fcl_p2p PUBLIC
       fcl_exceptions
       fcl_api
-      fcl_api_transport
+      fcl_transport_api
       fcl_raw
       fcl_crypto
       fcl_multiformats

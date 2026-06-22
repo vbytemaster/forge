@@ -19,7 +19,7 @@ plugins, telemetry and compatibility layers должны быть пригодн
   exception hierarchy.
 - Neutral `fcl_api` contracts for in-process plugin APIs and transport API
   bindings.
-- `fcl_plugins` aggregate plus focused `fcl_plugin_*` targets for shared
+- `fcl_plugins` aggregate plus focused `fcl_plugins_<family>_<name>` targets for shared
   lifecycle-owned components such as P2P nodes, with narrow local APIs for
   route/binding contributions.
 - Std chrono instead of old FC time aliases.
@@ -71,7 +71,7 @@ cmake --build build/fcl-debug -j 1 \
   test_fcl_multiformats test_fcl_asio test_fcl_transport test_fcl_tcp test_fcl_stcp \
   test_fcl_yamux test_fcl_quic test_fcl_app test_fcl_schema test_fcl_config \
   test_fcl_yaml test_fcl_program_options test_fcl_env test_fcl_api \
-  test_fcl_api_transport test_fcl_http_websocket test_fcl_quic_p2p \
+  test_fcl_transport_api test_fcl_http_websocket test_fcl_quic_p2p \
   test_fcl_plugins test_fcl_otlp test_fcl_tui
 
 ctest --test-dir build/fcl-debug --output-on-failure

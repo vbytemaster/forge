@@ -43,11 +43,11 @@ import fcl.api.connection;
 import fcl.api.registry;
 import fcl.api.binding;
 import fcl.api.dispatcher;
-import fcl.api.transport.exceptions;
-import fcl.api.transport.options;
-import fcl.api.transport.client;
-import fcl.api.transport.connection;
-import fcl.api.transport.server;
+import fcl.transport.api.exceptions;
+import fcl.transport.api.options;
+import fcl.transport.api.client;
+import fcl.transport.api.connection;
+import fcl.transport.api.server;
 import fcl.app.exceptions;
 import fcl.app.application;
 import fcl.app.events;
@@ -109,31 +109,31 @@ import fcl.p2p.negotiation;
 import fcl.p2p.peer_store;
 import fcl.p2p.node;
 import fcl.p2p.api;
-import fcl.plugins.signature_provider.types;
-import fcl.plugins.signature_provider.exceptions;
-import fcl.plugins.signature_provider.api;
-import fcl.plugins.signature_provider.plugin;
-import fcl.plugins.p2p_diagnostics.types;
-import fcl.plugins.p2p_diagnostics.exceptions;
-import fcl.plugins.p2p_diagnostics.api;
-import fcl.plugins.p2p_diagnostics.plugin;
-import fcl.plugins.p2p_pubsub.types;
-import fcl.plugins.p2p_pubsub.exceptions;
-import fcl.plugins.p2p_pubsub.api;
-import fcl.plugins.p2p_pubsub.plugin;
-import fcl.plugins.p2p_api_resolver.types;
-import fcl.plugins.p2p_api_resolver.exceptions;
-import fcl.plugins.p2p_api_resolver.api;
-import fcl.plugins.p2p_api_resolver.plugin;
-import fcl.plugins.p2p_node.types;
-import fcl.plugins.p2p_node.exceptions;
-import fcl.plugins.p2p_node.api;
-import fcl.plugins.p2p_node.plugin;
-import fcl.plugins.http_server.types;
-import fcl.plugins.http_server.exceptions;
-import fcl.plugins.http_server.middleware;
-import fcl.plugins.http_server.api;
-import fcl.plugins.http_server.plugin;
+import fcl.plugins.signing.provider.types;
+import fcl.plugins.signing.provider.exceptions;
+import fcl.plugins.signing.provider.api;
+import fcl.plugins.signing.provider.plugin;
+import fcl.plugins.p2p.diagnostics.types;
+import fcl.plugins.p2p.diagnostics.exceptions;
+import fcl.plugins.p2p.diagnostics.api;
+import fcl.plugins.p2p.diagnostics.plugin;
+import fcl.plugins.p2p.pubsub.types;
+import fcl.plugins.p2p.pubsub.exceptions;
+import fcl.plugins.p2p.pubsub.api;
+import fcl.plugins.p2p.pubsub.plugin;
+import fcl.plugins.p2p.resolver.types;
+import fcl.plugins.p2p.resolver.exceptions;
+import fcl.plugins.p2p.resolver.api;
+import fcl.plugins.p2p.resolver.plugin;
+import fcl.plugins.p2p.node.types;
+import fcl.plugins.p2p.node.exceptions;
+import fcl.plugins.p2p.node.api;
+import fcl.plugins.p2p.node.plugin;
+import fcl.plugins.http.server.types;
+import fcl.plugins.http.server.exceptions;
+import fcl.plugins.http.server.middleware;
+import fcl.plugins.http.server.api;
+import fcl.plugins.http.server.plugin;
 import fcl.program_options;
 import fcl.raw.raw;
 import fcl.schema.diagnostic;
@@ -143,7 +143,7 @@ import fcl.schema.enums;
 
 template <typename T>
 concept accepts_raw_http_binding = requires(T& api, fcl::http::api::binding_plan binding) {
-   api.publish(std::move(binding), fcl::plugins::http_server::publish_options{});
+   api.publish(std::move(binding), fcl::plugins::http::server::publish_options{});
 };
 
 namespace raw_http = fcl::http;
@@ -154,8 +154,8 @@ concept accepts_raw_http_middleware = requires(T& api, raw_http_middleware descr
    api.use(std::move(descriptor));
 };
 
-static_assert(!accepts_raw_http_binding<fcl::plugins::http_server::api>);
-static_assert(!accepts_raw_http_middleware<fcl::plugins::http_server::api>);
+static_assert(!accepts_raw_http_binding<fcl::plugins::http::server::api>);
+static_assert(!accepts_raw_http_middleware<fcl::plugins::http::server::api>);
 
 [[nodiscard]] bool has_internal_fcl_header(const fcl::http::response& value) {
    for (const auto& header : value.headers()) {
@@ -267,8 +267,8 @@ class scripted_resolver_api
     : public fcl::api::contract<scripted_resolver_api, fcl::api::surface::local | fcl::api::surface::remote> {
  public:
    virtual ~scripted_resolver_api() = default;
-   virtual boost::asio::awaitable<fcl::plugins::p2p_api_resolver::response>
-   query(fcl::plugins::p2p_api_resolver::query request) = 0;
+   virtual boost::asio::awaitable<fcl::plugins::p2p::resolver::response>
+   query(fcl::plugins::p2p::resolver::query request) = 0;
 };
 
 } // namespace plugin_test_contract
@@ -284,7 +284,7 @@ FCL_API(::plugin_test_contract::http_stream_api, FCL_API_CONTRACT("stream-cache"
 FCL_API(::plugin_test_contract::http_empty_api, FCL_API_CONTRACT("empty-cache", 1, 0),
         FCL_API_METHOD_TYPED(clear, ::http_stream_read_request, ::fcl::http::empty_response))
 FCL_API(::plugin_test_contract::scripted_resolver_api,
-        FCL_API_CONTRACT("fcl.plugins.p2p_api_resolver.protocol", 1, 0), FCL_API_METHOD(query))
+        FCL_API_CONTRACT("fcl.plugins.p2p.resolver.protocol", 1, 0), FCL_API_METHOD(query))
 
 FCL_HTTP_API(::plugin_test_contract::http_cache_api,
              FCL_HTTP_GET(read, "/cache/chunks/:ref?offset={offset}&limit={limit}"),
@@ -304,8 +304,8 @@ using plugin_test_contract::http_cache_api;
 using plugin_test_contract::http_stream_api;
 using plugin_test_contract::http_empty_api;
 
-namespace signature_provider = fcl::plugins::signature_provider;
-namespace http_server = fcl::plugins::http_server;
+namespace signature_provider = fcl::plugins::signing::provider;
+namespace http_server = fcl::plugins::http::server;
 
 struct plugin_log {
    std::vector<std::string> entries;
@@ -369,11 +369,11 @@ std::string_view test_private_key() {
 
 [[nodiscard]] fcl::config::document test_p2p_config(std::optional<fcl::p2p::peer_id> peer = std::nullopt) {
    auto document = fcl::config::document{};
-   document.set("p2p.allow-insecure-test-mode", true);
-   document.set("p2p.certificate-pem", std::string{test_certificate()});
-   document.set("p2p.private-key-pem", std::string{test_private_key()});
+   document.set("plugins.p2p.node.allow-insecure-test-mode", true);
+   document.set("plugins.p2p.node.certificate-pem", std::string{test_certificate()});
+   document.set("plugins.p2p.node.private-key-pem", std::string{test_private_key()});
    if (peer.has_value()) {
-      document.set("p2p.peer-id", peer->to_string());
+      document.set("plugins.p2p.node.peer-id", peer->to_string());
    }
    return document;
 }
@@ -722,13 +722,13 @@ class temp_directory {
 
 struct received_pubsub_messages {
    mutable std::mutex mutex;
-   std::vector<fcl::plugins::p2p_pubsub::message> raw;
-   std::vector<fcl::plugins::p2p_pubsub::typed_message<pubsub_payload>> typed;
+   std::vector<fcl::plugins::p2p::pubsub::message> raw;
+   std::vector<fcl::plugins::p2p::pubsub::typed_message<pubsub_payload>> typed;
    std::size_t accepted = 0;
    std::size_t rejected = 0;
    std::size_t ignored = 0;
 
-   void push(fcl::plugins::p2p_pubsub::message value, fcl::p2p::pubsub::validation_result result) {
+   void push(fcl::plugins::p2p::pubsub::message value, fcl::p2p::pubsub::validation_result result) {
       auto lock = std::scoped_lock{mutex};
       raw.push_back(std::move(value));
       switch (result) {
@@ -744,7 +744,7 @@ struct received_pubsub_messages {
       }
    }
 
-   void push(fcl::plugins::p2p_pubsub::typed_message<pubsub_payload> value) {
+   void push(fcl::plugins::p2p::pubsub::typed_message<pubsub_payload> value) {
       auto lock = std::scoped_lock{mutex};
       typed.push_back(std::move(value));
    }
@@ -773,7 +773,7 @@ bool wait_for_count(const received_pubsub_messages& messages, std::size_t raw, s
 }
 
 template <typename Predicate>
-bool wait_for_pubsub_snapshot(const fcl::plugins::p2p_pubsub::api& pubsub, Predicate predicate,
+bool wait_for_pubsub_snapshot(const fcl::plugins::p2p::pubsub::api& pubsub, Predicate predicate,
                               std::chrono::milliseconds timeout) {
    const auto deadline = std::chrono::steady_clock::now() + timeout;
    while (std::chrono::steady_clock::now() < deadline) {
@@ -785,10 +785,10 @@ bool wait_for_pubsub_snapshot(const fcl::plugins::p2p_pubsub::api& pubsub, Predi
    return predicate(pubsub.snapshot());
 }
 
-bool wait_for_pubsub_peer(const fcl::plugins::p2p_pubsub::api& pubsub, std::chrono::milliseconds timeout) {
+bool wait_for_pubsub_peer(const fcl::plugins::p2p::pubsub::api& pubsub, std::chrono::milliseconds timeout) {
    return wait_for_pubsub_snapshot(
       pubsub,
-      [](const fcl::plugins::p2p_pubsub::snapshot& snapshot) {
+      [](const fcl::plugins::p2p::pubsub::snapshot& snapshot) {
          return snapshot.core.peers > 0;
       },
       timeout);
@@ -838,9 +838,9 @@ struct subscribe_task_result {
    mutable std::mutex mutex;
    bool done = false;
    std::exception_ptr error;
-   std::optional<fcl::plugins::p2p_pubsub::subscription> value;
+   std::optional<fcl::plugins::p2p::pubsub::subscription> value;
 
-   void complete(fcl::plugins::p2p_pubsub::subscription subscription) {
+   void complete(fcl::plugins::p2p::pubsub::subscription subscription) {
       auto lock = std::scoped_lock{mutex};
       value = std::move(subscription);
       done = true;
@@ -863,7 +863,7 @@ struct subscribe_task_result {
    }
 };
 
-class fake_pubsub_source final : public fcl::plugins::p2p_node::pubsub_source {
+class fake_pubsub_source final : public fcl::plugins::p2p::node::pubsub_source {
  public:
    explicit fake_pubsub_source(std::shared_ptr<fake_pubsub_source_state> state) : state_{std::move(state)} {}
 
@@ -901,7 +901,7 @@ class fake_pubsub_source final : public fcl::plugins::p2p_node::pubsub_source {
       {
          auto lock = std::scoped_lock{state_->mutex};
          if (state_->fail_join) {
-            FCL_THROW_EXCEPTION(fcl::plugins::p2p_pubsub::exceptions::handler_limit,
+            FCL_THROW_EXCEPTION(fcl::plugins::p2p::pubsub::exceptions::handler_limit,
                                 "fake PubSub source join failed");
          }
          ++state_->joined_handlers;
@@ -928,7 +928,7 @@ class fake_p2p_node_plugin final : public fcl::app::plugin {
    explicit fake_p2p_node_plugin(std::shared_ptr<fake_pubsub_source_state> state) : state_{std::move(state)} {}
 
    [[nodiscard]] fcl::app::plugin_id id() const override {
-      return fcl::app::plugin_id{.value = "fcl.p2p_node"};
+      return fcl::app::plugin_id{.value = "fcl.plugins.p2p.node"};
    }
 
    [[nodiscard]] std::string version() const override {
@@ -936,7 +936,7 @@ class fake_p2p_node_plugin final : public fcl::app::plugin {
    }
 
    boost::asio::awaitable<void> provide(fcl::api::provider& provider) override {
-      provider.install<fcl::plugins::p2p_node::pubsub_source>(std::make_shared<fake_pubsub_source>(state_));
+      provider.install<fcl::plugins::p2p::node::pubsub_source>(std::make_shared<fake_pubsub_source>(state_));
       co_return;
    }
 
@@ -957,7 +957,7 @@ class fake_p2p_node_plugin final : public fcl::app::plugin {
 };
 
 struct scripted_resolver_state {
-   std::vector<fcl::plugins::p2p_api_resolver::response> responses;
+   std::vector<fcl::plugins::p2p::resolver::response> responses;
    std::size_t calls = 0;
 };
 
@@ -965,8 +965,8 @@ class scripted_resolver_api_impl final : public scripted_resolver_api {
  public:
    explicit scripted_resolver_api_impl(std::shared_ptr<scripted_resolver_state> state) : state_{std::move(state)} {}
 
-   boost::asio::awaitable<fcl::plugins::p2p_api_resolver::response>
-   query(fcl::plugins::p2p_api_resolver::query) override {
+   boost::asio::awaitable<fcl::plugins::p2p::resolver::response>
+   query(fcl::plugins::p2p::resolver::query) override {
       const auto index = std::min(state_->calls, state_->responses.size() - 1);
       ++state_->calls;
       co_return state_->responses[index];
@@ -976,15 +976,15 @@ class scripted_resolver_api_impl final : public scripted_resolver_api {
    std::shared_ptr<scripted_resolver_state> state_;
 };
 
-[[nodiscard]] fcl::plugins::p2p_api_resolver::entry resolver_test_entry(std::string protocol) {
-   return fcl::plugins::p2p_api_resolver::entry{
+[[nodiscard]] fcl::plugins::p2p::resolver::entry resolver_test_entry(std::string protocol) {
+   return fcl::plugins::p2p::resolver::entry{
       .id = {.value = "node.test"},
       .version = {.major = 1, .revision = 0},
       .protocol = std::move(protocol),
       .codec = {.value = "fcl.raw"},
       .max_inflight = 64,
       .max_frame_size = 16 * 1024 * 1024,
-      .methods = {fcl::plugins::p2p_api_resolver::method{
+      .methods = {fcl::plugins::p2p::resolver::method{
          .name = "ping",
          .kind = fcl::api::method_kind::unary,
       }},
@@ -1004,8 +1004,8 @@ class route_publisher_plugin final : public fcl::app::plugin {
    }
 
    boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
-      auto p2p = context.apis().get<fcl::plugins::p2p_node::api>(
-         {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+      auto p2p = context.apis().get<fcl::plugins::p2p::node::api>(
+         {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
 
       auto plan = fcl::api::binding()
                      .serve(context.apis())
@@ -1066,8 +1066,8 @@ class duplicate_route_plugin final : public fcl::app::plugin {
    }
 
    boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
-      auto p2p = context.apis().get<fcl::plugins::p2p_node::api>(
-         {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+      auto p2p = context.apis().get<fcl::plugins::p2p::node::api>(
+         {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
       auto handler = [](fcl::p2p::node::incoming_protocol_stream) -> boost::asio::awaitable<void> {
          co_return;
       };
@@ -1096,8 +1096,8 @@ class resolver_route_publisher_plugin final : public fcl::app::plugin {
    }
 
    boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
-      auto resolver = context.apis().get<fcl::plugins::p2p_api_resolver::api>(
-         {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+      auto resolver = context.apis().get<fcl::plugins::p2p::resolver::api>(
+         {.id = {"fcl.plugins.p2p.resolver"}, .major = 1, .min_revision = 0});
 
       auto plan = fcl::api::binding()
                      .serve(context.apis())
@@ -1127,8 +1127,8 @@ class duplicate_resolver_route_plugin final : public fcl::app::plugin {
    }
 
    boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
-      auto resolver = context.apis().get<fcl::plugins::p2p_api_resolver::api>(
-         {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+      auto resolver = context.apis().get<fcl::plugins::p2p::resolver::api>(
+         {.id = {"fcl.plugins.p2p.resolver"}, .major = 1, .min_revision = 0});
       auto plan = fcl::api::binding()
                      .serve(context.apis())
                      .export_api<node_test_api>({.id = {"node.test"}, .major = 1, .min_revision = 0})
@@ -1158,15 +1158,15 @@ class resolver_custom_transport_route_plugin final : public fcl::app::plugin {
    }
 
    boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
-      auto resolver = context.apis().get<fcl::plugins::p2p_api_resolver::api>(
-         {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+      auto resolver = context.apis().get<fcl::plugins::p2p::resolver::api>(
+         {.id = {"fcl.plugins.p2p.resolver"}, .major = 1, .min_revision = 0});
       auto plan = fcl::api::binding()
                      .serve(context.apis())
                      .export_api<node_test_api>({.id = {"node.test"}, .major = 1, .min_revision = 0})
                      .build();
       resolver->publish_api(std::move(plan), fcl::p2p::protocol_id{.value = "/fcl/api/node-test-custom/1"},
-                            fcl::plugins::p2p_api_resolver::publish_options{
-                               .transport = fcl::api::transport::options{
+                            fcl::plugins::p2p::resolver::publish_options{
+                               .transport = fcl::transport::api::options{
                                   .codec = {.value = "fcl.test.raw"},
                                   .max_inflight = 7,
                                   .max_frame_size = 512 * 1024,
@@ -1195,8 +1195,8 @@ class receipt_route_publisher_plugin final : public fcl::app::plugin {
    }
 
    boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
-      auto resolver = context.apis().get<fcl::plugins::p2p_api_resolver::api>(
-         {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+      auto resolver = context.apis().get<fcl::plugins::p2p::resolver::api>(
+         {.id = {"fcl.plugins.p2p.resolver"}, .major = 1, .min_revision = 0});
 
       auto plan = fcl::api::binding()
                      .serve(context.apis())
@@ -1226,8 +1226,8 @@ class resolver_protocol_conflict_plugin final : public fcl::app::plugin {
    }
 
    boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
-      auto p2p = context.apis().get<fcl::plugins::p2p_node::api>(
-         {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+      auto p2p = context.apis().get<fcl::plugins::p2p::node::api>(
+         {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
       p2p->publish_protocol(
          fcl::p2p::protocol_id{.value = "/fcl/api/resolver/1"},
          [](fcl::p2p::node::incoming_protocol_stream) -> boost::asio::awaitable<void> {
@@ -1256,12 +1256,12 @@ class scripted_resolver_plugin final : public fcl::app::plugin {
    }
 
    boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
-      auto p2p = context.apis().get<fcl::plugins::p2p_node::api>(
-         {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+      auto p2p = context.apis().get<fcl::plugins::p2p::node::api>(
+         {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
       auto plan = fcl::api::binding()
                      .serve(context.apis())
                      .export_api<scripted_resolver_api>(
-                        {.id = {"fcl.plugins.p2p_api_resolver.protocol"}, .major = 1, .min_revision = 0})
+                        {.id = {"fcl.plugins.p2p.resolver.protocol"}, .major = 1, .min_revision = 0})
                      .build();
       p2p->publish_api(std::move(plan), fcl::p2p::protocol_id{.value = "/fcl/api/resolver/1"});
       co_return;
@@ -1282,10 +1282,10 @@ class p2p_plugin_application final : public fcl::app::application_shell {
 
    protected:
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::node::descriptor());
       registry.register_plugin(fcl::app::plugin_descriptor{
          .id = fcl::app::plugin_id{.value = "route-publisher"},
-         .dependencies = {fcl::app::plugin_id{.value = "fcl.p2p_node"}},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.plugins.p2p.node"}},
          .factory = [this] {
             return std::make_unique<route_publisher_plugin>(*log_);
          },
@@ -1306,10 +1306,10 @@ class p2p_plugin_application final : public fcl::app::application_shell {
 class duplicate_p2p_plugin_application final : public fcl::app::application_shell {
    protected:
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::node::descriptor());
       registry.register_plugin(fcl::app::plugin_descriptor{
          .id = fcl::app::plugin_id{.value = "duplicate-route"},
-         .dependencies = {fcl::app::plugin_id{.value = "fcl.p2p_node"}},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.plugins.p2p.node"}},
          .factory = [] {
             return std::make_unique<duplicate_route_plugin>();
          },
@@ -1320,23 +1320,23 @@ class duplicate_p2p_plugin_application final : public fcl::app::application_shel
 class p2p_only_application final : public fcl::app::application_shell {
    protected:
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::node::descriptor());
    }
 };
 
 class diagnostics_application final : public fcl::app::application_shell {
  protected:
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
-      registry.register_plugin(fcl::plugins::p2p_diagnostics::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::diagnostics::descriptor());
    }
 };
 
 class pubsub_application final : public fcl::app::application_shell {
  protected:
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
-      registry.register_plugin(fcl::plugins::p2p_pubsub::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::pubsub::descriptor());
    }
 };
 
@@ -1347,12 +1347,12 @@ class fake_pubsub_application final : public fcl::app::application_shell {
  protected:
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
       registry.register_plugin(fcl::app::plugin_descriptor{
-         .id = fcl::app::plugin_id{.value = "fcl.p2p_node"},
+         .id = fcl::app::plugin_id{.value = "fcl.plugins.p2p.node"},
          .factory = [state = state_] {
             return std::make_unique<fake_p2p_node_plugin>(state);
          },
       });
-      registry.register_plugin(fcl::plugins::p2p_pubsub::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::pubsub::descriptor());
    }
 
  private:
@@ -1362,11 +1362,11 @@ class fake_pubsub_application final : public fcl::app::application_shell {
 class resolver_plugin_application final : public fcl::app::application_shell {
  protected:
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
-      registry.register_plugin(fcl::plugins::p2p_api_resolver::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::resolver::descriptor());
       registry.register_plugin(fcl::app::plugin_descriptor{
          .id = fcl::app::plugin_id{.value = "resolver-route-publisher"},
-         .dependencies = {fcl::app::plugin_id{.value = "fcl.p2p_api_resolver"}},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.plugins.p2p.resolver"}},
          .factory = [] {
             return std::make_unique<resolver_route_publisher_plugin>();
          },
@@ -1384,19 +1384,19 @@ class resolver_plugin_application final : public fcl::app::application_shell {
 class resolver_only_application final : public fcl::app::application_shell {
  protected:
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
-      registry.register_plugin(fcl::plugins::p2p_api_resolver::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::resolver::descriptor());
    }
 };
 
 class duplicate_resolver_plugin_application final : public fcl::app::application_shell {
  protected:
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
-      registry.register_plugin(fcl::plugins::p2p_api_resolver::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::resolver::descriptor());
       registry.register_plugin(fcl::app::plugin_descriptor{
          .id = fcl::app::plugin_id{.value = "duplicate-resolver-route"},
-         .dependencies = {fcl::app::plugin_id{.value = "fcl.p2p_api_resolver"}},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.plugins.p2p.resolver"}},
          .factory = [] {
             return std::make_unique<duplicate_resolver_route_plugin>();
          },
@@ -1414,11 +1414,11 @@ class duplicate_resolver_plugin_application final : public fcl::app::application
 class resolver_custom_transport_application final : public fcl::app::application_shell {
  protected:
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
-      registry.register_plugin(fcl::plugins::p2p_api_resolver::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::resolver::descriptor());
       registry.register_plugin(fcl::app::plugin_descriptor{
          .id = fcl::app::plugin_id{.value = "resolver-custom-transport-route"},
-         .dependencies = {fcl::app::plugin_id{.value = "fcl.p2p_api_resolver"}},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.plugins.p2p.resolver"}},
          .factory = [] {
             return std::make_unique<resolver_custom_transport_route_plugin>();
          },
@@ -1439,11 +1439,11 @@ class receipt_resolver_application final : public fcl::app::application_shell {
 
  protected:
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
-      registry.register_plugin(fcl::plugins::p2p_api_resolver::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::resolver::descriptor());
       registry.register_plugin(fcl::app::plugin_descriptor{
          .id = fcl::app::plugin_id{.value = "receipt-route-publisher"},
-         .dependencies = {fcl::app::plugin_id{.value = "fcl.p2p_api_resolver"}},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.plugins.p2p.resolver"}},
          .factory = [] {
             return std::make_unique<receipt_route_publisher_plugin>();
          },
@@ -1463,15 +1463,15 @@ class receipt_resolver_application final : public fcl::app::application_shell {
 class resolver_protocol_conflict_application final : public fcl::app::application_shell {
  protected:
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::node::descriptor());
       registry.register_plugin(fcl::app::plugin_descriptor{
          .id = fcl::app::plugin_id{.value = "resolver-protocol-conflict"},
-         .dependencies = {fcl::app::plugin_id{.value = "fcl.p2p_node"}},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.plugins.p2p.node"}},
          .factory = [] {
             return std::make_unique<resolver_protocol_conflict_plugin>();
          },
       });
-      registry.register_plugin(fcl::plugins::p2p_api_resolver::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::resolver::descriptor());
    }
 };
 
@@ -1481,10 +1481,10 @@ class scripted_resolver_application final : public fcl::app::application_shell {
 
  protected:
    void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::plugins::p2p_node::descriptor());
+      registry.register_plugin(fcl::plugins::p2p::node::descriptor());
       registry.register_plugin(fcl::app::plugin_descriptor{
          .id = fcl::app::plugin_id{.value = "scripted-resolver"},
-         .dependencies = {fcl::app::plugin_id{.value = "fcl.p2p_node"}},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.plugins.p2p.node"}},
          .factory = [] {
             return std::make_unique<scripted_resolver_plugin>();
          },
@@ -1512,7 +1512,7 @@ class http_server_application final : public fcl::app::application_shell {
       if (middleware_) {
          registry.register_plugin(fcl::app::plugin_descriptor{
             .id = fcl::app::plugin_id{.value = "http-middleware"},
-            .dependencies = {fcl::app::plugin_id{.value = "fcl.http_server"}},
+            .dependencies = {fcl::app::plugin_id{.value = "fcl.plugins.http.server"}},
             .factory = [state = state_] {
                return std::make_unique<http_middleware_plugin>(state);
             },
@@ -1520,7 +1520,7 @@ class http_server_application final : public fcl::app::application_shell {
       }
       registry.register_plugin(fcl::app::plugin_descriptor{
          .id = fcl::app::plugin_id{.value = "http-cache-publisher"},
-         .dependencies = {fcl::app::plugin_id{.value = "fcl.http_server"}},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.plugins.http.server"}},
          .factory = [state = state_] {
             return std::make_unique<http_cache_publisher_plugin>(state);
          },
@@ -1547,14 +1547,14 @@ class http_stream_server_application final : public fcl::app::application_shell 
       registry.register_plugin(http_server::descriptor());
       registry.register_plugin(fcl::app::plugin_descriptor{
          .id = fcl::app::plugin_id{.value = "http-middleware"},
-         .dependencies = {fcl::app::plugin_id{.value = "fcl.http_server"}},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.plugins.http.server"}},
          .factory = [state = state_] {
             return std::make_unique<http_middleware_plugin>(state);
          },
       });
       registry.register_plugin(fcl::app::plugin_descriptor{
          .id = fcl::app::plugin_id{.value = "http-stream-publisher"},
-         .dependencies = {fcl::app::plugin_id{.value = "fcl.http_server"}},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.plugins.http.server"}},
          .factory = [state = state_] {
             return std::make_unique<http_stream_publisher_plugin>(state);
          },
@@ -1581,14 +1581,14 @@ class http_empty_server_application final : public fcl::app::application_shell {
       registry.register_plugin(http_server::descriptor());
       registry.register_plugin(fcl::app::plugin_descriptor{
          .id = fcl::app::plugin_id{.value = "http-middleware"},
-         .dependencies = {fcl::app::plugin_id{.value = "fcl.http_server"}},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.plugins.http.server"}},
          .factory = [state = state_] {
             return std::make_unique<http_middleware_plugin>(state);
          },
       });
       registry.register_plugin(fcl::app::plugin_descriptor{
          .id = fcl::app::plugin_id{.value = "http-empty-publisher"},
-         .dependencies = {fcl::app::plugin_id{.value = "fcl.http_server"}},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.plugins.http.server"}},
          .factory = [state = state_] {
             return std::make_unique<http_empty_publisher_plugin>(state);
          },
@@ -1610,7 +1610,7 @@ class duplicate_http_server_application final : public fcl::app::application_she
       registry.register_plugin(http_server::descriptor());
       registry.register_plugin(fcl::app::plugin_descriptor{
          .id = fcl::app::plugin_id{.value = "duplicate-http-cache-publisher"},
-         .dependencies = {fcl::app::plugin_id{.value = "fcl.http_server"}},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.plugins.http.server"}},
          .factory = [] {
             return std::make_unique<duplicate_http_cache_publisher_plugin>();
          },
@@ -1629,7 +1629,7 @@ class late_http_server_application final : public fcl::app::application_shell {
       registry.register_plugin(http_server::descriptor());
       registry.register_plugin(fcl::app::plugin_descriptor{
          .id = fcl::app::plugin_id{.value = "late-http-publisher"},
-         .dependencies = {fcl::app::plugin_id{.value = "fcl.http_server"}},
+         .dependencies = {fcl::app::plugin_id{.value = "fcl.plugins.http.server"}},
          .factory = [] {
             return std::make_unique<late_http_publish_plugin>();
          },
@@ -1697,8 +1697,8 @@ class late_http_server_application final : public fcl::app::application_shell {
 [[nodiscard]] fcl::config::document signer_config(std::vector<fcl::config::value> keys,
                                                   std::string default_output_profile = "fcl") {
    auto document = fcl::config::document{};
-   document.set("signature-provider.keys", fcl::config::value::array_type(keys.begin(), keys.end()));
-   document.set("signature-provider.default-output-profile", std::move(default_output_profile));
+   document.set("plugins.signing.provider.keys", fcl::config::value::array_type(keys.begin(), keys.end()));
+   document.set("plugins.signing.provider.default-output-profile", std::move(default_output_profile));
    return document;
 }
 
@@ -1715,19 +1715,19 @@ concept has_peers = requires(T& value) {
 template <typename T>
 concept has_pubsub_publish = requires(T& value) {
    value.publish(fcl::p2p::pubsub::topic{.value = "topic"}, std::vector<std::uint8_t>{},
-                 fcl::plugins::p2p_pubsub::publish_options{});
+                 fcl::plugins::p2p::pubsub::publish_options{});
 };
 
 template <typename T>
-concept has_pubsub_subscribe = requires(T& value, fcl::plugins::p2p_pubsub::handler handler) {
+concept has_pubsub_subscribe = requires(T& value, fcl::plugins::p2p::pubsub::handler handler) {
    value.subscribe(fcl::p2p::pubsub::topic{.value = "topic"}, std::move(handler),
-                   fcl::plugins::p2p_pubsub::subscribe_options{});
+                   fcl::plugins::p2p::pubsub::subscribe_options{});
 };
 
-static_assert(!has_metrics<fcl::plugins::p2p_node::api>);
-static_assert(!has_peers<fcl::plugins::p2p_node::api>);
-static_assert(!has_pubsub_publish<fcl::plugins::p2p_node::api>);
-static_assert(!has_pubsub_subscribe<fcl::plugins::p2p_node::api>);
+static_assert(!has_metrics<fcl::plugins::p2p::node::api>);
+static_assert(!has_peers<fcl::plugins::p2p::node::api>);
+static_assert(!has_pubsub_publish<fcl::plugins::p2p::node::api>);
+static_assert(!has_pubsub_subscribe<fcl::plugins::p2p::node::api>);
 static_assert(fcl::api::local_interface<signature_provider::api>);
 static_assert(!fcl::api::remote_interface<signature_provider::api>);
 
@@ -1737,7 +1737,7 @@ BOOST_AUTO_TEST_CASE(http_server_config_is_described_from_schema) {
    auto plugin = http_server::plugin{};
    const auto descriptor = plugin.describe_config();
    BOOST_REQUIRE(descriptor.has_value());
-   BOOST_TEST(descriptor->section == "http-server");
+   BOOST_TEST(descriptor->section == "plugins.http.server");
 
    const auto& bind_address = require_field(*descriptor, "bind-address");
    BOOST_TEST(bind_address.has_default);
@@ -1763,11 +1763,11 @@ BOOST_AUTO_TEST_CASE(http_server_config_is_described_from_schema) {
 BOOST_AUTO_TEST_CASE(http_server_rejects_invalid_schema_config) {
    auto plugin = http_server::plugin{};
    auto document = fcl::config::document{};
-   document.set("http-server.port", std::uint64_t{70000});
+   document.set("plugins.http.server.port", std::uint64_t{70000});
 
    auto runtime = fcl::asio::runtime{};
    BOOST_CHECK_THROW(
-      fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "http-server"})),
+      fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "plugins.http.server"})),
       http_server::exceptions::invalid_config);
 }
 
@@ -1776,16 +1776,16 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_rejects_invalid_api_base_path_during_con
 
    auto empty = http_server::plugin{};
    auto empty_document = fcl::config::document{};
-   empty_document.set("http-server.api-base-path", std::string{});
+   empty_document.set("plugins.http.server.api-base-path", std::string{});
    BOOST_CHECK_THROW(
-      fcl::asio::blocking::run(runtime, empty.configure(fcl::config::component_view{empty_document, "http-server"})),
+      fcl::asio::blocking::run(runtime, empty.configure(fcl::config::component_view{empty_document, "plugins.http.server"})),
       http_server::exceptions::invalid_config);
 
    auto relative = http_server::plugin{};
    auto relative_document = fcl::config::document{};
-   relative_document.set("http-server.api-base-path", std::string{"api"});
+   relative_document.set("plugins.http.server.api-base-path", std::string{"api"});
    BOOST_CHECK_THROW(fcl::asio::blocking::run(
-                        runtime, relative.configure(fcl::config::component_view{relative_document, "http-server"})),
+                        runtime, relative.configure(fcl::config::component_view{relative_document, "plugins.http.server"})),
                      http_server::exceptions::invalid_config);
 }
 
@@ -1794,8 +1794,8 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_publishes_typed_api_under_configured_bas
    auto state = std::make_shared<http_publish_state>();
    auto app = http_server_application{state};
    auto config = fcl::config::document{};
-   config.set("http-server.port", std::uint64_t{port});
-   config.set("http-server.api-base-path", std::string{"/api"});
+   config.set("plugins.http.server.port", std::uint64_t{port});
+   config.set("plugins.http.server.api-base-path", std::string{"/api"});
 
    app.configure(config);
    fcl::asio::blocking::run(app.runtime(), app.startup());
@@ -1816,8 +1816,8 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_uses_publish_base_path_override) {
    state->base_path = "/custom";
    auto app = http_server_application{state};
    auto config = fcl::config::document{};
-   config.set("http-server.port", std::uint64_t{port});
-   config.set("http-server.api-base-path", std::string{"/api"});
+   config.set("plugins.http.server.port", std::uint64_t{port});
+   config.set("plugins.http.server.api-base-path", std::string{"/api"});
 
    app.configure(config);
    fcl::asio::blocking::run(app.runtime(), app.startup());
@@ -1838,8 +1838,8 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_applies_middleware_order_and_short_circu
    state->short_circuit = true;
    auto app = http_server_application{state, true};
    auto config = fcl::config::document{};
-   config.set("http-server.port", std::uint64_t{port});
-   config.set("http-server.api-base-path", std::string{"/api"});
+   config.set("plugins.http.server.port", std::uint64_t{port});
+   config.set("plugins.http.server.api-base-path", std::string{"/api"});
 
    app.configure(config);
    fcl::asio::blocking::run(app.runtime(), app.startup());
@@ -1873,8 +1873,8 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_preserves_stream_framing_through_middlew
    state->base_path = "/api";
    auto app = http_stream_server_application{state};
    auto config = fcl::config::document{};
-   config.set("http-server.port", std::uint64_t{port});
-   config.set("http-server.api-base-path", std::string{"/api"});
+   config.set("plugins.http.server.port", std::uint64_t{port});
+   config.set("plugins.http.server.api-base-path", std::string{"/api"});
 
    app.configure(config);
    fcl::asio::blocking::run(app.runtime(), app.startup());
@@ -1909,8 +1909,8 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_stream_middleware_content_type_preserves
    state->set_stream_content_type_after_next = true;
    auto app = http_stream_server_application{state};
    auto config = fcl::config::document{};
-   config.set("http-server.port", std::uint64_t{port});
-   config.set("http-server.api-base-path", std::string{"/api"});
+   config.set("plugins.http.server.port", std::uint64_t{port});
+   config.set("plugins.http.server.api-base-path", std::string{"/api"});
 
    app.configure(config);
    fcl::asio::blocking::run(app.runtime(), app.startup());
@@ -1945,8 +1945,8 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_preserves_absent_content_type_through_mi
    state->base_path = "/api";
    auto app = http_empty_server_application{state};
    auto config = fcl::config::document{};
-   config.set("http-server.port", std::uint64_t{port});
-   config.set("http-server.api-base-path", std::string{"/api"});
+   config.set("plugins.http.server.port", std::uint64_t{port});
+   config.set("plugins.http.server.api-base-path", std::string{"/api"});
 
    app.configure(config);
    fcl::asio::blocking::run(app.runtime(), app.startup());
@@ -1978,8 +1978,8 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_stream_middleware_replacement_does_not_l
    state->replace_stream_after_next = true;
    auto app = http_stream_server_application{state};
    auto config = fcl::config::document{};
-   config.set("http-server.port", std::uint64_t{port});
-   config.set("http-server.api-base-path", std::string{"/api"});
+   config.set("plugins.http.server.port", std::uint64_t{port});
+   config.set("plugins.http.server.api-base-path", std::string{"/api"});
 
    app.configure(config);
    fcl::asio::blocking::run(app.runtime(), app.startup());
@@ -2012,8 +2012,8 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_empty_stream_middleware_replacement_clea
    state->empty_replace_stream_after_next = true;
    auto app = http_stream_server_application{state};
    auto config = fcl::config::document{};
-   config.set("http-server.port", std::uint64_t{port});
-   config.set("http-server.api-base-path", std::string{"/api"});
+   config.set("plugins.http.server.port", std::uint64_t{port});
+   config.set("plugins.http.server.api-base-path", std::string{"/api"});
 
    app.configure(config);
    fcl::asio::blocking::run(app.runtime(), app.startup());
@@ -2043,7 +2043,7 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_rejects_duplicate_publication_on_startup
    const auto port = reserve_loopback_port();
    auto app = duplicate_http_server_application{};
    auto config = fcl::config::document{};
-   config.set("http-server.port", std::uint64_t{port});
+   config.set("plugins.http.server.port", std::uint64_t{port});
 
    app.configure(config);
    BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.startup()), fcl::http::exceptions::conflict);
@@ -2053,7 +2053,7 @@ BOOST_AUTO_TEST_CASE(http_server_plugin_rejects_late_publication_after_startup_c
    const auto port = reserve_loopback_port();
    auto app = late_http_server_application{};
    auto config = fcl::config::document{};
-   config.set("http-server.port", std::uint64_t{port});
+   config.set("plugins.http.server.port", std::uint64_t{port});
 
    app.configure(config);
    BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.startup()),
@@ -2064,7 +2064,7 @@ BOOST_AUTO_TEST_CASE(signature_provider_config_is_redacted_and_local_only) {
    auto plugin = signature_provider::plugin{};
    const auto descriptor = plugin.describe_config();
    BOOST_REQUIRE(descriptor.has_value());
-   BOOST_TEST(descriptor->section == "signature-provider");
+   BOOST_TEST(descriptor->section == "plugins.signing.provider");
 
    const auto& keys = require_field(*descriptor, "keys");
    BOOST_TEST(keys.secret);
@@ -2081,7 +2081,7 @@ BOOST_AUTO_TEST_CASE(signature_provider_config_is_redacted_and_local_only) {
                  "fcl",
                  {"storage.receipt"})});
    const auto redacted = fcl::config::redact(document, registry);
-   const auto* value = redacted.try_get("signature-provider.keys");
+   const auto* value = redacted.try_get("plugins.signing.provider.keys");
    BOOST_REQUIRE(value != nullptr);
    const auto* text = std::get_if<std::string>(&value->storage);
    BOOST_REQUIRE(text != nullptr);
@@ -2096,7 +2096,7 @@ BOOST_AUTO_TEST_CASE(signature_provider_config_decodes_through_public_schema) {
                  "fcl",
                  {"storage.receipt"})});
 
-   const auto decoded = fcl::config::decode<signature_provider::config>(document, "signature-provider");
+   const auto decoded = fcl::config::decode<signature_provider::config>(document, "plugins.signing.provider");
    BOOST_TEST(decoded.ok());
    BOOST_REQUIRE_EQUAL(decoded.value.keys.size(), 1U);
    BOOST_TEST(decoded.value.keys.front().id == "provider");
@@ -2115,12 +2115,12 @@ BOOST_AUTO_TEST_CASE(signature_provider_structured_keys_are_not_cli_or_env_field
    registry.add(*descriptor);
 
    const auto help = fcl::program_options::help(registry, "FCL options");
-   BOOST_TEST(help.find("signature-provider.keys") == std::string::npos);
+   BOOST_TEST(help.find("plugins.signing.provider.keys") == std::string::npos);
 
-   const char* argv[] = {"tool", "--signature-provider.keys=provider"};
+   const char* argv[] = {"tool", "--plugins.signing.provider.keys=provider"};
    const auto parsed = fcl::program_options::parse(2, argv, registry);
    BOOST_TEST(!parsed.ok());
-   BOOST_TEST(parsed.document.try_get("signature-provider.keys") == nullptr);
+   BOOST_TEST(parsed.document.try_get("plugins.signing.provider.keys") == nullptr);
 
    const auto key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::secp256k1::private_key_shim>();
    const auto document = signer_config(
@@ -2144,7 +2144,7 @@ BOOST_AUTO_TEST_CASE(signature_provider_structured_keys_are_not_cli_or_env_field
    BOOST_TEST(!read.ok());
    BOOST_REQUIRE_EQUAL(read.diagnostics.size(), 1U);
    BOOST_TEST(read.diagnostics.front().code == "env.unknown");
-   BOOST_TEST(read.value.try_get("signature-provider.keys") == nullptr);
+   BOOST_TEST(read.value.try_get("plugins.signing.provider.keys") == nullptr);
 }
 
 BOOST_AUTO_TEST_CASE(signature_provider_rejects_malformed_private_key_without_leaking_secret) {
@@ -2154,7 +2154,7 @@ BOOST_AUTO_TEST_CASE(signature_provider_rejects_malformed_private_key_without_le
 
    auto runtime = fcl::asio::runtime{};
    BOOST_CHECK_EXCEPTION(
-      fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "signature-provider"})),
+      fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "plugins.signing.provider"})),
       signature_provider::exceptions::invalid_key,
       [&](const auto& error) {
          const auto text = std::string{error.what()};
@@ -2171,11 +2171,11 @@ BOOST_AUTO_TEST_CASE(signature_provider_rejects_empty_private_key_through_schema
 
    auto runtime = fcl::asio::runtime{};
    BOOST_CHECK_EXCEPTION(
-      fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "signature-provider"})),
+      fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "plugins.signing.provider"})),
       signature_provider::exceptions::invalid_config,
       [](const auto& error) {
          const auto text = std::string{error.what()};
-         return text.find("signature-provider.keys[0].private-key") != std::string::npos &&
+         return text.find("plugins.signing.provider.keys[0].private-key") != std::string::npos &&
                 text.find("schema.non_empty") != std::string::npos;
       });
 }
@@ -2189,19 +2189,19 @@ BOOST_AUTO_TEST_CASE(signature_provider_requires_explicit_non_empty_purposes) {
    auto missing = signature_provider::plugin{};
    auto missing_document = signer_config({key_entry_without_purposes("missing", private_key, "fcl")});
    BOOST_CHECK_THROW(
-      fcl::asio::blocking::run(runtime, missing.configure(fcl::config::component_view{missing_document, "signature-provider"})),
+      fcl::asio::blocking::run(runtime, missing.configure(fcl::config::component_view{missing_document, "plugins.signing.provider"})),
       signature_provider::exceptions::invalid_config);
 
    auto empty = signature_provider::plugin{};
    auto empty_document = signer_config({key_entry("empty", private_key, "fcl", {})});
    BOOST_CHECK_THROW(
-      fcl::asio::blocking::run(runtime, empty.configure(fcl::config::component_view{empty_document, "signature-provider"})),
+      fcl::asio::blocking::run(runtime, empty.configure(fcl::config::component_view{empty_document, "plugins.signing.provider"})),
       signature_provider::exceptions::invalid_config);
 
    auto blank = signature_provider::plugin{};
    auto blank_document = signer_config({key_entry("blank", private_key, "fcl", {""})});
    BOOST_CHECK_THROW(
-      fcl::asio::blocking::run(runtime, blank.configure(fcl::config::component_view{blank_document, "signature-provider"})),
+      fcl::asio::blocking::run(runtime, blank.configure(fcl::config::component_view{blank_document, "plugins.signing.provider"})),
       signature_provider::exceptions::invalid_config);
 }
 
@@ -2215,7 +2215,7 @@ BOOST_AUTO_TEST_CASE(signature_provider_signs_k1_digest_with_antelope_output) {
                  {"storage.receipt", "storage.audit"})});
 
    auto runtime = fcl::asio::runtime{};
-   fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "signature-provider"}));
+   fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "plugins.signing.provider"}));
 
    auto apis = fcl::api::registry{};
    auto provider = fcl::api::installer{apis};
@@ -2256,7 +2256,7 @@ BOOST_AUTO_TEST_CASE(signature_provider_sugar_uses_configured_default_output_pro
       "antelope");
 
    auto runtime = fcl::asio::runtime{};
-   fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "signature-provider"}));
+   fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "plugins.signing.provider"}));
 
    auto apis = fcl::api::registry{};
    auto provider = fcl::api::installer{apis};
@@ -2299,7 +2299,7 @@ BOOST_AUTO_TEST_CASE(signature_provider_supports_p256_and_ed25519_without_k1_ass
        key_entry("ed25519", fcl::crypto::asymmetric::encoding::fcl().format(ed25519_key), "fcl", {"api.auth"})});
 
    auto runtime = fcl::asio::runtime{};
-   fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "signature-provider"}));
+   fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "plugins.signing.provider"}));
 
    auto apis = fcl::api::registry{};
    auto provider = fcl::api::installer{apis};
@@ -2341,7 +2341,7 @@ BOOST_AUTO_TEST_CASE(signature_provider_enforces_allowed_purpose_and_algorithm) 
       {key_entry("provider", fcl::crypto::asymmetric::encoding::fcl().format(key), "fcl", {"storage.receipt"})});
 
    auto runtime = fcl::asio::runtime{};
-   fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "signature-provider"}));
+   fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, "plugins.signing.provider"}));
 
    auto apis = fcl::api::registry{};
    auto provider = fcl::api::installer{apis};
@@ -2393,10 +2393,10 @@ BOOST_AUTO_TEST_CASE(signature_provider_enforces_allowed_purpose_and_algorithm) 
 }
 
 BOOST_AUTO_TEST_CASE(p2p_node_plugin_config_is_described_from_public_schema) {
-   auto plugin = fcl::plugins::p2p_node::plugin{};
+   auto plugin = fcl::plugins::p2p::node::plugin{};
    const auto descriptor = plugin.describe_config();
    BOOST_REQUIRE(descriptor.has_value());
-   BOOST_TEST(descriptor->section == "p2p");
+   BOOST_TEST(descriptor->section == "plugins.p2p.node");
 
    const auto& listen = require_field(*descriptor, "listen");
    BOOST_TEST(static_cast<int>(listen.kind) == static_cast<int>(fcl::schema::value_kind::string_list));
@@ -2445,7 +2445,7 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_publishes_safe_local_api_for_route_contribu
    app.configure(test_p2p_config(test_peer(18)));
    fcl::asio::blocking::run(app.runtime(), app.startup());
 
-   BOOST_TEST(app.apis().describe({.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0}) != nullptr);
+   BOOST_TEST(app.apis().describe({.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0}) != nullptr);
    BOOST_TEST(log.entries == (std::vector<std::string>{"routes.published", "routes.startup"}),
               boost::test_tools::per_element());
 
@@ -2459,33 +2459,33 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_rejects_duplicate_protocol_contributions_be
 
    app.configure(test_p2p_config(test_peer(19)));
    BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.initialize()),
-                     fcl::plugins::p2p_node::exceptions::route_conflict);
+                     fcl::plugins::p2p::node::exceptions::route_conflict);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_node_api_rejects_facade_calls_before_initialize) {
    auto runtime = fcl::asio::runtime{};
-   auto plugin = fcl::plugins::p2p_node::plugin{};
+   auto plugin = fcl::plugins::p2p::node::plugin{};
    auto apis = fcl::api::registry{};
    auto provider = fcl::api::installer{apis};
    fcl::asio::blocking::run(runtime, plugin.provide(provider));
 
-   auto p2p = apis.get<fcl::plugins::p2p_node::api>(
-      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   auto p2p = apis.get<fcl::plugins::p2p::node::api>(
+      {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
 
-   BOOST_CHECK_THROW((void)p2p->local_peer(), fcl::plugins::p2p_node::exceptions::plugin_not_initialized);
-   BOOST_CHECK_THROW((void)p2p->local_endpoint(), fcl::plugins::p2p_node::exceptions::plugin_not_initialized);
-   BOOST_CHECK_THROW((void)p2p->local_endpoints(), fcl::plugins::p2p_node::exceptions::plugin_not_initialized);
-   BOOST_CHECK_THROW((void)p2p->network_info(), fcl::plugins::p2p_node::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW((void)p2p->local_peer(), fcl::plugins::p2p::node::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW((void)p2p->local_endpoint(), fcl::plugins::p2p::node::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW((void)p2p->local_endpoints(), fcl::plugins::p2p::node::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW((void)p2p->network_info(), fcl::plugins::p2p::node::exceptions::plugin_not_initialized);
    BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
                                               p2p->remote<node_test_api>(
                                                  test_peer(10), fcl::p2p::protocol_id{.value = "/fcl/api/node-test/1"})),
-                     fcl::plugins::p2p_node::exceptions::plugin_not_initialized);
+                     fcl::plugins::p2p::node::exceptions::plugin_not_initialized);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_node_plugin_listens_from_config_and_exposes_local_endpoints) {
    const auto local_peer = test_peer(20);
    auto config = test_p2p_config(local_peer);
-   config.set("p2p.listen",
+   config.set("plugins.p2p.node.listen",
               fcl::config::value::array_type{fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"},
                                              fcl::config::value{"/ip4/127.0.0.1/tcp/0"}});
 
@@ -2493,8 +2493,8 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_listens_from_config_and_exposes_local_endpo
    app.configure(config);
    fcl::asio::blocking::run(app.runtime(), app.startup());
 
-   const auto p2p = app.apis().get<fcl::plugins::p2p_node::api>(
-      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   const auto p2p = app.apis().get<fcl::plugins::p2p::node::api>(
+      {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
    const auto endpoint = p2p->local_endpoint();
    BOOST_REQUIRE(endpoint.has_value());
    BOOST_CHECK_EQUAL(endpoint->transport.host, "127.0.0.1");
@@ -2516,7 +2516,7 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_listens_from_config_and_exposes_local_endpo
 
 BOOST_AUTO_TEST_CASE(p2p_node_plugin_without_peer_id_does_not_inject_test_peer) {
    auto config = test_p2p_config();
-   config.set("p2p.listen", fcl::config::value::array_type{fcl::config::value{"/ip4/127.0.0.1/tcp/0"}});
+   config.set("plugins.p2p.node.listen", fcl::config::value::array_type{fcl::config::value{"/ip4/127.0.0.1/tcp/0"}});
 
    auto app = p2p_only_application{};
    app.configure(config);
@@ -2527,7 +2527,7 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_without_peer_id_does_not_inject_test_peer) 
 BOOST_AUTO_TEST_CASE(p2p_node_plugin_opens_remote_api_over_p2p_stream) {
    const auto server_peer = test_peer(30);
    auto server_config = test_p2p_config(server_peer);
-   server_config.set("p2p.listen", fcl::config::value::array_type{
+   server_config.set("plugins.p2p.node.listen", fcl::config::value::array_type{
                                       fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
 
    auto log = plugin_log{};
@@ -2535,22 +2535,22 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_opens_remote_api_over_p2p_stream) {
    server.configure(server_config);
    fcl::asio::blocking::run(server.runtime(), server.startup());
 
-   auto server_p2p = server.apis().get<fcl::plugins::p2p_node::api>(
-      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   auto server_p2p = server.apis().get<fcl::plugins::p2p::node::api>(
+      {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
    const auto server_endpoint = server_p2p->local_endpoint();
    BOOST_REQUIRE(server_endpoint.has_value());
 
    const auto client_peer = test_peer(31);
    auto client_config = test_p2p_config(client_peer);
-   client_config.set("p2p.bootstrap",
+   client_config.set("plugins.p2p.node.bootstrap",
                      fcl::config::value::array_type{fcl::config::value{server_endpoint->to_string()}});
 
    auto client = p2p_only_application{};
    client.configure(client_config);
    fcl::asio::blocking::run(client.runtime(), client.startup());
 
-   auto client_p2p = client.apis().get<fcl::plugins::p2p_node::api>(
-      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   auto client_p2p = client.apis().get<fcl::plugins::p2p::node::api>(
+      {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
    auto remote = fcl::asio::blocking::run(
       client.runtime(),
       client_p2p->remote<node_test_api>(server_p2p->local_peer(),
@@ -2574,73 +2574,73 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_opens_remote_api_over_p2p_stream) {
 BOOST_AUTO_TEST_CASE(p2p_node_plugin_rejects_invalid_typed_config_before_startup) {
    {
       auto config = test_p2p_config();
-      config.set("p2p.max-inflight-per-peer", std::uint64_t{0});
+      config.set("plugins.p2p.node.max-inflight-per-peer", std::uint64_t{0});
       auto app = p2p_only_application{};
-      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p_node::exceptions::invalid_config);
+      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p::node::exceptions::invalid_config);
    }
 
    {
       auto config = test_p2p_config();
-      config.set("p2p.listen", fcl::config::value::array_type{fcl::config::value{"127.0.0.1:0"}});
+      config.set("plugins.p2p.node.listen", fcl::config::value::array_type{fcl::config::value{"127.0.0.1:0"}});
       auto app = p2p_only_application{};
-      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p_node::exceptions::invalid_config);
+      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p::node::exceptions::invalid_config);
    }
 
    {
       auto config = test_p2p_config();
-      config.set("p2p.api.max-frame-size", std::uint64_t{0});
+      config.set("plugins.p2p.node.api.max-frame-size", std::uint64_t{0});
       auto app = p2p_only_application{};
-      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p_node::exceptions::invalid_config);
+      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p::node::exceptions::invalid_config);
    }
 
    {
       auto config = test_p2p_config();
-      config.set("p2p.path.policy", std::string{"teleport"});
+      config.set("plugins.p2p.node.path.policy", std::string{"teleport"});
       auto app = p2p_only_application{};
       BOOST_CHECK_EXCEPTION(
          app.configure(config),
-         fcl::plugins::p2p_node::exceptions::invalid_config,
+         fcl::plugins::p2p::node::exceptions::invalid_config,
          [](const auto& error) {
             const auto text = std::string{error.what()};
-            return text.find("p2p.path.policy") != std::string::npos &&
+            return text.find("plugins.p2p.node.path.policy") != std::string::npos &&
                    text.find("config.type") != std::string::npos;
          });
    }
 
    {
       auto config = test_p2p_config();
-      config.set("p2p.path.policy", std::string{"relay-only"});
+      config.set("plugins.p2p.node.path.policy", std::string{"relay-only"});
       auto app = p2p_only_application{};
       BOOST_CHECK_NO_THROW(app.configure(config));
    }
 
    {
       auto config = test_p2p_config();
-      config.set("p2p.relay.trust", std::string{"public-allowed"});
+      config.set("plugins.p2p.node.relay.trust", std::string{"public-allowed"});
       auto app = p2p_only_application{};
       BOOST_CHECK_NO_THROW(app.configure(config));
    }
 
    {
       auto config = test_p2p_config();
-      config.set("p2p.relay.trust", std::string{"everyone"});
+      config.set("plugins.p2p.node.relay.trust", std::string{"everyone"});
       auto app = p2p_only_application{};
       BOOST_CHECK_EXCEPTION(
          app.configure(config),
-         fcl::plugins::p2p_node::exceptions::invalid_config,
+         fcl::plugins::p2p::node::exceptions::invalid_config,
          [](const auto& error) {
             const auto text = std::string{error.what()};
-            return text.find("p2p.relay.trust") != std::string::npos &&
+            return text.find("plugins.p2p.node.relay.trust") != std::string::npos &&
                    text.find("config.type") != std::string::npos;
          });
    }
 }
 
 BOOST_AUTO_TEST_CASE(p2p_diagnostics_plugin_config_is_described_from_public_schema) {
-   auto plugin = fcl::plugins::p2p_diagnostics::plugin{};
+   auto plugin = fcl::plugins::p2p::diagnostics::plugin{};
    const auto descriptor = plugin.describe_config();
    BOOST_REQUIRE(descriptor.has_value());
-   BOOST_TEST(descriptor->section == "p2p-diagnostics");
+   BOOST_TEST(descriptor->section == "plugins.p2p.diagnostics");
 
    const auto& max_peers = require_field(*descriptor, "max-peers");
    BOOST_TEST(max_peers.has_default);
@@ -2653,27 +2653,27 @@ BOOST_AUTO_TEST_CASE(p2p_diagnostics_plugin_config_is_described_from_public_sche
 
 BOOST_AUTO_TEST_CASE(p2p_diagnostics_api_rejects_facade_calls_before_initialize) {
    auto runtime = fcl::asio::runtime{};
-   auto plugin = fcl::plugins::p2p_diagnostics::plugin{};
+   auto plugin = fcl::plugins::p2p::diagnostics::plugin{};
    auto apis = fcl::api::registry{};
    auto provider = fcl::api::installer{apis};
    fcl::asio::blocking::run(runtime, plugin.provide(provider));
 
-   auto diagnostics = apis.get<fcl::plugins::p2p_diagnostics::api>(
-      {.id = {"fcl.plugins.p2p_diagnostics"}, .major = 1, .min_revision = 0});
+   auto diagnostics = apis.get<fcl::plugins::p2p::diagnostics::api>(
+      {.id = {"fcl.plugins.p2p.diagnostics"}, .major = 1, .min_revision = 0});
 
-   BOOST_CHECK_THROW((void)diagnostics->snapshot(), fcl::plugins::p2p_diagnostics::exceptions::plugin_not_initialized);
-   BOOST_CHECK_THROW((void)diagnostics->network(), fcl::plugins::p2p_diagnostics::exceptions::plugin_not_initialized);
-   BOOST_CHECK_THROW((void)diagnostics->resources(), fcl::plugins::p2p_diagnostics::exceptions::plugin_not_initialized);
-   BOOST_CHECK_THROW((void)diagnostics->pubsub(), fcl::plugins::p2p_diagnostics::exceptions::plugin_not_initialized);
-   BOOST_CHECK_THROW((void)diagnostics->peers(), fcl::plugins::p2p_diagnostics::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW((void)diagnostics->snapshot(), fcl::plugins::p2p::diagnostics::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW((void)diagnostics->network(), fcl::plugins::p2p::diagnostics::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW((void)diagnostics->resources(), fcl::plugins::p2p::diagnostics::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW((void)diagnostics->pubsub(), fcl::plugins::p2p::diagnostics::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW((void)diagnostics->peers(), fcl::plugins::p2p::diagnostics::exceptions::plugin_not_initialized);
    BOOST_CHECK_THROW((void)diagnostics->peer(test_peer(90)),
-                     fcl::plugins::p2p_diagnostics::exceptions::plugin_not_initialized);
+                     fcl::plugins::p2p::diagnostics::exceptions::plugin_not_initialized);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_diagnostics_plugin_reports_live_p2p_node_state) {
    const auto server_peer = test_peer(91);
    auto server_config = test_p2p_config(server_peer);
-   server_config.set("p2p.listen", fcl::config::value::array_type{
+   server_config.set("plugins.p2p.node.listen", fcl::config::value::array_type{
                                       fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
 
    auto log = plugin_log{};
@@ -2681,24 +2681,24 @@ BOOST_AUTO_TEST_CASE(p2p_diagnostics_plugin_reports_live_p2p_node_state) {
    server.configure(server_config);
    fcl::asio::blocking::run(server.runtime(), server.startup());
 
-   auto server_p2p = server.apis().get<fcl::plugins::p2p_node::api>(
-      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   auto server_p2p = server.apis().get<fcl::plugins::p2p::node::api>(
+      {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
    const auto server_endpoint = server_p2p->local_endpoint();
    BOOST_REQUIRE(server_endpoint.has_value());
 
    const auto client_peer = test_peer(92);
    auto client_config = test_p2p_config(client_peer);
-   client_config.set("p2p.bootstrap",
+   client_config.set("plugins.p2p.node.bootstrap",
                      fcl::config::value::array_type{fcl::config::value{server_endpoint->to_string()}});
 
    auto client = diagnostics_application{};
    client.configure(client_config);
    fcl::asio::blocking::run(client.runtime(), client.startup());
 
-   auto client_p2p = client.apis().get<fcl::plugins::p2p_node::api>(
-      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
-   auto diagnostics = client.apis().get<fcl::plugins::p2p_diagnostics::api>(
-      {.id = {"fcl.plugins.p2p_diagnostics"}, .major = 1, .min_revision = 0});
+   auto client_p2p = client.apis().get<fcl::plugins::p2p::node::api>(
+      {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
+   auto diagnostics = client.apis().get<fcl::plugins::p2p::diagnostics::api>(
+      {.id = {"fcl.plugins.p2p.diagnostics"}, .major = 1, .min_revision = 0});
 
    auto remote = fcl::asio::blocking::run(
       client.runtime(),
@@ -2717,17 +2717,17 @@ BOOST_AUTO_TEST_CASE(p2p_diagnostics_plugin_reports_live_p2p_node_state) {
 
    const auto server_record = diagnostics->peer(server_peer);
    BOOST_TEST(server_record.peer.to_string() == server_peer.to_string());
-   BOOST_CHECK_THROW((void)diagnostics->peer(test_peer(93)), fcl::plugins::p2p_diagnostics::exceptions::not_found);
+   BOOST_CHECK_THROW((void)diagnostics->peer(test_peer(93)), fcl::plugins::p2p::diagnostics::exceptions::not_found);
 
    fcl::asio::blocking::run(client.runtime(), client.shutdown());
    fcl::asio::blocking::run(server.runtime(), server.shutdown());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_config_is_described_from_public_schema) {
-   auto plugin = fcl::plugins::p2p_pubsub::plugin{};
+   auto plugin = fcl::plugins::p2p::pubsub::plugin{};
    const auto descriptor = plugin.describe_config();
    BOOST_REQUIRE(descriptor.has_value());
-   BOOST_TEST(descriptor->section == "p2p-pubsub");
+   BOOST_TEST(descriptor->section == "plugins.p2p.pubsub");
 
    BOOST_TEST(require_field(*descriptor, "max-topics").has_default);
    BOOST_TEST(require_field(*descriptor, "max-handlers-per-topic").has_default);
@@ -2741,53 +2741,53 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_config_is_described_from_public_schema) {
 
 BOOST_AUTO_TEST_CASE(p2p_pubsub_api_rejects_facade_calls_before_initialize) {
    auto runtime = fcl::asio::runtime{};
-   auto plugin = fcl::plugins::p2p_pubsub::plugin{};
+   auto plugin = fcl::plugins::p2p::pubsub::plugin{};
    auto apis = fcl::api::registry{};
    auto provider = fcl::api::installer{apis};
    fcl::asio::blocking::run(runtime, plugin.provide(provider));
 
-   auto pubsub = apis.get<fcl::plugins::p2p_pubsub::api>(
-      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
+   auto pubsub = apis.get<fcl::plugins::p2p::pubsub::api>(
+      {.id = {"fcl.plugins.p2p.pubsub"}, .major = 1, .min_revision = 0});
 
-   BOOST_CHECK_THROW((void)pubsub->snapshot(), fcl::plugins::p2p_pubsub::exceptions::plugin_not_initialized);
-   BOOST_CHECK_THROW((void)pubsub->subscriptions(), fcl::plugins::p2p_pubsub::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW((void)pubsub->snapshot(), fcl::plugins::p2p::pubsub::exceptions::plugin_not_initialized);
+   BOOST_CHECK_THROW((void)pubsub->subscriptions(), fcl::plugins::p2p::pubsub::exceptions::plugin_not_initialized);
    BOOST_CHECK_THROW(fcl::asio::blocking::run(
                         runtime, pubsub->publish(fcl::p2p::pubsub::topic{.value = "fcl.before-init"}, {1, 2, 3})),
-                     fcl::plugins::p2p_pubsub::exceptions::plugin_not_initialized);
+                     fcl::plugins::p2p::pubsub::exceptions::plugin_not_initialized);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_rejects_invalid_typed_config_before_startup) {
    {
       auto config = test_p2p_config();
-      config.set("p2p-pubsub.max-topics", std::uint64_t{0});
+      config.set("plugins.p2p.pubsub.max-topics", std::uint64_t{0});
       auto app = pubsub_application{};
-      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p_pubsub::exceptions::invalid_config);
+      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p::pubsub::exceptions::invalid_config);
    }
    {
       auto config = test_p2p_config();
-      config.set("p2p-pubsub.handler-deadline-ms", std::uint64_t{0});
+      config.set("plugins.p2p.pubsub.handler-deadline-ms", std::uint64_t{0});
       auto app = pubsub_application{};
-      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p_pubsub::exceptions::invalid_config);
+      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p::pubsub::exceptions::invalid_config);
    }
 }
 
 BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_requests_core_pubsub_capability_before_startup) {
    auto config = test_p2p_config(test_peer(94));
-   config.set("p2p.listen", fcl::config::value::array_type{
+   config.set("plugins.p2p.node.listen", fcl::config::value::array_type{
                                 fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
-   config.set("p2p-pubsub.sign-publishes", false);
+   config.set("plugins.p2p.pubsub.sign-publishes", false);
 
    auto app = pubsub_application{};
    app.configure(config);
    fcl::asio::blocking::run(app.runtime(), app.startup());
 
-   auto pubsub = app.apis().get<fcl::plugins::p2p_pubsub::api>(
-      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
+   auto pubsub = app.apis().get<fcl::plugins::p2p::pubsub::api>(
+      {.id = {"fcl.plugins.p2p.pubsub"}, .major = 1, .min_revision = 0});
    auto subscription = fcl::asio::blocking::run(
       app.runtime(),
       pubsub->subscribe(
          fcl::p2p::pubsub::topic{.value = "fcl.local"},
-         [](fcl::plugins::p2p_pubsub::message) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+         [](fcl::plugins::p2p::pubsub::message) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
             co_return fcl::p2p::pubsub::validation_result::accept;
          }));
 
@@ -2803,12 +2803,12 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_serializes_first_join_per_topic) {
    auto app = fake_pubsub_application{source_state};
    fcl::asio::blocking::run(app.runtime(), app.startup());
 
-   auto pubsub = app.apis().get<fcl::plugins::p2p_pubsub::api>(
-      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
+   auto pubsub = app.apis().get<fcl::plugins::p2p::pubsub::api>(
+      {.id = {"fcl.plugins.p2p.pubsub"}, .major = 1, .min_revision = 0});
    const auto topic = fcl::p2p::pubsub::topic{.value = "fcl.fake.pending"};
    auto first = std::make_shared<subscribe_task_result>();
    auto second = std::make_shared<subscribe_task_result>();
-   auto handler = [](fcl::plugins::p2p_pubsub::message) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+   auto handler = [](fcl::plugins::p2p::pubsub::message) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
       co_return fcl::p2p::pubsub::validation_result::accept;
    };
 
@@ -2861,12 +2861,12 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_failed_first_join_clears_pending_topic) {
    auto app = fake_pubsub_application{source_state};
    fcl::asio::blocking::run(app.runtime(), app.startup());
 
-   auto pubsub = app.apis().get<fcl::plugins::p2p_pubsub::api>(
-      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
+   auto pubsub = app.apis().get<fcl::plugins::p2p::pubsub::api>(
+      {.id = {"fcl.plugins.p2p.pubsub"}, .major = 1, .min_revision = 0});
    const auto topic = fcl::p2p::pubsub::topic{.value = "fcl.fake.failed"};
    auto first = std::make_shared<subscribe_task_result>();
    auto second = std::make_shared<subscribe_task_result>();
-   auto handler = [](fcl::plugins::p2p_pubsub::message) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+   auto handler = [](fcl::plugins::p2p::pubsub::message) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
       co_return fcl::p2p::pubsub::validation_result::accept;
    };
 
@@ -2917,41 +2917,41 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_failed_first_join_clears_pending_topic) {
 BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_publishes_and_subscribes_raw_and_typed_messages) {
    const auto subscriber_peer = test_peer(95);
    auto subscriber_config = test_p2p_config(subscriber_peer);
-   subscriber_config.set("p2p.listen", fcl::config::value::array_type{
+   subscriber_config.set("plugins.p2p.node.listen", fcl::config::value::array_type{
                                            fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
-   subscriber_config.set("p2p-pubsub.sign-publishes", false);
+   subscriber_config.set("plugins.p2p.pubsub.sign-publishes", false);
 
    auto subscriber = pubsub_application{};
    subscriber.configure(subscriber_config);
    fcl::asio::blocking::run(subscriber.runtime(), subscriber.startup());
 
-   auto subscriber_p2p = subscriber.apis().get<fcl::plugins::p2p_node::api>(
-      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   auto subscriber_p2p = subscriber.apis().get<fcl::plugins::p2p::node::api>(
+      {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
    const auto subscriber_endpoint = subscriber_p2p->local_endpoint();
    BOOST_REQUIRE(subscriber_endpoint.has_value());
 
    const auto publisher_peer = test_peer(96);
    auto publisher_config = test_p2p_config(publisher_peer);
-   publisher_config.set("p2p.bootstrap",
+   publisher_config.set("plugins.p2p.node.bootstrap",
                         fcl::config::value::array_type{fcl::config::value{subscriber_endpoint->to_string()}});
-   publisher_config.set("p2p-pubsub.sign-publishes", false);
+   publisher_config.set("plugins.p2p.pubsub.sign-publishes", false);
 
    auto publisher = pubsub_application{};
    publisher.configure(publisher_config);
    fcl::asio::blocking::run(publisher.runtime(), publisher.startup());
 
    auto received = std::make_shared<received_pubsub_messages>();
-   auto subscriber_pubsub = subscriber.apis().get<fcl::plugins::p2p_pubsub::api>(
-      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
-   auto publisher_pubsub = publisher.apis().get<fcl::plugins::p2p_pubsub::api>(
-      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
+   auto subscriber_pubsub = subscriber.apis().get<fcl::plugins::p2p::pubsub::api>(
+      {.id = {"fcl.plugins.p2p.pubsub"}, .major = 1, .min_revision = 0});
+   auto publisher_pubsub = publisher.apis().get<fcl::plugins::p2p::pubsub::api>(
+      {.id = {"fcl.plugins.p2p.pubsub"}, .major = 1, .min_revision = 0});
 
    const auto raw_topic = fcl::p2p::pubsub::topic{.value = "fcl.plugins.raw"};
    const auto typed_topic = fcl::p2p::pubsub::topic{.value = "fcl.plugins.typed"};
    auto first = fcl::asio::blocking::run(
       subscriber.runtime(),
       subscriber_pubsub->subscribe(
-         raw_topic, [received](fcl::plugins::p2p_pubsub::message message) mutable
+         raw_topic, [received](fcl::plugins::p2p::pubsub::message message) mutable
                        -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
             received->push(std::move(message), fcl::p2p::pubsub::validation_result::accept);
             co_return fcl::p2p::pubsub::validation_result::accept;
@@ -2959,7 +2959,7 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_publishes_and_subscribes_raw_and_typed_me
    auto second = fcl::asio::blocking::run(
       subscriber.runtime(),
       subscriber_pubsub->subscribe(
-         raw_topic, [received](fcl::plugins::p2p_pubsub::message message) mutable
+         raw_topic, [received](fcl::plugins::p2p::pubsub::message message) mutable
                        -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
             received->push(std::move(message), fcl::p2p::pubsub::validation_result::accept);
             co_return fcl::p2p::pubsub::validation_result::accept;
@@ -2967,7 +2967,7 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_publishes_and_subscribes_raw_and_typed_me
    (void)fcl::asio::blocking::run(
       subscriber.runtime(),
       subscriber_pubsub->subscribe<pubsub_payload>(
-         typed_topic, [received](fcl::plugins::p2p_pubsub::typed_message<pubsub_payload> message) mutable
+         typed_topic, [received](fcl::plugins::p2p::pubsub::typed_message<pubsub_payload> message) mutable
                          -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
             received->push(std::move(message));
             co_return fcl::p2p::pubsub::validation_result::accept;
@@ -3020,40 +3020,40 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_publishes_and_subscribes_raw_and_typed_me
 BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_aggregates_handler_results_and_deadlines) {
    const auto subscriber_peer = test_peer(98);
    auto subscriber_config = test_p2p_config(subscriber_peer);
-   subscriber_config.set("p2p.listen", fcl::config::value::array_type{
+   subscriber_config.set("plugins.p2p.node.listen", fcl::config::value::array_type{
                                            fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
-   subscriber_config.set("p2p-pubsub.sign-publishes", false);
+   subscriber_config.set("plugins.p2p.pubsub.sign-publishes", false);
 
    auto subscriber = pubsub_application{};
    subscriber.configure(subscriber_config);
    fcl::asio::blocking::run(subscriber.runtime(), subscriber.startup());
 
-   auto subscriber_p2p = subscriber.apis().get<fcl::plugins::p2p_node::api>(
-      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   auto subscriber_p2p = subscriber.apis().get<fcl::plugins::p2p::node::api>(
+      {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
    const auto subscriber_endpoint = subscriber_p2p->local_endpoint();
    BOOST_REQUIRE(subscriber_endpoint.has_value());
 
    auto publisher_config = test_p2p_config(test_peer(99));
-   publisher_config.set("p2p.bootstrap",
+   publisher_config.set("plugins.p2p.node.bootstrap",
                         fcl::config::value::array_type{fcl::config::value{subscriber_endpoint->to_string()}});
-   publisher_config.set("p2p-pubsub.sign-publishes", false);
+   publisher_config.set("plugins.p2p.pubsub.sign-publishes", false);
 
    auto publisher = pubsub_application{};
    publisher.configure(publisher_config);
    fcl::asio::blocking::run(publisher.runtime(), publisher.startup());
 
    auto received = std::make_shared<received_pubsub_messages>();
-   auto subscriber_pubsub = subscriber.apis().get<fcl::plugins::p2p_pubsub::api>(
-      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
-   auto publisher_pubsub = publisher.apis().get<fcl::plugins::p2p_pubsub::api>(
-      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
+   auto subscriber_pubsub = subscriber.apis().get<fcl::plugins::p2p::pubsub::api>(
+      {.id = {"fcl.plugins.p2p.pubsub"}, .major = 1, .min_revision = 0});
+   auto publisher_pubsub = publisher.apis().get<fcl::plugins::p2p::pubsub::api>(
+      {.id = {"fcl.plugins.p2p.pubsub"}, .major = 1, .min_revision = 0});
 
    const auto aggregate_topic = fcl::p2p::pubsub::topic{.value = "fcl.plugins.aggregate"};
    const auto timeout_topic = fcl::p2p::pubsub::topic{.value = "fcl.plugins.timeout"};
    (void)fcl::asio::blocking::run(
       subscriber.runtime(),
       subscriber_pubsub->subscribe(
-         aggregate_topic, [received](fcl::plugins::p2p_pubsub::message message) mutable
+         aggregate_topic, [received](fcl::plugins::p2p::pubsub::message message) mutable
                              -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
             received->push(std::move(message), fcl::p2p::pubsub::validation_result::ignore);
             co_return fcl::p2p::pubsub::validation_result::ignore;
@@ -3061,14 +3061,14 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_aggregates_handler_results_and_deadlines)
    (void)fcl::asio::blocking::run(
       subscriber.runtime(),
       subscriber_pubsub->subscribe(
-         aggregate_topic, [](fcl::plugins::p2p_pubsub::message)
+         aggregate_topic, [](fcl::plugins::p2p::pubsub::message)
                              -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
-            throw fcl::plugins::p2p_pubsub::exceptions::handler_limit{"test handler failure"};
+            throw fcl::plugins::p2p::pubsub::exceptions::handler_limit{"test handler failure"};
          }));
    (void)fcl::asio::blocking::run(
       subscriber.runtime(),
       subscriber_pubsub->subscribe(
-         aggregate_topic, [received](fcl::plugins::p2p_pubsub::message message) mutable
+         aggregate_topic, [received](fcl::plugins::p2p::pubsub::message message) mutable
                              -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
             received->push(std::move(message), fcl::p2p::pubsub::validation_result::accept);
             co_return fcl::p2p::pubsub::validation_result::accept;
@@ -3076,7 +3076,7 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_aggregates_handler_results_and_deadlines)
    (void)fcl::asio::blocking::run(
       subscriber.runtime(),
       subscriber_pubsub->subscribe(
-         aggregate_topic, [received](fcl::plugins::p2p_pubsub::message message) mutable
+         aggregate_topic, [received](fcl::plugins::p2p::pubsub::message message) mutable
                              -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
             received->push(std::move(message), fcl::p2p::pubsub::validation_result::reject);
             co_return fcl::p2p::pubsub::validation_result::reject;
@@ -3085,13 +3085,13 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_aggregates_handler_results_and_deadlines)
       subscriber.runtime(),
       subscriber_pubsub->subscribe(
          timeout_topic,
-         [](fcl::plugins::p2p_pubsub::message) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+         [](fcl::plugins::p2p::pubsub::message) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
             auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
             timer.expires_after(std::chrono::milliseconds{100});
             co_await timer.async_wait(boost::asio::use_awaitable);
             co_return fcl::p2p::pubsub::validation_result::accept;
          },
-         fcl::plugins::p2p_pubsub::subscribe_options{.handler_deadline = std::chrono::milliseconds{10}}));
+         fcl::plugins::p2p::pubsub::subscribe_options{.handler_deadline = std::chrono::milliseconds{10}}));
 
    BOOST_REQUIRE_MESSAGE(wait_for_pubsub_peer(*publisher_pubsub.shared(), std::chrono::seconds{5}),
                          "publisher did not learn a remote PubSub topic subscription");
@@ -3101,7 +3101,7 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_aggregates_handler_results_and_deadlines)
    BOOST_REQUIRE_MESSAGE(
       wait_for_pubsub_snapshot(
          *subscriber_pubsub.shared(),
-         [](const fcl::plugins::p2p_pubsub::snapshot& snapshot) {
+         [](const fcl::plugins::p2p::pubsub::snapshot& snapshot) {
             return snapshot.messages_rejected >= 1 && snapshot.handler_failures >= 1;
          },
          std::chrono::seconds{5}),
@@ -3118,7 +3118,7 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_aggregates_handler_results_and_deadlines)
    BOOST_REQUIRE_MESSAGE(
       wait_for_pubsub_snapshot(
          *subscriber_pubsub.shared(),
-         [](const fcl::plugins::p2p_pubsub::snapshot& snapshot) {
+         [](const fcl::plugins::p2p::pubsub::snapshot& snapshot) {
             return snapshot.messages_ignored >= 1 && snapshot.handler_failures >= 2;
          },
          std::chrono::seconds{5}),
@@ -3131,20 +3131,20 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_aggregates_handler_results_and_deadlines)
 
 BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_enforces_topic_policy_and_handler_bounds) {
    auto config = test_p2p_config(test_peer(97));
-   config.set("p2p-pubsub.sign-publishes", false);
-   config.set("p2p-pubsub.max-handlers-per-topic", std::uint64_t{1});
-   config.set("p2p-pubsub.max-message-size", std::uint64_t{4});
-   config.set("p2p-pubsub.allowed-topics",
+   config.set("plugins.p2p.pubsub.sign-publishes", false);
+   config.set("plugins.p2p.pubsub.max-handlers-per-topic", std::uint64_t{1});
+   config.set("plugins.p2p.pubsub.max-message-size", std::uint64_t{4});
+   config.set("plugins.p2p.pubsub.allowed-topics",
               fcl::config::value::array_type{fcl::config::value{"fcl.allowed"}});
-   config.set("p2p-pubsub.denied-topics", fcl::config::value::array_type{fcl::config::value{"fcl.denied"}});
+   config.set("plugins.p2p.pubsub.denied-topics", fcl::config::value::array_type{fcl::config::value{"fcl.denied"}});
 
    auto app = pubsub_application{};
    app.configure(config);
    fcl::asio::blocking::run(app.runtime(), app.startup());
 
-   auto pubsub = app.apis().get<fcl::plugins::p2p_pubsub::api>(
-      {.id = {"fcl.plugins.p2p_pubsub"}, .major = 1, .min_revision = 0});
-   auto handler = [](fcl::plugins::p2p_pubsub::message) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+   auto pubsub = app.apis().get<fcl::plugins::p2p::pubsub::api>(
+      {.id = {"fcl.plugins.p2p.pubsub"}, .major = 1, .min_revision = 0});
+   auto handler = [](fcl::plugins::p2p::pubsub::message) -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
       co_return fcl::p2p::pubsub::validation_result::ignore;
    };
 
@@ -3154,23 +3154,23 @@ BOOST_AUTO_TEST_CASE(p2p_pubsub_plugin_enforces_topic_policy_and_handler_bounds)
    BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(),
                                               pubsub->subscribe(fcl::p2p::pubsub::topic{.value = "fcl.allowed"},
                                                                 handler)),
-                     fcl::plugins::p2p_pubsub::exceptions::handler_limit);
+                     fcl::plugins::p2p::pubsub::exceptions::handler_limit);
    BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(),
                                               pubsub->publish(fcl::p2p::pubsub::topic{.value = "fcl.denied"}, {1})),
-                     fcl::plugins::p2p_pubsub::exceptions::topic_not_allowed);
+                     fcl::plugins::p2p::pubsub::exceptions::topic_not_allowed);
    BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(),
                                               pubsub->publish(fcl::p2p::pubsub::topic{.value = "fcl.allowed"},
                                                               {1, 2, 3, 4, 5})),
-                     fcl::plugins::p2p_pubsub::exceptions::message_too_large);
+                     fcl::plugins::p2p::pubsub::exceptions::message_too_large);
 
    fcl::asio::blocking::run(app.runtime(), app.shutdown());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_api_resolver_plugin_config_is_described_from_public_schema) {
-   auto plugin = fcl::plugins::p2p_api_resolver::plugin{};
+   auto plugin = fcl::plugins::p2p::resolver::plugin{};
    const auto descriptor = plugin.describe_config();
    BOOST_REQUIRE(descriptor.has_value());
-   BOOST_TEST(descriptor->section == "p2p-api-resolver");
+   BOOST_TEST(descriptor->section == "plugins.p2p.resolver");
 
    const auto& protocol = require_field(*descriptor, "protocol-id");
    BOOST_TEST(protocol.has_default);
@@ -3191,36 +3191,36 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_plugin_config_is_described_from_public_sch
 
 BOOST_AUTO_TEST_CASE(p2p_api_resolver_rejects_facade_calls_before_initialize) {
    auto runtime = fcl::asio::runtime{};
-   auto plugin = fcl::plugins::p2p_api_resolver::plugin{};
+   auto plugin = fcl::plugins::p2p::resolver::plugin{};
    auto apis = fcl::api::registry{};
    auto provider = fcl::api::installer{apis};
    fcl::asio::blocking::run(runtime, plugin.provide(provider));
 
-   auto resolver = apis.get<fcl::plugins::p2p_api_resolver::api>(
-      {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+   auto resolver = apis.get<fcl::plugins::p2p::resolver::api>(
+      {.id = {"fcl.plugins.p2p.resolver"}, .major = 1, .min_revision = 0});
 
    auto plan = fcl::api::binding().serve(apis).build();
    BOOST_CHECK_THROW(resolver->publish_api(std::move(plan), fcl::p2p::protocol_id{.value = "/fcl/api/node-test/1"}),
-                     fcl::plugins::p2p_api_resolver::exceptions::plugin_not_initialized);
+                     fcl::plugins::p2p::resolver::exceptions::plugin_not_initialized);
    BOOST_CHECK_THROW((void)resolver->local_apis(),
-                     fcl::plugins::p2p_api_resolver::exceptions::plugin_not_initialized);
+                     fcl::plugins::p2p::resolver::exceptions::plugin_not_initialized);
    BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, resolver->peer_apis(test_peer(40))),
-                     fcl::plugins::p2p_api_resolver::exceptions::plugin_not_initialized);
+                     fcl::plugins::p2p::resolver::exceptions::plugin_not_initialized);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_api_resolver_rejects_invalid_typed_config_before_startup) {
    {
       auto config = test_p2p_config(test_peer(45));
-      config.set("p2p-api-resolver.protocol-id", std::string{"fcl/api/resolver/1"});
+      config.set("plugins.p2p.resolver.protocol-id", std::string{"fcl/api/resolver/1"});
       auto app = resolver_only_application{};
-      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p_api_resolver::exceptions::invalid_config);
+      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p::resolver::exceptions::invalid_config);
    }
 
    {
       auto config = test_p2p_config(test_peer(46));
-      config.set("p2p-api-resolver.max-cached-peers", std::uint64_t{0});
+      config.set("plugins.p2p.resolver.max-cached-peers", std::uint64_t{0});
       auto app = resolver_only_application{};
-      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p_api_resolver::exceptions::invalid_config);
+      BOOST_CHECK_THROW(app.configure(config), fcl::plugins::p2p::resolver::exceptions::invalid_config);
    }
 }
 
@@ -3229,8 +3229,8 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_publishes_metadata_and_delegates_route_mou
    app.configure(test_p2p_config(test_peer(50)));
    fcl::asio::blocking::run(app.runtime(), app.initialize());
 
-   auto resolver = app.apis().get<fcl::plugins::p2p_api_resolver::api>(
-      {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+   auto resolver = app.apis().get<fcl::plugins::p2p::resolver::api>(
+      {.id = {"fcl.plugins.p2p.resolver"}, .major = 1, .min_revision = 0});
    const auto entries = resolver->local_apis();
    BOOST_REQUIRE_EQUAL(entries.size(), 1U);
    BOOST_TEST(entries.front().id.value == "node.test");
@@ -3251,41 +3251,41 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_rejects_duplicate_api_and_resolver_protoco
       auto app = duplicate_resolver_plugin_application{};
       app.configure(test_p2p_config(test_peer(60)));
       BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.initialize()),
-                        fcl::plugins::p2p_api_resolver::exceptions::duplicate_api);
+                        fcl::plugins::p2p::resolver::exceptions::duplicate_api);
    }
 
    {
       auto app = resolver_protocol_conflict_application{};
       app.configure(test_p2p_config(test_peer(61)));
       BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.initialize()),
-                        fcl::plugins::p2p_api_resolver::exceptions::duplicate_api);
+                        fcl::plugins::p2p::resolver::exceptions::duplicate_api);
    }
 }
 
 BOOST_AUTO_TEST_CASE(p2p_api_resolver_resolves_remote_api_and_opens_typed_remote) {
    const auto server_peer = test_peer(70);
    auto server_config = test_p2p_config(server_peer);
-   server_config.set("p2p.listen", fcl::config::value::array_type{
+   server_config.set("plugins.p2p.node.listen", fcl::config::value::array_type{
                                       fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
 
    auto server = resolver_plugin_application{};
    server.configure(server_config);
    fcl::asio::blocking::run(server.runtime(), server.startup());
 
-   auto server_p2p = server.apis().get<fcl::plugins::p2p_node::api>(
-      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   auto server_p2p = server.apis().get<fcl::plugins::p2p::node::api>(
+      {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
    const auto server_endpoint = server_p2p->local_endpoint();
    BOOST_REQUIRE(server_endpoint.has_value());
 
    auto client_config = test_p2p_config(test_peer(71));
-   client_config.set("p2p.bootstrap",
+   client_config.set("plugins.p2p.node.bootstrap",
                      fcl::config::value::array_type{fcl::config::value{server_endpoint->to_string()}});
    auto client = resolver_only_application{};
    client.configure(client_config);
    fcl::asio::blocking::run(client.runtime(), client.startup());
 
-   auto resolver = client.apis().get<fcl::plugins::p2p_api_resolver::api>(
-      {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+   auto resolver = client.apis().get<fcl::plugins::p2p::resolver::api>(
+      {.id = {"fcl.plugins.p2p.resolver"}, .major = 1, .min_revision = 0});
    const auto remote_entries = fcl::asio::blocking::run(client.runtime(), resolver->peer_apis(server_peer));
    BOOST_REQUIRE_EQUAL(remote_entries.size(), 1U);
    BOOST_TEST(remote_entries.front().protocol == "/fcl/api/node-test/1");
@@ -3305,27 +3305,27 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_resolves_remote_api_and_opens_typed_remote
 BOOST_AUTO_TEST_CASE(p2p_api_resolver_remote_honors_advertised_transport_options) {
    const auto server_peer = test_peer(72);
    auto server_config = test_p2p_config(server_peer);
-   server_config.set("p2p.listen", fcl::config::value::array_type{
+   server_config.set("plugins.p2p.node.listen", fcl::config::value::array_type{
                                       fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
 
    auto server = resolver_custom_transport_application{};
    server.configure(server_config);
    fcl::asio::blocking::run(server.runtime(), server.startup());
 
-   auto server_p2p = server.apis().get<fcl::plugins::p2p_node::api>(
-      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   auto server_p2p = server.apis().get<fcl::plugins::p2p::node::api>(
+      {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
    const auto server_endpoint = server_p2p->local_endpoint();
    BOOST_REQUIRE(server_endpoint.has_value());
 
    auto client_config = test_p2p_config(test_peer(73));
-   client_config.set("p2p.bootstrap",
+   client_config.set("plugins.p2p.node.bootstrap",
                      fcl::config::value::array_type{fcl::config::value{server_endpoint->to_string()}});
    auto client = resolver_only_application{};
    client.configure(client_config);
    fcl::asio::blocking::run(client.runtime(), client.startup());
 
-   auto resolver = client.apis().get<fcl::plugins::p2p_api_resolver::api>(
-      {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+   auto resolver = client.apis().get<fcl::plugins::p2p::resolver::api>(
+      {.id = {"fcl.plugins.p2p.resolver"}, .major = 1, .min_revision = 0});
    const auto remote_entries = fcl::asio::blocking::run(client.runtime(), resolver->peer_apis(server_peer));
    BOOST_REQUIRE_EQUAL(remote_entries.size(), 1U);
    BOOST_TEST(remote_entries.front().codec.value == "fcl.test.raw");
@@ -3343,7 +3343,7 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_remote_honors_advertised_transport_options
 BOOST_AUTO_TEST_CASE(p2p_api_resolver_supports_receipt_based_product_api) {
    const auto server_peer = test_peer(74);
    auto server_config = test_p2p_config(server_peer);
-   server_config.set("p2p.listen", fcl::config::value::array_type{
+   server_config.set("plugins.p2p.node.listen", fcl::config::value::array_type{
                                       fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
 
    auto server_state = std::make_shared<receipt_test_state>();
@@ -3351,20 +3351,20 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_supports_receipt_based_product_api) {
    server.configure(server_config);
    fcl::asio::blocking::run(server.runtime(), server.startup());
 
-   auto server_p2p = server.apis().get<fcl::plugins::p2p_node::api>(
-      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   auto server_p2p = server.apis().get<fcl::plugins::p2p::node::api>(
+      {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
    const auto server_endpoint = server_p2p->local_endpoint();
    BOOST_REQUIRE(server_endpoint.has_value());
 
    auto client_config = test_p2p_config(test_peer(75));
-   client_config.set("p2p.bootstrap",
+   client_config.set("plugins.p2p.node.bootstrap",
                      fcl::config::value::array_type{fcl::config::value{server_endpoint->to_string()}});
    auto client = resolver_only_application{};
    client.configure(client_config);
    fcl::asio::blocking::run(client.runtime(), client.startup());
 
-   auto resolver = client.apis().get<fcl::plugins::p2p_api_resolver::api>(
-      {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+   auto resolver = client.apis().get<fcl::plugins::p2p::resolver::api>(
+      {.id = {"fcl.plugins.p2p.resolver"}, .major = 1, .min_revision = 0});
    const auto resolved = fcl::asio::blocking::run(
       client.runtime(), resolver->resolve(server_peer, {.id = {"receipt.test"}, .major = 1, .min_revision = 0}));
    BOOST_TEST(resolved.api.protocol == "/fcl/api/receipt-test/1");
@@ -3399,33 +3399,33 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_supports_receipt_based_product_api) {
 BOOST_AUTO_TEST_CASE(p2p_api_resolver_enforces_version_compatibility) {
    const auto server_peer = test_peer(80);
    auto server_config = test_p2p_config(server_peer);
-   server_config.set("p2p.listen", fcl::config::value::array_type{
+   server_config.set("plugins.p2p.node.listen", fcl::config::value::array_type{
                                       fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
 
    auto server = resolver_plugin_application{};
    server.configure(server_config);
    fcl::asio::blocking::run(server.runtime(), server.startup());
 
-   auto server_p2p = server.apis().get<fcl::plugins::p2p_node::api>(
-      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   auto server_p2p = server.apis().get<fcl::plugins::p2p::node::api>(
+      {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
    const auto server_endpoint = server_p2p->local_endpoint();
    BOOST_REQUIRE(server_endpoint.has_value());
 
    auto client_config = test_p2p_config(test_peer(81));
-   client_config.set("p2p.bootstrap",
+   client_config.set("plugins.p2p.node.bootstrap",
                      fcl::config::value::array_type{fcl::config::value{server_endpoint->to_string()}});
    auto client = resolver_only_application{};
    client.configure(client_config);
    fcl::asio::blocking::run(client.runtime(), client.startup());
 
-   auto resolver = client.apis().get<fcl::plugins::p2p_api_resolver::api>(
-      {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+   auto resolver = client.apis().get<fcl::plugins::p2p::resolver::api>(
+      {.id = {"fcl.plugins.p2p.resolver"}, .major = 1, .min_revision = 0});
    BOOST_CHECK_NO_THROW(fcl::asio::blocking::run(
       client.runtime(), resolver->resolve(server_peer, {.id = {"node.test"}, .major = 1, .min_revision = 0})));
    BOOST_CHECK_THROW(fcl::asio::blocking::run(
                         client.runtime(),
                         resolver->resolve(server_peer, {.id = {"node.test"}, .major = 1, .min_revision = 10})),
-                     fcl::plugins::p2p_api_resolver::exceptions::incompatible_api);
+                     fcl::plugins::p2p::resolver::exceptions::incompatible_api);
 
    fcl::asio::blocking::run(client.runtime(), client.shutdown());
    fcl::asio::blocking::run(server.runtime(), server.shutdown());
@@ -3434,37 +3434,37 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_enforces_version_compatibility) {
 BOOST_AUTO_TEST_CASE(p2p_api_resolver_rejects_malformed_remote_metadata_without_caching_it) {
    const auto server_peer = test_peer(85);
    auto bad = resolver_test_entry("/fcl/api/node-test/1");
-   auto duplicate = fcl::plugins::p2p_api_resolver::response{.apis = {bad, bad}};
-   auto good = fcl::plugins::p2p_api_resolver::response{
+   auto duplicate = fcl::plugins::p2p::resolver::response{.apis = {bad, bad}};
+   auto good = fcl::plugins::p2p::resolver::response{
       .apis = {resolver_test_entry("/fcl/api/node-test/1")},
    };
    auto state = std::make_shared<scripted_resolver_state>(
       scripted_resolver_state{.responses = {std::move(duplicate), std::move(good)}});
 
    auto server_config = test_p2p_config(server_peer);
-   server_config.set("p2p.listen", fcl::config::value::array_type{
+   server_config.set("plugins.p2p.node.listen", fcl::config::value::array_type{
                                       fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
 
    auto server = scripted_resolver_application{state};
    server.configure(server_config);
    fcl::asio::blocking::run(server.runtime(), server.startup());
 
-   auto server_p2p = server.apis().get<fcl::plugins::p2p_node::api>(
-      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   auto server_p2p = server.apis().get<fcl::plugins::p2p::node::api>(
+      {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
    const auto server_endpoint = server_p2p->local_endpoint();
    BOOST_REQUIRE(server_endpoint.has_value());
 
    auto client_config = test_p2p_config(test_peer(86));
-   client_config.set("p2p.bootstrap",
+   client_config.set("plugins.p2p.node.bootstrap",
                      fcl::config::value::array_type{fcl::config::value{server_endpoint->to_string()}});
    auto client = resolver_only_application{};
    client.configure(client_config);
    fcl::asio::blocking::run(client.runtime(), client.startup());
 
-   auto resolver = client.apis().get<fcl::plugins::p2p_api_resolver::api>(
-      {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+   auto resolver = client.apis().get<fcl::plugins::p2p::resolver::api>(
+      {.id = {"fcl.plugins.p2p.resolver"}, .major = 1, .min_revision = 0});
    BOOST_CHECK_THROW(fcl::asio::blocking::run(client.runtime(), resolver->peer_apis(server_peer)),
-                     fcl::plugins::p2p_api_resolver::exceptions::protocol_error);
+                     fcl::plugins::p2p::resolver::exceptions::protocol_error);
    const auto entries = fcl::asio::blocking::run(client.runtime(), resolver->peer_apis(server_peer));
    BOOST_REQUIRE_EQUAL(entries.size(), 1U);
    BOOST_TEST(state->calls == 2U);
@@ -3476,28 +3476,28 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_rejects_malformed_remote_metadata_without_
 BOOST_AUTO_TEST_CASE(p2p_api_resolver_cache_ttl_and_force_refresh_are_behavioral) {
    const auto server_peer = test_peer(90);
    auto server_config = test_p2p_config(server_peer);
-   server_config.set("p2p.listen", fcl::config::value::array_type{
+   server_config.set("plugins.p2p.node.listen", fcl::config::value::array_type{
                                       fcl::config::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
 
    auto server = resolver_plugin_application{};
    server.configure(server_config);
    fcl::asio::blocking::run(server.runtime(), server.startup());
 
-   auto server_p2p = server.apis().get<fcl::plugins::p2p_node::api>(
-      {.id = {"fcl.plugins.p2p_node"}, .major = 1, .min_revision = 0});
+   auto server_p2p = server.apis().get<fcl::plugins::p2p::node::api>(
+      {.id = {"fcl.plugins.p2p.node"}, .major = 1, .min_revision = 0});
    const auto server_endpoint = server_p2p->local_endpoint();
    BOOST_REQUIRE(server_endpoint.has_value());
 
    auto client_config = test_p2p_config(test_peer(91));
-   client_config.set("p2p.bootstrap",
+   client_config.set("plugins.p2p.node.bootstrap",
                      fcl::config::value::array_type{fcl::config::value{server_endpoint->to_string()}});
-   client_config.set("p2p-api-resolver.cache-ttl-ms", std::uint64_t{200});
+   client_config.set("plugins.p2p.resolver.cache-ttl-ms", std::uint64_t{200});
    auto client = resolver_only_application{};
    client.configure(client_config);
    fcl::asio::blocking::run(client.runtime(), client.startup());
 
-   auto resolver = client.apis().get<fcl::plugins::p2p_api_resolver::api>(
-      {.id = {"fcl.plugins.p2p_api_resolver"}, .major = 1, .min_revision = 0});
+   auto resolver = client.apis().get<fcl::plugins::p2p::resolver::api>(
+      {.id = {"fcl.plugins.p2p.resolver"}, .major = 1, .min_revision = 0});
    BOOST_REQUIRE_EQUAL(fcl::asio::blocking::run(client.runtime(), resolver->peer_apis(server_peer)).size(), 1U);
 
    fcl::asio::blocking::run(server.runtime(), server.shutdown());

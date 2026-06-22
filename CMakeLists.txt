@@ -208,7 +208,7 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/program_options/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/env/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/api/include"
-   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/api_transport/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/transport_api/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/log/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/otlp/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/crypto/include"
@@ -226,12 +226,12 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/app/include"
 )
 
-set(FCL_PLUGIN_SIGNATURE_PROVIDER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/signature_provider/include")
-set(FCL_PLUGIN_P2P_NODE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_node/include")
-set(FCL_PLUGIN_P2P_API_RESOLVER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_api_resolver/include")
-set(FCL_PLUGIN_P2P_DIAGNOSTICS_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_diagnostics/include")
-set(FCL_PLUGIN_P2P_PUBSUB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p_pubsub/include")
-set(FCL_PLUGIN_HTTP_SERVER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/http_server/include")
+set(FCL_PLUGINS_SIGNING_PROVIDER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/signing/provider/include")
+set(FCL_PLUGINS_P2P_NODE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/node/include")
+set(FCL_PLUGINS_P2P_RESOLVER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/resolver/include")
+set(FCL_PLUGINS_P2P_DIAGNOSTICS_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/diagnostics/include")
+set(FCL_PLUGINS_P2P_PUBSUB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/pubsub/include")
+set(FCL_PLUGINS_HTTP_SERVER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/http/server/include")
 
 if(FCL_ENABLE_TUI AND FCL_TUI_NOTCURSES_TARGET)
    list(APPEND FCL_SOURCE_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/libraries/tui/include")
@@ -345,7 +345,7 @@ add_subdirectory(libraries/yaml)
 add_subdirectory(libraries/program_options)
 add_subdirectory(libraries/env)
 add_subdirectory(libraries/api)
-add_subdirectory(libraries/api_transport)
+add_subdirectory(libraries/transport_api)
 add_subdirectory(libraries/log)
 add_subdirectory(libraries/crypto)
 add_subdirectory(libraries/multiformats)
@@ -380,7 +380,7 @@ set(
    fcl_program_options
    fcl_env
    fcl_api
-   fcl_api_transport
+   fcl_transport_api
    fcl_log
    fcl_otlp
    fcl_crypto
@@ -396,12 +396,12 @@ set(
    fcl_quic
    fcl_p2p
    fcl_app
-   fcl_plugin_signature_provider
-   fcl_plugin_p2p_node
-   fcl_plugin_p2p_api_resolver
-   fcl_plugin_p2p_diagnostics
-   fcl_plugin_p2p_pubsub
-   fcl_plugin_http_server
+   fcl_plugins_signing_provider
+   fcl_plugins_p2p_node
+   fcl_plugins_p2p_resolver
+   fcl_plugins_p2p_diagnostics
+   fcl_plugins_p2p_pubsub
+   fcl_plugins_http_server
    fcl_plugins
 )
 
@@ -452,7 +452,7 @@ install(
              libraries/program_options/include/fcl
              libraries/env/include/fcl
              libraries/api/include/fcl
-             libraries/api_transport/include/fcl
+             libraries/transport_api/include/fcl
              libraries/log/include/fcl
              libraries/otlp/include/fcl
              libraries/crypto/include/fcl
@@ -468,12 +468,12 @@ install(
              libraries/stcp/include/fcl
              libraries/p2p/include/fcl
              libraries/app/include/fcl
-             plugins/signature_provider/include/fcl
-             plugins/p2p_node/include/fcl
-             plugins/p2p_api_resolver/include/fcl
-             plugins/p2p_diagnostics/include/fcl
-             plugins/p2p_pubsub/include/fcl
-             plugins/http_server/include/fcl
+             plugins/signing/provider/include/fcl
+             plugins/p2p/node/include/fcl
+             plugins/p2p/resolver/include/fcl
+             plugins/p2p/diagnostics/include/fcl
+             plugins/p2p/pubsub/include/fcl
+             plugins/http/server/include/fcl
    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
 )
 

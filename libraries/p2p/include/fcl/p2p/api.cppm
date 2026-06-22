@@ -19,11 +19,11 @@ import fcl.api.connection;
 import fcl.api.registry;
 import fcl.api.binding;
 import fcl.api.dispatcher;
-import fcl.api.transport.exceptions;
-import fcl.api.transport.options;
-import fcl.api.transport.client;
-import fcl.api.transport.connection;
-import fcl.api.transport.server;
+import fcl.transport.api.exceptions;
+import fcl.transport.api.options;
+import fcl.transport.api.client;
+import fcl.transport.api.connection;
+import fcl.transport.api.server;
 import fcl.p2p.exceptions;
 import fcl.p2p.node;
 import fcl.p2p.protocol;
@@ -41,7 +41,7 @@ class api_binding {
       std::string value;
    };
 
-   api_binding(node* owner, fcl::api::binding_plan plan, protocol_id protocol, fcl::api::transport::options options,
+   api_binding(node* owner, fcl::api::binding_plan plan, protocol_id protocol, fcl::transport::api::options options,
                peer_policy peer_policy_value, discovery_scope discovery_scope_value)
        : owner_{owner}, plan_{std::move(plan)}, protocol_{std::move(protocol)}, options_{std::move(options)},
          peer_policy_{std::move(peer_policy_value)}, discovery_scope_{std::move(discovery_scope_value)} {}
@@ -64,7 +64,7 @@ class api_binding {
             .value = stream.session.remote_peer.to_string(),
          },
       };
-      co_await fcl::api::transport::serve_stream(std::move(stream.stream).into_transport_stream(), plan_, options_,
+      co_await fcl::transport::api::serve_stream(std::move(stream.stream).into_transport_stream(), plan_, options_,
                                                  std::move(trusted));
    }
 
@@ -88,7 +88,7 @@ class api_binding {
       return options_.max_inflight;
    }
 
-   [[nodiscard]] const fcl::api::transport::options& options() const noexcept {
+   [[nodiscard]] const fcl::transport::api::options& options() const noexcept {
       return options_;
    }
 
@@ -109,7 +109,7 @@ class api_binding {
    node* owner_ = nullptr;
    fcl::api::binding_plan plan_;
    protocol_id protocol_;
-   fcl::api::transport::options options_;
+   fcl::transport::api::options options_;
    peer_policy peer_policy_{};
    discovery_scope discovery_scope_{};
 };
@@ -173,7 +173,7 @@ class api_builder {
    node* owner_ = nullptr;
    fcl::api::binding_plan plan_;
    fcl::p2p::protocol_id protocol_{.value = "/fcl/api/1"};
-   fcl::api::transport::options options_{.max_inflight = 64};
+   fcl::transport::api::options options_{.max_inflight = 64};
    api_binding::peer_policy peer_policy_{};
    api_binding::discovery_scope discovery_scope_{};
 };

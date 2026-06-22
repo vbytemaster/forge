@@ -138,7 +138,7 @@ boost::asio::awaitable<void> write_payload(fcl::quic::connection& connection) {
 
 `fcl.quic.api` is the API-over-QUIC adapter. It keeps QUIC transport policy in
 `fcl_quic`, contract/error semantics in `fcl_api`, and delegates frame-loop
-mechanics to `fcl.api.transport`.
+mechanics to `fcl.transport.api`.
 
 ```cpp
 import fcl.api.exceptions;
@@ -172,7 +172,7 @@ boost::asio::awaitable<void> serve_api_stream(fcl::quic::connection& connection)
 
 `fcl.quic.api` does not own certificates, ALPN, listener/connector setup or
 packet-level limits. Those remain in `fcl_quic` transport options. It also does
-not own the generic API frame state machine; that lives in `fcl.api.transport`.
+not own the generic API frame state machine; that lives in `fcl.transport.api`.
 
 ### Decode Frames Without A Connection
 

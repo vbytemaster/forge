@@ -12,7 +12,7 @@ and GossipSub/pubsub.
 - Direct transports should be tried first, with explicit relay/hole-punch
   fallback.
 - Application/plugin composition needs a shared P2P transport owner; use
-  `fcl::plugins::p2p_node` as the lifecycle/config/route facade above this
+  `fcl::plugins::p2p::node` as the lifecycle/config/route facade above this
   low-level engine.
 
 ## When Not To Use
@@ -66,7 +66,7 @@ Future transports must plug into the same multiaddr and transport session
 boundary, not fork P2P core.
 
 `fcl_transport` is the stream/session substrate for `fcl_p2p`; it is not an API
-or RPC layer. API-over-transport lives in `fcl.api.transport`, where QUIC/P2P
+or RPC layer. API-over-transport lives in `fcl.transport.api`, where QUIC/P2P
 bindings share frame serve-loop logic without putting `fcl::api` into
 `fcl_transport`.
 
@@ -176,7 +176,7 @@ node.register_protocol_handler(fcl::p2p::protocol_id{.value = "/example/1"},
 
 Application protocols that need request/response, typed errors and idempotent
 operation receipts should expose an `fcl_api` contract and mount it through the
-P2P API binding or `fcl::plugins::p2p_api_resolver`. P2P opens the stream and
+P2P API binding or `fcl::plugins::p2p::resolver`. P2P opens the stream and
 enforces peer/path policy; API dispatch owns method calls and error projection;
 the application handler owns authorization and durable state.
 
@@ -186,13 +186,13 @@ the application handler owns authorization and durable state.
 The binding path uses `multistream-select` and the same direct, hole-punch and
 relay path manager as ordinary P2P protocol streams; it must not reintroduce an
 FCL-only hello envelope into direct QUIC sessions. Once a protocol stream is
-open, frame serving delegates to `fcl.api.transport`; P2P keeps only P2P policy:
+open, frame serving delegates to `fcl.transport.api`; P2P keeps only P2P policy:
 protocol id, known-peer checks and discovery scope.
 
 ### Connect And Open A Protocol Stream
 
 This is the low-level engine path for custom transport owners and tests.
-Application plugins should use `fcl::plugins::p2p_node::api` instead of calling these
+Application plugins should use `fcl::plugins::p2p::node::api` instead of calling these
 methods directly.
 
 ```cpp

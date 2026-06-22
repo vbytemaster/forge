@@ -206,12 +206,12 @@ target_link_libraries(test_fcl_api fcl Boost::included_unit_test_framework)
 add_test(NAME test_fcl_api COMMAND test_fcl_api WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_api_transport
+   test_fcl_transport_api
    unit/main.cpp
-   api/api_transport_tests.cpp
+   api/transport_api_tests.cpp
 )
-target_link_libraries(test_fcl_api_transport fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_api_transport COMMAND test_fcl_api_transport WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_fcl_transport_api fcl Boost::included_unit_test_framework)
+add_test(NAME test_fcl_transport_api COMMAND test_fcl_transport_api WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
    test_fcl_http_websocket
@@ -398,25 +398,47 @@ add_custom_target(
    DEPENDS test_fcl_package_install
 )
 add_custom_target(
-   test_fcl_package_plugin_signature_provider
+   test_fcl_package_transport_api_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
-      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugin_signature_provider
-      ${CMAKE_BINARY_DIR}/fcl-package-plugin-signature-provider
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_transport_api_component
+      ${CMAKE_BINARY_DIR}/fcl-package-transport-api-component
       --build-generator ${CMAKE_GENERATOR}
       --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugin_signature_provider
+      --test-command fcl_package_transport_api_component
    DEPENDS test_fcl_package_install
 )
 add_custom_target(
-   test_fcl_package_plugin_http_server
+   test_fcl_package_plugins_p2p_node
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
-      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugin_http_server
-      ${CMAKE_BINARY_DIR}/fcl-package-plugin-http-server
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_p2p_node
+      ${CMAKE_BINARY_DIR}/fcl-package-plugins-p2p-node
       --build-generator ${CMAKE_GENERATOR}
       --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugin_http_server
+      --test-command fcl_package_plugins_p2p_node
+   DEPENDS test_fcl_package_install
+)
+add_custom_target(
+   test_fcl_package_plugins_signing_provider
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_signing_provider
+      ${CMAKE_BINARY_DIR}/fcl-package-plugins-signing-provider
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command fcl_package_plugins_signing_provider
+   DEPENDS test_fcl_package_install
+)
+add_custom_target(
+   test_fcl_package_plugins_http_server
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_http_server
+      ${CMAKE_BINARY_DIR}/fcl-package-plugins-http-server
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command fcl_package_plugins_http_server
    DEPENDS test_fcl_package_install
 )
 add_custom_target(
@@ -541,27 +563,49 @@ add_test(
 )
 set_tests_properties(test_fcl_package_http_api_component PROPERTIES DEPENDS test_fcl_package_install)
 add_test(
-   NAME test_fcl_package_plugin_signature_provider
+   NAME test_fcl_package_transport_api_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
-      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugin_signature_provider
-      ${CMAKE_BINARY_DIR}/fcl-package-plugin-signature-provider
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_transport_api_component
+      ${CMAKE_BINARY_DIR}/fcl-package-transport-api-component
       --build-generator ${CMAKE_GENERATOR}
       --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugin_signature_provider
+      --test-command fcl_package_transport_api_component
 )
-set_tests_properties(test_fcl_package_plugin_signature_provider PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_fcl_package_transport_api_component PROPERTIES DEPENDS test_fcl_package_install)
 add_test(
-   NAME test_fcl_package_plugin_http_server
+   NAME test_fcl_package_plugins_p2p_node
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
-      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugin_http_server
-      ${CMAKE_BINARY_DIR}/fcl-package-plugin-http-server
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_p2p_node
+      ${CMAKE_BINARY_DIR}/fcl-package-plugins-p2p-node
       --build-generator ${CMAKE_GENERATOR}
       --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugin_http_server
+      --test-command fcl_package_plugins_p2p_node
 )
-set_tests_properties(test_fcl_package_plugin_http_server PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_fcl_package_plugins_p2p_node PROPERTIES DEPENDS test_fcl_package_install)
+add_test(
+   NAME test_fcl_package_plugins_signing_provider
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_signing_provider
+      ${CMAKE_BINARY_DIR}/fcl-package-plugins-signing-provider
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command fcl_package_plugins_signing_provider
+)
+set_tests_properties(test_fcl_package_plugins_signing_provider PROPERTIES DEPENDS test_fcl_package_install)
+add_test(
+   NAME test_fcl_package_plugins_http_server
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_http_server
+      ${CMAKE_BINARY_DIR}/fcl-package-plugins-http-server
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command fcl_package_plugins_http_server
+)
+set_tests_properties(test_fcl_package_plugins_http_server PROPERTIES DEPENDS test_fcl_package_install)
 add_test(
    NAME test_fcl_package_plugins_component
    COMMAND ${CMAKE_CTEST_COMMAND}

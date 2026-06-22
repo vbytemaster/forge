@@ -6,7 +6,7 @@ client/connection primitives. It uses Boost.Beast/URL internally but keeps
 FCL-owned public message, route and lifecycle semantics.
 
 Application-level server lifecycle can be owned directly with `fcl::http::server`
-or composed through the official `fcl.plugins.http_server` plugin. The library
+or composed through the official `fcl.plugins.http.server` plugin. The library
 still owns HTTP mechanics; the plugin owns app lifecycle/config composition.
 
 ## When To Use

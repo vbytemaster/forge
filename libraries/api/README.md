@@ -191,7 +191,7 @@ return fcl::api::define<cache>({.id = {"cache.bulk"}, .version = {1, 0}})
 
 ## API Over Transport
 
-`fcl.api.transport` is the reusable binding for API-over-stream transports. It
+`fcl.transport.api` is the reusable binding for API-over-stream transports. It
 sits above `fcl_api` and `fcl_transport`, uses `fcl::transport::stream` /
 `fcl::transport::session`, and owns the shared frame read/write loop, codec
 checks, grouped stream handling, max-inflight limits, deadlines and error
@@ -229,7 +229,7 @@ auto plan = fcl::api::binding()
    .build();
 ```
 
-HTTP-specific request middleware stays in `fcl_http` or the `http_server`
+HTTP-specific request middleware stays in `fcl_http` or the `fcl::plugins::http::server`
 plugin facade; API interceptors do not parse HTTP headers, routes or upgrade
 state.
 

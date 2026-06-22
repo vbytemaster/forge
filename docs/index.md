@@ -49,7 +49,7 @@ Each library guide must be useful without reading source first:
 - [program_options](../libraries/program_options/README.md)
 - [env](../libraries/env/README.md)
 - [api](../libraries/api/README.md)
-- [api_transport](../libraries/api_transport/README.md)
+- [transport_api](../libraries/transport_api/README.md)
 - [crypto](../libraries/crypto/README.md)
 - [log](../libraries/log/README.md)
 - [otlp](../libraries/otlp/README.md)

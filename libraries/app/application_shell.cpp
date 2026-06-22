@@ -5,6 +5,7 @@ module;
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 #include <variant>
@@ -64,11 +65,20 @@ void publish_application_event(event_bus& events, event_severity severity, std::
    return out;
 }
 
+[[nodiscard]] std::string plugin_selection_key(const plugin_id& id) {
+   constexpr auto official_prefix = std::string_view{"fcl.plugins."};
+   if (id.value.starts_with(official_prefix)) {
+      return id.value.substr(official_prefix.size());
+   }
+   return id.value;
+}
+
 [[nodiscard]] fcl::config::component_descriptor plugin_selection_descriptor(const plugin_registry& registry) {
    auto descriptor = fcl::config::component_descriptor{.section = "plugins"};
    for (const auto& plugin : registry.descriptors()) {
+      const auto key = plugin_selection_key(plugin.id);
       descriptor.fields.push_back(fcl::config::field_descriptor{
-         .name = plugin.id.value + ".enabled",
+         .name = key + ".enabled",
          .kind = fcl::schema::value_kind::boolean,
          .has_default = true,
          .default_value = plugin.enabled_by_default,
@@ -83,7 +93,7 @@ void publish_application_event(event_bus& events, event_severity severity, std::
    auto out = std::vector<plugin_config>{};
    for (const auto& descriptor : registry.descriptors()) {
       auto enabled = descriptor.enabled_by_default;
-      const auto path = "plugins." + descriptor.id.value + ".enabled";
+      const auto path = "plugins." + plugin_selection_key(descriptor.id) + ".enabled";
       if (const auto* configured = document.try_get(path)) {
          if (const auto* value = std::get_if<bool>(&configured->storage)) {
             enabled = *value;

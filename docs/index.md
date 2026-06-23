@@ -22,7 +22,7 @@ Documents below explain cross-library architecture decisions.
 | [tui/notcurses-component-library.md](tui/notcurses-component-library.md) | TUI value models, deterministic rendering, navigation and Notcurses boundary. |
 | [codecs/json-yaml-glaze.md](codecs/json-yaml-glaze.md) | JSON/YAML API shape, Glaze backend isolation and diagnostics. |
 | [config/schema-config-program-options.md](config/schema-config-program-options.md) | Schema, config documents, env/CLI adapters, merge order and redaction. |
-| [iterations/forge-secret-provider-v1.md](iterations/forge-secret-provider-v1.md) | Local secret provider plugin: source loading, redaction, purpose-gated crypto operations and donor baseline. |
+| [iterations/fcl-secret-provider-v1.md](iterations/fcl-secret-provider-v1.md) | Local secret provider plugin: source loading, redaction, purpose-gated crypto operations and donor baseline. |
 | [forge_concept_ru.md](forge_concept_ru.md) | Original Russian concept and long-form design motivation. |
 
 ## Blueprints

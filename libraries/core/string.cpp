@@ -10,14 +10,14 @@ module;
 #include <limits>
 #include <stdexcept>
 
-module fcl.core.string;
+module forge.core.string;
 
-import fcl.core.utf8;
+import forge.core.utf8;
 /**
  *  Implemented with std::string for now.
  */
 
-namespace fcl {
+namespace forge {
 class comma_numpunct : public std::numpunct<char> {
  protected:
    virtual char do_thousands_sep() const {
@@ -81,7 +81,7 @@ static void append_json_escaped_char(std::string& out, unsigned char c, bool esc
 }
 
 static std::string escape_for_string_boundary(const std::string_view str, bool escape_ctrl) {
-   const auto pruned = fcl::prune_invalid_utf8(str);
+   const auto pruned = forge::prune_invalid_utf8(str);
    std::string out;
    out.reserve(pruned.size());
    for (unsigned char c : pruned) {
@@ -109,7 +109,7 @@ std::pair<std::string&, bool> escape_str(std::string& str, escape_control_chars 
                                            (c >= '\x0e' && c <= '\x1f');
                                  });
 
-   if (itr != str.end() || !fcl::is_valid_utf8(str)) {
+   if (itr != str.end() || !forge::is_valid_utf8(str)) {
       str = escape_for_string_boundary(str, escape_ctrl == escape_control_chars::on);
       modified = true;
       if (str.size() > max_len) {
@@ -125,4 +125,4 @@ std::pair<std::string&, bool> escape_str(std::string& str, escape_control_chars 
    return std::make_pair(std::ref(str), modified);
 }
 
-} // namespace fcl
+} // namespace forge

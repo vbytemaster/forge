@@ -1,15 +1,15 @@
 module;
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 #include <cstdint>
 #include <exception>
 #include <string>
 #include <vector>
 
-module fcl.crypto.hex;
+module forge.crypto.hex;
 
-import fcl.exceptions;
+import forge.exceptions;
 
-namespace fcl::crypto {
+namespace forge::crypto {
 
 uint8_t from_hex(char c) {
    if (c >= '0' && c <= '9')
@@ -18,8 +18,8 @@ uint8_t from_hex(char c) {
       return c - 'a' + 10;
    if (c >= 'A' && c <= 'F')
       return c - 'A' + 10;
-   FCL_THROW_EXCEPTION(hex::exceptions::invalid_character, "invalid hex character",
-                       fcl::exceptions::ctx("c", std::string(&c, 1)));
+   FORGE_THROW_EXCEPTION(hex::exceptions::invalid_character, "invalid hex character",
+                       forge::exceptions::ctx("c", std::string(&c, 1)));
    return 0;
 }
 
@@ -68,4 +68,4 @@ std::string to_hex(const bytes& data) {
    return "";
 }
 
-} // namespace fcl::crypto
+} // namespace forge::crypto

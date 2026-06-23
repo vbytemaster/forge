@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <openssl/evp.h>
 
@@ -8,9 +8,9 @@ module;
 #include <memory>
 #include <span>
 
-module fcl.crypto.ed25519;
+module forge.crypto.ed25519;
 
-namespace fcl::crypto::ed25519 {
+namespace forge::crypto::ed25519 {
 namespace {
 
 struct pkey_deleter {
@@ -36,7 +36,7 @@ using pkey_ctx_ptr = std::unique_ptr<EVP_PKEY_CTX, pkey_ctx_deleter>;
 using md_ctx_ptr = std::unique_ptr<EVP_MD_CTX, md_ctx_deleter>;
 
 [[noreturn]] void fail(std::string message) {
-   FCL_THROW_EXCEPTION(exceptions::backend_error, std::move(message));
+   FORGE_THROW_EXCEPTION(exceptions::backend_error, std::move(message));
 }
 
 [[nodiscard]] pkey_ptr make_private(const private_key_secret& secret) {
@@ -148,4 +148,4 @@ private_key_shim private_key_shim::generate() {
    return private_key_shim{private_key::generate().get_secret()};
 }
 
-} // namespace fcl::crypto::ed25519
+} // namespace forge::crypto::ed25519

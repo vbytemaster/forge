@@ -8,51 +8,51 @@
 
 #include <boost/asio/awaitable.hpp>
 
-namespace fcl::p2p::direct {
+namespace forge::p2p::direct {
 
 struct connection {
    peer_id peer;
-   fcl::transport::session session;
-   std::optional<fcl::p2p::endpoint> local_endpoint;
-   std::optional<fcl::p2p::endpoint> remote_endpoint;
+   forge::transport::session session;
+   std::optional<forge::p2p::endpoint> local_endpoint;
+   std::optional<forge::p2p::endpoint> remote_endpoint;
 };
 
 struct profile {
-   std::function<bool(const fcl::p2p::endpoint&)> supports;
+   std::function<bool(const forge::p2p::endpoint&)> supports;
    std::function<bool()> listening;
-   std::function<std::vector<fcl::p2p::endpoint>()> local_endpoints;
-   std::function<fcl::p2p::endpoint(fcl::p2p::endpoint)> listen;
+   std::function<std::vector<forge::p2p::endpoint>()> local_endpoints;
+   std::function<forge::p2p::endpoint(forge::p2p::endpoint)> listen;
    std::function<void()> stop;
-   std::function<boost::asio::awaitable<connection>(fcl::p2p::endpoint, const node::connect_options&)> async_connect;
-   std::function<boost::asio::awaitable<connection>(fcl::p2p::endpoint)> async_accept;
+   std::function<boost::asio::awaitable<connection>(forge::p2p::endpoint, const node::connect_options&)> async_connect;
+   std::function<boost::asio::awaitable<connection>(forge::p2p::endpoint)> async_accept;
 };
 
 class registry {
  public:
-   registry(fcl::asio::runtime& runtime, const node::options& options);
+   registry(forge::asio::runtime& runtime, const node::options& options);
    ~registry();
 
    registry(const registry&) = delete;
    registry& operator=(const registry&) = delete;
 
    [[nodiscard]] bool listening() const noexcept;
-   [[nodiscard]] std::optional<fcl::p2p::endpoint> local_endpoint() const;
-   [[nodiscard]] std::vector<fcl::p2p::endpoint> local_endpoints() const;
+   [[nodiscard]] std::optional<forge::p2p::endpoint> local_endpoint() const;
+   [[nodiscard]] std::vector<forge::p2p::endpoint> local_endpoints() const;
 
    void add(profile value);
-   [[nodiscard]] fcl::p2p::endpoint listen(fcl::p2p::endpoint endpoint);
+   [[nodiscard]] forge::p2p::endpoint listen(forge::p2p::endpoint endpoint);
    void stop();
 
-   boost::asio::awaitable<connection> async_connect(fcl::p2p::endpoint endpoint,
+   boost::asio::awaitable<connection> async_connect(forge::p2p::endpoint endpoint,
                                                     const node::connect_options& options);
-   boost::asio::awaitable<connection> async_accept(fcl::p2p::endpoint endpoint);
+   boost::asio::awaitable<connection> async_accept(forge::p2p::endpoint endpoint);
 
  private:
    struct state;
    std::unique_ptr<state> state_;
 };
 
-void register_quic_profile(registry& value, fcl::asio::runtime& runtime, const node::options& options);
-void register_tcp_profile(registry& value, fcl::asio::runtime& runtime, const node::options& options);
+void register_quic_profile(registry& value, forge::asio::runtime& runtime, const node::options& options);
+void register_tcp_profile(registry& value, forge::asio::runtime& runtime, const node::options& options);
 
-} // namespace fcl::p2p::direct
+} // namespace forge::p2p::direct

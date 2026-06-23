@@ -1,4 +1,4 @@
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <chrono>
 #include <csignal>
@@ -10,14 +10,14 @@
 #include <string>
 #include <thread>
 
-import fcl.asio.blocking;
-import fcl.asio.runtime;
-import fcl.exceptions;
-import fcl.otlp.exceptions;
-import fcl.otlp.options;
-import fcl.otlp.log_exporter;
-import fcl.otlp.log_sink;
-import fcl.otlp.crash;
+import forge.asio.blocking;
+import forge.asio.runtime;
+import forge.exceptions;
+import forge.otlp.exceptions;
+import forge.otlp.options;
+import forge.otlp.log_exporter;
+import forge.otlp.log_sink;
+import forge.otlp.crash;
 
 namespace {
 
@@ -27,16 +27,16 @@ enum class code : std::uint16_t {
    crash = 1,
 };
 
-FCL_DECLARE_EXCEPTION_CATEGORY(code, "fcl.otlp.test")
+FORGE_DECLARE_EXCEPTION_CATEGORY(code, "forge.otlp.test")
 
-using crash = fcl::exceptions::coded_exception<code, code::crash>;
+using crash = forge::exceptions::coded_exception<code, code::crash>;
 
 } // namespace test_errors
 
 using namespace std::chrono_literals;
 
-fcl::otlp::crash_spool_options make_options(const char* directory) {
-   return fcl::otlp::crash_spool_options{
+forge::otlp::crash_spool_options make_options(const char* directory) {
+   return forge::otlp::crash_spool_options{
        .directory = std::filesystem::path{directory},
        .max_record_bytes = 4096,
        .max_records_per_process = 8,
@@ -48,8 +48,8 @@ fcl::otlp::crash_spool_options make_options(const char* directory) {
    };
 }
 
-fcl::otlp::log_exporter_options make_exporter_options(const char* endpoint) {
-   return fcl::otlp::log_exporter_options{
+forge::otlp::log_exporter_options make_exporter_options(const char* endpoint) {
+   return forge::otlp::log_exporter_options{
        .endpoint = endpoint,
        .batch = {.max_records = 10, .max_bytes = 64 * 1024, .flush_interval = 1h},
        .queue = {.max_records = 100, .max_bytes = 1024 * 1024},
@@ -60,19 +60,19 @@ fcl::otlp::log_exporter_options make_exporter_options(const char* endpoint) {
 }
 
 int run_resend(const char* directory, const char* endpoint, const char* max_records) {
-   auto runtime = fcl::asio::runtime{};
-   auto exporter = fcl::otlp::log_exporter{runtime, make_exporter_options(endpoint)};
+   auto runtime = forge::asio::runtime{};
+   auto exporter = forge::otlp::log_exporter{runtime, make_exporter_options(endpoint)};
    auto options = make_options(directory);
    options.max_records_per_resend = static_cast<std::size_t>(std::stoull(max_records));
-   (void)fcl::asio::blocking::run(runtime, fcl::otlp::async_resend_crashes(exporter, options));
-   fcl::asio::blocking::run(runtime, exporter.async_shutdown());
+   (void)forge::asio::blocking::run(runtime, forge::otlp::async_resend_crashes(exporter, options));
+   forge::asio::blocking::run(runtime, exporter.async_shutdown());
    return 0;
 }
 
 int run_hold_capture(const char* directory, const char* ready_path) {
    auto options = make_options(directory);
    options.capture_terminate = false;
-   auto guard = fcl::otlp::install_crash_capture(options);
+   auto guard = forge::otlp::install_crash_capture(options);
 
    auto ready = std::ofstream{ready_path, std::ios::binary};
    ready << "ready";
@@ -117,11 +117,11 @@ int main(int argc, char** argv) {
       return 2;
    }
 
-   auto guard = fcl::otlp::install_crash_capture(make_options(argv[2]));
+   auto guard = forge::otlp::install_crash_capture(make_options(argv[2]));
    const auto mode = std::string{argv[1]};
    if (mode == "terminate") {
-      FCL_THROW_EXCEPTION(test_errors::crash, "super-secret-token",
-                          fcl::exceptions::secret("token", "super-secret-token"));
+      FORGE_THROW_EXCEPTION(test_errors::crash, "super-secret-token",
+                          forge::exceptions::secret("token", "super-secret-token"));
    }
    if (mode == "sigabrt") {
       std::raise(SIGABRT);

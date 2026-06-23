@@ -1,8 +1,8 @@
-# fcl_raw
+# forge_raw
 
-`fcl_raw` owns binary serialization. Its main contract is byte-to-byte
+`forge_raw` owns binary serialization. Its main contract is byte-to-byte
 compatibility with retained old FC raw layouts for supported types, while using
-modern FCL modules and Boost.Describe for structure traversal.
+modern FORGE modules and Boost.Describe for structure traversal.
 
 ## When To Use
 
@@ -21,16 +21,16 @@ modern FCL modules and Boost.Describe for structure traversal.
 
 ## Public Modules
 
-- `fcl.raw.datastream` — buffer/vector/size-counting streams.
-- `fcl.raw.varint` — signed/unsigned variable-width integer wrappers.
-- `fcl.raw.enum_type` — enum support.
-- `fcl.raw.raw` — `pack`, `unpack`, `pack_size`.
-- `fcl/raw/serialization.hpp` — macro-only explicit-instantiation helpers for
+- `forge.raw.datastream` — buffer/vector/size-counting streams.
+- `forge.raw.varint` — signed/unsigned variable-width integer wrappers.
+- `forge.raw.enum_type` — enum support.
+- `forge.raw.raw` — `pack`, `unpack`, `pack_size`.
+- `forge/raw/serialization.hpp` — macro-only explicit-instantiation helpers for
   application/domain DTOs.
 
-Target: `fcl_raw`.
+Target: `forge_raw`.
 
-Dependencies: `fcl_core`, `fcl_exceptions`, `fcl_reflect`, `fcl_variant`,
+Dependencies: `forge_core`, `forge_exceptions`, `forge_reflect`, `forge_variant`,
 Boost headers and Boost.Multiprecision.
 
 ## Examples
@@ -43,8 +43,8 @@ Boost headers and Boost.Multiprecision.
 #include <cstdint>
 #include <vector>
 
-import fcl.raw.datastream;
-import fcl.raw.raw;
+import forge.raw.datastream;
+import forge.raw.raw;
 
 struct transfer {
    std::uint64_t id = 0;
@@ -54,15 +54,15 @@ struct transfer {
 BOOST_DESCRIBE_STRUCT(transfer, (), (id, amount))
 
 auto bytes = std::vector<char>{};
-bytes.resize(fcl::raw::pack_size(transfer{.id = 7, .amount = 42}));
-auto stream = fcl::datastream<char*>{bytes.data(), bytes.size()};
-fcl::raw::pack(stream, transfer{.id = 7, .amount = 42});
+bytes.resize(forge::raw::pack_size(transfer{.id = 7, .amount = 42}));
+auto stream = forge::datastream<char*>{bytes.data(), bytes.size()};
+forge::raw::pack(stream, transfer{.id = 7, .amount = 42});
 ```
 
 ### Use Raw Bytes As The Hash/Signature Contract
 
 When an application signs or hashes a C++ structure, the signed bytes must come from
-the same `fcl::raw::pack` path that the verifier uses. Do not rebuild bytes with
+the same `forge::raw::pack` path that the verifier uses. Do not rebuild bytes with
 string concatenation, JSON or hand-written field loops.
 
 ```cpp
@@ -71,23 +71,23 @@ string concatenation, JSON or hand-written field loops.
 #include <cstdint>
 #include <string>
 
-import fcl.crypto.asymmetric;
-import fcl.crypto.sha256;
-import fcl.raw.raw;
+import forge.crypto.asymmetric;
+import forge.crypto.sha256;
+import forge.raw.raw;
 
 struct signed_command {
    std::uint64_t account = 0;
    std::uint64_t sequence = 0;
    std::string command;
 
-   [[nodiscard]] fcl::crypto::bytes signing_bytes() const;
+   [[nodiscard]] forge::crypto::bytes signing_bytes() const;
 };
 
 BOOST_DESCRIBE_STRUCT(signed_command, (), (account, sequence, command))
 
-inline fcl::crypto::bytes signed_command::signing_bytes() const {
-   auto bytes = fcl::crypto::bytes{};
-   fcl::raw::pack(bytes, *this);
+inline forge::crypto::bytes signed_command::signing_bytes() const {
+   auto bytes = forge::crypto::bytes{};
+   forge::raw::pack(bytes, *this);
    return bytes;
 }
 
@@ -97,7 +97,7 @@ auto command = signed_command{
    .command = "rotate-key",
 };
 
-auto private_key = fcl::crypto::asymmetric::private_key::generate();
+auto private_key = forge::crypto::asymmetric::private_key::generate();
 auto expected_public_key = private_key.get_public_key();
 
 auto message = command.signing_bytes();
@@ -114,29 +114,29 @@ Avoid shortcuts in signing code:
 - Do not sign JSON/YAML text, `to_string()` output or manually concatenated
   fields.
 - Do not materialize a temporary byte buffer only to hash it when the sink
-  accepts `fcl::raw::pack` directly.
+  accepts `forge::raw::pack` directly.
 - Do not treat a recoverable signature as authorized until the recovered public
   key equals the expected signer.
 
 ### Calculate Size Before Writing
 
 ```cpp
-import fcl.raw.datastream;
-import fcl.raw.raw;
+import forge.raw.datastream;
+import forge.raw.raw;
 
 auto value = std::string{"hello"};
-auto size_stream = fcl::datastream<size_t>{};
-fcl::raw::pack(size_stream, value);
+auto size_stream = forge::datastream<size_t>{};
+forge::raw::pack(size_stream, value);
 auto size = size_stream.tellp();
 ```
 
 ### Chrono Wire Compatibility
 
 ```cpp
-import fcl.raw.raw;
+import forge.raw.raw;
 
 auto time = std::chrono::sys_seconds{std::chrono::seconds{1}};
-fcl::raw::pack(stream, time); // old FC time_point_sec: uint32 seconds
+forge::raw::pack(stream, time); // old FC time_point_sec: uint32 seconds
 ```
 
 ### Declare Explicit Serialization Instantiations
@@ -147,22 +147,22 @@ instantiations for a frequently used DTO, while other translation units only see
 
 ```cpp
 #include <boost/describe.hpp>
-#include <fcl/raw/serialization.hpp>
+#include <forge/raw/serialization.hpp>
 
 #include <cstdint>
 #include <string>
 
-import fcl.crypto.sha256;
-import fcl.raw.datastream;
-import fcl.raw.raw;
-import fcl.variant.exceptions;
-import fcl.variant.value;
-import fcl.variant.conversion;
-import fcl.variant.containers;
-import fcl.variant.chrono;
-import fcl.variant.multiprecision;
-import fcl.variant.format;
-import fcl.variant.described;
+import forge.crypto.sha256;
+import forge.raw.datastream;
+import forge.raw.raw;
+import forge.variant.exceptions;
+import forge.variant.value;
+import forge.variant.conversion;
+import forge.variant.containers;
+import forge.variant.chrono;
+import forge.variant.multiprecision;
+import forge.variant.format;
+import forge.variant.described;
 
 struct action_payload {
    std::uint64_t id = 0;
@@ -171,34 +171,34 @@ struct action_payload {
 
 BOOST_DESCRIBE_STRUCT(action_payload, (), (id, actor))
 
-FCL_DECLARE_SERIALIZATION(action_payload)
+FORGE_DECLARE_SERIALIZATION(action_payload)
 ```
 
 Then place the implementation macro in exactly one module implementation unit
 or `.cpp` file:
 
 ```cpp
-#include <fcl/raw/serialization.hpp>
+#include <forge/raw/serialization.hpp>
 
-import fcl.crypto.sha256;
-import fcl.raw.datastream;
-import fcl.raw.raw;
-import fcl.variant.exceptions;
-import fcl.variant.value;
-import fcl.variant.conversion;
-import fcl.variant.containers;
-import fcl.variant.chrono;
-import fcl.variant.multiprecision;
-import fcl.variant.format;
-import fcl.variant.described;
+import forge.crypto.sha256;
+import forge.raw.datastream;
+import forge.raw.raw;
+import forge.variant.exceptions;
+import forge.variant.value;
+import forge.variant.conversion;
+import forge.variant.containers;
+import forge.variant.chrono;
+import forge.variant.multiprecision;
+import forge.variant.format;
+import forge.variant.described;
 
-FCL_IMPLEMENT_SERIALIZATION(action_payload)
+FORGE_IMPLEMENT_SERIALIZATION(action_payload)
 ```
 
-`FCL_DECLARE_SERIALIZATION_PACK` and `FCL_IMPLEMENT_SERIALIZATION_PACK` cover
+`FORGE_DECLARE_SERIALIZATION_PACK` and `FORGE_IMPLEMENT_SERIALIZATION_PACK` cover
 `datastream<size_t>`, `datastream<char*>`, `datastream<const char*>` and
-`sha256::encoder`. `FCL_DECLARE_SERIALIZATION_VARIANT` and
-`FCL_IMPLEMENT_SERIALIZATION_VARIANT` cover `to_variant/from_variant`.
+`sha256::encoder`. `FORGE_DECLARE_SERIALIZATION_VARIANT` and
+`FORGE_IMPLEMENT_SERIALIZATION_VARIANT` cover `to_variant/from_variant`.
 
 ## Compatibility Rules
 
@@ -222,7 +222,7 @@ FCL_IMPLEMENT_SERIALIZATION(action_payload)
 
 ## Typical Mistakes
 
-- Do not put `fcl::raw` overloads in `core`.
+- Do not put `forge::raw` overloads in `core`.
 - Do not use filesystem path serialization as an application policy boundary.
 - Do not catch raw bounds failures by parsing `what()`; errors are standard
   exceptions such as `std::out_of_range`.

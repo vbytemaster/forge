@@ -1,6 +1,6 @@
 #pragma once
 
-namespace fcl::p2p {
+namespace forge::p2p {
 
 struct peer_exchange_message {
    enum class type : std::uint16_t {
@@ -14,7 +14,7 @@ struct peer_exchange_message {
 
    struct endpoint_record {
       peer_id peer;
-      fcl::p2p::endpoint endpoint;
+      forge::p2p::endpoint endpoint;
       capability_set capabilities{};
    };
 
@@ -39,10 +39,10 @@ struct options {
 
 [[nodiscard]] std::vector<std::uint8_t> encode(const peer_exchange_message& message, options opts = {});
 [[nodiscard]] peer_exchange_message decode(std::span<const std::uint8_t> bytes, options opts = {});
-boost::asio::awaitable<void> async_write(fcl::p2p::stream& stream, const peer_exchange_message& message,
+boost::asio::awaitable<void> async_write(forge::p2p::stream& stream, const peer_exchange_message& message,
                                          options opts = {});
-boost::asio::awaitable<peer_exchange_message> async_read(fcl::p2p::stream& stream, options opts = {});
+boost::asio::awaitable<peer_exchange_message> async_read(forge::p2p::stream& stream, options opts = {});
 
 } // namespace peer_exchange_codec
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

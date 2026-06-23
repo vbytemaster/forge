@@ -1,5 +1,5 @@
 add_library(
-   fcl_quic STATIC
+   forge_quic STATIC
    endpoint.cpp
    security.cpp
    options.cpp
@@ -13,19 +13,19 @@ add_library(
    connector.cpp
    listener.cpp
 )
-fcl_target_modules(fcl_quic quic)
+forge_target_modules(forge_quic quic)
 
-target_include_directories(fcl_quic PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+target_include_directories(forge_quic PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
-   fcl_quic PUBLIC
-      fcl_exceptions
-      fcl_api
-      fcl_transport_api
-      fcl_raw
-      fcl_crypto
-      fcl_asio
-      fcl_transport
+   forge_quic PUBLIC
+      forge_exceptions
+      forge_api
+      forge_transport_api
+      forge_raw
+      forge_crypto
+      forge_asio
+      forge_transport
       Boost::asio
       OpenSSL::SSL
       OpenSSL::Crypto

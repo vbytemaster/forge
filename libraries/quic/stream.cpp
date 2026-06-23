@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include "wrapper_handles.hpp"
 
@@ -12,11 +12,11 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.quic.stream;
+module forge.quic.stream;
 
-import fcl.quic.exceptions;
+import forge.quic.exceptions;
 
-namespace fcl::quic {
+namespace forge::quic {
 namespace {
 
 [[nodiscard]] exceptions::code map_error(detail::engine_error_kind kind) noexcept {
@@ -60,7 +60,7 @@ namespace {
 }
 
 [[noreturn]] void raise_engine_failure(const detail::engine_failure& error) {
-   FCL_THROW_CODE(map_error(error.kind()), error.what());
+   FORGE_THROW_CODE(map_error(error.kind()), error.what());
 }
 
 } // namespace
@@ -89,7 +89,7 @@ std::int64_t stream::id() const noexcept {
 
 boost::asio::awaitable<void> stream::async_write(std::span<const std::uint8_t> bytes) {
    if (!impl_ || !impl_->engine) {
-      FCL_THROW_EXCEPTION(exceptions::stream_closed, "invalid QUIC stream");
+      FORGE_THROW_EXCEPTION(exceptions::stream_closed, "invalid QUIC stream");
    }
    try {
       co_await impl_->engine->async_write(bytes);
@@ -101,7 +101,7 @@ boost::asio::awaitable<void> stream::async_write(std::span<const std::uint8_t> b
 
 boost::asio::awaitable<std::vector<std::uint8_t>> stream::async_read() {
    if (!impl_ || !impl_->engine) {
-      FCL_THROW_EXCEPTION(exceptions::stream_closed, "invalid QUIC stream");
+      FORGE_THROW_EXCEPTION(exceptions::stream_closed, "invalid QUIC stream");
    }
    try {
       co_return co_await impl_->engine->async_read();
@@ -131,4 +131,4 @@ stream detail::stream_access::make(detail::stream_handle handle) {
    return stream{std::move(handle)};
 }
 
-} // namespace fcl::quic
+} // namespace forge::quic

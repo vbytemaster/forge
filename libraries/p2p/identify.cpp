@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -11,18 +11,18 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.p2p.identify;
+module forge.p2p.identify;
 
-import fcl.multiformats.exceptions;
-import fcl.multiformats.types;
-import fcl.multiformats.varint;
-import fcl.multiformats.multicodec;
-import fcl.multiformats.multihash;
-import fcl.multiformats.multibase;
-import fcl.multiformats.multiaddr;
-import fcl.p2p.exceptions;
+import forge.multiformats.exceptions;
+import forge.multiformats.types;
+import forge.multiformats.varint;
+import forge.multiformats.multicodec;
+import forge.multiformats.multihash;
+import forge.multiformats.multibase;
+import forge.multiformats.multiaddr;
+import forge.p2p.exceptions;
 
-namespace fcl::p2p::identify {
+namespace forge::p2p::identify {
 namespace {
 
 enum class wire_type : std::uint8_t {
@@ -31,7 +31,7 @@ enum class wire_type : std::uint8_t {
 };
 
 void append_varint(std::vector<std::uint8_t>& out, std::uint64_t value) {
-   auto encoded = fcl::multiformats::varint_encode(value);
+   auto encoded = forge::multiformats::varint_encode(value);
    out.insert(out.end(), encoded.begin(), encoded.end());
 }
 
@@ -55,15 +55,15 @@ void append_string(std::vector<std::uint8_t>& out, std::uint32_t field, std::str
 }
 
 [[nodiscard]] std::vector<std::uint8_t> endpoint_bytes(const endpoint& value) {
-   return fcl::multiformats::multiaddr::parse(value.to_string()).to_bytes();
+   return forge::multiformats::multiaddr::parse(value.to_string()).to_bytes();
 }
 
 [[nodiscard]] std::optional<endpoint> supported_endpoint(std::span<const std::uint8_t> value) {
    try {
-      return parse_endpoint(fcl::multiformats::multiaddr::from_bytes(value).to_string());
-   } catch (const fcl::multiformats::exceptions::invalid_format&) {
+      return parse_endpoint(forge::multiformats::multiaddr::from_bytes(value).to_string());
+   } catch (const forge::multiformats::exceptions::invalid_format&) {
       return std::nullopt;
-   } catch (const fcl::exceptions::base&) {
+   } catch (const forge::exceptions::base&) {
       return std::nullopt;
    }
 }
@@ -80,25 +80,25 @@ class reader {
       const auto decoded = read_varint();
       const auto type = static_cast<wire_type>(decoded & 0x07U);
       if (type != wire_type::varint && type != wire_type::length_delimited) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, "unsupported Identify protobuf wire type");
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, "unsupported Identify protobuf wire type");
       }
       return {static_cast<std::uint32_t>(decoded >> 3U), type};
    }
 
    [[nodiscard]] std::uint64_t read_varint() {
       try {
-         const auto decoded = fcl::multiformats::varint_decode(bytes_.subspan(offset_));
+         const auto decoded = forge::multiformats::varint_decode(bytes_.subspan(offset_));
          offset_ += decoded.size;
          return decoded.value;
-      } catch (const fcl::multiformats::exceptions::invalid_format& error) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, error.what());
+      } catch (const forge::multiformats::exceptions::invalid_format& error) {
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, error.what());
       }
    }
 
    [[nodiscard]] std::vector<std::uint8_t> bytes() {
       const auto size = read_varint();
       if (size > bytes_.size() - offset_) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, "truncated Identify protobuf bytes field");
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, "truncated Identify protobuf bytes field");
       }
       auto out = std::vector<std::uint8_t>{bytes_.begin() + static_cast<std::ptrdiff_t>(offset_),
                                            bytes_.begin() + static_cast<std::ptrdiff_t>(offset_ + size)};
@@ -126,8 +126,8 @@ class reader {
 
 } // namespace
 
-fcl::multiformats::bytes encode(const document& value) {
-   auto out = fcl::multiformats::bytes{};
+forge::multiformats::bytes encode(const document& value) {
+   auto out = forge::multiformats::bytes{};
    if (!value.public_key.empty()) {
       append_bytes(out, 1, value.public_key);
    }
@@ -196,4 +196,4 @@ document decode(std::span<const std::uint8_t> bytes) {
    return out;
 }
 
-} // namespace fcl::p2p::identify
+} // namespace forge::p2p::identify

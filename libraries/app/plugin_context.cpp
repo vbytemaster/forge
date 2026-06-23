@@ -4,33 +4,33 @@ module;
 #include <string>
 #include <utility>
 
-module fcl.app.plugin_context;
+module forge.app.plugin_context;
 
-namespace fcl::app {
+namespace forge::app {
 namespace {
 
-fcl::api::registry& default_api_registry() {
-   static auto registry = fcl::api::registry{};
+forge::api::registry& default_api_registry() {
+   static auto registry = forge::api::registry{};
    return registry;
 }
 
 } // namespace
 
-plugin_context::plugin_context(fcl::asio::task_scheduler& scheduler, fcl::api::registry& apis, signal_bus& signals,
+plugin_context::plugin_context(forge::asio::task_scheduler& scheduler, forge::api::registry& apis, signal_bus& signals,
                                event_bus& events, diagnostics_store* diagnostics, config_view config)
     : scheduler_{&scheduler}, apis_{&apis}, signals_{&signals}, events_{&events}, diagnostics_{diagnostics},
       config_{std::move(config)} {}
 
-plugin_context::plugin_context(fcl::asio::task_scheduler& scheduler, signal_bus& signals, event_bus& events,
+plugin_context::plugin_context(forge::asio::task_scheduler& scheduler, signal_bus& signals, event_bus& events,
                                diagnostics_store* diagnostics, config_view config)
     : plugin_context{scheduler, default_api_registry(), signals, events, diagnostics, std::move(config)} {}
 
-fcl::asio::task_scheduler& plugin_context::scheduler() noexcept {
+forge::asio::task_scheduler& plugin_context::scheduler() noexcept {
    return *scheduler_;
 }
 
-fcl::api::view plugin_context::apis() const noexcept {
-   return fcl::api::view{*apis_};
+forge::api::view plugin_context::apis() const noexcept {
+   return forge::api::view{*apis_};
 }
 
 signal_bus& plugin_context::signals() noexcept {
@@ -57,4 +57,4 @@ std::optional<std::string> plugin_context::config_value(const std::string& key) 
    return iterator->second;
 }
 
-} // namespace fcl::app
+} // namespace forge::app

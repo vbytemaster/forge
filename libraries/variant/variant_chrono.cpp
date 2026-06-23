@@ -1,26 +1,26 @@
 module;
 #include <chrono>
 
-module fcl.variant.chrono;
+module forge.variant.chrono;
 
-import fcl.core.chrono;
-import fcl.variant.value;
+import forge.core.chrono;
+import forge.variant.value;
 
-namespace fcl {
+namespace forge {
 void to_variant(const std::chrono::sys_time<std::chrono::microseconds>& t, variant& v) {
-   v = fcl::chrono::to_iso_string(t);
+   v = forge::chrono::to_iso_string(t);
 }
 
 void from_variant(const variant& v, std::chrono::sys_time<std::chrono::microseconds>& t) {
-   t = fcl::chrono::from_iso_time_point(v.as_string());
+   t = forge::chrono::from_iso_time_point(v.as_string());
 }
 
 void to_variant(const std::chrono::sys_seconds& t, variant& v) {
-   v = fcl::chrono::to_iso_string(t);
+   v = forge::chrono::to_iso_string(t);
 }
 
 void from_variant(const variant& v, std::chrono::sys_seconds& t) {
-   t = fcl::chrono::from_iso_seconds(v.as_string());
+   t = forge::chrono::from_iso_seconds(v.as_string());
 }
 
 void to_variant(const std::chrono::microseconds& input_microseconds, variant& output_variant) {
@@ -30,4 +30,4 @@ void to_variant(const std::chrono::microseconds& input_microseconds, variant& ou
 void from_variant(const variant& input_variant, std::chrono::microseconds& output_microseconds) {
    output_microseconds = std::chrono::microseconds{input_variant.as_int64()};
 }
-} // namespace fcl
+} // namespace forge

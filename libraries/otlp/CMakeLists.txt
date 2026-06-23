@@ -1,17 +1,17 @@
 add_library(
-   fcl_otlp STATIC
+   forge_otlp STATIC
    crash.cpp
    log_exporter.cpp
    log_sink.cpp
 )
-fcl_target_modules(fcl_otlp otlp)
+forge_target_modules(forge_otlp otlp)
 
-target_include_directories(fcl_otlp PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+target_include_directories(forge_otlp PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
-   fcl_otlp PUBLIC
-      fcl_exceptions
-      fcl_log
-      fcl_asio
-      fcl_http
+   forge_otlp PUBLIC
+      forge_exceptions
+      forge_log
+      forge_asio
+      forge_http
 )

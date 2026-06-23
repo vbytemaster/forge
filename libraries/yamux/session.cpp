@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -27,11 +27,11 @@ module;
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/system/error_code.hpp>
 
-module fcl.yamux.session;
+module forge.yamux.session;
 
-import fcl.transport.exceptions;
+import forge.transport.exceptions;
 
-namespace fcl::yamux {
+namespace forge::yamux {
 
 namespace {
 
@@ -119,17 +119,17 @@ void append_u32(bytes& out, std::uint32_t value) {
    try {
       switch (value) {
       case exceptions::code::invalid_options:
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, message);
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, message);
       case exceptions::code::protocol_error:
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, message);
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, message);
       case exceptions::code::resource_limit:
-         FCL_THROW_EXCEPTION(exceptions::resource_limit, message);
+         FORGE_THROW_EXCEPTION(exceptions::resource_limit, message);
       case exceptions::code::stream_reset:
-         FCL_THROW_EXCEPTION(exceptions::stream_reset, message);
+         FORGE_THROW_EXCEPTION(exceptions::stream_reset, message);
       case exceptions::code::closed:
-         FCL_THROW_EXCEPTION(exceptions::closed, message);
+         FORGE_THROW_EXCEPTION(exceptions::closed, message);
       case exceptions::code::canceled:
-         FCL_THROW_EXCEPTION(exceptions::canceled, message);
+         FORGE_THROW_EXCEPTION(exceptions::canceled, message);
       }
    } catch (...) {
       return std::current_exception();
@@ -205,7 +205,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
          rethrow_terminal_locked();
          reclaim_closed_streams_locked();
          if (streams_.size() >= options_.max_streams) {
-            FCL_THROW_EXCEPTION(exceptions::resource_limit, "yamux maximum stream count reached");
+            FORGE_THROW_EXCEPTION(exceptions::resource_limit, "yamux maximum stream count reached");
          }
          const auto id = next_stream_id_;
          next_stream_id_ += 2U;
@@ -288,10 +288,10 @@ struct session::impl : std::enable_shared_from_this<impl> {
             auto lock = std::scoped_lock{mutex_};
             auto state = get_stream_locked(id);
             if (state->local_fin) {
-               FCL_THROW_EXCEPTION(exceptions::closed, "yamux stream is locally closed");
+               FORGE_THROW_EXCEPTION(exceptions::closed, "yamux stream is locally closed");
             }
             if (state->reset) {
-               FCL_THROW_EXCEPTION(exceptions::stream_reset, "yamux stream reset");
+               FORGE_THROW_EXCEPTION(exceptions::stream_reset, "yamux stream reset");
             }
          }
 
@@ -302,7 +302,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
                auto state = get_stream_locked(id);
                rethrow_terminal_locked();
                if (state->reset) {
-                  FCL_THROW_EXCEPTION(exceptions::stream_reset, "yamux stream reset");
+                  FORGE_THROW_EXCEPTION(exceptions::stream_reset, "yamux stream reset");
                }
                if (state->send_window > 0) {
                   chunk_size =
@@ -343,9 +343,9 @@ struct session::impl : std::enable_shared_from_this<impl> {
                session_buffer_ -= out.size();
                consumed = static_cast<std::uint32_t>(out.size());
             } else if (state->reset) {
-               FCL_THROW_EXCEPTION(exceptions::stream_reset, "yamux stream reset");
+               FORGE_THROW_EXCEPTION(exceptions::stream_reset, "yamux stream reset");
             } else if (state->remote_fin) {
-               FCL_THROW_EXCEPTION(exceptions::closed, "yamux stream closed by remote");
+               FORGE_THROW_EXCEPTION(exceptions::closed, "yamux stream closed by remote");
             } else {
                rethrow_terminal_locked();
                arm_wait(state->read_timer);
@@ -396,7 +396,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
       boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> value) override {
          auto owner = owner_.lock();
          if (!owner) {
-            FCL_THROW_EXCEPTION(exceptions::closed, "yamux session expired");
+            FORGE_THROW_EXCEPTION(exceptions::closed, "yamux session expired");
          }
          auto owned = bytes{value.begin(), value.end()};
          co_await owner->write_stream(stream_id_, std::move(owned));
@@ -405,7 +405,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
       boost::asio::awaitable<void> async_write_chunk(transport::chunk value) override {
          auto owner = owner_.lock();
          if (!owner) {
-            FCL_THROW_EXCEPTION(exceptions::closed, "yamux session expired");
+            FORGE_THROW_EXCEPTION(exceptions::closed, "yamux session expired");
          }
          co_await owner->write_stream(stream_id_, std::move(value).into_vector());
       }
@@ -413,7 +413,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
       boost::asio::awaitable<bytes> async_read() override {
          auto owner = owner_.lock();
          if (!owner) {
-            FCL_THROW_EXCEPTION(exceptions::closed, "yamux session expired");
+            FORGE_THROW_EXCEPTION(exceptions::closed, "yamux session expired");
          }
          co_return co_await owner->read_stream(stream_id_);
       }
@@ -421,7 +421,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
       boost::asio::awaitable<transport::chunk> async_read_chunk() override {
          auto owner = owner_.lock();
          if (!owner) {
-            FCL_THROW_EXCEPTION(exceptions::closed, "yamux session expired");
+            FORGE_THROW_EXCEPTION(exceptions::closed, "yamux session expired");
          }
          co_return transport::chunk{co_await owner->read_stream(stream_id_)};
       }
@@ -447,16 +447,16 @@ struct session::impl : std::enable_shared_from_this<impl> {
 
    void validate_options() const {
       if (!stream_.valid()) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "yamux requires a valid transport stream");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "yamux requires a valid transport stream");
       }
       if (options_.initial_window == 0 || options_.max_stream_window < options_.initial_window ||
           options_.max_frame_size == 0 || options_.max_streams == 0 || options_.max_pending_accepts == 0 ||
           options_.max_stream_buffer < options_.initial_window ||
           options_.max_session_buffer < options_.initial_window) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "invalid yamux options");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "invalid yamux options");
       }
       if (options_.max_frame_size > static_cast<std::size_t>((std::numeric_limits<std::uint32_t>::max)())) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "yamux frame size exceeds wire limit");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "yamux frame size exceeds wire limit");
       }
    }
 
@@ -473,7 +473,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
    [[nodiscard]] std::shared_ptr<stream_state> get_stream_locked(std::uint32_t id) const {
       const auto found = streams_.find(id);
       if (found == streams_.end()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "yamux stream does not exist");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "yamux stream does not exist");
       }
       return found->second;
    }
@@ -505,10 +505,10 @@ struct session::impl : std::enable_shared_from_this<impl> {
          std::rethrow_exception(terminal_error_);
       }
       if (canceled_) {
-         FCL_THROW_EXCEPTION(exceptions::canceled, "yamux session canceled");
+         FORGE_THROW_EXCEPTION(exceptions::canceled, "yamux session canceled");
       }
       if (closed_) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "yamux session closed");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "yamux session closed");
       }
    }
 
@@ -585,7 +585,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
                   if (!allow_after_close) {
                      rethrow_terminal_locked();
                   }
-                  FCL_THROW_EXCEPTION(exceptions::closed, "yamux write waiter canceled");
+                  FORGE_THROW_EXCEPTION(exceptions::closed, "yamux write waiter canceled");
                }
                co_return;
             }
@@ -610,7 +610,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
       } catch (...) {
          finish_write();
          fail_session(exceptions::code::closed, "yamux underlying stream write failed");
-         FCL_THROW_EXCEPTION(exceptions::closed, "yamux underlying stream write failed");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "yamux underlying stream write failed");
       }
       finish_write();
    }
@@ -695,14 +695,14 @@ struct session::impl : std::enable_shared_from_this<impl> {
 
       auto view = std::span<const std::uint8_t>{buffer.data() + consumed, buffer.size() - consumed};
       if (view[0] != version) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "yamux frame version mismatch");
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "yamux frame version mismatch");
       }
       if (view[1] > static_cast<std::uint8_t>(frame_type::go_away)) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "yamux frame type is invalid");
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "yamux frame type is invalid");
       }
       const auto flags = static_cast<std::uint16_t>((static_cast<std::uint16_t>(view[2]) << 8U) | view[3]);
       if ((flags & ~known_flags) != 0U) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "yamux frame has unknown flags");
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "yamux frame has unknown flags");
       }
 
       auto header = frame_header{
@@ -713,7 +713,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
       };
 
       if (header.type == frame_type::data && header.length > options_.max_frame_size) {
-         FCL_THROW_EXCEPTION(exceptions::resource_limit, "yamux frame exceeds maximum size");
+         FORGE_THROW_EXCEPTION(exceptions::resource_limit, "yamux frame exceeds maximum size");
       }
       const auto payload_size = header.type == frame_type::data ? static_cast<std::size_t>(header.length) : 0U;
       while (buffer.size() - consumed < header_size + payload_size) {
@@ -754,12 +754,12 @@ struct session::impl : std::enable_shared_from_this<impl> {
          handle_go_away(header);
          co_return;
       }
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "unknown yamux frame type");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "unknown yamux frame type");
    }
 
    boost::asio::awaitable<void> handle_data(const frame_header& header, const bytes& payload) {
       if (header.stream_id == 0 || header.length != payload.size()) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "invalid yamux data frame");
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "invalid yamux data frame");
       }
 
       if ((header.flags & rst) != 0U) {
@@ -805,7 +805,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
 
    boost::asio::awaitable<void> handle_window_update(const frame_header& header) {
       if (header.stream_id == 0) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "invalid yamux window update frame");
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "invalid yamux window update frame");
       }
 
       auto opened = std::shared_ptr<stream_state>{};
@@ -847,7 +847,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
    boost::asio::awaitable<std::shared_ptr<stream_state>> handle_stream_open(const frame_header& header,
                                                                             std::uint32_t send_window) {
       if (!remote_opens_stream(side_, header.stream_id)) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "yamux stream id has invalid parity");
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "yamux stream id has invalid parity");
       }
 
       auto reject = false;
@@ -856,7 +856,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
          auto lock = std::scoped_lock{mutex_};
          reclaim_closed_streams_locked();
          if (streams_.contains(header.stream_id)) {
-            FCL_THROW_EXCEPTION(exceptions::protocol_error, "yamux stream already exists");
+            FORGE_THROW_EXCEPTION(exceptions::protocol_error, "yamux stream already exists");
          }
          if (streams_.size() >= options_.max_streams || pending_accepts_.size() >= options_.max_pending_accepts) {
             reject = true;
@@ -901,7 +901,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
 
    boost::asio::awaitable<void> handle_ping(const frame_header& header) {
       if (header.stream_id != 0) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "yamux ping must use stream zero");
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "yamux ping must use stream zero");
       }
       if ((header.flags & ack) == 0U) {
          co_await write_frame(frame_type::ping, ack, 0, header.length);
@@ -910,7 +910,7 @@ struct session::impl : std::enable_shared_from_this<impl> {
 
    void handle_go_away(const frame_header& header) {
       if (header.stream_id != 0) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "yamux goaway must use stream zero");
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "yamux goaway must use stream zero");
       }
       const auto code = header.length == go_away_normal ? exceptions::code::closed : exceptions::code::protocol_error;
       fail_session(code, "yamux remote sent goaway");
@@ -1034,14 +1034,14 @@ bool session::valid() const noexcept {
 
 boost::asio::awaitable<transport::stream> session::async_open_stream() {
    if (!impl_) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid yamux session");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid yamux session");
    }
    co_return co_await impl_->async_open_stream();
 }
 
 boost::asio::awaitable<transport::stream> session::async_accept_stream() {
    if (!impl_) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid yamux session");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid yamux session");
    }
    co_return co_await impl_->async_accept_stream();
 }
@@ -1067,4 +1067,4 @@ transport::session make_session(transport::stream stream, side session_side, opt
    return session{std::move(stream), session_side, session_options}.as_transport();
 }
 
-} // namespace fcl::yamux
+} // namespace forge::yamux

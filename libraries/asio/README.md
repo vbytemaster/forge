@@ -1,6 +1,6 @@
-# fcl_asio
+# forge_asio
 
-`fcl_asio` owns the shared async runtime primitives used by FCL networking and
+`forge_asio` owns the shared async runtime primitives used by FORGE networking and
 applications. It wraps Boost.Asio with explicit runtime ownership, blocking
 boundaries and a priority task scheduler.
 
@@ -13,17 +13,17 @@ boundaries and a priority task scheduler.
 ## When Not To Use
 
 - Do not use it as a generic global job system.
-- Do not encode application priority names here; `fcl::asio::priority` is numeric.
-- Do not expose `std::future` as public async API. FCL async APIs use
+- Do not encode application priority names here; `forge::asio::priority` is numeric.
+- Do not expose `std::future` as public async API. FORGE async APIs use
   `boost::asio::awaitable<T>`.
 
 ## Public Modules
 
-- `fcl.asio.runtime` — owned `io_context` and worker threads.
-- `fcl.asio.blocking` — explicit blocking boundary helpers.
-- `fcl.asio.task_scheduler` — bounded priority scheduler and task handles.
+- `forge.asio.runtime` — owned `io_context` and worker threads.
+- `forge.asio.blocking` — explicit blocking boundary helpers.
+- `forge.asio.task_scheduler` — bounded priority scheduler and task handles.
 
-Target: `fcl_asio`.
+Target: `forge_asio`.
 
 Dependencies: Boost.Asio and threads.
 
@@ -32,9 +32,9 @@ Dependencies: Boost.Asio and threads.
 ### Own A Runtime
 
 ```cpp
-import fcl.asio.runtime;
+import forge.asio.runtime;
 
-auto runtime = fcl::asio::runtime{{.worker_threads = 2, .thread_name = "worker"}};
+auto runtime = forge::asio::runtime{{.worker_threads = 2, .thread_name = "worker"}};
 auto& io = runtime.context();
 runtime.stop();
 ```
@@ -53,8 +53,8 @@ small utility. Do not push it into reusable async APIs.
 
 #include <chrono>
 
-import fcl.asio.blocking;
-import fcl.asio.runtime;
+import forge.asio.blocking;
+import forge.asio.runtime;
 
 boost::asio::awaitable<int> calculate_after_delay() {
    boost::asio::any_io_executor executor = co_await boost::asio::this_coro::executor;
@@ -63,8 +63,8 @@ boost::asio::awaitable<int> calculate_after_delay() {
    co_return 42;
 }
 
-auto runtime = fcl::asio::runtime{};
-auto value = fcl::asio::blocking::run(runtime, calculate_after_delay());
+auto runtime = forge::asio::runtime{};
+auto value = forge::asio::blocking::run(runtime, calculate_after_delay());
 ```
 
 ### Bound A Blocking Wait With Timeout
@@ -73,9 +73,9 @@ auto value = fcl::asio::blocking::run(runtime, calculate_after_delay());
 be reported as a timeout, not as an infinite hang.
 
 ```cpp
-import fcl.asio.blocking;
+import forge.asio.blocking;
 
-auto completed = fcl::asio::blocking::run_for(
+auto completed = forge::asio::blocking::run_for(
    runtime,
    wait_for_readiness_probe(),
    std::chrono::seconds{5});
@@ -90,19 +90,19 @@ if (!completed) {
 ```cpp
 #include <boost/asio/awaitable.hpp>
 
-import fcl.asio.task_scheduler;
+import forge.asio.task_scheduler;
 
-boost::asio::awaitable<void> submit_metadata_refresh(fcl::asio::runtime& runtime) {
-   auto scheduler = fcl::asio::task_scheduler{
+boost::asio::awaitable<void> submit_metadata_refresh(forge::asio::runtime& runtime) {
+   auto scheduler = forge::asio::task_scheduler{
       runtime,
-      fcl::asio::task_scheduler::options{
+      forge::asio::task_scheduler::options{
          .max_blocking_tasks = 4,
          .max_awaitable_tasks = 1024,
          .max_pending_tasks = 4096,
       },
    };
    auto refresh = scheduler.submit({
-      .priority = fcl::asio::priority{100},
+      .priority = forge::asio::priority{100},
       .name = "metadata-refresh",
       .work = [] { refresh_metadata(); },
    });
@@ -125,7 +125,7 @@ separate budgets:
 A saturated blocking task at the head of the queue does not block a runnable
 awaitable task, and a saturated awaitable budget does not consume blocking
 capacity. This mirrors the useful `fc::thread` scheduling property without
-copying FC fibers or hiding another runtime under FCL.
+copying FC fibers or hiding another runtime under FORGE.
 
 This matters for re-entrant workflows: an awaitable pass may submit a short
 blocking companion task to the same scheduler and wait for it. That must not
@@ -140,11 +140,11 @@ wait handle instead of `std::future`.
 ```cpp
 #include <boost/asio/awaitable.hpp>
 
-import fcl.asio.task_scheduler;
+import forge.asio.task_scheduler;
 
-boost::asio::awaitable<void> refresh_index(fcl::asio::task_scheduler& scheduler) {
+boost::asio::awaitable<void> refresh_index(forge::asio::task_scheduler& scheduler) {
    auto index_job = scheduler.submit({
-      .priority = fcl::asio::priority{25},
+      .priority = forge::asio::priority{25},
       .name = "index-refresh",
       .work = [] {
          rebuild_small_index_from_disk();
@@ -167,16 +167,16 @@ The task remains single-shot.
 ```cpp
 #include <boost/asio/awaitable.hpp>
 
-import fcl.asio.task_scheduler;
+import forge.asio.task_scheduler;
 
 boost::asio::awaitable<void> refresh_remote_index();
 
-boost::asio::awaitable<void> refresh_once(fcl::asio::task_scheduler& scheduler) {
-   auto handle = scheduler.submit(fcl::asio::awaitable_task{
-      .priority = fcl::asio::priority{-25},
+boost::asio::awaitable<void> refresh_once(forge::asio::task_scheduler& scheduler) {
+   auto handle = scheduler.submit(forge::asio::awaitable_task{
+      .priority = forge::asio::priority{-25},
       .name = "remote-index-refresh",
       .work =
-         [](fcl::asio::task_context& context) -> boost::asio::awaitable<void> {
+         [](forge::asio::task_context& context) -> boost::asio::awaitable<void> {
          context.throw_if_cancel_requested();
          co_await refresh_remote_index();
       },
@@ -197,11 +197,11 @@ completes.
 
 #include <chrono>
 
-import fcl.asio.task_scheduler;
+import forge.asio.task_scheduler;
 
 class scrub_worker {
  public:
-   explicit scrub_worker(fcl::asio::task_scheduler& scheduler) : scheduler_{&scheduler} {}
+   explicit scrub_worker(forge::asio::task_scheduler& scheduler) : scheduler_{&scheduler} {}
 
    void start() {
       running_ = true;
@@ -219,7 +219,7 @@ class scrub_worker {
       if (handle_.valid()) {
          try {
             co_await handle_.wait();
-         } catch (const fcl::asio::exceptions::canceled&) {
+         } catch (const forge::asio::exceptions::canceled&) {
             // Normal stop path for a pending background pass.
          }
       }
@@ -232,11 +232,11 @@ class scrub_worker {
       }
 
       handle_ = scheduler_->submit_after(
-         fcl::asio::awaitable_task{
-            .priority = fcl::asio::priority{-50},
+         forge::asio::awaitable_task{
+            .priority = forge::asio::priority{-50},
             .name = "scrub-pass",
             .work =
-               [this](fcl::asio::task_context& context) -> boost::asio::awaitable<void> {
+               [this](forge::asio::task_context& context) -> boost::asio::awaitable<void> {
                context.throw_if_cancel_requested();
                co_await run_one_pass();
                schedule_next();
@@ -247,8 +247,8 @@ class scrub_worker {
 
    boost::asio::awaitable<void> run_one_pass();
 
-   fcl::asio::task_scheduler* scheduler_ = nullptr;
-   fcl::asio::task_handle handle_;
+   forge::asio::task_scheduler* scheduler_ = nullptr;
+   forge::asio::task_handle handle_;
    bool running_ = false;
 };
 ```
@@ -259,24 +259,24 @@ class scrub_worker {
 instead of assuming the queue can grow forever.
 
 ```cpp
-boost::asio::awaitable<void> run_small_job(fcl::asio::runtime& runtime) {
-   auto scheduler = fcl::asio::task_scheduler{
+boost::asio::awaitable<void> run_small_job(forge::asio::runtime& runtime) {
+   auto scheduler = forge::asio::task_scheduler{
       runtime,
-      fcl::asio::task_scheduler::options{
+      forge::asio::task_scheduler::options{
          .max_blocking_tasks = 1,
          .max_pending_tasks = 2,
       },
    };
 
    auto accepted = scheduler.submit({
-      .priority = fcl::asio::priority{0},
+      .priority = forge::asio::priority{0},
       .name = "small-job",
       .work = [] { do_small_job(); },
    });
 
    try {
       co_await accepted.wait();
-   } catch (const fcl::asio::exceptions::rejected& error) {
+   } catch (const forge::asio::exceptions::rejected& error) {
       report_busy(error.what()); // for example: scheduler queue is full
    }
 }
@@ -292,8 +292,8 @@ near the component that owns those meanings.
 
 ```cpp
 namespace priorities {
-   inline constexpr auto foreground = fcl::asio::priority{500};
-   inline constexpr auto background = fcl::asio::priority{-100};
+   inline constexpr auto foreground = forge::asio::priority{500};
+   inline constexpr auto background = forge::asio::priority{-100};
 }
 
 auto hot = scheduler.submit({
@@ -313,7 +313,7 @@ auto cold = scheduler.submit({
 
 ```cpp
 auto handle = scheduler.submit_after(
-   {.priority = fcl::asio::priority{0}, .name = "retry", .work = [] { retry(); }},
+   {.priority = forge::asio::priority{0}, .name = "retry", .work = [] { retry(); }},
    std::chrono::milliseconds{250});
 
 handle.cancel();
@@ -345,9 +345,9 @@ running work is allowed to finish through its normal function body, and handles
 can still be awaited by tests.
 
 ```cpp
-boost::asio::awaitable<void> stop_with_pending_work(fcl::asio::task_scheduler& scheduler) {
+boost::asio::awaitable<void> stop_with_pending_work(forge::asio::task_scheduler& scheduler) {
    auto pending = scheduler.submit_after(
-      {.priority = fcl::asio::priority{0}, .name = "slow-retry", .work = [] { retry(); }},
+      {.priority = forge::asio::priority{0}, .name = "slow-retry", .work = [] { retry(); }},
       std::chrono::minutes{1});
 
    scheduler.stop();
@@ -373,7 +373,7 @@ waits for both blocking and awaitable running counts to reach zero.
 
 - Do not detach raw `std::thread` workers around the scheduler. That bypasses
   cancellation, metrics and deterministic shutdown.
-- Do not use `std::async` as a daemon worker pool. It has no FCL backpressure or
+- Do not use `std::async` as a daemon worker pool. It has no FORGE backpressure or
   lifecycle integration.
 - Do not sleep in polling loops on runtime threads. Use timers, task handles and
   explicit cancellation.
@@ -397,6 +397,6 @@ waits for both blocking and awaitable running counts to reach zero.
 
 ## Tests
 
-`test_fcl_asio` covers priority/FIFO ordering, delayed execution, cancellation,
+`test_forge_asio` covers priority/FIFO ordering, delayed execution, cancellation,
 queue saturation, separated blocking/awaitable budgets and shutdown
 cancellation.

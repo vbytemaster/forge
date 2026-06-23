@@ -1,20 +1,20 @@
 # HTTP Files And Object-Gateway Readiness
 
-This note records the `fcl_http` file/upload direction after the FastAPI-style
+This note records the `forge_http` file/upload direction after the FastAPI-style
 typed binding work. S3-compatible APIs are used only as a downstream readiness
-driver: FCL owns generic HTTP mechanics, while an application owns object
+driver: FORGE owns generic HTTP mechanics, while an application owns object
 storage semantics, credentials, authorization, billing and gateway-specific
 error shapes.
 
 ## Current HTTP Surface
 
-`fcl_http` owns:
+`forge_http` owns:
 
 - async router, route handlers and middleware;
-- server, connection and client mechanics over `fcl_asio`;
+- server, connection and client mechanics over `forge_asio`;
 - request target parsing and base URL rendering;
 - WebSocket upgrade routing;
-- `FCL_HTTP_API(...)` presentation metadata on top of `FCL_API(...)`;
+- `FORGE_HTTP_API(...)` presentation metadata on top of `FORGE_API(...)`;
 - JSON request/response DTOs for ordinary typed HTTP methods;
 - path, query and header binding into described request DTOs;
 - HTTP-only typed fields such as `header<T>`, `form_field<T>`,
@@ -26,7 +26,7 @@ error shapes.
 - file/range helpers for `HEAD`, `Range`, `206`, `416`, `ETag` and
   `Last-Modified` behavior.
 
-The official HTTP server plugin is parked until the `fcl_http` typed binding
+The official HTTP server plugin is parked until the `forge_http` typed binding
 surface is stable. This document describes the library substrate only.
 
 ## Binding Model
@@ -34,39 +34,39 @@ surface is stable. This document describes the library substrate only.
 The intended application shape is one C++ API class per HTTP API surface:
 
 ```cpp
-class object_api : public fcl::api::contract<object_api> {
+class object_api : public forge::api::contract<object_api> {
  public:
    virtual boost::asio::awaitable<put_response>
    put_object(put_request request) = 0;
 
-   virtual boost::asio::awaitable<fcl::http::file_response>
+   virtual boost::asio::awaitable<forge::http::file_response>
    get_object(get_request request) = 0;
 };
 
-FCL_API(
+FORGE_API(
    object_api,
-   FCL_API_CONTRACT("object", 1, 0),
-   FCL_API_METHOD_TYPED(put_object, put_request, put_response),
-   FCL_API_METHOD_TYPED(get_object, get_request, fcl::http::file_response))
+   FORGE_API_CONTRACT("object", 1, 0),
+   FORGE_API_METHOD_TYPED(put_object, put_request, put_response),
+   FORGE_API_METHOD_TYPED(get_object, get_request, forge::http::file_response))
 
-FCL_HTTP_API(
+FORGE_HTTP_API(
    object_api,
-   FCL_HTTP_PUT(put_object, "/objects/:collection/:key", created,
-      FCL_HTTP_BODY_STREAM(body),
-      FCL_HTTP_HEADER(content_type, "Content-Type")),
-   FCL_HTTP_GET(get_object, "/objects/:collection/:key"))
+   FORGE_HTTP_PUT(put_object, "/objects/:collection/:key", created,
+      FORGE_HTTP_BODY_STREAM(body),
+      FORGE_HTTP_HEADER(content_type, "Content-Type")),
+   FORGE_HTTP_GET(get_object, "/objects/:collection/:key"))
 ```
 
-`FCL_API(...)` remains the contract metadata source. `FCL_HTTP_API(...)` is only
+`FORGE_API(...)` remains the contract metadata source. `FORGE_HTTP_API(...)` is only
 the HTTP presentation: method, path, status and HTTP field mapping.
 
 Ordinary DTO request/response bodies use JSON. HTTP-specific transfer mechanics
-use explicit FCL-owned special types rather than leaking Boost.Beast parser,
+use explicit FORGE-owned special types rather than leaking Boost.Beast parser,
 serializer or body templates through public modules.
 
 ## Object-Gateway Readiness
 
-An object-storage gateway built above FCL needs HTTP mechanics such as:
+An object-storage gateway built above FORGE needs HTTP mechanics such as:
 
 - method coverage for `GET`, `PUT`, `HEAD`, `DELETE`, `POST` and `OPTIONS`;
 - stable path and query preservation;
@@ -78,7 +78,7 @@ An object-storage gateway built above FCL needs HTTP mechanics such as:
 - request limits, timeouts, cancellation and cleanup;
 - middleware hooks before body consumption.
 
-FCL does not own:
+FORGE does not own:
 
 - bucket, object, tenant or account models;
 - multipart object workflow;
@@ -87,9 +87,9 @@ FCL does not own:
 - gateway-specific XML error payloads;
 - mapping to any product storage or control-plane state.
 
-FCL may add generic HTTP canonicalization helpers if they are useful outside a
+FORGE may add generic HTTP canonicalization helpers if they are useful outside a
 single object gateway. Product policy and compatibility-specific semantics stay
-above FCL.
+above FORGE.
 
 ## Remaining Gaps
 
@@ -111,8 +111,8 @@ None of those gaps require an HTTP server plugin or product-specific route API.
 
 ## Non-Goals
 
-- Do not add object-storage product vocabulary to FCL runtime APIs.
+- Do not add object-storage product vocabulary to FORGE runtime APIs.
 - Do not add credential stores, signing policy, billing or tenant authorization.
-- Do not expose Boost.Beast parser/serializer/body templates as public FCL API.
+- Do not expose Boost.Beast parser/serializer/body templates as public FORGE API.
 - Do not add raw route mutation as the application-facing pattern.
 - Do not buffer large files in memory as a production transfer path.

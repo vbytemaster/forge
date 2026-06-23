@@ -1,3 +1,3 @@
-namespace fcl::schema {
+namespace forge::schema {
 void anchor() {}
-} // namespace fcl::schema
+} // namespace forge::schema

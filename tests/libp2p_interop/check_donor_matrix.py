@@ -19,7 +19,7 @@ def main() -> int:
         case_id = case.get("id", "")
         status = case.get("status", "")
         supported = bool(case.get("supported", False))
-        tests = case.get("fcl_tests", [])
+        tests = case.get("forge_tests", [])
 
         if not case_id:
             errors.append("case without id")
@@ -32,7 +32,7 @@ def main() -> int:
         if supported and status == "unsupported":
             errors.append(f"{case_id}: supported behavior must not be marked unsupported")
         if supported and not tests:
-            errors.append(f"{case_id}: supported behavior must list at least one FCL test")
+            errors.append(f"{case_id}: supported behavior must list at least one FORGE test")
 
     if errors:
         for error in errors:

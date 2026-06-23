@@ -25,13 +25,13 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
-module fcl.http.upload;
+module forge.http.upload;
 
-import fcl.http.exceptions;
+import forge.http.exceptions;
 
-namespace fcl::http {
+namespace forge::http {
 
 struct upload_spool::state {
    explicit state(std::filesystem::path path_value) : path(std::move(path_value)) {}
@@ -203,7 +203,7 @@ class upload_spool_writer {
  public:
    explicit upload_spool_writer(const upload_options& options) {
       const auto directory = effective_spool_directory(options);
-      const auto prefix = options.spool_prefix.empty() ? std::string{"fcl-http-upload-"} : options.spool_prefix;
+      const auto prefix = options.spool_prefix.empty() ? std::string{"forge-http-upload-"} : options.spool_prefix;
       const auto seed = std::chrono::steady_clock::now().time_since_epoch().count();
       for (auto attempt = 0; attempt != 64; ++attempt) {
          auto candidate = directory / (prefix + std::to_string(::getpid()) + "-" + std::to_string(seed) + "-" +
@@ -710,7 +710,7 @@ bool valid_multipart_header_value(std::string_view value) noexcept {
 
 std::string quote_multipart_parameter(std::string_view value) {
    if (!valid_multipart_header_value(value)) {
-      FCL_THROW_EXCEPTION(exceptions::bad_request, "multipart parameter contains unsafe characters");
+      FORGE_THROW_EXCEPTION(exceptions::bad_request, "multipart parameter contains unsafe characters");
    }
 
    auto output = std::string{};
@@ -739,7 +739,7 @@ std::string generate_multipart_boundary(const std::vector<multipart_writer_part>
    static auto next = std::atomic<std::uint64_t>{0};
    for (;;) {
       const auto value = next.fetch_add(1U, std::memory_order_relaxed) + 1U;
-      auto boundary = std::string{"fcl-http-"};
+      auto boundary = std::string{"forge-http-"};
       boundary += std::to_string(
          static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
       boundary += '-';
@@ -768,7 +768,7 @@ multipart_writer_result write_multipart_form(std::vector<multipart_writer_part> 
       body += "\r\n";
       if (!part.content_type.empty()) {
          if (!valid_multipart_header_value(part.content_type)) {
-            FCL_THROW_EXCEPTION(exceptions::bad_request, "multipart part content type contains unsafe characters");
+            FORGE_THROW_EXCEPTION(exceptions::bad_request, "multipart part content type contains unsafe characters");
          }
          body += "Content-Type: ";
          body += part.content_type;
@@ -788,4 +788,4 @@ multipart_writer_result write_multipart_form(std::vector<multipart_writer_part> 
    };
 }
 
-} // namespace fcl::http
+} // namespace forge::http

@@ -9,30 +9,30 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.app.application;
+module forge.app.application;
 
-import fcl.config.component;
-import fcl.config.document;
-import fcl.api.exceptions;
-import fcl.api.types;
-import fcl.api.descriptor;
-import fcl.api.error_projection;
-import fcl.api.handle;
-import fcl.api.connection;
-import fcl.api.registry;
-import fcl.api.binding;
-import fcl.api.dispatcher;
-import fcl.exceptions;
-import fcl.app.events;
-import fcl.app.signals;
+import forge.config.component;
+import forge.config.document;
+import forge.api.exceptions;
+import forge.api.types;
+import forge.api.descriptor;
+import forge.api.error_projection;
+import forge.api.handle;
+import forge.api.connection;
+import forge.api.registry;
+import forge.api.binding;
+import forge.api.dispatcher;
+import forge.exceptions;
+import forge.app.events;
+import forge.app.signals;
 
-namespace fcl::app {
+namespace forge::app {
 namespace {
 
 std::string exception_message() {
    try {
       throw;
-   } catch (const fcl::exceptions::base& error) {
+   } catch (const forge::exceptions::base& error) {
       return error.message();
    } catch (const std::exception& error) {
       return error.what();
@@ -83,7 +83,7 @@ boost::asio::awaitable<void> application_runtime::configure(const config::docume
    }
 }
 
-boost::asio::awaitable<void> application_runtime::provide(fcl::api::provider& provider) {
+boost::asio::awaitable<void> application_runtime::provide(forge::api::provider& provider) {
    if (state_ != application_state::created) {
       throw std::logic_error{"app runtime must provide APIs before initialize"};
    }
@@ -261,4 +261,4 @@ std::size_t application_runtime::plugin_count() const noexcept {
    return plugins_.size();
 }
 
-} // namespace fcl::app
+} // namespace forge::app

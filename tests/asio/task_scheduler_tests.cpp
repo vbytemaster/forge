@@ -19,21 +19,21 @@
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
-import fcl.asio.blocking;
-import fcl.asio.runtime;
-import fcl.asio.task_scheduler;
+import forge.asio.blocking;
+import forge.asio.runtime;
+import forge.asio.task_scheduler;
 
 namespace {
 
-using fcl::asio::awaitable_task;
-using fcl::asio::priority;
-using fcl::asio::task;
-using fcl::asio::task_context;
-using fcl::asio::task_handle;
-using fcl::asio::task_scheduler;
+using forge::asio::awaitable_task;
+using forge::asio::priority;
+using forge::asio::task;
+using forge::asio::task_context;
+using forge::asio::task_handle;
+using forge::asio::task_scheduler;
 
-void wait_task(fcl::asio::runtime& runtime, const task_handle& handle) {
-   fcl::asio::blocking::run(runtime, handle.wait());
+void wait_task(forge::asio::runtime& runtime, const task_handle& handle) {
+   forge::asio::blocking::run(runtime, handle.wait());
 }
 
 bool wait_for_true(const std::atomic_bool& value, std::chrono::milliseconds timeout = std::chrono::seconds{2}) {
@@ -63,17 +63,17 @@ boost::asio::awaitable<std::string> current_thread_name() {
 
 BOOST_AUTO_TEST_CASE(runtime_applies_custom_worker_thread_name_when_observable) {
 #if defined(__APPLE__) || defined(__linux__)
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1, .thread_name = "fcltest"}};
-   const auto name = fcl::asio::blocking::run(runtime, current_thread_name());
-   BOOST_TEST(name == "fcltest");
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1, .thread_name = "forgetest"}};
+   const auto name = forge::asio::blocking::run(runtime, current_thread_name());
+   BOOST_TEST(name == "forgetest");
 #else
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1, .thread_name = "fcltest"}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1, .thread_name = "forgetest"}};
    runtime.stop();
 #endif
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_orders_by_numeric_priority_then_fifo) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto scheduler = task_scheduler{runtime, task_scheduler::options{.max_blocking_tasks = 1, .max_pending_tasks = 8}};
 
    auto gate_mutex = std::mutex{};
@@ -129,7 +129,7 @@ BOOST_AUTO_TEST_CASE(task_scheduler_orders_by_numeric_priority_then_fifo) {
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_runs_delayed_tasks_when_due) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto scheduler = task_scheduler{runtime, task_scheduler::options{.max_blocking_tasks = 1, .max_pending_tasks = 4}};
    auto order_mutex = std::mutex{};
    auto order = std::vector<int>{};
@@ -154,16 +154,16 @@ BOOST_AUTO_TEST_CASE(task_scheduler_runs_delayed_tasks_when_due) {
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_cancels_pending_and_rejects_saturated_queue) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto scheduler = task_scheduler{runtime, task_scheduler::options{.max_blocking_tasks = 1, .max_pending_tasks = 2}};
 
    auto canceled = scheduler.submit_after(task{.priority = priority{1}, .name = "cancel", .work = [] {}},
                                           std::chrono::seconds{1});
    BOOST_CHECK(canceled.cancel());
    BOOST_CHECK(canceled.cancel_requested());
-   BOOST_CHECK_THROW(wait_task(runtime, canceled), fcl::asio::exceptions::canceled);
+   BOOST_CHECK_THROW(wait_task(runtime, canceled), forge::asio::exceptions::canceled);
 
-   auto bounded_runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto bounded_runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto bounded =
        task_scheduler{bounded_runtime, task_scheduler::options{.max_blocking_tasks = 1, .max_pending_tasks = 1}};
    auto queued = bounded.submit_after(task{.priority = priority{1}, .name = "queued", .work = [] {}},
@@ -171,27 +171,27 @@ BOOST_AUTO_TEST_CASE(task_scheduler_cancels_pending_and_rejects_saturated_queue)
    auto rejected = bounded.submit_after(task{.priority = priority{1}, .name = "rejected", .work = [] {}},
                                         std::chrono::seconds{1});
 
-   BOOST_CHECK_THROW(wait_task(bounded_runtime, rejected), fcl::asio::exceptions::rejected);
+   BOOST_CHECK_THROW(wait_task(bounded_runtime, rejected), forge::asio::exceptions::rejected);
    BOOST_CHECK_EQUAL(bounded.snapshot().rejected, 1U);
    static_cast<void>(queued.cancel());
    bounded.stop();
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_shutdown_cancels_pending_work) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto scheduler = task_scheduler{runtime, task_scheduler::options{.max_blocking_tasks = 1, .max_pending_tasks = 4}};
    auto delayed = scheduler.submit_after(task{.priority = priority{1}, .name = "delayed", .work = [] {}},
                                          std::chrono::seconds{10});
 
    scheduler.stop();
 
-   BOOST_CHECK_THROW(wait_task(runtime, delayed), fcl::asio::exceptions::canceled);
+   BOOST_CHECK_THROW(wait_task(runtime, delayed), forge::asio::exceptions::canceled);
    BOOST_CHECK(scheduler.snapshot().stopped);
    BOOST_CHECK_EQUAL(scheduler.snapshot().pending, 0U);
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_runs_awaitable_tasks) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto scheduler = task_scheduler{runtime, task_scheduler::options{.max_blocking_tasks = 1, .max_pending_tasks = 4}};
    auto ran = false;
 
@@ -211,7 +211,7 @@ BOOST_AUTO_TEST_CASE(task_scheduler_runs_awaitable_tasks) {
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_runs_delayed_awaitable_tasks_when_due) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto scheduler = task_scheduler{runtime, task_scheduler::options{.max_blocking_tasks = 1, .max_pending_tasks = 4}};
    auto order_mutex = std::mutex{};
    auto order = std::vector<int>{};
@@ -251,7 +251,7 @@ BOOST_AUTO_TEST_CASE(task_scheduler_runs_delayed_awaitable_tasks_when_due) {
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_cancels_pending_awaitable_tasks) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto scheduler = task_scheduler{runtime, task_scheduler::options{.max_blocking_tasks = 1, .max_pending_tasks = 4}};
    auto ran = false;
 
@@ -268,12 +268,12 @@ BOOST_AUTO_TEST_CASE(task_scheduler_cancels_pending_awaitable_tasks) {
       std::chrono::seconds{1});
 
    BOOST_CHECK(handle.cancel());
-   BOOST_CHECK_THROW(wait_task(runtime, handle), fcl::asio::exceptions::canceled);
+   BOOST_CHECK_THROW(wait_task(runtime, handle), forge::asio::exceptions::canceled);
    BOOST_CHECK(!ran);
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_running_awaitable_tasks_observe_cancel_request) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto scheduler = task_scheduler{runtime, task_scheduler::options{.max_blocking_tasks = 1, .max_pending_tasks = 4}};
    auto started = std::atomic_bool{false};
    auto observed_cancel = false;
@@ -300,7 +300,7 @@ BOOST_AUTO_TEST_CASE(task_scheduler_running_awaitable_tasks_observe_cancel_reque
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_throw_if_cancel_requested_marks_awaitable_canceled) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto scheduler = task_scheduler{runtime, task_scheduler::options{.max_blocking_tasks = 1, .max_pending_tasks = 4}};
    auto started = std::atomic_bool{false};
 
@@ -321,12 +321,12 @@ BOOST_AUTO_TEST_CASE(task_scheduler_throw_if_cancel_requested_marks_awaitable_ca
 
    wait_until_true(started);
    BOOST_CHECK(handle.cancel());
-   BOOST_CHECK_THROW(wait_task(runtime, handle), fcl::asio::exceptions::canceled);
+   BOOST_CHECK_THROW(wait_task(runtime, handle), forge::asio::exceptions::canceled);
    BOOST_CHECK_EQUAL(scheduler.snapshot().canceled, 1U);
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_reports_awaitable_exceptions) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto scheduler = task_scheduler{runtime, task_scheduler::options{.max_blocking_tasks = 1, .max_pending_tasks = 4}};
 
    auto handle = scheduler.submit(awaitable_task{
@@ -343,7 +343,7 @@ BOOST_AUTO_TEST_CASE(task_scheduler_reports_awaitable_exceptions) {
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_rejects_saturated_awaitable_queue) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto scheduler = task_scheduler{runtime, task_scheduler::options{.max_blocking_tasks = 1, .max_pending_tasks = 1}};
 
    auto queued = scheduler.submit_after(
@@ -365,14 +365,14 @@ BOOST_AUTO_TEST_CASE(task_scheduler_rejects_saturated_awaitable_queue) {
       },
       std::chrono::seconds{1});
 
-   BOOST_CHECK_THROW(wait_task(runtime, rejected), fcl::asio::exceptions::rejected);
+   BOOST_CHECK_THROW(wait_task(runtime, rejected), forge::asio::exceptions::rejected);
    BOOST_CHECK_EQUAL(scheduler.snapshot().rejected, 1U);
    static_cast<void>(queued.cancel());
    scheduler.stop();
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_stop_cancels_pending_and_waits_for_active_awaitable_tasks) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto scheduler = task_scheduler{runtime, task_scheduler::options{.max_blocking_tasks = 1, .max_pending_tasks = 4}};
    auto started = std::atomic_bool{false};
    auto allow_finish = std::atomic_bool{false};
@@ -407,12 +407,12 @@ BOOST_AUTO_TEST_CASE(task_scheduler_stop_cancels_pending_and_waits_for_active_aw
    stopper.join();
 
    wait_task(runtime, active);
-   BOOST_CHECK_THROW(wait_task(runtime, pending), fcl::asio::exceptions::canceled);
+   BOOST_CHECK_THROW(wait_task(runtime, pending), forge::asio::exceptions::canceled);
    BOOST_CHECK(scheduler.snapshot().stopped);
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_supports_host_owned_awaitable_reschedule_loop) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto scheduler = task_scheduler{runtime, task_scheduler::options{.max_blocking_tasks = 1, .max_pending_tasks = 4}};
    auto passes = 0;
 
@@ -436,7 +436,7 @@ BOOST_AUTO_TEST_CASE(task_scheduler_supports_host_owned_awaitable_reschedule_loo
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_awaitable_can_wait_for_nested_blocking_task_with_one_blocking_slot) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto scheduler = task_scheduler{runtime,
                                    task_scheduler::options{
                                       .max_blocking_tasks = 1,
@@ -480,7 +480,7 @@ BOOST_AUTO_TEST_CASE(task_scheduler_awaitable_can_wait_for_nested_blocking_task_
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_skips_saturated_blocking_head_for_runnable_awaitable) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto scheduler = task_scheduler{runtime,
                                    task_scheduler::options{
                                       .max_blocking_tasks = 1,
@@ -540,7 +540,7 @@ BOOST_AUTO_TEST_CASE(task_scheduler_skips_saturated_blocking_head_for_runnable_a
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_snapshot_reports_separate_blocking_and_awaitable_counts) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto scheduler = task_scheduler{runtime,
                                    task_scheduler::options{
                                       .max_blocking_tasks = 1,
@@ -611,7 +611,7 @@ BOOST_AUTO_TEST_CASE(task_scheduler_snapshot_reports_separate_blocking_and_await
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_delayed_awaitable_runs_while_blocking_budget_is_saturated) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto scheduler = task_scheduler{runtime,
                                    task_scheduler::options{
                                       .max_blocking_tasks = 1,
@@ -676,7 +676,7 @@ BOOST_AUTO_TEST_CASE(task_scheduler_delayed_awaitable_runs_while_blocking_budget
 }
 
 BOOST_AUTO_TEST_CASE(task_scheduler_awaitable_limit_does_not_consume_blocking_budget) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto scheduler = task_scheduler{runtime,
                                    task_scheduler::options{
                                       .max_blocking_tasks = 1,

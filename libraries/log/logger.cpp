@@ -9,16 +9,16 @@ module;
 #include <unordered_map>
 #include <vector>
 
-module fcl.log.logger;
+module forge.log.logger;
 
-import fcl.log.log_message;
-import fcl.log.appender;
-import fcl.log.record;
-import fcl.log.logger_config;
-import fcl.core.utility;
-import fcl.core.chrono;
+import forge.log.log_message;
+import forge.log.appender;
+import forge.log.record;
+import forge.log.logger_config;
+import forge.core.utility;
+import forge.core.chrono;
 
-namespace fcl {
+namespace forge {
 
 namespace {
 
@@ -67,7 +67,7 @@ logger& logger::operator=(const logger& l) {
    return *this;
 }
 logger& logger::operator=(logger&& l) noexcept {
-   fcl_swap(my, l.my);
+   forge_swap(my, l.my);
    return *this;
 }
 bool operator==(const logger& l, std::nullptr_t) {
@@ -140,9 +140,9 @@ void logger::log(log_level level, std::string message, log_fields fields, std::s
        .level = level,
        .message = std::move(message),
        .fields = std::move(fields),
-       .timestamp = fcl::chrono::now_us(),
+       .timestamp = forge::chrono::now_us(),
        .thread_id = current_thread_id(),
-       .thread_name = fcl::get_thread_name(),
+       .thread_name = forge::get_thread_name(),
        .location = location,
    };
    if (static_cast<int>(level) >= static_cast<int>(log_level::error)) {
@@ -215,4 +215,4 @@ void logger::add_sink(std::shared_ptr<sink> sink) {
    my->_sinks.push_back(std::move(sink));
 }
 
-} // namespace fcl
+} // namespace forge

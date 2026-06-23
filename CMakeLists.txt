@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.31)
 
-project(storlane-fc VERSION 5.0.0 LANGUAGES C CXX ASM)
+project(forge VERSION 5.0.0 LANGUAGES C CXX ASM)
 
 include(GNUInstallDirs)
 include(CheckCXXSourceCompiles)
@@ -16,22 +16,22 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-option(FCL_ENABLE_MODULES "Build FCL public module interfaces when supported" ON)
-option(FCL_ENABLE_VENDOR_TESTS "Build donor dependency tests and benchmarks" OFF)
-option(FCL_ENABLE_TUI "Build FCL Notcurses-backed terminal UI library when notcurses-core is available" ON)
-option(FCL_ENABLE_LIBP2P_INTEROP "Run live go-libp2p/rust-libp2p interoperability tests" OFF)
-option(FCL_ENABLE_ROCKSDB "Build RocksDB-backed optional FCL features when RocksDB is available" ON)
+option(FORGE_ENABLE_MODULES "Build FORGE public module interfaces when supported" ON)
+option(FORGE_ENABLE_VENDOR_TESTS "Build donor dependency tests and benchmarks" OFF)
+option(FORGE_ENABLE_TUI "Build FORGE Notcurses-backed terminal UI library when notcurses-core is available" ON)
+option(FORGE_ENABLE_LIBP2P_INTEROP "Run live go-libp2p/rust-libp2p interoperability tests" OFF)
+option(FORGE_ENABLE_ROCKSDB "Build RocksDB-backed optional FORGE features when RocksDB is available" ON)
 
-set(FCL_LIBP2P_DONORS_ROOT "" CACHE PATH "Path to workspace donors directory containing go-libp2p, rust-libp2p and libp2p-specs")
-if(NOT FCL_LIBP2P_DONORS_ROOT)
-   set(_fcl_default_donors_root "/Users/vladimirtarnakin/.openclaw/workspace/Projects/Storlane/donors")
-   if(EXISTS "${_fcl_default_donors_root}")
-      set(FCL_LIBP2P_DONORS_ROOT "${_fcl_default_donors_root}" CACHE PATH "Path to workspace donors directory containing go-libp2p, rust-libp2p and libp2p-specs" FORCE)
+set(FORGE_LIBP2P_DONORS_ROOT "" CACHE PATH "Path to workspace donors directory containing go-libp2p, rust-libp2p and libp2p-specs")
+if(NOT FORGE_LIBP2P_DONORS_ROOT)
+   set(_forge_default_donors_root "/Users/vladimirtarnakin/.openclaw/workspace/Projects/Storlane/donors")
+   if(EXISTS "${_forge_default_donors_root}")
+      set(FORGE_LIBP2P_DONORS_ROOT "${_forge_default_donors_root}" CACHE PATH "Path to workspace donors directory containing go-libp2p, rust-libp2p and libp2p-specs" FORCE)
    endif()
 endif()
 
-if(FCL_ENABLE_MODULES AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
-   message(FATAL_ERROR "FCL_ENABLE_MODULES=ON requires module-capable Homebrew LLVM clang++; AppleClang is not a supported FCL module toolchain")
+if(FORGE_ENABLE_MODULES AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+   message(FATAL_ERROR "FORGE_ENABLE_MODULES=ON requires module-capable Homebrew LLVM clang++; AppleClang is not a supported FORGE module toolchain")
 endif()
 
 if("${CMAKE_GENERATOR}" STREQUAL "Ninja")
@@ -39,11 +39,11 @@ if("${CMAKE_GENERATOR}" STREQUAL "Ninja")
 endif()
 
 if(APPLE)
-   message(STATUS "Configuring storlane-fc on macOS")
+   message(STATUS "Configuring Forge on macOS")
    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
 else()
-   message(STATUS "Configuring storlane-fc on Linux")
+   message(STATUS "Configuring Forge on Linux")
    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -latomic")
@@ -67,66 +67,66 @@ check_cxx_source_compiles(
    #error no std stacktrace feature macro
    #endif
    int main() { auto trace = std::stacktrace::current(); return static_cast<int>(trace.size()); }"
-   FCL_HAS_STD_STACKTRACE
+   FORGE_HAS_STD_STACKTRACE
 )
-if(FCL_HAS_STD_STACKTRACE)
-   message(STATUS "FCL log stacktrace backend: std::stacktrace")
+if(FORGE_HAS_STD_STACKTRACE)
+   message(STATUS "FORGE log stacktrace backend: std::stacktrace")
 elseif(TARGET Boost::stacktrace_basic)
-   message(STATUS "FCL log stacktrace backend: Boost::stacktrace_basic")
+   message(STATUS "FORGE log stacktrace backend: Boost::stacktrace_basic")
 else()
-   message(STATUS "FCL log stacktrace backend: unavailable")
+   message(STATUS "FORGE log stacktrace backend: unavailable")
 endif()
 
 find_package(OpenSSL 3 REQUIRED COMPONENTS SSL Crypto)
 find_package(Ngtcp2 REQUIRED)
-set(FCL_HAS_ROCKSDB OFF)
-if(FCL_ENABLE_ROCKSDB)
+set(FORGE_HAS_ROCKSDB OFF)
+if(FORGE_ENABLE_ROCKSDB)
    find_package(RocksDB QUIET)
    if(TARGET RocksDB::rocksdb)
-      set(FCL_HAS_ROCKSDB ON)
-      message(STATUS "FCL RocksDB backend: RocksDB::rocksdb")
+      set(FORGE_HAS_ROCKSDB ON)
+      message(STATUS "FORGE RocksDB backend: RocksDB::rocksdb")
    else()
-      message(STATUS "Skipping FCL RocksDB-backed features: RocksDB not found")
+      message(STATUS "Skipping FORGE RocksDB-backed features: RocksDB not found")
    endif()
 else()
-   message(STATUS "FCL RocksDB-backed features: disabled")
+   message(STATUS "FORGE RocksDB-backed features: disabled")
 endif()
 find_package(glaze 7.5 CONFIG REQUIRED)
 if(TARGET glaze::glaze)
-   message(STATUS "FCL codec backend: glaze::glaze")
+   message(STATUS "FORGE codec backend: glaze::glaze")
 else()
    message(FATAL_ERROR "Glaze was found, but target glaze::glaze is not available")
 endif()
 
-set(FCL_TUI_NOTCURSES_TARGET "")
-if(FCL_ENABLE_TUI)
+set(FORGE_TUI_NOTCURSES_TARGET "")
+if(FORGE_ENABLE_TUI)
    find_package(Notcurses CONFIG QUIET)
    if(TARGET Notcurses::notcurses-core)
-      set(FCL_TUI_NOTCURSES_TARGET Notcurses::notcurses-core)
+      set(FORGE_TUI_NOTCURSES_TARGET Notcurses::notcurses-core)
    elseif(TARGET notcurses::notcurses-core)
-      set(FCL_TUI_NOTCURSES_TARGET notcurses::notcurses-core)
+      set(FORGE_TUI_NOTCURSES_TARGET notcurses::notcurses-core)
    elseif(TARGET notcurses-core)
-      set(FCL_TUI_NOTCURSES_TARGET notcurses-core)
+      set(FORGE_TUI_NOTCURSES_TARGET notcurses-core)
    endif()
 
-   if(NOT FCL_TUI_NOTCURSES_TARGET)
+   if(NOT FORGE_TUI_NOTCURSES_TARGET)
       find_package(PkgConfig QUIET)
       if(PkgConfig_FOUND)
          pkg_check_modules(NOTCURSES_CORE QUIET IMPORTED_TARGET notcurses-core)
          if(TARGET PkgConfig::NOTCURSES_CORE)
-            set(FCL_TUI_NOTCURSES_TARGET PkgConfig::NOTCURSES_CORE)
+            set(FORGE_TUI_NOTCURSES_TARGET PkgConfig::NOTCURSES_CORE)
          endif()
       endif()
    endif()
 
-   if(FCL_TUI_NOTCURSES_TARGET)
-      message(STATUS "FCL TUI backend: ${FCL_TUI_NOTCURSES_TARGET}")
+   if(FORGE_TUI_NOTCURSES_TARGET)
+      message(STATUS "FORGE TUI backend: ${FORGE_TUI_NOTCURSES_TARGET}")
    else()
-      message(STATUS "Skipping fcl_tui: notcurses-core not found; install notcurses-core or set FCL_ENABLE_TUI=OFF")
+      message(STATUS "Skipping forge_tui: notcurses-core not found; install notcurses-core or set FORGE_ENABLE_TUI=OFF")
    endif()
 endif()
 
-function(fcl_add_header_only_boost_target component)
+function(forge_add_header_only_boost_target component)
    if(NOT TARGET Boost::${component})
       add_library(Boost::${component} INTERFACE IMPORTED)
       set_property(
@@ -136,12 +136,12 @@ function(fcl_add_header_only_boost_target component)
    endif()
 endfunction()
 
-fcl_add_header_only_boost_target(asio)
-fcl_add_header_only_boost_target(beast)
-fcl_add_header_only_boost_target(crc)
-fcl_add_header_only_boost_target(dll)
-fcl_add_header_only_boost_target(multi_index)
-fcl_add_header_only_boost_target(multiprecision)
+forge_add_header_only_boost_target(asio)
+forge_add_header_only_boost_target(beast)
+forge_add_header_only_boost_target(crc)
+forge_add_header_only_boost_target(dll)
+forge_add_header_only_boost_target(multi_index)
+forge_add_header_only_boost_target(multiprecision)
 
 if(NOT TARGET Boost::included_unit_test_framework)
    add_library(Boost::included_unit_test_framework INTERFACE IMPORTED)
@@ -152,32 +152,32 @@ if(NOT TARGET Boost::included_unit_test_framework)
 endif()
 
 find_package(Git QUIET)
-set(FCL_GIT_REVISION_SHA "unknown")
-set(FCL_GIT_REVISION_UNIX_TIMESTAMP 0)
+set(FORGE_GIT_REVISION_SHA "unknown")
+set(FORGE_GIT_REVISION_UNIX_TIMESTAMP 0)
 
 if(Git_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
    execute_process(
       COMMAND "${GIT_EXECUTABLE}" rev-parse HEAD
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-      OUTPUT_VARIABLE FCL_GIT_REVISION_SHA
-      RESULT_VARIABLE _fcl_git_rev_parse_result
+      OUTPUT_VARIABLE FORGE_GIT_REVISION_SHA
+      RESULT_VARIABLE _forge_git_rev_parse_result
       OUTPUT_STRIP_TRAILING_WHITESPACE
       ERROR_QUIET
    )
-   if(NOT _fcl_git_rev_parse_result EQUAL 0)
-      set(FCL_GIT_REVISION_SHA "unknown")
+   if(NOT _forge_git_rev_parse_result EQUAL 0)
+      set(FORGE_GIT_REVISION_SHA "unknown")
    endif()
 
    execute_process(
       COMMAND "${GIT_EXECUTABLE}" log -1 --format=%ct
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-      OUTPUT_VARIABLE FCL_GIT_REVISION_UNIX_TIMESTAMP
-      RESULT_VARIABLE _fcl_git_log_result
+      OUTPUT_VARIABLE FORGE_GIT_REVISION_UNIX_TIMESTAMP
+      RESULT_VARIABLE _forge_git_log_result
       OUTPUT_STRIP_TRAILING_WHITESPACE
       ERROR_QUIET
    )
-   if(NOT _fcl_git_log_result EQUAL 0)
-      set(FCL_GIT_REVISION_UNIX_TIMESTAMP 0)
+   if(NOT _forge_git_log_result EQUAL 0)
+      set(FORGE_GIT_REVISION_UNIX_TIMESTAMP 0)
    endif()
 endif()
 
@@ -195,7 +195,7 @@ set_target_properties(
 )
 
 set(
-   FCL_SOURCE_INCLUDE_DIRS
+   FORGE_SOURCE_INCLUDE_DIRS
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/core/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/exceptions/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/reflect/include"
@@ -226,36 +226,36 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/app/include"
 )
 
-set(FCL_PLUGINS_CRYPTO_SIGNER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/crypto/signer/include")
-set(FCL_PLUGINS_CRYPTO_SECRETS_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/crypto/secrets/include")
-set(FCL_PLUGINS_P2P_NODE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/node/include")
-set(FCL_PLUGINS_P2P_RESOLVER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/resolver/include")
-set(FCL_PLUGINS_P2P_DIAGNOSTICS_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/diagnostics/include")
-set(FCL_PLUGINS_P2P_PUBSUB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/pubsub/include")
-set(FCL_PLUGINS_HTTP_SERVER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/http/server/include")
+set(FORGE_PLUGINS_CRYPTO_SIGNER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/crypto/signer/include")
+set(FORGE_PLUGINS_CRYPTO_SECRETS_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/crypto/secrets/include")
+set(FORGE_PLUGINS_P2P_NODE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/node/include")
+set(FORGE_PLUGINS_P2P_RESOLVER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/resolver/include")
+set(FORGE_PLUGINS_P2P_DIAGNOSTICS_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/diagnostics/include")
+set(FORGE_PLUGINS_P2P_PUBSUB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/pubsub/include")
+set(FORGE_PLUGINS_HTTP_SERVER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/http/server/include")
 
-if(FCL_ENABLE_TUI AND FCL_TUI_NOTCURSES_TARGET)
-   list(APPEND FCL_SOURCE_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/libraries/tui/include")
+if(FORGE_ENABLE_TUI AND FORGE_TUI_NOTCURSES_TARGET)
+   list(APPEND FORGE_SOURCE_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/libraries/tui/include")
 endif()
 
-set(FCL_PUBLIC_INCLUDE_DIRS)
-foreach(_fcl_include_dir IN LISTS FCL_SOURCE_INCLUDE_DIRS)
-   list(APPEND FCL_PUBLIC_INCLUDE_DIRS "$<BUILD_INTERFACE:${_fcl_include_dir}>")
+set(FORGE_PUBLIC_INCLUDE_DIRS)
+foreach(_forge_include_dir IN LISTS FORGE_SOURCE_INCLUDE_DIRS)
+   list(APPEND FORGE_PUBLIC_INCLUDE_DIRS "$<BUILD_INTERFACE:${_forge_include_dir}>")
 endforeach()
-list(APPEND FCL_PUBLIC_INCLUDE_DIRS "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
+list(APPEND FORGE_PUBLIC_INCLUDE_DIRS "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
 
-function(fcl_target_modules_at target module_path)
+function(forge_target_modules_at target module_path)
    file(
-      GLOB _fcl_target_module_files CONFIGURE_DEPENDS
-      "${CMAKE_CURRENT_SOURCE_DIR}/include/fcl/${module_path}/*.cppm"
+      GLOB _forge_target_module_files CONFIGURE_DEPENDS
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/forge/${module_path}/*.cppm"
    )
-   if(NOT _fcl_target_module_files)
-      message(FATAL_ERROR "No public FCL module interfaces found for ${target} in ${CMAKE_CURRENT_SOURCE_DIR}/include/fcl/${module_path}")
+   if(NOT _forge_target_module_files)
+      message(FATAL_ERROR "No public FORGE module interfaces found for ${target} in ${CMAKE_CURRENT_SOURCE_DIR}/include/forge/${module_path}")
    endif()
 
-   string(REPLACE "/" "_" _fcl_module_var "${module_path}")
-   foreach(_fcl_disabled_module IN LISTS FCL_${_fcl_module_var}_DISABLED_MODULES)
-      list(FILTER _fcl_target_module_files EXCLUDE REGEX "/${_fcl_disabled_module}\\.cppm$")
+   string(REPLACE "/" "_" _forge_module_var "${module_path}")
+   foreach(_forge_disabled_module IN LISTS FORGE_${_forge_module_var}_DISABLED_MODULES)
+      list(FILTER _forge_target_module_files EXCLUDE REGEX "/${_forge_disabled_module}\\.cppm$")
    endforeach()
 
    target_sources(
@@ -263,13 +263,13 @@ function(fcl_target_modules_at target module_path)
       PUBLIC
          FILE_SET CXX_MODULES
          BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include"
-         FILES ${_fcl_target_module_files}
+         FILES ${_forge_target_module_files}
    )
    target_compile_features(${target} PUBLIC cxx_std_23)
 endfunction()
 
-function(fcl_target_modules target lib)
-   fcl_target_modules_at(${target} ${lib})
+function(forge_target_modules target lib)
+   forge_target_modules_at(${target} ${lib})
 endfunction()
 
 
@@ -305,7 +305,7 @@ target_include_directories(
 )
 target_link_libraries(secp256k1 PRIVATE secp256k1-internal)
 
-if(FCL_ENABLE_VENDOR_TESTS)
+if(FORGE_ENABLE_VENDOR_TESTS)
    add_executable(secp256k1-bench vendor/secp256k1/src/bench.c)
    target_link_libraries(secp256k1-bench secp256k1 secp256k1-internal)
 
@@ -326,7 +326,7 @@ set_property(
       "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
 
-if(NOT FCL_ENABLE_VENDOR_TESTS)
+if(NOT FORGE_ENABLE_VENDOR_TESTS)
    file(
       WRITE "${CMAKE_CURRENT_BINARY_DIR}/CTestCustom.cmake"
       "set(CTEST_CUSTOM_TESTS_IGNORE bls12-381 bls12-381-nobmi2)\n"
@@ -363,61 +363,61 @@ add_subdirectory(libraries/quic)
 add_subdirectory(libraries/p2p)
 add_subdirectory(libraries/app)
 add_subdirectory(plugins)
-if(FCL_ENABLE_TUI AND FCL_TUI_NOTCURSES_TARGET)
+if(FORGE_ENABLE_TUI AND FORGE_TUI_NOTCURSES_TARGET)
    add_subdirectory(libraries/tui)
 endif()
 
 set(
-   FCL_LEAF_TARGETS
-   fcl_core
-   fcl_exceptions
-   fcl_reflect
-   fcl_schema
-   fcl_variant
-   fcl_raw
-   fcl_config
-   fcl_json
-   fcl_yaml
-   fcl_program_options
-   fcl_env
-   fcl_api
-   fcl_transport_api
-   fcl_log
-   fcl_otlp
-   fcl_crypto
-   fcl_multiformats
-   fcl_asio
-   fcl_http
-   fcl_http_api
-   fcl_websocket
-   fcl_transport
-   fcl_tcp
-   fcl_stcp
-   fcl_yamux
-   fcl_quic
-   fcl_p2p
-   fcl_app
-   fcl_plugins_crypto_signer
-   fcl_plugins_crypto_secrets
-   fcl_plugins_p2p_node
-   fcl_plugins_p2p_resolver
-   fcl_plugins_p2p_diagnostics
-   fcl_plugins_p2p_pubsub
-   fcl_plugins_http_server
-   fcl_plugins
+   FORGE_LEAF_TARGETS
+   forge_core
+   forge_exceptions
+   forge_reflect
+   forge_schema
+   forge_variant
+   forge_raw
+   forge_config
+   forge_json
+   forge_yaml
+   forge_program_options
+   forge_env
+   forge_api
+   forge_transport_api
+   forge_log
+   forge_otlp
+   forge_crypto
+   forge_multiformats
+   forge_asio
+   forge_http
+   forge_http_api
+   forge_websocket
+   forge_transport
+   forge_tcp
+   forge_stcp
+   forge_yamux
+   forge_quic
+   forge_p2p
+   forge_app
+   forge_plugins_crypto_signer
+   forge_plugins_crypto_secrets
+   forge_plugins_p2p_node
+   forge_plugins_p2p_resolver
+   forge_plugins_p2p_diagnostics
+   forge_plugins_p2p_pubsub
+   forge_plugins_http_server
+   forge_plugins
 )
 
-if(TARGET fcl_tui)
-   list(APPEND FCL_LEAF_TARGETS fcl_tui)
+if(TARGET forge_tui)
+   list(APPEND FORGE_LEAF_TARGETS forge_tui)
 endif()
 
-add_library(fcl STATIC fcl.cpp)
+add_library(forge STATIC forge.cpp)
 
-target_include_directories(fcl PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+target_include_directories(forge PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
-   fcl PUBLIC
-      ${FCL_LEAF_TARGETS}
+   forge PUBLIC
+      ${FORGE_LEAF_TARGETS}
 )
 
 if(DEFINED BUILD_TESTING AND BUILD_TESTING)
@@ -425,8 +425,8 @@ if(DEFINED BUILD_TESTING AND BUILD_TESTING)
 endif()
 
 install(
-   TARGETS fcl ${FCL_LEAF_TARGETS}
-   EXPORT FCLTargets
+   TARGETS forge ${FORGE_LEAF_TARGETS}
+   EXPORT ForgeTargets
    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT dev EXCLUDE_FROM_ALL
    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT dev EXCLUDE_FROM_ALL
    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT dev EXCLUDE_FROM_ALL
@@ -435,54 +435,54 @@ install(
 
 install(
    TARGETS secp256k1-internal secp256k1 bls12-381
-   EXPORT FCLTargets
+   EXPORT ForgeTargets
    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT dev EXCLUDE_FROM_ALL
    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT dev EXCLUDE_FROM_ALL
    PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/bls12-381 COMPONENT dev EXCLUDE_FROM_ALL
 )
 
 install(
-   DIRECTORY libraries/core/include/fcl
-             libraries/exceptions/include/fcl
-             libraries/reflect/include/fcl
-             libraries/schema/include/fcl
-             libraries/variant/include/fcl
-             libraries/raw/include/fcl
-             libraries/json/include/fcl
-             libraries/config/include/fcl
-             libraries/yaml/include/fcl
-             libraries/program_options/include/fcl
-             libraries/env/include/fcl
-             libraries/api/include/fcl
-             libraries/transport_api/include/fcl
-             libraries/log/include/fcl
-             libraries/otlp/include/fcl
-             libraries/crypto/include/fcl
-             libraries/multiformats/include/fcl
-             libraries/asio/include/fcl
-             libraries/http/include/fcl
-             libraries/http_api/include/fcl
-             libraries/websocket/include/fcl
-             libraries/transport/include/fcl
-             libraries/tcp/include/fcl
-             libraries/yamux/include/fcl
-             libraries/quic/include/fcl
-             libraries/stcp/include/fcl
-             libraries/p2p/include/fcl
-             libraries/app/include/fcl
-             plugins/crypto/signer/include/fcl
-             plugins/crypto/secrets/include/fcl
-             plugins/p2p/node/include/fcl
-             plugins/p2p/resolver/include/fcl
-             plugins/p2p/diagnostics/include/fcl
-             plugins/p2p/pubsub/include/fcl
-             plugins/http/server/include/fcl
+   DIRECTORY libraries/core/include/forge
+             libraries/exceptions/include/forge
+             libraries/reflect/include/forge
+             libraries/schema/include/forge
+             libraries/variant/include/forge
+             libraries/raw/include/forge
+             libraries/json/include/forge
+             libraries/config/include/forge
+             libraries/yaml/include/forge
+             libraries/program_options/include/forge
+             libraries/env/include/forge
+             libraries/api/include/forge
+             libraries/transport_api/include/forge
+             libraries/log/include/forge
+             libraries/otlp/include/forge
+             libraries/crypto/include/forge
+             libraries/multiformats/include/forge
+             libraries/asio/include/forge
+             libraries/http/include/forge
+             libraries/http_api/include/forge
+             libraries/websocket/include/forge
+             libraries/transport/include/forge
+             libraries/tcp/include/forge
+             libraries/yamux/include/forge
+             libraries/quic/include/forge
+             libraries/stcp/include/forge
+             libraries/p2p/include/forge
+             libraries/app/include/forge
+             plugins/crypto/signer/include/forge
+             plugins/crypto/secrets/include/forge
+             plugins/p2p/node/include/forge
+             plugins/p2p/resolver/include/forge
+             plugins/p2p/diagnostics/include/forge
+             plugins/p2p/pubsub/include/forge
+             plugins/http/server/include/forge
    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
 )
 
-if(TARGET fcl_tui)
+if(TARGET forge_tui)
    install(
-      DIRECTORY libraries/tui/include/fcl
+      DIRECTORY libraries/tui/include/forge
       DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
    )
 endif()
@@ -507,44 +507,44 @@ install(
       "${CMAKE_CURRENT_SOURCE_DIR}/AUTHORS"
       "${CMAKE_CURRENT_SOURCE_DIR}/PROVENANCE.md"
       "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_LICENSES"
-   DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/FCL"
+   DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/Forge"
    COMPONENT dev
    EXCLUDE_FROM_ALL
 )
 
 install(
-   EXPORT FCLTargets
-   FILE FCLTargets.cmake
-   NAMESPACE FCL::
-   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/FCL
+   EXPORT ForgeTargets
+   FILE ForgeTargets.cmake
+   NAMESPACE Forge::
+   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Forge
    COMPONENT dev
    EXCLUDE_FROM_ALL
 )
 
 configure_package_config_file(
-   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FCLConfig.cmake.in"
-   "${CMAKE_CURRENT_BINARY_DIR}/FCLConfig.cmake"
-   INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/FCL"
+   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ForgeConfig.cmake.in"
+   "${CMAKE_CURRENT_BINARY_DIR}/ForgeConfig.cmake"
+   INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/Forge"
 )
 write_basic_package_version_file(
-   "${CMAKE_CURRENT_BINARY_DIR}/FCLConfigVersion.cmake"
+   "${CMAKE_CURRENT_BINARY_DIR}/ForgeConfigVersion.cmake"
    VERSION ${PROJECT_VERSION}
    COMPATIBILITY SameMajorVersion
 )
 install(
    FILES
-      "${CMAKE_CURRENT_BINARY_DIR}/FCLConfig.cmake"
-      "${CMAKE_CURRENT_BINARY_DIR}/FCLConfigVersion.cmake"
-   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/FCL
+      "${CMAKE_CURRENT_BINARY_DIR}/ForgeConfig.cmake"
+      "${CMAKE_CURRENT_BINARY_DIR}/ForgeConfigVersion.cmake"
+   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Forge
    COMPONENT dev
    EXCLUDE_FROM_ALL
 )
 install(
    DIRECTORY cmake/
-   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/FCL/modules
+   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Forge/modules
    COMPONENT dev
    EXCLUDE_FROM_ALL
    FILES_MATCHING
       PATTERN "*.cmake"
-      PATTERN "FCLConfig.cmake.in" EXCLUDE
+      PATTERN "ForgeConfig.cmake.in" EXCLUDE
 )

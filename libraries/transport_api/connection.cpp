@@ -1,27 +1,27 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <memory>
 #include <utility>
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.transport.api.connection;
+module forge.transport.api.connection;
 
-namespace fcl::transport::api {
+namespace forge::transport::api {
 
 struct connection::impl {
-   class stream_invoker final : public fcl::api::remote_invoker {
+   class stream_invoker final : public forge::api::remote_invoker {
     public:
-      stream_invoker(std::shared_ptr<impl> owner, fcl::api::descriptor contract)
+      stream_invoker(std::shared_ptr<impl> owner, forge::api::descriptor contract)
           : owner_(std::move(owner)), contract_(std::move(contract)) {}
 
-      boost::asio::awaitable<fcl::api::response> async_call(fcl::api::request value) override;
+      boost::asio::awaitable<forge::api::response> async_call(forge::api::request value) override;
 
     private:
       std::shared_ptr<impl> owner_;
-      fcl::api::descriptor contract_;
+      forge::api::descriptor contract_;
    };
 
    client transport;
@@ -29,7 +29,7 @@ struct connection::impl {
 
 connection::connection() = default;
 
-connection::connection(fcl::transport::stream stream, options value) : impl_(std::make_shared<impl>()) {
+connection::connection(forge::transport::stream stream, options value) : impl_(std::make_shared<impl>()) {
    impl_->transport = client{std::move(stream), std::move(value)};
 }
 
@@ -59,17 +59,17 @@ void connection::cancel() noexcept {
    }
 }
 
-boost::asio::awaitable<std::shared_ptr<fcl::api::remote_invoker>>
-connection::open_remote_invoker(fcl::api::api_ref, fcl::api::descriptor remote_descriptor) {
+boost::asio::awaitable<std::shared_ptr<forge::api::remote_invoker>>
+connection::open_remote_invoker(forge::api::api_ref, forge::api::descriptor remote_descriptor) {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::cancelled, "API transport connection is closed");
+      FORGE_THROW_EXCEPTION(exceptions::cancelled, "API transport connection is closed");
    }
    co_return std::make_shared<impl::stream_invoker>(impl_, std::move(remote_descriptor));
 }
 
-boost::asio::awaitable<fcl::api::response> connection::impl::stream_invoker::async_call(fcl::api::request value) {
-   auto outbound = fcl::api::frame{
-       .kind = fcl::api::frame_kind::request,
+boost::asio::awaitable<forge::api::response> connection::impl::stream_invoker::async_call(forge::api::request value) {
+   auto outbound = forge::api::frame{
+       .kind = forge::api::frame_kind::request,
        .api = std::move(value.api),
        .method = std::move(value.method),
        .meta = std::move(value.meta),
@@ -78,21 +78,21 @@ boost::asio::awaitable<fcl::api::response> connection::impl::stream_invoker::asy
    };
 
    auto inbound = co_await owner_->transport.async_call(std::move(outbound));
-   if (inbound.kind == fcl::api::frame_kind::error) {
-      co_return fcl::api::response{
+   if (inbound.kind == forge::api::frame_kind::error) {
+      co_return forge::api::response{
           .api = std::move(inbound.api),
           .method = std::move(inbound.method),
           .meta = std::move(inbound.meta),
           .codec = std::move(inbound.codec),
-          .error = fcl::api::unpack_body<fcl::api::error_payload>(inbound.payload),
+          .error = forge::api::unpack_body<forge::api::error_payload>(inbound.payload),
       };
    }
-   if (inbound.kind != fcl::api::frame_kind::response) {
-      FCL_THROW_EXCEPTION(fcl::api::exceptions::protocol_error,
+   if (inbound.kind != forge::api::frame_kind::response) {
+      FORGE_THROW_EXCEPTION(forge::api::exceptions::protocol_error,
                           "API transport connection received non-response frame",
-                          fcl::exceptions::ctx("method", inbound.method));
+                          forge::exceptions::ctx("method", inbound.method));
    }
-   co_return fcl::api::response{
+   co_return forge::api::response{
        .api = std::move(inbound.api),
        .method = std::move(inbound.method),
        .meta = std::move(inbound.meta),
@@ -101,4 +101,4 @@ boost::asio::awaitable<fcl::api::response> connection::impl::stream_invoker::asy
    };
 }
 
-} // namespace fcl::transport::api
+} // namespace forge::transport::api

@@ -27,13 +27,13 @@ module;
 #include <boost/beast/ssl.hpp>
 #include <boost/beast/version.hpp>
 
-module fcl.http.connection;
+module forge.http.connection;
 
-import fcl.asio.runtime;
-import fcl.http.body;
-import fcl.http.exceptions;
+import forge.asio.runtime;
+import forge.http.body;
+import forge.http.exceptions;
 
-namespace fcl::http {
+namespace forge::http {
 namespace {
 
 namespace asio = boost::asio;
@@ -238,7 +238,7 @@ struct connection::impl {
       explicit queued_request(asio::io_context& context)
           : completion_timer(context, (std::chrono::steady_clock::time_point::max)()) {}
 
-      fcl::http::request request_value;
+      forge::http::request request_value;
       request_options options;
       boost::asio::steady_timer completion_timer;
       mutable std::mutex completion_mutex;
@@ -281,7 +281,7 @@ struct connection::impl {
       }
    };
 
-   explicit impl(fcl::asio::runtime& runtime_value, base_url endpoint_value)
+   explicit impl(forge::asio::runtime& runtime_value, base_url endpoint_value)
        : runtime(runtime_value), endpoint(std::move(endpoint_value)), strand(asio::make_strand(runtime.context())),
          resolver(strand), ssl_context(asio::ssl::context::tls_client) {
       ssl_context.set_default_verify_paths();
@@ -329,7 +329,7 @@ struct connection::impl {
       tls_connected = true;
    }
 
-   awaitable<response> do_plain_request(fcl::http::request request_value, std::chrono::milliseconds timeout) {
+   awaitable<response> do_plain_request(forge::http::request request_value, std::chrono::milliseconds timeout) {
       co_await ensure_plain_connected(timeout);
 
       ensure_host_header(request_value, endpoint);
@@ -357,7 +357,7 @@ struct connection::impl {
       co_return response_value;
    }
 
-   awaitable<response> do_tls_request(fcl::http::request request_value, std::chrono::milliseconds timeout) {
+   awaitable<response> do_tls_request(forge::http::request request_value, std::chrono::milliseconds timeout) {
       co_await ensure_tls_connected(timeout);
 
       ensure_host_header(request_value, endpoint);
@@ -385,7 +385,7 @@ struct connection::impl {
       co_return response_value;
    }
 
-   awaitable<response> do_plain_streaming_request(fcl::http::request request_value,
+   awaitable<response> do_plain_streaming_request(forge::http::request request_value,
                                                   body_reader body,
                                                   std::chrono::milliseconds timeout) {
       auto results = co_await resolver.async_resolve(endpoint.host, endpoint.port, use_awaitable);
@@ -405,7 +405,7 @@ struct connection::impl {
       co_return response_value;
    }
 
-   awaitable<response> do_tls_streaming_request(fcl::http::request request_value,
+   awaitable<response> do_tls_streaming_request(forge::http::request request_value,
                                                 body_reader body,
                                                 std::chrono::milliseconds timeout) {
       auto results = co_await resolver.async_resolve(endpoint.host, endpoint.port, use_awaitable);
@@ -431,7 +431,7 @@ struct connection::impl {
       co_return response_value;
    }
 
-   awaitable<response_stream> do_plain_stream_request(fcl::http::request request_value,
+   awaitable<response_stream> do_plain_stream_request(forge::http::request request_value,
                                                       std::optional<body_reader> body,
                                                       std::chrono::milliseconds timeout) {
       auto results = co_await resolver.async_resolve(endpoint.host, endpoint.port, use_awaitable);
@@ -462,7 +462,7 @@ struct connection::impl {
       co_return response_stream{.head = std::move(head), .body = body_reader{std::move(source)}};
    }
 
-   awaitable<response_stream> do_tls_stream_request(fcl::http::request request_value,
+   awaitable<response_stream> do_tls_stream_request(forge::http::request request_value,
                                                     std::optional<body_reader> body,
                                                     std::chrono::milliseconds timeout) {
       auto results = co_await resolver.async_resolve(endpoint.host, endpoint.port, use_awaitable);
@@ -499,7 +499,7 @@ struct connection::impl {
       co_return response_stream{.head = std::move(head), .body = body_reader{std::move(source)}};
    }
 
-   awaitable<response> streaming_request(fcl::http::request request_value, body_reader body, request_options options) {
+   awaitable<response> streaming_request(forge::http::request request_value, body_reader body, request_options options) {
       record_started();
       try {
          if (endpoint.secure()) {
@@ -519,7 +519,7 @@ struct connection::impl {
       }
    }
 
-   awaitable<response_stream> stream_request(fcl::http::request request_value,
+   awaitable<response_stream> stream_request(forge::http::request request_value,
                                              std::optional<body_reader> body,
                                              request_options options) {
       record_started();
@@ -720,7 +720,7 @@ struct connection::impl {
       return snapshot;
    }
 
-   fcl::asio::runtime& runtime;
+   forge::asio::runtime& runtime;
    base_url endpoint;
    asio::strand<asio::io_context::executor_type> strand;
    tcp::resolver resolver;
@@ -738,12 +738,12 @@ struct connection::impl {
    connection_metrics current_metrics{};
 };
 
-connection::connection(fcl::asio::runtime& runtime, base_url endpoint)
+connection::connection(forge::asio::runtime& runtime, base_url endpoint)
     : impl_(std::make_unique<impl>(runtime, std::move(endpoint))) {}
 
 connection::~connection() = default;
 
-boost::asio::awaitable<response> connection::async_request(fcl::http::request request_value, request_options options) {
+boost::asio::awaitable<response> connection::async_request(forge::http::request request_value, request_options options) {
    auto operation = std::make_shared<impl::queued_request>(impl_->runtime.context());
    operation->request_value = std::move(request_value);
    operation->options = options;
@@ -758,20 +758,20 @@ boost::asio::awaitable<response> connection::async_request(fcl::http::request re
    co_return operation->take_result();
 }
 
-boost::asio::awaitable<response> connection::async_streaming_request(fcl::http::request request_value,
+boost::asio::awaitable<response> connection::async_streaming_request(forge::http::request request_value,
                                                                      body_reader body,
                                                                      request_options options) {
    co_await asio::dispatch(impl_->strand, use_awaitable);
    co_return co_await impl_->streaming_request(std::move(request_value), std::move(body), options);
 }
 
-boost::asio::awaitable<response_stream> connection::async_stream_request(fcl::http::request request_value,
+boost::asio::awaitable<response_stream> connection::async_stream_request(forge::http::request request_value,
                                                                          request_options options) {
    co_await asio::dispatch(impl_->strand, use_awaitable);
    co_return co_await impl_->stream_request(std::move(request_value), std::nullopt, options);
 }
 
-boost::asio::awaitable<response_stream> connection::async_stream_request(fcl::http::request request_value,
+boost::asio::awaitable<response_stream> connection::async_stream_request(forge::http::request request_value,
                                                                          body_reader body,
                                                                          request_options options) {
    co_await asio::dispatch(impl_->strand, use_awaitable);
@@ -782,4 +782,4 @@ connection_metrics connection::metrics() const {
    return impl_->metrics();
 }
 
-} // namespace fcl::http
+} // namespace forge::http

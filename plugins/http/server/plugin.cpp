@@ -9,55 +9,55 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.plugins.http.server.plugin;
+module forge.plugins.http.server.plugin;
 
-import fcl.api.registry;
-import fcl.app.plugin;
-import fcl.app.plugin_context;
-import fcl.asio.runtime;
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.http.api.binding;
-import fcl.http.server;
-import fcl.plugins.http.server.api;
-import fcl.plugins.http.server.exceptions;
-import fcl.plugins.http.server.middleware;
-import fcl.plugins.http.server.types;
+import forge.api.registry;
+import forge.app.plugin;
+import forge.app.plugin_context;
+import forge.asio.runtime;
+import forge.config.component;
+import forge.config.decode;
+import forge.http.api.binding;
+import forge.http.server;
+import forge.plugins.http.server.api;
+import forge.plugins.http.server.exceptions;
+import forge.plugins.http.server.middleware;
+import forge.plugins.http.server.types;
 
 #include "details/config.hxx"
 #include "details/plugin_impl.hxx"
 #include "details/publisher_api.hxx"
 #include "details/server_lifecycle.hxx"
 
-namespace fcl::plugins::http::server {
+namespace forge::plugins::http::server {
 
 plugin::plugin() : impl_{std::make_shared<impl>()} {}
 
 plugin::~plugin() = default;
 
-fcl::app::plugin_id plugin::id() const {
-   return fcl::app::plugin_id{.value = "fcl.plugins.http.server"};
+forge::app::plugin_id plugin::id() const {
+   return forge::app::plugin_id{.value = "forge.plugins.http.server"};
 }
 
 std::string plugin::version() const {
    return "1.0.0";
 }
 
-std::optional<fcl::config::component_descriptor> plugin::describe_config() const {
-   return fcl::config::describe_component<config>("plugins.http.server");
+std::optional<forge::config::component_descriptor> plugin::describe_config() const {
+   return forge::config::describe_component<config>("plugins.http.server");
 }
 
-boost::asio::awaitable<void> plugin::configure(fcl::config::component_view view) {
+boost::asio::awaitable<void> plugin::configure(forge::config::component_view view) {
    impl_->settings = decode_config(view);
    co_return;
 }
 
-boost::asio::awaitable<void> plugin::provide(fcl::api::provider& provider) {
+boost::asio::awaitable<void> plugin::provide(forge::api::provider& provider) {
    provider.install<api>(std::make_shared<publisher_api>(impl_));
    co_return;
 }
 
-boost::asio::awaitable<void> plugin::initialize(fcl::app::plugin_context& context) {
+boost::asio::awaitable<void> plugin::initialize(forge::app::plugin_context& context) {
    impl_->runtime = &context.scheduler().runtime_context();
    impl_->apis = &context.apis().registry_ref();
    impl_->stopping = false;
@@ -78,13 +78,13 @@ boost::asio::awaitable<void> plugin::shutdown() {
    impl_->reset_runtime();
 }
 
-fcl::app::plugin_descriptor descriptor() {
-   return fcl::app::plugin_descriptor{
-      .id = fcl::app::plugin_id{.value = "fcl.plugins.http.server"},
+forge::app::plugin_descriptor descriptor() {
+   return forge::app::plugin_descriptor{
+      .id = forge::app::plugin_id{.value = "forge.plugins.http.server"},
       .factory = [] {
          return std::make_unique<plugin>();
       },
    };
 }
 
-} // namespace fcl::plugins::http::server
+} // namespace forge::plugins::http::server

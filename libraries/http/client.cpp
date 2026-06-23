@@ -8,9 +8,9 @@ module;
 #include <boost/asio/awaitable.hpp>
 #include <boost/beast/http.hpp>
 
-module fcl.http.client;
+module forge.http.client;
 
-namespace fcl::http {
+namespace forge::http {
 namespace {
 
 request make_request(method method_value, const base_url& endpoint, std::string_view path, std::string body = {},
@@ -30,27 +30,27 @@ request make_request(method method_value, const base_url& endpoint, std::string_
 
 } // namespace
 
-client::client(fcl::asio::runtime& runtime, base_url endpoint)
+client::client(forge::asio::runtime& runtime, base_url endpoint)
     : endpoint_(std::move(endpoint)), connection_(runtime, endpoint_) {}
 
 client::~client() = default;
 
-boost::asio::awaitable<response> client::async_request(fcl::http::request request_value, request_options options) {
+boost::asio::awaitable<response> client::async_request(forge::http::request request_value, request_options options) {
    co_return co_await connection_.async_request(std::move(request_value), options);
 }
 
-boost::asio::awaitable<response> client::async_streaming_request(fcl::http::request request_value,
+boost::asio::awaitable<response> client::async_streaming_request(forge::http::request request_value,
                                                                  body_reader body,
                                                                  request_options options) {
    co_return co_await connection_.async_streaming_request(std::move(request_value), std::move(body), options);
 }
 
-boost::asio::awaitable<response_stream> client::async_stream_request(fcl::http::request request_value,
+boost::asio::awaitable<response_stream> client::async_stream_request(forge::http::request request_value,
                                                                      request_options options) {
    co_return co_await connection_.async_stream_request(std::move(request_value), options);
 }
 
-boost::asio::awaitable<response_stream> client::async_stream_request(fcl::http::request request_value,
+boost::asio::awaitable<response_stream> client::async_stream_request(forge::http::request request_value,
                                                                      body_reader body,
                                                                      request_options options) {
    co_return co_await connection_.async_stream_request(std::move(request_value), std::move(body), options);
@@ -79,4 +79,4 @@ connection_metrics client::metrics() const {
    return connection_.metrics();
 }
 
-} // namespace fcl::http
+} // namespace forge::http

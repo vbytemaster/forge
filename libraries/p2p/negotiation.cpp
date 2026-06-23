@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -13,14 +13,14 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.p2p.negotiation;
+module forge.p2p.negotiation;
 
-import fcl.multiformats.varint;
-import fcl.multiformats.types;
-import fcl.multiformats.exceptions;
-import fcl.p2p.exceptions;
+import forge.multiformats.varint;
+import forge.multiformats.types;
+import forge.multiformats.exceptions;
+import forge.p2p.exceptions;
 
-namespace fcl::p2p::protocol_negotiation {
+namespace forge::p2p::protocol_negotiation {
 namespace {
 
 [[nodiscard]] std::vector<std::uint8_t> bytes_for(std::string_view value) {
@@ -33,7 +33,7 @@ namespace {
 
 void require_protocol_id(const protocol_id& protocol) {
    if (protocol.value.empty() || protocol.value.front() != '/') {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "invalid multistream protocol id");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "invalid multistream protocol id");
    }
 }
 
@@ -43,7 +43,7 @@ void require_protocol_id(const protocol_id& protocol) {
 
 class stream_io {
  public:
-   stream_io(fcl::transport::stream stream_value, options opts_value)
+   stream_io(forge::transport::stream stream_value, options opts_value)
        : stream_(std::move(stream_value)), opts_(opts_value) {}
 
    boost::asio::awaitable<void> write(message value) {
@@ -59,32 +59,32 @@ class stream_io {
             auto payload = std::move(frame.payload);
             buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(frame.consumed));
             co_return decode_message(payload, opts_);
-         } catch (const fcl::exceptions::base& error) {
+         } catch (const forge::exceptions::base& error) {
             if (exceptions::code_of(error).value() != exceptions::code::closed) {
                throw;
             }
          }
          auto chunk = co_await stream_.async_read();
          if (chunk.empty()) {
-            FCL_THROW_EXCEPTION(exceptions::closed, "multistream-select stream closed");
+            FORGE_THROW_EXCEPTION(exceptions::closed, "multistream-select stream closed");
          }
          buffer_.insert(buffer_.end(), chunk.begin(), chunk.end());
       }
    }
 
-   [[nodiscard]] fcl::p2p::stream finish() {
-      return fcl::p2p::stream{std::move(stream_), std::move(buffer_)};
+   [[nodiscard]] forge::p2p::stream finish() {
+      return forge::p2p::stream{std::move(stream_), std::move(buffer_)};
    }
 
  private:
-   fcl::transport::stream stream_;
+   forge::transport::stream stream_;
    options opts_;
    std::vector<std::uint8_t> buffer_;
 };
 
 class p2p_stream_io {
  public:
-   p2p_stream_io(fcl::p2p::stream stream_value, options opts_value)
+   p2p_stream_io(forge::p2p::stream stream_value, options opts_value)
        : stream_(std::move(stream_value)), opts_(opts_value) {}
 
    boost::asio::awaitable<void> write(message value) {
@@ -100,25 +100,25 @@ class p2p_stream_io {
             auto payload = std::move(frame.payload);
             buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(frame.consumed));
             co_return decode_message(payload, opts_);
-         } catch (const fcl::exceptions::base& error) {
+         } catch (const forge::exceptions::base& error) {
             if (exceptions::code_of(error).value() != exceptions::code::closed) {
                throw;
             }
          }
          auto chunk = co_await stream_.async_read();
          if (chunk.empty()) {
-            FCL_THROW_EXCEPTION(exceptions::closed, "multistream-select stream closed");
+            FORGE_THROW_EXCEPTION(exceptions::closed, "multistream-select stream closed");
          }
          buffer_.insert(buffer_.end(), chunk.begin(), chunk.end());
       }
    }
 
-   [[nodiscard]] fcl::p2p::stream finish() {
+   [[nodiscard]] forge::p2p::stream finish() {
       return detail::stream_access::with_buffer(std::move(stream_), std::move(buffer_));
    }
 
  private:
-   fcl::p2p::stream stream_;
+   forge::p2p::stream stream_;
    options opts_;
    std::vector<std::uint8_t> buffer_;
 };
@@ -127,29 +127,29 @@ class p2p_stream_io {
 
 std::vector<std::uint8_t> encode_frame(std::span<const std::uint8_t> payload, options opts) {
    if (payload.size() > opts.max_frame_size) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "multistream-select frame is too large");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "multistream-select frame is too large");
    }
-   auto out = fcl::multiformats::varint_encode(payload.size());
+   auto out = forge::multiformats::varint_encode(payload.size());
    out.insert(out.end(), payload.begin(), payload.end());
    return out;
 }
 
 decoded_frame decode_frame(std::span<const std::uint8_t> bytes, options opts) {
-   auto decoded = fcl::multiformats::decoded_varint{};
+   auto decoded = forge::multiformats::decoded_varint{};
    try {
-      decoded = fcl::multiformats::varint_decode(bytes);
-   } catch (const fcl::multiformats::exceptions::invalid_format& error) {
+      decoded = forge::multiformats::varint_decode(bytes);
+   } catch (const forge::multiformats::exceptions::invalid_format& error) {
       if (bytes.size() < 2) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "multistream-select frame needs more bytes");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "multistream-select frame needs more bytes");
       }
-      FCL_THROW_EXCEPTION(exceptions::codec_error, error.what());
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, error.what());
    }
    if (decoded.value > opts.max_frame_size) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "multistream-select frame is too large");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "multistream-select frame is too large");
    }
    const auto total = decoded.size + static_cast<std::size_t>(decoded.value);
    if (bytes.size() < total) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "multistream-select frame needs more bytes");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "multistream-select frame needs more bytes");
    }
    return decoded_frame{
        .payload = std::vector<std::uint8_t>{bytes.begin() + static_cast<std::ptrdiff_t>(decoded.size),
@@ -180,20 +180,20 @@ std::vector<std::uint8_t> encode_message(const message& value, options opts) {
       return out;
    case message_kind::protocols:
       if (value.protocols.size() > opts.max_protocols) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, "too many multistream-select protocols");
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, "too many multistream-select protocols");
       }
       for (const auto& protocol : value.protocols) {
          require_protocol_id(protocol);
          auto line = bytes_for(protocol.value);
          line.push_back('\n');
-         auto encoded_length = fcl::multiformats::varint_encode(line.size());
+         auto encoded_length = forge::multiformats::varint_encode(line.size());
          out.insert(out.end(), encoded_length.begin(), encoded_length.end());
          out.insert(out.end(), line.begin(), line.end());
       }
       out.push_back('\n');
       return out;
    }
-   FCL_THROW_EXCEPTION(exceptions::internal, "unknown multistream-select message kind");
+   FORGE_THROW_EXCEPTION(exceptions::internal, "unknown multistream-select message kind");
 }
 
 message decode_message(std::span<const std::uint8_t> bytes, options opts) {
@@ -219,34 +219,34 @@ message decode_message(std::span<const std::uint8_t> bytes, options opts) {
          return message{.kind = message_kind::protocols, .protocols = std::move(protocols)};
       }
       if (protocols.size() >= opts.max_protocols) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, "too many multistream-select protocols");
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, "too many multistream-select protocols");
       }
-      auto decoded = fcl::multiformats::decoded_varint{};
+      auto decoded = forge::multiformats::decoded_varint{};
       try {
-         decoded = fcl::multiformats::varint_decode(bytes.subspan(offset));
-      } catch (const fcl::multiformats::exceptions::invalid_format& error) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, error.what());
+         decoded = forge::multiformats::varint_decode(bytes.subspan(offset));
+      } catch (const forge::multiformats::exceptions::invalid_format& error) {
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, error.what());
       }
       if (decoded.value == 0 || offset + decoded.size + decoded.value > bytes.size()) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, "invalid multistream-select protocols list");
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, "invalid multistream-select protocols list");
       }
       const auto begin = offset + decoded.size;
       const auto end = begin + static_cast<std::size_t>(decoded.value);
       if (bytes[end - 1] != '\n') {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, "multistream-select protocol is not newline-terminated");
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, "multistream-select protocol is not newline-terminated");
       }
       const auto protocol = string_for(bytes.subspan(begin, static_cast<std::size_t>(decoded.value) - 1));
       if (protocol.empty() || protocol.front() != '/') {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "invalid multistream-select protocol id");
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "invalid multistream-select protocol id");
       }
       protocols.push_back(protocol_id{.value = protocol});
       offset = end;
    }
 
-   FCL_THROW_EXCEPTION(exceptions::codec_error, "invalid multistream-select message");
+   FORGE_THROW_EXCEPTION(exceptions::codec_error, "invalid multistream-select message");
 }
 
-boost::asio::awaitable<fcl::p2p::stream> async_select(fcl::transport::stream raw, protocol_id protocol, options opts) {
+boost::asio::awaitable<forge::p2p::stream> async_select(forge::transport::stream raw, protocol_id protocol, options opts) {
    require_protocol_id(protocol);
    auto io = stream_io{std::move(raw), opts};
    co_await io.write(message{.kind = message_kind::header, .protocol = multistream_v1});
@@ -254,19 +254,19 @@ boost::asio::awaitable<fcl::p2p::stream> async_select(fcl::transport::stream raw
 
    auto header = co_await io.read();
    if (header.kind != message_kind::header) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select expected header response");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select expected header response");
    }
    auto selected = co_await io.read();
    if (selected.kind == message_kind::not_available) {
-      FCL_THROW_EXCEPTION(exceptions::unsupported_protocol, "remote peer does not support requested protocol");
+      FORGE_THROW_EXCEPTION(exceptions::unsupported_protocol, "remote peer does not support requested protocol");
    }
    if (selected.kind != message_kind::protocol || !same_protocol(selected.protocol, protocol)) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select selected unexpected protocol");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select selected unexpected protocol");
    }
    co_return io.finish();
 }
 
-boost::asio::awaitable<fcl::p2p::stream> async_select(fcl::p2p::stream raw, protocol_id protocol, options opts) {
+boost::asio::awaitable<forge::p2p::stream> async_select(forge::p2p::stream raw, protocol_id protocol, options opts) {
    require_protocol_id(protocol);
    auto io = p2p_stream_io{std::move(raw), opts};
    co_await io.write(message{.kind = message_kind::header, .protocol = multistream_v1});
@@ -274,22 +274,22 @@ boost::asio::awaitable<fcl::p2p::stream> async_select(fcl::p2p::stream raw, prot
 
    auto header = co_await io.read();
    if (header.kind != message_kind::header) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select expected header response");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select expected header response");
    }
    auto selected = co_await io.read();
    if (selected.kind == message_kind::not_available) {
-      FCL_THROW_EXCEPTION(exceptions::unsupported_protocol, "remote peer does not support requested protocol");
+      FORGE_THROW_EXCEPTION(exceptions::unsupported_protocol, "remote peer does not support requested protocol");
    }
    if (selected.kind != message_kind::protocol || !same_protocol(selected.protocol, protocol)) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select selected unexpected protocol");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select selected unexpected protocol");
    }
    co_return io.finish();
 }
 
-boost::asio::awaitable<negotiated_stream> async_accept(fcl::transport::stream raw, std::vector<protocol_id> protocols,
+boost::asio::awaitable<negotiated_stream> async_accept(forge::transport::stream raw, std::vector<protocol_id> protocols,
                                                        options opts) {
    if (protocols.size() > opts.max_protocols) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "too many local multistream-select protocols");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "too many local multistream-select protocols");
    }
    for (const auto& protocol : protocols) {
       require_protocol_id(protocol);
@@ -298,7 +298,7 @@ boost::asio::awaitable<negotiated_stream> async_accept(fcl::transport::stream ra
    auto io = stream_io{std::move(raw), opts};
    auto header = co_await io.read();
    if (header.kind != message_kind::header) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select expected header");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select expected header");
    }
    co_await io.write(message{.kind = message_kind::header, .protocol = multistream_v1});
 
@@ -309,7 +309,7 @@ boost::asio::awaitable<negotiated_stream> async_accept(fcl::transport::stream ra
          continue;
       }
       if (request.kind != message_kind::protocol) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select expected protocol proposal");
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select expected protocol proposal");
       }
       const auto found = std::find_if(protocols.begin(), protocols.end(), [&](const protocol_id& candidate) {
          return same_protocol(candidate, request.protocol);
@@ -323,10 +323,10 @@ boost::asio::awaitable<negotiated_stream> async_accept(fcl::transport::stream ra
    }
 }
 
-boost::asio::awaitable<negotiated_stream> async_accept(fcl::p2p::stream raw, std::vector<protocol_id> protocols,
+boost::asio::awaitable<negotiated_stream> async_accept(forge::p2p::stream raw, std::vector<protocol_id> protocols,
                                                        options opts) {
    if (protocols.size() > opts.max_protocols) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "too many local multistream-select protocols");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "too many local multistream-select protocols");
    }
    for (const auto& protocol : protocols) {
       require_protocol_id(protocol);
@@ -335,7 +335,7 @@ boost::asio::awaitable<negotiated_stream> async_accept(fcl::p2p::stream raw, std
    auto io = p2p_stream_io{std::move(raw), opts};
    auto header = co_await io.read();
    if (header.kind != message_kind::header) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select expected header");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select expected header");
    }
    co_await io.write(message{.kind = message_kind::header, .protocol = multistream_v1});
 
@@ -346,7 +346,7 @@ boost::asio::awaitable<negotiated_stream> async_accept(fcl::p2p::stream raw, std
          continue;
       }
       if (request.kind != message_kind::protocol) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select expected protocol proposal");
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "multistream-select expected protocol proposal");
       }
       const auto found = std::find_if(protocols.begin(), protocols.end(), [&](const protocol_id& candidate) {
          return same_protocol(candidate, request.protocol);
@@ -360,4 +360,4 @@ boost::asio::awaitable<negotiated_stream> async_accept(fcl::p2p::stream raw, std
    }
 }
 
-} // namespace fcl::p2p::protocol_negotiation
+} // namespace forge::p2p::protocol_negotiation

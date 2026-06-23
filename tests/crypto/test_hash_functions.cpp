@@ -1,18 +1,18 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 #include <string>
 
-import fcl.crypto.hex;
-import fcl.crypto.ripemd160;
-import fcl.crypto.sha1;
-import fcl.crypto.sha224;
-import fcl.crypto.sha256;
-import fcl.crypto.sha3;
-import fcl.crypto.sha512;
-import fcl.core.utility;
-import fcl.exceptions;
+import forge.crypto.hex;
+import forge.crypto.ripemd160;
+import forge.crypto.sha1;
+import forge.crypto.sha224;
+import forge.crypto.sha256;
+import forge.crypto.sha3;
+import forge.crypto.sha512;
+import forge.core.utility;
+import forge.exceptions;
 
-using namespace fcl;
+using namespace forge;
 
 BOOST_AUTO_TEST_SUITE(hash_functions)
 
@@ -20,25 +20,25 @@ BOOST_AUTO_TEST_CASE(evp_digest_vectors) try {
    const std::string empty;
    const std::string abc = "abc";
 
-   BOOST_CHECK_EQUAL(fcl::crypto::sha1::hash(empty).str(), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
-   BOOST_CHECK_EQUAL(fcl::crypto::sha1::hash(abc).str(), "a9993e364706816aba3e25717850c26c9cd0d89d");
+   BOOST_CHECK_EQUAL(forge::crypto::sha1::hash(empty).str(), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+   BOOST_CHECK_EQUAL(forge::crypto::sha1::hash(abc).str(), "a9993e364706816aba3e25717850c26c9cd0d89d");
 
-   BOOST_CHECK_EQUAL(fcl::crypto::sha224::hash(empty).str(), "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f");
-   BOOST_CHECK_EQUAL(fcl::crypto::sha224::hash(abc).str(), "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7");
+   BOOST_CHECK_EQUAL(forge::crypto::sha224::hash(empty).str(), "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f");
+   BOOST_CHECK_EQUAL(forge::crypto::sha224::hash(abc).str(), "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7");
 
-   BOOST_CHECK_EQUAL(fcl::crypto::sha256::hash(empty).str(),
+   BOOST_CHECK_EQUAL(forge::crypto::sha256::hash(empty).str(),
                      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-   BOOST_CHECK_EQUAL(fcl::crypto::sha256::hash(abc).str(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+   BOOST_CHECK_EQUAL(forge::crypto::sha256::hash(abc).str(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 
-   BOOST_CHECK_EQUAL(fcl::crypto::sha512::hash(empty).str(), "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce4"
+   BOOST_CHECK_EQUAL(forge::crypto::sha512::hash(empty).str(), "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce4"
                                                      "7d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e");
-   BOOST_CHECK_EQUAL(fcl::crypto::sha512::hash(abc).str(), "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a219"
+   BOOST_CHECK_EQUAL(forge::crypto::sha512::hash(abc).str(), "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a219"
                                                    "2992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f");
 
-   BOOST_CHECK_EQUAL(fcl::crypto::ripemd160::hash(empty).str(), "9c1185a5c5e9fc54612808977ee8f548b2258d31");
-   BOOST_CHECK_EQUAL(fcl::crypto::ripemd160::hash(abc).str(), "8eb208f7e05d987a9b044a8e98c6b087f15a0bfc");
+   BOOST_CHECK_EQUAL(forge::crypto::ripemd160::hash(empty).str(), "9c1185a5c5e9fc54612808977ee8f548b2258d31");
+   BOOST_CHECK_EQUAL(forge::crypto::ripemd160::hash(abc).str(), "8eb208f7e05d987a9b044a8e98c6b087f15a0bfc");
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(sha3) try {
 
@@ -62,10 +62,10 @@ BOOST_AUTO_TEST_CASE(sha3) try {
                                       }};
 
    for (const auto& test : tests) {
-      BOOST_CHECK_EQUAL(fcl::crypto::sha3::hash(std::get<0>(test), true).str(), std::get<1>(test));
+      BOOST_CHECK_EQUAL(forge::crypto::sha3::hash(std::get<0>(test), true).str(), std::get<1>(test));
    }
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(keccak256) try {
 
@@ -89,9 +89,9 @@ BOOST_AUTO_TEST_CASE(keccak256) try {
                                            }};
 
    for (const auto& test : tests) {
-      BOOST_CHECK_EQUAL(fcl::crypto::sha3::hash(std::get<0>(test), false).str(), std::get<1>(test));
+      BOOST_CHECK_EQUAL(forge::crypto::sha3::hash(std::get<0>(test), false).str(), std::get<1>(test));
    }
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_SUITE_END()

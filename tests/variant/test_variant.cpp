@@ -1,24 +1,24 @@
 #include <boost/describe.hpp>
 #include <boost/test/unit_test.hpp>
 #include <chrono>
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 #include <string>
 
-import fcl.variant.exceptions;
-import fcl.variant.value;
-import fcl.variant.conversion;
-import fcl.variant.containers;
-import fcl.variant.chrono;
-import fcl.variant.multiprecision;
-import fcl.variant.format;
-import fcl.variant.described;
-import fcl.variant.value;
-import fcl.variant.format;
-import fcl.core.chrono;
-import fcl.variant.described;
-import fcl.exceptions;
-import fcl.crypto.base64;
-using namespace fcl;
+import forge.variant.exceptions;
+import forge.variant.value;
+import forge.variant.conversion;
+import forge.variant.containers;
+import forge.variant.chrono;
+import forge.variant.multiprecision;
+import forge.variant.format;
+import forge.variant.described;
+import forge.variant.value;
+import forge.variant.format;
+import forge.core.chrono;
+import forge.variant.described;
+import forge.exceptions;
+import forge.crypto.base64;
+using namespace forge;
 using std::string;
 
 namespace {
@@ -39,8 +39,8 @@ BOOST_AUTO_TEST_SUITE(variant_test_suite)
 BOOST_AUTO_TEST_CASE(boost_describe_struct_variant_roundtrip) {
    const described_variant_config original{"workspace", 42, described_access::write};
 
-   fcl::variant as_variant;
-   fcl::to_variant(original, as_variant);
+   forge::variant as_variant;
+   forge::to_variant(original, as_variant);
 
    const auto& object = as_variant.get_object();
    BOOST_CHECK_EQUAL(object["name"].as_string(), "workspace");
@@ -48,15 +48,15 @@ BOOST_AUTO_TEST_CASE(boost_describe_struct_variant_roundtrip) {
    BOOST_CHECK_EQUAL(object["access"].as_string(), "write");
 
    described_variant_config roundtrip;
-   fcl::from_variant(as_variant, roundtrip);
+   forge::from_variant(as_variant, roundtrip);
    BOOST_CHECK(original == roundtrip);
 }
 
 BOOST_AUTO_TEST_CASE(boost_describe_variant_missing_fields_keep_defaults_and_unknown_fields_are_ignored) {
-   const fcl::variant input = fcl::mutable_variant_object()("name", "override")("unknown", "ignored");
+   const forge::variant input = forge::mutable_variant_object()("name", "override")("unknown", "ignored");
 
    described_variant_config parsed;
-   fcl::from_variant(input, parsed);
+   forge::from_variant(input, parsed);
 
    BOOST_CHECK_EQUAL(parsed.name, "override");
    BOOST_CHECK_EQUAL(parsed.limit, 7u);
@@ -64,28 +64,28 @@ BOOST_AUTO_TEST_CASE(boost_describe_variant_missing_fields_keep_defaults_and_unk
 }
 
 BOOST_AUTO_TEST_CASE(boost_describe_variant_bad_enum_value_fails) {
-   const fcl::variant input = fcl::mutable_variant_object()("name", "bad")("access", "delete");
+   const forge::variant input = forge::mutable_variant_object()("name", "bad")("access", "delete");
 
    described_variant_config parsed;
-   BOOST_CHECK_THROW(fcl::from_variant(input, parsed), std::invalid_argument);
+   BOOST_CHECK_THROW(forge::from_variant(input, parsed), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_CASE(std_chrono_variant_iso_roundtrip) {
    const std::chrono::sys_time<std::chrono::microseconds> timestamp{std::chrono::seconds{1}};
-   fcl::variant encoded;
-   fcl::to_variant(timestamp, encoded);
+   forge::variant encoded;
+   forge::to_variant(timestamp, encoded);
    BOOST_CHECK_EQUAL(encoded.as_string(), "1970-01-01T00:00:01.000");
 
    std::chrono::sys_time<std::chrono::microseconds> decoded;
-   fcl::from_variant(encoded, decoded);
+   forge::from_variant(encoded, decoded);
    BOOST_CHECK(decoded == timestamp);
 
-   fcl::variant seconds_encoded;
-   fcl::to_variant(std::chrono::sys_seconds{std::chrono::seconds{1}}, seconds_encoded);
+   forge::variant seconds_encoded;
+   forge::to_variant(std::chrono::sys_seconds{std::chrono::seconds{1}}, seconds_encoded);
    BOOST_CHECK_EQUAL(seconds_encoded.as_string(), "1970-01-01T00:00:01");
 
    std::chrono::microseconds micros;
-   fcl::from_variant(fcl::variant(int64_t{-1}), micros);
+   forge::from_variant(forge::variant(int64_t{-1}), micros);
    BOOST_CHECK(micros == std::chrono::microseconds{-1});
 }
 
@@ -107,7 +107,7 @@ BOOST_AUTO_TEST_CASE(mutable_variant_object_test) {
       vs.push_back(mutable_variant_object("level", "debug").set("color", "green"));
       vs.push_back(mutable_variant_object()("level", "debug").set("color", "green"));
    }
-   FCL_LOG_AND_RETHROW();
+   FORGE_LOG_AND_RETHROW();
 }
 
 BOOST_AUTO_TEST_CASE(variant_format_string_limited) {
@@ -116,11 +116,11 @@ BOOST_AUTO_TEST_CASE(variant_format_string_limited) {
    const std::string b_long_list = std::string(long_rep_char_num, 'b');
    {
       const string format = "${a} ${b} ${c}";
-      fcl::mutable_variant_object mu;
+      forge::mutable_variant_object mu;
       mu("a", string(long_rep_char_num, 'a'));
       mu("b", string(long_rep_char_num, 'b'));
       mu("c", string(long_rep_char_num, 'c'));
-      const string result = fcl::format_string(format, mu, true);
+      const string result = forge::format_string(format, mu, true);
       BOOST_CHECK_LT(0u, mu.size());
       const auto arg_limit_size = (1024 - format.size()) / mu.size();
       BOOST_CHECK_EQUAL(result, string(arg_limit_size, 'a') + "... " + string(arg_limit_size, 'b') + "... " +
@@ -128,14 +128,14 @@ BOOST_AUTO_TEST_CASE(variant_format_string_limited) {
       BOOST_CHECK_LT(result.size(), 1024 + 3 * mu.size());
    }
    { // verify object, array, blob, and string, all exceeds limits, fold display for each
-      fcl::mutable_variant_object mu;
+      forge::mutable_variant_object mu;
       mu("str", a_long_list);
       mu("obj", variant_object(mutable_variant_object()("a", a_long_list)("b", b_long_list)));
       mu("arr", variants{variant(a_long_list), variant(b_long_list)});
       mu("blob", blob({std::vector<char>(a_long_list.begin(), a_long_list.end())}));
       const string format_prefix = "Format string test: ";
       const string format_str = format_prefix + "${str} ${obj} ${arr} {blob}";
-      const string result = fcl::format_string(format_str, mu, true);
+      const string result = forge::format_string(format_str, mu, true);
       BOOST_CHECK_LT(0u, mu.size());
       const auto arg_limit_size = (1024 - format_str.size()) / mu.size();
       BOOST_CHECK_EQUAL(result,
@@ -154,7 +154,7 @@ BOOST_AUTO_TEST_CASE(variant_format_string_limited) {
       const std::string e_short_list = std::string(short_rep_char_num / 3, 'e');
       const std::string f_short_list = std::string(short_rep_char_num, 'f');
       const std::string g_short_list = std::string(short_rep_char_num, 'g');
-      fcl::mutable_variant_object mu;
+      forge::mutable_variant_object mu;
       const variant_object vo(mutable_variant_object()("b", b_short_list)("c", c_short_list));
       const variants variant_list{variant(d_short_list), variant(e_short_list)};
       const blob a_blob({std::vector<char>(f_short_list.begin(), f_short_list.end())});
@@ -164,11 +164,11 @@ BOOST_AUTO_TEST_CASE(variant_format_string_limited) {
       mu("arr", variant_list);
       mu("blob", a_blob);
       mu("var", a_variant);
-      const string result = fcl::format_string(format_str, mu, true);
+      const string result = forge::format_string(format_str, mu, true);
       const string target_result = format_prefix + a_short_list + " " + "{" + "\"b\":\"" + b_short_list +
                                    "\",\"c\":\"" + c_short_list + "\"}" + " " + "[\"" + d_short_list + "\",\"" +
                                    e_short_list + "\"]" + " " +
-                                   fcl::crypto::base64_encode(a_blob.data.data(), a_blob.data.size()) +
+                                   forge::crypto::base64_encode(a_blob.data.data(), a_blob.data.size()) +
                                    " " + g_short_list;
 
       BOOST_CHECK_EQUAL(result, target_result);
@@ -181,7 +181,7 @@ BOOST_AUTO_TEST_CASE(variant_blob) {
    {
       std::string a17_orig = "aaaaaaaaaaaaaaaaa";
       std::string a17_encoded = "YWFhYWFhYWFhYWFhYWFhYWE=";
-      fcl::mutable_variant_object mu;
+      forge::mutable_variant_object mu;
       mu("blob", blob{{a17_orig.begin(), a17_orig.end()}});
       mu("str", a17_encoded);
 
@@ -196,7 +196,7 @@ BOOST_AUTO_TEST_CASE(variant_blob) {
                            "\xff"
                            "\xf9";
       std::string s_6364_encoded = "A+//+Q==";
-      fcl::mutable_variant_object mu;
+      forge::mutable_variant_object mu;
       mu("blob", blob{{s_6364.begin(), s_6364.end()}});
       mu("str", s_6364_encoded);
 
@@ -209,7 +209,7 @@ BOOST_AUTO_TEST_CASE(variant_blob) {
       std::string org = "abc";
       std::string encoded = "YWJj";
 
-      fcl::mutable_variant_object mu;
+      forge::mutable_variant_object mu;
       mu("blob", blob{{org.begin(), org.end()}});
       mu("str", encoded);
 
@@ -227,7 +227,7 @@ BOOST_AUTO_TEST_CASE(variant_blob_backwards_compatibility) {
       std::string a17_orig = "aaaaaaaaaaaaaaaaa";
       std::string a17_encoded = "YWFhYWFhYWFhYWFhYWFhYWE=";
       std::string a17_encoded_old = a17_encoded + '=';
-      fcl::mutable_variant_object mu;
+      forge::mutable_variant_object mu;
       mu("blob", blob{{a17_orig.begin(), a17_orig.end()}});
       mu("str", a17_encoded_old);
 
@@ -241,7 +241,7 @@ BOOST_AUTO_TEST_CASE(variant_blob_backwards_compatibility) {
       std::string encoded = "YWJj";
       std::string encoded_old = encoded + '=';
 
-      fcl::mutable_variant_object mu;
+      forge::mutable_variant_object mu;
       mu("blob", blob{{org.begin(), org.end()}});
       mu("str", encoded_old);
 
@@ -254,13 +254,13 @@ BOOST_AUTO_TEST_CASE(variant_blob_backwards_compatibility) {
 
 BOOST_AUTO_TEST_CASE(variant_blob_rejects_malformed_base64_trailing_garbage) {
    const auto malformed = std::string{"YQ==evil"};
-   const auto value = fcl::variant{malformed};
+   const auto value = forge::variant{malformed};
 
    const auto blob_value = value.as_blob().data;
    BOOST_TEST(std::string(blob_value.begin(), blob_value.end()) == malformed);
 
-   auto decoded = fcl::blob{};
-   BOOST_CHECK_THROW(fcl::from_variant(value, decoded), std::invalid_argument);
+   auto decoded = forge::blob{};
+   BOOST_CHECK_THROW(forge::from_variant(value, decoded), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_CASE(array) {
@@ -270,10 +270,10 @@ BOOST_AUTO_TEST_CASE(array) {
    //  - `std::array`
    // --------------------------------------------------------------------------------------------
    auto check_variant_round_trip = []<class C>(const C& arr) {
-      fcl::variant m(arr);
+      forge::variant m(arr);
 
       std::vector<int> v;
-      fcl::from_variant(m, v);
+      forge::from_variant(m, v);
       auto expected = std::vector<int>{arr.begin(), arr.end()};
       BOOST_TEST(v == expected);
    };
@@ -293,15 +293,15 @@ BOOST_AUTO_TEST_CASE(array) {
    //  - `std::array`
    // --------------------------------------------------------------------------------------------
    auto check_variant_round_trip2 = []<class C>(const C& arr) {
-      fcl::mutable_variant_object mu("a", arr);
+      forge::mutable_variant_object mu("a", arr);
 
       std::vector<int> v;
-      fcl::from_variant(mu["a"], v);
+      forge::from_variant(mu["a"], v);
       auto expected = std::vector<int>{arr.begin(), arr.end()};
       BOOST_TEST(v == expected);
 
-      auto mu2 = fcl::mutable_variant_object()("b", arr); // also test mutable_variant_object operator()
-      fcl::from_variant(mu2["b"], v);
+      auto mu2 = forge::mutable_variant_object()("b", arr); // also test mutable_variant_object operator()
+      forge::from_variant(mu2["b"], v);
       BOOST_TEST(v == expected);
    };
 

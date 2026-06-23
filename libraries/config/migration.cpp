@@ -9,13 +9,13 @@ module;
 #include <utility>
 #include <variant>
 
-module fcl.config.migration;
+module forge.config.migration;
 
-import fcl.config.document;
-import fcl.config.value;
-import fcl.schema.diagnostic;
+import forge.config.document;
+import forge.config.value;
+import forge.schema.diagnostic;
 
-namespace fcl::config {
+namespace forge::config {
 namespace {
 
 [[nodiscard]] schema::diagnostic migration_error(std::string path, std::string code, std::string message) {
@@ -148,4 +148,4 @@ migration_result migrate(document input, const migration_plan& plan, migration_o
    return result;
 }
 
-} // namespace fcl::config
+} // namespace forge::config

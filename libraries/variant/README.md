@@ -1,6 +1,6 @@
-# fcl_variant
+# forge_variant
 
-`fcl_variant` provides the FCL dynamic value model: scalar values, arrays,
+`forge_variant` provides the FORGE dynamic value model: scalar values, arrays,
 objects, blobs, described-type conversion, `static_variant` and dynamic bitsets.
 It is the bridge between typed C++ values and generic codec/config/log shapes.
 
@@ -13,24 +13,24 @@ It is the bridge between typed C++ values and generic codec/config/log shapes.
 ## When Not To Use
 
 - Do not use `variant` as an internal data model when a typed struct is known.
-- Do not put validation or required-field policy here; use `fcl_schema`.
-- Do not put binary serialization here; use `fcl_raw`.
+- Do not put validation or required-field policy here; use `forge_schema`.
+- Do not put binary serialization here; use `forge_raw`.
 
 ## Public Modules
 
-- `fcl.variant.value` — `variant`, `variant_object`, `mutable_variant_object`.
-- `fcl.variant.conversion` — scalar/string/blob conversions.
-- `fcl.variant.containers` — STL container conversions.
-- `fcl.variant.described` — Boost.Describe object/enum mapping.
-- `fcl.variant.chrono` — std chrono ISO conversion.
-- `fcl.variant.multiprecision` — Boost multiprecision conversions.
-- `fcl.variant.format` — display helpers.
-- `fcl.variant.static_variant` — FC-style static variant.
-- `fcl.variant.dynamic_bitset`, `fcl.variant.variant_dynamic_bitset`.
+- `forge.variant.value` — `variant`, `variant_object`, `mutable_variant_object`.
+- `forge.variant.conversion` — scalar/string/blob conversions.
+- `forge.variant.containers` — STL container conversions.
+- `forge.variant.described` — Boost.Describe object/enum mapping.
+- `forge.variant.chrono` — std chrono ISO conversion.
+- `forge.variant.multiprecision` — Boost multiprecision conversions.
+- `forge.variant.format` — display helpers.
+- `forge.variant.static_variant` — FC-style static variant.
+- `forge.variant.dynamic_bitset`, `forge.variant.variant_dynamic_bitset`.
 
-Target: `fcl_variant`.
+Target: `forge_variant`.
 
-Dependencies: `fcl_core`, `fcl_reflect`, Boost headers, Boost.MultiIndex and
+Dependencies: `forge_core`, `forge_reflect`, Boost headers, Boost.MultiIndex and
 Boost.Multiprecision.
 
 ## Examples
@@ -38,19 +38,19 @@ Boost.Multiprecision.
 ### Build A Value Object
 
 ```cpp
-import fcl.variant.exceptions;
-import fcl.variant.value;
-import fcl.variant.conversion;
-import fcl.variant.containers;
-import fcl.variant.chrono;
-import fcl.variant.multiprecision;
-import fcl.variant.format;
-import fcl.variant.described;
+import forge.variant.exceptions;
+import forge.variant.value;
+import forge.variant.conversion;
+import forge.variant.containers;
+import forge.variant.chrono;
+import forge.variant.multiprecision;
+import forge.variant.format;
+import forge.variant.described;
 
-auto object = fcl::mutable_variant_object{};
+auto object = forge::mutable_variant_object{};
 object("name", "node-a")("enabled", true)("retries", 3);
 
-fcl::variant value{object};
+forge::variant value{object};
 auto enabled = value.get_object()["enabled"].as_bool();
 ```
 
@@ -68,20 +68,20 @@ struct profile {
 
 BOOST_DESCRIBE_STRUCT(profile, (), (name, enabled))
 
-import fcl.variant.described;
+import forge.variant.described;
 
 auto source = profile{.name = "dev", .enabled = true};
-auto value = fcl::variant{source};
+auto value = forge::variant{source};
 auto restored = value.as<profile>();
 ```
 
 ### Chrono Values Use ISO Text
 
 ```cpp
-import fcl.variant.chrono;
+import forge.variant.chrono;
 
 auto now = std::chrono::sys_time<std::chrono::microseconds>{std::chrono::microseconds{1}};
-auto value = fcl::variant{now};
+auto value = forge::variant{now};
 auto restored = value.as<std::chrono::sys_time<std::chrono::microseconds>>();
 ```
 

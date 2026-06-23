@@ -8,9 +8,9 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.app.plugin_registry;
+module forge.app.plugin_registry;
 
-namespace fcl::app {
+namespace forge::app {
 namespace {
 
 using descriptor_map = std::map<std::string, const plugin_descriptor*>;
@@ -119,4 +119,4 @@ std::vector<plugin_descriptor> plugin_registry::descriptors() const {
    return descriptors_;
 }
 
-} // namespace fcl::app
+} // namespace forge::app

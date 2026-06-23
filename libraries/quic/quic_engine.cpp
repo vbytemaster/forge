@@ -42,11 +42,11 @@
 #include <string_view>
 #include <unordered_map>
 
-import fcl.crypto.random;
-import fcl.crypto.hex;
-import fcl.crypto.sha256;
+import forge.crypto.random;
+import forge.crypto.hex;
+import forge.crypto.sha256;
 
-namespace fcl::quic::detail {
+namespace forge::quic::detail {
 namespace {
 
 namespace asio = boost::asio;
@@ -90,9 +90,9 @@ using stateless_reset_secret = std::array<std::uint8_t, stateless_reset_secret_s
       return out;
    }
    out += "; client_version=0x";
-   out += fcl::crypto::itoh(ngtcp2_conn_get_client_chosen_version(conn), 8);
+   out += forge::crypto::itoh(ngtcp2_conn_get_client_chosen_version(conn), 8);
    out += "; negotiated_version=0x";
-   out += fcl::crypto::itoh(ngtcp2_conn_get_negotiated_version(conn), 8);
+   out += forge::crypto::itoh(ngtcp2_conn_get_negotiated_version(conn), 8);
    if (const auto tls_error = ngtcp2_conn_get_tls_error(conn); tls_error != 0) {
       out += "; tls_error=";
       out += std::to_string(tls_error);
@@ -142,7 +142,7 @@ int accept_any_certificate_cb(int, X509_STORE_CTX*) {
 
 [[nodiscard]] bool fill_random(std::span<std::uint8_t> bytes) {
    try {
-      fcl::crypto::fill_random(bytes);
+      forge::crypto::fill_random(bytes);
       return true;
    } catch (...) {
       return false;
@@ -432,8 +432,8 @@ std::string normalize_engine_sha256_fingerprint(std::string_view value) {
 }
 
 std::string engine_sha256_fingerprint(std::span<const std::uint8_t> data) {
-   const auto digest = fcl::crypto::sha256::hash(data).to_uint8_span();
-   return fcl::crypto::to_hex(digest.data(), static_cast<std::uint32_t>(digest.size()));
+   const auto digest = forge::crypto::sha256::hash(data).to_uint8_span();
+   return forge::crypto::to_hex(digest.data(), static_cast<std::uint32_t>(digest.size()));
 }
 
 struct engine_stream::impl {
@@ -2459,4 +2459,4 @@ void engine_listener::stop() {
    });
 }
 
-} // namespace fcl::quic::detail
+} // namespace forge::quic::detail

@@ -1,5 +1,5 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -8,7 +8,7 @@
 #include <string>
 #include <system_error>
 
-import fcl.exceptions;
+import forge.exceptions;
 
 namespace test_http_exceptions {
 
@@ -17,9 +17,9 @@ enum class code : int {
    internal = 500,
 };
 
-FCL_DECLARE_EXCEPTION_CATEGORY(code, "test.http")
+FORGE_DECLARE_EXCEPTION_CATEGORY(code, "test.http")
 
-using not_found = fcl::exceptions::coded_exception<code, code::not_found>;
+using not_found = forge::exceptions::coded_exception<code, code::not_found>;
 
 } // namespace test_http_exceptions
 
@@ -29,30 +29,30 @@ enum class code : std::uint8_t {
    chunk_not_found = 1,
 };
 
-FCL_DECLARE_EXCEPTION_CATEGORY(code, "test.cache")
+FORGE_DECLARE_EXCEPTION_CATEGORY(code, "test.cache")
 
-using chunk_not_found = fcl::exceptions::coded_exception<code, code::chunk_not_found>;
+using chunk_not_found = forge::exceptions::coded_exception<code, code::chunk_not_found>;
 
 } // namespace test_product_exceptions
 
 BOOST_AUTO_TEST_SUITE(exception_test_suite)
 
 BOOST_AUTO_TEST_CASE(context_fields_are_formatted_and_redacted) {
-   const fcl::exceptions::context_error error{
+   const forge::exceptions::context_error error{
        "open vault",
-       {fcl::exceptions::ctx("path", "/tmp/fcl.vault"), fcl::exceptions::secret("passphrase", "correct horse battery staple")},
+       {forge::exceptions::ctx("path", "/tmp/forge.vault"), forge::exceptions::secret("passphrase", "correct horse battery staple")},
        std::source_location::current()};
 
    const std::string text = error.what();
    BOOST_CHECK(text.find("open vault") != std::string::npos);
-   BOOST_CHECK(text.find("path=/tmp/fcl.vault") != std::string::npos);
+   BOOST_CHECK(text.find("path=/tmp/forge.vault") != std::string::npos);
    BOOST_CHECK(text.find("passphrase=<redacted>") != std::string::npos);
    BOOST_CHECK(text.find("correct horse battery staple") == std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(context_error_keeps_optional_error_code) {
-   const fcl::exceptions::context_error error{"deadline exceeded",
-                                         {fcl::exceptions::ctx("phase", "startup")},
+   const forge::exceptions::context_error error{"deadline exceeded",
+                                         {forge::exceptions::ctx("phase", "startup")},
                                          std::source_location::current(),
                                          std::make_error_code(std::errc::timed_out)};
 
@@ -64,7 +64,7 @@ BOOST_AUTO_TEST_CASE(context_error_keeps_optional_error_code) {
 
 BOOST_AUTO_TEST_CASE(throw_exception_throws_concrete_coded_exception) {
    try {
-      FCL_THROW_EXCEPTION(test_http_exceptions::not_found, "route not found", fcl::exceptions::ctx("path", "/missing"));
+      FORGE_THROW_EXCEPTION(test_http_exceptions::not_found, "route not found", forge::exceptions::ctx("path", "/missing"));
    } catch (const test_http_exceptions::not_found& error) {
       BOOST_CHECK_EQUAL(error.message(), "route not found");
       BOOST_CHECK_EQUAL(error.code().value(), 404);
@@ -78,7 +78,7 @@ BOOST_AUTO_TEST_CASE(throw_exception_throws_concrete_coded_exception) {
 
 BOOST_AUTO_TEST_CASE(custom_uint8_exception_category_works) {
    try {
-      FCL_THROW_EXCEPTION(test_product_exceptions::chunk_not_found, "chunk not found");
+      FORGE_THROW_EXCEPTION(test_product_exceptions::chunk_not_found, "chunk not found");
    } catch (const test_product_exceptions::chunk_not_found& error) {
       BOOST_CHECK_EQUAL(error.code().value(), 1);
       BOOST_CHECK_EQUAL(std::string(error.code().category().name()), "test.cache");
@@ -94,8 +94,8 @@ BOOST_AUTO_TEST_CASE(throw_code_throws_runtime_coded_exception_with_call_site_co
 
    try {
       expected_line = __LINE__ + 1;
-      FCL_THROW_CODE(runtime_code, "dynamic failure", fcl::exceptions::ctx("phase", "runtime-map"));
-   } catch (const fcl::exceptions::runtime_coded_exception<test_http_exceptions::code>& error) {
+      FORGE_THROW_CODE(runtime_code, "dynamic failure", forge::exceptions::ctx("phase", "runtime-map"));
+   } catch (const forge::exceptions::runtime_coded_exception<test_http_exceptions::code>& error) {
       BOOST_CHECK_EQUAL(static_cast<int>(error.value()), static_cast<int>(test_http_exceptions::code::internal));
       BOOST_CHECK_EQUAL(error.message(), "dynamic failure");
       BOOST_CHECK_EQUAL(error.code().value(), 500);
@@ -116,9 +116,9 @@ BOOST_AUTO_TEST_CASE(capture_and_rethrow_preserves_nested_exception) {
       try {
          throw std::runtime_error("inner failure");
       }
-      FCL_CAPTURE_AND_RETHROW("outer context", fcl::exceptions::ctx("phase", "initialize"))
-   } catch (const fcl::exceptions::context_error& error) {
-      const auto chain = fcl::exceptions::format_exception_chain(error);
+      FORGE_CAPTURE_AND_RETHROW("outer context", forge::exceptions::ctx("phase", "initialize"))
+   } catch (const forge::exceptions::context_error& error) {
+      const auto chain = forge::exceptions::format_exception_chain(error);
       BOOST_CHECK(chain.find("outer context") != std::string::npos);
       BOOST_CHECK(chain.find("phase=initialize") != std::string::npos);
       BOOST_CHECK(chain.find("inner failure") != std::string::npos);
@@ -128,13 +128,13 @@ BOOST_AUTO_TEST_CASE(capture_and_rethrow_preserves_nested_exception) {
    BOOST_FAIL("expected context_error");
 }
 
-BOOST_AUTO_TEST_CASE(capture_and_rethrow_preserves_fcl_exceptions_dynamic_type) {
+BOOST_AUTO_TEST_CASE(capture_and_rethrow_preserves_forge_exceptions_dynamic_type) {
    try {
       try {
-         FCL_THROW_EXCEPTION(test_product_exceptions::chunk_not_found, "chunk not found",
-                             fcl::exceptions::ctx("ref", "bafk..."));
+         FORGE_THROW_EXCEPTION(test_product_exceptions::chunk_not_found, "chunk not found",
+                             forge::exceptions::ctx("ref", "bafk..."));
       }
-      FCL_CAPTURE_AND_RETHROW("read cache", fcl::exceptions::ctx("phase", "lookup"))
+      FORGE_CAPTURE_AND_RETHROW("read cache", forge::exceptions::ctx("phase", "lookup"))
    } catch (const test_product_exceptions::chunk_not_found& error) {
       const std::string text = error.what();
       BOOST_CHECK_EQUAL(error.code().value(), 1);
@@ -149,8 +149,8 @@ BOOST_AUTO_TEST_CASE(capture_and_rethrow_preserves_fcl_exceptions_dynamic_type) 
 }
 
 BOOST_AUTO_TEST_CASE(assert_macro_throws_std_compatible_context_error) {
-   BOOST_CHECK_EXCEPTION(FCL_ASSERT(false, "broken invariant", fcl::exceptions::ctx("value", 42)), fcl::exceptions::context_error,
-                         [](const fcl::exceptions::context_error& error) {
+   BOOST_CHECK_EXCEPTION(FORGE_ASSERT(false, "broken invariant", forge::exceptions::ctx("value", 42)), forge::exceptions::context_error,
+                         [](const forge::exceptions::context_error& error) {
                             const std::string text = error.what();
                             return error.code() == std::make_error_code(std::errc::invalid_argument) &&
                                    text.find("broken invariant") != std::string::npos &&
@@ -160,9 +160,9 @@ BOOST_AUTO_TEST_CASE(assert_macro_throws_std_compatible_context_error) {
 }
 
 BOOST_AUTO_TEST_CASE(deadline_macro_throws_timeout_context_error) {
-   BOOST_CHECK_EXCEPTION(FCL_CHECK_DEADLINE(std::chrono::system_clock::now() - std::chrono::milliseconds(1),
-                                            fcl::exceptions::ctx("phase", "render")),
-                         fcl::exceptions::context_error, [](const fcl::exceptions::context_error& error) {
+   BOOST_CHECK_EXCEPTION(FORGE_CHECK_DEADLINE(std::chrono::system_clock::now() - std::chrono::milliseconds(1),
+                                            forge::exceptions::ctx("phase", "render")),
+                         forge::exceptions::context_error, [](const forge::exceptions::context_error& error) {
                             return error.code() == std::make_error_code(std::errc::timed_out) &&
                                    std::string(error.what()).find("phase=render") != std::string::npos;
                          });

@@ -1,30 +1,30 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <memory>
 #include <mutex>
 #include <utility>
 #include <vector>
 
-module fcl.plugins.http.server.plugin;
+module forge.plugins.http.server.plugin;
 
-import fcl.api.registry;
-import fcl.asio.runtime;
-import fcl.http.api.binding;
-import fcl.http.server;
-import fcl.plugins.http.server.exceptions;
-import fcl.plugins.http.server.middleware;
-import fcl.plugins.http.server.types;
+import forge.api.registry;
+import forge.asio.runtime;
+import forge.http.api.binding;
+import forge.http.server;
+import forge.plugins.http.server.exceptions;
+import forge.plugins.http.server.middleware;
+import forge.plugins.http.server.types;
 
 #include "details/plugin_impl.hxx"
 
-namespace fcl::plugins::http::server {
+namespace forge::plugins::http::server {
 
 void plugin::impl::add(pending_binding value) {
    auto lock = std::scoped_lock{mutex};
    if (publication_closed) {
-      FCL_THROW_EXCEPTION(exceptions::publication_closed, "HTTP server publication is closed");
+      FORGE_THROW_EXCEPTION(exceptions::publication_closed, "HTTP server publication is closed");
    }
    bindings.push_back(std::move(value));
 }
@@ -32,7 +32,7 @@ void plugin::impl::add(pending_binding value) {
 void plugin::impl::add(middleware_descriptor value) {
    auto lock = std::scoped_lock{mutex};
    if (publication_closed) {
-      FCL_THROW_EXCEPTION(exceptions::publication_closed, "HTTP server publication is closed");
+      FORGE_THROW_EXCEPTION(exceptions::publication_closed, "HTTP server publication is closed");
    }
    middleware.push_back(std::move(value));
 }
@@ -55,4 +55,4 @@ void plugin::impl::reset_runtime() noexcept {
    middleware.clear();
 }
 
-} // namespace fcl::plugins::http::server
+} // namespace forge::plugins::http::server

@@ -1,6 +1,6 @@
 # Runtime + App
 
-Этот документ описывает связку `fcl_asio` and `fcl_app`. Локальные API
+Этот документ описывает связку `forge_asio` and `forge_app`. Локальные API
 показаны в [libraries/asio/README.md](../../libraries/asio/README.md) and
 [libraries/app/README.md](../../libraries/app/README.md); здесь фиксируется
 сквозная архитектура runtime, scheduler and async application lifecycle.
@@ -12,19 +12,19 @@
 непонятно, кто владеет shutdown, где backpressure, кто отменяет delayed work и
 почему startup failure оставил часть системы работающей.
 
-FCL baseline другой: runtime is explicit, async API is coroutine-first, queues
+FORGE baseline другой: runtime is explicit, async API is coroutine-first, queues
 are bounded, shutdown is deterministic and diagnostics are part of the contract.
 
 ## Layering
 
 ```text
 foreground daemon
-  -> fcl_app::run_daemon
-  -> fcl_yaml / fcl_env / fcl_program_options
-  -> fcl_config::document
-  -> fcl_app::application_shell
+  -> forge_app::run_daemon
+  -> forge_yaml / forge_env / forge_program_options
+  -> forge_config::document
+  -> forge_app::application_shell
   -> plugins configured through component_view
-  -> fcl_asio runtime / task_scheduler for async work
+  -> forge_asio runtime / task_scheduler for async work
 ```
 
 `run_daemon(...)` is the high-level foreground-daemon entrypoint. It owns
@@ -40,10 +40,10 @@ API registry, events, signals, diagnostics, plugin registry and plugin context.
 
 ## Runtime Ownership
 
-- `fcl_asio::runtime` owns `boost::asio::io_context` and worker threads.
-- `fcl_asio::task_scheduler` owns bounded pending queues, numeric priority,
+- `forge_asio::runtime` owns `boost::asio::io_context` and worker threads.
+- `forge_asio::task_scheduler` owns bounded pending queues, numeric priority,
   delayed tasks, cancellation handles and metrics.
-- Priority names are product/program policy. FCL only orders numeric priority and
+- Priority names are product/program policy. FORGE only orders numeric priority and
   FIFO within equal priority.
 - Blocking work must cross an explicit boundary; it must not be hidden inside
   unrelated coroutine code.
@@ -73,8 +73,8 @@ Most service `main(...)` functions should be thin:
 
 ```cpp
 int main(int argc, char** argv) {
-   return fcl::app::run_daemon(
-      [](const fcl::app::daemon_context& context) {
+   return forge::app::run_daemon(
+      [](const forge::app::daemon_context& context) {
          return std::make_unique<service_application>(service_application_options{
             .data_dir = context.data_dir,
             .profile = context.profile,
@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
       },
       argc,
       argv,
-      fcl::app::daemon_options{
+      forge::app::daemon_options{
          .name = "service",
          .display_name = "Service daemon",
          .default_data_dir_name = "service",
@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
 }
 ```
 
-The app still owns product composition. FCL owns the generic daemon flow:
+The app still owns product composition. FORGE owns the generic daemon flow:
 
 ```text
 collect descriptors -> defaults/YAML/.env/process-env/CLI merge -> configure -> startup
@@ -108,18 +108,18 @@ schema defaults < daemon defaults < YAML < .env < process env < daemon CLI < app
 ## Shell Integration Example
 
 ```cpp
-class service_application final : public fcl::app::application_shell {
+class service_application final : public forge::app::application_shell {
  protected:
-   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+   void on_register_plugins(forge::app::plugin_registry& registry) override {
       registry.register_plugin(make_http_plugin_descriptor());
    }
 
-   void on_describe_config(fcl::config::component_registry& registry) const override {
-      registry.add(fcl::config::describe_component<service_config>("service"));
+   void on_describe_config(forge::config::component_registry& registry) const override {
+      registry.add(forge::config::describe_component<service_config>("service"));
    }
 };
 
-boost::asio::awaitable<void> run_service(service_application& app, const fcl::config::document& document) {
+boost::asio::awaitable<void> run_service(service_application& app, const forge::config::document& document) {
    app.configure(document);
    co_await app.startup();
    app.request_stop();
@@ -135,23 +135,23 @@ For smaller applications and tests, `application_builder` creates an
 `application_shell` without introducing another lifecycle model:
 
 ```cpp
-auto builder = fcl::app::application_builder{};
+auto builder = forge::app::application_builder{};
 builder.name("service")
    .config<service_config>("service", [&](const service_config& config) {
       configure_service(config);
    })
    .plugin(make_http_plugin_descriptor());
 
-std::unique_ptr<fcl::app::application_shell> app = std::move(builder).build();
+std::unique_ptr<forge::app::application_shell> app = std::move(builder).build();
 app->configure(document);
-boost::asio::awaitable<void> start_then_stop(fcl::app::application_shell& app) {
+boost::asio::awaitable<void> start_then_stop(forge::app::application_shell& app) {
    co_await app.startup();
    app.request_stop();
    co_await app.shutdown();
 }
 ```
 
-Executable lifecycle coverage lives in `test_fcl_app`. Consumer snippets stay in
+Executable lifecycle coverage lives in `test_forge_app`. Consumer snippets stay in
 this document and the library README so they cannot drift behind an unbuilt
 example tree.
 
@@ -164,9 +164,9 @@ example tree.
 
 ## Boundaries
 
-- `fcl_asio` imports no app/config/network/TUI code.
-- `fcl_app` may depend on source adapters at the high daemon-runner layer:
-  `fcl_yaml`, `fcl_env` and `fcl_program_options`. Plugins and app hooks still
+- `forge_asio` imports no app/config/network/TUI code.
+- `forge_app` may depend on source adapters at the high daemon-runner layer:
+  `forge_yaml`, `forge_env` and `forge_program_options`. Plugins and app hooks still
   see only `config::document` / `component_view`.
 - Events and signals are diagnostics/lifecycle surfaces. They are not hidden
   business-flow transport.
@@ -191,7 +191,7 @@ Rejected:
 
 ## Verification
 
-- `test_fcl_asio`: priority ordering, delayed tasks, cancellation, queue bounds
+- `test_forge_asio`: priority ordering, delayed tasks, cancellation, queue bounds
   and shutdown.
-- `test_fcl_app`: config collection, configure-before-initialize, dependency
+- `test_forge_app`: config collection, configure-before-initialize, dependency
   ordering, rollback, diagnostics and reverse shutdown.

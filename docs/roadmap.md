@@ -1,9 +1,9 @@
-# FCL Roadmap
+# FORGE Roadmap
 
-FCL развивается как нейтральный C++23 infrastructure framework и constructor
+FORGE развивается как нейтральный C++23 infrastructure framework и constructor
 substrate. Он нужен для сборки распределённых сервисов, DePIN-сетей,
 blockchain/control-plane runtimes, P2P сетей, plugin-based daemons and
-transport/API layers без переноса продуктовой семантики в FCL.
+transport/API layers без переноса продуктовой семантики в FORGE.
 
 После `v1.0.0` основной ориентир — не “дописать старый FC-слой”, а удерживать
 чистые reusable boundaries: runtime, config, API contracts, transports, P2P,
@@ -12,14 +12,14 @@ plugins, telemetry and compatibility layers должны быть пригодн
 
 ## Current Framework Surface
 
-- Module-first public API under `libraries/<lib>/include/fcl/<lib>/*.cppm`.
+- Module-first public API under `libraries/<lib>/include/forge/<lib>/*.cppm`.
 - Boost.Describe as canonical reflection metadata.
-- `fcl_raw` byte compatibility for retained old FC wire layouts.
-- Typed `fcl_exceptions` categories plus redacted context instead of old
+- `forge_raw` byte compatibility for retained old FC wire layouts.
+- Typed `forge_exceptions` categories plus redacted context instead of old
   exception hierarchy.
-- Neutral `fcl_api` contracts for in-process plugin APIs and transport API
+- Neutral `forge_api` contracts for in-process plugin APIs and transport API
   bindings.
-- `fcl_plugins` aggregate plus focused `fcl_plugins_<family>_<name>` targets for shared
+- `forge_plugins` aggregate plus focused `forge_plugins_<family>_<name>` targets for shared
   lifecycle-owned components such as P2P nodes, with narrow local APIs for
   route/binding contributions.
 - Std chrono instead of old FC time aliases.
@@ -69,24 +69,24 @@ plugins, telemetry and compatibility layers должны быть пригодн
 Build/test gates:
 
 ```bash
-cmake --build build/fcl-debug -j 1 \
-  --target fcl test_fcl test_fcl_exceptions test_fcl_raw test_fcl_json test_fcl_crypto \
-  test_fcl_multiformats test_fcl_asio test_fcl_transport test_fcl_tcp test_fcl_stcp \
-  test_fcl_yamux test_fcl_quic test_fcl_app test_fcl_schema test_fcl_config \
-  test_fcl_yaml test_fcl_program_options test_fcl_env test_fcl_api \
-  test_fcl_transport_api test_fcl_http_websocket test_fcl_quic_p2p \
-  test_fcl_plugins test_fcl_otlp test_fcl_tui
+cmake --build build/forge-debug -j 1 \
+  --target forge test_forge test_forge_exceptions test_forge_raw test_forge_json test_forge_crypto \
+  test_forge_multiformats test_forge_asio test_forge_transport test_forge_tcp test_forge_stcp \
+  test_forge_yamux test_forge_quic test_forge_app test_forge_schema test_forge_config \
+  test_forge_yaml test_forge_program_options test_forge_env test_forge_api \
+  test_forge_transport_api test_forge_http_websocket test_forge_quic_p2p \
+  test_forge_plugins test_forge_otlp test_forge_tui
 
-ctest --test-dir build/fcl-debug --output-on-failure
+ctest --test-dir build/forge-debug --output-on-failure
 git diff --check
 ```
 
 Architecture gates:
 
-- No public `<fc/...>` includes, `namespace fc`, `FC_REFLECT` or `FCL_REFLECT`.
+- No public `<fc/...>` includes, `namespace fc`, `FC_REFLECT` or `FORGE_REFLECT`.
 - No backend parser/terminal/network types in public module interfaces.
 - No umbrella target carrying external dependencies "just in case".
-- No nested public include directories under `include/fcl/<lib>`.
+- No nested public include directories under `include/forge/<lib>`.
 - No absolute local machine paths in docs.
 - Every library has a useful README with examples and ownership boundaries.
 
@@ -101,12 +101,12 @@ Security gates:
 
 - Keep library READMEs aligned with public modules and actual targets.
 - Keep donor traceability updated when compatibility behavior changes.
-- Re-run package install plus external `find_package(FCL CONFIG REQUIRED)`
+- Re-run package install plus external `find_package(Forge CONFIG REQUIRED)`
   consumer smoke before releases.
 - Keep review focused on architecture boundaries, dependency hygiene, security
   and production readiness.
 
-## Out Of Scope For FCL Core
+## Out Of Scope For FORGE Core
 
 - Reintroducing source-level `fc::...` compatibility.
 - A full schema migration framework.

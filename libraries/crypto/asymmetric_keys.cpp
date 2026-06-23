@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 #include <algorithm>
 #include <compare>
 #include <cstddef>
@@ -9,13 +9,13 @@ module;
 #include <type_traits>
 #include <variant>
 
-module fcl.crypto.asymmetric;
+module forge.crypto.asymmetric;
 
-import fcl.core.utility;
-import fcl.exceptions;
-import fcl.variant.static_variant;
+import forge.core.utility;
+import forge.exceptions;
+import forge.variant.static_variant;
 
-namespace fcl::crypto::asymmetric {
+namespace forge::crypto::asymmetric {
 namespace {
 
 template <typename Storage> [[nodiscard]] algorithm algorithm_for(const Storage& storage) noexcept {
@@ -73,14 +73,14 @@ struct public_key_visitor : visitor<public_key::storage_type> {
    }
 };
 
-struct recovery_visitor : fcl::visitor<public_key::storage_type> {
+struct recovery_visitor : forge::visitor<public_key::storage_type> {
    recovery_visitor(const sha256& digest, bool check_canonical) : _digest(digest), _check_canonical(check_canonical) {}
 
    template <typename SignatureType> public_key::storage_type operator()(const SignatureType& s) const {
       if constexpr (requires { s.recover(_digest, _check_canonical); }) {
          return public_key::storage_type(s.recover(_digest, _check_canonical));
       } else {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "signature type does not support public key recovery");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "signature type does not support public key recovery");
       }
    }
 
@@ -114,13 +114,13 @@ struct sign_digest_visitor : visitor<signature::storage_type> {
    const sha256& _digest;
 };
 
-struct is_valid_visitor : public fcl::visitor<bool> {
+struct is_valid_visitor : public forge::visitor<bool> {
    template <typename KeyType> bool operator()(const KeyType& key) const {
       return key.valid();
    }
 };
 
-struct hash_visitor : public fcl::visitor<std::size_t> {
+struct hash_visitor : public forge::visitor<std::size_t> {
    template <typename SigType> std::size_t operator()(const SigType& sig) const {
       auto seed = std::size_t{0};
       const auto& data = sig.serialize();
@@ -174,7 +174,7 @@ bool public_key::valid() const {
 
 bool public_key::verify(std::span<const std::uint8_t> message, const signature& sig) const {
    if (_storage.index() != sig.storage().index()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_key, "signature algorithm does not match public key");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_key, "signature algorithm does not match public key");
    }
 
    return std::visit(
@@ -237,4 +237,4 @@ std::size_t hash_value(const signature& b) {
    return std::visit(hash_visitor(), b._storage);
 }
 
-} // namespace fcl::crypto::asymmetric
+} // namespace forge::crypto::asymmetric

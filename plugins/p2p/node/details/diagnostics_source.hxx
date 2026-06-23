@@ -1,15 +1,15 @@
 #pragma once
 
-namespace fcl::plugins::p2p::node {
+namespace forge::plugins::p2p::node {
 
 class plugin::diagnostics_source_adapter final : public diagnostics_source {
  public:
    explicit diagnostics_source_adapter(std::shared_ptr<plugin::impl> impl);
 
-   fcl::p2p::diagnostics::snapshot snapshot(fcl::p2p::diagnostics::options options) const override;
+   forge::p2p::diagnostics::snapshot snapshot(forge::p2p::diagnostics::options options) const override;
 
  private:
    std::shared_ptr<plugin::impl> impl_;
 };
 
-} // namespace fcl::plugins::p2p::node
+} // namespace forge::plugins::p2p::node

@@ -15,23 +15,23 @@ module;
 #include <alloca.h>
 #endif
 
-module fcl.crypto.secp256k1;
+module forge.crypto.secp256k1;
 
-import fcl.crypto.hmac;
-import fcl.crypto.ripemd160;
-import fcl.crypto.sha256;
-import fcl.crypto.sha512;
-import fcl.raw.raw;
+import forge.crypto.hmac;
+import forge.crypto.ripemd160;
+import forge.crypto.sha256;
+import forge.crypto.sha512;
+import forge.raw.raw;
 
 /* stuff common to all ecc implementations */
 
 #define BTC_EXT_PUB_MAGIC (0x0488B21E)
 #define BTC_EXT_PRIV_MAGIC (0x0488ADE4)
 
-namespace fcl::crypto::secp256k1 {
-using fcl::crypto::detail::bn_ctx;
-using fcl::crypto::detail::ec_group;
-using fcl::crypto::detail::ssl_bignum;
+namespace forge::crypto::secp256k1 {
+using forge::crypto::detail::bn_ctx;
+using forge::crypto::detail::ec_group;
+using forge::crypto::detail::ssl_bignum;
 
 namespace detail {
 void require(bool value, const char* message) {
@@ -42,14 +42,14 @@ void require(bool value, const char* message) {
 
 typedef std::array<char, 37> chr37;
 
-fcl::crypto::sha256 _left(const fcl::crypto::sha512& v) {
-   fcl::crypto::sha256 result;
+forge::crypto::sha256 _left(const forge::crypto::sha512& v) {
+   forge::crypto::sha256 result;
    memcpy(result.data(), v.data(), 32);
    return result;
 }
 
-fcl::crypto::sha256 _right(const fcl::crypto::sha512& v) {
-   fcl::crypto::sha256 result;
+forge::crypto::sha256 _right(const forge::crypto::sha512& v) {
+   forge::crypto::sha256 result;
    memcpy(result.data(), v.data() + 32, 32);
    return result;
 }
@@ -130,7 +130,7 @@ bool public_key::is_canonical(const compact_signature& c) {
           !(c.data()[33] == 0 && !(c.data()[34] & 0x80));
 }
 
-private_key private_key::generate_from_seed(const fcl::crypto::sha256& seed, const fcl::crypto::sha256& offset) {
+private_key private_key::generate_from_seed(const forge::crypto::sha256& seed, const forge::crypto::sha256& offset) {
    ssl_bignum z;
    BN_bin2bn((unsigned char*)&offset, sizeof(offset), z);
 
@@ -145,11 +145,11 @@ private_key private_key::generate_from_seed(const fcl::crypto::sha256& seed, con
    BN_add(secexp, secexp, z);
    BN_mod(secexp, secexp, order, ctx);
 
-   fcl::crypto::sha256 secret;
+   forge::crypto::sha256 secret;
    detail::require(BN_num_bytes(secexp) <= int64_t(sizeof(secret)), "secret exponent is too large");
    auto shift = sizeof(secret) - BN_num_bytes(secexp);
    BN_bn2bin(secexp, ((unsigned char*)&secret) + shift);
    return regenerate(secret);
 }
 
-} // namespace fcl::crypto::secp256k1
+} // namespace forge::crypto::secp256k1

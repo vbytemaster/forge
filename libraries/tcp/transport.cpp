@@ -4,9 +4,9 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.tcp.transport;
+module forge.tcp.transport;
 
-namespace fcl::tcp {
+namespace forge::tcp {
 
 void register_stream(transport::registry& registry, boost::asio::any_io_executor executor, options tcp_options) {
    registry.register_stream(
@@ -21,4 +21,4 @@ void register_stream(transport::registry& registry, boost::asio::any_io_executor
        });
 }
 
-} // namespace fcl::tcp
+} // namespace forge::tcp

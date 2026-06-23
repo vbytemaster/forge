@@ -1,6 +1,6 @@
 #pragma once
 
-namespace fcl::p2p::dht_query {
+namespace forge::p2p::dht_query {
 
 struct request {
    dht::key target;
@@ -131,7 +131,7 @@ query_batch_on_strand(std::vector<dht::peer> batch, Query& query,
              auto failed = false;
              try {
                 response = co_await query(peer);
-             } catch (const fcl::exceptions::base&) {
+             } catch (const forge::exceptions::base&) {
                 failed = true;
              }
              shared->items[index].response = std::move(response);
@@ -221,4 +221,4 @@ boost::asio::awaitable<result> run(request value, Query&& query) {
    co_return out;
 }
 
-} // namespace fcl::p2p::dht_query
+} // namespace forge::p2p::dht_query

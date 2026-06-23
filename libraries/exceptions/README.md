@@ -1,6 +1,6 @@
-# fcl_exceptions
+# forge_exceptions
 
-`fcl_exceptions` is the central FCL exception layer: std-compatible typed
+`forge_exceptions` is the central FORGE exception layer: std-compatible typed
 exceptions, numeric category codes, redacted diagnostic context and FC-like
 capture semantics without bringing back the old FC exception hierarchy.
 
@@ -9,28 +9,28 @@ capture semantics without bringing back the old FC exception hierarchy.
 - Throw typed domain errors that callers can catch by concrete type.
 - Wrap a lower-level exception with phase/resource context.
 - Throw assertion and deadline failures with source location and typed context.
-- Format nested exception chains for diagnostics without depending on `fcl_log`.
+- Format nested exception chains for diagnostics without depending on `forge_log`.
 
 ## When Not To Use
 
-- Do not model schema/config validation errors here; those live in `fcl_schema`.
+- Do not model schema/config validation errors here; those live in `forge_schema`.
 - Do not serialize diagnostic capture context through `variant` or JSON.
-- Do not put application-specific error enums in FCL core. Application code
+- Do not put application-specific error enums in FORGE core. Application code
   owns its own typed errors and declares categories next to those enums.
 
 ## Public API
 
 Modules:
 
-- `fcl.exceptions`
+- `forge.exceptions`
 
 Macro-only header:
 
-- `fcl/exceptions/macros.hpp`
+- `forge/exceptions/macros.hpp`
 
-Target: `fcl_exceptions`.
+Target: `forge_exceptions`.
 
-Dependencies: `fcl_core` only. It must not import `log`, `variant`, `json`,
+Dependencies: `forge_core` only. It must not import `log`, `variant`, `json`,
 `raw` or `crypto`.
 
 ## Examples
@@ -38,14 +38,14 @@ Dependencies: `fcl_core` only. It must not import `log`, `variant`, `json`,
 ### Throw With Context
 
 ```cpp
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
-import fcl.exceptions;
+import forge.exceptions;
 
-FCL_THROW(
+FORGE_THROW(
    "cannot open vault",
-   fcl::exceptions::ctx("path", "fcl.vault"),
-   fcl::exceptions::secret("passphrase", "not logged"));
+   forge::exceptions::ctx("path", "forge.vault"),
+   forge::exceptions::secret("passphrase", "not logged"));
 ```
 
 `secret(...)` values render as `<redacted>` in `what()`,
@@ -54,25 +54,25 @@ FCL_THROW(
 ### Throw A Typed Exception
 
 ```cpp
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
-import fcl.exceptions;
+import forge.exceptions;
 
 namespace cache_errors {
 enum class code : std::uint8_t {
    chunk_not_found = 1,
 };
 
-FCL_DECLARE_EXCEPTION_CATEGORY(code, "cache")
+FORGE_DECLARE_EXCEPTION_CATEGORY(code, "cache")
 
 using chunk_not_found =
-   fcl::exceptions::coded_exception<code, code::chunk_not_found>;
+   forge::exceptions::coded_exception<code, code::chunk_not_found>;
 } // namespace cache_errors
 
-FCL_THROW_EXCEPTION(
+FORGE_THROW_EXCEPTION(
    cache_errors::chunk_not_found,
    "chunk not found",
-   fcl::exceptions::ctx("ref", ref));
+   forge::exceptions::ctx("ref", ref));
 ```
 
 Callers can catch the concrete type:
@@ -88,56 +88,56 @@ try {
 ### Assert With Debug Context
 
 ```cpp
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
-import fcl.exceptions;
+import forge.exceptions;
 
 void open_slot(std::uint32_t index, std::uint32_t capacity) {
-   FCL_ASSERT(
+   FORGE_ASSERT(
       index < capacity,
       "slot index is out of range",
-      fcl::exceptions::ctx("index", index),
-      fcl::exceptions::ctx("capacity", capacity));
+      forge::exceptions::ctx("index", index),
+      forge::exceptions::ctx("capacity", capacity));
 }
 ```
 
-`FCL_ASSERT` throws a std-compatible `context_error`; callers should still catch
-`std::exception` at process boundaries because other FCL layers intentionally use
+`FORGE_ASSERT` throws a std-compatible `context_error`; callers should still catch
+`std::exception` at process boundaries because other FORGE layers intentionally use
 standard exceptions such as `std::invalid_argument` and `std::out_of_range`.
 
 ### Preserve Nested Cause
 
 ```cpp
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
-import fcl.exceptions;
+import forge.exceptions;
 
 try {
    parse_config();
-} FCL_CAPTURE_AND_RETHROW(
+} FORGE_CAPTURE_AND_RETHROW(
    "config bootstrap failed",
-   fcl::exceptions::ctx("component", "http"))
+   forge::exceptions::ctx("component", "http"))
 ```
 
 The rethrow uses `std::throw_with_nested`, so callers can inspect the outer
-`fcl::exceptions::context_error` and the original inner exception.
+`forge::exceptions::context_error` and the original inner exception.
 
 ### Format A Nested Exception Chain
 
 ```cpp
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
-import fcl.exceptions;
+import forge.exceptions;
 
 try {
    try {
       parse_config();
-   } FCL_CAPTURE_AND_RETHROW(
+   } FORGE_CAPTURE_AND_RETHROW(
       "config load failed",
-      fcl::exceptions::ctx("source", "service.yaml"),
-      fcl::exceptions::secret("passphrase", passphrase))
+      forge::exceptions::ctx("source", "service.yaml"),
+      forge::exceptions::secret("passphrase", passphrase))
 } catch (const std::exception& error) {
-   auto chain = fcl::exceptions::format_exception_chain(error);
+   auto chain = forge::exceptions::format_exception_chain(error);
    // chain contains outer context, inner std::exception::what(), and redacted secrets.
 }
 ```
@@ -145,9 +145,9 @@ try {
 ### Deadline Check
 
 ```cpp
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
-FCL_CHECK_DEADLINE(deadline, fcl::exceptions::ctx("phase", "handshake"));
+FORGE_CHECK_DEADLINE(deadline, forge::exceptions::ctx("phase", "handshake"));
 ```
 
 This throws a std-compatible `context_error` with `std::errc::timed_out`.
@@ -159,15 +159,15 @@ shutdown, and return an error. Do not turn recoverable startup failures into
 `abort()` or detached cleanup.
 
 ```cpp
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
-import fcl.exceptions;
+import forge.exceptions;
 
 int run_service() {
    try {
       return run_foreground();
    } catch (const std::exception& error) {
-      auto chain = fcl::exceptions::format_exception_chain(error);
+      auto chain = forge::exceptions::format_exception_chain(error);
       report_startup_failure(chain);
       request_stop_noexcept();
       shutdown_best_effort();
@@ -179,48 +179,48 @@ int run_service() {
 The chain is diagnostic text, not a control-flow taxonomy. Application code should
 use typed domain errors for decisions such as retry, backoff or user messaging.
 
-### Route Capture Logs To `fcl_log`
+### Route Capture Logs To `forge_log`
 
-`fcl_exceptions` exposes a neutral callback. The consuming program may route that
-callback to `fcl_log`, syslog, a test capture vector or any other sink.
+`forge_exceptions` exposes a neutral callback. The consuming program may route that
+callback to `forge_log`, syslog, a test capture vector or any other sink.
 
 ```cpp
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
-import fcl.exceptions;
-import fcl.log.logger;
-import fcl.log.record;
+import forge.exceptions;
+import forge.log.logger;
+import forge.log.record;
 
-auto log = fcl::logger{"worker"};
+auto log = forge::logger{"worker"};
 
-fcl::exceptions::set_log_sink([&](std::string_view chain) {
+forge::exceptions::set_log_sink([&](std::string_view chain) {
    log.error(
       "cleanup failed",
       {
-         fcl::log_ctx("exception-chain", chain),
-         fcl::log_secret("session-token", token),
+         forge::log_ctx("exception-chain", chain),
+         forge::log_secret("session-token", token),
       });
 });
 
 try {
    cleanup_best_effort();
-} FCL_CAPTURE_AND_LOG(
+} FORGE_CAPTURE_AND_LOG(
    "cleanup best-effort path failed",
-   fcl::exceptions::ctx("phase", "shutdown"),
-   fcl::exceptions::secret("session-token", token))
+   forge::exceptions::ctx("phase", "shutdown"),
+   forge::exceptions::secret("session-token", token))
 ```
 
-`FCL_CAPTURE_AND_LOG` deliberately swallows the current exception after routing
+`FORGE_CAPTURE_AND_LOG` deliberately swallows the current exception after routing
 it to the callback. Use it only for cleanup paths where continuing is correct.
-For correctness paths, use `FCL_CAPTURE_AND_RETHROW` or
-`FCL_CAPTURE_LOG_AND_RETHROW`. FCL exceptions keep their dynamic type and receive
-extra context; non-FCL exceptions are wrapped into a sanitized `context_error`.
+For correctness paths, use `FORGE_CAPTURE_AND_RETHROW` or
+`FORGE_CAPTURE_LOG_AND_RETHROW`. FORGE exceptions keep their dynamic type and receive
+extra context; non-FORGE exceptions are wrapped into a sanitized `context_error`.
 
 ## Risks And Anti-Patterns
 
 - Do not convert every error into `context_error`. Use standard exception types
   when no structured context is needed.
-- Do not throw `std::runtime_error` for public FCL/app/network/API boundary
+- Do not throw `std::runtime_error` for public FORGE/app/network/API boundary
   failures that need stable handling. Add a typed exception family instead.
 - Do not log-and-continue from correctness paths. Capture helpers must preserve
   failure semantics, not create silent recovery.
@@ -229,10 +229,10 @@ extra context; non-FCL exceptions are wrapped into a sanitized `context_error`.
 
 ## Typical Mistakes
 
-- Do not catch only `fcl::exceptions::context_error` at process boundaries. Also catch
-  `std::exception` because many FCL layers intentionally throw standard errors.
+- Do not catch only `forge::exceptions::context_error` at process boundaries. Also catch
+  `std::exception` because many FORGE layers intentionally throw standard errors.
 - Do not put secrets into the plain message string. Use `secret(key, value)`.
-- Do not use `FCL_CAPTURE_AND_LOG` on correctness paths if the error must
+- Do not use `FORGE_CAPTURE_AND_LOG` on correctness paths if the error must
   propagate; logging must not become silent recovery.
 - Do not call `std::terminate()`/`abort()` just to get a stack trace. Capture
   context, log the chain, and let the application lifecycle shut down.
@@ -241,5 +241,5 @@ extra context; non-FCL exceptions are wrapped into a sanitized `context_error`.
 
 ## Tests
 
-`test_fcl_exceptions` covers redaction, nested exception chains, assertion macro
+`test_forge_exceptions` covers redaction, nested exception chains, assertion macro
 behavior and deadline errors.

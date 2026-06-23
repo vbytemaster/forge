@@ -8,58 +8,58 @@ module;
 #include <string>
 #include <vector>
 
-module fcl.plugins.crypto.secrets.plugin;
+module forge.plugins.crypto.secrets.plugin;
 
-import fcl.api.registry;
-import fcl.app.plugin;
-import fcl.app.plugin_context;
-import fcl.app.plugin_registry;
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.crypto.secret_bytes;
-import fcl.plugins.crypto.secrets.api;
-import fcl.plugins.crypto.secrets.types;
+import forge.api.registry;
+import forge.app.plugin;
+import forge.app.plugin_context;
+import forge.app.plugin_registry;
+import forge.config.component;
+import forge.config.decode;
+import forge.crypto.secret_bytes;
+import forge.plugins.crypto.secrets.api;
+import forge.plugins.crypto.secrets.types;
 
 #include "details/config.hxx"
 #include "details/plugin_impl.hxx"
 #include "details/secret_api.hxx"
 
-namespace fcl::plugins::crypto::secrets {
+namespace forge::plugins::crypto::secrets {
 
 plugin::plugin() : impl_{std::make_shared<impl>()} {}
 
 plugin::~plugin() = default;
 
-fcl::app::plugin_descriptor descriptor() {
-   return fcl::app::plugin_descriptor{
-      .id = {.value = "fcl.plugins.crypto.secrets"},
+forge::app::plugin_descriptor descriptor() {
+   return forge::app::plugin_descriptor{
+      .id = {.value = "forge.plugins.crypto.secrets"},
       .factory = [] { return std::make_unique<plugin>(); },
    };
 }
 
-fcl::app::plugin_id plugin::id() const {
-   return {.value = "fcl.plugins.crypto.secrets"};
+forge::app::plugin_id plugin::id() const {
+   return {.value = "forge.plugins.crypto.secrets"};
 }
 
 std::string plugin::version() const {
    return "1.0.0";
 }
 
-std::optional<fcl::config::component_descriptor> plugin::describe_config() const {
-   return fcl::config::describe_component<config>("plugins.crypto.secrets");
+std::optional<forge::config::component_descriptor> plugin::describe_config() const {
+   return forge::config::describe_component<config>("plugins.crypto.secrets");
 }
 
-boost::asio::awaitable<void> plugin::configure(fcl::config::component_view view) {
+boost::asio::awaitable<void> plugin::configure(forge::config::component_view view) {
    apply_config(*impl_, view);
    co_return;
 }
 
-boost::asio::awaitable<void> plugin::provide(fcl::api::provider& provider) {
+boost::asio::awaitable<void> plugin::provide(forge::api::provider& provider) {
    provider.install<api>(std::make_shared<secret_api>(impl_));
    co_return;
 }
 
-boost::asio::awaitable<void> plugin::initialize(fcl::app::plugin_context&) {
+boost::asio::awaitable<void> plugin::initialize(forge::app::plugin_context&) {
    impl_->stopping = false;
    co_return;
 }
@@ -77,4 +77,4 @@ boost::asio::awaitable<void> plugin::shutdown() {
    co_return;
 }
 
-} // namespace fcl::plugins::crypto::secrets
+} // namespace forge::plugins::crypto::secrets

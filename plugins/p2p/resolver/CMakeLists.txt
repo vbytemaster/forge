@@ -1,5 +1,5 @@
 add_library(
-   fcl_plugins_p2p_resolver STATIC
+   forge_plugins_p2p_resolver STATIC
       plugin.cpp
       config.cpp
       descriptor_projection.cpp
@@ -7,25 +7,25 @@ add_library(
       protocol.cpp
       resolver_api.cpp
 )
-fcl_target_modules_at(fcl_plugins_p2p_resolver plugins/p2p/resolver)
+forge_target_modules_at(forge_plugins_p2p_resolver plugins/p2p/resolver)
 
 target_include_directories(
-   fcl_plugins_p2p_resolver
+   forge_plugins_p2p_resolver
    PUBLIC
-      ${FCL_PUBLIC_INCLUDE_DIRS}
-      "$<BUILD_INTERFACE:${FCL_PLUGINS_P2P_RESOLVER_INCLUDE_DIR}>"
+      ${FORGE_PUBLIC_INCLUDE_DIRS}
+      "$<BUILD_INTERFACE:${FORGE_PLUGINS_P2P_RESOLVER_INCLUDE_DIR}>"
    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 target_link_libraries(
-   fcl_plugins_p2p_resolver PUBLIC
-      fcl_plugins_p2p_node
-      fcl_app
-      fcl_api
-      fcl_transport_api
-      fcl_p2p
-      fcl_config
-      fcl_schema
-      fcl_exceptions
+   forge_plugins_p2p_resolver PUBLIC
+      forge_plugins_p2p_node
+      forge_app
+      forge_api
+      forge_transport_api
+      forge_p2p
+      forge_config
+      forge_schema
+      forge_exceptions
       Boost::asio
 )

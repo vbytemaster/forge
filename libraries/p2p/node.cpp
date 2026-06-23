@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -33,46 +33,46 @@ module;
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
-module fcl.p2p.node;
+module forge.p2p.node;
 
-import fcl.crypto.chacha20_poly1305;
-import fcl.crypto.der;
-import fcl.crypto.ed25519;
-import fcl.crypto.hmac;
-import fcl.crypto.pem;
-import fcl.crypto.asymmetric;
-import fcl.p2p.dht;
-import fcl.p2p.diagnostics;
-import fcl.p2p.discovery;
-import fcl.p2p.endpoint;
-import fcl.p2p.envelope;
-import fcl.p2p.hole_punch;
-import fcl.p2p.identify;
-import fcl.p2p.exceptions;
-import fcl.p2p.message;
-import fcl.p2p.negotiation;
-import fcl.p2p.pubsub;
-import fcl.p2p.reachability;
-import fcl.p2p.rendezvous;
-import fcl.p2p.resource_manager;
-import fcl.p2p.scoring;
-import fcl.p2p.stream;
-import fcl.crypto.random;
-import fcl.crypto.rsa;
-import fcl.crypto.sha256;
-import fcl.crypto.x25519;
-import fcl.multiformats.types;
-import fcl.multiformats.varint;
-import fcl.multiformats.exceptions;
-import fcl.transport.session;
-import fcl.transport.stream;
-import fcl.yamux.session;
+import forge.crypto.chacha20_poly1305;
+import forge.crypto.der;
+import forge.crypto.ed25519;
+import forge.crypto.hmac;
+import forge.crypto.pem;
+import forge.crypto.asymmetric;
+import forge.p2p.dht;
+import forge.p2p.diagnostics;
+import forge.p2p.discovery;
+import forge.p2p.endpoint;
+import forge.p2p.envelope;
+import forge.p2p.hole_punch;
+import forge.p2p.identify;
+import forge.p2p.exceptions;
+import forge.p2p.message;
+import forge.p2p.negotiation;
+import forge.p2p.pubsub;
+import forge.p2p.reachability;
+import forge.p2p.rendezvous;
+import forge.p2p.resource_manager;
+import forge.p2p.scoring;
+import forge.p2p.stream;
+import forge.crypto.random;
+import forge.crypto.rsa;
+import forge.crypto.sha256;
+import forge.crypto.x25519;
+import forge.multiformats.types;
+import forge.multiformats.varint;
+import forge.multiformats.exceptions;
+import forge.transport.session;
+import forge.transport.stream;
+import forge.yamux.session;
 
 #include "node_impl.hpp"
 #include "dht_query.hpp"
 #include "protocol_capabilities.hpp"
 
-namespace fcl::p2p {
+namespace forge::p2p {
 
 namespace {
 
@@ -291,7 +291,7 @@ identify_peer(auto self, const peer_id& peer, discovery::source source, std::chr
       self->store.upsert(std::move(record));
       co_await stream.async_close();
       co_return document;
-   } catch (const fcl::exceptions::base&) {
+   } catch (const forge::exceptions::base&) {
       self->store.mark_failure(peer);
       co_return std::nullopt;
    }
@@ -306,7 +306,7 @@ identify_peer(auto self, const peer_id& peer, discovery::source source, std::chr
           rendezvous::codec::open_peer_record(signed_envelope::decode(registration.signed_peer_record),
                                               registration.peer);
       return record.endpoints;
-   } catch (const fcl::exceptions::base&) {
+   } catch (const forge::exceptions::base&) {
       return {};
    }
 }
@@ -360,7 +360,7 @@ make_local_rendezvous_record(const auto& self, std::uint64_t sequence) {
 
 } // namespace
 
-node::node(fcl::asio::runtime& runtime, node::options options) {
+node::node(forge::asio::runtime& runtime, node::options options) {
    validate(options);
    impl_ = std::make_shared<impl>(runtime, std::move(options));
 }
@@ -373,7 +373,7 @@ const peer_id& node::local_peer() const noexcept {
    return impl_->local;
 }
 
-std::optional<fcl::p2p::endpoint> node::local_endpoint() const {
+std::optional<forge::p2p::endpoint> node::local_endpoint() const {
    auto endpoints = local_endpoints();
    if (endpoints.empty()) {
       return std::nullopt;
@@ -381,7 +381,7 @@ std::optional<fcl::p2p::endpoint> node::local_endpoint() const {
    return endpoints.front();
 }
 
-std::vector<fcl::p2p::endpoint> node::local_endpoints() const {
+std::vector<forge::p2p::endpoint> node::local_endpoints() const {
    return impl_->local_endpoints_for_control();
 }
 
@@ -395,10 +395,10 @@ node::metrics_snapshot node::metrics() const {
    return out;
 }
 
-fcl::p2p::diagnostics::snapshot node::diagnostics(fcl::p2p::diagnostics::options options) const {
+forge::p2p::diagnostics::snapshot node::diagnostics(forge::p2p::diagnostics::options options) const {
    auto lock = std::scoped_lock{impl_->mutex};
-   auto out = fcl::p2p::diagnostics::snapshot{};
-   out.network = fcl::p2p::diagnostics::network_state{
+   auto out = forge::p2p::diagnostics::snapshot{};
+   out.network = forge::p2p::diagnostics::network_state{
       .local_peer = impl_->local,
       .local_endpoints = impl_->local_endpoints_for_control_locked(),
       .stopped = impl_->stopped,
@@ -411,7 +411,7 @@ fcl::p2p::diagnostics::snapshot node::diagnostics(fcl::p2p::diagnostics::options
    out.pubsub = diagnostics_pubsub(*impl_);
 
    auto connection_snapshot = impl_->connections.current(options.max_sessions);
-   out.connections = fcl::p2p::diagnostics::connection_state{
+   out.connections = forge::p2p::diagnostics::connection_state{
       .active_sessions = connection_snapshot.active_sessions,
       .protected_peers = std::move(connection_snapshot.protected_peers),
    };
@@ -424,7 +424,7 @@ fcl::p2p::diagnostics::snapshot node::diagnostics(fcl::p2p::diagnostics::options
          continue;
       }
       const auto& session = *found->second;
-      out.sessions.push_back(fcl::p2p::diagnostics::session{
+      out.sessions.push_back(forge::p2p::diagnostics::session{
           .id = session.id,
           .remote_peer = session.info.remote_peer,
           .capabilities = session.info.capabilities,
@@ -478,25 +478,25 @@ bool node::is_peer_protected(const peer_id& peer) const {
 
 void node::register_protocol_handler(protocol_id protocol, node::protocol_handler handler) {
    if (protocol.value.empty() || !handler) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P protocol handler requires protocol id and handler");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "P2P protocol handler requires protocol id and handler");
    }
    auto lock = std::scoped_lock{impl_->mutex};
    if (impl_->handlers.size() >= impl_->options.limits.max_protocol_handlers) {
-      FCL_THROW_EXCEPTION(exceptions::backpressure_rejected, "P2P max protocol handlers reached");
+      FORGE_THROW_EXCEPTION(exceptions::backpressure_rejected, "P2P max protocol handlers reached");
    }
    const auto [_, inserted] = impl_->handlers.emplace(std::move(protocol), std::move(handler));
    if (!inserted) {
-      FCL_THROW_EXCEPTION(exceptions::duplicate_protocol, "duplicate P2P protocol handler");
+      FORGE_THROW_EXCEPTION(exceptions::duplicate_protocol, "duplicate P2P protocol handler");
    }
 }
 
-boost::asio::awaitable<void> node::async_listen(fcl::p2p::endpoint endpoint) {
+boost::asio::awaitable<void> node::async_listen(forge::p2p::endpoint endpoint) {
    auto self = impl_;
-   auto local_endpoint = fcl::p2p::endpoint{};
+   auto local_endpoint = forge::p2p::endpoint{};
    {
       auto lock = std::scoped_lock{self->mutex};
       if (self->stopped) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "P2P node is stopped");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "P2P node is stopped");
       }
       local_endpoint = self->direct_registry.listen(std::move(endpoint));
    }
@@ -506,11 +506,11 @@ boost::asio::awaitable<void> node::async_listen(fcl::p2p::endpoint endpoint) {
    co_return;
 }
 
-boost::asio::awaitable<node::session_info> node::async_connect(fcl::p2p::endpoint endpoint) {
+boost::asio::awaitable<node::session_info> node::async_connect(forge::p2p::endpoint endpoint) {
    return async_connect(std::move(endpoint), connect_options{});
 }
 
-boost::asio::awaitable<node::session_info> node::async_connect(fcl::p2p::endpoint endpoint,
+boost::asio::awaitable<node::session_info> node::async_connect(forge::p2p::endpoint endpoint,
                                                                node::connect_options options) {
    validate_operation_timeout(options.timeout, "P2P connect timeout");
    auto self = impl_;
@@ -543,7 +543,7 @@ boost::asio::awaitable<reachability::state> node::async_probe_reachability(peer_
               },
       }));
       auto state = reachability::state::private_network;
-      auto observed = std::optional<fcl::p2p::endpoint>{};
+      auto observed = std::optional<forge::p2p::endpoint>{};
       auto buffer = std::vector<std::uint8_t>{};
       for (auto step = 0U; step != 8U; ++step) {
          auto message = reachability::codec::decode_v2(
@@ -565,7 +565,7 @@ boost::asio::awaitable<reachability::state> node::async_probe_reachability(peer_
             continue;
          }
          if (message.type != reachability::v2::message::kind::dial_response || !message.dial_response) {
-            FCL_THROW_EXCEPTION(exceptions::protocol_error, "AutoNAT v2 probe expected dial response");
+            FORGE_THROW_EXCEPTION(exceptions::protocol_error, "AutoNAT v2 probe expected dial response");
          }
          if (message.dial_response->status == reachability::v2::response_status::ok &&
              message.dial_response->dial_status == reachability::v2::dial_status::ok) {
@@ -582,8 +582,8 @@ boost::asio::awaitable<reachability::state> node::async_probe_reachability(peer_
          self->store.mark_reachability(self->local, state, observed);
          co_return state;
       }
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "AutoNAT v2 probe exceeded message exchange limit");
-   } catch (const fcl::exceptions::base& error) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "AutoNAT v2 probe exceeded message exchange limit");
+   } catch (const forge::exceptions::base& error) {
       self->forget_autonat_v2_nonce(observer);
       if (p2p_code(error) != exceptions::code::unsupported_protocol) {
          throw;
@@ -600,7 +600,7 @@ boost::asio::awaitable<reachability::state> node::async_probe_reachability(peer_
    }));
    auto response = reachability::codec::decode_v1(co_await stream.async_read());
    if (response.kind != reachability::message::message_kind::dial_response || !response.response) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "AutoNAT probe expected dial response");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "AutoNAT probe expected dial response");
    }
    auto state = reachability::state::private_network;
    if (response.response->status == reachability::dial_status::ok) {
@@ -721,7 +721,7 @@ boost::asio::awaitable<std::vector<discovery::result>> node::async_refresh_disco
                                                                             .signed_peer_record = std::move(*signed_record),
                                                                             .ttl = self->options.limits.rendezvous.default_ttl,
                                                                         });
-               } catch (const fcl::exceptions::base&) {
+               } catch (const forge::exceptions::base&) {
                   self->store.mark_failure(record.peer);
                }
             }
@@ -764,7 +764,7 @@ boost::asio::awaitable<std::vector<discovery::result>> node::async_refresh_disco
                                    self->options.limits.discovery.max_results);
                   }
                }
-            } catch (const fcl::exceptions::base&) {
+            } catch (const forge::exceptions::base&) {
                self->store.mark_failure(record.peer);
             }
          }
@@ -899,7 +899,7 @@ boost::asio::awaitable<void> node::async_provide(dht::key key) {
          },
                                                         self->options.limits.dht));
          co_await stream.async_close();
-      } catch (const fcl::exceptions::base&) {
+      } catch (const forge::exceptions::base&) {
          self->store.mark_failure(candidate.id);
       }
    }
@@ -982,7 +982,7 @@ node::async_rendezvous_register(peer_id rendezvous_peer, rendezvous::register_re
        co_await async_read_length_delimited(stream, buffer, self->options.limits.rendezvous.max_message_size),
        self->options.limits.rendezvous);
    if (response.type != rendezvous::message_type::register_response || !response.register_response_value) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "rendezvous expected register response");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "rendezvous expected register response");
    }
    co_await stream.async_close();
    co_return *response.register_response_value;
@@ -1003,7 +1003,7 @@ node::async_rendezvous_discover(peer_id rendezvous_peer, rendezvous::discover_re
        co_await async_read_length_delimited(stream, buffer, self->options.limits.rendezvous.max_message_size),
        self->options.limits.rendezvous);
    if (response.type != rendezvous::message_type::discover_response || !response.discover_response_value) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "rendezvous expected discover response");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "rendezvous expected discover response");
    }
    auto sanitized_registrations = std::vector<rendezvous::registration>{};
    const auto context = third_party_discovery_context();
@@ -1024,7 +1024,7 @@ node::async_rendezvous_discover(peer_id rendezvous_peer, rendezvous::discover_re
 
 boost::asio::awaitable<pubsub::subscription> node::async_subscribe(pubsub::topic subject, pubsub::handler handler) {
    if (subject.value.empty() || !handler) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub subscription requires topic and handler");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub subscription requires topic and handler");
    }
    auto self = impl_;
    auto subscription = pubsub::subscription{.subscribe = true, .subject = std::move(subject)};
@@ -1032,7 +1032,7 @@ boost::asio::awaitable<pubsub::subscription> node::async_subscribe(pubsub::topic
       auto lock = std::scoped_lock{self->mutex};
       if (self->pubsub_value.handlers.size() >= self->options.limits.pubsub.limits.max_topics &&
           !self->pubsub_value.handlers.contains(subscription.subject.value)) {
-         FCL_THROW_EXCEPTION(exceptions::backpressure_rejected, "GossipSub topic limit reached");
+         FORGE_THROW_EXCEPTION(exceptions::backpressure_rejected, "GossipSub topic limit reached");
       }
       self->pubsub_value.handlers[subscription.subject.value] = std::move(handler);
    }
@@ -1040,7 +1040,7 @@ boost::asio::awaitable<pubsub::subscription> node::async_subscribe(pubsub::topic
    for (const auto& peer : peers) {
       try {
          co_await self->send_pubsub_rpc(peer, pubsub::rpc{.subscriptions = std::vector<pubsub::subscription>{subscription}});
-      } catch (const fcl::exceptions::base&) {
+      } catch (const forge::exceptions::base&) {
          self->store.mark_failure(peer);
       }
    }
@@ -1049,7 +1049,7 @@ boost::asio::awaitable<pubsub::subscription> node::async_subscribe(pubsub::topic
 
 boost::asio::awaitable<void> node::async_unsubscribe(pubsub::topic subject) {
    if (subject.value.empty()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub unsubscribe requires topic");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub unsubscribe requires topic");
    }
    auto self = impl_;
    auto subscription = pubsub::subscription{.subscribe = false, .subject = std::move(subject)};
@@ -1062,7 +1062,7 @@ boost::asio::awaitable<void> node::async_unsubscribe(pubsub::topic subject) {
    for (const auto& peer : peers) {
       try {
          co_await self->send_pubsub_rpc(peer, pubsub::rpc{.subscriptions = std::vector<pubsub::subscription>{subscription}});
-      } catch (const fcl::exceptions::base&) {
+      } catch (const forge::exceptions::base&) {
          self->store.mark_failure(peer);
       }
    }
@@ -1076,11 +1076,11 @@ boost::asio::awaitable<pubsub::message> node::async_publish(pubsub::topic subjec
 boost::asio::awaitable<pubsub::message> node::async_publish(pubsub::topic subject, std::vector<std::uint8_t> data,
                                                             pubsub::publish_options publish_options) {
    if (subject.value.empty()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub publish requires topic");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub publish requires topic");
    }
    auto self = impl_;
    if (data.size() > self->options.limits.pubsub.limits.max_data_size) {
-      FCL_THROW_EXCEPTION(exceptions::backpressure_rejected, "GossipSub publish exceeds max data size");
+      FORGE_THROW_EXCEPTION(exceptions::backpressure_rejected, "GossipSub publish exceeds max data size");
    }
    auto value = pubsub::message{
        .data = std::move(data),
@@ -1088,13 +1088,13 @@ boost::asio::awaitable<pubsub::message> node::async_publish(pubsub::topic subjec
        .subject = std::move(subject),
    };
    if (publish_options.sign) {
-      const auto key = fcl::crypto::pem::read_private_key(self->options.private_key_pem);
+      const auto key = forge::crypto::pem::read_private_key(self->options.private_key_pem);
       pubsub::codec::sign_message(value, key);
       if (!value.from || *value.from != self->local) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_identity, "GossipSub signing key does not match local Peer ID");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_identity, "GossipSub signing key does not match local Peer ID");
       }
    } else if (self->options.limits.pubsub.signatures == pubsub::signature_policy::strict_sign) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub strict-sign node cannot publish unsigned messages");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub strict-sign node cannot publish unsigned messages");
    }
 
    const auto id = pubsub::codec::message_id(value);
@@ -1118,12 +1118,12 @@ boost::asio::awaitable<pubsub::message> node::async_publish(pubsub::topic subjec
       try {
          co_await self->send_pubsub_rpc(peer, pubsub::rpc{.messages = std::vector<pubsub::message>{value}});
          ++sent;
-      } catch (const fcl::exceptions::base&) {
+      } catch (const forge::exceptions::base&) {
          self->store.mark_failure(peer);
       }
    }
    if (attempted > 0 && sent == 0) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "GossipSub publish could not reach any candidate peer");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "GossipSub publish could not reach any candidate peer");
    }
    co_return value;
 }
@@ -1139,11 +1139,11 @@ boost::asio::awaitable<std::chrono::milliseconds> node::async_ping(peer_id peer)
 boost::asio::awaitable<std::chrono::milliseconds> node::async_ping(peer_id peer, open_options options) {
    auto started = std::chrono::steady_clock::now();
    auto stream = co_await async_open_protocol_stream(std::move(peer), builtins::ping, std::move(options));
-   const auto payload = fcl::crypto::random_bytes(32);
+   const auto payload = forge::crypto::random_bytes(32);
    co_await stream.async_write(payload);
    const auto reply = co_await stream.async_read();
    if (reply != payload) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "libp2p ping payload mismatch");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "libp2p ping payload mismatch");
    }
    co_await stream.async_close();
    co_return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started);
@@ -1155,17 +1155,17 @@ node::async_attempt_hole_punch(peer_id peer, std::optional<peer_id> relay_peer, 
    co_return co_await self->attempt_hole_punch(std::move(peer), std::move(relay_peer), timeout);
 }
 
-boost::asio::awaitable<fcl::p2p::stream> node::async_open_protocol_stream(peer_id peer, protocol_id protocol) {
+boost::asio::awaitable<forge::p2p::stream> node::async_open_protocol_stream(peer_id peer, protocol_id protocol) {
    return async_open_protocol_stream(std::move(peer), std::move(protocol), open_options{});
 }
 
-boost::asio::awaitable<fcl::p2p::stream> node::async_open_protocol_stream(peer_id peer, protocol_id protocol,
+boost::asio::awaitable<forge::p2p::stream> node::async_open_protocol_stream(peer_id peer, protocol_id protocol,
                                                                           node::open_options options) {
    validate_operation_timeout(options.timeout, "P2P protocol open timeout");
    validate_operation_timeout(options.direct_attempt_timeout, "P2P direct attempt timeout");
    validate_operation_timeout(options.relay_attempt_timeout, "P2P relay attempt timeout");
    if (options.max_direct_endpoints == 0 || options.max_relay_candidates == 0) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P path attempt limits must be positive");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "P2P path attempt limits must be positive");
    }
    auto self = impl_;
    auto effective = options;
@@ -1183,7 +1183,7 @@ boost::asio::awaitable<fcl::p2p::stream> node::async_open_protocol_stream(peer_i
       try {
          co_return co_await self->open_protocol_direct(
              peer, protocol, effective.timeout, effective.max_direct_endpoints, effective.direct_attempt_timeout);
-      } catch (const fcl::exceptions::base& error) {
+      } catch (const forge::exceptions::base& error) {
          last_kind = p2p_code(error);
          last_message = error.what();
          if (p2p_code(error) == exceptions::code::unsupported_protocol || p2p_code(error) == exceptions::code::protocol_error ||
@@ -1192,7 +1192,7 @@ boost::asio::awaitable<fcl::p2p::stream> node::async_open_protocol_stream(peer_i
          }
          try {
             (void)remaining_timeout(started, effective.timeout, "P2P protocol open");
-         } catch (const fcl::exceptions::base&) {
+         } catch (const forge::exceptions::base&) {
             throw;
          }
          if (!effective.allow_relay && !(effective.allow_hole_punch && effective.relay_peer)) {
@@ -1214,7 +1214,7 @@ boost::asio::awaitable<fcl::p2p::stream> node::async_open_protocol_stream(peer_i
             (void)co_await self->refresh_relay_candidates(peer, refresh_timeout);
             relay_candidates = self->fresh_outbound_relay_candidates(effective.max_relay_candidates,
                                                                      self->options.relay_policy.refresh_margin);
-         } catch (const fcl::exceptions::base& error) {
+         } catch (const forge::exceptions::base& error) {
             last_kind = p2p_code(error);
             last_message = error.what();
          }
@@ -1232,7 +1232,7 @@ boost::asio::awaitable<fcl::p2p::stream> node::async_open_protocol_stream(peer_i
                    peer, protocol, remaining_timeout(started, effective.timeout, "P2P protocol open after hole punch"),
                    effective.max_direct_endpoints, effective.direct_attempt_timeout);
             }
-         } catch (const fcl::exceptions::base& error) {
+         } catch (const forge::exceptions::base& error) {
             last_kind = p2p_code(error);
             last_message = error.what();
          }
@@ -1241,13 +1241,13 @@ boost::asio::awaitable<fcl::p2p::stream> node::async_open_protocol_stream(peer_i
 
    if (!effective.allow_relay) {
       if (last_kind) {
-         FCL_THROW_CODE(*last_kind, last_message);
+         FORGE_THROW_CODE(*last_kind, last_message);
       }
-      FCL_THROW_EXCEPTION(exceptions::relay_not_available, "P2P relay fallback is disabled");
+      FORGE_THROW_EXCEPTION(exceptions::relay_not_available, "P2P relay fallback is disabled");
    }
 
    if (relay_candidates.empty()) {
-      FCL_THROW_EXCEPTION(exceptions::relay_not_available, "P2P path manager found no reserved relay candidate");
+      FORGE_THROW_EXCEPTION(exceptions::relay_not_available, "P2P path manager found no reserved relay candidate");
    }
    self->record_direct_failure(peer);
    for (const auto& relay_peer : relay_candidates) {
@@ -1255,15 +1255,15 @@ boost::asio::awaitable<fcl::p2p::stream> node::async_open_protocol_stream(peer_i
       const auto per_attempt = attempt_timeout(remaining, effective.relay_attempt_timeout, "P2P relay path attempt");
       try {
          co_return co_await self->open_protocol_via_relay(peer, protocol, relay_peer, per_attempt);
-      } catch (const fcl::exceptions::base& error) {
+      } catch (const forge::exceptions::base& error) {
          last_kind = p2p_code(error);
          last_message = error.what();
       }
    }
    if (last_kind) {
-      FCL_THROW_CODE(*last_kind, last_message);
+      FORGE_THROW_CODE(*last_kind, last_message);
    }
-   FCL_THROW_EXCEPTION(exceptions::relay_not_available, "P2P path manager exhausted relay candidates");
+   FORGE_THROW_EXCEPTION(exceptions::relay_not_available, "P2P path manager exhausted relay candidates");
 }
 
 boost::asio::awaitable<void> node::async_stop() {
@@ -1322,4 +1322,4 @@ void node::stop() {
    }
 }
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

@@ -1,5 +1,5 @@
 module;
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 #include "openssl_backend.hpp"
 #include <array>
 #include <exception>
@@ -16,26 +16,26 @@ module;
 #include <alloca.h>
 #endif
 
-module fcl.crypto.secp256k1;
+module forge.crypto.secp256k1;
 
-import fcl.crypto.hmac;
-import fcl.crypto.random;
-import fcl.crypto.sha256;
-import fcl.crypto.sha512;
-import fcl.exceptions;
+import forge.crypto.hmac;
+import forge.crypto.random;
+import forge.crypto.sha256;
+import forge.crypto.sha512;
+import forge.exceptions;
 
 #include "secp256k1_backend.hpp"
 
-namespace fcl::crypto::secp256k1 {
+namespace forge::crypto::secp256k1 {
 namespace detail {
-using fcl::crypto::detail::ec_group;
+using forge::crypto::detail::ec_group;
 
 struct context_creator {
    context_creator() {
       ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
       char seed[32];
-      fcl::crypto::fill_random(std::span<std::uint8_t>{reinterpret_cast<std::uint8_t*>(seed), sizeof(seed)});
-      FCL_ASSERT(secp256k1_context_randomize(ctx, (const unsigned char*)seed));
+      forge::crypto::fill_random(std::span<std::uint8_t>{reinterpret_cast<std::uint8_t*>(seed), sizeof(seed)});
+      FORGE_ASSERT(secp256k1_context_randomize(ctx, (const unsigned char*)seed));
    }
    secp256k1_context* ctx = nullptr;
 };
@@ -55,8 +55,8 @@ class public_key_impl {
 
 typedef std::array<char, 37> chr37;
 chr37 _derive_message(const public_key_data& key, int i);
-fcl::crypto::sha256 _left(const fcl::crypto::sha512& v);
-fcl::crypto::sha256 _right(const fcl::crypto::sha512& v);
+forge::crypto::sha256 _left(const forge::crypto::sha512& v);
+forge::crypto::sha256 _right(const forge::crypto::sha512& v);
 const ec_group& get_curve();
 const private_key_secret& get_curve_order();
 const private_key_secret& get_half_curve_order();
@@ -64,27 +64,27 @@ const private_key_secret& get_half_curve_order();
 
 static const public_key_data empty_pub{};
 
-fcl::crypto::sha512 private_key::get_shared_secret(const public_key& other) const {
+forge::crypto::sha512 private_key::get_shared_secret(const public_key& other) const {
    static const private_key_secret empty_priv{};
-   FCL_ASSERT(my->_key != empty_priv);
-   FCL_ASSERT(other.my->_key != empty_pub);
+   FORGE_ASSERT(my->_key != empty_priv);
+   FORGE_ASSERT(other.my->_key != empty_pub);
    secp256k1_pubkey secp_pubkey;
    const auto other_serialized = other.serialize();
-   FCL_ASSERT(secp256k1_ec_pubkey_parse(detail::_get_context(), &secp_pubkey,
+   FORGE_ASSERT(secp256k1_ec_pubkey_parse(detail::_get_context(), &secp_pubkey,
                                         (const unsigned char*)other_serialized.data(), other_serialized.size()));
-   FCL_ASSERT(secp256k1_ec_pubkey_tweak_mul(detail::_get_context(), &secp_pubkey, (unsigned char*)my->_key.data()));
+   FORGE_ASSERT(secp256k1_ec_pubkey_tweak_mul(detail::_get_context(), &secp_pubkey, (unsigned char*)my->_key.data()));
    public_key_data serialized_result;
    size_t serialized_result_sz = sizeof(serialized_result);
    secp256k1_ec_pubkey_serialize(detail::_get_context(), reinterpret_cast<unsigned char*>(serialized_result.data()),
                                  &serialized_result_sz, &secp_pubkey, SECP256K1_EC_COMPRESSED);
-   FCL_ASSERT(serialized_result_sz == sizeof(serialized_result));
-   return fcl::crypto::sha512::hash(serialized_result.begin() + 1, serialized_result.size() - 1);
+   FORGE_ASSERT(serialized_result_sz == sizeof(serialized_result));
+   return forge::crypto::sha512::hash(serialized_result.begin() + 1, serialized_result.size() - 1);
 }
 
 private_key private_key::generate() {
    private_key ret;
    do {
-      fcl::crypto::fill_random(std::span<std::uint8_t>{
+      forge::crypto::fill_random(std::span<std::uint8_t>{
          reinterpret_cast<std::uint8_t*>(ret.my->_key.data()), ret.my->_key.data_size()});
    } while (!secp256k1_ec_seckey_verify(detail::_get_context(), (const uint8_t*)ret.my->_key.data()));
    return ret;
@@ -114,7 +114,7 @@ bool public_key::valid() const {
 }
 
 public_key_data public_key::serialize() const {
-   FCL_ASSERT(my->_key != empty_pub);
+   FORGE_ASSERT(my->_key != empty_pub);
    return my->_key;
 }
 
@@ -123,13 +123,13 @@ public_key::public_key(const public_key_point_data& dat) : my(std::make_unique<d
    if (*front == 0) {
    } else {
       secp256k1_pubkey pub;
-      FCL_ASSERT(secp256k1_ec_pubkey_parse(detail::_get_context(), &pub, reinterpret_cast<const unsigned char*>(front),
+      FORGE_ASSERT(secp256k1_ec_pubkey_parse(detail::_get_context(), &pub, reinterpret_cast<const unsigned char*>(front),
                                            sizeof(dat)));
       size_t serialized_size = my->_key.size();
-      FCL_ASSERT(secp256k1_ec_pubkey_serialize(detail::_get_context(),
+      FORGE_ASSERT(secp256k1_ec_pubkey_serialize(detail::_get_context(),
                                                reinterpret_cast<unsigned char*>(my->_key.data()), &serialized_size,
                                                &pub, SECP256K1_EC_COMPRESSED));
-      FCL_ASSERT(serialized_size == my->_key.size());
+      FORGE_ASSERT(serialized_size == my->_key.size());
    }
 }
 
@@ -137,27 +137,27 @@ public_key::public_key(const public_key_data& dat) : my(std::make_unique<detail:
    my->_key = dat;
 }
 
-public_key::public_key(const compact_signature& c, const fcl::crypto::sha256& digest, bool check_canonical)
+public_key::public_key(const compact_signature& c, const forge::crypto::sha256& digest, bool check_canonical)
     : my(std::make_unique<detail::public_key_impl>()) {
    int nV = c.data()[0];
    if (nV < 27 || nV >= 35)
-      FCL_THROW_EXCEPTION(exceptions::invalid_signature, "unable to reconstruct public key from signature");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_signature, "unable to reconstruct public key from signature");
 
    if (check_canonical) {
-      FCL_ASSERT(is_canonical(c), "signature is not canonical");
+      FORGE_ASSERT(is_canonical(c), "signature is not canonical");
    }
 
    secp256k1_pubkey secp_pub;
    secp256k1_ecdsa_recoverable_signature secp_sig;
 
-   FCL_ASSERT(secp256k1_ecdsa_recoverable_signature_parse_compact(
+   FORGE_ASSERT(secp256k1_ecdsa_recoverable_signature_parse_compact(
        detail::_get_context(), &secp_sig, (unsigned char*)c.begin() + 1, (*c.begin() - 27) & 3));
-   FCL_ASSERT(secp256k1_ecdsa_recover(detail::_get_context(), &secp_pub, &secp_sig, (unsigned char*)digest.data()));
+   FORGE_ASSERT(secp256k1_ecdsa_recover(detail::_get_context(), &secp_pub, &secp_sig, (unsigned char*)digest.data()));
 
    size_t serialized_result_sz = my->_key.size();
    secp256k1_ec_pubkey_serialize(detail::_get_context(), reinterpret_cast<unsigned char*>(my->_key.data()),
                                  &serialized_result_sz, &secp_pub, SECP256K1_EC_COMPRESSED);
-   FCL_ASSERT(serialized_result_sz == my->_key.size());
+   FORGE_ASSERT(serialized_result_sz == my->_key.size());
 }
 
-} // namespace fcl::crypto::secp256k1
+} // namespace forge::crypto::secp256k1

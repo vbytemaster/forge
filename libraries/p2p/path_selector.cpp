@@ -4,15 +4,15 @@ module;
 #include <chrono>
 #include <vector>
 
-module fcl.p2p.node;
+module forge.p2p.node;
 
-import fcl.p2p.endpoint;
-import fcl.p2p.peer_store;
-import fcl.p2p.scoring;
+import forge.p2p.endpoint;
+import forge.p2p.peer_store;
+import forge.p2p.scoring;
 
 #include "path_selector.hpp"
 
-namespace fcl::p2p::path_selector {
+namespace forge::p2p::path_selector {
 namespace {
 
 [[nodiscard]] bool supported_direct(const peer_store::endpoint_record& value) {
@@ -43,4 +43,4 @@ std::vector<peer_store::endpoint_record> rank_direct(const peer_store::record& r
    return selected;
 }
 
-} // namespace fcl::p2p::path_selector
+} // namespace forge::p2p::path_selector

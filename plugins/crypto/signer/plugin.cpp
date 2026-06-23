@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <boost/asio/awaitable.hpp>
 
@@ -17,75 +17,75 @@ module;
 #include <variant>
 #include <vector>
 
-module fcl.plugins.crypto.signer.plugin;
+module forge.plugins.crypto.signer.plugin;
 
-import fcl.api.exceptions;
-import fcl.api.types;
-import fcl.api.descriptor;
-import fcl.api.error_projection;
-import fcl.api.handle;
-import fcl.api.connection;
-import fcl.api.registry;
-import fcl.api.binding;
-import fcl.api.dispatcher;
-import fcl.app.plugin;
-import fcl.app.plugin_context;
-import fcl.app.plugin_registry;
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.config.document;
-import fcl.config.value;
-import fcl.crypto.asymmetric;
-import fcl.crypto.sha256;
-import fcl.exceptions;
-import fcl.plugins.crypto.signer.api;
-import fcl.plugins.crypto.signer.exceptions;
-import fcl.plugins.crypto.signer.types;
-import fcl.schema.diagnostic;
-import fcl.schema.value_kind;
-import fcl.schema.object;
-import fcl.schema.enums;
+import forge.api.exceptions;
+import forge.api.types;
+import forge.api.descriptor;
+import forge.api.error_projection;
+import forge.api.handle;
+import forge.api.connection;
+import forge.api.registry;
+import forge.api.binding;
+import forge.api.dispatcher;
+import forge.app.plugin;
+import forge.app.plugin_context;
+import forge.app.plugin_registry;
+import forge.config.component;
+import forge.config.decode;
+import forge.config.document;
+import forge.config.value;
+import forge.crypto.asymmetric;
+import forge.crypto.sha256;
+import forge.exceptions;
+import forge.plugins.crypto.signer.api;
+import forge.plugins.crypto.signer.exceptions;
+import forge.plugins.crypto.signer.types;
+import forge.schema.diagnostic;
+import forge.schema.value_kind;
+import forge.schema.object;
+import forge.schema.enums;
 
 #include "details/config.hxx"
 #include "details/plugin_impl.hxx"
 #include "details/signer_api.hxx"
 
-namespace fcl::plugins::crypto::signer {
+namespace forge::plugins::crypto::signer {
 
 plugin::plugin(plugin_options value) : impl_{std::make_shared<impl>(std::move(value))} {}
 
 plugin::~plugin() = default;
 
-fcl::app::plugin_descriptor descriptor(plugin_options value) {
-   return fcl::app::plugin_descriptor{
-      .id = {.value = "fcl.plugins.crypto.signer"},
+forge::app::plugin_descriptor descriptor(plugin_options value) {
+   return forge::app::plugin_descriptor{
+      .id = {.value = "forge.plugins.crypto.signer"},
       .factory = [value = std::move(value)] { return std::make_unique<plugin>(value); },
    };
 }
 
-fcl::app::plugin_id plugin::id() const {
-   return {.value = "fcl.plugins.crypto.signer"};
+forge::app::plugin_id plugin::id() const {
+   return {.value = "forge.plugins.crypto.signer"};
 }
 
 std::string plugin::version() const {
    return "1.0.0";
 }
 
-std::optional<fcl::config::component_descriptor> plugin::describe_config() const {
-   return fcl::config::describe_component<config>("plugins.crypto.signer");
+std::optional<forge::config::component_descriptor> plugin::describe_config() const {
+   return forge::config::describe_component<config>("plugins.crypto.signer");
 }
 
-boost::asio::awaitable<void> plugin::configure(fcl::config::component_view view) {
+boost::asio::awaitable<void> plugin::configure(forge::config::component_view view) {
    apply_config(*impl_, view);
    co_return;
 }
 
-boost::asio::awaitable<void> plugin::provide(fcl::api::provider& provider) {
+boost::asio::awaitable<void> plugin::provide(forge::api::provider& provider) {
    provider.install<api>(std::make_shared<signer_api>(impl_));
    co_return;
 }
 
-boost::asio::awaitable<void> plugin::initialize(fcl::app::plugin_context&) {
+boost::asio::awaitable<void> plugin::initialize(forge::app::plugin_context&) {
    impl_->stopping = false;
    co_return;
 }
@@ -103,4 +103,4 @@ boost::asio::awaitable<void> plugin::shutdown() {
    co_return;
 }
 
-} // namespace fcl::plugins::crypto::signer
+} // namespace forge::plugins::crypto::signer

@@ -1,21 +1,21 @@
 # P2P Pubsub Plugin
 
-`fcl::plugins::p2p::pubsub` exposes a typed application facade for topic
+`forge::plugins::p2p::pubsub` exposes a typed application facade for topic
 publish/subscribe over the shared P2P node.
 
 ## Identity
 
-- Target: `fcl_plugins_p2p_pubsub`
+- Target: `forge_plugins_p2p_pubsub`
 - Package component: `plugins_p2p_pubsub`
-- Plugin id: `fcl.plugins.p2p.pubsub`
-- Main API id: `fcl.plugins.p2p.pubsub`
+- Plugin id: `forge.plugins.p2p.pubsub`
+- Main API id: `forge.plugins.p2p.pubsub`
 - Config section: `plugins.p2p.pubsub`
-- Depends on plugin id: `fcl.plugins.p2p.node`
+- Depends on plugin id: `forge.plugins.p2p.node`
 - Public modules:
-  - `fcl.plugins.p2p.pubsub.plugin`
-  - `fcl.plugins.p2p.pubsub.api`
-  - `fcl.plugins.p2p.pubsub.types`
-  - `fcl.plugins.p2p.pubsub.exceptions`
+  - `forge.plugins.p2p.pubsub.plugin`
+  - `forge.plugins.p2p.pubsub.api`
+  - `forge.plugins.p2p.pubsub.types`
+  - `forge.plugins.p2p.pubsub.exceptions`
 
 ## What It Provides
 
@@ -46,26 +46,26 @@ plugins:
 ## Example
 
 ```cpp
-import fcl.plugins.p2p.pubsub.api;
-import fcl.plugins.p2p.pubsub.plugin;
+import forge.plugins.p2p.pubsub.api;
+import forge.plugins.p2p.pubsub.plugin;
 
-auto pubsub = context.apis().get<fcl::plugins::p2p::pubsub::api>(
-   {.id = {"fcl.plugins.p2p.pubsub"}, .major = 1});
+auto pubsub = context.apis().get<forge::plugins::p2p::pubsub::api>(
+   {.id = {"forge.plugins.p2p.pubsub"}, .major = 1});
 
 auto subscription = co_await pubsub->subscribe(
-   fcl::p2p::pubsub::topic{.value = "catalog.updates"},
-   [](fcl::plugins::p2p::pubsub::message value)
-      -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+   forge::p2p::pubsub::topic{.value = "catalog.updates"},
+   [](forge::plugins::p2p::pubsub::message value)
+      -> boost::asio::awaitable<forge::p2p::pubsub::validation_result> {
       consume(value.data);
-      co_return fcl::p2p::pubsub::validation_result::accept;
+      co_return forge::p2p::pubsub::validation_result::accept;
    });
 
 co_await pubsub->publish(
-   fcl::p2p::pubsub::topic{.value = "catalog.updates"},
+   forge::p2p::pubsub::topic{.value = "catalog.updates"},
    std::vector<std::uint8_t>{1, 2, 3});
 ```
 
 ```cpp
-registry.register_plugin(fcl::plugins::p2p::node::descriptor());
-registry.register_plugin(fcl::plugins::p2p::pubsub::descriptor());
+registry.register_plugin(forge::plugins::p2p::node::descriptor());
+registry.register_plugin(forge::plugins::p2p::pubsub::descriptor());
 ```

@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -30,12 +30,12 @@ module;
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
-module fcl.stcp.connection;
+module forge.stcp.connection;
 
-import fcl.crypto.x509;
-import fcl.transport.stream;
+import forge.crypto.x509;
+import forge.transport.stream;
 
-namespace fcl::stcp {
+namespace forge::stcp {
 namespace {
 
 namespace asio = boost::asio;
@@ -56,34 +56,34 @@ using x509_ptr = std::unique_ptr<X509, x509_deleter>;
 }
 
 [[noreturn]] void throw_invalid_options(std::string message) {
-   FCL_THROW_EXCEPTION(exceptions::invalid_options, std::move(message));
+   FORGE_THROW_EXCEPTION(exceptions::invalid_options, std::move(message));
 }
 
 [[noreturn]] void throw_io_error(std::string message, const boost::system::error_code& error) {
-   FCL_THROW_EXCEPTION(exceptions::io_error, std::move(message), fcl::exceptions::ctx("reason", error.message()));
+   FORGE_THROW_EXCEPTION(exceptions::io_error, std::move(message), forge::exceptions::ctx("reason", error.message()));
 }
 
 [[noreturn]] void throw_handshake_failed(std::string message, const boost::system::error_code& error) {
    if (error == boost::asio::error::operation_aborted) {
-      FCL_THROW_EXCEPTION(exceptions::canceled, "stcp handshake canceled",
-                          fcl::exceptions::ctx("reason", error.message()));
+      FORGE_THROW_EXCEPTION(exceptions::canceled, "stcp handshake canceled",
+                          forge::exceptions::ctx("reason", error.message()));
    }
-   FCL_THROW_EXCEPTION(exceptions::handshake_failed, std::move(message),
-                       fcl::exceptions::ctx("reason", error.message()));
+   FORGE_THROW_EXCEPTION(exceptions::handshake_failed, std::move(message),
+                       forge::exceptions::ctx("reason", error.message()));
 }
 
 [[noreturn]] void throw_verification_failed(std::string message) {
-   FCL_THROW_EXCEPTION(exceptions::verification_failed, std::move(message));
+   FORGE_THROW_EXCEPTION(exceptions::verification_failed, std::move(message));
 }
 
 [[noreturn]] void throw_read_write_error(const boost::system::error_code& error) {
    if (error == boost::asio::error::operation_aborted) {
-      FCL_THROW_EXCEPTION(exceptions::canceled, "stcp connection operation canceled",
-                          fcl::exceptions::ctx("reason", error.message()));
+      FORGE_THROW_EXCEPTION(exceptions::canceled, "stcp connection operation canceled",
+                          forge::exceptions::ctx("reason", error.message()));
    }
    if (error == boost::asio::error::eof || error == boost::asio::error::connection_reset ||
        error == boost::asio::error::broken_pipe || error == boost::asio::ssl::error::stream_truncated) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "stcp connection closed", fcl::exceptions::ctx("reason", error.message()));
+      FORGE_THROW_EXCEPTION(exceptions::closed, "stcp connection closed", forge::exceptions::ctx("reason", error.message()));
    }
    throw_io_error("stcp connection I/O failed", error);
 }
@@ -152,7 +152,7 @@ void configure_tls_version(asio::ssl::context& context, bool tls13_only) {
    }
    if (SSL_CTX_set_min_proto_version(context.native_handle(), TLS1_3_VERSION) != 1 ||
        SSL_CTX_set_max_proto_version(context.native_handle(), TLS1_3_VERSION) != 1) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "failed to configure stcp TLS 1.3 only mode");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "failed to configure stcp TLS 1.3 only mode");
    }
 }
 
@@ -164,8 +164,8 @@ void load_identity(asio::ssl::context& context, std::string_view certificate_pem
       context.use_certificate_chain(asio::buffer(certificate_pem.data(), certificate_pem.size()));
       context.use_private_key(asio::buffer(private_key_pem.data(), private_key_pem.size()), asio::ssl::context::pem);
    } catch (const boost::system::system_error& error) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "failed to load stcp certificate or private key",
-                          fcl::exceptions::ctx("reason", error.code().message()));
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "failed to load stcp certificate or private key",
+                          forge::exceptions::ctx("reason", error.code().message()));
    }
 }
 
@@ -174,8 +174,8 @@ void load_trust(asio::ssl::context& context, const security_options& security) {
       try {
          context.add_certificate_authority(asio::buffer(security.trusted_ca_pem.data(), security.trusted_ca_pem.size()));
       } catch (const boost::system::system_error& error) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "failed to load stcp trusted CA",
-                             fcl::exceptions::ctx("reason", error.code().message()));
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "failed to load stcp trusted CA",
+                             forge::exceptions::ctx("reason", error.code().message()));
       }
       return;
    }
@@ -183,8 +183,8 @@ void load_trust(asio::ssl::context& context, const security_options& security) {
       auto error = boost::system::error_code{};
       context.set_default_verify_paths(error);
       if (error) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "failed to load default TLS verify paths",
-                             fcl::exceptions::ctx("reason", error.message()));
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "failed to load default TLS verify paths",
+                             forge::exceptions::ctx("reason", error.message()));
       }
    }
 }
@@ -240,12 +240,12 @@ void load_trust(asio::ssl::context& context, const security_options& security) {
 [[nodiscard]] std::vector<std::uint8_t> certificate_der(X509* certificate) {
    const auto length = i2d_X509(certificate, nullptr);
    if (length <= 0) {
-      FCL_THROW_EXCEPTION(exceptions::verification_failed, "failed to size peer certificate DER");
+      FORGE_THROW_EXCEPTION(exceptions::verification_failed, "failed to size peer certificate DER");
    }
    auto out = std::vector<std::uint8_t>(static_cast<std::size_t>(length));
    auto* cursor = out.data();
    if (i2d_X509(certificate, &cursor) != length) {
-      FCL_THROW_EXCEPTION(exceptions::verification_failed, "failed to write peer certificate DER");
+      FORGE_THROW_EXCEPTION(exceptions::verification_failed, "failed to write peer certificate DER");
    }
    return out;
 }
@@ -310,8 +310,8 @@ void verify_host_name(const peer_certificate& certificate, std::string_view host
    const auto ok = address_error ? X509_check_host(parsed.get(), host.data(), host.size(), 0, nullptr)
                                  : X509_check_ip_asc(parsed.get(), std::string{host}.c_str(), 0);
    if (ok != 1) {
-      FCL_THROW_EXCEPTION(exceptions::verification_failed, "stcp peer certificate host mismatch",
-                          fcl::exceptions::ctx("host", std::string{host}));
+      FORGE_THROW_EXCEPTION(exceptions::verification_failed, "stcp peer certificate host mismatch",
+                          forge::exceptions::ctx("host", std::string{host}));
    }
 }
 
@@ -331,8 +331,8 @@ void verify_peer(native_stream& stream, const security_options& security, std::s
       const auto actual = normalize_fingerprint(certificate.sha256_fingerprint);
       const auto expected = normalize_fingerprint(*security.expected_sha256_fingerprint);
       if (actual != expected) {
-         FCL_THROW_EXCEPTION(exceptions::verification_failed, "stcp peer certificate fingerprint mismatch",
-                             fcl::exceptions::ctx("actual", actual));
+         FORGE_THROW_EXCEPTION(exceptions::verification_failed, "stcp peer certificate fingerprint mismatch",
+                             forge::exceptions::ctx("actual", actual));
       }
    }
    if (security.verifier && !security.verifier(chain)) {
@@ -365,12 +365,12 @@ void configure_client_stream(native_stream& stream, const client_options& option
    const auto host = sni_host(options, remote_host);
    if (host && !host->empty()) {
       if (SSL_set_tlsext_host_name(stream.native_handle(), host->c_str()) != 1) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "failed to configure stcp SNI");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "failed to configure stcp SNI");
       }
    }
    const auto alpn = encode_alpn(options.alpn_protocols);
    if (!alpn.empty() && SSL_set_alpn_protos(stream.native_handle(), alpn.data(), static_cast<unsigned>(alpn.size())) != 0) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "failed to configure stcp ALPN");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "failed to configure stcp ALPN");
    }
 }
 
@@ -447,7 +447,7 @@ class stream_model final : public transport::detail::stream_concept {
 
    boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> bytes) override {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp stream");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp stream");
       }
       auto error = boost::system::error_code{};
       co_await boost::asio::async_write(*stream_, boost::asio::buffer(bytes),
@@ -459,7 +459,7 @@ class stream_model final : public transport::detail::stream_concept {
 
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read() override {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp stream");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp stream");
       }
       auto out = std::vector<std::uint8_t>(read_chunk_size_);
       auto error = boost::system::error_code{};
@@ -474,7 +474,7 @@ class stream_model final : public transport::detail::stream_concept {
 
    boost::asio::awaitable<transport::chunk> async_read_chunk() override {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp stream");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp stream");
       }
       auto builder = pool_.acquire(read_chunk_size_);
       auto writable = builder.writable();
@@ -522,7 +522,7 @@ struct connection::impl final {
 
    [[nodiscard]] transport::endpoint local_endpoint() const {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
       }
       auto error = boost::system::error_code{};
       const auto endpoint = stream->lowest_layer().local_endpoint(error);
@@ -534,7 +534,7 @@ struct connection::impl final {
 
    [[nodiscard]] transport::endpoint remote_endpoint() const {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
       }
       auto error = boost::system::error_code{};
       const auto endpoint = stream->lowest_layer().remote_endpoint(error);
@@ -546,7 +546,7 @@ struct connection::impl final {
 
    boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> bytes) {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
       }
       auto error = boost::system::error_code{};
       co_await boost::asio::async_write(*stream, boost::asio::buffer(bytes),
@@ -558,7 +558,7 @@ struct connection::impl final {
 
    boost::asio::awaitable<std::size_t> async_read_some(std::span<std::uint8_t> bytes) {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
       }
       auto error = boost::system::error_code{};
       const auto size = co_await stream->async_read_some(boost::asio::buffer(bytes),
@@ -571,7 +571,7 @@ struct connection::impl final {
 
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read() {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
       }
       auto out = std::vector<std::uint8_t>(read_chunk_size);
       auto error = boost::system::error_code{};
@@ -600,7 +600,7 @@ struct connection::impl final {
 
    [[nodiscard]] transport::stream_connection into_transport_stream() {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
       }
       auto local = local_endpoint();
       auto remote = remote_endpoint();
@@ -632,56 +632,56 @@ bool connection::valid() const noexcept {
 
 transport::endpoint connection::local_endpoint() const {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
    }
    return impl_->local_endpoint();
 }
 
 transport::endpoint connection::remote_endpoint() const {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
    }
    return impl_->remote_endpoint();
 }
 
 std::optional<peer_certificate> connection::peer_certificate() const {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
    }
    return read_peer_certificate(*impl_->stream);
 }
 
 certificate_chain connection::peer_certificate_chain() const {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
    }
    return read_peer_certificate_chain(*impl_->stream);
 }
 
 std::string connection::selected_alpn() const {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
    }
-   return ::fcl::stcp::selected_alpn(*impl_->stream);
+   return ::forge::stcp::selected_alpn(*impl_->stream);
 }
 
 boost::asio::awaitable<void> connection::async_write(std::span<const std::uint8_t> bytes) {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
    }
    co_await impl_->async_write(bytes);
 }
 
 boost::asio::awaitable<std::size_t> connection::async_read_some(std::span<std::uint8_t> bytes) {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
    }
    co_return co_await impl_->async_read_some(bytes);
 }
 
 boost::asio::awaitable<std::vector<std::uint8_t>> connection::async_read() {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
    }
    co_return co_await impl_->async_read();
 }
@@ -701,7 +701,7 @@ void connection::cancel() {
 
 transport::stream_connection connection::into_transport_stream() && {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid stcp connection");
    }
    auto out = impl_->into_transport_stream();
    impl_.reset();
@@ -725,7 +725,7 @@ boost::asio::awaitable<connection> async_upgrade_client(tcp::connection source, 
 boost::asio::awaitable<connection> async_upgrade_client(tcp::connection source, client_options options,
                                                         std::optional<std::chrono::milliseconds> timeout) {
    if (!source.valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid source tcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid source tcp connection");
    }
    const auto remote = source.remote_endpoint();
    auto context = make_client_context(options);
@@ -737,8 +737,8 @@ boost::asio::awaitable<connection> async_upgrade_client(tcp::connection source, 
    } catch (const exceptions::handshake_failed&) {
       const auto verify_result = SSL_get_verify_result(stream->native_handle());
       if (options.security.verify_peer && verify_result != X509_V_OK) {
-         FCL_THROW_EXCEPTION(exceptions::verification_failed, "stcp server certificate verification failed",
-                             fcl::exceptions::ctx("reason", X509_verify_cert_error_string(verify_result)));
+         FORGE_THROW_EXCEPTION(exceptions::verification_failed, "stcp server certificate verification failed",
+                             forge::exceptions::ctx("reason", X509_verify_cert_error_string(verify_result)));
       }
       throw;
    }
@@ -759,7 +759,7 @@ boost::asio::awaitable<connection> async_upgrade_server(tcp::connection source, 
 boost::asio::awaitable<connection> async_upgrade_server(tcp::connection source, server_options options,
                                                         std::optional<std::chrono::milliseconds> timeout) {
    if (!source.valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid source tcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid source tcp connection");
    }
    auto context = make_server_context(options);
    configure_server_context(*context, options);
@@ -769,4 +769,4 @@ boost::asio::awaitable<connection> async_upgrade_server(tcp::connection source, 
    co_return connection{connection::native_token{}, std::move(*stream), std::move(context), options.read_chunk_size};
 }
 
-} // namespace fcl::stcp
+} // namespace forge::stcp

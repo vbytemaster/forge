@@ -4,22 +4,22 @@ module;
 #include <string>
 #include <vector>
 
-module fcl.plugins.p2p.pubsub.plugin;
+module forge.plugins.p2p.pubsub.plugin;
 
-import fcl.p2p.identity;
-import fcl.p2p.pubsub;
-import fcl.plugins.p2p.pubsub.types;
+import forge.p2p.identity;
+import forge.p2p.pubsub;
+import forge.plugins.p2p.pubsub.types;
 
 #include "details/message_projection.hxx"
 
-namespace fcl::plugins::p2p::pubsub {
+namespace forge::plugins::p2p::pubsub {
 
 bool contains_topic(const std::vector<std::string>& values, const std::string& topic) {
    return std::ranges::find(values, topic) != values.end();
 }
 
-message project_message(const fcl::p2p::peer_id& source,
-                        const fcl::p2p::pubsub::message& value) {
+message project_message(const forge::p2p::peer_id& source,
+                        const forge::p2p::pubsub::message& value) {
    return message{
       .source = source,
       .author = value.from,
@@ -29,4 +29,4 @@ message project_message(const fcl::p2p::peer_id& source,
    };
 }
 
-} // namespace fcl::plugins::p2p::pubsub
+} // namespace forge::plugins::p2p::pubsub

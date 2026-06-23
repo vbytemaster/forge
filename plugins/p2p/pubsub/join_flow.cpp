@@ -12,15 +12,15 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.plugins.p2p.pubsub.plugin;
+module forge.plugins.p2p.pubsub.plugin;
 
-import fcl.p2p.pubsub;
-import fcl.plugins.p2p.pubsub.api;
-import fcl.plugins.p2p.pubsub.types;
+import forge.p2p.pubsub;
+import forge.plugins.p2p.pubsub.api;
+import forge.plugins.p2p.pubsub.types;
 
 #include "details/join_flow.hxx"
 
-namespace fcl::plugins::p2p::pubsub {
+namespace forge::plugins::p2p::pubsub {
 
 join_waiter::join_waiter(boost::asio::any_io_executor executor) : timer(std::move(executor)) {
    timer.expires_at(boost::asio::steady_timer::time_point::max());
@@ -34,4 +34,4 @@ void complete_join_waiter(std::shared_ptr<join_waiter> pending, std::exception_p
    });
 }
 
-} // namespace fcl::plugins::p2p::pubsub
+} // namespace forge::plugins::p2p::pubsub

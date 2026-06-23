@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <cstdint>
 #include <cstddef>
@@ -11,12 +11,12 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.p2p.stream;
+module forge.p2p.stream;
 
-import fcl.p2p.exceptions;
-import fcl.transport.frame;
+import forge.p2p.exceptions;
+import forge.transport.frame;
 
-namespace fcl::p2p {
+namespace forge::p2p {
 namespace {
 
 constexpr auto compact_threshold = std::size_t{65'536};
@@ -48,18 +48,18 @@ void compact_buffer(std::vector<std::uint8_t>& buffer, std::size_t& consumed) {
 } // namespace
 
 struct stream::impl {
-   fcl::transport::stream transport;
+   forge::transport::stream transport;
    std::vector<std::uint8_t> buffer;
    std::size_t consumed = 0;
 };
 
 stream::stream() = default;
 
-stream::stream(fcl::transport::stream value) : impl_(std::make_shared<impl>()) {
+stream::stream(forge::transport::stream value) : impl_(std::make_shared<impl>()) {
    impl_->transport = std::move(value);
 }
 
-stream::stream(fcl::transport::stream value, std::vector<std::uint8_t> buffered) : stream{std::move(value)} {
+stream::stream(forge::transport::stream value, std::vector<std::uint8_t> buffered) : stream{std::move(value)} {
    impl_->buffer = std::move(buffered);
 }
 
@@ -76,12 +76,12 @@ std::int64_t stream::id() const noexcept {
 }
 
 boost::asio::awaitable<void> stream::async_write(std::span<const std::uint8_t> bytes) {
-   co_await async_write(fcl::transport::chunk{bytes});
+   co_await async_write(forge::transport::chunk{bytes});
 }
 
-boost::asio::awaitable<void> stream::async_write(fcl::transport::chunk bytes) {
+boost::asio::awaitable<void> stream::async_write(forge::transport::chunk bytes) {
    if (!impl_) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid P2P stream");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid P2P stream");
    }
    co_await impl_->transport.async_write(std::move(bytes));
 }
@@ -91,12 +91,12 @@ boost::asio::awaitable<std::vector<std::uint8_t>> stream::async_read() {
    co_return std::move(value).into_vector();
 }
 
-boost::asio::awaitable<fcl::transport::chunk> stream::async_read_chunk() {
+boost::asio::awaitable<forge::transport::chunk> stream::async_read_chunk() {
    if (!impl_) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid P2P stream");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid P2P stream");
    }
    if (!available_bytes(impl_->buffer, impl_->consumed).empty()) {
-      auto out = fcl::transport::chunk{available_bytes(impl_->buffer, impl_->consumed)};
+      auto out = forge::transport::chunk{available_bytes(impl_->buffer, impl_->consumed)};
       impl_->buffer.clear();
       impl_->consumed = 0;
       co_return out;
@@ -105,12 +105,12 @@ boost::asio::awaitable<fcl::transport::chunk> stream::async_read_chunk() {
 }
 
 boost::asio::awaitable<void> stream::async_write_frame(std::span<const std::uint8_t> bytes) {
-   co_await async_write_frame(fcl::transport::chunk{bytes});
+   co_await async_write_frame(forge::transport::chunk{bytes});
 }
 
-boost::asio::awaitable<void> stream::async_write_frame(fcl::transport::chunk bytes) {
+boost::asio::awaitable<void> stream::async_write_frame(forge::transport::chunk bytes) {
    if (!impl_) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid P2P stream");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid P2P stream");
    }
    co_await impl_->transport.async_write_frame(std::move(bytes));
 }
@@ -120,25 +120,25 @@ boost::asio::awaitable<std::vector<std::uint8_t>> stream::async_read_frame() {
    co_return std::move(value).into_vector();
 }
 
-boost::asio::awaitable<fcl::transport::chunk> stream::async_read_frame_chunk() {
+boost::asio::awaitable<forge::transport::chunk> stream::async_read_frame_chunk() {
    if (!impl_) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid P2P stream");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid P2P stream");
    }
    if (impl_->buffer.empty()) {
       co_return co_await impl_->transport.async_read_frame_chunk();
    }
    while (true) {
-      const auto decoded = fcl::transport::decode_frame_view(available_bytes(impl_->buffer, impl_->consumed));
-      if (decoded.status == fcl::transport::frame_decode_status::complete) {
+      const auto decoded = forge::transport::decode_frame_view(available_bytes(impl_->buffer, impl_->consumed));
+      if (decoded.status == forge::transport::frame_decode_status::complete) {
          const auto payload_size = decoded.payload.size();
          const auto payload_offset = static_cast<std::size_t>(decoded.payload.data() - impl_->buffer.data());
          if (impl_->consumed == 0 && decoded.consumed == impl_->buffer.size()) {
             auto storage = std::move(impl_->buffer);
             impl_->buffer.clear();
             impl_->consumed = 0;
-            co_return fcl::transport::chunk{std::move(storage), payload_offset, payload_size};
+            co_return forge::transport::chunk{std::move(storage), payload_offset, payload_size};
          }
-         auto payload = fcl::transport::chunk{decoded.payload};
+         auto payload = forge::transport::chunk{decoded.payload};
          impl_->consumed += decoded.consumed;
          if (impl_->consumed >= impl_->buffer.size() || impl_->consumed > compact_threshold) {
             compact_buffer(impl_->buffer, impl_->consumed);
@@ -168,15 +168,15 @@ void stream::cancel() {
    }
 }
 
-fcl::transport::stream stream::into_transport_stream() && {
+forge::transport::stream stream::into_transport_stream() && {
    if (!impl_) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid P2P stream");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid P2P stream");
    }
    compact_buffer(impl_->buffer, impl_->consumed);
    auto transport = std::move(impl_->transport);
    auto buffered = std::move(impl_->buffer);
    impl_.reset();
-   return fcl::transport::detail::stream_access::with_buffer(std::move(transport), std::move(buffered));
+   return forge::transport::detail::stream_access::with_buffer(std::move(transport), std::move(buffered));
 }
 
 stream detail::stream_access::with_buffer(stream value, std::vector<std::uint8_t> buffered) {
@@ -193,4 +193,4 @@ stream detail::stream_access::with_buffer(stream value, std::vector<std::uint8_t
    return value;
 }
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

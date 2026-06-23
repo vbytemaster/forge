@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <openssl/evp.h>
 #include <openssl/pem.h>
@@ -9,9 +9,9 @@ module;
 #include <memory>
 #include <span>
 
-module fcl.crypto.rsa;
+module forge.crypto.rsa;
 
-namespace fcl::crypto::rsa {
+namespace forge::crypto::rsa {
 namespace {
 
 struct pkey_deleter {
@@ -37,14 +37,14 @@ using pkey_ctx_ptr = std::unique_ptr<EVP_PKEY_CTX, pkey_ctx_deleter>;
 using md_ctx_ptr = std::unique_ptr<EVP_MD_CTX, md_ctx_deleter>;
 
 [[noreturn]] void fail(std::string message) {
-   FCL_THROW_EXCEPTION(exceptions::backend_error, std::move(message));
+   FORGE_THROW_EXCEPTION(exceptions::backend_error, std::move(message));
 }
 
 [[nodiscard]] pkey_ptr read_public(std::span<const std::uint8_t> der) {
    const auto* cursor = der.data();
    auto* raw = d2i_PUBKEY(nullptr, &cursor, static_cast<long>(der.size()));
    if (raw == nullptr) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_key, "invalid RSA public key DER");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_key, "invalid RSA public key DER");
    }
    return pkey_ptr{raw};
 }
@@ -53,7 +53,7 @@ using md_ctx_ptr = std::unique_ptr<EVP_MD_CTX, md_ctx_deleter>;
    const auto* cursor = der.data();
    auto* raw = d2i_AutoPrivateKey(nullptr, &cursor, static_cast<long>(der.size()));
    if (raw == nullptr) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_key, "invalid RSA private key DER");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_key, "invalid RSA private key DER");
    }
    return pkey_ptr{raw};
 }
@@ -174,4 +174,4 @@ private_key_shim private_key_shim::generate() {
    return private_key_shim{private_key::generate().get_secret()};
 }
 
-} // namespace fcl::crypto::rsa
+} // namespace forge::crypto::rsa

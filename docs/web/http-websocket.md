@@ -1,6 +1,6 @@
 # HTTP + WebSocket
 
-`fcl_http` and `fcl_websocket` are separate libraries over the shared Asio
+`forge_http` and `forge_websocket` are separate libraries over the shared Asio
 runtime. They are web/control surfaces, not the same layer as QUIC/P2P.
 
 Local guides:
@@ -20,19 +20,19 @@ semantics creates blurry ownership and unsafe retry behavior.
 ## Layering
 
 ```text
-fcl_asio::runtime
-  -> fcl_http::server/router/middleware
+forge_asio::runtime
+  -> forge_http::server/router/middleware
       -> ordinary HTTP route handlers
       -> WebSocket Upgrade route
-          -> fcl_websocket::connection
-  -> fcl_http::client/connection
-  -> fcl_websocket::client
+          -> forge_websocket::connection
+  -> forge_http::client/connection
+  -> forge_websocket::client
 ```
 
-`fcl_http` owns HTTP request/response mechanics and route matching. Public
-HTTP messages are `fcl::http::request` / `fcl::http::response`; Boost.Beast is
+`forge_http` owns HTTP request/response mechanics and route matching. Public
+HTTP messages are `forge::http::request` / `forge::http::response`; Boost.Beast is
 the internal parser/serializer/socket mechanics donor.
-`fcl_websocket` owns bidirectional message connection mechanics. Product DTOs,
+`forge_websocket` owns bidirectional message connection mechanics. Product DTOs,
 authentication and business routing live above both.
 
 ## HTTP Decisions
@@ -54,21 +54,21 @@ authentication and business routing live above both.
 ## Integration Example
 
 ```cpp
-auto router = fcl::http::router{};
-router.get("/healthz", [](fcl::http::route_context& ctx)
-   -> boost::asio::awaitable<fcl::http::response> {
-   co_return fcl::http::make_text_response(ctx.request, fcl::http::status::ok, "ok");
+auto router = forge::http::router{};
+router.get("/healthz", [](forge::http::route_context& ctx)
+   -> boost::asio::awaitable<forge::http::response> {
+   co_return forge::http::make_text_response(ctx.request, forge::http::status::ok, "ok");
 });
 
-router.websocket("/events", [](std::shared_ptr<fcl::websocket::connection> ws) {
-   ws->on_message([](fcl::websocket::connection& connection, std::string message)
+router.websocket("/events", [](std::shared_ptr<forge::websocket::connection> ws) {
+   ws->on_message([](forge::websocket::connection& connection, std::string message)
       -> boost::asio::awaitable<void> {
       co_await connection.send(std::move(message));
    });
-   // fcl::http::server starts the WebSocket read loop after this callback.
+   // forge::http::server starts the WebSocket read loop after this callback.
 });
 
-auto server = fcl::http::server{
+auto server = forge::http::server{
    runtime,
    {.bind_address = "127.0.0.1", .port = 8080},
    std::move(router),
@@ -77,13 +77,13 @@ server.start();
 ```
 
 This example intentionally keeps auth, JSON DTOs and product actions outside
-`fcl_http` and `fcl_websocket`.
+`forge_http` and `forge_websocket`.
 
 ## Security Boundary
 
 HTTP/WebSocket do not provide authority by themselves. Authentication, bearer
 tokens, cookies, API keys, role checks and redaction are responsibilities of
-the consuming API layer. FCL must not log credentials from headers, query
+the consuming API layer. FORGE must not log credentials from headers, query
 strings or message bodies without explicit caller redaction.
 
 ## Failure Model
@@ -100,7 +100,7 @@ strings or message bodies without explicit caller redaction.
 Accepted:
 
 - Boost.Beast parser/serializer, message behavior and close mechanics behind
-  FCL-owned request/response wrappers.
+  FORGE-owned request/response wrappers.
 - Per-connection serialized writes.
 - Shared HTTP Upgrade path for WebSocket.
 - Metrics snapshots for reconnect/queue behavior.
@@ -114,6 +114,6 @@ Rejected:
 
 ## Verification
 
-`test_fcl_http_websocket` covers URL/target parsing, router behavior, middleware
+`test_forge_http_websocket` covers URL/target parsing, router behavior, middleware
 short-circuiting, client/server roundtrip, reconnect rules, WebSocket upgrade
 and TLS WebSocket client behavior.

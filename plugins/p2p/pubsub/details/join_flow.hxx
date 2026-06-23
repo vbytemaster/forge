@@ -1,10 +1,10 @@
 #pragma once
 
-namespace fcl::plugins::p2p::pubsub {
+namespace forge::plugins::p2p::pubsub {
 
 struct handler_record {
    std::uint64_t id = 0;
-   fcl::p2p::pubsub::topic subject;
+   forge::p2p::pubsub::topic subject;
    handler callback;
    std::chrono::milliseconds deadline{0};
 };
@@ -26,4 +26,4 @@ struct topic_state {
 
 void complete_join_waiter(std::shared_ptr<join_waiter> pending, std::exception_ptr error = {});
 
-} // namespace fcl::plugins::p2p::pubsub
+} // namespace forge::plugins::p2p::pubsub

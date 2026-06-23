@@ -1,6 +1,6 @@
-# fcl_schema
+# forge_schema
 
-`fcl_schema` describes typed configuration and codec rules for Boost.Describe
+`forge_schema` describes typed configuration and codec rules for Boost.Describe
 objects. It is intentionally small: metadata, defaults, basic validation and
 diagnostics. It is not a full business validation framework.
 
@@ -21,14 +21,14 @@ diagnostics. It is not a full business validation framework.
 
 ## Public Modules
 
-- `fcl.schema.diagnostic` — `severity`, `diagnostic`.
-- `fcl.schema.value_kind` — supported scalar/list kind metadata.
-- `fcl.schema.object` — `rules<T>`, `object<T>()`, field builders.
-- `fcl.schema.enums` — described enum conversion helpers.
+- `forge.schema.diagnostic` — `severity`, `diagnostic`.
+- `forge.schema.value_kind` — supported scalar/list kind metadata.
+- `forge.schema.object` — `rules<T>`, `object<T>()`, field builders.
+- `forge.schema.enums` — described enum conversion helpers.
 
-Target: `fcl_schema`.
+Target: `forge_schema`.
 
-Dependencies: `fcl_reflect` and Boost.Describe headers.
+Dependencies: `forge_reflect` and Boost.Describe headers.
 
 ## Examples
 
@@ -40,10 +40,10 @@ Dependencies: `fcl_reflect` and Boost.Describe headers.
 #include <cstdint>
 #include <string>
 
-import fcl.schema.diagnostic;
-import fcl.schema.value_kind;
-import fcl.schema.object;
-import fcl.schema.enums;
+import forge.schema.diagnostic;
+import forge.schema.value_kind;
+import forge.schema.object;
+import forge.schema.enums;
 
 struct http_config {
    std::uint16_t bind_port = 0;
@@ -54,9 +54,9 @@ struct http_config {
 BOOST_DESCRIBE_STRUCT(http_config, (), (bind_port, bind_host, token))
 
 template <>
-struct fcl::schema::rules<http_config> {
-   static fcl::schema::object_schema<http_config> define() {
-      auto schema = fcl::schema::object<http_config>();
+struct forge::schema::rules<http_config> {
+   static forge::schema::object_schema<http_config> define() {
+      auto schema = forge::schema::object<http_config>();
       schema.field<&http_config::bind_port>("bind-port")
          .alias("port")
          .required()
@@ -73,12 +73,12 @@ struct fcl::schema::rules<http_config> {
 ### Apply Defaults And Validate
 
 ```cpp
-import fcl.schema.diagnostic;
-import fcl.schema.value_kind;
-import fcl.schema.object;
-import fcl.schema.enums;
+import forge.schema.diagnostic;
+import forge.schema.value_kind;
+import forge.schema.object;
+import forge.schema.enums;
 
-auto rules = fcl::schema::rules<http_config>::define();
+auto rules = forge::schema::rules<http_config>::define();
 auto config = http_config{};
 rules.apply_defaults(config);
 auto diagnostics = rules.validate(config, "http");
@@ -94,7 +94,7 @@ adapters; nested fields still receive typed decode and indexed diagnostics.
 struct key_config {
    std::string id;
    std::string private_key;
-   std::string input_profile = "fcl";
+   std::string input_profile = "forge";
    std::vector<std::string> purposes;
 };
 
@@ -106,21 +106,21 @@ BOOST_DESCRIBE_STRUCT(key_config, (), (id, private_key, input_profile, purposes)
 BOOST_DESCRIBE_STRUCT(signer_config, (), (keys))
 
 template <>
-struct fcl::schema::rules<key_config> {
+struct forge::schema::rules<key_config> {
    static auto define() {
-      auto schema = fcl::schema::object<key_config>();
+      auto schema = forge::schema::object<key_config>();
       schema.field<&key_config::id>("id").required().non_empty();
       schema.field<&key_config::private_key>("private-key").required().secret();
-      schema.field<&key_config::input_profile>("input-profile").default_value("fcl");
+      schema.field<&key_config::input_profile>("input-profile").default_value("forge");
       schema.field<&key_config::purposes>("purposes").min_items(1).each_non_empty();
       return schema;
    }
 };
 
 template <>
-struct fcl::schema::rules<signer_config> {
+struct forge::schema::rules<signer_config> {
    static auto define() {
-      auto schema = fcl::schema::object<signer_config>();
+      auto schema = forge::schema::object<signer_config>();
       schema.field<&signer_config::keys>("keys")
          .items<key_config>()
          .secret()
@@ -133,14 +133,14 @@ struct fcl::schema::rules<signer_config> {
 ### Convert Described Enums
 
 ```cpp
-import fcl.schema.diagnostic;
-import fcl.schema.value_kind;
-import fcl.schema.object;
-import fcl.schema.enums;
+import forge.schema.diagnostic;
+import forge.schema.value_kind;
+import forge.schema.object;
+import forge.schema.enums;
 
-auto level = fcl::schema::severity::info;
-bool ok = fcl::schema::enum_from_string("warning", level);
-auto name = fcl::schema::enum_to_string(fcl::schema::severity::error);
+auto level = forge::schema::severity::info;
+bool ok = forge::schema::enum_from_string("warning", level);
+auto name = forge::schema::enum_to_string(forge::schema::severity::error);
 ```
 
 ## Diagnostics Contract
@@ -175,6 +175,6 @@ Diagnostics carry:
 
 ## Tests
 
-`test_fcl_schema` and `test_fcl_config` cover field traversal, defaults, range
+`test_forge_schema` and `test_forge_config` cover field traversal, defaults, range
 validation, nested object-list decode, secret/deprecated metadata, and enum
 string/int conversion.

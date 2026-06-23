@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace fcl::p2p::detail {
+namespace forge::p2p::detail {
 
 template <typename ResourceManager, typename Metrics, typename Reservation>
 bool add_relay_bytes(ResourceManager& resources, Metrics& metrics, Reservation* reservation,
@@ -28,4 +28,4 @@ bool add_relay_bytes(ResourceManager& resources, Metrics& metrics, Reservation* 
    return true;
 }
 
-} // namespace fcl::p2p::detail
+} // namespace forge::p2p::detail

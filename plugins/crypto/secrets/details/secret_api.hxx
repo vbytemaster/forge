@@ -1,6 +1,6 @@
 #pragma once
 
-namespace fcl::plugins::crypto::secrets {
+namespace forge::plugins::crypto::secrets {
 
 class plugin::secret_api final : public api {
  public:
@@ -16,4 +16,4 @@ class plugin::secret_api final : public api {
    std::shared_ptr<impl> state_;
 };
 
-} // namespace fcl::plugins::crypto::secrets
+} // namespace forge::plugins::crypto::secrets

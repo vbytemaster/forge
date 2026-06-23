@@ -12,19 +12,19 @@ module;
 #endif
 #include <stdexcept>
 
-module fcl.log.log_message;
+module forge.log.log_message;
 
-import fcl.variant.exceptions;
-import fcl.variant.value;
-import fcl.variant.conversion;
-import fcl.variant.containers;
-import fcl.variant.chrono;
-import fcl.variant.multiprecision;
-import fcl.variant.format;
-import fcl.variant.described;
-import fcl.core.chrono;
+import forge.variant.exceptions;
+import forge.variant.value;
+import forge.variant.conversion;
+import forge.variant.containers;
+import forge.variant.chrono;
+import forge.variant.multiprecision;
+import forge.variant.format;
+import forge.variant.described;
+import forge.core.chrono;
 
-namespace fcl {
+namespace forge {
 static thread_local std::string thread_name;
 
 void set_thread_name(const std::string& name) {
@@ -80,8 +80,8 @@ log_context::log_context(log_level ll, const char* file, uint64_t line, const ch
    my->file = std::filesystem::path(file).filename().generic_string(); // TODO truncate filename
    my->line = line;
    my->method = method;
-   my->timestamp = fcl::chrono::now_us();
-   my->thread_name = fcl::get_thread_name();
+   my->timestamp = forge::chrono::now_us();
+   my->thread_name = forge::get_thread_name();
 }
 
 log_context::log_context(const variant& v) : my(std::make_shared<detail::log_context_impl>()) {
@@ -264,4 +264,4 @@ std::string log_message::get_limited_message() const {
    return format_string(my->format, my->args, minimize);
 }
 
-} // namespace fcl
+} // namespace forge

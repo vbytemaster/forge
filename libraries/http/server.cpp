@@ -16,7 +16,7 @@ module;
 #include <utility>
 #include <vector>
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/awaitable.hpp>
@@ -29,16 +29,16 @@ module;
 #include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
 
-module fcl.http.server;
+module forge.http.server;
 
-import fcl.asio.runtime;
-import fcl.http.body;
-import fcl.http.exceptions;
-import fcl.http.route_context;
-import fcl.http.stream;
-import fcl.websocket.connection;
+import forge.asio.runtime;
+import forge.http.body;
+import forge.http.exceptions;
+import forge.http.route_context;
+import forge.http.stream;
+import forge.websocket.connection;
 
-namespace fcl::http {
+namespace forge::http {
 namespace detail {
 
 namespace asio = boost::asio;
@@ -166,7 +166,7 @@ class beast_body_reader_source final : public body_reader::source {
             read_error = {};
          }
          if (read_error == beast_http::error::body_limit) {
-            FCL_THROW_EXCEPTION(exceptions::payload_too_large, "HTTP request body is too large");
+            FORGE_THROW_EXCEPTION(exceptions::payload_too_large, "HTTP request body is too large");
          }
          if (read_error) {
             throw boost::system::system_error{read_error};
@@ -174,7 +174,7 @@ class beast_body_reader_source final : public body_reader::source {
 
          bytes_read_ += produced;
          if (bytes_read_ > limits_.max_body_bytes) {
-            FCL_THROW_EXCEPTION(exceptions::payload_too_large, "HTTP request body is too large");
+            FORGE_THROW_EXCEPTION(exceptions::payload_too_large, "HTTP request body is too large");
          }
 
          if (produced != 0U) {
@@ -201,7 +201,7 @@ class beast_body_reader_source final : public body_reader::source {
 
 class server_session : public std::enable_shared_from_this<server_session> {
  public:
-   server_session(fcl::asio::runtime& runtime, beast::tcp_stream stream, server_config config, server_handler handler,
+   server_session(forge::asio::runtime& runtime, beast::tcp_stream stream, server_config config, server_handler handler,
                   std::shared_ptr<router> router_value)
        : runtime_{runtime}, stream_(std::move(stream)), config_(std::move(config)), handler_(std::move(handler)),
          router_(std::move(router_value)) {}
@@ -425,7 +425,7 @@ class server_session : public std::enable_shared_from_this<server_session> {
          co_return false;
       }
 
-      auto connection = fcl::websocket::connection::create(std::move(stream_));
+      auto connection = forge::websocket::connection::create(std::move(stream_));
       auto websocket_request = to_websocket_request(request_value);
       co_await connection->accept(websocket_request);
       (*handler)(connection);
@@ -440,7 +440,7 @@ class server_session : public std::enable_shared_from_this<server_session> {
       stream_.socket().close(ignored);
    }
 
-   fcl::asio::runtime& runtime_;
+   forge::asio::runtime& runtime_;
    beast::tcp_stream stream_;
    server_config config_;
    beast::flat_buffer buffer_;
@@ -457,7 +457,7 @@ using asio::awaitable;
 using asio::use_awaitable;
 
 struct server::impl : std::enable_shared_from_this<server::impl> {
-   impl(fcl::asio::runtime& runtime_value, server_config config_value, server_handler handler_value,
+   impl(forge::asio::runtime& runtime_value, server_config config_value, server_handler handler_value,
         std::shared_ptr<router> router_value)
        : runtime(runtime_value), config(std::move(config_value)), handler(std::move(handler_value)),
          router_value(std::move(router_value)), acceptor_executor(asio::make_strand(runtime.context())),
@@ -489,7 +489,7 @@ struct server::impl : std::enable_shared_from_this<server::impl> {
       }
    }
 
-   fcl::asio::runtime& runtime;
+   forge::asio::runtime& runtime;
    server_config config;
    server_handler handler;
    std::shared_ptr<router> router_value;
@@ -614,10 +614,10 @@ struct server::impl : std::enable_shared_from_this<server::impl> {
    }
 };
 
-server::server(fcl::asio::runtime& runtime, server_config config, server_handler handler)
+server::server(forge::asio::runtime& runtime, server_config config, server_handler handler)
     : impl_(std::make_shared<impl>(runtime, std::move(config), std::move(handler), nullptr)) {}
 
-server::server(fcl::asio::runtime& runtime, server_config config, router router_value)
+server::server(forge::asio::runtime& runtime, server_config config, router router_value)
     : impl_(std::make_shared<impl>(runtime, std::move(config), server_handler{},
                                    std::make_shared<router>(std::move(router_value)))) {}
 
@@ -638,14 +638,14 @@ void server::start() {
    auto state = std::make_shared<start_state>();
    auto impl = impl_;
    if (impl->runtime.context().stopped()) {
-      FCL_THROW_EXCEPTION(exceptions::internal, "HTTP server cannot start after runtime stop");
+      FORGE_THROW_EXCEPTION(exceptions::internal, "HTTP server cannot start after runtime stop");
    }
    if (impl->acceptor_executor.running_in_this_thread()) {
       impl->start_on_executor();
       return;
    }
    if (impl->runtime.context().get_executor().running_in_this_thread()) {
-      FCL_THROW_EXCEPTION(exceptions::internal,
+      FORGE_THROW_EXCEPTION(exceptions::internal,
                           "HTTP server synchronous start cannot run on a runtime worker; use async_start()");
    }
 
@@ -743,4 +743,4 @@ std::uint16_t server::port() const {
    return impl_->acceptor.local_endpoint().port();
 }
 
-} // namespace fcl::http
+} // namespace forge::http

@@ -1,20 +1,20 @@
 # HTTP FastAPI-Style Parameters
 
 This design note records the implemented direction for DTO-first
-`FCL_HTTP_API(...)` bindings, bounded HTTP positional methods and the
+`FORGE_HTTP_API(...)` bindings, bounded HTTP positional methods and the
 boundaries to keep clean.
 
 The goal is FastAPI-style endpoint ergonomics for C++ without turning HTTP into
 a generic frame RPC transport:
 
-- `FCL_API(...)` remains the typed contract metadata source.
-- `FCL_HTTP_API(...)` declares only HTTP presentation: method, path, success
+- `FORGE_API(...)` remains the typed contract metadata source.
+- `FORGE_HTTP_API(...)` declares only HTTP presentation: method, path, success
   status and response mode.
 - Request parameters are classified from described DTO fields first.
 - HTTP positional arguments are limited to path/query routing sugar plus at most
   one described JSON body DTO.
-- Boost.Beast request/parser/serializer mechanics stay private to `fcl_http`.
-- `fcl_api` stays HTTP-free.
+- Boost.Beast request/parser/serializer mechanics stay private to `forge_http`.
+- `forge_api` stays HTTP-free.
 
 Donor behavior:
 
@@ -23,7 +23,7 @@ Donor behavior:
 - FastAPI also supports request/response context objects in path operation
   functions.
 - FastAPI can inspect Python function parameter names at runtime. C++ cannot,
-  so FCL records positional names in `FCL_API_METHOD(method, arg...)` while
+  so FORGE records positional names in `FORGE_API_METHOD(method, arg...)` while
   keeping HTTP parameter categories in wrapper types.
 
 References:
@@ -43,8 +43,8 @@ request DTO. FastAPI-style parameter categories are represented as fields:
 struct object_request {
    std::string bucket;
    std::string key;
-   fcl::http::query<std::uint32_t> limit;
-   fcl::http::header<std::string> request_id;
+   forge::http::query<std::uint32_t> limit;
+   forge::http::header<std::string> request_id;
 };
 
 BOOST_DESCRIBE_STRUCT(object_request, (), (bucket, key, limit, request_id))
@@ -55,23 +55,23 @@ class object_api {
    get_object(object_request request) = 0;
 };
 
-FCL_API(
+FORGE_API(
    object_api,
-   FCL_API_CONTRACT("object", 1, 0),
-   FCL_API_METHOD(get_object))
+   FORGE_API_CONTRACT("object", 1, 0),
+   FORGE_API_METHOD(get_object))
 ```
 
 The HTTP presentation stays compact:
 
 ```cpp
-FCL_HTTP_API(
+FORGE_HTTP_API(
    object_api,
-   FCL_HTTP_GET(get_object, "/:bucket/:key?limit={limit}",
-      FCL_HTTP_HEADER(request_id, "X-Request-Id")))
+   FORGE_HTTP_GET(get_object, "/:bucket/:key?limit={limit}",
+      FORGE_HTTP_HEADER(request_id, "X-Request-Id")))
 ```
 
 There is no per-argument mapping macro in the normal path.
-`FCL_HTTP_API(...)` declares the HTTP route and presentation. The binding layer
+`FORGE_HTTP_API(...)` declares the HTTP route and presentation. The binding layer
 derives parameter sources from DTO field names and wrapper types:
 
 - `bucket` and `key` are filled from `/:bucket/:key`.
@@ -90,8 +90,8 @@ signature:
 struct put_object_request {
    bucket_name bucket;
    object_key key;
-   fcl::http::header<std::string> type;
-   fcl::http::body_stream body;
+   forge::http::header<std::string> type;
+   forge::http::body_stream body;
 };
 
 BOOST_DESCRIBE_STRUCT(put_object_request, (), (bucket, key, type, body))
@@ -102,23 +102,23 @@ class object_api {
    put_object(put_object_request request) = 0;
 };
 
-FCL_API(
+FORGE_API(
    object_api,
-   FCL_API_CONTRACT("object", 1, 0),
-   FCL_API_METHOD(put_object))
+   FORGE_API_CONTRACT("object", 1, 0),
+   FORGE_API_METHOD(put_object))
 
-FCL_HTTP_API(
+FORGE_HTTP_API(
    object_api,
-   FCL_HTTP_PUT(put_object, "/:bucket/:key", created,
-      FCL_HTTP_HEADER(type, "Content-Type"),
-      FCL_HTTP_BODY_STREAM(body)))
+   FORGE_HTTP_PUT(put_object, "/:bucket/:key", created,
+      FORGE_HTTP_HEADER(type, "Content-Type"),
+      FORGE_HTTP_BODY_STREAM(body)))
 ```
 
 Binding:
 
 - `bucket` and `key` consume route path placeholders.
 - `header<std::string>` consumes an HTTP header by field name, or by
-  explicit `FCL_HTTP_HEADER(...)` alias.
+  explicit `FORGE_HTTP_HEADER(...)` alias.
 - `body_stream` remains the streaming request-body type for APIs that should
   not buffer the entity body.
 
@@ -129,19 +129,19 @@ are supported as described request DTO fields:
 
 | Type | Meaning |
 | --- | --- |
-| `fcl::http::query<T>` | Query parameter value decoded by field name or route query alias. |
-| `fcl::http::header<T>` | Header value decoded by explicit `FCL_HTTP_HEADER(...)` alias or default field-name mapping `_ -> -`. |
-| `fcl::http::cookie<T>` | Cookie value decoded by field name. |
-| `fcl::http::body<T>` | Explicit JSON body DTO field. |
-| `fcl::http::body_bytes` | Bounded raw body bytes. |
-| `fcl::http::body_stream` | Streaming request body. |
-| `fcl::http::form<T>` | Form field value decoded by field name or form alias. |
-| `fcl::http::form_field<T>` | Server-side named form field. |
-| `fcl::http::upload_file` | Server-side multipart file part with safe filename helpers and bounded spool behavior. |
+| `forge::http::query<T>` | Query parameter value decoded by field name or route query alias. |
+| `forge::http::header<T>` | Header value decoded by explicit `FORGE_HTTP_HEADER(...)` alias or default field-name mapping `_ -> -`. |
+| `forge::http::cookie<T>` | Cookie value decoded by field name. |
+| `forge::http::body<T>` | Explicit JSON body DTO field. |
+| `forge::http::body_bytes` | Bounded raw body bytes. |
+| `forge::http::body_stream` | Streaming request body. |
+| `forge::http::form<T>` | Form field value decoded by field name or form alias. |
+| `forge::http::form_field<T>` | Server-side named form field. |
+| `forge::http::upload_file` | Server-side multipart file part with safe filename helpers and bounded spool behavior. |
 
 The typed HTTP client supports DTO fields for ordinary JSON, `query<T>`,
 `header<T>`, `cookie<T>`, `body<T>`, `body_bytes`, `body_stream`, `form<T>`,
-`form_field<T>` and `upload_file` without falling back to `fcl.raw`.
+`form_field<T>` and `upload_file` without falling back to `forge.raw`.
 
 FastAPI-style background task injection is intentionally not part of this surface.
 Background execution policy belongs to the application runtime, scheduler,
@@ -149,10 +149,10 @@ plugin lifecycle or product job system, not to HTTP parameter binding.
 
 Response special types remain return values, not request parameters:
 
-- `fcl::http::file_response`;
-- `fcl::http::streaming_response`;
-- `fcl::http::bytes_response`;
-- `fcl::http::empty_response`.
+- `forge::http::file_response`;
+- `forge::http::streaming_response`;
+- `forge::http::bytes_response`;
+- `forge::http::empty_response`.
 
 ## Binding Rules
 
@@ -168,7 +168,7 @@ DTO binding is deterministic and fail closed:
    `upload_file` by field type.
 6. If no explicit body field exists, preserve legacy whole-request JSON DTO
    behavior and verify consistency for duplicate route/body fields.
-7. Run final `fcl_schema` validation after all HTTP sources are assembled.
+7. Run final `forge_schema` validation after all HTTP sources are assembled.
 8. Reject ambiguous mappings at compile time when the type information is
    enough, otherwise at mount time before the server starts.
 
@@ -177,21 +177,21 @@ query, header, cookie, form or body source.
 
 ## Bounded HTTP Positional Parameters
 
-FCL still supports positional API methods for local and frame transports. For
+FORGE still supports positional API methods for local and frame transports. For
 HTTP, positional methods are intentionally bounded:
 
 ```cpp
 boost::asio::awaitable<object_meta>
 get_object(std::string bucket, std::string key, std::optional<std::uint32_t> limit);
 
-FCL_API(
+FORGE_API(
    object_api,
-   FCL_API_CONTRACT("object", 1, 0),
-   FCL_API_METHOD(get_object, bucket, key, limit))
+   FORGE_API_CONTRACT("object", 1, 0),
+   FORGE_API_METHOD(get_object, bucket, key, limit))
 
-FCL_HTTP_API(
+FORGE_HTTP_API(
    object_api,
-   FCL_HTTP_GET(get_object, "/:bucket/:key?limit={limit}"))
+   FORGE_HTTP_GET(get_object, "/:bucket/:key?limit={limit}"))
 ```
 
 Rules:
@@ -202,13 +202,13 @@ Rules:
   `POST`, `PUT`, `PATCH` and body-capable `DELETE`;
 - remaining scalar/string/enum/optional arguments are errors if not consumed by
   path/query;
-- `fcl::http::query<T>`, `header<T>`, `cookie<T>`, `body<T>`, `form<T>`,
+- `forge::http::query<T>`, `header<T>`, `cookie<T>`, `body<T>`, `form<T>`,
   `form_field<T>`, `upload_file`, `body_bytes` and `body_stream` are DTO-only
   for HTTP and are rejected in positional HTTP signatures.
 
 The preferred production shape remains a described DTO for HTTP endpoints.
 Positional HTTP exists for simple path/query routes and for compatibility with
-the broader multi-argument `FCL_API` model.
+the broader multi-argument `FORGE_API` model.
 
 ## Error Model
 
@@ -235,18 +235,18 @@ values.
 
 ## Boundaries
 
-- This is an HTTP presentation layer over `FCL_API(...)`, not a new product API
+- This is an HTTP presentation layer over `FORGE_API(...)`, not a new product API
   framework.
-- FCL does not add S3, SigV4, bucket, object-policy, billing or tenant-auth
+- FORGE does not add S3, SigV4, bucket, object-policy, billing or tenant-auth
   semantics.
-- `fcl_api` must not import `fcl_http`.
+- `forge_api` must not import `forge_http`.
 - HTTP special parameter types make an API method HTTP-bound and should appear
   as fields of HTTP request DTOs. Transport-neutral APIs should keep ordinary
   request/response DTOs or use positional arguments without HTTP wrappers.
 - Boost.Beast remains a private mechanics dependency.
 - Manual per-argument macros are not part of the normal path. Existing
-  `FCL_HTTP_HEADER(...)`, `FCL_HTTP_FORM(...)` and response mode options only
+  `FORGE_HTTP_HEADER(...)`, `FORGE_HTTP_FORM(...)` and response mode options only
   express wire aliases or response presentation.
-- Background task injection is out of scope for `fcl_http`; HTTP endpoints may
+- Background task injection is out of scope for `forge_http`; HTTP endpoints may
   submit work through explicit application/plugin APIs instead of hidden
   framework-managed post-response jobs.

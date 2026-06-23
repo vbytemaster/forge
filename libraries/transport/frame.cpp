@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -8,9 +8,9 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.transport.frame;
+module forge.transport.frame;
 
-namespace fcl::transport {
+namespace forge::transport {
 namespace {
 
 constexpr auto header_size = std::size_t{4};
@@ -38,7 +38,7 @@ std::vector<std::uint8_t> encode_frame(std::span<const std::uint8_t> payload, fr
 
 void encode_frame_to(std::vector<std::uint8_t>& out, std::span<const std::uint8_t> payload, frame_options options) {
    if (payload.size() > options.max_size) {
-      FCL_THROW_EXCEPTION(exceptions::frame_too_large, "transport frame payload exceeds max_size");
+      FORGE_THROW_EXCEPTION(exceptions::frame_too_large, "transport frame payload exceeds max_size");
    }
    write_u32_be(out, static_cast<std::uint32_t>(payload.size()));
    out.insert(out.end(), payload.begin(), payload.end());
@@ -51,7 +51,7 @@ frame_view_decode_result decode_frame_view(std::span<const std::uint8_t> bytes, 
 
    const auto size = read_u32_be(std::span<const std::uint8_t, header_size>{bytes.data(), header_size});
    if (size > options.max_size) {
-      FCL_THROW_EXCEPTION(exceptions::frame_too_large, "transport frame payload exceeds max_size");
+      FORGE_THROW_EXCEPTION(exceptions::frame_too_large, "transport frame payload exceeds max_size");
    }
 
    if (static_cast<std::size_t>(size) > bytes.size() - header_size) {
@@ -73,4 +73,4 @@ frame_decode_result decode_frame(std::span<const std::uint8_t> bytes, frame_opti
    return {.status = frame_decode_status::complete, .payload = std::move(payload), .consumed = decoded.consumed};
 }
 
-} // namespace fcl::transport
+} // namespace forge::transport

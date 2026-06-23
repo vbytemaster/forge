@@ -14,14 +14,14 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.multiformats.multiaddr;
+module forge.multiformats.multiaddr;
 
-import fcl.multiformats.exceptions;
+import forge.multiformats.exceptions;
 
-import fcl.crypto.base58;
-import fcl.multiformats.varint;
+import forge.crypto.base58;
+import forge.multiformats.varint;
 
-namespace fcl::multiformats {
+namespace forge::multiformats {
 namespace {
 
 [[nodiscard]] std::vector<std::string_view> split_path(std::string_view value) {
@@ -190,11 +190,11 @@ void validate_component(const multiaddr_component& component) {
             throw exceptions::invalid_format{"multiaddr protocol is missing a value"};
          }
          try {
-            const auto bytes = fcl::crypto::base58_decode(component.value);
+            const auto bytes = forge::crypto::base58_decode(component.value);
             if (bytes.empty()) {
                throw exceptions::invalid_format{"multiaddr p2p component is invalid"};
             }
-         } catch (const fcl::exceptions::base&) {
+         } catch (const forge::exceptions::base&) {
             throw exceptions::invalid_format{"multiaddr p2p component is invalid"};
          }
          break;
@@ -291,7 +291,7 @@ multiaddr multiaddr::from_bytes(std::span<const std::uint8_t> data) {
             }
             auto peer_bytes = bytes{data.begin() + static_cast<std::ptrdiff_t>(offset),
                                     data.begin() + static_cast<std::ptrdiff_t>(offset + length.value)};
-            result.push({.code = code, .value = fcl::crypto::base58_encode(peer_bytes)});
+            result.push({.code = code, .value = forge::crypto::base58_encode(peer_bytes)});
             offset += static_cast<std::size_t>(length.value);
             break;
          }
@@ -350,7 +350,7 @@ bytes multiaddr::to_bytes() const {
             break;
          }
          case protocol_code::p2p: {
-            auto payload = fcl::crypto::base58_decode(component.value);
+            auto payload = forge::crypto::base58_decode(component.value);
             append_prefixed(out, payload);
             break;
          }
@@ -403,4 +403,4 @@ void multiaddr::push(multiaddr_component value) {
    components_.push_back(std::move(value));
 }
 
-} // namespace fcl::multiformats
+} // namespace forge::multiformats

@@ -5,11 +5,11 @@ module;
 #include <string>
 #include <utility>
 
-module fcl.variant.value;
+module forge.variant.value;
 
-import fcl.core.utility;
+import forge.core.utility;
 
-namespace fcl {
+namespace forge {
 // ---------------------------------------------------------------
 // entry
 
@@ -25,8 +25,8 @@ variant_object::entry& variant_object::entry::operator=(const variant_object::en
    return *this;
 }
 variant_object::entry& variant_object::entry::operator=(variant_object::entry&& e) noexcept {
-   fcl_swap(_key, e._key);
-   fcl_swap(_value, e._value);
+   forge_swap(_key, e._key);
+   forge_swap(_value, e._value);
    return *this;
 }
 
@@ -42,7 +42,7 @@ variant& variant_object::entry::value() {
 }
 
 void variant_object::entry::set(variant v) {
-   fcl_swap(_value, v);
+   forge_swap(_value, v);
 }
 
 // ---------------------------------------------------------------
@@ -109,7 +109,7 @@ variant_object::variant_object(mutable_variant_object&& obj) : _key_value(std::m
 
 variant_object& variant_object::operator=(variant_object&& obj) noexcept {
    if (this != &obj) {
-      fcl_swap(_key_value, obj._key_value);
+      forge_swap(_key_value, obj._key_value);
       assert(_key_value != nullptr);
    }
    return *this;
@@ -355,4 +355,4 @@ void from_variant(const variant& var, mutable_variant_object& vo) {
    vo = var.get_object();
 }
 
-} // namespace fcl
+} // namespace forge

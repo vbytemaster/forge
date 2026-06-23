@@ -12,14 +12,14 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.p2p.node;
+module forge.p2p.node;
 
-import fcl.p2p.identity;
-import fcl.p2p.resource_manager;
+import forge.p2p.identity;
+import forge.p2p.resource_manager;
 
 #include "connection_manager.hpp"
 
-namespace fcl::p2p {
+namespace forge::p2p {
 
 connection_manager::connection_manager(policy value) : policy_(value) {}
 
@@ -256,4 +256,4 @@ connection_manager::policy connection_policy_for(const node::limits& limits) {
    };
 }
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

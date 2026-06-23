@@ -4,20 +4,20 @@ module;
 
 #include <optional>
 
-module fcl.app.plugin;
+module forge.app.plugin;
 
-import fcl.config.component;
-import fcl.api.exceptions;
-import fcl.api.types;
-import fcl.api.descriptor;
-import fcl.api.error_projection;
-import fcl.api.handle;
-import fcl.api.connection;
-import fcl.api.registry;
-import fcl.api.binding;
-import fcl.api.dispatcher;
+import forge.config.component;
+import forge.api.exceptions;
+import forge.api.types;
+import forge.api.descriptor;
+import forge.api.error_projection;
+import forge.api.handle;
+import forge.api.connection;
+import forge.api.registry;
+import forge.api.binding;
+import forge.api.dispatcher;
 
-namespace fcl::app {
+namespace forge::app {
 
 std::optional<config::component_descriptor> plugin::describe_config() const {
    return std::nullopt;
@@ -27,7 +27,7 @@ boost::asio::awaitable<void> plugin::configure(config::component_view) {
    co_return;
 }
 
-boost::asio::awaitable<void> plugin::provide(fcl::api::provider&) {
+boost::asio::awaitable<void> plugin::provide(forge::api::provider&) {
    co_return;
 }
 
@@ -37,4 +37,4 @@ bool valid_plugin_id(const plugin_id& id) noexcept {
    return !id.value.empty();
 }
 
-} // namespace fcl::app
+} // namespace forge::app

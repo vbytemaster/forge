@@ -1,3 +1,3 @@
 module;
 
-module fcl.app.signals;
+module forge.app.signals;

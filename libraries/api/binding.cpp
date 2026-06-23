@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <boost/asio/awaitable.hpp>
 
@@ -13,9 +13,9 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.api.binding;
+module forge.api.binding;
 
-namespace fcl::api {
+namespace forge::api {
 
 namespace {
 
@@ -45,7 +45,7 @@ namespace {
        .meta = request.meta,
        .codec = request.codec,
    };
-   fcl::raw::pack(response.payload, payload);
+   forge::raw::pack(response.payload, payload);
    return response;
 }
 
@@ -58,7 +58,7 @@ namespace {
                     .status_code = status::permission_denied,
                     .identity =
                         {
-                            .category = "fcl.api",
+                            .category = "forge.api",
                             .code = static_cast<std::uint32_t>(exceptions::code::incompatible_version),
                         },
                 });
@@ -111,15 +111,15 @@ void validate_interceptors(const std::vector<interceptor_step>& interceptors) {
    auto ids = std::set<std::string>{};
    for (const auto& step : interceptors) {
       if (step.id.empty()) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "API interceptor id must not be empty");
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API interceptor id must not be empty");
       }
       if (!step.handler) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "API interceptor handler must not be empty",
-                             fcl::exceptions::ctx("interceptor", step.id));
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API interceptor handler must not be empty",
+                             forge::exceptions::ctx("interceptor", step.id));
       }
       if (!ids.insert(step.id).second) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "duplicate API interceptor id",
-                             fcl::exceptions::ctx("interceptor", step.id));
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "duplicate API interceptor id",
+                             forge::exceptions::ctx("interceptor", step.id));
       }
    }
 }
@@ -159,17 +159,17 @@ call_runtime::call_runtime(call_runtime_options options) : options_{options} {}
 void call_runtime::observe(const frame& value) {
    const auto id = value.id.value;
    if (id == 0) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "API frame call_id must not be zero");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API frame call_id must not be zero");
    }
 
    if (value.kind == frame_kind::request) {
       if (active_.contains(id)) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "duplicate active API call_id",
-                             fcl::exceptions::ctx("call_id", id));
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "duplicate active API call_id",
+                             forge::exceptions::ctx("call_id", id));
       }
       if (active_.size() >= options_.max_inflight) {
-         FCL_THROW_EXCEPTION(exceptions::resource_exhausted, "API max inflight calls exceeded",
-                             fcl::exceptions::ctx("max_inflight", options_.max_inflight));
+         FORGE_THROW_EXCEPTION(exceptions::resource_exhausted, "API max inflight calls exceeded",
+                             forge::exceptions::ctx("max_inflight", options_.max_inflight));
       }
       active_.emplace(id, active_call{.started_at = std::chrono::steady_clock::now()});
       return;
@@ -177,15 +177,15 @@ void call_runtime::observe(const frame& value) {
 
    const auto active = active_.find(id);
    if (active == active_.end()) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "API frame references unknown call_id",
-                          fcl::exceptions::ctx("call_id", id));
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API frame references unknown call_id",
+                          forge::exceptions::ctx("call_id", id));
    }
 
    if (options_.deadline.count() > 0 &&
        std::chrono::steady_clock::now() - active->second.started_at > options_.deadline) {
       active_.erase(active);
-      FCL_THROW_EXCEPTION(exceptions::deadline_exceeded, "API call deadline exceeded",
-                          fcl::exceptions::ctx("call_id", id));
+      FORGE_THROW_EXCEPTION(exceptions::deadline_exceeded, "API call deadline exceeded",
+                          forge::exceptions::ctx("call_id", id));
    }
 
    if (terminal(value.kind)) {
@@ -195,26 +195,26 @@ void call_runtime::observe(const frame& value) {
 
 void call_runtime::observe_input_stream_end(const frame& value) {
    if (value.kind != frame_kind::stream_end) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "API input stream end observer received non-terminal frame",
-                          fcl::exceptions::ctx("call_id", value.id.value));
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API input stream end observer received non-terminal frame",
+                          forge::exceptions::ctx("call_id", value.id.value));
    }
 
    const auto id = value.id.value;
    if (id == 0) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "API frame call_id must not be zero");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API frame call_id must not be zero");
    }
 
    const auto active = active_.find(id);
    if (active == active_.end()) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "API frame references unknown call_id",
-                          fcl::exceptions::ctx("call_id", id));
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API frame references unknown call_id",
+                          forge::exceptions::ctx("call_id", id));
    }
 
    if (options_.deadline.count() > 0 &&
        std::chrono::steady_clock::now() - active->second.started_at > options_.deadline) {
       active_.erase(active);
-      FCL_THROW_EXCEPTION(exceptions::deadline_exceeded, "API call deadline exceeded",
-                          fcl::exceptions::ctx("call_id", id));
+      FORGE_THROW_EXCEPTION(exceptions::deadline_exceeded, "API call deadline exceeded",
+                          forge::exceptions::ctx("call_id", id));
    }
 }
 
@@ -243,7 +243,7 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_many(frame req
 
 boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_many(frame request, call_runtime& calls) const {
    if (local == nullptr) {
-      FCL_THROW_EXCEPTION(exceptions::incompatible_version, "API binding plan has no local registry");
+      FORGE_THROW_EXCEPTION(exceptions::incompatible_version, "API binding plan has no local registry");
    }
    if (!exports_api(*this, request.api) || method_hidden_by_export(*this, request.api, request.method)) {
       co_return std::vector<frame>{make_api_not_exported_response(request)};
@@ -285,10 +285,10 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::ve
 boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::vector<frame> frames,
                                                                          call_runtime& calls) const {
    if (local == nullptr) {
-      FCL_THROW_EXCEPTION(exceptions::incompatible_version, "API binding plan has no local registry");
+      FORGE_THROW_EXCEPTION(exceptions::incompatible_version, "API binding plan has no local registry");
    }
    if (frames.empty()) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "API stream dispatch requires at least one frame");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API stream dispatch requires at least one frame");
    }
    if (!exports_api(*this, frames.front().api) ||
        method_hidden_by_export(*this, frames.front().api, frames.front().method)) {
@@ -362,4 +362,4 @@ binding_builder binding() {
    return binding_builder{};
 }
 
-} // namespace fcl::api
+} // namespace forge::api

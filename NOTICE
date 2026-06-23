@@ -1,10 +1,10 @@
-FCL
+FORGE
 
 Copyright (c) 2026 Vladimir Tarnakin.
 
 Licensed under the Apache License, Version 2.0.
 
-FCL is a C++23 foundation library created and maintained by Vladimir
+FORGE is a C++23 foundation library created and maintained by Vladimir
 Tarnakin. Portions of this repository derive from, adapt, or preserve
 compatibility with earlier FC, AntelopeIO/spring, EOS Network Foundation,
 and EOSIO/eos code originally distributed under the MIT License.
@@ -14,4 +14,4 @@ THIRD_PARTY_LICENSES. File-level source lineage and compatibility-only donor
 boundaries are documented in PROVENANCE.md.
 
 Canonical upstream:
-https://github.com/vbytemaster/storlane-fc
+https://github.com/vbytemaster/forge

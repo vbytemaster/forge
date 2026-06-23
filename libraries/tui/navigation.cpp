@@ -4,11 +4,11 @@ module;
 #include <optional>
 #include <utility>
 
-module fcl.tui.navigation;
+module forge.tui.navigation;
 
-import fcl.tui.types;
+import forge.tui.types;
 
-namespace fcl::tui {
+namespace forge::tui {
 
 navigation_stack::navigation_stack() = default;
 navigation_stack::~navigation_stack() = default;
@@ -70,4 +70,4 @@ void navigation_stack::select_previous() {
    --model->selected;
 }
 
-} // namespace fcl::tui
+} // namespace forge::tui

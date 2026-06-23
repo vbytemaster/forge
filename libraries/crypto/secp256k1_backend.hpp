@@ -4,7 +4,7 @@
  * used by secp256k1 key operations
  */
 
-namespace fcl::crypto::secp256k1::detail {
+namespace forge::crypto::secp256k1::detail {
 
 const secp256k1_context* _get_context();
 
@@ -18,4 +18,4 @@ class private_key_impl {
    private_key_secret _key;
 };
 
-} // namespace fcl::crypto::secp256k1::detail
+} // namespace forge::crypto::secp256k1::detail

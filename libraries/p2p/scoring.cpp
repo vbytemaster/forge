@@ -1,8 +1,8 @@
 module;
 
-module fcl.p2p.scoring;
+module forge.p2p.scoring;
 
-namespace fcl::p2p {
+namespace forge::p2p {
 
 double score_path(const path::observation& observation) noexcept {
    auto score = 1'000.0;
@@ -21,4 +21,4 @@ double score_path(const path::observation& observation) noexcept {
    return score;
 }
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

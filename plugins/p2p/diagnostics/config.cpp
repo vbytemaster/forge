@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -9,28 +9,28 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.plugins.p2p.diagnostics.plugin;
+module forge.plugins.p2p.diagnostics.plugin;
 
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.exceptions;
-import fcl.p2p.diagnostics;
-import fcl.p2p.identity;
-import fcl.p2p.pubsub;
-import fcl.p2p.resource_manager;
-import fcl.plugins.p2p.diagnostics.api;
-import fcl.plugins.p2p.diagnostics.exceptions;
-import fcl.plugins.p2p.diagnostics.types;
+import forge.config.component;
+import forge.config.decode;
+import forge.exceptions;
+import forge.p2p.diagnostics;
+import forge.p2p.identity;
+import forge.p2p.pubsub;
+import forge.p2p.resource_manager;
+import forge.plugins.p2p.diagnostics.api;
+import forge.plugins.p2p.diagnostics.exceptions;
+import forge.plugins.p2p.diagnostics.types;
 
 #include "details/config.hxx"
 
-namespace fcl::plugins::p2p::diagnostics {
+namespace forge::plugins::p2p::diagnostics {
 
-config decode_config(const fcl::config::component_view& view) {
-   auto decoded = fcl::config::decode<config>(view.source(), view.section());
+config decode_config(const forge::config::component_view& view) {
+   auto decoded = forge::config::decode<config>(view.source(), view.section());
    if (!decoded.ok()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_config,
-                          fcl::config::format_decode_diagnostics("invalid P2P diagnostics config",
+      FORGE_THROW_EXCEPTION(exceptions::invalid_config,
+                          forge::config::format_decode_diagnostics("invalid P2P diagnostics config",
                                                                  decoded.diagnostics));
    }
    return std::move(decoded.value);
@@ -40,8 +40,8 @@ void validate_config(const config& value) {
    static_cast<void>(value);
 }
 
-fcl::p2p::diagnostics::options configured_options(const config& value) {
-   return fcl::p2p::diagnostics::options{
+forge::p2p::diagnostics::options configured_options(const config& value) {
+   return forge::p2p::diagnostics::options{
       .max_peers = static_cast<std::size_t>(value.max_peers),
       .max_sessions = static_cast<std::size_t>(value.max_sessions),
       .max_endpoints_per_peer = static_cast<std::size_t>(value.max_endpoints_per_peer),
@@ -50,16 +50,16 @@ fcl::p2p::diagnostics::options configured_options(const config& value) {
    };
 }
 
-std::vector<fcl::p2p::diagnostics::peer>
-filter_peers(const fcl::p2p::diagnostics::snapshot& snapshot, const filter& filter) {
-   auto connected = std::set<fcl::p2p::peer_id>{};
+std::vector<forge::p2p::diagnostics::peer>
+filter_peers(const forge::p2p::diagnostics::snapshot& snapshot, const filter& filter) {
+   auto connected = std::set<forge::p2p::peer_id>{};
    if (filter.only_connected) {
       for (const auto& session : snapshot.sessions) {
          connected.insert(session.remote_peer);
       }
    }
 
-   auto out = std::vector<fcl::p2p::diagnostics::peer>{};
+   auto out = std::vector<forge::p2p::diagnostics::peer>{};
    out.reserve(snapshot.peers.size());
    for (const auto& peer : snapshot.peers) {
       if (filter.peer.has_value() && peer.peer != *filter.peer) {
@@ -79,4 +79,4 @@ filter_peers(const fcl::p2p::diagnostics::snapshot& snapshot, const filter& filt
    return out;
 }
 
-} // namespace fcl::plugins::p2p::diagnostics
+} // namespace forge::plugins::p2p::diagnostics

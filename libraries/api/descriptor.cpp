@@ -3,9 +3,9 @@ module;
 #include <string_view>
 #include <string>
 
-module fcl.api.descriptor;
+module forge.api.descriptor;
 
-namespace fcl::api {
+namespace forge::api {
 
 bool compatible(const descriptor& available, const api_ref& requested) noexcept {
    return available.id == requested.id && available.version.major == requested.major &&
@@ -25,4 +25,4 @@ const method_descriptor* find_method(const descriptor& api, std::string_view nam
    return nullptr;
 }
 
-} // namespace fcl::api
+} // namespace forge::api

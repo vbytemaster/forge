@@ -1,6 +1,6 @@
 #pragma once
 
-namespace fcl::p2p {
+namespace forge::p2p {
 
 struct tcp_upgrade_deadline {
    boost::asio::io_context* context = nullptr;
@@ -9,19 +9,19 @@ struct tcp_upgrade_deadline {
 };
 
 boost::asio::awaitable<upgraded_session>
-upgrade_outbound_tcp(fcl::tcp::connection connection, const node::options& options, std::optional<peer_id> expected_peer);
+upgrade_outbound_tcp(forge::tcp::connection connection, const node::options& options, std::optional<peer_id> expected_peer);
 
 boost::asio::awaitable<upgraded_session>
-upgrade_inbound_tcp(fcl::tcp::connection connection, const node::options& options, std::optional<peer_id> expected_peer);
+upgrade_inbound_tcp(forge::tcp::connection connection, const node::options& options, std::optional<peer_id> expected_peer);
 
-boost::asio::awaitable<upgraded_session> upgrade_outbound_tcp(fcl::tcp::connection connection,
+boost::asio::awaitable<upgraded_session> upgrade_outbound_tcp(forge::tcp::connection connection,
                                                               const node::options& options,
                                                               std::optional<peer_id> expected_peer,
                                                               tcp_upgrade_deadline deadline);
 
-boost::asio::awaitable<upgraded_session> upgrade_inbound_tcp(fcl::tcp::connection connection,
+boost::asio::awaitable<upgraded_session> upgrade_inbound_tcp(forge::tcp::connection connection,
                                                              const node::options& options,
                                                              std::optional<peer_id> expected_peer,
                                                              tcp_upgrade_deadline deadline);
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

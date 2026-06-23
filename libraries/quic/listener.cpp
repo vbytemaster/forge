@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include "wrapper_handles.hpp"
 
@@ -9,13 +9,13 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.quic.listener;
+module forge.quic.listener;
 
-import fcl.quic.exceptions;
-import fcl.quic.runtime;
-import fcl.quic.security;
+import forge.quic.exceptions;
+import forge.quic.runtime;
+import forge.quic.security;
 
-namespace fcl::quic {
+namespace forge::quic {
 namespace {
 
 [[nodiscard]] exceptions::code map_error(detail::engine_error_kind kind) noexcept {
@@ -59,7 +59,7 @@ namespace {
 }
 
 [[noreturn]] void raise_engine_failure(const detail::engine_failure& error) {
-   FCL_THROW_CODE(map_error(error.kind()), error.what());
+   FORGE_THROW_CODE(map_error(error.kind()), error.what());
 }
 
 [[nodiscard]] detail::engine_transport_limits map_limits(const transport_limits& limits) noexcept {
@@ -105,21 +105,21 @@ namespace {
 } // namespace
 
 struct listener::impl {
-   impl(fcl::asio::runtime& runtime_value, endpoint bind_endpoint_value, server_options options_value)
+   impl(forge::asio::runtime& runtime_value, endpoint bind_endpoint_value, server_options options_value)
        : runtime(runtime_value),
          engine(runtime_value.context(),
                 detail::engine_endpoint{.host = std::move(bind_endpoint_value.host), .port = bind_endpoint_value.port},
                 map_options(options_value)) {}
 
-   fcl::asio::runtime& runtime;
+   forge::asio::runtime& runtime;
    detail::engine_listener engine;
 };
 
-listener::listener(fcl::asio::runtime& runtime, endpoint bind_endpoint, server_options options) {
+listener::listener(forge::asio::runtime& runtime, endpoint bind_endpoint, server_options options) {
    validate(options);
    const auto capabilities = initialize_runtime();
    if (!capabilities.crypto_ossl_initialized) {
-      FCL_THROW_EXCEPTION(exceptions::dependency_unavailable, "ngtcp2 OpenSSL crypto backend initialization failed");
+      FORGE_THROW_EXCEPTION(exceptions::dependency_unavailable, "ngtcp2 OpenSSL crypto backend initialization failed");
    }
    impl_ = std::make_unique<impl>(runtime, std::move(bind_endpoint), std::move(options));
 }
@@ -136,7 +136,7 @@ endpoint listener::local_endpoint() const {
 
 boost::asio::awaitable<connection> listener::async_accept() {
    if (!impl_) {
-      FCL_THROW_EXCEPTION(exceptions::connection_closed, "invalid QUIC listener");
+      FORGE_THROW_EXCEPTION(exceptions::connection_closed, "invalid QUIC listener");
    }
    try {
       auto engine_connection = co_await impl_->engine.async_accept();
@@ -152,4 +152,4 @@ void listener::stop() {
    }
 }
 
-} // namespace fcl::quic
+} // namespace forge::quic

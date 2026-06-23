@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <boost/asio/awaitable.hpp>
 
@@ -16,53 +16,53 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.plugins.p2p.node.plugin;
+module forge.plugins.p2p.node.plugin;
 
-import fcl.api.exceptions;
-import fcl.api.types;
-import fcl.api.descriptor;
-import fcl.api.error_projection;
-import fcl.api.handle;
-import fcl.api.connection;
-import fcl.api.registry;
-import fcl.api.binding;
-import fcl.api.dispatcher;
-import fcl.transport.api.exceptions;
-import fcl.transport.api.options;
-import fcl.transport.api.client;
-import fcl.transport.api.connection;
-import fcl.transport.api.server;
-import fcl.app.plugin;
-import fcl.app.plugin_context;
-import fcl.asio.runtime;
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.exceptions;
-import fcl.p2p.exceptions;
-import fcl.p2p.identity;
-import fcl.p2p.endpoint;
-import fcl.p2p.envelope;
-import fcl.p2p.identify;
-import fcl.p2p.diagnostics;
-import fcl.p2p.discovery;
-import fcl.p2p.dht;
-import fcl.p2p.rendezvous;
-import fcl.p2p.pubsub;
-import fcl.p2p.reachability;
-import fcl.p2p.hole_punch;
-import fcl.p2p.protocol;
-import fcl.p2p.message;
-import fcl.p2p.scoring;
-import fcl.p2p.relay;
-import fcl.p2p.resource_manager;
-import fcl.p2p.stream;
-import fcl.p2p.negotiation;
-import fcl.p2p.peer_store;
-import fcl.p2p.node;
-import fcl.p2p.api;
-import fcl.plugins.p2p.node.api;
-import fcl.plugins.p2p.node.exceptions;
-import fcl.plugins.p2p.node.types;
+import forge.api.exceptions;
+import forge.api.types;
+import forge.api.descriptor;
+import forge.api.error_projection;
+import forge.api.handle;
+import forge.api.connection;
+import forge.api.registry;
+import forge.api.binding;
+import forge.api.dispatcher;
+import forge.transport.api.exceptions;
+import forge.transport.api.options;
+import forge.transport.api.client;
+import forge.transport.api.connection;
+import forge.transport.api.server;
+import forge.app.plugin;
+import forge.app.plugin_context;
+import forge.asio.runtime;
+import forge.config.component;
+import forge.config.decode;
+import forge.exceptions;
+import forge.p2p.exceptions;
+import forge.p2p.identity;
+import forge.p2p.endpoint;
+import forge.p2p.envelope;
+import forge.p2p.identify;
+import forge.p2p.diagnostics;
+import forge.p2p.discovery;
+import forge.p2p.dht;
+import forge.p2p.rendezvous;
+import forge.p2p.pubsub;
+import forge.p2p.reachability;
+import forge.p2p.hole_punch;
+import forge.p2p.protocol;
+import forge.p2p.message;
+import forge.p2p.scoring;
+import forge.p2p.relay;
+import forge.p2p.resource_manager;
+import forge.p2p.stream;
+import forge.p2p.negotiation;
+import forge.p2p.peer_store;
+import forge.p2p.node;
+import forge.p2p.api;
+import forge.plugins.p2p.node.api;
+import forge.plugins.p2p.node.exceptions;
+import forge.plugins.p2p.node.types;
 
 #include "details/config.hxx"
 #include "details/diagnostics_source.hxx"
@@ -70,37 +70,37 @@ import fcl.plugins.p2p.node.types;
 #include "details/plugin_impl.hxx"
 #include "details/pubsub_source.hxx"
 
-namespace fcl::plugins::p2p::node {
+namespace forge::plugins::p2p::node {
 
 plugin::plugin() : impl_{std::make_shared<impl>()} {}
 plugin::~plugin() = default;
 
-fcl::app::plugin_id plugin::id() const {
-   return fcl::app::plugin_id{.value = "fcl.plugins.p2p.node"};
+forge::app::plugin_id plugin::id() const {
+   return forge::app::plugin_id{.value = "forge.plugins.p2p.node"};
 }
 
 std::string plugin::version() const {
    return "1.0.0";
 }
 
-std::optional<fcl::config::component_descriptor> plugin::describe_config() const {
-   return fcl::config::describe_component<config>("plugins.p2p.node");
+std::optional<forge::config::component_descriptor> plugin::describe_config() const {
+   return forge::config::describe_component<config>("plugins.p2p.node");
 }
 
-boost::asio::awaitable<void> plugin::configure(fcl::config::component_view view) {
+boost::asio::awaitable<void> plugin::configure(forge::config::component_view view) {
    const auto config = decode_config(view);
    apply_config(*impl_, config);
    co_return;
 }
 
-boost::asio::awaitable<void> plugin::provide(fcl::api::provider& provider) {
+boost::asio::awaitable<void> plugin::provide(forge::api::provider& provider) {
    provider.install<api>(std::make_shared<node_api>(impl_));
    provider.install<diagnostics_source>(std::make_shared<diagnostics_source_adapter>(impl_));
    provider.install<pubsub_source>(std::make_shared<pubsub_source_adapter>(impl_));
    co_return;
 }
 
-boost::asio::awaitable<void> plugin::initialize(fcl::app::plugin_context& context) {
+boost::asio::awaitable<void> plugin::initialize(forge::app::plugin_context& context) {
    impl_->runtime = &context.scheduler().runtime_context();
    impl_->stopping = false;
    co_return;
@@ -118,7 +118,7 @@ boost::asio::awaitable<void> plugin::startup() {
       try {
          (void)co_await node.async_connect(endpoint);
       } catch (...) {
-         fcl::exceptions::capture_and_log("P2P bootstrap connect failed");
+         forge::exceptions::capture_and_log("P2P bootstrap connect failed");
       }
    }
    impl_->started = true;
@@ -141,13 +141,13 @@ boost::asio::awaitable<void> plugin::shutdown() {
    impl_->started = false;
 }
 
-fcl::app::plugin_descriptor descriptor() {
-   return fcl::app::plugin_descriptor{
-      .id = fcl::app::plugin_id{.value = "fcl.plugins.p2p.node"},
+forge::app::plugin_descriptor descriptor() {
+   return forge::app::plugin_descriptor{
+      .id = forge::app::plugin_id{.value = "forge.plugins.p2p.node"},
       .factory = [] {
          return std::make_unique<plugin>();
       },
    };
 }
 
-} // namespace fcl::plugins::p2p::node
+} // namespace forge::plugins::p2p::node

@@ -1,8 +1,8 @@
-# fcl_program_options
+# forge_program_options
 
-`fcl_program_options` is the CLI adapter for FCL config. It uses
-Boost.Program_options internally, but returns `fcl::config::document` and
-`fcl::schema::diagnostic` so application code never depends on Boost parser
+`forge_program_options` is the CLI adapter for FORGE config. It uses
+Boost.Program_options internally, but returns `forge::config::document` and
+`forge::schema::diagnostic` so application code never depends on Boost parser
 types.
 
 ## When To Use
@@ -13,7 +13,7 @@ types.
 
 ## When Not To Use
 
-- Do not use this library inside `fcl_app` core. `fcl_app` consumes config
+- Do not use this library inside `forge_app` core. `forge_app` consumes config
   documents and descriptors only.
 - Do not expose backend parser result maps in public APIs.
 - Do not use argv for secrets unless a consuming CLI explicitly accepts the
@@ -21,27 +21,27 @@ types.
 
 ## Public Module
 
-- `fcl.program_options`
+- `forge.program_options`
 
-Target: `fcl_program_options`.
+Target: `forge_program_options`.
 
-Dependencies: `fcl_config`, `fcl_schema`, private Boost.Program_options.
+Dependencies: `forge_config`, `forge_schema`, private Boost.Program_options.
 
 ## Examples
 
 ### Parse CLI Into A Config Document
 
 ```cpp
-import fcl.config.key_path;
-import fcl.config.value;
-import fcl.config.document;
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.config.migration;
-import fcl.program_options;
+import forge.config.key_path;
+import forge.config.value;
+import forge.config.document;
+import forge.config.component;
+import forge.config.decode;
+import forge.config.migration;
+import forge.program_options;
 
-auto registry = fcl::config::component_registry{};
-registry.add(fcl::config::describe_component<http_config>("http"));
+auto registry = forge::config::component_registry{};
+registry.add(forge::config::describe_component<http_config>("http"));
 
 const char* argv[] = {
    "tool",
@@ -49,11 +49,11 @@ const char* argv[] = {
    "--http.tls-enabled=false",
 };
 
-auto parsed = fcl::program_options::parse(3, argv, registry);
+auto parsed = forge::program_options::parse(3, argv, registry);
 if (!parsed.ok()) {
    report_diagnostics(parsed.diagnostics);
 } else {
-   auto decoded = fcl::config::decode<http_config>(parsed.document, "http");
+   auto decoded = forge::config::decode<http_config>(parsed.document, "http");
    if (!decoded.ok()) {
       report_diagnostics(decoded.diagnostics.entries);
    }
@@ -63,26 +63,26 @@ if (!parsed.ok()) {
 ### Generate Help Text
 
 ```cpp
-import fcl.program_options;
+import forge.program_options;
 
-auto text = fcl::program_options::help(registry, "FCL options");
+auto text = forge::program_options::help(registry, "FORGE options");
 ```
 
 ### Merge With File Config
 
 ```cpp
-import fcl.config.key_path;
-import fcl.config.value;
-import fcl.config.document;
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.config.migration;
+import forge.config.key_path;
+import forge.config.value;
+import forge.config.document;
+import forge.config.component;
+import forge.config.decode;
+import forge.config.migration;
 
 if (!parsed.ok()) {
    report_diagnostics(parsed.diagnostics);
 } else {
-   auto effective = fcl::config::merge({
-      fcl::config::defaults_for<http_config>("http"),
+   auto effective = forge::config::merge({
+      forge::config::defaults_for<http_config>("http"),
       yaml_document,
       dotenv_document,
       process_env_document,
@@ -98,11 +98,11 @@ bootstrap flags such as `--log-level` flat instead of forcing a synthetic
 section.
 
 ```cpp
-auto registry = fcl::config::component_registry{};
-registry.add(fcl::config::describe_component<daemon_config>(""));
+auto registry = forge::config::component_registry{};
+registry.add(forge::config::describe_component<daemon_config>(""));
 
 const char* argv[] = {"daemon", "--log-level=debug"};
-auto parsed = fcl::program_options::parse(2, argv, registry);
+auto parsed = forge::program_options::parse(2, argv, registry);
 ```
 
 CLI should be the last high-precedence source in a normal daemon bootstrap.
@@ -135,9 +135,9 @@ for (const auto& diagnostic : parsed.diagnostics) {
 
 - Do not let plugins call `parse(argc, argv, ...)` themselves. Plugins publish
   descriptors; the application shell decides which adapters are active.
-- Do not encode config source precedence in this library. Use `fcl_config::merge`.
+- Do not encode config source precedence in this library. Use `forge_config::merge`.
 - Do not document aliases that are not present in schema descriptors.
-- Do not parse environment variables here. Use `fcl_env` for process env and
+- Do not parse environment variables here. Use `forge_env` for process env and
   `.env` files.
 - Do not pass secrets on argv unless the application explicitly accepts the process
   list/history risk. Prefer config files with permissions, stdin or an application
@@ -147,5 +147,5 @@ for (const auto& diagnostic : parsed.diagnostics) {
 
 ## Tests
 
-`test_fcl_program_options` covers dotted flags, flat root flags, explicit
+`test_forge_program_options` covers dotted flags, flat root flags, explicit
 boolean false, repeated list flags, aliases and conversion errors.

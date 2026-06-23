@@ -13,20 +13,20 @@ module;
 #include <variant>
 #include <vector>
 
-module fcl.config.decode;
+module forge.config.decode;
 
-import fcl.config.value;
-import fcl.schema.diagnostic;
-import fcl.schema.value_kind;
-import fcl.schema.object;
-import fcl.schema.enums;
-import fcl.schema.scalar;
+import forge.config.value;
+import forge.schema.diagnostic;
+import forge.schema.value_kind;
+import forge.schema.object;
+import forge.schema.enums;
+import forge.schema.scalar;
 
-namespace fcl::config {
+namespace forge::config {
 
 bool parse_bool_text(std::string text, bool& output) {
    try {
-      output = fcl::schema::parse_scalar_text<bool>(text);
+      output = forge::schema::parse_scalar_text<bool>(text);
       return true;
    } catch (const std::invalid_argument&) {
       return false;
@@ -85,10 +85,10 @@ std::any value_to_any(const value& input, schema::value_kind kind) {
          return *signed_value;
       }
       if (const auto* unsigned_value = std::get_if<std::uint64_t>(&input.storage)) {
-         return fcl::schema::checked_integral_cast<std::int64_t>(*unsigned_value);
+         return forge::schema::checked_integral_cast<std::int64_t>(*unsigned_value);
       }
       if (const auto* string_value = std::get_if<std::string>(&input.storage)) {
-         return fcl::schema::parse_scalar_text<std::int64_t>(*string_value);
+         return forge::schema::parse_scalar_text<std::int64_t>(*string_value);
       }
       break;
    case schema::value_kind::unsigned_integer:
@@ -96,10 +96,10 @@ std::any value_to_any(const value& input, schema::value_kind kind) {
          return *unsigned_value;
       }
       if (const auto* signed_value = std::get_if<std::int64_t>(&input.storage)) {
-         return fcl::schema::checked_integral_cast<std::uint64_t>(*signed_value);
+         return forge::schema::checked_integral_cast<std::uint64_t>(*signed_value);
       }
       if (const auto* string_value = std::get_if<std::string>(&input.storage)) {
-         return fcl::schema::parse_scalar_text<std::uint64_t>(*string_value);
+         return forge::schema::parse_scalar_text<std::uint64_t>(*string_value);
       }
       break;
    case schema::value_kind::floating:
@@ -113,7 +113,7 @@ std::any value_to_any(const value& input, schema::value_kind kind) {
          return static_cast<double>(*unsigned_value);
       }
       if (const auto* string_value = std::get_if<std::string>(&input.storage)) {
-         return fcl::schema::parse_scalar_text<double>(*string_value);
+         return forge::schema::parse_scalar_text<double>(*string_value);
       }
       break;
    case schema::value_kind::string:
@@ -203,4 +203,4 @@ value any_to_value(schema::value_kind kind, const std::any& input) {
    return {};
 }
 
-} // namespace fcl::config
+} // namespace forge::config

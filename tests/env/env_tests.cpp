@@ -9,17 +9,17 @@
 #include <windows.h>
 #endif
 
-import fcl.config.key_path;
-import fcl.config.value;
-import fcl.config.document;
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.config.migration;
-import fcl.env;
-import fcl.schema.diagnostic;
-import fcl.schema.value_kind;
-import fcl.schema.object;
-import fcl.schema.enums;
+import forge.config.key_path;
+import forge.config.value;
+import forge.config.document;
+import forge.config.component;
+import forge.config.decode;
+import forge.config.migration;
+import forge.env;
+import forge.schema.diagnostic;
+import forge.schema.value_kind;
+import forge.schema.object;
+import forge.schema.enums;
 
 namespace {
 
@@ -86,14 +86,14 @@ class scoped_environment_variable {
 };
 #endif
 
-[[nodiscard]] fcl::config::component_registry make_registry() {
-   auto registry = fcl::config::component_registry{};
-   registry.add(fcl::config::describe_component<http_config>("http"));
-   registry.add(fcl::config::describe_component<flat_config>(""));
+[[nodiscard]] forge::config::component_registry make_registry() {
+   auto registry = forge::config::component_registry{};
+   registry.add(forge::config::describe_component<http_config>("http"));
+   registry.add(forge::config::describe_component<flat_config>(""));
    return registry;
 }
 
-[[nodiscard]] const fcl::schema::diagnostic* find_diagnostic(const std::vector<fcl::schema::diagnostic>& diagnostics,
+[[nodiscard]] const forge::schema::diagnostic* find_diagnostic(const std::vector<forge::schema::diagnostic>& diagnostics,
                                                              std::string_view code) {
    for (const auto& entry : diagnostics) {
       if (entry.code == code) {
@@ -113,9 +113,9 @@ BOOST_DESCRIBE_STRUCT(alias_collision_config, (), (token, auth_token))
 BOOST_DESCRIBE_STRUCT(same_path_alias_config, (), (token))
 BOOST_DESCRIBE_STRUCT(unsigned_counter_config, (), (count))
 
-template <> struct fcl::schema::rules<http_config> {
-   [[nodiscard]] static fcl::schema::object_schema<http_config> define() {
-      auto schema = fcl::schema::object<http_config>();
+template <> struct forge::schema::rules<http_config> {
+   [[nodiscard]] static forge::schema::object_schema<http_config> define() {
+      auto schema = forge::schema::object<http_config>();
       schema.field<&http_config::bind_port>("bind-port")
           .alias("port")
           .default_value(8080)
@@ -130,51 +130,51 @@ template <> struct fcl::schema::rules<http_config> {
    }
 };
 
-template <> struct fcl::schema::rules<flat_config> {
-   [[nodiscard]] static fcl::schema::object_schema<flat_config> define() {
-      auto schema = fcl::schema::object<flat_config>();
+template <> struct forge::schema::rules<flat_config> {
+   [[nodiscard]] static forge::schema::object_schema<flat_config> define() {
+      auto schema = forge::schema::object<flat_config>();
       schema.field<&flat_config::log_level>("log-level").default_value("info").description("Root log level.");
       return schema;
    }
 };
 
-template <> struct fcl::schema::rules<env_name_collision_config> {
-   [[nodiscard]] static fcl::schema::object_schema<env_name_collision_config> define() {
-      auto schema = fcl::schema::object<env_name_collision_config>();
+template <> struct forge::schema::rules<env_name_collision_config> {
+   [[nodiscard]] static forge::schema::object_schema<env_name_collision_config> define() {
+      auto schema = forge::schema::object<env_name_collision_config>();
       static_cast<void>(schema.field<&env_name_collision_config::hyphen_name>("log-level"));
       static_cast<void>(schema.field<&env_name_collision_config::underscore_name>("log_level"));
       return schema;
    }
 };
 
-template <> struct fcl::schema::rules<flat_http_collision_config> {
-   [[nodiscard]] static fcl::schema::object_schema<flat_http_collision_config> define() {
-      auto schema = fcl::schema::object<flat_http_collision_config>();
+template <> struct forge::schema::rules<flat_http_collision_config> {
+   [[nodiscard]] static forge::schema::object_schema<flat_http_collision_config> define() {
+      auto schema = forge::schema::object<flat_http_collision_config>();
       static_cast<void>(schema.field<&flat_http_collision_config::http_bind_port>("http-bind-port"));
       return schema;
    }
 };
 
-template <> struct fcl::schema::rules<alias_collision_config> {
-   [[nodiscard]] static fcl::schema::object_schema<alias_collision_config> define() {
-      auto schema = fcl::schema::object<alias_collision_config>();
+template <> struct forge::schema::rules<alias_collision_config> {
+   [[nodiscard]] static forge::schema::object_schema<alias_collision_config> define() {
+      auto schema = forge::schema::object<alias_collision_config>();
       schema.field<&alias_collision_config::token>("token").alias("auth-token");
       static_cast<void>(schema.field<&alias_collision_config::auth_token>("auth_token"));
       return schema;
    }
 };
 
-template <> struct fcl::schema::rules<same_path_alias_config> {
-   [[nodiscard]] static fcl::schema::object_schema<same_path_alias_config> define() {
-      auto schema = fcl::schema::object<same_path_alias_config>();
+template <> struct forge::schema::rules<same_path_alias_config> {
+   [[nodiscard]] static forge::schema::object_schema<same_path_alias_config> define() {
+      auto schema = forge::schema::object<same_path_alias_config>();
       schema.field<&same_path_alias_config::token>("token").alias("auth-token").alias("auth_token");
       return schema;
    }
 };
 
-template <> struct fcl::schema::rules<unsigned_counter_config> {
-   [[nodiscard]] static fcl::schema::object_schema<unsigned_counter_config> define() {
-      auto schema = fcl::schema::object<unsigned_counter_config>();
+template <> struct forge::schema::rules<unsigned_counter_config> {
+   [[nodiscard]] static forge::schema::object_schema<unsigned_counter_config> define() {
+      auto schema = forge::schema::object<unsigned_counter_config>();
       static_cast<void>(schema.field<&unsigned_counter_config::count>("count"));
       return schema;
    }
@@ -184,16 +184,16 @@ BOOST_AUTO_TEST_CASE(env_reads_dotenv_document_with_aliases_flat_fields_and_list
    const auto registry = make_registry();
    const auto input = std::string{
        "# local development overrides\n"
-       "export FCL_HTTP_PORT=9090\n"
-       "FCL_HTTP_TLS_ENABLED=yes\n"
-       "FCL_HTTP_TAGS=alpha\\,one,beta\n"
-       "FCL_LOG_LEVEL=debug\n"};
+       "export FORGE_HTTP_PORT=9090\n"
+       "FORGE_HTTP_TLS_ENABLED=yes\n"
+       "FORGE_HTTP_TAGS=alpha\\,one,beta\n"
+       "FORGE_LOG_LEVEL=debug\n"};
 
-   const auto parsed = fcl::env::read_document(
-       input, registry, fcl::env::read_options{.prefix = "FCL", .source_name = "workspace/.env"});
+   const auto parsed = forge::env::read_document(
+       input, registry, forge::env::read_options{.prefix = "FORGE", .source_name = "workspace/.env"});
    BOOST_TEST(parsed.ok());
 
-   const auto decoded_http = fcl::config::decode<http_config>(parsed.value, "http");
+   const auto decoded_http = forge::config::decode<http_config>(parsed.value, "http");
    BOOST_TEST(decoded_http.ok());
    BOOST_TEST(decoded_http.value.bind_port == 9090U);
    BOOST_TEST(decoded_http.value.tls_enabled);
@@ -201,7 +201,7 @@ BOOST_AUTO_TEST_CASE(env_reads_dotenv_document_with_aliases_flat_fields_and_list
    BOOST_TEST(decoded_http.value.tags[0] == "alpha,one");
    BOOST_TEST(decoded_http.value.tags[1] == "beta");
 
-   const auto decoded_flat = fcl::config::decode<flat_config>(parsed.value);
+   const auto decoded_flat = forge::config::decode<flat_config>(parsed.value);
    BOOST_TEST(decoded_flat.ok());
    BOOST_TEST(decoded_flat.value.log_level == "debug");
 }
@@ -209,11 +209,11 @@ BOOST_AUTO_TEST_CASE(env_reads_dotenv_document_with_aliases_flat_fields_and_list
 BOOST_AUTO_TEST_CASE(env_reads_empty_list_value_as_empty_vector) {
    const auto registry = make_registry();
 
-   const auto parsed = fcl::env::read_document(
-       "FCL_HTTP_TAGS=\n", registry, fcl::env::read_options{.prefix = "FCL"});
+   const auto parsed = forge::env::read_document(
+       "FORGE_HTTP_TAGS=\n", registry, forge::env::read_options{.prefix = "FORGE"});
    BOOST_TEST(parsed.ok());
 
-   const auto decoded_http = fcl::config::decode<http_config>(parsed.value, "http");
+   const auto decoded_http = forge::config::decode<http_config>(parsed.value, "http");
    BOOST_TEST(decoded_http.ok());
    BOOST_TEST(decoded_http.value.tags.empty());
 }
@@ -221,12 +221,12 @@ BOOST_AUTO_TEST_CASE(env_reads_empty_list_value_as_empty_vector) {
 BOOST_AUTO_TEST_CASE(env_reports_dotenv_parse_duplicate_and_source_locations) {
    const auto registry = make_registry();
    const auto input = std::string{
-       "FCL_HTTP_BIND_HOST=\"127.0.0.1\"\n"
+       "FORGE_HTTP_BIND_HOST=\"127.0.0.1\"\n"
        "broken line\n"
-       "FCL_HTTP_BIND_HOST='0.0.0.0'\n"};
+       "FORGE_HTTP_BIND_HOST='0.0.0.0'\n"};
 
    const auto parsed =
-       fcl::env::read_document(input, registry, fcl::env::read_options{.prefix = "FCL", .source_name = ".env"});
+       forge::env::read_document(input, registry, forge::env::read_options{.prefix = "FORGE", .source_name = ".env"});
    BOOST_TEST(!parsed.ok());
    const auto* parse_error = find_diagnostic(parsed.diagnostics, "env.parse");
    BOOST_REQUIRE(parse_error != nullptr);
@@ -235,7 +235,7 @@ BOOST_AUTO_TEST_CASE(env_reports_dotenv_parse_duplicate_and_source_locations) {
 
    const auto* duplicate = find_diagnostic(parsed.diagnostics, "env.duplicate");
    BOOST_REQUIRE(duplicate != nullptr);
-   BOOST_TEST(static_cast<int>(duplicate->level) == static_cast<int>(fcl::schema::severity::warning));
+   BOOST_TEST(static_cast<int>(duplicate->level) == static_cast<int>(forge::schema::severity::warning));
 
    const auto* host = parsed.value.try_get("http.bind-host");
    BOOST_REQUIRE(host != nullptr);
@@ -244,42 +244,42 @@ BOOST_AUTO_TEST_CASE(env_reports_dotenv_parse_duplicate_and_source_locations) {
 
 BOOST_AUTO_TEST_CASE(env_reads_injected_environment_snapshot_without_global_mutation) {
    const auto registry = make_registry();
-   const auto variables = std::vector<fcl::env::environment_variable>{
-       {.name = "FCL_HTTP_BIND_PORT", .value = "7777", .location = {.source = "test-env"}},
-       {.name = "FCL_UNKNOWN_FLAG", .value = "1", .location = {.source = "test-env"}},
+   const auto variables = std::vector<forge::env::environment_variable>{
+       {.name = "FORGE_HTTP_BIND_PORT", .value = "7777", .location = {.source = "test-env"}},
+       {.name = "FORGE_UNKNOWN_FLAG", .value = "1", .location = {.source = "test-env"}},
        {.name = "UNRELATED_HTTP_BIND_PORT", .value = "9999", .location = {.source = "test-env"}},
    };
 
    auto parsed =
-       fcl::env::read_variables(variables, registry, fcl::env::read_options{.prefix = "FCL"});
+       forge::env::read_variables(variables, registry, forge::env::read_options{.prefix = "FORGE"});
    BOOST_TEST(parsed.ok());
    BOOST_REQUIRE(find_diagnostic(parsed.diagnostics, "env.unknown") != nullptr);
 
-   const auto decoded = fcl::config::decode<http_config>(parsed.value, "http");
+   const auto decoded = forge::config::decode<http_config>(parsed.value, "http");
    BOOST_TEST(decoded.ok());
    BOOST_TEST(decoded.value.bind_port == 7777U);
 
-   parsed = fcl::env::read_variables(
+   parsed = forge::env::read_variables(
        variables, registry,
-       fcl::env::read_options{.prefix = "FCL", .unknown_variables = fcl::env::unknown_variable_policy::error});
+       forge::env::read_options{.prefix = "FORGE", .unknown_variables = forge::env::unknown_variable_policy::error});
    BOOST_TEST(!parsed.ok());
 }
 
 BOOST_AUTO_TEST_CASE(env_reports_alias_conflicts_deprecated_fields_and_conversion_errors) {
    const auto registry = make_registry();
-   auto parsed = fcl::env::read_document(
-       "FCL_HTTP_BIND_PORT=9090\n"
-       "FCL_HTTP_PORT=8080\n"
-       "FCL_HTTP_TLS_ENABLED=maybe\n"
-       "FCL_HTTP_LEGACY_TOKEN=old\n",
-       registry, fcl::env::read_options{.prefix = "FCL"});
+   auto parsed = forge::env::read_document(
+       "FORGE_HTTP_BIND_PORT=9090\n"
+       "FORGE_HTTP_PORT=8080\n"
+       "FORGE_HTTP_TLS_ENABLED=maybe\n"
+       "FORGE_HTTP_LEGACY_TOKEN=old\n",
+       registry, forge::env::read_options{.prefix = "FORGE"});
 
    BOOST_TEST(!parsed.ok());
    BOOST_REQUIRE(find_diagnostic(parsed.diagnostics, "env.alias_conflict") != nullptr);
    BOOST_REQUIRE(find_diagnostic(parsed.diagnostics, "env.convert") != nullptr);
    const auto* deprecated = find_diagnostic(parsed.diagnostics, "env.deprecated");
    BOOST_REQUIRE(deprecated != nullptr);
-   BOOST_TEST(static_cast<int>(deprecated->level) == static_cast<int>(fcl::schema::severity::warning));
+   BOOST_TEST(static_cast<int>(deprecated->level) == static_cast<int>(forge::schema::severity::warning));
 
    const auto* port = parsed.value.try_get("http.bind-port");
    BOOST_REQUIRE(port != nullptr);
@@ -287,204 +287,204 @@ BOOST_AUTO_TEST_CASE(env_reports_alias_conflicts_deprecated_fields_and_conversio
 }
 
 BOOST_AUTO_TEST_CASE(env_typed_helpers_decode_schema_and_validate_ranges) {
-   const auto parsed = fcl::env::read<http_config>(
-       "FCL_HTTP_BIND_PORT=0\n", "http", fcl::env::read_options{.prefix = "FCL"});
+   const auto parsed = forge::env::read<http_config>(
+       "FORGE_HTTP_BIND_PORT=0\n", "http", forge::env::read_options{.prefix = "FORGE"});
    BOOST_TEST(!parsed.ok());
    BOOST_REQUIRE(find_diagnostic(parsed.diagnostics, "schema.range") != nullptr);
 }
 
 BOOST_AUTO_TEST_CASE(env_rejects_negative_text_for_unsigned_fields_before_decode) {
-   auto registry = fcl::config::component_registry{};
-   registry.add(fcl::config::describe_component<unsigned_counter_config>("counter"));
+   auto registry = forge::config::component_registry{};
+   registry.add(forge::config::describe_component<unsigned_counter_config>("counter"));
 
-   const auto rejected = fcl::env::read_document(
-       "FCL_COUNTER_COUNT=-1\n", registry, fcl::env::read_options{.prefix = "FCL"});
+   const auto rejected = forge::env::read_document(
+       "FORGE_COUNTER_COUNT=-1\n", registry, forge::env::read_options{.prefix = "FORGE"});
    BOOST_TEST(!rejected.ok());
    const auto* convert = find_diagnostic(rejected.diagnostics, "env.convert");
    BOOST_REQUIRE(convert != nullptr);
    BOOST_TEST(convert->path == "counter.count");
    BOOST_TEST(convert->message.find("expected unsigned integer value") != std::string::npos);
 
-   const auto accepted = fcl::env::read_document(
-       "FCL_COUNTER_COUNT=42\n", registry, fcl::env::read_options{.prefix = "FCL"});
+   const auto accepted = forge::env::read_document(
+       "FORGE_COUNTER_COUNT=42\n", registry, forge::env::read_options{.prefix = "FORGE"});
    BOOST_TEST(accepted.ok());
-   const auto decoded = fcl::config::decode<unsigned_counter_config>(accepted.value, "counter");
+   const auto decoded = forge::config::decode<unsigned_counter_config>(accepted.value, "counter");
    BOOST_TEST(decoded.ok());
    BOOST_TEST(decoded.value.count == 42U);
 }
 
 BOOST_AUTO_TEST_CASE(env_writes_dotenv_and_examples_with_secret_redaction) {
    const auto registry = make_registry();
-   auto document = fcl::config::document{};
+   auto document = forge::config::document{};
    document.set("http.bind-port", 9090);
-   document.set("http.tags", fcl::config::value::array_type{fcl::config::value{"blue"}, fcl::config::value{"green"}});
+   document.set("http.tags", forge::config::value::array_type{forge::config::value{"blue"}, forge::config::value{"green"}});
    document.set("http.token", "secret-value");
 
-   const auto written = fcl::env::write_document(document, registry, fcl::env::write_options{.prefix = "FCL"});
+   const auto written = forge::env::write_document(document, registry, forge::env::write_options{.prefix = "FORGE"});
    BOOST_TEST(written.ok());
-   BOOST_TEST(written.text.find("FCL_HTTP_BIND_PORT=9090") != std::string::npos);
-   BOOST_TEST(written.text.find("FCL_HTTP_TAGS=blue,green") != std::string::npos);
+   BOOST_TEST(written.text.find("FORGE_HTTP_BIND_PORT=9090") != std::string::npos);
+   BOOST_TEST(written.text.find("FORGE_HTTP_TAGS=blue,green") != std::string::npos);
    BOOST_TEST(written.text.find("secret-value") == std::string::npos);
-   BOOST_TEST(written.text.find("FCL_HTTP_TOKEN=<redacted>") != std::string::npos);
+   BOOST_TEST(written.text.find("FORGE_HTTP_TOKEN=<redacted>") != std::string::npos);
 
-   const auto example = fcl::env::write_example(registry, fcl::env::write_options{.prefix = "FCL"});
+   const auto example = forge::env::write_example(registry, forge::env::write_options{.prefix = "FORGE"});
    BOOST_TEST(example.ok());
    BOOST_TEST(example.text.find("# HTTP bind port.") != std::string::npos);
-   BOOST_TEST(example.text.find("FCL_HTTP_BIND_PORT=8080") != std::string::npos);
-   BOOST_TEST(example.text.find("FCL_HTTP_TOKEN=") != std::string::npos);
+   BOOST_TEST(example.text.find("FORGE_HTTP_BIND_PORT=8080") != std::string::npos);
+   BOOST_TEST(example.text.find("FORGE_HTTP_TOKEN=") != std::string::npos);
    BOOST_TEST(example.text.find("<redacted>") == std::string::npos);
-   BOOST_TEST(example.text.find("FCL_LOG_LEVEL=info") != std::string::npos);
+   BOOST_TEST(example.text.find("FORGE_LOG_LEVEL=info") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(env_write_document_empty_list_roundtrips_as_empty_vector) {
    const auto registry = make_registry();
-   auto document = fcl::config::document{};
-   document.set("http.tags", fcl::config::value::array_type{});
+   auto document = forge::config::document{};
+   document.set("http.tags", forge::config::value::array_type{});
 
-   const auto written = fcl::env::write_document(document, registry, fcl::env::write_options{.prefix = "FCL"});
+   const auto written = forge::env::write_document(document, registry, forge::env::write_options{.prefix = "FORGE"});
    BOOST_TEST(written.ok());
-   BOOST_TEST(written.text.find("FCL_HTTP_TAGS=\n") != std::string::npos);
+   BOOST_TEST(written.text.find("FORGE_HTTP_TAGS=\n") != std::string::npos);
 
    const auto parsed =
-       fcl::env::read_document(written.text, registry, fcl::env::read_options{.prefix = "FCL"});
+       forge::env::read_document(written.text, registry, forge::env::read_options{.prefix = "FORGE"});
    BOOST_TEST(parsed.ok());
 
-   const auto decoded_http = fcl::config::decode<http_config>(parsed.value, "http");
+   const auto decoded_http = forge::config::decode<http_config>(parsed.value, "http");
    BOOST_TEST(decoded_http.ok());
    BOOST_TEST(decoded_http.value.tags.empty());
 }
 
 BOOST_AUTO_TEST_CASE(env_rejects_canonical_name_collisions_after_normalization) {
-   auto registry = fcl::config::component_registry{};
-   registry.add(fcl::config::describe_component<env_name_collision_config>(""));
+   auto registry = forge::config::component_registry{};
+   registry.add(forge::config::describe_component<env_name_collision_config>(""));
 
-   const auto parsed = fcl::env::read_document(
-       "FCL_LOG_LEVEL=debug\n", registry, fcl::env::read_options{.prefix = "FCL"});
+   const auto parsed = forge::env::read_document(
+       "FORGE_LOG_LEVEL=debug\n", registry, forge::env::read_options{.prefix = "FORGE"});
    BOOST_TEST(!parsed.ok());
 
    const auto* conflict = find_diagnostic(parsed.diagnostics, "env.name_conflict");
    BOOST_REQUIRE(conflict != nullptr);
-   BOOST_TEST(conflict->message.find("FCL_LOG_LEVEL") != std::string::npos);
+   BOOST_TEST(conflict->message.find("FORGE_LOG_LEVEL") != std::string::npos);
    BOOST_TEST(conflict->message.find("log-level") != std::string::npos);
    BOOST_TEST(conflict->message.find("log_level") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(env_rejects_flat_and_sectioned_name_collisions_after_normalization) {
-   auto registry = fcl::config::component_registry{};
-   registry.add(fcl::config::describe_component<http_config>("http"));
-   registry.add(fcl::config::describe_component<flat_http_collision_config>(""));
+   auto registry = forge::config::component_registry{};
+   registry.add(forge::config::describe_component<http_config>("http"));
+   registry.add(forge::config::describe_component<flat_http_collision_config>(""));
 
-   const auto parsed = fcl::env::read_document(
-       "FCL_HTTP_BIND_PORT=9090\n", registry, fcl::env::read_options{.prefix = "FCL"});
+   const auto parsed = forge::env::read_document(
+       "FORGE_HTTP_BIND_PORT=9090\n", registry, forge::env::read_options{.prefix = "FORGE"});
    BOOST_TEST(!parsed.ok());
 
    const auto* conflict = find_diagnostic(parsed.diagnostics, "env.name_conflict");
    BOOST_REQUIRE(conflict != nullptr);
-   BOOST_TEST(conflict->message.find("FCL_HTTP_BIND_PORT") != std::string::npos);
+   BOOST_TEST(conflict->message.find("FORGE_HTTP_BIND_PORT") != std::string::npos);
    BOOST_TEST(conflict->message.find("http.bind-port") != std::string::npos);
    BOOST_TEST(conflict->message.find("http-bind-port") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(env_rejects_alias_name_collisions_after_normalization) {
-   auto registry = fcl::config::component_registry{};
-   registry.add(fcl::config::describe_component<alias_collision_config>("auth"));
+   auto registry = forge::config::component_registry{};
+   registry.add(forge::config::describe_component<alias_collision_config>("auth"));
 
-   const auto parsed = fcl::env::read_document(
-       "FCL_AUTH_AUTH_TOKEN=value\n", registry, fcl::env::read_options{.prefix = "FCL"});
+   const auto parsed = forge::env::read_document(
+       "FORGE_AUTH_AUTH_TOKEN=value\n", registry, forge::env::read_options{.prefix = "FORGE"});
    BOOST_TEST(!parsed.ok());
 
    const auto* conflict = find_diagnostic(parsed.diagnostics, "env.name_conflict");
    BOOST_REQUIRE(conflict != nullptr);
-   BOOST_TEST(conflict->message.find("FCL_AUTH_AUTH_TOKEN") != std::string::npos);
+   BOOST_TEST(conflict->message.find("FORGE_AUTH_AUTH_TOKEN") != std::string::npos);
    BOOST_TEST(conflict->message.find("auth.token") != std::string::npos);
    BOOST_TEST(conflict->message.find("auth.auth_token") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(env_write_example_rejects_name_collisions_after_normalization) {
-   auto registry = fcl::config::component_registry{};
-   registry.add(fcl::config::describe_component<env_name_collision_config>(""));
+   auto registry = forge::config::component_registry{};
+   registry.add(forge::config::describe_component<env_name_collision_config>(""));
 
-   const auto example = fcl::env::write_example(registry, fcl::env::write_options{.prefix = "FCL"});
+   const auto example = forge::env::write_example(registry, forge::env::write_options{.prefix = "FORGE"});
    BOOST_TEST(!example.ok());
 
    const auto* conflict = find_diagnostic(example.diagnostics, "env.name_conflict");
    BOOST_REQUIRE(conflict != nullptr);
-   BOOST_TEST(conflict->message.find("FCL_LOG_LEVEL") != std::string::npos);
+   BOOST_TEST(conflict->message.find("FORGE_LOG_LEVEL") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(env_write_example_rejects_alias_name_collisions_after_normalization) {
-   auto registry = fcl::config::component_registry{};
-   registry.add(fcl::config::describe_component<alias_collision_config>("auth"));
+   auto registry = forge::config::component_registry{};
+   registry.add(forge::config::describe_component<alias_collision_config>("auth"));
 
-   const auto example = fcl::env::write_example(registry, fcl::env::write_options{.prefix = "FCL"});
+   const auto example = forge::env::write_example(registry, forge::env::write_options{.prefix = "FORGE"});
    BOOST_TEST(!example.ok());
 
    const auto* conflict = find_diagnostic(example.diagnostics, "env.name_conflict");
    BOOST_REQUIRE(conflict != nullptr);
-   BOOST_TEST(conflict->message.find("FCL_AUTH_AUTH_TOKEN") != std::string::npos);
+   BOOST_TEST(conflict->message.find("FORGE_AUTH_AUTH_TOKEN") != std::string::npos);
    BOOST_TEST(conflict->message.find("auth.token") != std::string::npos);
    BOOST_TEST(conflict->message.find("auth.auth_token") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(env_write_document_rejects_alias_name_collisions_after_normalization) {
-   auto registry = fcl::config::component_registry{};
-   registry.add(fcl::config::describe_component<alias_collision_config>("auth"));
+   auto registry = forge::config::component_registry{};
+   registry.add(forge::config::describe_component<alias_collision_config>("auth"));
 
-   auto document = fcl::config::document{};
+   auto document = forge::config::document{};
    document.set("auth.token", "token-value");
    document.set("auth.auth_token", "auth-token-value");
 
-   const auto written = fcl::env::write_document(document, registry, fcl::env::write_options{.prefix = "FCL"});
+   const auto written = forge::env::write_document(document, registry, forge::env::write_options{.prefix = "FORGE"});
    BOOST_TEST(!written.ok());
 
    const auto* conflict = find_diagnostic(written.diagnostics, "env.name_conflict");
    BOOST_REQUIRE(conflict != nullptr);
-   BOOST_TEST(conflict->message.find("FCL_AUTH_AUTH_TOKEN") != std::string::npos);
+   BOOST_TEST(conflict->message.find("FORGE_AUTH_AUTH_TOKEN") != std::string::npos);
    BOOST_TEST(conflict->message.find("auth.token") != std::string::npos);
    BOOST_TEST(conflict->message.find("auth.auth_token") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(env_allows_same_path_alias_duplicates_after_normalization) {
-   auto registry = fcl::config::component_registry{};
-   registry.add(fcl::config::describe_component<same_path_alias_config>("auth"));
+   auto registry = forge::config::component_registry{};
+   registry.add(forge::config::describe_component<same_path_alias_config>("auth"));
 
-   const auto parsed = fcl::env::read_document(
-       "FCL_AUTH_AUTH_TOKEN=token-value\n", registry, fcl::env::read_options{.prefix = "FCL"});
+   const auto parsed = forge::env::read_document(
+       "FORGE_AUTH_AUTH_TOKEN=token-value\n", registry, forge::env::read_options{.prefix = "FORGE"});
    BOOST_TEST(parsed.ok());
    BOOST_TEST(find_diagnostic(parsed.diagnostics, "env.name_conflict") == nullptr);
 
-   const auto decoded = fcl::config::decode<same_path_alias_config>(parsed.value, "auth");
+   const auto decoded = forge::config::decode<same_path_alias_config>(parsed.value, "auth");
    BOOST_TEST(decoded.ok());
    BOOST_TEST(decoded.value.token == "token-value");
 }
 
 BOOST_AUTO_TEST_CASE(env_write_paths_allow_same_path_alias_duplicates_after_normalization) {
-   auto registry = fcl::config::component_registry{};
-   registry.add(fcl::config::describe_component<same_path_alias_config>("auth"));
+   auto registry = forge::config::component_registry{};
+   registry.add(forge::config::describe_component<same_path_alias_config>("auth"));
 
-   auto document = fcl::config::document{};
+   auto document = forge::config::document{};
    document.set("auth.token", "token-value");
 
-   const auto example = fcl::env::write_example(registry, fcl::env::write_options{.prefix = "FCL"});
+   const auto example = forge::env::write_example(registry, forge::env::write_options{.prefix = "FORGE"});
    BOOST_TEST(example.ok());
    BOOST_TEST(find_diagnostic(example.diagnostics, "env.name_conflict") == nullptr);
 
-   const auto written = fcl::env::write_document(document, registry, fcl::env::write_options{.prefix = "FCL"});
+   const auto written = forge::env::write_document(document, registry, forge::env::write_options{.prefix = "FORGE"});
    BOOST_TEST(written.ok());
    BOOST_TEST(find_diagnostic(written.diagnostics, "env.name_conflict") == nullptr);
-   BOOST_TEST(written.text.find("FCL_AUTH_TOKEN=token-value") != std::string::npos);
+   BOOST_TEST(written.text.find("FORGE_AUTH_TOKEN=token-value") != std::string::npos);
 }
 
 #if defined(_WIN32)
 BOOST_AUTO_TEST_CASE(env_windows_process_snapshot_preserves_utf16_values_as_utf8) {
-   auto registry = fcl::config::component_registry{};
-   registry.add(fcl::config::describe_component<same_path_alias_config>("win"));
-   const auto variable = scoped_environment_variable{L"FCL_WIN_TOKEN", L"\x043A\x043B\x044E\x0447-\x2713"};
+   auto registry = forge::config::component_registry{};
+   registry.add(forge::config::describe_component<same_path_alias_config>("win"));
+   const auto variable = scoped_environment_variable{L"FORGE_WIN_TOKEN", L"\x043A\x043B\x044E\x0447-\x2713"};
 
-   const auto parsed = fcl::env::read_process_document(registry, fcl::env::read_options{.prefix = "FCL"});
+   const auto parsed = forge::env::read_process_document(registry, forge::env::read_options{.prefix = "FORGE"});
    BOOST_TEST(parsed.ok());
 
-   const auto decoded = fcl::config::decode<same_path_alias_config>(parsed.value, "win");
+   const auto decoded = forge::config::decode<same_path_alias_config>(parsed.value, "win");
    BOOST_TEST(decoded.ok());
    BOOST_TEST(decoded.value.token == "\xD0\xBA\xD0\xBB\xD1\x8E\xD1\x87-\xE2\x9C\x93");
 }

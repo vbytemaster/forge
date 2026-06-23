@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -11,11 +11,11 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.transport.stream;
+module forge.transport.stream;
 
-import fcl.transport.exceptions;
+import forge.transport.exceptions;
 
-namespace fcl::transport {
+namespace forge::transport {
 namespace {
 
 constexpr auto compact_threshold = std::size_t{65'536};
@@ -76,7 +76,7 @@ boost::asio::awaitable<void> stream::async_write(std::span<const std::uint8_t> b
 
 boost::asio::awaitable<void> stream::async_write(chunk bytes) {
    if (!impl_ || !impl_->model) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid transport stream");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid transport stream");
    }
    co_await impl_->model->async_write_chunk(std::move(bytes));
 }
@@ -88,7 +88,7 @@ boost::asio::awaitable<std::vector<std::uint8_t>> stream::async_read() {
 
 boost::asio::awaitable<chunk> stream::async_read_chunk() {
    if (!impl_ || !impl_->model) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid transport stream");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid transport stream");
    }
    if (!available_bytes(impl_->buffer, impl_->consumed).empty()) {
       auto view = available_bytes(impl_->buffer, impl_->consumed);
@@ -116,7 +116,7 @@ boost::asio::awaitable<std::vector<std::uint8_t>> stream::async_read_frame() {
 
 boost::asio::awaitable<chunk> stream::async_read_frame_chunk() {
    if (!impl_ || !impl_->model) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid transport stream");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid transport stream");
    }
    while (true) {
       const auto decoded = decode_frame_view(available_bytes(impl_->buffer, impl_->consumed));
@@ -184,4 +184,4 @@ boost::asio::awaitable<chunk> detail::stream_concept::async_read_chunk() {
    co_return chunk{co_await async_read()};
 }
 
-} // namespace fcl::transport
+} // namespace forge::transport

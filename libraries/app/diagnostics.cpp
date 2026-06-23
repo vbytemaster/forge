@@ -5,9 +5,9 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.app.diagnostics;
+module forge.app.diagnostics;
 
-namespace fcl::app {
+namespace forge::app {
 
 struct diagnostics_store::impl {
    mutable std::mutex mutex;
@@ -64,4 +64,4 @@ application_diagnostics_snapshot diagnostics_store::snapshot(const event_bus& ev
    return out;
 }
 
-} // namespace fcl::app
+} // namespace forge::app

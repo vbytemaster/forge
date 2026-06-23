@@ -10,26 +10,26 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.app.application_builder;
+module forge.app.application_builder;
 
-import fcl.asio.runtime;
-import fcl.asio.task_scheduler;
-import fcl.config.key_path;
-import fcl.config.value;
-import fcl.config.document;
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.config.migration;
-import fcl.app.application_shell;
-import fcl.app.plugin_registry;
+import forge.asio.runtime;
+import forge.asio.task_scheduler;
+import forge.config.key_path;
+import forge.config.value;
+import forge.config.document;
+import forge.config.component;
+import forge.config.decode;
+import forge.config.migration;
+import forge.app.application_shell;
+import forge.app.plugin_registry;
 
-namespace fcl::app {
+namespace forge::app {
 namespace {
 
 struct builder_state {
    application_shell_options options;
    std::vector<plugin_descriptor> plugins;
-   std::vector<fcl::config::component_descriptor> config_descriptors;
+   std::vector<forge::config::component_descriptor> config_descriptors;
    std::vector<std::function<boost::asio::awaitable<void>(configure_context&)>> configure_callbacks;
    std::vector<std::function<boost::asio::awaitable<void>(application_context&)>> provide_callbacks;
    std::function<int(application_shell&)> foreground;
@@ -40,7 +40,7 @@ class built_application final : public application_shell {
    explicit built_application(builder_state state) : application_shell{std::move(state.options)}, state_{std::move(state)} {}
 
  protected:
-   void on_describe_config(fcl::config::component_registry& registry) const override {
+   void on_describe_config(forge::config::component_registry& registry) const override {
       for (auto descriptor : state_.config_descriptors) {
          registry.add(std::move(descriptor));
       }
@@ -94,12 +94,12 @@ application_builder& application_builder::name(std::string value) {
    return *this;
 }
 
-application_builder& application_builder::runtime(fcl::asio::runtime_options value) {
+application_builder& application_builder::runtime(forge::asio::runtime_options value) {
    impl_->state.options.runtime = std::move(value);
    return *this;
 }
 
-application_builder& application_builder::scheduler(fcl::asio::task_scheduler::options value) {
+application_builder& application_builder::scheduler(forge::asio::task_scheduler::options value) {
    impl_->state.options.scheduler = std::move(value);
    return *this;
 }
@@ -109,7 +109,7 @@ application_builder& application_builder::plugin(plugin_descriptor descriptor) {
    return *this;
 }
 
-application_builder& application_builder::describe_config(fcl::config::component_descriptor descriptor) {
+application_builder& application_builder::describe_config(forge::config::component_descriptor descriptor) {
    impl_->state.config_descriptors.push_back(std::move(descriptor));
    return *this;
 }
@@ -128,7 +128,7 @@ std::unique_ptr<application_shell> application_builder::build() && {
    return std::make_unique<built_application>(std::move(state));
 }
 
-std::invalid_argument application_builder::make_decode_error(const fcl::config::decode_diagnostics& diagnostics) {
+std::invalid_argument application_builder::make_decode_error(const forge::config::decode_diagnostics& diagnostics) {
    auto message = std::ostringstream{};
    message << "application config decode failed";
    for (const auto& entry : diagnostics.entries) {
@@ -145,4 +145,4 @@ void application_builder::add_provide_callback(provide_callback callback) {
    impl_->state.provide_callbacks.push_back(std::move(callback));
 }
 
-} // namespace fcl::app
+} // namespace forge::app

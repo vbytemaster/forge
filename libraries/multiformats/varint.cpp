@@ -1,17 +1,17 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <span>
 
-module fcl.multiformats.varint;
+module forge.multiformats.varint;
 
-import fcl.multiformats.exceptions;
+import forge.multiformats.exceptions;
 
-namespace fcl::multiformats {
+namespace forge::multiformats {
 
 bytes varint_encode(std::uint64_t value) {
    auto out = bytes{};
@@ -33,21 +33,21 @@ decoded_varint varint_decode(std::span<const std::uint8_t> data) {
       const auto byte = data[index];
       const auto payload = static_cast<std::uint8_t>(byte & 0x7fU);
       if (shift >= 64 || (shift == 63 && payload > 1)) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_format, "multiformats varint overflows uint64");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_format, "multiformats varint overflows uint64");
       }
 
       value |= static_cast<std::uint64_t>(payload) << shift;
       if ((byte & 0x80U) == 0) {
          const auto encoded = varint_encode(value);
          if (encoded.size() != index + 1) {
-            FCL_THROW_EXCEPTION(exceptions::invalid_format, "multiformats varint is not minimally encoded");
+            FORGE_THROW_EXCEPTION(exceptions::invalid_format, "multiformats varint is not minimally encoded");
          }
          return {.value = value, .size = index + 1};
       }
       shift += 7;
    }
 
-   FCL_THROW_EXCEPTION(exceptions::invalid_format, "unterminated multiformats varint");
+   FORGE_THROW_EXCEPTION(exceptions::invalid_format, "unterminated multiformats varint");
 }
 
-} // namespace fcl::multiformats
+} // namespace forge::multiformats

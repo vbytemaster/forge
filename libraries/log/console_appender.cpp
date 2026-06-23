@@ -8,22 +8,22 @@ module;
 #include <mutex>
 #include <sstream>
 
-module fcl.log.console_appender;
+module forge.log.console_appender;
 
-import fcl.core.chrono;
-import fcl.log.log_message;
-import fcl.core.string;
-import fcl.variant.exceptions;
-import fcl.variant.value;
-import fcl.variant.conversion;
-import fcl.variant.containers;
-import fcl.variant.chrono;
-import fcl.variant.multiprecision;
-import fcl.variant.format;
-import fcl.variant.described;
-import fcl.variant.described;
+import forge.core.chrono;
+import forge.log.log_message;
+import forge.core.string;
+import forge.variant.exceptions;
+import forge.variant.value;
+import forge.variant.conversion;
+import forge.variant.containers;
+import forge.variant.chrono;
+import forge.variant.multiprecision;
+import forge.variant.format;
+import forge.variant.described;
+import forge.variant.described;
 
-namespace fcl {
+namespace forge {
 
 class console_appender::impl {
  public:
@@ -124,7 +124,7 @@ void console_appender::log(const log_message& m) {
    append_fixed_size(line, 5, context.get_log_level().to_string());
    line += ' ';
    // use timestamp of when log message created, note this could cause times on log entries to not be consecutive
-   line += fcl::chrono::to_iso_string(context.get_timestamp());
+   line += forge::chrono::to_iso_string(context.get_timestamp());
    line += ' ';
    append_fixed_size(line, 9, context.get_thread_name());
    line += ' ';
@@ -141,7 +141,7 @@ void console_appender::log(const log_message& m) {
       line += ' ';
    }
    line += "] ";
-   line += fcl::format_string(m.get_format(), m.get_data());
+   line += forge::format_string(m.get_format(), m.get_data());
 
    print(line, my->lc[context.get_log_level()]);
 }
@@ -174,4 +174,4 @@ void console_appender::print(const std::string& text, color::type text_color) {
       fflush(out);
 }
 
-} // namespace fcl
+} // namespace forge

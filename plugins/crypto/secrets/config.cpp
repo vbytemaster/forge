@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <cstdint>
 #include <map>
@@ -8,20 +8,20 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.plugins.crypto.secrets.plugin;
+module forge.plugins.crypto.secrets.plugin;
 
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.crypto.secret_bytes;
-import fcl.exceptions;
-import fcl.plugins.crypto.secrets.exceptions;
-import fcl.plugins.crypto.secrets.types;
+import forge.config.component;
+import forge.config.decode;
+import forge.crypto.secret_bytes;
+import forge.exceptions;
+import forge.plugins.crypto.secrets.exceptions;
+import forge.plugins.crypto.secrets.types;
 
 #include "details/config.hxx"
 #include "details/plugin_impl.hxx"
 #include "details/source_loading.hxx"
 
-namespace fcl::plugins::crypto::secrets {
+namespace forge::plugins::crypto::secrets {
 namespace {
 
 [[nodiscard]] std::uint64_t resolved_limit(std::uint64_t value, std::uint64_t fallback) {
@@ -30,23 +30,23 @@ namespace {
 
 void require_aes_update_limit(std::uint64_t value, const char* label) {
    if (value > aes_update_bytes_ceiling) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_config, std::string{label} + " exceeds AES update ceiling");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_config, std::string{label} + " exceeds AES update ceiling");
    }
 }
 
 } // namespace
 
-config decode_config(const fcl::config::component_view& view) {
-   auto decoded = fcl::config::decode<config>(view.source(), view.section());
+config decode_config(const forge::config::component_view& view) {
+   auto decoded = forge::config::decode<config>(view.source(), view.section());
    if (!decoded.ok()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_config,
-                          fcl::config::format_decode_diagnostics("invalid crypto secrets config",
+      FORGE_THROW_EXCEPTION(exceptions::invalid_config,
+                          forge::config::format_decode_diagnostics("invalid crypto secrets config",
                                                                  decoded.diagnostics));
    }
    return std::move(decoded.value);
 }
 
-void apply_config(plugin::impl& state, fcl::config::component_view view) {
+void apply_config(plugin::impl& state, forge::config::component_view view) {
    auto decoded = decode_config(view);
    require_aes_update_limit(decoded.default_max_plaintext_bytes, "default-max-plaintext-bytes");
    require_aes_update_limit(decoded.default_max_ciphertext_bytes, "default-max-ciphertext-bytes");
@@ -85,4 +85,4 @@ void apply_config(plugin::impl& state, fcl::config::component_view view) {
    state.stopping = false;
 }
 
-} // namespace fcl::plugins::crypto::secrets
+} // namespace forge::plugins::crypto::secrets

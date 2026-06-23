@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <memory>
 #include <string_view>
@@ -10,9 +10,9 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.api.dispatcher;
+module forge.api.dispatcher;
 
-namespace fcl::api {
+namespace forge::api {
 namespace {
 
 [[nodiscard]] const descriptor* find_export(const std::vector<descriptor>& exports,
@@ -40,7 +40,7 @@ namespace {
 }
 
 [[nodiscard]] bool reserved_metadata_key(std::string_view key) noexcept {
-   return key.starts_with(fcl::api::trusted_metadata_prefix);
+   return key.starts_with(forge::api::trusted_metadata_prefix);
 }
 
 void apply_remote_metadata_boundary(frame& value, const metadata& trusted) {
@@ -80,24 +80,24 @@ frame_dispatcher& frame_dispatcher::operator=(frame_dispatcher&&) noexcept = def
 
 boost::asio::awaitable<std::vector<frame>> frame_dispatcher::dispatch(frame value) {
    if (!impl_) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "invalid API frame dispatcher");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "invalid API frame dispatcher");
    }
    apply_remote_metadata_boundary(value, impl_->options.trusted_metadata);
    if (value.codec != impl_->options.codec) {
-      FCL_THROW_EXCEPTION(exceptions::codec_failed, "API frame codec is not accepted",
-                          fcl::exceptions::ctx("codec", value.codec.value));
+      FORGE_THROW_EXCEPTION(exceptions::codec_failed, "API frame codec is not accepted",
+                          forge::exceptions::ctx("codec", value.codec.value));
    }
 
    if (value.kind == frame_kind::request && grouped_stream_method(impl_->plan, value)) {
       impl_->calls.observe(value);
       if (impl_->grouped.size() >= impl_->options.max_inflight) {
-         FCL_THROW_EXCEPTION(exceptions::resource_exhausted, "API grouped stream limit exceeded",
-                             fcl::exceptions::ctx("max_inflight", impl_->options.max_inflight));
+         FORGE_THROW_EXCEPTION(exceptions::resource_exhausted, "API grouped stream limit exceeded",
+                             forge::exceptions::ctx("max_inflight", impl_->options.max_inflight));
       }
       const auto id = value.id.value;
       if (!impl_->grouped.emplace(id, std::vector<frame>{std::move(value)}).second) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "duplicate active API stream",
-                             fcl::exceptions::ctx("call_id", id));
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "duplicate active API stream",
+                             forge::exceptions::ctx("call_id", id));
       }
       co_return std::vector<frame>{};
    }
@@ -142,4 +142,4 @@ std::size_t frame_dispatcher::grouped_calls() const noexcept {
    return impl_ ? impl_->grouped.size() : 0;
 }
 
-} // namespace fcl::api
+} // namespace forge::api

@@ -2,39 +2,39 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <memory>
 #include <mutex>
 #include <utility>
 #include <vector>
 
-module fcl.plugins.http.server.plugin;
+module forge.plugins.http.server.plugin;
 
-import fcl.api.registry;
-import fcl.asio.runtime;
-import fcl.http.api.binding;
-import fcl.http.middleware;
-import fcl.http.router;
-import fcl.http.server;
-import fcl.plugins.http.server.exceptions;
-import fcl.plugins.http.server.middleware;
-import fcl.plugins.http.server.types;
+import forge.api.registry;
+import forge.asio.runtime;
+import forge.http.api.binding;
+import forge.http.middleware;
+import forge.http.router;
+import forge.http.server;
+import forge.plugins.http.server.exceptions;
+import forge.plugins.http.server.middleware;
+import forge.plugins.http.server.types;
 
 #include "details/config.hxx"
 #include "details/middleware_bridge.hxx"
 #include "details/plugin_impl.hxx"
 #include "details/server_lifecycle.hxx"
 
-namespace fcl::plugins::http::server {
+namespace forge::plugins::http::server {
 
 boost::asio::awaitable<void> start_server(plugin::impl& state) {
    if (state.runtime == nullptr || state.apis == nullptr) {
-      FCL_THROW_EXCEPTION(exceptions::startup_failed, "HTTP server plugin is not initialized");
+      FORGE_THROW_EXCEPTION(exceptions::startup_failed, "HTTP server plugin is not initialized");
    }
 
    auto snapshot = state.close_publication();
-   auto router = fcl::http::router{};
+   auto router = forge::http::router{};
    for (auto& descriptor : snapshot.middleware) {
       router.use(to_http_middleware(std::move(descriptor)));
    }
@@ -42,7 +42,7 @@ boost::asio::awaitable<void> start_server(plugin::impl& state) {
       value.binding.mount(router, resolve_base_path(state.settings, value.options.base_path));
    }
 
-   auto server = std::make_unique<fcl::http::server>(*state.runtime, to_server_config(state.settings), std::move(router));
+   auto server = std::make_unique<forge::http::server>(*state.runtime, to_server_config(state.settings), std::move(router));
    co_await server->async_start();
 
    auto lock = std::scoped_lock{state.mutex};
@@ -50,7 +50,7 @@ boost::asio::awaitable<void> start_server(plugin::impl& state) {
 }
 
 boost::asio::awaitable<void> stop_server(plugin::impl& state) {
-   auto server = std::unique_ptr<fcl::http::server>{};
+   auto server = std::unique_ptr<forge::http::server>{};
    {
       auto lock = std::scoped_lock{state.mutex};
       server = std::move(state.server);
@@ -65,4 +65,4 @@ void request_server_stop(plugin::impl& state) noexcept {
    state.stopping = true;
 }
 
-} // namespace fcl::plugins::http::server
+} // namespace forge::plugins::http::server

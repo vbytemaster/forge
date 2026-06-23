@@ -1,18 +1,18 @@
 module;
 #include <cstdint>
 
-module fcl.raw.varint;
+module forge.raw.varint;
 
-import fcl.variant.exceptions;
-import fcl.variant.value;
-import fcl.variant.conversion;
-import fcl.variant.containers;
-import fcl.variant.chrono;
-import fcl.variant.multiprecision;
-import fcl.variant.format;
-import fcl.variant.described;
+import forge.variant.exceptions;
+import forge.variant.value;
+import forge.variant.conversion;
+import forge.variant.containers;
+import forge.variant.chrono;
+import forge.variant.multiprecision;
+import forge.variant.format;
+import forge.variant.described;
 
-namespace fcl {
+namespace forge {
 void to_variant(const signed_int& var, variant& vo) {
    vo = var.value;
 }
@@ -25,4 +25,4 @@ void to_variant(const unsigned_int& var, variant& vo) {
 void from_variant(const variant& var, unsigned_int& vo) {
    vo.value = static_cast<uint32_t>(var.as_uint64());
 }
-} // namespace fcl
+} // namespace forge

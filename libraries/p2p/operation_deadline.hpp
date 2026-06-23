@@ -1,6 +1,6 @@
 #pragma once
 
-namespace fcl::p2p {
+namespace forge::p2p {
 
 void validate_operation_timeout(std::chrono::milliseconds timeout, std::string_view name);
 [[noreturn]] void throw_operation_timeout(std::string_view operation);
@@ -24,4 +24,4 @@ class operation_deadline {
    std::shared_ptr<std::atomic<state_value>> state_;
 };
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

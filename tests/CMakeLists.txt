@@ -1,7 +1,7 @@
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 add_executable(
-   test_fcl
+   test_forge
    unit/main.cpp
    core/test_chrono.cpp
    core/test_encoding.cpp
@@ -26,55 +26,55 @@ add_executable(
    crypto/test_webauthn.cpp
 )
 
-target_link_libraries(test_fcl fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl COMMAND test_fcl WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge forge Boost::included_unit_test_framework)
+add_test(NAME test_forge COMMAND test_forge WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_exceptions
+   test_forge_exceptions
    unit/main.cpp
    exceptions/exception_tests.cpp
 )
-target_link_libraries(test_fcl_exceptions fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_exceptions COMMAND test_fcl_exceptions WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_exceptions forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_exceptions COMMAND test_forge_exceptions WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_log
+   test_forge_log
    unit/main.cpp
    log/log_tests.cpp
 )
-target_link_libraries(test_fcl_log fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_log COMMAND test_fcl_log WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_log forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_log COMMAND test_forge_log WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_otlp
+   test_forge_otlp
    unit/main.cpp
    otlp/otlp_tests.cpp
 )
-target_link_libraries(test_fcl_otlp fcl Boost::included_unit_test_framework)
-add_executable(fcl_otlp_crash_helper otlp/crash_helper.cpp)
-target_link_libraries(fcl_otlp_crash_helper fcl)
-add_dependencies(test_fcl_otlp fcl_otlp_crash_helper)
-target_compile_definitions(test_fcl_otlp PRIVATE FCL_OTLP_CRASH_HELPER="$<TARGET_FILE:fcl_otlp_crash_helper>")
-add_test(NAME test_fcl_otlp COMMAND test_fcl_otlp WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_otlp forge Boost::included_unit_test_framework)
+add_executable(forge_otlp_crash_helper otlp/crash_helper.cpp)
+target_link_libraries(forge_otlp_crash_helper forge)
+add_dependencies(test_forge_otlp forge_otlp_crash_helper)
+target_compile_definitions(test_forge_otlp PRIVATE FORGE_OTLP_CRASH_HELPER="$<TARGET_FILE:forge_otlp_crash_helper>")
+add_test(NAME test_forge_otlp COMMAND test_forge_otlp WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_json
+   test_forge_json
    unit/main.cpp
    json/test_json.cpp
 )
-target_link_libraries(test_fcl_json fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_json COMMAND test_fcl_json WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_json forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_json COMMAND test_forge_json WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_raw
+   test_forge_raw
    unit/main.cpp
    raw/test_raw.cpp
 )
-target_link_libraries(test_fcl_raw fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_raw COMMAND test_fcl_raw WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_raw forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_raw COMMAND test_forge_raw WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_crypto
+   test_forge_crypto
    unit/main.cpp
    crypto/test_base32.cpp
    crypto/test_base64.cpp
@@ -89,575 +89,575 @@ add_executable(
    crypto/test_symmetric.cpp
    crypto/test_webauthn.cpp
 )
-target_link_libraries(test_fcl_crypto fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_crypto COMMAND test_fcl_crypto WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_crypto forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_crypto COMMAND test_forge_crypto WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_multiformats
+   test_forge_multiformats
    unit/main.cpp
    multiformats/multiformats_tests.cpp
 )
-target_link_libraries(test_fcl_multiformats fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_multiformats COMMAND test_fcl_multiformats WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_multiformats forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_multiformats COMMAND test_forge_multiformats WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_asio
+   test_forge_asio
    unit/main.cpp
    asio/task_scheduler_tests.cpp
 )
-target_link_libraries(test_fcl_asio fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_asio COMMAND test_fcl_asio WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_asio forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_asio COMMAND test_forge_asio WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_transport
+   test_forge_transport
    unit/main.cpp
    transport/transport_tests.cpp
 )
-target_link_libraries(test_fcl_transport fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_transport COMMAND test_fcl_transport WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_transport forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_transport COMMAND test_forge_transport WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_tcp
+   test_forge_tcp
    unit/main.cpp
    tcp/tcp_tests.cpp
 )
-target_link_libraries(test_fcl_tcp fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_tcp COMMAND test_fcl_tcp WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_tcp forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_tcp COMMAND test_forge_tcp WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_stcp
+   test_forge_stcp
    unit/main.cpp
    stcp/stcp_tests.cpp
 )
-target_link_libraries(test_fcl_stcp fcl Boost::included_unit_test_framework OpenSSL::SSL)
-add_test(NAME test_fcl_stcp COMMAND test_fcl_stcp WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_stcp forge Boost::included_unit_test_framework OpenSSL::SSL)
+add_test(NAME test_forge_stcp COMMAND test_forge_stcp WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_yamux
+   test_forge_yamux
    unit/main.cpp
    yamux/yamux_tests.cpp
 )
-target_link_libraries(test_fcl_yamux fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_yamux COMMAND test_fcl_yamux WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_yamux forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_yamux COMMAND test_forge_yamux WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_quic
+   test_forge_quic
    unit/main.cpp
    quic/quic_transport_tests.cpp
 )
-target_link_libraries(test_fcl_quic fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_quic COMMAND test_fcl_quic WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_quic forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_quic COMMAND test_forge_quic WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_app
+   test_forge_app
    unit/main.cpp
    app/app_tests.cpp
 )
-target_link_libraries(test_fcl_app fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_app COMMAND test_fcl_app WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_app forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_app COMMAND test_forge_app WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_schema
+   test_forge_schema
    unit/main.cpp
    schema/schema_tests.cpp
 )
-target_link_libraries(test_fcl_schema fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_schema COMMAND test_fcl_schema WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_schema forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_schema COMMAND test_forge_schema WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_config
+   test_forge_config
    unit/main.cpp
    config/config_tests.cpp
 )
-target_link_libraries(test_fcl_config fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_config COMMAND test_fcl_config WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_config forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_config COMMAND test_forge_config WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_yaml
+   test_forge_yaml
    unit/main.cpp
    yaml/yaml_tests.cpp
 )
-target_link_libraries(test_fcl_yaml fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_yaml COMMAND test_fcl_yaml WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_yaml forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_yaml COMMAND test_forge_yaml WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_program_options
+   test_forge_program_options
    unit/main.cpp
    program_options/program_options_tests.cpp
 )
-target_link_libraries(test_fcl_program_options fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_program_options COMMAND test_fcl_program_options WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_program_options forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_program_options COMMAND test_forge_program_options WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_env
+   test_forge_env
    unit/main.cpp
    env/env_tests.cpp
 )
-target_link_libraries(test_fcl_env fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_env COMMAND test_fcl_env WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_env forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_env COMMAND test_forge_env WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_api
+   test_forge_api
    unit/main.cpp
    api/api_tests.cpp
    api/api_module_smoke_tests.cpp
 )
-target_link_libraries(test_fcl_api fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_api COMMAND test_fcl_api WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_api forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_api COMMAND test_forge_api WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_transport_api
+   test_forge_transport_api
    unit/main.cpp
    api/transport_api_tests.cpp
 )
-target_link_libraries(test_fcl_transport_api fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_transport_api COMMAND test_fcl_transport_api WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_transport_api forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_transport_api COMMAND test_forge_transport_api WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_http_websocket
+   test_forge_http_websocket
    unit/main.cpp
    http_websocket/network_tests.cpp
 )
-target_link_libraries(test_fcl_http_websocket fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_http_websocket COMMAND test_fcl_http_websocket WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_http_websocket forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_http_websocket COMMAND test_forge_http_websocket WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_quic_p2p
+   test_forge_quic_p2p
    unit/main.cpp
    quic_p2p/quic_tests.cpp
    quic_p2p/p2p_tests.cpp
 )
-target_link_libraries(test_fcl_quic_p2p fcl Boost::included_unit_test_framework)
-target_compile_definitions(test_fcl_quic_p2p PRIVATE FCL_HAS_ROCKSDB=$<BOOL:${FCL_HAS_ROCKSDB}>)
-add_test(NAME test_fcl_quic_p2p COMMAND test_fcl_quic_p2p WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_quic_p2p forge Boost::included_unit_test_framework)
+target_compile_definitions(test_forge_quic_p2p PRIVATE FORGE_HAS_ROCKSDB=$<BOOL:${FORGE_HAS_ROCKSDB}>)
+add_test(NAME test_forge_quic_p2p COMMAND test_forge_quic_p2p WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   fcl_interop_fixture
-   libp2p_interop/fcl_interop_fixture.cpp
+   forge_interop_fixture
+   libp2p_interop/forge_interop_fixture.cpp
 )
-target_link_libraries(fcl_interop_fixture fcl)
+target_link_libraries(forge_interop_fixture forge)
 
-set(_fcl_libp2p_interop_enabled 0)
-if(FCL_ENABLE_LIBP2P_INTEROP)
-   set(_fcl_libp2p_interop_enabled 1)
+set(_forge_libp2p_interop_enabled 0)
+if(FORGE_ENABLE_LIBP2P_INTEROP)
+   set(_forge_libp2p_interop_enabled 1)
 endif()
 
 add_custom_target(
-   test_fcl_libp2p_interop
+   test_forge_libp2p_interop
    COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop/runner.py
-      --enabled ${_fcl_libp2p_interop_enabled}
-      --fcl-fixture $<TARGET_FILE:fcl_interop_fixture>
+      --enabled ${_forge_libp2p_interop_enabled}
+      --forge-fixture $<TARGET_FILE:forge_interop_fixture>
       --source-dir ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop
       --build-dir ${CMAKE_CURRENT_BINARY_DIR}/libp2p_interop
-      --donors-root ${FCL_LIBP2P_DONORS_ROOT}
-   DEPENDS fcl_interop_fixture
+      --donors-root ${FORGE_LIBP2P_DONORS_ROOT}
+   DEPENDS forge_interop_fixture
 )
 add_test(
-   NAME test_fcl_libp2p_interop
+   NAME test_forge_libp2p_interop
    COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop/runner.py
-      --enabled ${_fcl_libp2p_interop_enabled}
-      --fcl-fixture $<TARGET_FILE:fcl_interop_fixture>
+      --enabled ${_forge_libp2p_interop_enabled}
+      --forge-fixture $<TARGET_FILE:forge_interop_fixture>
       --source-dir ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop
       --build-dir ${CMAKE_CURRENT_BINARY_DIR}/libp2p_interop
-      --donors-root ${FCL_LIBP2P_DONORS_ROOT}
+      --donors-root ${FORGE_LIBP2P_DONORS_ROOT}
 )
-set_tests_properties(test_fcl_libp2p_interop PROPERTIES SKIP_REGULAR_EXPRESSION "^SKIP:")
+set_tests_properties(test_forge_libp2p_interop PROPERTIES SKIP_REGULAR_EXPRESSION "^SKIP:")
 
 add_test(
-   NAME test_fcl_libp2p_donor_matrix
+   NAME test_forge_libp2p_donor_matrix
    COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop/check_donor_matrix.py
       ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop/donor_cases.json
 )
 
 add_executable(
-   test_fcl_plugins
+   test_forge_plugins
    unit/main.cpp
    plugins/plugins_tests.cpp
 )
-target_link_libraries(test_fcl_plugins fcl Boost::included_unit_test_framework)
-add_test(NAME test_fcl_plugins COMMAND test_fcl_plugins WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_plugins forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_plugins COMMAND test_forge_plugins WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_crypto_secrets
+   test_forge_crypto_secrets
    unit/main.cpp
    plugins/crypto/secrets_tests.cpp
 )
-target_link_libraries(test_fcl_crypto_secrets fcl Boost::included_unit_test_framework)
-target_include_directories(test_fcl_crypto_secrets PRIVATE ${PROJECT_SOURCE_DIR}/plugins/crypto/secrets)
-add_test(NAME test_fcl_crypto_secrets COMMAND test_fcl_crypto_secrets WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_forge_crypto_secrets forge Boost::included_unit_test_framework)
+target_include_directories(test_forge_crypto_secrets PRIVATE ${PROJECT_SOURCE_DIR}/plugins/crypto/secrets)
+add_test(NAME test_forge_crypto_secrets COMMAND test_forge_crypto_secrets WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
-if(TARGET fcl_tui)
+if(TARGET forge_tui)
    add_executable(
-      test_fcl_tui
+      test_forge_tui
       unit/main.cpp
       tui/tui_tests.cpp
    )
-   target_link_libraries(test_fcl_tui fcl fcl_tui Boost::included_unit_test_framework)
-   add_test(NAME test_fcl_tui COMMAND test_fcl_tui WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+   target_link_libraries(test_forge_tui forge forge_tui Boost::included_unit_test_framework)
+   add_test(NAME test_forge_tui COMMAND test_forge_tui WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 else()
-   message(STATUS "Skipping test_fcl_tui: fcl_tui is not available")
+   message(STATUS "Skipping test_forge_tui: forge_tui is not available")
 endif()
 
-set(FCL_PACKAGE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/fcl-package-install")
+set(FORGE_PACKAGE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/forge-package-install")
 set(
-   FCL_PACKAGE_CONSUMER_BUILD_OPTIONS
-   -DCMAKE_PREFIX_PATH=${FCL_PACKAGE_INSTALL_PREFIX}
+   FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS
+   -DCMAKE_PREFIX_PATH=${FORGE_PACKAGE_INSTALL_PREFIX}
    -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
    -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
    -DCMAKE_OSX_SYSROOT=${CMAKE_OSX_SYSROOT}
 )
 
 add_custom_target(
-   test_fcl_package_install
-   COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${FCL_PACKAGE_INSTALL_PREFIX} --component dev
+   test_forge_package_install
+   COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${FORGE_PACKAGE_INSTALL_PREFIX} --component dev
 )
 add_custom_target(
-   test_fcl_package_consumer
+   test_forge_package_consumer
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_consumer
-      ${CMAKE_BINARY_DIR}/fcl-package-consumer
+      ${CMAKE_BINARY_DIR}/forge-package-consumer
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_consumer
-   DEPENDS test_fcl_package_install
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_consumer
+   DEPENDS test_forge_package_install
 )
 add_custom_target(
-   test_fcl_package_core_lightweight
+   test_forge_package_core_lightweight
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_core_lightweight
-      ${CMAKE_BINARY_DIR}/fcl-package-core-lightweight
+      ${CMAKE_BINARY_DIR}/forge-package-core-lightweight
       --build-generator ${CMAKE_GENERATOR}
       --build-options
-         ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+         ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
          -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_Ngtcp2=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_glaze=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_Notcurses=ON
-      --test-command fcl_package_core_lightweight
-   DEPENDS test_fcl_package_install
+      --test-command forge_package_core_lightweight
+   DEPENDS test_forge_package_install
 )
 add_custom_target(
-   test_fcl_package_env_lightweight
+   test_forge_package_env_lightweight
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_env_lightweight
-      ${CMAKE_BINARY_DIR}/fcl-package-env-lightweight
+      ${CMAKE_BINARY_DIR}/forge-package-env-lightweight
       --build-generator ${CMAKE_GENERATOR}
       --build-options
-         ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+         ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
          -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_Ngtcp2=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_glaze=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_Notcurses=ON
-      --test-command fcl_package_env_lightweight
-   DEPENDS test_fcl_package_install
+      --test-command forge_package_env_lightweight
+   DEPENDS test_forge_package_install
 )
 add_custom_target(
-   test_fcl_package_api_lightweight
+   test_forge_package_api_lightweight
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_api_lightweight
-      ${CMAKE_BINARY_DIR}/fcl-package-api-lightweight
+      ${CMAKE_BINARY_DIR}/forge-package-api-lightweight
       --build-generator ${CMAKE_GENERATOR}
       --build-options
-         ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+         ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
          -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_Ngtcp2=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_glaze=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_Notcurses=ON
-      --test-command fcl_package_api_lightweight
-   DEPENDS test_fcl_package_install
+      --test-command forge_package_api_lightweight
+   DEPENDS test_forge_package_install
 )
 add_custom_target(
-   test_fcl_package_quic_component
+   test_forge_package_quic_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_quic_component
-      ${CMAKE_BINARY_DIR}/fcl-package-quic-component
+      ${CMAKE_BINARY_DIR}/forge-package-quic-component
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_quic_component
-   DEPENDS test_fcl_package_install
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_quic_component
+   DEPENDS test_forge_package_install
 )
 add_custom_target(
-   test_fcl_package_otlp_component
+   test_forge_package_otlp_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_otlp_component
-      ${CMAKE_BINARY_DIR}/fcl-package-otlp-component
+      ${CMAKE_BINARY_DIR}/forge-package-otlp-component
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_otlp_component
-   DEPENDS test_fcl_package_install
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_otlp_component
+   DEPENDS test_forge_package_install
 )
 add_custom_target(
-   test_fcl_package_http_api_component
+   test_forge_package_http_api_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_http_api_component
-      ${CMAKE_BINARY_DIR}/fcl-package-http-api-component
+      ${CMAKE_BINARY_DIR}/forge-package-http-api-component
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_http_api_component
-   DEPENDS test_fcl_package_install
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_http_api_component
+   DEPENDS test_forge_package_install
 )
 add_custom_target(
-   test_fcl_package_transport_api_component
+   test_forge_package_transport_api_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_transport_api_component
-      ${CMAKE_BINARY_DIR}/fcl-package-transport-api-component
+      ${CMAKE_BINARY_DIR}/forge-package-transport-api-component
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_transport_api_component
-   DEPENDS test_fcl_package_install
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_transport_api_component
+   DEPENDS test_forge_package_install
 )
 add_custom_target(
-   test_fcl_package_plugins_p2p_node
+   test_forge_package_plugins_p2p_node
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_p2p_node
-      ${CMAKE_BINARY_DIR}/fcl-package-plugins-p2p-node
+      ${CMAKE_BINARY_DIR}/forge-package-plugins-p2p-node
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugins_p2p_node
-   DEPENDS test_fcl_package_install
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_plugins_p2p_node
+   DEPENDS test_forge_package_install
 )
 add_custom_target(
-   test_fcl_package_plugins_crypto_signer
+   test_forge_package_plugins_crypto_signer
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_crypto_signer
-      ${CMAKE_BINARY_DIR}/fcl-package-plugins-crypto-signer
+      ${CMAKE_BINARY_DIR}/forge-package-plugins-crypto-signer
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugins_crypto_signer
-   DEPENDS test_fcl_package_install
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_plugins_crypto_signer
+   DEPENDS test_forge_package_install
 )
 add_custom_target(
-   test_fcl_package_plugins_crypto_secrets
+   test_forge_package_plugins_crypto_secrets
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_crypto_secrets
-      ${CMAKE_BINARY_DIR}/fcl-package-plugins-crypto-secrets
+      ${CMAKE_BINARY_DIR}/forge-package-plugins-crypto-secrets
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugins_crypto_secrets
-   DEPENDS test_fcl_package_install
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_plugins_crypto_secrets
+   DEPENDS test_forge_package_install
 )
 add_custom_target(
-   test_fcl_package_plugins_http_server
+   test_forge_package_plugins_http_server
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_http_server
-      ${CMAKE_BINARY_DIR}/fcl-package-plugins-http-server
+      ${CMAKE_BINARY_DIR}/forge-package-plugins-http-server
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugins_http_server
-   DEPENDS test_fcl_package_install
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_plugins_http_server
+   DEPENDS test_forge_package_install
 )
 add_custom_target(
-   test_fcl_package_plugins_component
+   test_forge_package_plugins_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_component
-      ${CMAKE_BINARY_DIR}/fcl-package-plugins-component
+      ${CMAKE_BINARY_DIR}/forge-package-plugins-component
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugins_component
-   DEPENDS test_fcl_package_install
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_plugins_component
+   DEPENDS test_forge_package_install
 )
 add_custom_target(
-   test_fcl_package_all_missing_dependency
+   test_forge_package_all_missing_dependency
    COMMAND ${CMAKE_COMMAND}
-      -DFCL_PACKAGE_TEST_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_all_missing_dependency
-      -DFCL_PACKAGE_TEST_BINARY_DIR=${CMAKE_BINARY_DIR}/fcl-package-all-missing-dependency
-      -DFCL_PACKAGE_TEST_PREFIX=${FCL_PACKAGE_INSTALL_PREFIX}
-      -DFCL_PACKAGE_TEST_GENERATOR=${CMAKE_GENERATOR}
-      -DFCL_PACKAGE_TEST_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-      -DFCL_PACKAGE_TEST_C_COMPILER=${CMAKE_C_COMPILER}
-      -DFCL_PACKAGE_TEST_OSX_SYSROOT=${CMAKE_OSX_SYSROOT}
+      -DFORGE_PACKAGE_TEST_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_all_missing_dependency
+      -DFORGE_PACKAGE_TEST_BINARY_DIR=${CMAKE_BINARY_DIR}/forge-package-all-missing-dependency
+      -DFORGE_PACKAGE_TEST_PREFIX=${FORGE_PACKAGE_INSTALL_PREFIX}
+      -DFORGE_PACKAGE_TEST_GENERATOR=${CMAKE_GENERATOR}
+      -DFORGE_PACKAGE_TEST_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+      -DFORGE_PACKAGE_TEST_C_COMPILER=${CMAKE_C_COMPILER}
+      -DFORGE_PACKAGE_TEST_OSX_SYSROOT=${CMAKE_OSX_SYSROOT}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/package_all_missing_dependency/expect_configure_failure.cmake
-   DEPENDS test_fcl_package_install
+   DEPENDS test_forge_package_install
 )
 
 add_test(
-   NAME test_fcl_package_install
-   COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${FCL_PACKAGE_INSTALL_PREFIX} --component dev
+   NAME test_forge_package_install
+   COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${FORGE_PACKAGE_INSTALL_PREFIX} --component dev
 )
 add_test(
-   NAME test_fcl_package_consumer
+   NAME test_forge_package_consumer
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_consumer
-      ${CMAKE_BINARY_DIR}/fcl-package-consumer
+      ${CMAKE_BINARY_DIR}/forge-package-consumer
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_consumer
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_consumer
 )
-set_tests_properties(test_fcl_package_consumer PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_forge_package_consumer PROPERTIES DEPENDS test_forge_package_install)
 add_test(
-   NAME test_fcl_package_core_lightweight
+   NAME test_forge_package_core_lightweight
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_core_lightweight
-      ${CMAKE_BINARY_DIR}/fcl-package-core-lightweight
+      ${CMAKE_BINARY_DIR}/forge-package-core-lightweight
       --build-generator ${CMAKE_GENERATOR}
       --build-options
-         ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+         ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
          -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_Ngtcp2=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_glaze=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_Notcurses=ON
-      --test-command fcl_package_core_lightweight
+      --test-command forge_package_core_lightweight
 )
-set_tests_properties(test_fcl_package_core_lightweight PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_forge_package_core_lightweight PROPERTIES DEPENDS test_forge_package_install)
 add_test(
-   NAME test_fcl_package_env_lightweight
+   NAME test_forge_package_env_lightweight
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_env_lightweight
-      ${CMAKE_BINARY_DIR}/fcl-package-env-lightweight
+      ${CMAKE_BINARY_DIR}/forge-package-env-lightweight
       --build-generator ${CMAKE_GENERATOR}
       --build-options
-         ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+         ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
          -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_Ngtcp2=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_glaze=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_Notcurses=ON
-      --test-command fcl_package_env_lightweight
+      --test-command forge_package_env_lightweight
 )
-set_tests_properties(test_fcl_package_env_lightweight PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_forge_package_env_lightweight PROPERTIES DEPENDS test_forge_package_install)
 add_test(
-   NAME test_fcl_package_api_lightweight
+   NAME test_forge_package_api_lightweight
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_api_lightweight
-      ${CMAKE_BINARY_DIR}/fcl-package-api-lightweight
+      ${CMAKE_BINARY_DIR}/forge-package-api-lightweight
       --build-generator ${CMAKE_GENERATOR}
       --build-options
-         ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
+         ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
          -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_Ngtcp2=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_glaze=ON
          -DCMAKE_DISABLE_FIND_PACKAGE_Notcurses=ON
-      --test-command fcl_package_api_lightweight
+      --test-command forge_package_api_lightweight
 )
-set_tests_properties(test_fcl_package_api_lightweight PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_forge_package_api_lightweight PROPERTIES DEPENDS test_forge_package_install)
 add_test(
-   NAME test_fcl_package_quic_component
+   NAME test_forge_package_quic_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_quic_component
-      ${CMAKE_BINARY_DIR}/fcl-package-quic-component
+      ${CMAKE_BINARY_DIR}/forge-package-quic-component
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_quic_component
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_quic_component
 )
-set_tests_properties(test_fcl_package_quic_component PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_forge_package_quic_component PROPERTIES DEPENDS test_forge_package_install)
 add_test(
-   NAME test_fcl_package_otlp_component
+   NAME test_forge_package_otlp_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_otlp_component
-      ${CMAKE_BINARY_DIR}/fcl-package-otlp-component
+      ${CMAKE_BINARY_DIR}/forge-package-otlp-component
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_otlp_component
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_otlp_component
 )
-set_tests_properties(test_fcl_package_otlp_component PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_forge_package_otlp_component PROPERTIES DEPENDS test_forge_package_install)
 add_test(
-   NAME test_fcl_package_http_api_component
+   NAME test_forge_package_http_api_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_http_api_component
-      ${CMAKE_BINARY_DIR}/fcl-package-http-api-component
+      ${CMAKE_BINARY_DIR}/forge-package-http-api-component
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_http_api_component
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_http_api_component
 )
-set_tests_properties(test_fcl_package_http_api_component PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_forge_package_http_api_component PROPERTIES DEPENDS test_forge_package_install)
 add_test(
-   NAME test_fcl_package_transport_api_component
+   NAME test_forge_package_transport_api_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_transport_api_component
-      ${CMAKE_BINARY_DIR}/fcl-package-transport-api-component
+      ${CMAKE_BINARY_DIR}/forge-package-transport-api-component
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_transport_api_component
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_transport_api_component
 )
-set_tests_properties(test_fcl_package_transport_api_component PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_forge_package_transport_api_component PROPERTIES DEPENDS test_forge_package_install)
 add_test(
-   NAME test_fcl_package_plugins_p2p_node
+   NAME test_forge_package_plugins_p2p_node
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_p2p_node
-      ${CMAKE_BINARY_DIR}/fcl-package-plugins-p2p-node
+      ${CMAKE_BINARY_DIR}/forge-package-plugins-p2p-node
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugins_p2p_node
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_plugins_p2p_node
 )
-set_tests_properties(test_fcl_package_plugins_p2p_node PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_forge_package_plugins_p2p_node PROPERTIES DEPENDS test_forge_package_install)
 add_test(
-   NAME test_fcl_package_plugins_crypto_signer
+   NAME test_forge_package_plugins_crypto_signer
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_crypto_signer
-      ${CMAKE_BINARY_DIR}/fcl-package-plugins-crypto-signer
+      ${CMAKE_BINARY_DIR}/forge-package-plugins-crypto-signer
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugins_crypto_signer
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_plugins_crypto_signer
 )
-set_tests_properties(test_fcl_package_plugins_crypto_signer PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_forge_package_plugins_crypto_signer PROPERTIES DEPENDS test_forge_package_install)
 add_test(
-   NAME test_fcl_package_plugins_crypto_secrets
+   NAME test_forge_package_plugins_crypto_secrets
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_crypto_secrets
-      ${CMAKE_BINARY_DIR}/fcl-package-plugins-crypto-secrets
+      ${CMAKE_BINARY_DIR}/forge-package-plugins-crypto-secrets
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugins_crypto_secrets
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_plugins_crypto_secrets
 )
-set_tests_properties(test_fcl_package_plugins_crypto_secrets PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_forge_package_plugins_crypto_secrets PROPERTIES DEPENDS test_forge_package_install)
 add_test(
-   NAME test_fcl_package_plugins_http_server
+   NAME test_forge_package_plugins_http_server
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_http_server
-      ${CMAKE_BINARY_DIR}/fcl-package-plugins-http-server
+      ${CMAKE_BINARY_DIR}/forge-package-plugins-http-server
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugins_http_server
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_plugins_http_server
 )
-set_tests_properties(test_fcl_package_plugins_http_server PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_forge_package_plugins_http_server PROPERTIES DEPENDS test_forge_package_install)
 add_test(
-   NAME test_fcl_package_plugins_component
+   NAME test_forge_package_plugins_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
       ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_component
-      ${CMAKE_BINARY_DIR}/fcl-package-plugins-component
+      ${CMAKE_BINARY_DIR}/forge-package-plugins-component
       --build-generator ${CMAKE_GENERATOR}
-      --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugins_component
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_plugins_component
 )
-set_tests_properties(test_fcl_package_plugins_component PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_forge_package_plugins_component PROPERTIES DEPENDS test_forge_package_install)
 add_test(
-   NAME test_fcl_package_all_missing_dependency
+   NAME test_forge_package_all_missing_dependency
    COMMAND ${CMAKE_COMMAND}
-      -DFCL_PACKAGE_TEST_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_all_missing_dependency
-      -DFCL_PACKAGE_TEST_BINARY_DIR=${CMAKE_BINARY_DIR}/fcl-package-all-missing-dependency
-      -DFCL_PACKAGE_TEST_PREFIX=${FCL_PACKAGE_INSTALL_PREFIX}
-      -DFCL_PACKAGE_TEST_GENERATOR=${CMAKE_GENERATOR}
-      -DFCL_PACKAGE_TEST_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-      -DFCL_PACKAGE_TEST_C_COMPILER=${CMAKE_C_COMPILER}
-      -DFCL_PACKAGE_TEST_OSX_SYSROOT=${CMAKE_OSX_SYSROOT}
+      -DFORGE_PACKAGE_TEST_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_all_missing_dependency
+      -DFORGE_PACKAGE_TEST_BINARY_DIR=${CMAKE_BINARY_DIR}/forge-package-all-missing-dependency
+      -DFORGE_PACKAGE_TEST_PREFIX=${FORGE_PACKAGE_INSTALL_PREFIX}
+      -DFORGE_PACKAGE_TEST_GENERATOR=${CMAKE_GENERATOR}
+      -DFORGE_PACKAGE_TEST_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+      -DFORGE_PACKAGE_TEST_C_COMPILER=${CMAKE_C_COMPILER}
+      -DFORGE_PACKAGE_TEST_OSX_SYSROOT=${CMAKE_OSX_SYSROOT}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/package_all_missing_dependency/expect_configure_failure.cmake
 )
-set_tests_properties(test_fcl_package_all_missing_dependency PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_forge_package_all_missing_dependency PROPERTIES DEPENDS test_forge_package_install)

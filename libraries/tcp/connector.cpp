@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -19,29 +19,29 @@ module;
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/system/error_code.hpp>
 
-module fcl.tcp.connector;
+module forge.tcp.connector;
 
-namespace fcl::tcp {
+namespace forge::tcp {
 namespace {
 
 using asio_tcp = boost::asio::ip::tcp;
 
 [[noreturn]] void throw_invalid_endpoint(const transport::endpoint& endpoint, std::string message) {
-   FCL_THROW_EXCEPTION(exceptions::invalid_endpoint, std::move(message),
-                       fcl::exceptions::ctx("host", endpoint.host),
-                       fcl::exceptions::ctx("port", endpoint.port),
-                       fcl::exceptions::ctx("protocol", static_cast<int>(endpoint.protocol)));
+   FORGE_THROW_EXCEPTION(exceptions::invalid_endpoint, std::move(message),
+                       forge::exceptions::ctx("host", endpoint.host),
+                       forge::exceptions::ctx("port", endpoint.port),
+                       forge::exceptions::ctx("protocol", static_cast<int>(endpoint.protocol)));
 }
 
 [[noreturn]] void throw_invalid_options(std::string message) {
-   FCL_THROW_EXCEPTION(exceptions::invalid_options, std::move(message));
+   FORGE_THROW_EXCEPTION(exceptions::invalid_options, std::move(message));
 }
 
 [[noreturn]] void throw_connect_failed(const transport::endpoint& endpoint, const boost::system::error_code& error) {
-   FCL_THROW_EXCEPTION(exceptions::connect_failed, "tcp connect failed",
-                       fcl::exceptions::ctx("host", endpoint.host),
-                       fcl::exceptions::ctx("port", endpoint.port),
-                       fcl::exceptions::ctx("reason", error.message()));
+   FORGE_THROW_EXCEPTION(exceptions::connect_failed, "tcp connect failed",
+                       forge::exceptions::ctx("host", endpoint.host),
+                       forge::exceptions::ctx("port", endpoint.port),
+                       forge::exceptions::ctx("reason", error.message()));
 }
 
 void validate_options(const options& value) {
@@ -87,13 +87,13 @@ void configure_socket(asio_tcp::socket& socket, const options& tcp_options) {
    auto error = boost::system::error_code{};
    socket.set_option(asio_tcp::no_delay{tcp_options.no_delay}, error);
    if (error) {
-      FCL_THROW_EXCEPTION(exceptions::io_error, "failed to configure tcp no_delay",
-                          fcl::exceptions::ctx("reason", error.message()));
+      FORGE_THROW_EXCEPTION(exceptions::io_error, "failed to configure tcp no_delay",
+                          forge::exceptions::ctx("reason", error.message()));
    }
    socket.set_option(boost::asio::socket_base::keep_alive{tcp_options.keep_alive}, error);
    if (error) {
-      FCL_THROW_EXCEPTION(exceptions::io_error, "failed to configure tcp keep_alive",
-                          fcl::exceptions::ctx("reason", error.message()));
+      FORGE_THROW_EXCEPTION(exceptions::io_error, "failed to configure tcp keep_alive",
+                          forge::exceptions::ctx("reason", error.message()));
    }
 }
 
@@ -127,7 +127,7 @@ struct connector::impl final : transport::detail::stream_connector_concept {
 
    boost::asio::awaitable<connection> async_connect_connection(transport::endpoint remote) {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connector");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connector");
       }
       validate_remote_endpoint(remote);
 
@@ -171,9 +171,9 @@ struct connector::impl final : transport::detail::stream_connector_concept {
 
       if (error) {
          if (error == boost::asio::error::operation_aborted) {
-            FCL_THROW_EXCEPTION(exceptions::canceled, "tcp connect canceled",
-                                fcl::exceptions::ctx("host", remote.host),
-                                fcl::exceptions::ctx("port", remote.port));
+            FORGE_THROW_EXCEPTION(exceptions::canceled, "tcp connect canceled",
+                                forge::exceptions::ctx("host", remote.host),
+                                forge::exceptions::ctx("port", remote.port));
          }
          throw_connect_failed(remote, error);
       }
@@ -226,7 +226,7 @@ bool connector::valid() const noexcept {
 boost::asio::awaitable<connection> connector::async_connect_connection(transport::endpoint remote,
                                                                        transport::connect_options) {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connector");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connector");
    }
    co_return co_await impl_->async_connect_connection(std::move(remote));
 }
@@ -234,7 +234,7 @@ boost::asio::awaitable<connection> connector::async_connect_connection(transport
 boost::asio::awaitable<transport::stream_connection> connector::async_connect(transport::endpoint remote,
                                                                               transport::connect_options options) {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connector");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connector");
    }
    co_return co_await impl_->async_connect(std::move(remote), options);
 }
@@ -252,4 +252,4 @@ transport::stream_connector connector::as_transport() const {
    return transport::detail::stream_connector_access::make(impl_);
 }
 
-} // namespace fcl::tcp
+} // namespace forge::tcp

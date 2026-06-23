@@ -1,5 +1,5 @@
 module;
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -7,11 +7,11 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.crypto.blake2;
+module forge.crypto.blake2;
 
-import fcl.core.utility;
+import forge.core.utility;
 
-namespace fcl::crypto {
+namespace forge::crypto {
 namespace {
 
 constexpr std::array<std::uint64_t, 8> blake2b_iv = {
@@ -128,7 +128,7 @@ void blake2b_wrapper::finish(blake2b_state* state) {
 bytes blake2b(std::uint32_t rounds, const bytes& h, const bytes& m, const bytes& t0_offset, const bytes& t1_offset,
               bool final_block, const yield_function_t& yield) {
    if (h.size() != 64 || m.size() != blake2b_wrapper::block_bytes || t0_offset.size() != 8 || t1_offset.size() != 8) {
-      FCL_THROW_EXCEPTION(blake2::exceptions::invalid_input, "invalid BLAKE2b compression input length");
+      FORGE_THROW_EXCEPTION(blake2::exceptions::invalid_input, "invalid BLAKE2b compression input length");
    }
 
    blake2b_wrapper wrapper;
@@ -150,4 +150,4 @@ bytes blake2b(std::uint32_t rounds, const bytes& h, const bytes& m, const bytes&
    return out;
 }
 
-} // namespace fcl::crypto
+} // namespace forge::crypto

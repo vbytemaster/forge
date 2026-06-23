@@ -7,9 +7,9 @@ module;
 #include <string>
 #include <string_view>
 
-module fcl.http.range;
+module forge.http.range;
 
-namespace fcl::http {
+namespace forge::http {
 namespace {
 
 bool parse_u64(std::string_view value, std::uint64_t& output) {
@@ -122,4 +122,4 @@ range_response resolve_range(std::optional<std::string_view> header, std::uint64
    };
 }
 
-} // namespace fcl::http
+} // namespace forge::http

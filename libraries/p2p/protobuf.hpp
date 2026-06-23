@@ -1,8 +1,8 @@
 #pragma once
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
-namespace fcl::p2p::detail {
+namespace forge::p2p::detail {
 
 enum class wire_type : std::uint8_t {
    varint = 0,
@@ -11,7 +11,7 @@ enum class wire_type : std::uint8_t {
 };
 
 inline void append_varint(std::vector<std::uint8_t>& out, std::uint64_t value) {
-   auto encoded = fcl::multiformats::varint_encode(value);
+   auto encoded = forge::multiformats::varint_encode(value);
    out.insert(out.end(), encoded.begin(), encoded.end());
 }
 
@@ -43,7 +43,7 @@ inline void append_string(std::vector<std::uint8_t>& out, std::uint32_t field, s
 }
 
 inline std::vector<std::uint8_t> wrap_message(std::span<const std::uint8_t> payload) {
-   auto out = fcl::multiformats::varint_encode(payload.size());
+   auto out = forge::multiformats::varint_encode(payload.size());
    out.insert(out.end(), payload.begin(), payload.end());
    return out;
 }
@@ -60,18 +60,18 @@ class reader {
       const auto decoded = read_varint();
       const auto type = static_cast<wire_type>(decoded & 0x07U);
       if (type != wire_type::varint && type != wire_type::fixed64 && type != wire_type::length_delimited) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, "unsupported libp2p protobuf wire type");
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, "unsupported libp2p protobuf wire type");
       }
       return {static_cast<std::uint32_t>(decoded >> 3U), type};
    }
 
    [[nodiscard]] std::uint64_t read_varint() {
       try {
-         const auto decoded = fcl::multiformats::varint_decode(bytes_.subspan(offset_));
+         const auto decoded = forge::multiformats::varint_decode(bytes_.subspan(offset_));
          offset_ += decoded.size;
          return decoded.value;
-      } catch (const fcl::multiformats::exceptions::invalid_format& error) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, error.what());
+      } catch (const forge::multiformats::exceptions::invalid_format& error) {
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, error.what());
       }
    }
 
@@ -87,7 +87,7 @@ class reader {
    [[nodiscard]] std::vector<std::uint8_t> bytes() {
       const auto size = read_varint();
       if (size > bytes_.size() - offset_) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, "truncated libp2p protobuf bytes field");
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, "truncated libp2p protobuf bytes field");
       }
       auto out = std::vector<std::uint8_t>{bytes_.begin() + static_cast<std::ptrdiff_t>(offset_),
                                            bytes_.begin() + static_cast<std::ptrdiff_t>(offset_ + size)};
@@ -117,7 +117,7 @@ class reader {
  private:
    void require(std::size_t size) const {
       if (size > bytes_.size() - offset_) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, "truncated libp2p protobuf message");
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, "truncated libp2p protobuf message");
       }
    }
 
@@ -126,20 +126,20 @@ class reader {
 };
 
 inline std::vector<std::uint8_t> unwrap_message(std::span<const std::uint8_t> bytes, std::size_t max_payload_size) {
-   auto decoded = fcl::multiformats::decoded_varint{};
+   auto decoded = forge::multiformats::decoded_varint{};
    try {
-      decoded = fcl::multiformats::varint_decode(bytes);
-   } catch (const fcl::multiformats::exceptions::invalid_format& error) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, error.what());
+      decoded = forge::multiformats::varint_decode(bytes);
+   } catch (const forge::multiformats::exceptions::invalid_format& error) {
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, error.what());
    }
    if (decoded.value > max_payload_size) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "libp2p protobuf message exceeds max size");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "libp2p protobuf message exceeds max size");
    }
    const auto total = decoded.size + static_cast<std::size_t>(decoded.value);
    if (total != bytes.size()) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "libp2p protobuf message length mismatch");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "libp2p protobuf message length mismatch");
    }
    return {bytes.begin() + static_cast<std::ptrdiff_t>(decoded.size), bytes.end()};
 }
 
-} // namespace fcl::p2p::detail
+} // namespace forge::p2p::detail

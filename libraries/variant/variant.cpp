@@ -11,16 +11,16 @@ module;
 #include <string_view>
 #include <vector>
 
-#include <fcl/core/macros.hpp>
+#include <forge/core/macros.hpp>
 
-module fcl.variant.value;
+module forge.variant.value;
 
-import fcl.core.encoding;
-import fcl.core.string;
-import fcl.core.utf8;
-import fcl.variant.exceptions;
+import forge.core.encoding;
+import forge.core.string;
+import forge.core.utf8;
+import forge.variant.exceptions;
 
-namespace fcl {
+namespace forge {
 /**
  *  The TypeID is stored in the 'last byte' of the variant.
  */
@@ -33,7 +33,7 @@ variant::variant() {
    set_variant_type(this, null_type);
 }
 
-variant::variant(fcl::nullptr_t) {
+variant::variant(forge::nullptr_t) {
    set_variant_type(this, null_type);
 }
 
@@ -104,14 +104,14 @@ variant::variant(const char* str) {
 
 variant::variant(wchar_t* str) {
    auto utf8 = std::string{};
-   fcl::encodeUtf8(std::wstring{str, wcslen(str)}, &utf8);
+   forge::encodeUtf8(std::wstring{str, wcslen(str)}, &utf8);
    *reinterpret_cast<std::string**>(this) = new std::string(std::move(utf8));
    set_variant_type(this, string_type);
 }
 
 variant::variant(const wchar_t* str) {
    auto utf8 = std::string{};
-   fcl::encodeUtf8(std::wstring{str, wcslen(str)}, &utf8);
+   forge::encodeUtf8(std::wstring{str, wcslen(str)}, &utf8);
    *reinterpret_cast<std::string**>(this) = new std::string(std::move(utf8));
    set_variant_type(this, string_type);
 }
@@ -262,7 +262,7 @@ void variant::visit(const visitor& v) const {
       v.handle(**reinterpret_cast<const const_blob_ptr*>(this));
       return;
    default:
-      throw fcl::variant_exceptions::invalid_type{"Invalid Type / Corrupted Memory"};
+      throw forge::variant_exceptions::invalid_type{"Invalid Type / Corrupted Memory"};
    }
 }
 
@@ -429,7 +429,7 @@ std::string variant::as_string() const {
       return *reinterpret_cast<const bool*>(this) ? "true" : "false";
    case blob_type:
       if (get_blob().data.size())
-         return fcl::encoding::to_base64(std::span<const std::uint8_t>{
+         return forge::encoding::to_base64(std::span<const std::uint8_t>{
              reinterpret_cast<const std::uint8_t*>(get_blob().data.data()), get_blob().data.size()});
       return std::string();
    case null_type:
@@ -473,12 +473,12 @@ blob variant::as_blob() const {
          // pre-5.0 versions of variant added `=` to end of base64 encoded string in as_string() above.
          // Keep legacy base64_decode behavior: extra trailing `=` is accepted.
          // Other base64 decoders will not accept the extra `=`.
-         auto decoded = fcl::encoding::from_base64(str);
+         auto decoded = forge::encoding::from_base64(str);
          return {std::vector<char>{decoded.begin(), decoded.end()}};
       } catch (const std::exception&) {
          if (str.ends_with('=')) {
             try {
-               auto decoded = fcl::encoding::from_base64(std::string_view{str}.substr(0, str.size() - 1U));
+               auto decoded = forge::encoding::from_base64(std::string_view{str}.substr(0, str.size() - 1U));
                return {std::vector<char>{decoded.begin(), decoded.end()}};
             } catch (const std::exception&) {
             }
@@ -544,7 +544,7 @@ size_t variant::estimated_size() const {
    case blob_type:
       return sizeof(blob) + get_blob().data.size() + sizeof(*this);
    default:
-      throw fcl::variant_exceptions::invalid_type{"Invalid Type / Corrupted Memory"};
+      throw forge::variant_exceptions::invalid_type{"Invalid Type / Corrupted Memory"};
    }
 }
 
@@ -689,7 +689,7 @@ void to_variant(const std::vector<char>& var, variant& vo) {
    if (var.size() > MAX_SIZE_OF_BYTE_ARRAYS)
       throw std::out_of_range("byte array too large");
    if (var.size())
-      vo = variant(fcl::encoding::to_hex(
+      vo = variant(forge::encoding::to_hex(
          std::span<const std::uint8_t>{reinterpret_cast<const std::uint8_t*>(var.data()), var.size()}));
    else
       vo = "";
@@ -702,20 +702,20 @@ void from_variant(const variant& var, std::vector<char>& vo) {
       throw std::invalid_argument("the length of hex string should be even number");
    vo.resize(str.size() / 2);
    if (vo.size()) {
-      const auto r = fcl::encoding::from_hex(
+      const auto r = forge::encoding::from_hex(
          str, std::span<std::uint8_t>{reinterpret_cast<std::uint8_t*>(vo.data()), vo.size()});
       if (r != vo.size())
-         throw fcl::variant_exceptions::decode_error{"hex decode length mismatch"};
+         throw forge::variant_exceptions::decode_error{"hex decode length mismatch"};
    }
 }
 
 void to_variant(const blob& b, variant& v) {
-   v = variant(fcl::encoding::to_base64(
+   v = variant(forge::encoding::to_base64(
       std::span<const std::uint8_t>{reinterpret_cast<const std::uint8_t*>(b.data.data()), b.data.size()}));
 }
 
 void from_variant(const variant& v, blob& b) {
-   auto decoded = fcl::encoding::from_base64(v.as_string());
+   auto decoded = forge::encoding::from_base64(v.as_string());
    b.data = std::vector<char>{decoded.begin(), decoded.end()};
 }
 
@@ -794,7 +794,7 @@ bool operator<(const variant& a, const variant& b) {
       return a.as_int64() < b.as_int64();
    if (a.is_uint64() || b.is_uint64())
       return a.as_uint64() < b.as_uint64();
-   throw fcl::variant_exceptions::invalid_operation{"Invalid operation"};
+   throw forge::variant_exceptions::invalid_operation{"Invalid operation"};
 }
 
 bool operator>(const variant& a, const variant& b) {
@@ -806,7 +806,7 @@ bool operator>(const variant& a, const variant& b) {
       return a.as_int64() > b.as_int64();
    if (a.is_uint64() || b.is_uint64())
       return a.as_uint64() > b.as_uint64();
-   throw fcl::variant_exceptions::invalid_operation{"Invalid operation"};
+   throw forge::variant_exceptions::invalid_operation{"Invalid operation"};
 }
 
 bool operator<=(const variant& a, const variant& b) {
@@ -818,7 +818,7 @@ bool operator<=(const variant& a, const variant& b) {
       return a.as_int64() <= b.as_int64();
    if (a.is_uint64() || b.is_uint64())
       return a.as_uint64() <= b.as_uint64();
-   throw fcl::variant_exceptions::invalid_operation{"Invalid operation"};
+   throw forge::variant_exceptions::invalid_operation{"Invalid operation"};
 }
 
 variant operator+(const variant& a, const variant& b) {
@@ -846,7 +846,7 @@ variant operator+(const variant& a, const variant& b) {
       return a.as_int64() + b.as_int64();
    if (a.is_uint64() || b.is_uint64())
       return a.as_uint64() + b.as_uint64();
-   throw fcl::variant_exceptions::invalid_operation{"invalid variant addition"};
+   throw forge::variant_exceptions::invalid_operation{"invalid variant addition"};
 }
 
 variant operator-(const variant& a, const variant& b) {
@@ -874,7 +874,7 @@ variant operator-(const variant& a, const variant& b) {
       return a.as_int64() - b.as_int64();
    if (a.is_uint64() || b.is_uint64())
       return a.as_uint64() - b.as_uint64();
-   throw fcl::variant_exceptions::invalid_operation{"invalid variant subtraction"};
+   throw forge::variant_exceptions::invalid_operation{"invalid variant subtraction"};
 }
 variant operator*(const variant& a, const variant& b) {
    if (a.is_double() || b.is_double())
@@ -899,7 +899,7 @@ variant operator*(const variant& a, const variant& b) {
       }
       return result;
    }
-   throw fcl::variant_exceptions::invalid_operation{"invalid variant multiplication"};
+   throw forge::variant_exceptions::invalid_operation{"invalid variant multiplication"};
 }
 variant operator/(const variant& a, const variant& b) {
    if (a.is_double() || b.is_double())
@@ -924,6 +924,6 @@ variant operator/(const variant& a, const variant& b) {
       }
       return result;
    }
-   throw fcl::variant_exceptions::invalid_operation{"invalid variant division"};
+   throw forge::variant_exceptions::invalid_operation{"invalid variant division"};
 }
-} // namespace fcl
+} // namespace forge

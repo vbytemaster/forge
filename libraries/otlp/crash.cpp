@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <boost/asio/awaitable.hpp>
 
@@ -35,16 +35,16 @@ module;
 #include <unistd.h>
 #endif
 
-module fcl.otlp.crash;
+module forge.otlp.crash;
 
-import fcl.exceptions;
-import fcl.log.log_message;
-import fcl.log.record;
+import forge.exceptions;
+import forge.log.log_message;
+import forge.log.record;
 
-namespace fcl::otlp {
+namespace forge::otlp {
 namespace {
 
-constexpr auto record_magic = std::uint64_t{0x46434c4f544c5043ULL}; // "FCLOTLPC"
+constexpr auto record_magic = std::uint64_t{0x46434c4f544c5043ULL}; // "FORGEOTLPC"
 constexpr auto record_version = std::uint16_t{1};
 constexpr auto max_exception_category = std::size_t{64};
 constexpr auto max_stack_addresses = std::size_t{32};
@@ -207,25 +207,25 @@ namespace {
 
 void validate_options(const crash_spool_options& options, bool installing) {
    if (options.directory.empty() || options.directory == options.directory.root_path()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash spool directory is not safe");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash spool directory is not safe");
    }
    if (options.max_record_bytes < sizeof(disk_record) || options.max_records_per_process == 0 ||
        options.max_records_per_resend == 0 || options.max_file_bytes < sizeof(disk_record)) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash spool limits must be positive");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash spool limits must be positive");
    }
    if (options.max_file_bytes < options.max_record_bytes) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash file limit must cover one record");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash file limit must cover one record");
    }
    if (options.max_records_per_process >
        static_cast<std::size_t>((std::numeric_limits<std::sig_atomic_t>::max)())) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash process record limit is too large");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash process record limit is too large");
    }
    if (installing && !options.capture_signals && !options.capture_terminate) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash capture has no enabled capture source");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash capture has no enabled capture source");
    }
    if (options.capture_signals) {
       if (options.signals.empty()) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash signal set must not be empty");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash signal set must not be empty");
       }
       for (const auto signal_number : options.signals) {
          if (signal_number <= 0
@@ -233,8 +233,8 @@ void validate_options(const crash_spool_options& options, bool installing) {
              || signal_number >= NSIG
 #endif
          ) {
-            FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash signal is not supported",
-                                fcl::exceptions::ctx("signal", signal_number));
+            FORGE_THROW_EXCEPTION(exceptions::invalid_options, "OTLP crash signal is not supported",
+                                forge::exceptions::ctx("signal", signal_number));
          }
       }
    }
@@ -276,7 +276,7 @@ void capture_current_exception(disk_record& record) noexcept {
          return;
       }
       std::rethrow_exception(current);
-   } catch (const fcl::exceptions::base& error) {
+   } catch (const forge::exceptions::base& error) {
       record.exception_code = error.code().value();
       copy_fixed(record.exception_category, error.code().category().name());
    } catch (const std::exception&) {
@@ -288,7 +288,7 @@ void capture_current_exception(disk_record& record) noexcept {
 
 void capture_stack_addresses(disk_record& record) noexcept {
    try {
-      const auto stacktrace = fcl::capture_stacktrace(2, max_stack_addresses);
+      const auto stacktrace = forge::capture_stacktrace(2, max_stack_addresses);
       const auto count = std::min(stacktrace.frames.size(), record.stack_addresses.size());
       record.stack_count = static_cast<std::uint32_t>(count);
       for (auto index = std::size_t{0}; index < count; ++index) {
@@ -354,9 +354,9 @@ void ensure_crash_directory(const std::filesystem::path& directory) {
    auto error = std::error_code{};
    std::filesystem::create_directories(directory, error);
    if (error) {
-      FCL_THROW_EXCEPTION(exceptions::spool_error, "failed to create OTLP crash spool directory",
-                          fcl::exceptions::ctx("path", directory.string()),
-                          fcl::exceptions::ctx("reason", error.message()));
+      FORGE_THROW_EXCEPTION(exceptions::spool_error, "failed to create OTLP crash spool directory",
+                          forge::exceptions::ctx("path", directory.string()),
+                          forge::exceptions::ctx("reason", error.message()));
    }
 }
 
@@ -407,28 +407,28 @@ struct fd_guard {
 };
 
 void throw_errno_spool_error(std::string_view message, const std::filesystem::path& path) {
-   FCL_THROW_EXCEPTION(exceptions::spool_error, std::string{message}, fcl::exceptions::ctx("path", path.string()),
-                       fcl::exceptions::ctx("errno", errno));
+   FORGE_THROW_EXCEPTION(exceptions::spool_error, std::string{message}, forge::exceptions::ctx("path", path.string()),
+                       forge::exceptions::ctx("errno", errno));
 }
 
 void ensure_owner_private_mode(const struct stat& value, const std::filesystem::path& path, bool directory) {
    const auto mode = value.st_mode;
    if (directory) {
       if (!S_ISDIR(mode)) {
-         FCL_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool path is not a directory",
-                             fcl::exceptions::ctx("path", path.string()));
+         FORGE_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool path is not a directory",
+                             forge::exceptions::ctx("path", path.string()));
       }
    } else if (!S_ISREG(mode)) {
-      FCL_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool path is not a regular file",
-                          fcl::exceptions::ctx("path", path.string()));
+      FORGE_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool path is not a regular file",
+                          forge::exceptions::ctx("path", path.string()));
    }
    if (value.st_uid != ::geteuid()) {
-      FCL_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool path is not owned by current user",
-                          fcl::exceptions::ctx("path", path.string()));
+      FORGE_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool path is not owned by current user",
+                          forge::exceptions::ctx("path", path.string()));
    }
    if ((mode & (S_IWGRP | S_IWOTH)) != 0) {
-      FCL_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool path is group/world writable",
-                          fcl::exceptions::ctx("path", path.string()));
+      FORGE_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool path is group/world writable",
+                          forge::exceptions::ctx("path", path.string()));
    }
 }
 
@@ -538,8 +538,8 @@ struct open_spool_result {
 
 [[nodiscard]] std::sig_atomic_t checked_signal_count(std::size_t value, const std::filesystem::path& path) {
    if (value > static_cast<std::size_t>((std::numeric_limits<std::sig_atomic_t>::max)())) {
-      FCL_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool record count is too large",
-                          fcl::exceptions::ctx("path", path.string()));
+      FORGE_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool record count is too large",
+                          forge::exceptions::ctx("path", path.string()));
    }
    return static_cast<std::sig_atomic_t>(value);
 }
@@ -548,8 +548,8 @@ struct open_spool_result {
                                                 const crash_spool_options& options) {
    if (stat_value.st_size < 0 || static_cast<std::uint64_t>(stat_value.st_size) > options.max_file_bytes ||
        static_cast<std::uint64_t>(stat_value.st_size) % sizeof(disk_record) != 0) {
-      FCL_THROW_EXCEPTION(exceptions::spool_error, "existing OTLP crash spool is malformed",
-                          fcl::exceptions::ctx("path", path.string()));
+      FORGE_THROW_EXCEPTION(exceptions::spool_error, "existing OTLP crash spool is malformed",
+                          forge::exceptions::ctx("path", path.string()));
    }
    return static_cast<std::size_t>(static_cast<std::uint64_t>(stat_value.st_size) / sizeof(disk_record));
 }
@@ -560,8 +560,8 @@ void read_record_or_throw(int fd, disk_record& record, const std::filesystem::pa
    while (remaining > 0) {
       const auto count = ::read(fd, cursor, remaining);
       if (count == 0) {
-         FCL_THROW_EXCEPTION(exceptions::spool_error, "existing OTLP crash spool is truncated",
-                             fcl::exceptions::ctx("path", path.string()));
+         FORGE_THROW_EXCEPTION(exceptions::spool_error, "existing OTLP crash spool is truncated",
+                             forge::exceptions::ctx("path", path.string()));
       }
       if (count < 0) {
          if (errno == EINTR) {
@@ -582,8 +582,8 @@ void validate_existing_records(int fd, std::size_t count, const std::filesystem:
       auto record = disk_record{};
       read_record_or_throw(fd, record, path);
       if (!valid_record(record)) {
-         FCL_THROW_EXCEPTION(exceptions::spool_error, "existing OTLP crash spool contains invalid record",
-                             fcl::exceptions::ctx("path", path.string()));
+         FORGE_THROW_EXCEPTION(exceptions::spool_error, "existing OTLP crash spool contains invalid record",
+                             forge::exceptions::ctx("path", path.string()));
       }
    }
    if (::lseek(fd, 0, SEEK_END) < 0) {
@@ -602,13 +602,13 @@ void validate_existing_records(int fd, std::size_t count, const std::filesystem:
    validate_existing_records(fd.get(), existing, path);
    const auto capacity = max_file_records(options);
    if (existing >= capacity) {
-      FCL_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool is full",
-                          fcl::exceptions::ctx("path", path.string()));
+      FORGE_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool is full",
+                          forge::exceptions::ctx("path", path.string()));
    }
    const auto writable = std::min(options.max_records_per_process, capacity - existing);
    if (writable == 0) {
-      FCL_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool cannot accept records",
-                          fcl::exceptions::ctx("path", path.string()));
+      FORGE_THROW_EXCEPTION(exceptions::spool_error, "OTLP crash spool cannot accept records",
+                          forge::exceptions::ctx("path", path.string()));
    }
    (void)checked_signal_count(existing, path);
    (void)checked_signal_count(existing + writable, path);
@@ -961,8 +961,8 @@ void remove_exported_records(int directory_fd, const spool_entry& entry, std::ui
 
    auto opened = open_existing_spool_file(directory_fd, entry);
    if (opened.missing || opened.unsafe) {
-      FCL_THROW_EXCEPTION(exceptions::spool_error, "cannot safely rewrite OTLP crash spool",
-                          fcl::exceptions::ctx("path", entry.path.string()));
+      FORGE_THROW_EXCEPTION(exceptions::spool_error, "cannot safely rewrite OTLP crash spool",
+                          forge::exceptions::ctx("path", entry.path.string()));
    }
    const auto offset = static_cast<off_t>(removed * sizeof(disk_record));
    if (::lseek(opened.fd.get(), offset, SEEK_SET) < 0) {
@@ -1023,8 +1023,8 @@ std::chrono::sys_time<std::chrono::microseconds> timestamp_for(const disk_record
    return std::chrono::time_point_cast<std::chrono::microseconds>(std::chrono::sys_time<std::chrono::nanoseconds>{nanos});
 }
 
-fcl::stacktrace_snapshot stacktrace_for(const disk_record& record) {
-   auto stacktrace = fcl::stacktrace_snapshot{.backend = "crash-spool"};
+forge::stacktrace_snapshot stacktrace_for(const disk_record& record) {
+   auto stacktrace = forge::stacktrace_snapshot{.backend = "crash-spool"};
    const auto count = std::min<std::uint32_t>(record.stack_count, max_stack_addresses);
    stacktrace.frames.reserve(count);
    for (auto index = std::uint32_t{0}; index < count; ++index) {
@@ -1032,7 +1032,7 @@ fcl::stacktrace_snapshot stacktrace_for(const disk_record& record) {
       if (address == 0) {
          continue;
       }
-      stacktrace.frames.push_back(fcl::stacktrace_frame{
+      stacktrace.frames.push_back(forge::stacktrace_frame{
           .index = stacktrace.frames.size(),
           .address = static_cast<std::uintptr_t>(address),
       });
@@ -1040,29 +1040,29 @@ fcl::stacktrace_snapshot stacktrace_for(const disk_record& record) {
    return stacktrace;
 }
 
-fcl::log_record to_log_record(const disk_record& record) {
-   auto fields = fcl::log_fields{};
-   fields.push_back(fcl::log_ctx("crash.severity", "fatal"));
-   fields.push_back(fcl::log_ctx("crash.kind", kind_text(record)));
-   fields.push_back(fcl::log_ctx("process.pid", record.pid));
-   fields.push_back(fcl::log_ctx("crash.sequence", record.sequence));
+forge::log_record to_log_record(const disk_record& record) {
+   auto fields = forge::log_fields{};
+   fields.push_back(forge::log_ctx("crash.severity", "fatal"));
+   fields.push_back(forge::log_ctx("crash.kind", kind_text(record)));
+   fields.push_back(forge::log_ctx("process.pid", record.pid));
+   fields.push_back(forge::log_ctx("crash.sequence", record.sequence));
    if (record.signal_number != 0) {
-      fields.push_back(fcl::log_ctx("signal.number", record.signal_number));
+      fields.push_back(forge::log_ctx("signal.number", record.signal_number));
    }
    if (record.fault_address != 0) {
-      fields.push_back(fcl::log_ctx("fault.address", record.fault_address));
+      fields.push_back(forge::log_ctx("fault.address", record.fault_address));
    }
    const auto category = fixed_string(record.exception_category);
    if (!category.empty()) {
-      fields.push_back(fcl::log_ctx("exception.category", category));
-      fields.push_back(fcl::log_ctx("exception.code", record.exception_code));
+      fields.push_back(forge::log_ctx("exception.category", category));
+      fields.push_back(forge::log_ctx("exception.code", record.exception_code));
    }
 
-   auto log = fcl::log_record{
-       .level = fcl::log_level::error,
-       .logger = "fcl.otlp.crash",
+   auto log = forge::log_record{
+       .level = forge::log_level::error,
+       .logger = "forge.otlp.crash",
        .component = "otlp.crash",
-       .message = "fcl crash captured",
+       .message = "forge crash captured",
        .fields = std::move(fields),
        .timestamp = timestamp_for(record),
        .thread_id = "crash",
@@ -1124,7 +1124,7 @@ crash_guard install_crash_capture(crash_spool_options options) {
    {
       const auto lock = std::scoped_lock{capture_lifecycle_mutex};
       if (active_capture.load(std::memory_order_acquire) != nullptr) {
-         FCL_THROW_EXCEPTION(exceptions::capture_active, "OTLP crash capture is already active");
+         FORGE_THROW_EXCEPTION(exceptions::capture_active, "OTLP crash capture is already active");
       }
 #if defined(__unix__) || defined(__APPLE__)
       state->pid = ::getpid();
@@ -1138,7 +1138,7 @@ crash_guard install_crash_capture(crash_spool_options options) {
 
       auto* expected = static_cast<crash_state*>(nullptr);
       if (!active_capture.compare_exchange_strong(expected, state.get(), std::memory_order_acq_rel)) {
-         FCL_THROW_EXCEPTION(exceptions::capture_active, "OTLP crash capture is already active");
+         FORGE_THROW_EXCEPTION(exceptions::capture_active, "OTLP crash capture is already active");
       }
    }
 
@@ -1152,9 +1152,9 @@ crash_guard install_crash_capture(crash_spool_options options) {
          for (const auto signal_number : options.signals) {
             struct sigaction previous {};
             if (::sigaction(signal_number, &action, &previous) != 0) {
-               FCL_THROW_EXCEPTION(exceptions::invalid_options, "failed to install OTLP crash signal handler",
-                                   fcl::exceptions::ctx("signal", signal_number),
-                                   fcl::exceptions::ctx("errno", errno));
+               FORGE_THROW_EXCEPTION(exceptions::invalid_options, "failed to install OTLP crash signal handler",
+                                   forge::exceptions::ctx("signal", signal_number),
+                                   forge::exceptions::ctx("errno", errno));
             }
             state->installed_signals.push_back(signal_number);
             state->previous_actions.push_back(previous);
@@ -1207,7 +1207,7 @@ boost::asio::awaitable<crash_resend_result> async_resend_crashes(log_exporter& e
          continue;
       }
 
-      auto records = std::vector<fcl::log_record>{};
+      auto records = std::vector<forge::log_record>{};
       records.reserve(read.records.size());
       for (const auto& record : read.records) {
          records.push_back(to_log_record(record));
@@ -1241,4 +1241,4 @@ boost::asio::awaitable<crash_resend_result> async_resend_crashes(log_exporter& e
    co_return result;
 }
 
-} // namespace fcl::otlp
+} // namespace forge::otlp

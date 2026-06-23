@@ -1,6 +1,6 @@
-# fcl_tui
+# forge_tui
 
-`fcl_tui` is a reusable terminal UI component library. It provides value models,
+`forge_tui` is a reusable terminal UI component library. It provides value models,
 deterministic render helpers, navigation and a Notcurses-backed screen runner.
 Notcurses is a backend detail and does not appear in public module interfaces.
 
@@ -20,14 +20,14 @@ Notcurses is a backend detail and does not appear in public module interfaces.
 
 ## Public Modules
 
-- `fcl.tui.types` — value models, statuses, action states, terminal capabilities.
-- `fcl.tui.render` — deterministic text renderers and redaction helpers.
-- `fcl.tui.navigation` — `navigation_stack`.
-- `fcl.tui.runner` — `screen_runner`, input events, capability detection.
+- `forge.tui.types` — value models, statuses, action states, terminal capabilities.
+- `forge.tui.render` — deterministic text renderers and redaction helpers.
+- `forge.tui.navigation` — `navigation_stack`.
+- `forge.tui.runner` — `screen_runner`, input events, capability detection.
 
-Target: `fcl_tui`.
+Target: `forge_tui`.
 
-Dependencies: Notcurses core privately. If `FCL_ENABLE_TUI=ON` but Notcurses is
+Dependencies: Notcurses core privately. If `FORGE_ENABLE_TUI=ON` but Notcurses is
 not found, TUI targets are skipped with a clear CMake status message; non-TUI
 libraries continue to build.
 
@@ -36,11 +36,11 @@ libraries continue to build.
 ### Render A Status Badge
 
 ```cpp
-import fcl.tui.render;
-import fcl.tui.types;
+import forge.tui.render;
+import forge.tui.types;
 
-auto lines = fcl::tui::render_status_badge({
-   .value = fcl::tui::status::degraded,
+auto lines = forge::tui::render_status_badge({
+   .value = forge::tui::status::degraded,
    .label = "storage",
 });
 ```
@@ -48,9 +48,9 @@ auto lines = fcl::tui::render_status_badge({
 ### Redact Key/Value Panels
 
 ```cpp
-import fcl.tui.render;
+import forge.tui.render;
 
-auto panel = fcl::tui::render_key_value_panel({
+auto panel = forge::tui::render_key_value_panel({
    {.key = "endpoint", .value = "https://user:pass@example.test/api"},
    {.key = "token", .value = "secret", .sensitive = true},
 });
@@ -59,25 +59,25 @@ auto panel = fcl::tui::render_key_value_panel({
 ### Validate A Form
 
 ```cpp
-import fcl.tui.render;
-import fcl.tui.types;
+import forge.tui.render;
+import forge.tui.types;
 
-auto form = fcl::tui::form_model{{
+auto form = forge::tui::form_model{{
    {.name = "profile", .label = "Profile", .required = true},
 }};
-auto validation = fcl::tui::validate_form(form);
+auto validation = forge::tui::validate_form(form);
 ```
 
 ### Headless Runner Test
 
 ```cpp
-import fcl.tui.runner;
+import forge.tui.runner;
 
-auto runner = fcl::tui::screen_runner{};
+auto runner = forge::tui::screen_runner{};
 auto code = runner.run({
    .headless = true,
-   .input = [] { return fcl::tui::input_event{fcl::tui::input_event::kind::quit}; },
-   .model = [] { return fcl::tui::shell_model{.title = "FCL Control"}; },
+   .input = [] { return forge::tui::input_event{forge::tui::input_event::kind::quit}; },
+   .model = [] { return forge::tui::shell_model{.title = "FORGE Control"}; },
 });
 ```
 
@@ -104,6 +104,6 @@ strings. UI is a presentation boundary, not a security boundary.
 
 ## Tests
 
-`test_fcl_tui` covers status badges, table states, key/value and endpoint
+`test_forge_tui` covers status badges, table states, key/value and endpoint
 redaction, form validation, shell/event log rendering, navigation, dangerous and
 disabled action states, headless runner quit and terminal capability failure.

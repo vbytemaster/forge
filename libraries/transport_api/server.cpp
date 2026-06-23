@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -20,13 +20,13 @@ module;
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/system/error_code.hpp>
 
-module fcl.transport.api.server;
+module forge.transport.api.server;
 
-import fcl.raw.raw;
-import fcl.transport.exceptions;
-import fcl.transport.frame;
+import forge.raw.raw;
+import forge.transport.exceptions;
+import forge.transport.frame;
 
-namespace fcl::transport::api {
+namespace forge::transport::api {
 namespace {
 
 constexpr auto compact_threshold = std::size_t{65'536};
@@ -55,15 +55,15 @@ void compact_buffer(std::vector<std::uint8_t>& buffer, std::size_t& consumed) {
    return {buffer.data() + consumed, buffer.size() - consumed};
 }
 
-boost::asio::awaitable<fcl::transport::chunk> read_transport_frame(fcl::transport::stream& stream,
+boost::asio::awaitable<forge::transport::chunk> read_transport_frame(forge::transport::stream& stream,
                                                                    std::vector<std::uint8_t>& buffer,
                                                                    std::size_t& consumed,
                                                                    std::uint32_t max_frame_size) {
    while (true) {
-      const auto decoded = fcl::transport::decode_frame_view(available_bytes(buffer, consumed),
-                                                             fcl::transport::frame_options{.max_size = max_frame_size});
-      if (decoded.status == fcl::transport::frame_decode_status::complete) {
-         const auto payload = fcl::transport::chunk{decoded.payload};
+      const auto decoded = forge::transport::decode_frame_view(available_bytes(buffer, consumed),
+                                                             forge::transport::frame_options{.max_size = max_frame_size});
+      if (decoded.status == forge::transport::frame_decode_status::complete) {
+         const auto payload = forge::transport::chunk{decoded.payload};
          consumed += decoded.consumed;
          if (consumed >= buffer.size() || consumed > compact_threshold) {
             compact_buffer(buffer, consumed);
@@ -78,27 +78,27 @@ boost::asio::awaitable<fcl::transport::chunk> read_transport_frame(fcl::transpor
    }
 }
 
-boost::asio::awaitable<void> write_transport_frame(fcl::transport::stream& stream, std::span<const std::uint8_t> payload,
+boost::asio::awaitable<void> write_transport_frame(forge::transport::stream& stream, std::span<const std::uint8_t> payload,
                                                   std::uint32_t max_frame_size) {
    auto encoded = std::vector<std::uint8_t>{};
-   fcl::transport::encode_frame_to(encoded, payload, fcl::transport::frame_options{.max_size = max_frame_size});
-   co_await stream.async_write(fcl::transport::chunk{std::move(encoded)});
+   forge::transport::encode_frame_to(encoded, payload, forge::transport::frame_options{.max_size = max_frame_size});
+   co_await stream.async_write(forge::transport::chunk{std::move(encoded)});
 }
 
-[[nodiscard]] bool is_clean_close(const fcl::exceptions::base& error) noexcept {
-   return fcl::transport::exceptions::is(error, fcl::transport::exceptions::code::closed) ||
-          fcl::transport::exceptions::is(error, fcl::transport::exceptions::code::canceled);
+[[nodiscard]] bool is_clean_close(const forge::exceptions::base& error) noexcept {
+   return forge::transport::exceptions::is(error, forge::transport::exceptions::code::closed) ||
+          forge::transport::exceptions::is(error, forge::transport::exceptions::code::canceled);
 }
 
 } // namespace
 
-boost::asio::awaitable<void> serve_stream(fcl::transport::stream stream, fcl::api::binding_plan plan, options value) {
+boost::asio::awaitable<void> serve_stream(forge::transport::stream stream, forge::api::binding_plan plan, options value) {
    co_await serve_stream(std::move(stream), std::move(plan), value, {});
 }
 
-boost::asio::awaitable<void> serve_stream(fcl::transport::stream stream, fcl::api::binding_plan plan, options value,
-                                         fcl::api::metadata trusted_metadata) {
-   auto dispatcher = fcl::api::frame_dispatcher{std::move(plan), fcl::api::dispatch_options{
+boost::asio::awaitable<void> serve_stream(forge::transport::stream stream, forge::api::binding_plan plan, options value,
+                                         forge::api::metadata trusted_metadata) {
+   auto dispatcher = forge::api::frame_dispatcher{std::move(plan), forge::api::dispatch_options{
                                                                      .codec = value.codec,
                                                                      .max_inflight = value.max_inflight,
                                                                      .deadline = value.deadline,
@@ -110,14 +110,14 @@ boost::asio::awaitable<void> serve_stream(fcl::transport::stream stream, fcl::ap
    while (true) {
       try {
          auto payload = co_await read_transport_frame(stream, buffer, consumed, value.max_frame_size);
-         auto request = fcl::raw::unpack<fcl::api::frame>(payload.to_vector());
+         auto request = forge::raw::unpack<forge::api::frame>(payload.to_vector());
          auto responses = co_await dispatcher.dispatch(std::move(request));
          for (const auto& response : responses) {
-            auto encoded = fcl::api::bytes{};
-            fcl::raw::pack(encoded, response);
+            auto encoded = forge::api::bytes{};
+            forge::raw::pack(encoded, response);
             co_await write_transport_frame(stream, encoded, value.max_frame_size);
          }
-      } catch (const fcl::exceptions::base& error) {
+      } catch (const forge::exceptions::base& error) {
          if (is_clean_close(error)) {
             co_return;
          }
@@ -126,10 +126,10 @@ boost::asio::awaitable<void> serve_stream(fcl::transport::stream stream, fcl::ap
    }
 }
 
-boost::asio::awaitable<void> serve_session(fcl::transport::session session, fcl::api::binding_plan plan,
+boost::asio::awaitable<void> serve_session(forge::transport::session session, forge::api::binding_plan plan,
                                            session_options value) {
    if (value.max_concurrent_streams == 0) {
-      FCL_THROW_EXCEPTION(exceptions::resource_exhausted, "API transport max concurrent streams must be positive");
+      FORGE_THROW_EXCEPTION(exceptions::resource_exhausted, "API transport max concurrent streams must be positive");
    }
 
    struct state {
@@ -185,7 +185,7 @@ boost::asio::awaitable<void> serve_session(fcl::transport::session session, fcl:
              -> boost::asio::awaitable<void> {
                 try {
                    co_await serve_stream(std::move(stream), std::move(plan), stream_options);
-                } catch (const fcl::exceptions::base&) {
+                } catch (const forge::exceptions::base&) {
                    // A bad API stream closes that stream; the session accept loop owns admission.
                 } catch (...) {
                    // Detached stream failures must still release their reserved admission slot.
@@ -193,7 +193,7 @@ boost::asio::awaitable<void> serve_session(fcl::transport::session session, fcl:
                 co_await release_slot();
              },
              boost::asio::detached);
-      } catch (const fcl::exceptions::base& error) {
+      } catch (const forge::exceptions::base& error) {
          if (reserved) {
             release_reserved = true;
          }
@@ -218,4 +218,4 @@ boost::asio::awaitable<void> serve_session(fcl::transport::session session, fcl:
    co_await wait_for_drain();
 }
 
-} // namespace fcl::transport::api
+} // namespace forge::transport::api

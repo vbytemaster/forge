@@ -14,7 +14,7 @@
 #include <string_view>
 #include <vector>
 
-namespace fcl::quic::detail {
+namespace forge::quic::detail {
 
 enum class engine_error_kind {
    invalid_endpoint,
@@ -78,7 +78,7 @@ struct engine_security_options {
 };
 
 struct engine_client_options {
-   std::string alpn = "fcl-p2p/1";
+   std::string alpn = "forge-p2p/1";
    std::chrono::milliseconds connect_timeout{10'000};
    std::chrono::milliseconds handshake_timeout{10'000};
    std::chrono::milliseconds idle_timeout{30'000};
@@ -90,7 +90,7 @@ struct engine_client_options {
 };
 
 struct engine_server_options {
-   std::string alpn = "fcl-p2p/1";
+   std::string alpn = "forge-p2p/1";
    std::chrono::milliseconds handshake_timeout{10'000};
    std::chrono::milliseconds idle_timeout{30'000};
    engine_transport_limits limits{};
@@ -207,4 +207,4 @@ class engine_listener {
 [[nodiscard]] std::string engine_sha256_fingerprint(std::span<const std::uint8_t> data);
 [[nodiscard]] std::string normalize_engine_sha256_fingerprint(std::string_view value);
 
-} // namespace fcl::quic::detail
+} // namespace forge::quic::detail

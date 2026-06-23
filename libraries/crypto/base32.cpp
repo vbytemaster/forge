@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <array>
 #include <cctype>
@@ -8,9 +8,9 @@ module;
 #include <string>
 #include <string_view>
 
-module fcl.crypto.base32;
+module forge.crypto.base32;
 
-namespace fcl::crypto {
+namespace forge::crypto {
 namespace {
 
 constexpr auto lower_alphabet = std::string_view{"abcdefghijklmnopqrstuvwxyz234567"};
@@ -73,7 +73,7 @@ bytes base32_decode(std::string_view value) {
    for (auto ch : payload) {
       const auto decoded = decode_value(ch);
       if (decoded < 0) {
-         FCL_THROW_EXCEPTION(base32::exceptions::invalid_options, "base32 input contains an invalid character");
+         FORGE_THROW_EXCEPTION(base32::exceptions::invalid_options, "base32 input contains an invalid character");
       }
 
       buffer = (buffer << 5U) | static_cast<std::uint32_t>(decoded);
@@ -85,10 +85,10 @@ bytes base32_decode(std::string_view value) {
    }
 
    if (bits > 0 && ((buffer << (8 - bits)) & 0xffU) != 0) {
-      FCL_THROW_EXCEPTION(base32::exceptions::invalid_options, "base32 input has non-zero trailing bits");
+      FORGE_THROW_EXCEPTION(base32::exceptions::invalid_options, "base32 input has non-zero trailing bits");
    }
 
    return output;
 }
 
-} // namespace fcl::crypto
+} // namespace forge::crypto

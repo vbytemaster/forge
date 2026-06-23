@@ -7,9 +7,9 @@ module;
 #include <ngtcp2/ngtcp2_crypto_ossl.h>
 #include <openssl/opensslv.h>
 
-module fcl.quic.runtime;
+module forge.quic.runtime;
 
-namespace fcl::quic {
+namespace forge::quic {
 namespace {
 
 std::once_flag init_once;
@@ -30,4 +30,4 @@ runtime_capabilities initialize_runtime() {
    };
 }
 
-} // namespace fcl::quic
+} // namespace forge::quic

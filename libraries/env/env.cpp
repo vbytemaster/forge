@@ -24,21 +24,21 @@ module;
 extern char** environ;
 #endif
 
-module fcl.env;
+module forge.env;
 
-import fcl.config.key_path;
-import fcl.config.value;
-import fcl.config.document;
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.config.migration;
-import fcl.schema.diagnostic;
-import fcl.schema.value_kind;
-import fcl.schema.object;
-import fcl.schema.enums;
-import fcl.schema.scalar;
+import forge.config.key_path;
+import forge.config.value;
+import forge.config.document;
+import forge.config.component;
+import forge.config.decode;
+import forge.config.migration;
+import forge.schema.diagnostic;
+import forge.schema.value_kind;
+import forge.schema.object;
+import forge.schema.enums;
+import forge.schema.scalar;
 
-namespace fcl::env {
+namespace forge::env {
 namespace {
 
 struct field_binding {
@@ -878,4 +878,4 @@ write_result save_example(const std::filesystem::path& path, const config::compo
    return save_text(path, std::move(written.text));
 }
 
-} // namespace fcl::env
+} // namespace forge::env

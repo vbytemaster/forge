@@ -6,12 +6,12 @@ module;
 #include <string_view>
 #include <utility>
 
-module fcl.config.component;
+module forge.config.component;
 
-import fcl.config.document;
-import fcl.config.value;
+import forge.config.document;
+import forge.config.value;
 
-namespace fcl::config {
+namespace forge::config {
 namespace {
 
 [[nodiscard]] std::string field_path(std::string_view section, std::string_view field) {
@@ -92,4 +92,4 @@ document defaults_for(const component_registry& registry) {
    return output;
 }
 
-} // namespace fcl::config
+} // namespace forge::config

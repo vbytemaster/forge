@@ -3,15 +3,15 @@ module;
 #include <string>
 #include <span>
 
-module fcl.multiformats.multihash;
+module forge.multiformats.multihash;
 
-import fcl.multiformats.exceptions;
+import forge.multiformats.exceptions;
 
-import fcl.crypto.sha256;
-import fcl.crypto.sha512;
-import fcl.multiformats.varint;
+import forge.crypto.sha256;
+import forge.crypto.sha512;
+import forge.multiformats.varint;
 
-namespace fcl::multiformats {
+namespace forge::multiformats {
 namespace {
 
 [[nodiscard]] std::string bytes_to_string(std::span<const std::uint8_t> data) {
@@ -78,14 +78,14 @@ multihash multihash::identity(std::span<const std::uint8_t> data) {
 
 multihash multihash::sha2_256(std::span<const std::uint8_t> data) {
    const auto input = bytes_to_string(data);
-   const auto digest = fcl::crypto::sha256::hash(input.data(), static_cast<std::uint32_t>(input.size()));
+   const auto digest = forge::crypto::sha256::hash(input.data(), static_cast<std::uint32_t>(input.size()));
    return {.code = code_value(multicodec_code::sha2_256), .digest = bytes_from_chars(digest.data(), digest.data_size())};
 }
 
 multihash multihash::sha2_512(std::span<const std::uint8_t> data) {
    const auto input = bytes_to_string(data);
-   const auto digest = fcl::crypto::sha512::hash(input.data(), static_cast<std::uint32_t>(input.size()));
+   const auto digest = forge::crypto::sha512::hash(input.data(), static_cast<std::uint32_t>(input.size()));
    return {.code = code_value(multicodec_code::sha2_512), .digest = bytes_from_chars(digest.data(), digest.data_size())};
 }
 
-} // namespace fcl::multiformats
+} // namespace forge::multiformats

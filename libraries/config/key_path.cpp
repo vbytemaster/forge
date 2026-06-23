@@ -5,9 +5,9 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.config.key_path;
+module forge.config.key_path;
 
-namespace fcl::config {
+namespace forge::config {
 
 std::vector<std::string> key_path::segments() const {
    auto result = std::vector<std::string>{};
@@ -26,4 +26,4 @@ std::vector<std::string> key_path::segments() const {
    return result;
 }
 
-} // namespace fcl::config
+} // namespace forge::config

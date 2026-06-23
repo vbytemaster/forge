@@ -1,9 +1,9 @@
-# fcl_env
+# forge_env
 
-`fcl_env` converts process environment variables and explicit `.env` files into
-`fcl::config::document`. It is a config source adapter, like
-`fcl_program_options` for CLI flags: plugins and applications publish schema
-descriptors, `fcl_env` maps prefixed variables to canonical config keys, and
+`forge_env` converts process environment variables and explicit `.env` files into
+`forge::config::document`. It is a config source adapter, like
+`forge_program_options` for CLI flags: plugins and applications publish schema
+descriptors, `forge_env` maps prefixed variables to canonical config keys, and
 the caller decides merge precedence.
 
 ## When To Use
@@ -18,24 +18,24 @@ the caller decides merge precedence.
 
 ## When Not To Use
 
-- Do not hide environment loading inside `fcl_app`; app receives a ready
+- Do not hide environment loading inside `forge_app`; app receives a ready
   `config::document`.
 - Do not use env vars as the only high-value secret transport. Environment
   values may leak through process inspection, CI logs or crash dumps.
 - Do not rely on implicit `.env` discovery from the current directory. The
   caller must pass an explicit path.
 - Do not put application bootstrap names such as workspace/config-file discovery in
-  FCL. That belongs to the consuming application.
+  FORGE. That belongs to the consuming application.
 
 ## Public Module
 
-- `fcl.env`
+- `forge.env`
 
-Target: `fcl_env`.
+Target: `forge_env`.
 
-Dependencies: `fcl_config`, `fcl_schema`.
+Dependencies: `forge_config`, `forge_schema`.
 
-No dependency on `fcl_app`, Glaze, Boost.Program_options, OpenSSL, ngtcp2,
+No dependency on `forge_app`, Glaze, Boost.Program_options, OpenSSL, ngtcp2,
 Notcurses or crypto backends.
 
 ## Naming
@@ -49,9 +49,9 @@ Variables are generated from the config registry:
 `-`, `.`, `/` and repeated separators become `_`, then names are uppercased:
 
 ```text
-http.bind-port    -> FCL_APP_HTTP_BIND_PORT
-http.tls-enabled  -> FCL_APP_HTTP_TLS_ENABLED
-log-level         -> FCL_APP_LOG_LEVEL
+http.bind-port    -> FORGE_APP_HTTP_BIND_PORT
+http.tls-enabled  -> FORGE_APP_HTTP_TLS_ENABLED
+log-level         -> FORGE_APP_LOG_LEVEL
 ```
 
 Aliases are accepted when enabled, but values are written to the canonical
@@ -62,22 +62,22 @@ dotted config path.
 ### Read A `.env` File
 
 ```cpp
-import fcl.config.key_path;
-import fcl.config.value;
-import fcl.config.document;
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.config.migration;
-import fcl.env;
+import forge.config.key_path;
+import forge.config.value;
+import forge.config.document;
+import forge.config.component;
+import forge.config.decode;
+import forge.config.migration;
+import forge.env;
 
-auto registry = fcl::config::component_registry{};
-registry.add(fcl::config::describe_component<http_config>("http"));
+auto registry = forge::config::component_registry{};
+registry.add(forge::config::describe_component<http_config>("http"));
 
-auto dotenv = fcl::env::load_document(
+auto dotenv = forge::env::load_document(
    workspace / ".env",
    registry,
-   fcl::env::read_options{
-      .prefix = "FCL_APP",
+   forge::env::read_options{
+      .prefix = "FORGE_APP",
       .source_name = "workspace/.env",
    });
 
@@ -88,13 +88,13 @@ if (!dotenv.ok()) {
 
 ### Merge With YAML And CLI
 
-`fcl_env` does not own precedence. Keep it explicit at the composition layer:
+`forge_env` does not own precedence. Keep it explicit at the composition layer:
 
 ```cpp
-auto file = fcl::yaml::load_document(workspace / "config.yml");
-auto dotenv = fcl::env::load_document(workspace / ".env", registry, {.prefix = "FCL_APP"});
-auto env = fcl::env::read_process_document(registry, {.prefix = "FCL_APP"});
-auto cli = fcl::program_options::parse(argc, argv, registry);
+auto file = forge::yaml::load_document(workspace / "config.yml");
+auto dotenv = forge::env::load_document(workspace / ".env", registry, {.prefix = "FORGE_APP"});
+auto env = forge::env::read_process_document(registry, {.prefix = "FORGE_APP"});
+auto cli = forge::program_options::parse(argc, argv, registry);
 
 if (!file.ok()) {
    report_diagnostics(file.diagnostics);
@@ -110,7 +110,7 @@ if (!cli.ok()) {
 }
 
 if (file.ok() && dotenv.ok() && env.ok() && cli.ok()) {
-   auto input = fcl::config::merge({
+   auto input = forge::config::merge({
       file.value,
       dotenv.value,
       env.value,
@@ -133,10 +133,10 @@ For a small tool or test, the typed helper can build the registry from one
 described config type:
 
 ```cpp
-auto parsed = fcl::env::read<http_config>(
-   "FCL_APP_HTTP_BIND_PORT=9090\n",
+auto parsed = forge::env::read<http_config>(
+   "FORGE_APP_HTTP_BIND_PORT=9090\n",
    "http",
-   {.prefix = "FCL_APP"});
+   {.prefix = "FORGE_APP"});
 
 if (parsed.ok()) {
    start_http(parsed.value);
@@ -148,19 +148,19 @@ if (parsed.ok()) {
 Avoid mutating global process environment in tests. Use `read_variables()`:
 
 ```cpp
-auto vars = std::vector<fcl::env::environment_variable>{
-   {.name = "FCL_APP_HTTP_BIND_PORT", .value = "9090"},
+auto vars = std::vector<forge::env::environment_variable>{
+   {.name = "FORGE_APP_HTTP_BIND_PORT", .value = "9090"},
 };
 
-auto parsed = fcl::env::read_variables(vars, registry, {.prefix = "FCL_APP"});
+auto parsed = forge::env::read_variables(vars, registry, {.prefix = "FORGE_APP"});
 ```
 
 ### Generate `.env.example`
 
 ```cpp
-auto example = fcl::env::write_example(registry, {.prefix = "FCL_APP"});
+auto example = forge::env::write_example(registry, {.prefix = "FORGE_APP"});
 if (example.ok()) {
-   fcl::env::save_example(workspace / ".env.example", registry, {.prefix = "FCL_APP"});
+   forge::env::save_example(workspace / ".env.example", registry, {.prefix = "FORGE_APP"});
 }
 ```
 
@@ -169,13 +169,13 @@ Secret fields are emitted as empty placeholders in examples:
 ```dotenv
 # HTTP bearer token.
 # Secret value. Prefer a platform secret manager in production.
-FCL_APP_HTTP_TOKEN=
+FORGE_APP_HTTP_TOKEN=
 ```
 
 ### Write Current Overrides
 
 ```cpp
-auto redacted = fcl::env::write_document(document, registry, {.prefix = "FCL_APP"});
+auto redacted = forge::env::write_document(document, registry, {.prefix = "FORGE_APP"});
 if (!redacted.ok()) {
    report_diagnostics(redacted.diagnostics);
 }
@@ -190,10 +190,10 @@ Supported v1 syntax:
 
 ```dotenv
 # comment
-export FCL_APP_HTTP_BIND_PORT=9090
-FCL_APP_HTTP_TLS_ENABLED=true
-FCL_APP_HTTP_TOKEN="secret value"
-FCL_APP_HTTP_TAGS=blue,green
+export FORGE_APP_HTTP_BIND_PORT=9090
+FORGE_APP_HTTP_TLS_ENABLED=true
+FORGE_APP_HTTP_TOKEN="secret value"
+FORGE_APP_HTTP_TAGS=blue,green
 ```
 
 Supported:
@@ -251,6 +251,6 @@ Unknown prefixed variables warn by default and can be made fatal with
 
 ## Tests
 
-`test_fcl_env` covers env name mapping, flat sections, aliases, dotenv syntax,
+`test_forge_env` covers env name mapping, flat sections, aliases, dotenv syntax,
 source-line diagnostics, injected process env snapshots, conversions, unknowns,
 deprecated fields, alias conflicts and secret-safe output.

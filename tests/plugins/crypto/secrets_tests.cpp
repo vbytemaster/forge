@@ -1,5 +1,5 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <filesystem>
@@ -11,131 +11,131 @@
 #include <variant>
 #include <vector>
 
-import fcl.api.registry;
-import fcl.app.plugin;
-import fcl.asio.blocking;
-import fcl.asio.runtime;
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.config.document;
-import fcl.config.value;
-import fcl.crypto.aes;
-import fcl.crypto.base64;
-import fcl.crypto.kdf;
-import fcl.crypto.secret_bytes;
-import fcl.crypto.types;
-import fcl.env;
-import fcl.plugins.crypto.secrets.api;
-import fcl.plugins.crypto.secrets.exceptions;
-import fcl.plugins.crypto.secrets.plugin;
-import fcl.plugins.crypto.secrets.types;
-import fcl.program_options;
-import fcl.schema.value_kind;
+import forge.api.registry;
+import forge.app.plugin;
+import forge.asio.blocking;
+import forge.asio.runtime;
+import forge.config.component;
+import forge.config.decode;
+import forge.config.document;
+import forge.config.value;
+import forge.crypto.aes;
+import forge.crypto.base64;
+import forge.crypto.kdf;
+import forge.crypto.secret_bytes;
+import forge.crypto.types;
+import forge.env;
+import forge.plugins.crypto.secrets.api;
+import forge.plugins.crypto.secrets.exceptions;
+import forge.plugins.crypto.secrets.plugin;
+import forge.plugins.crypto.secrets.types;
+import forge.program_options;
+import forge.schema.value_kind;
 
 #include "details/source_loading.hxx"
 
-namespace crypto_secrets = fcl::plugins::crypto::secrets;
+namespace crypto_secrets = forge::plugins::crypto::secrets;
 
 namespace {
 
 constexpr auto crypto_secrets_section = "plugins.crypto.secrets";
 
-[[nodiscard]] fcl::config::value array(std::vector<std::string> values) {
-   auto result = fcl::config::value::array_type{};
+[[nodiscard]] forge::config::value array(std::vector<std::string> values) {
+   auto result = forge::config::value::array_type{};
    for (auto& value : values) {
       result.emplace_back(std::move(value));
    }
-   return fcl::config::value{std::move(result)};
+   return forge::config::value{std::move(result)};
 }
 
-[[nodiscard]] fcl::config::value source_value(std::string value,
+[[nodiscard]] forge::config::value source_value(std::string value,
                                               crypto_secrets::encoding encoding = crypto_secrets::encoding::raw) {
-   auto object = fcl::config::value::object_type{};
-   object.emplace("type", fcl::config::value{"value"});
-   object.emplace("encoding", fcl::config::value{encoding == crypto_secrets::encoding::hex ? "hex" :
+   auto object = forge::config::value::object_type{};
+   object.emplace("type", forge::config::value{"value"});
+   object.emplace("encoding", forge::config::value{encoding == crypto_secrets::encoding::hex ? "hex" :
                                                  encoding == crypto_secrets::encoding::base64 ? "base64" : "raw"});
-   object.emplace("value", fcl::config::value{std::move(value)});
-   return fcl::config::value{std::move(object)};
+   object.emplace("value", forge::config::value{std::move(value)});
+   return forge::config::value{std::move(object)};
 }
 
-[[nodiscard]] fcl::config::value source_file(const std::filesystem::path& path,
+[[nodiscard]] forge::config::value source_file(const std::filesystem::path& path,
                                              crypto_secrets::encoding encoding = crypto_secrets::encoding::raw) {
-   auto object = fcl::config::value::object_type{};
-   object.emplace("type", fcl::config::value{"file"});
-   object.emplace("encoding", fcl::config::value{encoding == crypto_secrets::encoding::hex ? "hex" :
+   auto object = forge::config::value::object_type{};
+   object.emplace("type", forge::config::value{"file"});
+   object.emplace("encoding", forge::config::value{encoding == crypto_secrets::encoding::hex ? "hex" :
                                                  encoding == crypto_secrets::encoding::base64 ? "base64" : "raw"});
-   object.emplace("path", fcl::config::value{path.string()});
-   return fcl::config::value{std::move(object)};
+   object.emplace("path", forge::config::value{path.string()});
+   return forge::config::value{std::move(object)};
 }
 
-[[nodiscard]] fcl::config::value source_encrypted_file(const std::filesystem::path& path, std::string passphrase) {
-   auto object = fcl::config::value::object_type{};
-   object.emplace("type", fcl::config::value{"encrypted_file"});
-   object.emplace("path", fcl::config::value{path.string()});
-   object.emplace("passphrase-value", fcl::config::value{std::move(passphrase)});
-   return fcl::config::value{std::move(object)};
+[[nodiscard]] forge::config::value source_encrypted_file(const std::filesystem::path& path, std::string passphrase) {
+   auto object = forge::config::value::object_type{};
+   object.emplace("type", forge::config::value{"encrypted_file"});
+   object.emplace("path", forge::config::value{path.string()});
+   object.emplace("passphrase-value", forge::config::value{std::move(passphrase)});
+   return forge::config::value{std::move(object)};
 }
 
-[[nodiscard]] fcl::config::value source_encrypted_file_with_passphrase_file(const std::filesystem::path& path,
+[[nodiscard]] forge::config::value source_encrypted_file_with_passphrase_file(const std::filesystem::path& path,
                                                                             const std::filesystem::path& passphrase) {
-   auto object = fcl::config::value::object_type{};
-   object.emplace("type", fcl::config::value{"encrypted_file"});
-   object.emplace("path", fcl::config::value{path.string()});
-   object.emplace("passphrase-file", fcl::config::value{passphrase.string()});
-   return fcl::config::value{std::move(object)};
+   auto object = forge::config::value::object_type{};
+   object.emplace("type", forge::config::value{"encrypted_file"});
+   object.emplace("path", forge::config::value{path.string()});
+   object.emplace("passphrase-file", forge::config::value{passphrase.string()});
+   return forge::config::value{std::move(object)};
 }
 
-[[nodiscard]] fcl::config::value secret_entry(std::string id,
-                                              fcl::config::value source,
+[[nodiscard]] forge::config::value secret_entry(std::string id,
+                                              forge::config::value source,
                                               std::vector<std::string> purposes,
                                               std::vector<std::string> operations,
                                               bool allow_raw_export = false) {
-   auto object = fcl::config::value::object_type{};
-   object.emplace("id", fcl::config::value{std::move(id)});
-   object.emplace("kind", fcl::config::value{"symmetric_key"});
+   auto object = forge::config::value::object_type{};
+   object.emplace("id", forge::config::value{std::move(id)});
+   object.emplace("kind", forge::config::value{"symmetric_key"});
    object.emplace("source", std::move(source));
    object.emplace("purposes", array(std::move(purposes)));
    object.emplace("operations", array(std::move(operations)));
-   object.emplace("allow-raw-export", fcl::config::value{allow_raw_export});
-   return fcl::config::value{std::move(object)};
+   object.emplace("allow-raw-export", forge::config::value{allow_raw_export});
+   return forge::config::value{std::move(object)};
 }
 
-[[nodiscard]] fcl::config::value secret_entry_with_limit(std::string limit_name, std::uint64_t limit) {
+[[nodiscard]] forge::config::value secret_entry_with_limit(std::string limit_name, std::uint64_t limit) {
    auto entry = secret_entry("data-key", source_value(std::string(32, 'K')), {"payload.encrypt"}, {"encrypt_aes_gcm"});
-   auto& object = std::get<fcl::config::value::object_type>(entry.storage);
-   object.emplace(std::move(limit_name), fcl::config::value{limit});
+   auto& object = std::get<forge::config::value::object_type>(entry.storage);
+   object.emplace(std::move(limit_name), forge::config::value{limit});
    return entry;
 }
 
-[[nodiscard]] fcl::config::document secrets_config(std::vector<fcl::config::value> secrets) {
-   auto document = fcl::config::document{};
-   document.set("plugins.crypto.secrets.secrets", fcl::config::value::array_type(secrets.begin(), secrets.end()));
+[[nodiscard]] forge::config::document secrets_config(std::vector<forge::config::value> secrets) {
+   auto document = forge::config::document{};
+   document.set("plugins.crypto.secrets.secrets", forge::config::value::array_type(secrets.begin(), secrets.end()));
    return document;
 }
 
-void write_secret_file(const std::filesystem::path& path, const fcl::crypto::bytes& value) {
+void write_secret_file(const std::filesystem::path& path, const forge::crypto::bytes& value) {
    auto out = std::ofstream{path, std::ios::binary | std::ios::trunc};
    out.write(reinterpret_cast<const char*>(value.data()), static_cast<std::streamsize>(value.size()));
 }
 
-void overwrite_u64_le(fcl::crypto::bytes& value, std::size_t offset, std::uint64_t replacement) {
+void overwrite_u64_le(forge::crypto::bytes& value, std::size_t offset, std::uint64_t replacement) {
    for (auto i = 0U; i < 8U; ++i) {
       value[offset + i] = static_cast<std::uint8_t>((replacement >> (i * 8U)) & 0xffU);
    }
 }
 
-[[nodiscard]] fcl::api::handle<crypto_secrets::api> configured_api(fcl::asio::runtime& runtime,
+[[nodiscard]] forge::api::handle<crypto_secrets::api> configured_api(forge::asio::runtime& runtime,
                                                                     crypto_secrets::plugin& plugin,
-                                                                    const fcl::config::document& document) {
-   fcl::asio::blocking::run(runtime, plugin.configure(fcl::config::component_view{document, crypto_secrets_section}));
-   auto registry = fcl::api::registry{};
-   auto installer = fcl::api::installer{registry};
-   fcl::asio::blocking::run(runtime, plugin.provide(installer));
+                                                                    const forge::config::document& document) {
+   forge::asio::blocking::run(runtime, plugin.configure(forge::config::component_view{document, crypto_secrets_section}));
+   auto registry = forge::api::registry{};
+   auto installer = forge::api::installer{registry};
+   forge::asio::blocking::run(runtime, plugin.provide(installer));
    return registry.get<crypto_secrets::api>(crypto_secrets::api::ref());
 }
 
-[[nodiscard]] fcl::crypto::bytes bytes(std::string_view value) {
-   return fcl::crypto::bytes{value.begin(), value.end()};
+[[nodiscard]] forge::crypto::bytes bytes(std::string_view value) {
+   return forge::crypto::bytes{value.begin(), value.end()};
 }
 
 [[nodiscard]] crypto_secrets::encrypted_file_decrypt_limits default_decrypt_limits(
@@ -175,11 +175,11 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_config_direct_defaults_match_schema_constant
    BOOST_TEST(value.encrypted_file_max_scrypt_memory_bytes ==
               crypto_secrets::default_encrypted_file_max_scrypt_memory_bytes);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_descriptor_redacts_config_and_keeps_api_local) try {
-   static_assert(fcl::api::local_interface<crypto_secrets::api>);
-   static_assert(!fcl::api::remote_interface<crypto_secrets::api>);
+   static_assert(forge::api::local_interface<crypto_secrets::api>);
+   static_assert(!forge::api::remote_interface<crypto_secrets::api>);
 
    auto plugin = crypto_secrets::plugin{};
    const auto descriptor = plugin.describe_config();
@@ -191,7 +191,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_descriptor_redacts_config_and_keeps_api_loca
    });
    BOOST_REQUIRE(secrets != descriptor->fields.end());
    BOOST_TEST(secrets->secret);
-   BOOST_TEST(static_cast<int>(secrets->kind) == static_cast<int>(fcl::schema::value_kind::object_list));
+   BOOST_TEST(static_cast<int>(secrets->kind) == static_cast<int>(forge::schema::value_kind::object_list));
 
    const auto has_default_field = [&](std::string_view name, std::uint64_t expected) {
       const auto found = std::ranges::find_if(descriptor->fields, [&](const auto& field) {
@@ -210,9 +210,9 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_descriptor_redacts_config_and_keeps_api_loca
    has_default_field("encrypted-file-max-scrypt-memory-bytes",
                      crypto_secrets::default_encrypted_file_max_scrypt_memory_bytes);
 
-   auto registry = fcl::config::component_registry{};
+   auto registry = forge::config::component_registry{};
    registry.add(*descriptor);
-   const auto redacted = fcl::config::redact(
+   const auto redacted = forge::config::redact(
       secrets_config({secret_entry("session", source_value("super-secret"), {"payload.decrypt"}, {"get_bytes"}, true)}),
       registry);
    const auto* value = redacted.try_get("plugins.crypto.secrets.secrets");
@@ -221,84 +221,84 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_descriptor_redacts_config_and_keeps_api_loca
    BOOST_REQUIRE(text != nullptr);
    BOOST_TEST(*text == "<redacted>");
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_rejects_default_payload_limits_above_aes_update_ceiling) try {
    const auto too_large = crypto_secrets::aes_update_bytes_ceiling + 1U;
 
    auto plaintext_document = secrets_config(
       {secret_entry("data-key", source_value(std::string(32, 'K')), {"payload.encrypt"}, {"encrypt_aes_gcm"})});
-   plaintext_document.set("plugins.crypto.secrets.default-max-plaintext-bytes", fcl::config::value{too_large});
+   plaintext_document.set("plugins.crypto.secrets.default-max-plaintext-bytes", forge::config::value{too_large});
    auto plaintext_plugin = crypto_secrets::plugin{};
-   auto plaintext_runtime = fcl::asio::runtime{};
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(
+   auto plaintext_runtime = forge::asio::runtime{};
+   BOOST_CHECK_THROW(forge::asio::blocking::run(
                         plaintext_runtime,
                         plaintext_plugin.configure(
-                           fcl::config::component_view{plaintext_document, crypto_secrets_section})),
+                           forge::config::component_view{plaintext_document, crypto_secrets_section})),
                      crypto_secrets::exceptions::invalid_config);
 
    auto ciphertext_document = secrets_config(
       {secret_entry("data-key", source_value(std::string(32, 'K')), {"payload.decrypt"}, {"decrypt_aes_gcm"})});
-   ciphertext_document.set("plugins.crypto.secrets.default-max-ciphertext-bytes", fcl::config::value{too_large});
+   ciphertext_document.set("plugins.crypto.secrets.default-max-ciphertext-bytes", forge::config::value{too_large});
    auto ciphertext_plugin = crypto_secrets::plugin{};
-   auto ciphertext_runtime = fcl::asio::runtime{};
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(ciphertext_runtime,
+   auto ciphertext_runtime = forge::asio::runtime{};
+   BOOST_CHECK_THROW(forge::asio::blocking::run(ciphertext_runtime,
                                               ciphertext_plugin.configure(
-                                                 fcl::config::component_view{ciphertext_document,
+                                                 forge::config::component_view{ciphertext_document,
                                                                              crypto_secrets_section})),
                      crypto_secrets::exceptions::invalid_config);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_rejects_per_secret_payload_limits_above_aes_update_ceiling) try {
    const auto too_large = crypto_secrets::aes_update_bytes_ceiling + 1U;
 
    auto plaintext_plugin = crypto_secrets::plugin{};
-   auto plaintext_runtime = fcl::asio::runtime{};
+   auto plaintext_runtime = forge::asio::runtime{};
    const auto plaintext_document = secrets_config({secret_entry_with_limit("max-plaintext-bytes", too_large)});
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(
+   BOOST_CHECK_THROW(forge::asio::blocking::run(
                         plaintext_runtime,
                         plaintext_plugin.configure(
-                           fcl::config::component_view{plaintext_document, crypto_secrets_section})),
+                           forge::config::component_view{plaintext_document, crypto_secrets_section})),
                      crypto_secrets::exceptions::invalid_config);
 
    auto ciphertext_plugin = crypto_secrets::plugin{};
-   auto ciphertext_runtime = fcl::asio::runtime{};
+   auto ciphertext_runtime = forge::asio::runtime{};
    const auto ciphertext_document = secrets_config({secret_entry_with_limit("max-ciphertext-bytes", too_large)});
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(ciphertext_runtime,
+   BOOST_CHECK_THROW(forge::asio::blocking::run(ciphertext_runtime,
                                               ciphertext_plugin.configure(
-                                                 fcl::config::component_view{ciphertext_document,
+                                                 forge::config::component_view{ciphertext_document,
                                                                              crypto_secrets_section})),
                      crypto_secrets::exceptions::invalid_config);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_value_source_denies_raw_export_by_default) try {
    auto plugin = crypto_secrets::plugin{};
-   auto runtime = fcl::asio::runtime{};
+   auto runtime = forge::asio::runtime{};
    auto api = configured_api(runtime,
                              plugin,
                              secrets_config({secret_entry(
                                 "session", source_value("super-secret"), {"payload.decrypt"}, {"get_bytes"})}));
 
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime,
                                               api->get_bytes(crypto_secrets::get_request{
                                                  .secret_id = "session",
                                                  .purpose = "payload.decrypt",
                                               })),
                      crypto_secrets::exceptions::operation_denied);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_value_source_exports_only_when_allowed) try {
    auto plugin = crypto_secrets::plugin{};
-   auto runtime = fcl::asio::runtime{};
+   auto runtime = forge::asio::runtime{};
    auto api = configured_api(runtime,
                              plugin,
                              secrets_config({secret_entry(
                                 "session", source_value("super-secret"), {"payload.decrypt"}, {"get_bytes"}, true)}));
 
-   const auto result = fcl::asio::blocking::run(runtime,
+   const auto result = forge::asio::blocking::run(runtime,
                                                api->get_bytes(crypto_secrets::get_request{
                                                   .secret_id = "session",
                                                   .purpose = "payload.decrypt",
@@ -307,12 +307,12 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_value_source_exports_only_when_allowed) try 
    BOOST_TEST(result.secret_id == "session");
    BOOST_TEST(result.bytes == bytes("super-secret"));
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_file_source_loads_bounded_secret_without_env_parser) try {
-   const auto path = write_temp_file("fcl-crypto-secrets-file-source.txt", "file-secret");
+   const auto path = write_temp_file("forge-crypto-secrets-file-source.txt", "file-secret");
    auto plugin = crypto_secrets::plugin{};
-   auto runtime = fcl::asio::runtime{};
+   auto runtime = forge::asio::runtime{};
    auto api = configured_api(runtime,
                              plugin,
                              secrets_config({secret_entry("file",
@@ -321,7 +321,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_file_source_loads_bounded_secret_without_env
                                                            {"get_bytes"},
                                                            true)}));
 
-   const auto result = fcl::asio::blocking::run(runtime,
+   const auto result = forge::asio::blocking::run(runtime,
                                                api->get_bytes(crypto_secrets::get_request{
                                                   .secret_id = "file",
                                                   .purpose = "payload.decrypt",
@@ -329,22 +329,22 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_file_source_loads_bounded_secret_without_env
 
    BOOST_TEST(result.bytes == bytes("file-secret"));
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_file_source_rejects_short_read) try {
    auto input = std::istringstream{"abc"};
-   auto output = fcl::crypto::bytes(5U);
+   auto output = forge::crypto::bytes(5U);
    input.read(reinterpret_cast<char*>(output.data()), static_cast<std::streamsize>(output.size()));
 
    BOOST_CHECK_THROW(crypto_secrets::require_complete_file_read(input, output.size(), "/tmp/short-secret", "short"),
                      crypto_secrets::exceptions::invalid_source);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_hkdf_and_aes_gcm_are_purpose_gated) try {
    const auto key = std::string(32, 'K');
    auto plugin = crypto_secrets::plugin{};
-   auto runtime = fcl::asio::runtime{};
+   auto runtime = forge::asio::runtime{};
    auto api = configured_api(runtime,
                              plugin,
                              secrets_config({secret_entry(
@@ -353,7 +353,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_hkdf_and_aes_gcm_are_purpose_gated) try {
                                 {"payload.decrypt"},
                                 {"derive_hkdf_sha256", "decrypt_aes_gcm"})}));
 
-   const auto derived = fcl::asio::blocking::run(runtime,
+   const auto derived = forge::asio::blocking::run(runtime,
                                                 api->derive_hkdf_sha256(crypto_secrets::derive_request{
                                                    .secret_id = "data-key",
                                                    .purpose = "payload.decrypt",
@@ -363,16 +363,16 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_hkdf_and_aes_gcm_are_purpose_gated) try {
                                                 }));
    BOOST_TEST(derived.bytes.size() == 32U);
 
-   auto aes_key = fcl::crypto::make_aes256_key(std::span<const std::uint8_t>{
+   auto aes_key = forge::crypto::make_aes256_key(std::span<const std::uint8_t>{
       reinterpret_cast<const std::uint8_t*>(key.data()), key.size()});
-   const auto encrypted = fcl::crypto::encrypt_aes256_gcm({
+   const auto encrypted = forge::crypto::encrypt_aes256_gcm({
       .key = aes_key,
       .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
       .plaintext = bytes("payload"),
       .aad = bytes("aad"),
    });
 
-   const auto decrypted = fcl::asio::blocking::run(runtime,
+   const auto decrypted = forge::asio::blocking::run(runtime,
                                                   api->decrypt_aes_gcm(crypto_secrets::aead_decrypt_request{
                                                      .secret_id = "data-key",
                                                      .purpose = "payload.decrypt",
@@ -383,7 +383,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_hkdf_and_aes_gcm_are_purpose_gated) try {
                                                   }));
    BOOST_TEST(decrypted.plaintext == bytes("payload"));
 
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime,
                                               api->derive_hkdf_sha256(crypto_secrets::derive_request{
                                                  .secret_id = "data-key",
                                                  .purpose = "other",
@@ -393,11 +393,11 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_hkdf_and_aes_gcm_are_purpose_gated) try {
                                               })),
                      crypto_secrets::exceptions::purpose_denied);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_hkdf_invalid_output_size_maps_to_invalid_secret) try {
    auto plugin = crypto_secrets::plugin{};
-   auto runtime = fcl::asio::runtime{};
+   auto runtime = forge::asio::runtime{};
    auto api = configured_api(runtime,
                              plugin,
                              secrets_config({secret_entry(
@@ -406,7 +406,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_hkdf_invalid_output_size_maps_to_invalid_sec
                                 {"data-key.derivation"},
                                 {"derive_hkdf_sha256"})}));
 
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime,
                                               api->derive_hkdf_sha256(crypto_secrets::derive_request{
                                                  .secret_id = "data-key",
                                                  .purpose = "data-key.derivation",
@@ -416,7 +416,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_hkdf_invalid_output_size_maps_to_invalid_sec
                                               })),
                      crypto_secrets::exceptions::invalid_secret);
 
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime,
                                               api->derive_hkdf_sha256(crypto_secrets::derive_request{
                                                  .secret_id = "data-key",
                                                  .purpose = "data-key.derivation",
@@ -426,12 +426,12 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_hkdf_invalid_output_size_maps_to_invalid_sec
                                               })),
                      crypto_secrets::exceptions::invalid_secret);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_encrypt_aes_gcm_maps_malformed_nonce) try {
    const auto key = std::string(32, 'K');
    auto plugin = crypto_secrets::plugin{};
-   auto runtime = fcl::asio::runtime{};
+   auto runtime = forge::asio::runtime{};
    auto api = configured_api(runtime,
                              plugin,
                              secrets_config({secret_entry("data-key",
@@ -439,7 +439,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_encrypt_aes_gcm_maps_malformed_nonce) try {
                                                            {"payload.encrypt"},
                                                            {"encrypt_aes_gcm"})}));
 
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime,
                                               api->encrypt_aes_gcm(crypto_secrets::aead_encrypt_request{
                                                  .secret_id = "data-key",
                                                  .purpose = "payload.encrypt",
@@ -449,7 +449,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_encrypt_aes_gcm_maps_malformed_nonce) try {
                                               })),
                      crypto_secrets::exceptions::invalid_secret);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_encrypt_aes_gcm_rejects_oversized_aad_before_crypto) try {
    const auto key = std::string(32, 'K');
@@ -457,13 +457,13 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_encrypt_aes_gcm_rejects_oversized_aad_before
                                                 source_value(key),
                                                 {"payload.encrypt"},
                                                 {"encrypt_aes_gcm"})});
-   document.set("plugins.crypto.secrets.default-max-aad-bytes", fcl::config::value{4U});
+   document.set("plugins.crypto.secrets.default-max-aad-bytes", forge::config::value{4U});
 
    auto plugin = crypto_secrets::plugin{};
-   auto runtime = fcl::asio::runtime{};
+   auto runtime = forge::asio::runtime{};
    auto api = configured_api(runtime, plugin, document);
 
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime,
                                               api->encrypt_aes_gcm(crypto_secrets::aead_encrypt_request{
                                                  .secret_id = "data-key",
                                                  .purpose = "payload.encrypt",
@@ -472,12 +472,12 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_encrypt_aes_gcm_rejects_oversized_aad_before
                                               })),
                      crypto_secrets::exceptions::size_limit_exceeded);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_aes_gcm_maps_malformed_parameters) try {
    const auto key = std::string(32, 'K');
    auto plugin = crypto_secrets::plugin{};
-   auto runtime = fcl::asio::runtime{};
+   auto runtime = forge::asio::runtime{};
    auto api = configured_api(runtime,
                              plugin,
                              secrets_config({secret_entry("data-key",
@@ -485,16 +485,16 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_aes_gcm_maps_malformed_parameters) t
                                                            {"payload.decrypt"},
                                                            {"decrypt_aes_gcm"})}));
 
-   auto aes_key = fcl::crypto::make_aes256_key(std::span<const std::uint8_t>{
+   auto aes_key = forge::crypto::make_aes256_key(std::span<const std::uint8_t>{
       reinterpret_cast<const std::uint8_t*>(key.data()), key.size()});
-   const auto encrypted = fcl::crypto::encrypt_aes256_gcm({
+   const auto encrypted = forge::crypto::encrypt_aes256_gcm({
       .key = aes_key,
       .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
       .plaintext = bytes("payload"),
       .aad = bytes("aad"),
    });
 
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime,
                                               api->decrypt_aes_gcm(crypto_secrets::aead_decrypt_request{
                                                  .secret_id = "data-key",
                                                  .purpose = "payload.decrypt",
@@ -505,7 +505,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_aes_gcm_maps_malformed_parameters) t
                                               })),
                      crypto_secrets::exceptions::invalid_secret);
 
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime,
                                               api->decrypt_aes_gcm(crypto_secrets::aead_decrypt_request{
                                                  .secret_id = "data-key",
                                                  .purpose = "payload.decrypt",
@@ -516,7 +516,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_aes_gcm_maps_malformed_parameters) t
                                               })),
                      crypto_secrets::exceptions::invalid_secret);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_aes_gcm_rejects_oversized_aad_before_crypto) try {
    const auto key = std::string(32, 'K');
@@ -524,24 +524,24 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_aes_gcm_rejects_oversized_aad_before
                                                 source_value(key),
                                                 {"payload.decrypt"},
                                                 {"decrypt_aes_gcm"})});
-   document.set("plugins.crypto.secrets.default-max-aad-bytes", fcl::config::value{4U});
+   document.set("plugins.crypto.secrets.default-max-aad-bytes", forge::config::value{4U});
 
    auto plugin = crypto_secrets::plugin{};
-   auto runtime = fcl::asio::runtime{};
+   auto runtime = forge::asio::runtime{};
    auto api = configured_api(runtime, plugin, document);
 
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime,
                                               api->decrypt_aes_gcm(crypto_secrets::aead_decrypt_request{
                                                  .secret_id = "data-key",
                                                  .purpose = "payload.decrypt",
                                                  .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
-                                                 .tag = std::vector<std::uint8_t>(fcl::crypto::aes_gcm_tag_size, 0),
+                                                 .tag = std::vector<std::uint8_t>(forge::crypto::aes_gcm_tag_size, 0),
                                                  .ciphertext = bytes("ciphertext"),
                                                  .aad = bytes("oversized-aad"),
                                               })),
                      crypto_secrets::exceptions::size_limit_exceeded);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_aes_gcm_rejects_oversized_plaintext_before_crypto) try {
    const auto key = std::string(32, 'K');
@@ -549,28 +549,28 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_aes_gcm_rejects_oversized_plaintext_
                                                 source_value(key),
                                                 {"payload.decrypt"},
                                                 {"decrypt_aes_gcm"})});
-   document.set("plugins.crypto.secrets.default-max-plaintext-bytes", fcl::config::value{32U});
+   document.set("plugins.crypto.secrets.default-max-plaintext-bytes", forge::config::value{32U});
 
    auto plugin = crypto_secrets::plugin{};
-   auto runtime = fcl::asio::runtime{};
+   auto runtime = forge::asio::runtime{};
    auto api = configured_api(runtime, plugin, document);
 
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime,
                                               api->decrypt_aes_gcm(crypto_secrets::aead_decrypt_request{
                                                  .secret_id = "data-key",
                                                  .purpose = "payload.decrypt",
                                                  .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
-                                                 .tag = std::vector<std::uint8_t>(fcl::crypto::aes_gcm_tag_size, 0),
-                                                 .ciphertext = fcl::crypto::bytes(33U, std::uint8_t{0}),
+                                                 .tag = std::vector<std::uint8_t>(forge::crypto::aes_gcm_tag_size, 0),
+                                                 .ciphertext = forge::crypto::bytes(33U, std::uint8_t{0}),
                                               })),
                      crypto_secrets::exceptions::size_limit_exceeded);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_aes_gcm_keeps_authentication_failure_typed) try {
    const auto key = std::string(32, 'K');
    auto plugin = crypto_secrets::plugin{};
-   auto runtime = fcl::asio::runtime{};
+   auto runtime = forge::asio::runtime{};
    auto api = configured_api(runtime,
                              plugin,
                              secrets_config({secret_entry("data-key",
@@ -578,9 +578,9 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_aes_gcm_keeps_authentication_failure
                                                            {"payload.decrypt"},
                                                            {"decrypt_aes_gcm"})}));
 
-   auto aes_key = fcl::crypto::make_aes256_key(std::span<const std::uint8_t>{
+   auto aes_key = forge::crypto::make_aes256_key(std::span<const std::uint8_t>{
       reinterpret_cast<const std::uint8_t*>(key.data()), key.size()});
-   auto encrypted = fcl::crypto::encrypt_aes256_gcm({
+   auto encrypted = forge::crypto::encrypt_aes256_gcm({
       .key = aes_key,
       .nonce = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
       .plaintext = bytes("payload"),
@@ -588,7 +588,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_aes_gcm_keeps_authentication_failure
    });
    encrypted.tag.front() ^= 0xffU;
 
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime,
+   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime,
                                               api->decrypt_aes_gcm(crypto_secrets::aead_decrypt_request{
                                                  .secret_id = "data-key",
                                                  .purpose = "payload.decrypt",
@@ -599,10 +599,10 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_aes_gcm_keeps_authentication_failure
                                               })),
                      crypto_secrets::exceptions::crypto_failed);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_encrypted_file_roundtrips_and_rejects_wrong_passphrase) try {
-   const auto path = std::filesystem::temp_directory_path() / "fcl-crypto-secrets-encrypted-source.bin";
+   const auto path = std::filesystem::temp_directory_path() / "forge-crypto-secrets-encrypted-source.bin";
    const auto container = crypto_secrets::encrypt_secret_file(crypto_secrets::encrypted_file_encrypt_request{
       .plaintext = bytes("encrypted-secret"),
       .passphrase = "correct horse battery staple",
@@ -614,7 +614,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_encrypted_file_roundtrips_and_rejects_wrong_
    write_secret_file(path, container);
 
    auto plugin = crypto_secrets::plugin{};
-   auto runtime = fcl::asio::runtime{};
+   auto runtime = forge::asio::runtime{};
    auto api = configured_api(runtime,
                              plugin,
                              secrets_config({secret_entry("encrypted",
@@ -622,7 +622,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_encrypted_file_roundtrips_and_rejects_wrong_
                                                            {"payload.decrypt"},
                                                            {"get_bytes"},
                                                            true)}));
-   const auto result = fcl::asio::blocking::run(runtime,
+   const auto result = forge::asio::blocking::run(runtime,
                                                api->get_bytes(crypto_secrets::get_request{
                                                   .secret_id = "encrypted",
                                                   .purpose = "payload.decrypt",
@@ -631,9 +631,9 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_encrypted_file_roundtrips_and_rejects_wrong_
 
    auto wrong = crypto_secrets::plugin{};
    BOOST_CHECK_THROW(
-      fcl::asio::blocking::run(
+      forge::asio::blocking::run(
          runtime,
-         wrong.configure(fcl::config::component_view{
+         wrong.configure(forge::config::component_view{
             secrets_config({secret_entry("encrypted",
                                           source_encrypted_file(path, "wrong passphrase"),
                                           {"payload.decrypt"},
@@ -642,7 +642,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_encrypted_file_roundtrips_and_rejects_wrong_
             crypto_secrets_section})),
       crypto_secrets::exceptions::invalid_secret);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_secret_file_maps_malformed_container_to_invalid_secret) try {
    auto container = crypto_secrets::encrypt_secret_file(crypto_secrets::encrypted_file_encrypt_request{
@@ -675,7 +675,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_secret_file_maps_malformed_container
                         trailing_bytes, "correct horse battery staple", default_decrypt_limits()),
                      crypto_secrets::exceptions::invalid_secret);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_secret_file_maps_kdf_failures_to_invalid_secret) try {
    auto container = crypto_secrets::encrypt_secret_file(crypto_secrets::encrypted_file_encrypt_request{
@@ -692,7 +692,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_secret_file_maps_kdf_failures_to_inv
                         container, "correct horse battery staple", default_decrypt_limits()),
                      crypto_secrets::exceptions::invalid_secret);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_secret_file_maps_crypto_failures_to_invalid_secret) try {
    auto container = crypto_secrets::encrypt_secret_file(crypto_secrets::encrypted_file_encrypt_request{
@@ -731,10 +731,10 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_decrypt_secret_file_maps_crypto_failures_to_
                         }),
                      crypto_secrets::exceptions::invalid_secret);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_encrypted_file_plaintext_limit_is_size_limit_exceeded) try {
-   const auto path = std::filesystem::temp_directory_path() / "fcl-crypto-secrets-encrypted-source-too-large.bin";
+   const auto path = std::filesystem::temp_directory_path() / "forge-crypto-secrets-encrypted-source-too-large.bin";
    const auto container = crypto_secrets::encrypt_secret_file(crypto_secrets::encrypted_file_encrypt_request{
       .plaintext = bytes("encrypted-secret"),
       .passphrase = "correct horse battery staple",
@@ -750,20 +750,20 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_encrypted_file_plaintext_limit_is_size_limit
                                                 {"payload.decrypt"},
                                                 {"get_bytes"},
                                                 true)});
-   document.set("plugins.crypto.secrets.default-max-plaintext-bytes", fcl::config::value{4U});
+   document.set("plugins.crypto.secrets.default-max-plaintext-bytes", forge::config::value{4U});
 
    auto plugin = crypto_secrets::plugin{};
-   auto runtime = fcl::asio::runtime{};
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(
-                        runtime, plugin.configure(fcl::config::component_view{document, crypto_secrets_section})),
+   auto runtime = forge::asio::runtime{};
+   BOOST_CHECK_THROW(forge::asio::blocking::run(
+                        runtime, plugin.configure(forge::config::component_view{document, crypto_secrets_section})),
                      crypto_secrets::exceptions::size_limit_exceeded);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_encrypted_file_default_ciphertext_limit_allows_max_plaintext) try {
-   const auto path = std::filesystem::temp_directory_path() / "fcl-crypto-secrets-encrypted-source-default-limit.bin";
+   const auto path = std::filesystem::temp_directory_path() / "forge-crypto-secrets-encrypted-source-default-limit.bin";
    const auto passphrase = std::string{"correct horse battery staple"};
-   const auto plaintext = fcl::crypto::bytes(crypto_secrets::default_max_plaintext_bytes, std::uint8_t{'x'});
+   const auto plaintext = forge::crypto::bytes(crypto_secrets::default_max_plaintext_bytes, std::uint8_t{'x'});
    const auto container = crypto_secrets::encrypt_secret_file(crypto_secrets::encrypted_file_encrypt_request{
       .plaintext = plaintext,
       .passphrase = passphrase,
@@ -777,7 +777,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_encrypted_file_default_ciphertext_limit_allo
    write_secret_file(path, container);
 
    auto plugin = crypto_secrets::plugin{};
-   auto runtime = fcl::asio::runtime{};
+   auto runtime = forge::asio::runtime{};
    auto api = configured_api(runtime,
                              plugin,
                              secrets_config({secret_entry("encrypted",
@@ -786,19 +786,19 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_encrypted_file_default_ciphertext_limit_allo
                                                            {"get_bytes"},
                                                            true)}));
 
-   const auto exported = fcl::asio::blocking::run(runtime,
+   const auto exported = forge::asio::blocking::run(runtime,
                                                  api->get_bytes(crypto_secrets::get_request{
                                                     .secret_id = "encrypted",
                                                     .purpose = "payload.decrypt",
                                                  }));
    BOOST_TEST(exported.bytes == plaintext);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_encrypted_file_missing_passphrase_file_is_invalid_source) try {
-   const auto path = std::filesystem::temp_directory_path() / "fcl-crypto-secrets-encrypted-missing-passphrase.bin";
+   const auto path = std::filesystem::temp_directory_path() / "forge-crypto-secrets-encrypted-missing-passphrase.bin";
    const auto missing_passphrase =
-      std::filesystem::temp_directory_path() / "fcl-crypto-secrets-missing-passphrase-file.txt";
+      std::filesystem::temp_directory_path() / "forge-crypto-secrets-missing-passphrase-file.txt";
    std::filesystem::remove(missing_passphrase);
    const auto container = crypto_secrets::encrypt_secret_file(crypto_secrets::encrypted_file_encrypt_request{
       .plaintext = bytes("encrypted-secret"),
@@ -811,11 +811,11 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_encrypted_file_missing_passphrase_file_is_in
    write_secret_file(path, container);
 
    auto plugin = crypto_secrets::plugin{};
-   auto runtime = fcl::asio::runtime{};
+   auto runtime = forge::asio::runtime{};
    BOOST_CHECK_THROW(
-      fcl::asio::blocking::run(
+      forge::asio::blocking::run(
          runtime,
-         plugin.configure(fcl::config::component_view{
+         plugin.configure(forge::config::component_view{
             secrets_config({secret_entry("encrypted",
                                           source_encrypted_file_with_passphrase_file(path, missing_passphrase),
                                           {"payload.decrypt"},
@@ -824,7 +824,7 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_encrypted_file_missing_passphrase_file_is_in
             crypto_secrets_section})),
       crypto_secrets::exceptions::invalid_source);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_encrypted_file_rejects_scrypt_params_above_limits_before_kdf) try {
    auto container = crypto_secrets::encrypt_secret_file(crypto_secrets::encrypted_file_encrypt_request{
@@ -849,10 +849,10 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_encrypted_file_rejects_scrypt_params_above_l
                         }),
                      crypto_secrets::exceptions::invalid_secret);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(crypto_secrets_config_rejects_encrypted_file_scrypt_params_above_configured_ceilings) try {
-   const auto path = std::filesystem::temp_directory_path() / "fcl-crypto-secrets-encrypted-source-high-scrypt.bin";
+   const auto path = std::filesystem::temp_directory_path() / "forge-crypto-secrets-encrypted-source-high-scrypt.bin";
    const auto container = crypto_secrets::encrypt_secret_file(crypto_secrets::encrypted_file_encrypt_request{
       .plaintext = bytes("encrypted-secret"),
       .passphrase = "correct horse battery staple",
@@ -868,33 +868,33 @@ BOOST_AUTO_TEST_CASE(crypto_secrets_config_rejects_encrypted_file_scrypt_params_
                                                 {"payload.decrypt"},
                                                 {"get_bytes"},
                                                 true)});
-   document.set("plugins.crypto.secrets.encrypted-file-max-scrypt-n", fcl::config::value{512U});
+   document.set("plugins.crypto.secrets.encrypted-file-max-scrypt-n", forge::config::value{512U});
 
    auto plugin = crypto_secrets::plugin{};
-   auto runtime = fcl::asio::runtime{};
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(
-                        runtime, plugin.configure(fcl::config::component_view{document, crypto_secrets_section})),
+   auto runtime = forge::asio::runtime{};
+   BOOST_CHECK_THROW(forge::asio::blocking::run(
+                        runtime, plugin.configure(forge::config::component_view{document, crypto_secrets_section})),
                      crypto_secrets::exceptions::invalid_secret);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
-BOOST_AUTO_TEST_CASE(crypto_secrets_config_value_can_be_delivered_by_fcl_env_source_adapter) try {
+BOOST_AUTO_TEST_CASE(crypto_secrets_config_value_can_be_delivered_by_forge_env_source_adapter) try {
    auto plugin = crypto_secrets::plugin{};
    const auto descriptor = plugin.describe_config();
    BOOST_REQUIRE(descriptor.has_value());
-   auto registry = fcl::config::component_registry{};
+   auto registry = forge::config::component_registry{};
    registry.add(*descriptor);
 
    const auto document = secrets_config(
       {secret_entry("from-env-adapter", source_value("env-secret"), {"payload.decrypt"}, {"get_bytes"}, true)});
-   const auto written = fcl::env::write_document(document, registry, {.prefix = "FCL"});
+   const auto written = forge::env::write_document(document, registry, {.prefix = "FORGE"});
    BOOST_TEST(written.ok());
    BOOST_TEST(written.text.find("env-secret") == std::string::npos);
-   BOOST_TEST(written.text.find("FCL_SECRET_PROVIDER_SECRETS") == std::string::npos);
+   BOOST_TEST(written.text.find("FORGE_SECRET_PROVIDER_SECRETS") == std::string::npos);
 
-   const auto help = fcl::program_options::help(registry, "FCL options");
+   const auto help = forge::program_options::help(registry, "FORGE options");
    BOOST_TEST(help.find("plugins.crypto.secrets.secrets") == std::string::npos);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_SUITE_END()

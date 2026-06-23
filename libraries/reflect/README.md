@@ -1,6 +1,6 @@
-# fcl_reflect
+# forge_reflect
 
-`fcl_reflect` is a thin Boost.Describe utility layer. It centralizes described
+`forge_reflect` is a thin Boost.Describe utility layer. It centralizes described
 type detection, member traversal and enum conversion so `raw`, `variant`,
 `schema` and other libraries do not each write their own reflection boilerplate.
 
@@ -13,18 +13,18 @@ type detection, member traversal and enum conversion so `raw`, `variant`,
 ## When Not To Use
 
 - Do not put `to_variant/from_variant` here. Described value mapping belongs to
-  `fcl_variant`.
-- Do not put validation rules here. Validation metadata belongs to `fcl_schema`.
+  `forge_variant`.
+- Do not put validation rules here. Validation metadata belongs to `forge_schema`.
 - Do not put application schema or config defaults here.
 
 ## Public Modules
 
-- `fcl.reflect.reflect`
+- `forge.reflect.reflect`
 
-Target: `fcl_reflect`.
+Target: `forge_reflect`.
 
-Dependencies: `fcl_core` and Boost.Describe headers. `fcl_reflect` must not link
-or import `fcl_variant`.
+Dependencies: `forge_core` and Boost.Describe headers. `forge_reflect` must not link
+or import `forge_variant`.
 
 ## Examples
 
@@ -44,8 +44,8 @@ struct endpoint_config {
 BOOST_DESCRIBE_STRUCT(endpoint_config, (), (host, port))
 ```
 
-The same member order is then consumed by `fcl_raw`, `fcl_variant` and
-`fcl_schema` helpers.
+The same member order is then consumed by `forge_raw`, `forge_variant` and
+`forge_schema` helpers.
 
 ### Convert Described Enum Names
 
@@ -55,17 +55,17 @@ The same member order is then consumed by `fcl_raw`, `fcl_variant` and
 enum class mode { active, passive };
 BOOST_DESCRIBE_ENUM(mode, active, passive)
 
-import fcl.reflect.reflect;
+import forge.reflect.reflect;
 
-auto text = fcl::reflect::enum_to_string(mode::active);
+auto text = forge::reflect::enum_to_string(mode::active);
 auto parsed = mode{};
-auto ok = fcl::reflect::enum_from_string("passive", parsed);
+auto ok = forge::reflect::enum_from_string("passive", parsed);
 ```
 
 ## Compatibility Rule
 
 For types that replace old `FC_REFLECT(TYPE, (a)(b)(c))`, the new
-`BOOST_DESCRIBE_*` member list must keep the same order. `fcl_raw` uses that
+`BOOST_DESCRIBE_*` member list must keep the same order. `forge_raw` uses that
 order for byte-compatible packing.
 
 ## Risks And Anti-Patterns
@@ -74,18 +74,18 @@ order for byte-compatible packing.
   and order; schema/application layers validate meaning.
 - Do not reorder described members as a cleanup unless every raw/wire consumer
   gets a compatibility migration.
-- Do not add application-specific reflection macros here. FCL stays neutral and
+- Do not add application-specific reflection macros here. FORGE stays neutral and
   Boost.Describe remains the explicit source of member order.
 
 ## Typical Mistakes
 
-- Do not add `FCL_DESCRIBE_*` wrappers casually. The canonical spelling is
+- Do not add `FORGE_DESCRIBE_*` wrappers casually. The canonical spelling is
   Boost.Describe until a separate compatibility decision changes it.
 - Do not import higher-level variant modules from this library to "make it
   convenient".
 
 ## Tests
 
-Reflect behavior is mostly exercised through `test_fcl_raw`,
-`test_fcl_variant`, `test_fcl_schema` and `test_fcl_config`, where member order
+Reflect behavior is mostly exercised through `test_forge_raw`,
+`test_forge_variant`, `test_forge_schema` and `test_forge_config`, where member order
 and enum mapping are observable.

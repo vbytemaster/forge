@@ -1,5 +1,5 @@
 module;
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 #include <cstring>
 #include <exception>
 #include <memory>
@@ -8,38 +8,38 @@ module;
 #include <string>
 #include <vector>
 
-module fcl.crypto.ripemd160;
+module forge.crypto.ripemd160;
 
-import fcl.core.utility;
-import fcl.crypto.hex;
-import fcl.crypto.sha256;
-import fcl.crypto.sha512;
-import fcl.exceptions;
-import fcl.variant.exceptions;
-import fcl.variant.value;
-import fcl.variant.conversion;
-import fcl.variant.containers;
-import fcl.variant.chrono;
-import fcl.variant.multiprecision;
-import fcl.variant.format;
-import fcl.variant.described;
+import forge.core.utility;
+import forge.crypto.hex;
+import forge.crypto.sha256;
+import forge.crypto.sha512;
+import forge.exceptions;
+import forge.variant.exceptions;
+import forge.variant.value;
+import forge.variant.conversion;
+import forge.variant.containers;
+import forge.variant.chrono;
+import forge.variant.multiprecision;
+import forge.variant.format;
+import forge.variant.described;
 
 #include "_digest_common.hpp"
 #include "_evp_digest.hpp"
 
-namespace fcl::crypto {
+namespace forge::crypto {
 
 ripemd160::ripemd160() {
    memset(_hash, 0, sizeof(_hash));
 }
 ripemd160::ripemd160(const std::string& hex_str) {
-   auto bytes_written = fcl::crypto::from_hex(hex_str, (char*)_hash, sizeof(_hash));
+   auto bytes_written = forge::crypto::from_hex(hex_str, (char*)_hash, sizeof(_hash));
    if (bytes_written < sizeof(_hash))
       memset((char*)_hash + bytes_written, 0, (sizeof(_hash) - bytes_written));
 }
 
 std::string ripemd160::str() const {
-   return fcl::crypto::to_hex((char*)_hash, sizeof(_hash));
+   return forge::crypto::to_hex((char*)_hash, sizeof(_hash));
 }
 ripemd160::operator std::string() const {
    return str();
@@ -50,7 +50,7 @@ char* ripemd160::data() const {
 }
 
 struct ripemd160::encoder::impl {
-   fcl::detail::evp_digest_context ctx;
+   forge::detail::evp_digest_context ctx;
 };
 
 ripemd160::encoder::~encoder() {}
@@ -58,10 +58,10 @@ ripemd160::encoder::encoder() : my(std::make_unique<impl>()) {
    reset();
 }
 
-ripemd160 ripemd160::hash(const fcl::crypto::sha512& h) {
+ripemd160 ripemd160::hash(const forge::crypto::sha512& h) {
    return hash((const char*)&h, sizeof(h));
 }
-ripemd160 ripemd160::hash(const fcl::crypto::sha256& h) {
+ripemd160 ripemd160::hash(const forge::crypto::sha256& h) {
    return hash((const char*)&h, sizeof(h));
 }
 ripemd160 ripemd160::hash(const char* d, uint32_t dlen) {
@@ -74,20 +74,20 @@ ripemd160 ripemd160::hash(const std::string& s) {
 }
 
 void ripemd160::encoder::write(const char* d, uint32_t dlen) {
-   fcl::detail::evp_digest_update(my->ctx.get(), d, dlen);
+   forge::detail::evp_digest_update(my->ctx.get(), d, dlen);
 }
 ripemd160 ripemd160::encoder::result() {
    ripemd160 h;
-   fcl::detail::evp_digest_final(my->ctx.get(), h.data(), h.data_size());
+   forge::detail::evp_digest_final(my->ctx.get(), h.data(), h.data_size());
    return h;
 }
 void ripemd160::encoder::reset() {
-   fcl::detail::evp_digest_init(my->ctx.get(), EVP_ripemd160());
+   forge::detail::evp_digest_init(my->ctx.get(), EVP_ripemd160());
 }
 
 ripemd160 operator<<(const ripemd160& h1, uint32_t i) {
    ripemd160 result;
-   fcl::detail::shift_l(h1.data(), result.data(), result.data_size(), i);
+   forge::detail::shift_l(h1.data(), result.data(), result.data_size(), i);
    return result;
 }
 ripemd160 operator^(const ripemd160& h1, const ripemd160& h2) {
@@ -121,9 +121,9 @@ void to_variant(const ripemd160& bi, variant& v) {
 void from_variant(const variant& v, ripemd160& bi) {
    std::vector<char> ve = v.as<std::vector<char>>();
    if (ve.size()) {
-      memcpy(bi.data(), ve.data(), fcl::min<size_t>(ve.size(), sizeof(bi)));
+      memcpy(bi.data(), ve.data(), forge::min<size_t>(ve.size(), sizeof(bi)));
    } else
       memset(bi.data(), char(0), sizeof(bi));
 }
 
-} // namespace fcl::crypto
+} // namespace forge::crypto

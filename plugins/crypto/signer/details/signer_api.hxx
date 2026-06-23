@@ -1,6 +1,6 @@
 #pragma once
 
-namespace fcl::plugins::crypto::signer {
+namespace forge::plugins::crypto::signer {
 
 class plugin::signer_api final : public api {
  public:
@@ -12,4 +12,4 @@ class plugin::signer_api final : public api {
    std::shared_ptr<impl> state_;
 };
 
-} // namespace fcl::plugins::crypto::signer
+} // namespace forge::plugins::crypto::signer

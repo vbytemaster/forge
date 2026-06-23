@@ -1,16 +1,16 @@
 module;
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 #include <algorithm>
 #include <gmp.h>
 #include <vector>
 
-module fcl.crypto.modular_arithmetic;
+module forge.crypto.modular_arithmetic;
 
-namespace fcl::crypto {
+namespace forge::crypto {
 
 bytes modexp(const bytes& _base, const bytes& _exponent, const bytes& _modulus) {
    if (_modulus.size() == 0) {
-      FCL_THROW_EXCEPTION(modular_arithmetic::exceptions::invalid_modulus, "modulus must not be empty");
+      FORGE_THROW_EXCEPTION(modular_arithmetic::exceptions::invalid_modulus, "modulus must not be empty");
    }
 
    auto output = bytes(_modulus.size(), '\0');
@@ -47,4 +47,4 @@ bytes modexp(const bytes& _base, const bytes& _exponent, const bytes& _modulus) 
    return output;
 }
 
-} // namespace fcl::crypto
+} // namespace forge::crypto

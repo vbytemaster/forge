@@ -1,15 +1,15 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <openssl/evp.h>
 
 #include <memory>
 #include <span>
 
-module fcl.crypto.chacha20_poly1305;
+module forge.crypto.chacha20_poly1305;
 
-namespace fcl::crypto::chacha20_poly1305 {
+namespace forge::crypto::chacha20_poly1305 {
 namespace {
 
 struct cipher_ctx_deleter {
@@ -21,7 +21,7 @@ struct cipher_ctx_deleter {
 using cipher_ctx_ptr = std::unique_ptr<EVP_CIPHER_CTX, cipher_ctx_deleter>;
 
 [[noreturn]] void fail(std::string message) {
-   FCL_THROW_EXCEPTION(exceptions::backend_error, std::move(message));
+   FORGE_THROW_EXCEPTION(exceptions::backend_error, std::move(message));
 }
 
 } // namespace
@@ -64,7 +64,7 @@ bytes encrypt(const key& key, const nonce& nonce, std::span<const std::uint8_t> 
 bytes decrypt(const key& key, const nonce& nonce, std::span<const std::uint8_t> associated_data,
               std::span<const std::uint8_t> ciphertext_and_tag) {
    if (ciphertext_and_tag.size() < 16U) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_tag, "ChaCha20-Poly1305 ciphertext is missing tag");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_tag, "ChaCha20-Poly1305 ciphertext is missing tag");
    }
    auto context = cipher_ctx_ptr{EVP_CIPHER_CTX_new()};
    if (context == nullptr ||
@@ -95,11 +95,11 @@ bytes decrypt(const key& key, const nonce& nonce, std::span<const std::uint8_t> 
       fail("failed to set ChaCha20-Poly1305 tag");
    }
    if (EVP_DecryptFinal_ex(context.get(), out.data() + written, &len) != 1) {
-      FCL_THROW_EXCEPTION(exceptions::authentication_failed, "ChaCha20-Poly1305 authentication failed");
+      FORGE_THROW_EXCEPTION(exceptions::authentication_failed, "ChaCha20-Poly1305 authentication failed");
    }
    written += len;
    out.resize(static_cast<std::size_t>(written));
    return out;
 }
 
-} // namespace fcl::crypto::chacha20_poly1305
+} // namespace forge::crypto::chacha20_poly1305

@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -11,19 +11,19 @@ module;
 #include <string>
 #include <string_view>
 
-module fcl.plugins.crypto.secrets.plugin;
+module forge.plugins.crypto.secrets.plugin;
 
-import fcl.crypto.base64;
-import fcl.crypto.hex;
-import fcl.crypto.secret_bytes;
-import fcl.crypto.types;
-import fcl.exceptions;
-import fcl.plugins.crypto.secrets.exceptions;
-import fcl.plugins.crypto.secrets.types;
+import forge.crypto.base64;
+import forge.crypto.hex;
+import forge.crypto.secret_bytes;
+import forge.crypto.types;
+import forge.exceptions;
+import forge.plugins.crypto.secrets.exceptions;
+import forge.plugins.crypto.secrets.types;
 
 #include "details/source_loading.hxx"
 
-namespace fcl::plugins::crypto::secrets {
+namespace forge::plugins::crypto::secrets {
 namespace {
 
 [[nodiscard]] std::string trim_ascii(std::string value) {
@@ -33,11 +33,11 @@ namespace {
    return value;
 }
 
-[[nodiscard]] fcl::crypto::bytes bytes_from_string(std::string_view value) {
-   return fcl::crypto::bytes{value.begin(), value.end()};
+[[nodiscard]] forge::crypto::bytes bytes_from_string(std::string_view value) {
+   return forge::crypto::bytes{value.begin(), value.end()};
 }
 
-[[nodiscard]] fcl::crypto::bytes decode_material(std::string value, encoding encoding_value, const std::string& id) {
+[[nodiscard]] forge::crypto::bytes decode_material(std::string value, encoding encoding_value, const std::string& id) {
    try {
       switch (encoding_value) {
       case encoding::raw:
@@ -45,48 +45,48 @@ namespace {
       case encoding::hex: {
          value = trim_ascii(std::move(value));
          if ((value.size() % 2U) != 0U) {
-            FCL_THROW_EXCEPTION(exceptions::invalid_secret, "hex secret has odd length",
-                                fcl::exceptions::ctx("secret_id", id));
+            FORGE_THROW_EXCEPTION(exceptions::invalid_secret, "hex secret has odd length",
+                                forge::exceptions::ctx("secret_id", id));
          }
-         auto output = fcl::crypto::bytes(value.size() / 2U);
-         const auto written = fcl::crypto::from_hex(value, output.data(), output.size());
+         auto output = forge::crypto::bytes(value.size() / 2U);
+         const auto written = forge::crypto::from_hex(value, output.data(), output.size());
          output.resize(written);
          return output;
       }
       case encoding::base64: {
          value = trim_ascii(std::move(value));
-         auto decoded = fcl::crypto::base64_decode<std::vector<char>>(value);
-         return fcl::crypto::bytes{decoded.begin(), decoded.end()};
+         auto decoded = forge::crypto::base64_decode<std::vector<char>>(value);
+         return forge::crypto::bytes{decoded.begin(), decoded.end()};
       }
       }
    } catch (const exceptions::invalid_secret&) {
       throw;
    } catch (const std::exception&) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_secret, "secret material cannot be decoded",
-                          fcl::exceptions::ctx("secret_id", id));
+      FORGE_THROW_EXCEPTION(exceptions::invalid_secret, "secret material cannot be decoded",
+                          forge::exceptions::ctx("secret_id", id));
    }
-   FCL_THROW_EXCEPTION(exceptions::invalid_secret, "unknown secret encoding", fcl::exceptions::ctx("secret_id", id));
+   FORGE_THROW_EXCEPTION(exceptions::invalid_secret, "unknown secret encoding", forge::exceptions::ctx("secret_id", id));
 }
 
-[[nodiscard]] fcl::crypto::bytes read_file(const std::string& path, std::uint64_t max_bytes, const std::string& id) {
+[[nodiscard]] forge::crypto::bytes read_file(const std::string& path, std::uint64_t max_bytes, const std::string& id) {
    if (path.empty()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_source, "secret file path is empty",
-                          fcl::exceptions::ctx("secret_id", id));
+      FORGE_THROW_EXCEPTION(exceptions::invalid_source, "secret file path is empty",
+                          forge::exceptions::ctx("secret_id", id));
    }
    auto in = std::ifstream{std::filesystem::path{path}, std::ios::binary};
    if (!in) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_source, "secret file cannot be opened",
-                          fcl::exceptions::ctx("secret_id", id),
-                          fcl::exceptions::ctx("path", path));
+      FORGE_THROW_EXCEPTION(exceptions::invalid_source, "secret file cannot be opened",
+                          forge::exceptions::ctx("secret_id", id),
+                          forge::exceptions::ctx("path", path));
    }
    in.seekg(0, std::ios::end);
    const auto size = in.tellg();
    if (size < 0 || static_cast<std::uint64_t>(size) > max_bytes) {
-      FCL_THROW_EXCEPTION(exceptions::size_limit_exceeded, "secret file exceeds configured limit",
-                          fcl::exceptions::ctx("secret_id", id));
+      FORGE_THROW_EXCEPTION(exceptions::size_limit_exceeded, "secret file exceeds configured limit",
+                          forge::exceptions::ctx("secret_id", id));
    }
    in.seekg(0, std::ios::beg);
-   auto output = fcl::crypto::bytes(static_cast<std::size_t>(size));
+   auto output = forge::crypto::bytes(static_cast<std::size_t>(size));
    if (!output.empty()) {
       in.read(reinterpret_cast<char*>(output.data()), static_cast<std::streamsize>(output.size()));
       require_complete_file_read(in, output.size(), path, id);
@@ -102,17 +102,17 @@ namespace {
       const auto bytes = read_file(source.passphrase_file, 64U * 1024U, id);
       return trim_ascii(std::string{bytes.begin(), bytes.end()});
    }
-   FCL_THROW_EXCEPTION(exceptions::invalid_source, "encrypted_file source requires passphrase",
-                       fcl::exceptions::ctx("secret_id", id));
+   FORGE_THROW_EXCEPTION(exceptions::invalid_source, "encrypted_file source requires passphrase",
+                       forge::exceptions::ctx("secret_id", id));
 }
 
 } // namespace
 
-fcl::crypto::secret_bytes load_secret_material(const secret_entry& entry,
+forge::crypto::secret_bytes load_secret_material(const secret_entry& entry,
                                                std::uint64_t max_plaintext_bytes,
                                                std::uint64_t max_ciphertext_bytes,
                                                encrypted_file_decrypt_limits decrypt_limits) {
-   auto material = fcl::crypto::bytes{};
+   auto material = forge::crypto::bytes{};
    switch (entry.source.type) {
    case source_type::value:
       material = decode_material(entry.source.value, entry.source.encoding, entry.id);
@@ -129,30 +129,30 @@ fcl::crypto::secret_bytes load_secret_material(const secret_entry& entry,
          decrypt_limits.max_plaintext_bytes = max_plaintext_bytes;
          material = decrypt_secret_file(container, passphrase, decrypt_limits);
       } catch (const exceptions::size_limit_exceeded&) {
-         fcl::exceptions::capture_and_rethrow("encrypted secret file source",
+         forge::exceptions::capture_and_rethrow("encrypted secret file source",
                                               std::source_location::current(),
-                                              fcl::exceptions::ctx("secret_id", entry.id));
+                                              forge::exceptions::ctx("secret_id", entry.id));
       } catch (const exceptions::invalid_secret&) {
-         fcl::exceptions::capture_and_rethrow("encrypted secret file source",
+         forge::exceptions::capture_and_rethrow("encrypted secret file source",
                                               std::source_location::current(),
-                                              fcl::exceptions::ctx("secret_id", entry.id));
+                                              forge::exceptions::ctx("secret_id", entry.id));
       } catch (const std::exception&) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_secret, "encrypted secret file cannot be decrypted",
-                             fcl::exceptions::ctx("secret_id", entry.id));
+         FORGE_THROW_EXCEPTION(exceptions::invalid_secret, "encrypted secret file cannot be decrypted",
+                             forge::exceptions::ctx("secret_id", entry.id));
       }
       break;
    }
    }
 
    if (material.size() > max_plaintext_bytes) {
-      FCL_THROW_EXCEPTION(exceptions::size_limit_exceeded, "secret material exceeds configured plaintext limit",
-                          fcl::exceptions::ctx("secret_id", entry.id));
+      FORGE_THROW_EXCEPTION(exceptions::size_limit_exceeded, "secret material exceeds configured plaintext limit",
+                          forge::exceptions::ctx("secret_id", entry.id));
    }
    if (material.empty()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_secret, "secret material is empty",
-                          fcl::exceptions::ctx("secret_id", entry.id));
+      FORGE_THROW_EXCEPTION(exceptions::invalid_secret, "secret material is empty",
+                          forge::exceptions::ctx("secret_id", entry.id));
    }
-   return fcl::crypto::secret_bytes{std::move(material)};
+   return forge::crypto::secret_bytes{std::move(material)};
 }
 
-} // namespace fcl::plugins::crypto::secrets
+} // namespace forge::plugins::crypto::secrets

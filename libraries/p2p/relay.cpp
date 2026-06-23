@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -11,25 +11,25 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.p2p.relay;
+module forge.p2p.relay;
 
-import fcl.multiformats.multiaddr;
-import fcl.multiformats.types;
-import fcl.multiformats.varint;
-import fcl.multiformats.exceptions;
-import fcl.p2p.exceptions;
+import forge.multiformats.multiaddr;
+import forge.multiformats.types;
+import forge.multiformats.varint;
+import forge.multiformats.exceptions;
+import forge.p2p.exceptions;
 
 #include "protobuf.hpp"
 
-namespace fcl::p2p {
+namespace forge::p2p {
 namespace {
 
 [[nodiscard]] std::vector<std::uint8_t> endpoint_bytes(const endpoint& value) {
-   return fcl::multiformats::multiaddr::parse(value.to_string()).to_bytes();
+   return forge::multiformats::multiaddr::parse(value.to_string()).to_bytes();
 }
 
 [[nodiscard]] endpoint endpoint_from_bytes(std::span<const std::uint8_t> value) {
-   return parse_endpoint(fcl::multiformats::multiaddr::from_bytes(value).to_string());
+   return parse_endpoint(forge::multiformats::multiaddr::from_bytes(value).to_string());
 }
 
 void append_peer(std::vector<std::uint8_t>& out, std::uint32_t field, const relay::peer& value) {
@@ -66,7 +66,7 @@ void append_peer(std::vector<std::uint8_t>& out, std::uint32_t field, const rela
       }
    }
    if (!saw_id) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "relay peer is missing id");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay peer is missing id");
    }
    return out;
 }
@@ -93,19 +93,19 @@ void append_reservation(std::vector<std::uint8_t>& out, std::uint32_t field, con
       switch (field) {
       case 1:
          if (type != detail::wire_type::varint) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "relay reservation expire must be varint");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay reservation expire must be varint");
          }
          out.expires_at = in.read_varint();
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "relay reservation address must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay reservation address must be bytes");
          }
          out.relay_endpoints.push_back(endpoint_from_bytes(in.bytes()));
          break;
       case 3:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "relay reservation voucher must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay reservation voucher must be bytes");
          }
          out.voucher = signed_envelope::decode(in.bytes());
          break;
@@ -154,7 +154,7 @@ void append_limit(std::vector<std::uint8_t>& out, std::uint32_t field, const rel
    if (value == static_cast<std::uint16_t>(relay::hop_message::message_kind::status)) {
       return relay::hop_message::message_kind::status;
    }
-   FCL_THROW_EXCEPTION(exceptions::codec_error, "unknown relay hop message type");
+   FORGE_THROW_EXCEPTION(exceptions::codec_error, "unknown relay hop message type");
 }
 
 [[nodiscard]] relay::stop_message::message_kind checked_stop_kind(std::uint64_t value) {
@@ -164,7 +164,7 @@ void append_limit(std::vector<std::uint8_t>& out, std::uint32_t field, const rel
    if (value == static_cast<std::uint16_t>(relay::stop_message::message_kind::status)) {
       return relay::stop_message::message_kind::status;
    }
-   FCL_THROW_EXCEPTION(exceptions::codec_error, "unknown relay stop message type");
+   FORGE_THROW_EXCEPTION(exceptions::codec_error, "unknown relay stop message type");
 }
 
 [[nodiscard]] relay::status checked_status(std::uint64_t value) {
@@ -180,7 +180,7 @@ void append_limit(std::vector<std::uint8_t>& out, std::uint32_t field, const rel
    case relay::status::unexpected_message:
       return static_cast<relay::status>(value);
    }
-   FCL_THROW_EXCEPTION(exceptions::codec_error, "unknown relay status");
+   FORGE_THROW_EXCEPTION(exceptions::codec_error, "unknown relay status");
 }
 
 } // namespace
@@ -216,32 +216,32 @@ relay::hop_message read_hop_payload(std::span<const std::uint8_t> bytes) {
       switch (field) {
       case 1:
          if (type != detail::wire_type::varint) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "relay hop type must be varint");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay hop type must be varint");
          }
          out.kind = checked_hop_kind(in.read_varint());
          saw_type = true;
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "relay hop peer must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay hop peer must be bytes");
          }
          out.target = decode_peer(in.bytes());
          break;
       case 3:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "relay hop reservation must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay hop reservation must be bytes");
          }
          out.reservation_value = decode_reservation(in.bytes());
          break;
       case 4:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "relay hop limit must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay hop limit must be bytes");
          }
          out.limit_value = decode_limit(in.bytes());
          break;
       case 5:
          if (type != detail::wire_type::varint) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "relay hop status must be varint");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay hop status must be varint");
          }
          out.status = checked_status(in.read_varint());
          break;
@@ -251,7 +251,7 @@ relay::hop_message read_hop_payload(std::span<const std::uint8_t> bytes) {
       }
    }
    if (!saw_type) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "relay hop message is missing required type");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay hop message is missing required type");
    }
    return out;
 }
@@ -288,26 +288,26 @@ relay::stop_message read_stop_payload(std::span<const std::uint8_t> bytes) {
       switch (field) {
       case 1:
          if (type != detail::wire_type::varint) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "relay stop type must be varint");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay stop type must be varint");
          }
          out.kind = checked_stop_kind(in.read_varint());
          saw_type = true;
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "relay stop peer must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay stop peer must be bytes");
          }
          out.source = decode_peer(in.bytes());
          break;
       case 3:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "relay stop limit must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay stop limit must be bytes");
          }
          out.limit_value = decode_limit(in.bytes());
          break;
       case 4:
          if (type != detail::wire_type::varint) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "relay stop status must be varint");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay stop status must be varint");
          }
          out.status = checked_status(in.read_varint());
          break;
@@ -317,7 +317,7 @@ relay::stop_message read_stop_payload(std::span<const std::uint8_t> bytes) {
       }
    }
    if (!saw_type) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "relay stop message is missing required type");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay stop message is missing required type");
    }
    return out;
 }
@@ -328,7 +328,7 @@ relay::stop_message relay::codec::decode_stop(std::span<const std::uint8_t> byte
 
 std::vector<std::uint8_t> make_reservation_voucher_payload(const relay::voucher& value) {
    if (!valid_peer_id(value.relay_peer) || !valid_peer_id(value.peer) || value.expires_at == 0) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "invalid relay reservation voucher");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "invalid relay reservation voucher");
    }
    auto out = std::vector<std::uint8_t>{};
    detail::append_bytes(out, 1, value.relay_peer.to_bytes());
@@ -339,7 +339,7 @@ std::vector<std::uint8_t> make_reservation_voucher_payload(const relay::voucher&
 
 relay::voucher read_reservation_voucher_payload(std::span<const std::uint8_t> bytes) {
    if (bytes.empty()) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "relay voucher is empty");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay voucher is empty");
    }
    auto out = relay::voucher{};
    auto saw_relay = false;
@@ -351,21 +351,21 @@ relay::voucher read_reservation_voucher_payload(std::span<const std::uint8_t> by
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "relay voucher relay id must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay voucher relay id must be bytes");
          }
          out.relay_peer = peer_id::from_bytes(in.bytes());
          saw_relay = true;
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "relay voucher peer id must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay voucher peer id must be bytes");
          }
          out.peer = peer_id::from_bytes(in.bytes());
          saw_peer = true;
          break;
       case 3:
          if (type != detail::wire_type::varint) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "relay voucher expiration must be varint");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay voucher expiration must be varint");
          }
          out.expires_at = in.read_varint();
          saw_expiration = true;
@@ -376,7 +376,7 @@ relay::voucher read_reservation_voucher_payload(std::span<const std::uint8_t> by
       }
    }
    if (!saw_relay || !saw_peer || !saw_expiration || out.expires_at == 0) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "relay voucher missing required fields");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay voucher missing required fields");
    }
    return out;
 }
@@ -386,7 +386,7 @@ std::vector<std::uint8_t> relay::codec::reservation_voucher_payload_type() {
 }
 
 signed_envelope relay::codec::seal_reservation_voucher(const relay::voucher& value, const public_key& key,
-                                                       const fcl::crypto::asymmetric::private_key& private_key) {
+                                                       const forge::crypto::asymmetric::private_key& private_key) {
    const auto payload = make_reservation_voucher_payload(value);
    return signed_envelope::seal(key, private_key, "libp2p-relay-rsvp", reservation_voucher_payload_type(), payload);
 }
@@ -395,16 +395,16 @@ relay::voucher relay::codec::open_reservation_voucher(const signed_envelope& env
                                                        std::uint64_t now_unix_seconds) {
    envelope.verify("libp2p-relay-rsvp", relay_peer);
    if (envelope.payload_type != reservation_voucher_payload_type()) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "relay reservation voucher payload type mismatch");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "relay reservation voucher payload type mismatch");
    }
    auto out = read_reservation_voucher_payload(envelope.payload);
    if (out.relay_peer != relay_peer) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "relay reservation voucher relay mismatch");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_identity, "relay reservation voucher relay mismatch");
    }
    if (out.expires_at <= now_unix_seconds) {
-      FCL_THROW_EXCEPTION(exceptions::timeout, "relay reservation voucher is expired");
+      FORGE_THROW_EXCEPTION(exceptions::timeout, "relay reservation voucher is expired");
    }
    return out;
 }
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

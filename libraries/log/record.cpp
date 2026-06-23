@@ -1,8 +1,8 @@
 module;
 
-#if FCL_HAS_STD_STACKTRACE
+#if FORGE_HAS_STD_STACKTRACE
 #include <stacktrace>
-#elif FCL_HAS_BOOST_STACKTRACE
+#elif FORGE_HAS_BOOST_STACKTRACE
 #include <boost/stacktrace.hpp>
 #endif
 
@@ -16,12 +16,12 @@ module;
 #include <string>
 #include <utility>
 
-module fcl.log.record;
+module forge.log.record;
 
-import fcl.core.chrono;
-import fcl.core.string;
-import fcl.log.exceptions;
-import fcl.log.log_message;
+import forge.core.chrono;
+import forge.core.string;
+import forge.log.exceptions;
+import forge.log.log_message;
 
 namespace {
 
@@ -34,7 +34,7 @@ std::string sanitize_value(std::string value, bool redacted) {
 
 void write_json_string(std::ostream& out, std::string_view value) {
    auto escaped = std::string{value};
-   fcl::escape_str(escaped, fcl::escape_control_chars::on);
+   forge::escape_str(escaped, forge::escape_control_chars::on);
    out << '"' << escaped << '"';
 }
 
@@ -49,7 +49,7 @@ class locked_file {
       }
       stream.open(path, mode);
       if (!stream) {
-         throw fcl::log::exceptions::io_error{"failed to open log file: " + path.generic_string()};
+         throw forge::log::exceptions::io_error{"failed to open log file: " + path.generic_string()};
       }
    }
 
@@ -59,7 +59,7 @@ class locked_file {
 
 } // namespace
 
-namespace fcl {
+namespace forge {
 
 log_field log_ctx(std::string_view key, std::string value) {
    return log_field{std::string(key), std::move(value), false};
@@ -142,7 +142,7 @@ void append_log_field(log_fields& fields, const log_field_provider& provider) {
 
 stacktrace_snapshot capture_stacktrace(std::size_t skip, std::size_t max_frames) {
    auto result = stacktrace_snapshot{};
-#if FCL_HAS_STD_STACKTRACE
+#if FORGE_HAS_STD_STACKTRACE
    result.backend = "std::stacktrace";
    const auto trace = std::stacktrace::current(skip + 1, max_frames);
    result.frames.reserve(trace.size());
@@ -156,7 +156,7 @@ stacktrace_snapshot capture_stacktrace(std::size_t skip, std::size_t max_frames)
           .source_line = frame.source_line(),
       });
    }
-#elif FCL_HAS_BOOST_STACKTRACE
+#elif FORGE_HAS_BOOST_STACKTRACE
    result.backend = "boost::stacktrace";
    const auto trace = boost::stacktrace::stacktrace(skip + 1, max_frames);
    result.frames.reserve(trace.size());
@@ -205,7 +205,7 @@ std::string format_stacktrace(const stacktrace_snapshot& stacktrace) {
 
 std::string format_text_log_record(const log_record& record) {
    auto out = std::ostringstream{};
-   out << '[' << fcl::chrono::to_iso_string(record.timestamp) << "] ";
+   out << '[' << forge::chrono::to_iso_string(record.timestamp) << "] ";
    out << record.level.to_string() << ' ';
    if (!record.logger.empty()) {
       out << record.logger << ' ';
@@ -230,7 +230,7 @@ std::string format_json_log_record(const log_record& record) {
    auto out = std::ostringstream{};
    out << '{';
    out << "\"timestamp\":";
-   write_json_string(out, fcl::chrono::to_iso_string(record.timestamp));
+   write_json_string(out, forge::chrono::to_iso_string(record.timestamp));
    out << ",\"level\":";
    write_json_string(out, record.level.to_string());
    out << ",\"logger\":";
@@ -325,4 +325,4 @@ void jsonl_sink::log(const log_record& record) {
    impl_->stream.flush();
 }
 
-} // namespace fcl
+} // namespace forge

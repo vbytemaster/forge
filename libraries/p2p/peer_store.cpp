@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -15,23 +15,23 @@ module;
 #include <utility>
 #include <vector>
 
-#if FCL_HAS_ROCKSDB
+#if FORGE_HAS_ROCKSDB
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
 #endif
 
-module fcl.p2p.peer_store;
+module forge.p2p.peer_store;
 
-import fcl.p2p.dht;
-import fcl.p2p.discovery;
-import fcl.p2p.endpoint;
-import fcl.p2p.exceptions;
-import fcl.p2p.rendezvous;
+import forge.p2p.dht;
+import forge.p2p.discovery;
+import forge.p2p.endpoint;
+import forge.p2p.exceptions;
+import forge.p2p.rendezvous;
 
-namespace fcl::p2p {
+namespace forge::p2p {
 namespace {
 
-[[nodiscard]] bool same_endpoint(const fcl::p2p::endpoint& left, const fcl::p2p::endpoint& right) {
+[[nodiscard]] bool same_endpoint(const forge::p2p::endpoint& left, const forge::p2p::endpoint& right) {
    return left.to_string() == right.to_string();
 }
 
@@ -73,10 +73,10 @@ void normalize_for_storage(peer_store::record& value) {
    refresh_record_score(value, kind, value.successes > 0);
 }
 
-#if FCL_HAS_ROCKSDB
-constexpr auto peer_store_magic = std::string_view{"FCLP2PPS"};
-constexpr auto provider_store_magic = std::string_view{"FCLP2PPV"};
-constexpr auto rendezvous_store_magic = std::string_view{"FCLP2PRV"};
+#if FORGE_HAS_ROCKSDB
+constexpr auto peer_store_magic = std::string_view{"FORGEP2PPS"};
+constexpr auto provider_store_magic = std::string_view{"FORGEP2PPV"};
+constexpr auto rendezvous_store_magic = std::string_view{"FORGEP2PRV"};
 constexpr auto peer_store_version = std::uint8_t{4};
 
 class binary_writer {
@@ -133,11 +133,11 @@ class binary_writer {
       i64(std::chrono::duration_cast<std::chrono::milliseconds>(value.time_since_epoch()).count());
    }
 
-   void endpoint(const fcl::p2p::endpoint& value) {
+   void endpoint(const forge::p2p::endpoint& value) {
       text(value.to_string());
    }
 
-   void optional_endpoint(const std::optional<fcl::p2p::endpoint>& value) {
+   void optional_endpoint(const std::optional<forge::p2p::endpoint>& value) {
       boolean(value.has_value());
       if (value) {
          endpoint(*value);
@@ -159,7 +159,7 @@ class binary_writer {
       bytes(value.bytes);
    }
 
-   void p2p_endpoint(const fcl::p2p::endpoint& value) {
+   void p2p_endpoint(const forge::p2p::endpoint& value) {
       text(value.to_string());
    }
 
@@ -186,7 +186,7 @@ class binary_reader {
 
    void expect_raw(std::string_view expected) {
       if (data_.substr(position_, expected.size()) != expected) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, "invalid RocksDB peer store record header");
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, "invalid RocksDB peer store record header");
       }
       position_ += expected.size();
    }
@@ -199,7 +199,7 @@ class binary_reader {
    [[nodiscard]] bool boolean() {
       const auto value = u8();
       if (value > 1U) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, "invalid RocksDB peer store boolean");
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, "invalid RocksDB peer store boolean");
       }
       return value != 0U;
    }
@@ -251,11 +251,11 @@ class binary_reader {
       return std::chrono::system_clock::time_point{std::chrono::milliseconds{milliseconds}};
    }
 
-   [[nodiscard]] fcl::p2p::endpoint endpoint() {
+   [[nodiscard]] forge::p2p::endpoint endpoint() {
       return parse_endpoint(text());
    }
 
-   [[nodiscard]] std::optional<fcl::p2p::endpoint> optional_endpoint() {
+   [[nodiscard]] std::optional<forge::p2p::endpoint> optional_endpoint() {
       if (!boolean()) {
          return std::nullopt;
       }
@@ -277,7 +277,7 @@ class binary_reader {
       return dht::key{.bytes = bytes()};
    }
 
-   [[nodiscard]] fcl::p2p::endpoint p2p_endpoint() {
+   [[nodiscard]] forge::p2p::endpoint p2p_endpoint() {
       return parse_endpoint(text());
    }
 
@@ -293,21 +293,21 @@ class binary_reader {
 
    void finish() const {
       if (position_ != data_.size()) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, "trailing bytes in RocksDB peer store record");
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, "trailing bytes in RocksDB peer store record");
       }
    }
 
  private:
    [[nodiscard]] std::size_t checked_size(std::uint64_t value) const {
       if (value > static_cast<std::uint64_t>(data_.size() - position_)) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, "truncated RocksDB peer store record");
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, "truncated RocksDB peer store record");
       }
       return static_cast<std::size_t>(value);
    }
 
    void require(std::size_t size) const {
       if (size > data_.size() - position_) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, "truncated RocksDB peer store record");
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, "truncated RocksDB peer store record");
       }
    }
 
@@ -374,7 +374,7 @@ class binary_reader {
    reader.expect_raw(peer_store_magic);
    const auto version = reader.u8();
    if (version != peer_store_version) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "unsupported RocksDB peer store record version");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "unsupported RocksDB peer store record version");
    }
 
    auto value = peer_store::record{};
@@ -458,7 +458,7 @@ class binary_reader {
    reader.expect_raw(provider_store_magic);
    const auto version = reader.u8();
    if (version != peer_store_version) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "unsupported RocksDB DHT provider record version");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "unsupported RocksDB DHT provider record version");
    }
    auto out = peer_store::provider_record{};
    out.key = reader.dht_key();
@@ -493,7 +493,7 @@ class binary_reader {
    reader.expect_raw(rendezvous_store_magic);
    const auto version = reader.u8();
    if (version != peer_store_version) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "unsupported RocksDB rendezvous registration version");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "unsupported RocksDB rendezvous registration version");
    }
    auto out = rendezvous::registration{};
    out.namespace_name = reader.text();
@@ -511,7 +511,7 @@ class binary_reader {
 }
 #endif
 
-void mutate_endpoint(peer_store::record& record, const fcl::p2p::endpoint& endpoint, path::kind kind,
+void mutate_endpoint(peer_store::record& record, const forge::p2p::endpoint& endpoint, path::kind kind,
                      auto&& callback) {
    auto iterator = std::ranges::find_if(record.endpoints, [&](const auto& current) {
       return same_endpoint(current.endpoint, endpoint);
@@ -532,7 +532,7 @@ class memory_peer_store_backend final : public peer_store::backend {
       records_[value.peer] = std::move(value);
    }
 
-   void learn_endpoint(peer_id peer, fcl::p2p::endpoint endpoint, capability_set capabilities) override {
+   void learn_endpoint(peer_id peer, forge::p2p::endpoint endpoint, capability_set capabilities) override {
       auto lock = std::scoped_lock{mutex_};
       auto& record = records_[peer];
       record.peer = std::move(peer);
@@ -549,7 +549,7 @@ class memory_peer_store_backend final : public peer_store::backend {
    }
 
    void mark_reachability(peer_id peer, reachability::state state,
-                          std::optional<fcl::p2p::endpoint> observed) override {
+                          std::optional<forge::p2p::endpoint> observed) override {
       auto lock = std::scoped_lock{mutex_};
       auto& record = records_[peer];
       record.peer = std::move(peer);
@@ -576,7 +576,7 @@ class memory_peer_store_backend final : public peer_store::backend {
       refresh_record_score(record, kind, false);
    }
 
-   void mark_endpoint_success(const peer_id& peer, const fcl::p2p::endpoint& endpoint, path::kind kind,
+   void mark_endpoint_success(const peer_id& peer, const forge::p2p::endpoint& endpoint, path::kind kind,
                               std::chrono::milliseconds latency) override {
       auto lock = std::scoped_lock{mutex_};
       auto& record = records_[peer];
@@ -591,7 +591,7 @@ class memory_peer_store_backend final : public peer_store::backend {
       refresh_record_score(record, kind, true);
    }
 
-   void mark_endpoint_failure(const peer_id& peer, const fcl::p2p::endpoint& endpoint, path::kind kind,
+   void mark_endpoint_failure(const peer_id& peer, const forge::p2p::endpoint& endpoint, path::kind kind,
                               std::chrono::system_clock::time_point backoff_until) override {
       auto lock = std::scoped_lock{mutex_};
       auto& record = records_[peer];
@@ -754,15 +754,15 @@ class memory_peer_store_backend final : public peer_store::backend {
    std::uint64_t rendezvous_sequence_ = 0;
 };
 
-#if FCL_HAS_ROCKSDB
+#if FORGE_HAS_ROCKSDB
 class rocksdb_peer_store_backend final : public peer_store::backend {
  public:
    explicit rocksdb_peer_store_backend(peer_store::rocksdb_options options) : options_(std::move(options)) {
       if (options_.path.empty()) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "RocksDB peer store path is required");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "RocksDB peer store path is required");
       }
       if (options_.key_prefix.empty()) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "RocksDB peer store key prefix is required");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "RocksDB peer store key prefix is required");
       }
 
       auto rocksdb_options = rocksdb::Options{};
@@ -770,7 +770,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       auto db = std::unique_ptr<rocksdb::DB>{};
       const auto status = rocksdb::DB::Open(rocksdb_options, options_.path.string(), &db);
       if (!status.ok()) {
-         FCL_THROW_EXCEPTION(exceptions::internal, "failed to open RocksDB peer store: " + status.ToString());
+         FORGE_THROW_EXCEPTION(exceptions::internal, "failed to open RocksDB peer store: " + status.ToString());
       }
       db_ = std::move(db);
    }
@@ -780,7 +780,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       put(value);
    }
 
-   void learn_endpoint(peer_id peer, fcl::p2p::endpoint endpoint, capability_set capabilities) override {
+   void learn_endpoint(peer_id peer, forge::p2p::endpoint endpoint, capability_set capabilities) override {
       mutate(std::move(peer), [&](peer_store::record& record) {
          record.capabilities.bits |= capabilities.bits;
          const auto exists = std::ranges::any_of(record.endpoints, [&](const peer_store::endpoint_record& current) {
@@ -795,7 +795,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
    }
 
    void mark_reachability(peer_id peer, reachability::state state,
-                          std::optional<fcl::p2p::endpoint> observed) override {
+                          std::optional<forge::p2p::endpoint> observed) override {
       mutate(std::move(peer), [&](peer_store::record& record) {
          record.reachability = state;
          record.observed_endpoint = std::move(observed);
@@ -819,7 +819,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       });
    }
 
-   void mark_endpoint_success(const peer_id& peer, const fcl::p2p::endpoint& endpoint, path::kind kind,
+   void mark_endpoint_success(const peer_id& peer, const forge::p2p::endpoint& endpoint, path::kind kind,
                               std::chrono::milliseconds latency) override {
       mutate(peer, [&](peer_store::record& record) {
          mutate_endpoint(record, endpoint, kind, [&](peer_store::endpoint_record& current) {
@@ -833,7 +833,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       });
    }
 
-   void mark_endpoint_failure(const peer_id& peer, const fcl::p2p::endpoint& endpoint, path::kind kind,
+   void mark_endpoint_failure(const peer_id& peer, const forge::p2p::endpoint& endpoint, path::kind kind,
                               std::chrono::system_clock::time_point backoff_until) override {
       mutate(peer, [&](peer_store::record& record) {
          mutate_endpoint(record, endpoint, kind, [&](peer_store::endpoint_record& current) {
@@ -870,7 +870,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       const auto status = db_->Put(rocksdb::WriteOptions{}, provider_key_for(value.key, value.provider.id),
                                    encode_provider_record(value));
       if (!status.ok()) {
-         FCL_THROW_EXCEPTION(exceptions::internal, "failed to write RocksDB DHT provider record: " + status.ToString());
+         FORGE_THROW_EXCEPTION(exceptions::internal, "failed to write RocksDB DHT provider record: " + status.ToString());
       }
    }
 
@@ -880,7 +880,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       const auto status = db_->Put(rocksdb::WriteOptions{}, rendezvous_key_for(value.namespace_name, value.peer),
                                    encode_rendezvous_registration(value));
       if (!status.ok()) {
-         FCL_THROW_EXCEPTION(exceptions::internal,
+         FORGE_THROW_EXCEPTION(exceptions::internal,
                            "failed to write RocksDB rendezvous registration: " + status.ToString());
       }
    }
@@ -889,7 +889,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       auto lock = std::scoped_lock{mutex_};
       const auto status = db_->Delete(rocksdb::WriteOptions{}, rendezvous_key_for(namespace_name, peer));
       if (!status.ok()) {
-         FCL_THROW_EXCEPTION(exceptions::internal,
+         FORGE_THROW_EXCEPTION(exceptions::internal,
                            "failed to delete RocksDB rendezvous registration: " + status.ToString());
       }
    }
@@ -912,7 +912,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       }
       const auto status = iterator->status();
       if (!status.ok()) {
-         FCL_THROW_EXCEPTION(exceptions::internal, "failed to scan RocksDB peer store: " + status.ToString());
+         FORGE_THROW_EXCEPTION(exceptions::internal, "failed to scan RocksDB peer store: " + status.ToString());
       }
       return out;
    }
@@ -943,7 +943,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       }
       const auto status = iterator->status();
       if (!status.ok()) {
-         FCL_THROW_EXCEPTION(exceptions::internal, "failed to scan RocksDB routing peers: " + status.ToString());
+         FORGE_THROW_EXCEPTION(exceptions::internal, "failed to scan RocksDB routing peers: " + status.ToString());
       }
       std::ranges::sort(entries, [](const auto& left, const auto& right) {
          return left.first < right.first;
@@ -971,7 +971,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       }
       const auto status = iterator->status();
       if (!status.ok()) {
-         FCL_THROW_EXCEPTION(exceptions::internal, "failed to scan RocksDB DHT providers: " + status.ToString());
+         FORGE_THROW_EXCEPTION(exceptions::internal, "failed to scan RocksDB DHT providers: " + status.ToString());
       }
       return out;
    }
@@ -995,7 +995,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       }
       const auto status = iterator->status();
       if (!status.ok()) {
-         FCL_THROW_EXCEPTION(exceptions::internal, "failed to scan RocksDB rendezvous records: " + status.ToString());
+         FORGE_THROW_EXCEPTION(exceptions::internal, "failed to scan RocksDB rendezvous records: " + status.ToString());
       }
       std::ranges::sort(out, [](const auto& left, const auto& right) {
          return left.sequence < right.sequence;
@@ -1046,7 +1046,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       if (read_status.ok() && value.size() == sizeof(sequence)) {
          std::memcpy(&sequence, value.data(), sizeof(sequence));
       } else if (!read_status.ok() && !read_status.IsNotFound()) {
-         FCL_THROW_EXCEPTION(exceptions::internal,
+         FORGE_THROW_EXCEPTION(exceptions::internal,
                            "failed to read RocksDB rendezvous sequence: " + read_status.ToString());
       }
       ++sequence;
@@ -1054,7 +1054,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       std::memcpy(encoded.data(), &sequence, sizeof(sequence));
       const auto write_status = db_->Put(rocksdb::WriteOptions{}, sequence_key(), encoded);
       if (!write_status.ok()) {
-         FCL_THROW_EXCEPTION(exceptions::internal,
+         FORGE_THROW_EXCEPTION(exceptions::internal,
                            "failed to write RocksDB rendezvous sequence: " + write_status.ToString());
       }
       return sequence;
@@ -1067,7 +1067,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
          return std::nullopt;
       }
       if (!status.ok()) {
-         FCL_THROW_EXCEPTION(exceptions::internal, "failed to read RocksDB peer store: " + status.ToString());
+         FORGE_THROW_EXCEPTION(exceptions::internal, "failed to read RocksDB peer store: " + status.ToString());
       }
       auto record = decode_record(value);
       if (expire_copy) {
@@ -1084,7 +1084,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
    void put_locked(const peer_store::record& value) {
       const auto status = db_->Put(rocksdb::WriteOptions{}, key_for(value.peer), encode_record(value));
       if (!status.ok()) {
-         FCL_THROW_EXCEPTION(exceptions::internal, "failed to write RocksDB peer store: " + status.ToString());
+         FORGE_THROW_EXCEPTION(exceptions::internal, "failed to write RocksDB peer store: " + status.ToString());
       }
    }
 
@@ -1114,11 +1114,11 @@ std::shared_ptr<peer_store::backend> peer_store::make_memory_backend() {
 }
 
 std::shared_ptr<peer_store::backend> peer_store::make_rocksdb_backend(peer_store::rocksdb_options options) {
-#if FCL_HAS_ROCKSDB
+#if FORGE_HAS_ROCKSDB
    return std::make_shared<rocksdb_peer_store_backend>(std::move(options));
 #else
    (void)options;
-   FCL_THROW_EXCEPTION(exceptions::invalid_options, "RocksDB peer store backend is not enabled in this build");
+   FORGE_THROW_EXCEPTION(exceptions::invalid_options, "RocksDB peer store backend is not enabled in this build");
 #endif
 }
 
@@ -1137,12 +1137,12 @@ void peer_store::upsert(record value) {
    impl_->backend->upsert(std::move(value));
 }
 
-void peer_store::learn_endpoint(peer_id peer, fcl::p2p::endpoint endpoint, capability_set capabilities) {
+void peer_store::learn_endpoint(peer_id peer, forge::p2p::endpoint endpoint, capability_set capabilities) {
    impl_->backend->learn_endpoint(std::move(peer), std::move(endpoint), capabilities);
 }
 
 void peer_store::mark_reachability(peer_id peer, reachability::state state,
-                                   std::optional<fcl::p2p::endpoint> observed) {
+                                   std::optional<forge::p2p::endpoint> observed) {
    impl_->backend->mark_reachability(std::move(peer), state, std::move(observed));
 }
 
@@ -1154,12 +1154,12 @@ void peer_store::mark_failure(const peer_id& peer) {
    impl_->backend->mark_failure(peer);
 }
 
-void peer_store::mark_endpoint_success(const peer_id& peer, const fcl::p2p::endpoint& endpoint, path::kind kind,
+void peer_store::mark_endpoint_success(const peer_id& peer, const forge::p2p::endpoint& endpoint, path::kind kind,
                                        std::chrono::milliseconds latency) {
    impl_->backend->mark_endpoint_success(peer, endpoint, kind, latency);
 }
 
-void peer_store::mark_endpoint_failure(const peer_id& peer, const fcl::p2p::endpoint& endpoint, path::kind kind,
+void peer_store::mark_endpoint_failure(const peer_id& peer, const forge::p2p::endpoint& endpoint, path::kind kind,
                                        std::chrono::system_clock::time_point backoff_until) {
    impl_->backend->mark_endpoint_failure(peer, endpoint, kind, backoff_until);
 }
@@ -1202,4 +1202,4 @@ peer_store::discover_rendezvous(std::string_view namespace_name, std::uint64_t a
    return impl_->backend->discover_rendezvous(namespace_name, after_sequence, limit);
 }
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

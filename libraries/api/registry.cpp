@@ -9,11 +9,11 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.api.registry;
+module forge.api.registry;
 
-import fcl.raw.raw;
+import forge.raw.raw;
 
-namespace fcl::api {
+namespace forge::api {
 
 namespace {
 
@@ -30,7 +30,7 @@ namespace {
 
 [[nodiscard]] frame make_error_response(const frame& request, error_payload payload) {
    auto response = make_response_base(request, frame_kind::error);
-   fcl::raw::pack(response.payload, payload);
+   forge::raw::pack(response.payload, payload);
    return response;
 }
 
@@ -55,7 +55,7 @@ boost::asio::awaitable<frame> registry::dispatch(frame request) const {
           .retryable = false,
           .identity =
               {
-                  .category = "fcl.api",
+                  .category = "forge.api",
                   .code = static_cast<std::uint32_t>(exceptions::code::incompatible_version),
               },
       });
@@ -69,7 +69,7 @@ boost::asio::awaitable<frame> registry::dispatch(frame request) const {
           .retryable = false,
           .identity =
               {
-                  .category = "fcl.api",
+                  .category = "forge.api",
                   .code = static_cast<std::uint32_t>(exceptions::code::method_not_found),
               },
       });
@@ -78,17 +78,17 @@ boost::asio::awaitable<frame> registry::dispatch(frame request) const {
    try {
       response.payload = co_await method->raw_invoker(entry->implementation, std::move(request.payload));
       co_return response;
-   } catch (const fcl::exceptions::base& error) {
+   } catch (const forge::exceptions::base& error) {
       response.kind = frame_kind::error;
-      fcl::raw::pack(response.payload, project_error(*method, error));
+      forge::raw::pack(response.payload, project_error(*method, error));
       co_return response;
    } catch (const std::exception&) {
       response.kind = frame_kind::error;
-      fcl::raw::pack(response.payload, make_internal_error_payload());
+      forge::raw::pack(response.payload, make_internal_error_payload());
       co_return response;
    } catch (...) {
       response.kind = frame_kind::error;
-      fcl::raw::pack(response.payload, make_internal_error_payload());
+      forge::raw::pack(response.payload, make_internal_error_payload());
       co_return response;
    }
 }
@@ -103,7 +103,7 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_many(frame request
                        .retryable = false,
                        .identity =
                            {
-                               .category = "fcl.api",
+                               .category = "forge.api",
                                .code = static_cast<std::uint32_t>(exceptions::code::incompatible_version),
                            },
                    })};
@@ -118,7 +118,7 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_many(frame request
                        .retryable = false,
                        .identity =
                            {
-                               .category = "fcl.api",
+                               .category = "forge.api",
                                .code = static_cast<std::uint32_t>(exceptions::code::method_not_found),
                            },
                    })};
@@ -132,7 +132,7 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_many(frame request
                        .retryable = false,
                        .identity =
                            {
-                               .category = "fcl.api",
+                               .category = "forge.api",
                                .code = static_cast<std::uint32_t>(exceptions::code::protocol_error),
                            },
                    })};
@@ -151,7 +151,7 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_many(frame request
                        .retryable = false,
                        .identity =
                            {
-                               .category = "fcl.api",
+                               .category = "forge.api",
                                .code = static_cast<std::uint32_t>(exceptions::code::method_not_found),
                            },
                    })};
@@ -168,7 +168,7 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_many(frame request
       }
       responses.push_back(make_response_base(request, frame_kind::stream_end));
       co_return responses;
-   } catch (const fcl::exceptions::base& error) {
+   } catch (const forge::exceptions::base& error) {
       co_return std::vector<frame>{make_error_response(request, project_error(*method, error))};
    } catch (const std::exception&) {
       co_return std::vector<frame>{make_error_response(request, make_internal_error_payload())};
@@ -191,7 +191,7 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_stream(std::vector
                        .retryable = false,
                        .identity =
                            {
-                               .category = "fcl.api",
+                               .category = "forge.api",
                                .code = static_cast<std::uint32_t>(exceptions::code::protocol_error),
                            },
                    })};
@@ -206,7 +206,7 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_stream(std::vector
                        .retryable = false,
                        .identity =
                            {
-                               .category = "fcl.api",
+                               .category = "forge.api",
                                .code = static_cast<std::uint32_t>(exceptions::code::incompatible_version),
                            },
                    })};
@@ -221,7 +221,7 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_stream(std::vector
                        .retryable = false,
                        .identity =
                            {
-                               .category = "fcl.api",
+                               .category = "forge.api",
                                .code = static_cast<std::uint32_t>(exceptions::code::method_not_found),
                            },
                    })};
@@ -239,7 +239,7 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_stream(std::vector
                        .retryable = false,
                        .identity =
                            {
-                               .category = "fcl.api",
+                               .category = "forge.api",
                                .code = static_cast<std::uint32_t>(exceptions::code::protocol_error),
                            },
                    })};
@@ -257,7 +257,7 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_stream(std::vector
                           .retryable = false,
                           .identity =
                               {
-                                  .category = "fcl.api",
+                                  .category = "forge.api",
                                   .code = static_cast<std::uint32_t>(exceptions::code::protocol_error),
                               },
                       })};
@@ -288,7 +288,7 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_stream(std::vector
       }
       responses.push_back(make_response_base(request, frame_kind::stream_end));
       co_return responses;
-   } catch (const fcl::exceptions::base& error) {
+   } catch (const forge::exceptions::base& error) {
       co_return std::vector<frame>{make_error_response(request, project_error(*method, error))};
    } catch (const std::exception&) {
       co_return std::vector<frame>{make_error_response(request, make_internal_error_payload())};
@@ -336,4 +336,4 @@ const registry::entry* registry::find(api_ref requested) const noexcept {
    return &iterator->second;
 }
 
-} // namespace fcl::api
+} // namespace forge::api

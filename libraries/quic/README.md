@@ -1,13 +1,13 @@
-# fcl_quic
+# forge_quic
 
-`fcl_quic` owns the QUIC transport layer over ngtcp2, OpenSSL 3.0+ and Boost.Asio.
+`forge_quic` owns the QUIC transport layer over ngtcp2, OpenSSL 3.0+ and Boost.Asio.
 It exposes endpoints, security options, listeners, connectors, connections and
 framed streams without defining application protocols.
 
 ## Transport Alignment Checkpoint
 
-`fcl_quic` is a native `fcl_transport` session transport. The
-`fcl.quic.transport` module exposes:
+`forge_quic` is a native `forge_transport` session transport. The
+`forge.quic.transport` module exposes:
 
 - `quic::as_transport_stream(...)` and `quic::as_transport_session(...)` for
   adapting existing QUIC objects.
@@ -28,20 +28,20 @@ byte-stream transports; they become sessions only after a muxer such as Yamux.
 
 ## When Not To Use
 
-- Do not put peer discovery or relay policy here; that is `fcl_p2p`.
+- Do not put peer discovery or relay policy here; that is `forge_p2p`.
 - Do not put application protocol messages here; use framed streams as substrate.
 - Do not disable peer verification outside explicit tests.
 
 ## Public Modules
 
-- `fcl.quic.endpoint`, `fcl.quic.options`, `fcl.quic.security`.
-- `fcl.quic.listener`, `fcl.quic.connector`, `fcl.quic.connection`.
-- `fcl.quic.stream`, `fcl.quic.framed_stream`.
-- `fcl.quic.runtime`, `fcl.quic.metrics`, `fcl.quic.exceptions`.
+- `forge.quic.endpoint`, `forge.quic.options`, `forge.quic.security`.
+- `forge.quic.listener`, `forge.quic.connector`, `forge.quic.connection`.
+- `forge.quic.stream`, `forge.quic.framed_stream`.
+- `forge.quic.runtime`, `forge.quic.metrics`, `forge.quic.exceptions`.
 
-Target: `fcl_quic`.
+Target: `forge_quic`.
 
-Dependencies: `fcl_asio`, Boost.Asio, OpenSSL::SSL/Crypto, ngtcp2 and
+Dependencies: `forge_asio`, Boost.Asio, OpenSSL::SSL/Crypto, ngtcp2 and
 ngtcp2 crypto OpenSSL backend.
 
 ## Examples
@@ -49,9 +49,9 @@ ngtcp2 crypto OpenSSL backend.
 ### Parse Endpoint
 
 ```cpp
-import fcl.quic.endpoint;
+import forge.quic.endpoint;
 
-auto endpoint = fcl::quic::parse_endpoint("127.0.0.1:9443");
+auto endpoint = forge::quic::parse_endpoint("127.0.0.1:9443");
 auto authority = endpoint.authority();
 ```
 
@@ -60,20 +60,20 @@ auto authority = endpoint.authority();
 ```cpp
 #include <boost/asio/awaitable.hpp>
 
-import fcl.quic.connector;
-import fcl.quic.options;
-import fcl.quic.security;
+import forge.quic.connector;
+import forge.quic.options;
+import forge.quic.security;
 
 boost::asio::awaitable<void> connect_with_pin(
-   fcl::quic::connector& connector,
-   fcl::quic::endpoint endpoint) {
-   auto options = fcl::quic::client_options{
+   forge::quic::connector& connector,
+   forge::quic::endpoint endpoint) {
+   auto options = forge::quic::client_options{
       .certificate_pem = client_certificate_pem,
       .private_key_pem = client_private_key_pem,
    };
    options.security.expected_sha256_fingerprint = expected_server_fingerprint;
 
-   fcl::quic::connection connection = co_await connector.async_connect(endpoint, options);
+   forge::quic::connection connection = co_await connector.async_connect(endpoint, options);
    use_connection(std::move(connection));
 }
 ```
@@ -82,16 +82,16 @@ For CA-based verification, trust is explicit and host-bound:
 
 ```cpp
 boost::asio::awaitable<void> connect_with_ca(
-   fcl::quic::connector& connector,
-   fcl::quic::endpoint endpoint) {
-   auto options = fcl::quic::client_options{};
-   options.security = fcl::quic::security_options{
+   forge::quic::connector& connector,
+   forge::quic::endpoint endpoint) {
+   auto options = forge::quic::client_options{};
+   options.security = forge::quic::security_options{
       .verify_peer = true,
       .trusted_ca_pem = trusted_ca_bundle_pem,
    };
 
    // The certificate must be valid for endpoint.host through DNS/IP SAN matching.
-   fcl::quic::connection connection = co_await connector.async_connect(endpoint, options);
+   forge::quic::connection connection = co_await connector.async_connect(endpoint, options);
    use_connection(std::move(connection));
 }
 ```
@@ -101,21 +101,21 @@ boost::asio::awaitable<void> connect_with_ca(
 ```cpp
 #include <boost/asio/awaitable.hpp>
 
-import fcl.quic.listener;
+import forge.quic.listener;
 
-boost::asio::awaitable<void> accept_one(fcl::asio::runtime& runtime) {
-   auto server_options = fcl::quic::server_options{
+boost::asio::awaitable<void> accept_one(forge::asio::runtime& runtime) {
+   auto server_options = forge::quic::server_options{
       .certificate_pem = server_certificate_pem,
       .private_key_pem = server_private_key_pem,
    };
 
-   auto listener = fcl::quic::listener{
+   auto listener = forge::quic::listener{
       runtime,
-      fcl::quic::parse_endpoint("127.0.0.1:9443"),
+      forge::quic::parse_endpoint("127.0.0.1:9443"),
       server_options,
    };
 
-   fcl::quic::connection inbound = co_await listener.async_accept();
+   forge::quic::connection inbound = co_await listener.async_accept();
    handle_inbound(std::move(inbound));
 }
 ```
@@ -125,63 +125,63 @@ boost::asio::awaitable<void> accept_one(fcl::asio::runtime& runtime) {
 ```cpp
 #include <boost/asio/awaitable.hpp>
 
-import fcl.quic.framed_stream;
+import forge.quic.framed_stream;
 
-boost::asio::awaitable<void> write_payload(fcl::quic::connection& connection) {
-   fcl::quic::stream stream = co_await connection.async_open_stream();
-   auto framed = fcl::quic::framed_stream{std::move(stream), {.max_frame_size = 1 << 20}};
+boost::asio::awaitable<void> write_payload(forge::quic::connection& connection) {
+   forge::quic::stream stream = co_await connection.async_open_stream();
+   auto framed = forge::quic::framed_stream{std::move(stream), {.max_frame_size = 1 << 20}};
    co_await framed.async_write_frame(payload);
 }
 ```
 
 ### Bind API Frames To QUIC Streams
 
-`fcl.quic.api` is the API-over-QUIC adapter. It keeps QUIC transport policy in
-`fcl_quic`, contract/error semantics in `fcl_api`, and delegates frame-loop
-mechanics to `fcl.transport.api`.
+`forge.quic.api` is the API-over-QUIC adapter. It keeps QUIC transport policy in
+`forge_quic`, contract/error semantics in `forge_api`, and delegates frame-loop
+mechanics to `forge.transport.api`.
 
 ```cpp
-import fcl.api.exceptions;
-import fcl.api.types;
-import fcl.api.descriptor;
-import fcl.api.error_projection;
-import fcl.api.handle;
-import fcl.api.connection;
-import fcl.api.registry;
-import fcl.api.binding;
-import fcl.api.dispatcher;
-import fcl.quic.api;
+import forge.api.exceptions;
+import forge.api.types;
+import forge.api.descriptor;
+import forge.api.error_projection;
+import forge.api.handle;
+import forge.api.connection;
+import forge.api.registry;
+import forge.api.binding;
+import forge.api.dispatcher;
+import forge.quic.api;
 
-auto plan = fcl::api::binding()
+auto plan = forge::api::binding()
    .serve(app.apis())
    .export_api<cache>({.id = {"cache"}, .major = 1, .min_revision = 8})
    .build();
 
-auto binding = fcl::quic::api()
+auto binding = forge::quic::api()
    .use(plan)
-   .codec({"fcl.raw"})
+   .codec({"forge.raw"})
    .max_concurrent_calls(256)
    .deadline(std::chrono::seconds{5})
    .build();
 
-boost::asio::awaitable<void> serve_api_stream(fcl::quic::connection& connection) {
+boost::asio::awaitable<void> serve_api_stream(forge::quic::connection& connection) {
    auto stream = co_await connection.async_accept_stream();
    co_await binding.accept(std::move(stream));
 }
 ```
 
-`fcl.quic.api` does not own certificates, ALPN, listener/connector setup or
-packet-level limits. Those remain in `fcl_quic` transport options. It also does
-not own the generic API frame state machine; that lives in `fcl.transport.api`.
+`forge.quic.api` does not own certificates, ALPN, listener/connector setup or
+packet-level limits. Those remain in `forge_quic` transport options. It also does
+not own the generic API frame state machine; that lives in `forge.transport.api`.
 
 ### Decode Frames Without A Connection
 
 ```cpp
-import fcl.quic.framed_stream;
+import forge.quic.framed_stream;
 
-auto encoded = fcl::quic::encode_frame(payload);
-auto decoded = fcl::quic::decode_frame(encoded);
-if (decoded.status == fcl::quic::frame_decode_status::complete) {
+auto encoded = forge::quic::encode_frame(payload);
+auto decoded = forge::quic::decode_frame(encoded);
+if (decoded.status == forge::quic::frame_decode_status::complete) {
    consume(decoded.payload);
 }
 ```
@@ -189,10 +189,10 @@ if (decoded.status == fcl::quic::frame_decode_status::complete) {
 ### Verify A Certificate Fingerprint
 
 ```cpp
-import fcl.quic.security;
+import forge.quic.security;
 
-auto fingerprint = fcl::quic::certificate_sha256_fingerprint_from_pem(certificate_pem);
-auto normalized = fcl::quic::normalize_sha256_fingerprint(fingerprint);
+auto fingerprint = forge::quic::certificate_sha256_fingerprint_from_pem(certificate_pem);
+auto normalized = forge::quic::normalize_sha256_fingerprint(fingerprint);
 ```
 
 ## Backpressure And Failure Model
@@ -218,18 +218,18 @@ become application defaults.
   the certificate to the requested endpoint host.
 - Do not raise frame/queue limits without backpressure tests. Oversized frames
   are a memory pressure and denial-of-service vector.
-- Do not define application API envelopes in QUIC handlers. Use `fcl.quic.api` and
-  `fcl::api::frame` for typed API calls over QUIC streams.
+- Do not define application API envelopes in QUIC handlers. Use `forge.quic.api` and
+  `forge::api::frame` for typed API calls over QUIC streams.
 - Do not swallow handler exceptions in detached stream tasks; convert expected
-  failures into typed `fcl_exceptions` values or API error frames.
+  failures into typed `forge_exceptions` values or API error frames.
 - Do not treat `.deadline(...)` or `.max_concurrent_calls(...)` as documentation
   only; API frames are checked by the call runtime before application handlers run.
 - Do not put ALPN, certificate or listener lifecycle options into
-  `fcl.quic.api`; those belong to the transport owner.
+  `forge.quic.api`; those belong to the transport owner.
 
 ## Typical Mistakes
 
-- Do not put peer discovery or relay fallback in `fcl_quic`; use `fcl_p2p`.
+- Do not put peer discovery or relay fallback in `forge_quic`; use `forge_p2p`.
 - Do not use insecure test settings as application defaults; identity and ALPN
   checks are part of correctness.
 - Do not bypass `transport_limits` for "temporary" large frames without adding a
@@ -237,6 +237,6 @@ become application defaults.
 
 ## Tests
 
-`test_fcl_quic_p2p` covers endpoint parsing, frame codec, loopback handshakes,
+`test_forge_quic_p2p` covers endpoint parsing, frame codec, loopback handshakes,
 parallel streams, loss/delay/reorder fault proxy, mTLS, pinned fingerprints and
 backpressure limits.

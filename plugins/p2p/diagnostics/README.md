@@ -1,22 +1,22 @@
 # P2P Diagnostics Plugin
 
-`fcl::plugins::p2p::diagnostics` exposes read-only diagnostics for the shared
+`forge::plugins::p2p::diagnostics` exposes read-only diagnostics for the shared
 P2P node. It is intended for operators, tests and application plugins that need
 bounded snapshots of network state without depending on private node internals.
 
 ## Identity
 
-- Target: `fcl_plugins_p2p_diagnostics`
+- Target: `forge_plugins_p2p_diagnostics`
 - Package component: `plugins_p2p_diagnostics`
-- Plugin id: `fcl.plugins.p2p.diagnostics`
-- Main API id: `fcl.plugins.p2p.diagnostics`
+- Plugin id: `forge.plugins.p2p.diagnostics`
+- Main API id: `forge.plugins.p2p.diagnostics`
 - Config section: `plugins.p2p.diagnostics`
-- Depends on plugin id: `fcl.plugins.p2p.node`
+- Depends on plugin id: `forge.plugins.p2p.node`
 - Public modules:
-  - `fcl.plugins.p2p.diagnostics.plugin`
-  - `fcl.plugins.p2p.diagnostics.api`
-  - `fcl.plugins.p2p.diagnostics.types`
-  - `fcl.plugins.p2p.diagnostics.exceptions`
+  - `forge.plugins.p2p.diagnostics.plugin`
+  - `forge.plugins.p2p.diagnostics.api`
+  - `forge.plugins.p2p.diagnostics.types`
+  - `forge.plugins.p2p.diagnostics.exceptions`
 
 ## What It Provides
 
@@ -44,11 +44,11 @@ plugins:
 ## Example
 
 ```cpp
-import fcl.plugins.p2p.diagnostics.api;
-import fcl.plugins.p2p.diagnostics.plugin;
+import forge.plugins.p2p.diagnostics.api;
+import forge.plugins.p2p.diagnostics.plugin;
 
-auto diagnostics = context.apis().get<fcl::plugins::p2p::diagnostics::api>(
-   {.id = {"fcl.plugins.p2p.diagnostics"}, .major = 1});
+auto diagnostics = context.apis().get<forge::plugins::p2p::diagnostics::api>(
+   {.id = {"forge.plugins.p2p.diagnostics"}, .major = 1});
 
 auto network = diagnostics->network();
 auto resources = diagnostics->resources();
@@ -56,6 +56,6 @@ auto peers = diagnostics->peers({.only_connected = true, .limit = 100});
 ```
 
 ```cpp
-registry.register_plugin(fcl::plugins::p2p::node::descriptor());
-registry.register_plugin(fcl::plugins::p2p::diagnostics::descriptor());
+registry.register_plugin(forge::plugins::p2p::node::descriptor());
+registry.register_plugin(forge::plugins::p2p::diagnostics::descriptor());
 ```

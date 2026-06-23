@@ -11,9 +11,9 @@ module;
 #include <tuple>
 #include <utility>
 
-module fcl.core.utf8;
+module forge.core.utf8;
 
-namespace fcl {
+namespace forge {
 
 inline constexpr char hex_digits[] = "0123456789abcdef";
 
@@ -92,4 +92,4 @@ void encodeUtf8(const std::wstring& input, std::string* storage) {
    utf8::utf32to8(input.begin(), input.end(), std::back_inserter(*storage));
 }
 
-} // namespace fcl
+} // namespace forge

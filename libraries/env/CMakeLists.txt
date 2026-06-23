@@ -1,9 +1,9 @@
-add_library(fcl_env STATIC env.cpp)
-fcl_target_modules(fcl_env env)
+add_library(forge_env STATIC env.cpp)
+forge_target_modules(forge_env env)
 
-target_include_directories(fcl_env PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+target_include_directories(forge_env PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 target_link_libraries(
-   fcl_env PUBLIC
-      fcl_config
-      fcl_schema
+   forge_env PUBLIC
+      forge_config
+      forge_schema
 )

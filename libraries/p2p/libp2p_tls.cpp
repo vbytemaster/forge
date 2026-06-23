@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -19,21 +19,21 @@ module;
 #include <openssl/pem.h>
 #include <openssl/x509.h>
 
-module fcl.p2p.node;
+module forge.p2p.node;
 
-import fcl.crypto.asymmetric;
-import fcl.crypto.pem;
-import fcl.crypto.x509;
-import fcl.p2p.exceptions;
-import fcl.p2p.identity;
-import fcl.stcp.connection;
-import fcl.stcp.options;
+import forge.crypto.asymmetric;
+import forge.crypto.pem;
+import forge.crypto.x509;
+import forge.p2p.exceptions;
+import forge.p2p.identity;
+import forge.stcp.connection;
+import forge.stcp.options;
 
 #include "identity_signature.hpp"
 
 #include "libp2p_tls.hpp"
 
-namespace fcl::p2p {
+namespace forge::p2p {
 namespace {
 
 constexpr auto extension_oid = "1.3.6.1.4.1.53594.1.1";
@@ -85,7 +85,7 @@ using asn1_octet_string_ptr = std::unique_ptr<ASN1_OCTET_STRING, asn1_octet_stri
 using x509_extension_ptr = std::unique_ptr<X509_EXTENSION, x509_extension_deleter>;
 
 [[noreturn]] void throw_identity(std::string message) {
-   FCL_THROW_EXCEPTION(exceptions::invalid_identity, std::move(message));
+   FORGE_THROW_EXCEPTION(exceptions::invalid_identity, std::move(message));
 }
 
 void require_openssl(bool ok, std::string_view message) {
@@ -118,19 +118,19 @@ void require_openssl(bool ok, std::string_view message) {
    return out;
 }
 
-[[nodiscard]] fcl::crypto::asymmetric::private_key identity_private_key(const node::options& options) {
+[[nodiscard]] forge::crypto::asymmetric::private_key identity_private_key(const node::options& options) {
    if (options.private_key_pem.empty()) {
       throw_identity("libp2p TLS requires identity private key material");
    }
    try {
-      return fcl::crypto::pem::read_private_key(options.private_key_pem);
-   } catch (const fcl::exceptions::base& error) {
+      return forge::crypto::pem::read_private_key(options.private_key_pem);
+   } catch (const forge::exceptions::base& error) {
       throw_identity(error.what());
    }
 }
 
 [[nodiscard]] std::vector<std::uint8_t> identity_public_key_bytes(const node::options& options,
-                                                                  const fcl::crypto::asymmetric::private_key& key) {
+                                                                  const forge::crypto::asymmetric::private_key& key) {
    if (!options.public_key.empty()) {
       return options.public_key;
    }
@@ -194,11 +194,11 @@ void add_libp2p_extension(X509* certificate, std::span<const std::uint8_t> value
 void verify_certificate_basics(X509* certificate) {
    if (X509_cmp_current_time(X509_get0_notBefore(certificate)) > 0 ||
        X509_cmp_current_time(X509_get0_notAfter(certificate)) < 0) {
-      FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS certificate is not currently valid");
+      FORGE_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS certificate is not currently valid");
    }
    auto key = pkey_ptr{X509_get_pubkey(certificate)};
    if (!key || X509_verify(certificate, key.get()) != 1) {
-      FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS certificate self-signature is invalid");
+      FORGE_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS certificate self-signature is invalid");
    }
 }
 
@@ -210,17 +210,17 @@ void verify_certificate_basics(X509* certificate) {
    return message;
 }
 
-[[nodiscard]] peer_id verify_certificate_identity(const fcl::crypto::x509::certificate& certificate,
+[[nodiscard]] peer_id verify_certificate_identity(const forge::crypto::x509::certificate& certificate,
                                                   const std::optional<peer_id>& expected_peer) {
    const auto value = certificate.extension(extension_oid);
    if (value.empty()) {
-      FCL_THROW_EXCEPTION(exceptions::peer_verification_failed,
+      FORGE_THROW_EXCEPTION(exceptions::peer_verification_failed,
                           "libp2p TLS certificate is missing public key extension");
    }
    auto offset = std::size_t{};
    auto read_length = [&value](std::size_t& cursor) {
       if (cursor >= value.size()) {
-         FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS extension is truncated");
+         FORGE_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS extension is truncated");
       }
       const auto first = value[cursor++];
       if ((first & 0x80U) == 0) {
@@ -228,7 +228,7 @@ void verify_certificate_basics(X509* certificate) {
       }
       const auto count = static_cast<std::size_t>(first & 0x7fU);
       if (count == 0 || count > sizeof(std::size_t) || count > value.size() - cursor) {
-         FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "invalid libp2p TLS extension length");
+         FORGE_THROW_EXCEPTION(exceptions::peer_verification_failed, "invalid libp2p TLS extension length");
       }
       auto out = std::size_t{};
       for (auto i = std::size_t{}; i < count; ++i) {
@@ -238,12 +238,12 @@ void verify_certificate_basics(X509* certificate) {
    };
    auto read_octet = [&value, &read_length](std::size_t& cursor) {
       if (cursor >= value.size() || value[cursor++] != 0x04) {
-         FCL_THROW_EXCEPTION(exceptions::peer_verification_failed,
+         FORGE_THROW_EXCEPTION(exceptions::peer_verification_failed,
                              "libp2p TLS extension expected octet string");
       }
       const auto length = read_length(cursor);
       if (length > value.size() - cursor) {
-         FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS extension octet is truncated");
+         FORGE_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS extension octet is truncated");
       }
       const auto begin = value.begin() + static_cast<std::ptrdiff_t>(cursor);
       const auto end = begin + static_cast<std::ptrdiff_t>(length);
@@ -252,25 +252,25 @@ void verify_certificate_basics(X509* certificate) {
       return out;
    };
    if (value.empty() || value[offset++] != 0x30) {
-      FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS extension expected sequence");
+      FORGE_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS extension expected sequence");
    }
    const auto length = read_length(offset);
    if (length != value.size() - offset) {
-      FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS extension sequence length mismatch");
+      FORGE_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS extension sequence length mismatch");
    }
    auto encoded_key = read_octet(offset);
    auto signature = read_octet(offset);
    if (offset != value.size()) {
-      FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS extension has trailing bytes");
+      FORGE_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS extension has trailing bytes");
    }
    const auto key = decode_public_key(encoded_key);
    const auto peer = make_peer_id(key);
    if (expected_peer && peer != *expected_peer) {
-      FCL_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS peer id mismatch");
+      FORGE_THROW_EXCEPTION(exceptions::peer_verification_failed, "libp2p TLS peer id mismatch");
    }
    const auto message = make_signing_message(certificate.public_key_der());
    if (!verify_identity_signature(key, message, signature)) {
-      FCL_THROW_EXCEPTION(exceptions::peer_verification_failed,
+      FORGE_THROW_EXCEPTION(exceptions::peer_verification_failed,
                           "libp2p TLS public key extension signature is invalid");
    }
    return peer;
@@ -319,33 +319,33 @@ libp2p_tls_material make_libp2p_tls_material(const node::options& options) {
                               .private_key_pem = bio_to_string(key_bio.get())};
 }
 
-peer_id verify_libp2p_tls_chain(const fcl::stcp::certificate_chain& chain,
+peer_id verify_libp2p_tls_chain(const forge::stcp::certificate_chain& chain,
                                 const std::optional<peer_id>& expected_peer) {
    if (chain.certificates.size() != 1) {
-      FCL_THROW_EXCEPTION(exceptions::peer_verification_failed,
+      FORGE_THROW_EXCEPTION(exceptions::peer_verification_failed,
                           "libp2p TLS requires exactly one peer certificate");
    }
    auto certificate = parse_certificate(chain.certificates.front().der);
    verify_certificate_basics(certificate.get());
-   auto parsed = fcl::crypto::x509::certificate::from_der(chain.certificates.front().der);
+   auto parsed = forge::crypto::x509::certificate::from_der(chain.certificates.front().der);
    return verify_certificate_identity(parsed, expected_peer);
 }
 
-fcl::stcp::client_options make_libp2p_tls_client_options(const node::options& options) {
+forge::stcp::client_options make_libp2p_tls_client_options(const node::options& options) {
    auto material = make_libp2p_tls_material(options);
-   auto out = fcl::stcp::client_options{};
+   auto out = forge::stcp::client_options{};
    out.security.verify_peer = false;
    out.security.require_peer_certificate = false;
    out.certificate_pem = std::move(material.certificate_pem);
    out.private_key_pem = std::move(material.private_key_pem);
-   out.sni = fcl::stcp::sni_policy::disabled;
+   out.sni = forge::stcp::sni_policy::disabled;
    out.alpn_protocols = {std::string{yamux_protocol}, std::string{legacy_libp2p_alpn}};
    return out;
 }
 
-fcl::stcp::server_options make_libp2p_tls_server_options(const node::options& options) {
+forge::stcp::server_options make_libp2p_tls_server_options(const node::options& options) {
    auto material = make_libp2p_tls_material(options);
-   auto out = fcl::stcp::server_options{};
+   auto out = forge::stcp::server_options{};
    out.security.verify_peer = false;
    out.security.require_peer_certificate = true;
    out.certificate_pem = std::move(material.certificate_pem);
@@ -354,4 +354,4 @@ fcl::stcp::server_options make_libp2p_tls_server_options(const node::options& op
    return out;
 }
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

@@ -1,34 +1,34 @@
 # Secret Provider Plugin
 
-`fcl::plugins::crypto::secrets` provides a local-only secret operations API for
-`fcl_app` applications. It lets application plugins request bounded secret
+`forge::plugins::crypto::secrets` provides a local-only secret operations API for
+`forge_app` applications. It lets application plugins request bounded secret
 retrieval, HKDF-SHA256 derivation and AES-GCM encryption/decryption by
 `secret_id` and `purpose`, without parsing secret-bearing config or encrypted
 files in product code.
 
 The plugin is not a wallet, remote KMS, product vault or authorization service.
 It enforces configured purposes, operation allow-lists, byte limits and local
-source loading policy, then delegates cryptographic primitives to `fcl_crypto`.
+source loading policy, then delegates cryptographic primitives to `forge_crypto`.
 
 ## Target And Modules
 
-- Target: `fcl_plugins_crypto_secrets`
+- Target: `forge_plugins_crypto_secrets`
 - Package component: `plugins_crypto_secrets`
-- Plugin id: `fcl.plugins.crypto.secrets`
-- Main API contract id: `fcl.plugins.crypto.secrets`
+- Plugin id: `forge.plugins.crypto.secrets`
+- Main API contract id: `forge.plugins.crypto.secrets`
 - Config section: `plugins.crypto.secrets`
 
 Public modules:
 
-- `fcl.plugins.crypto.secrets.plugin`
-- `fcl.plugins.crypto.secrets.api`
-- `fcl.plugins.crypto.secrets.types`
-- `fcl.plugins.crypto.secrets.exceptions`
+- `forge.plugins.crypto.secrets.plugin`
+- `forge.plugins.crypto.secrets.api`
+- `forge.plugins.crypto.secrets.types`
+- `forge.plugins.crypto.secrets.exceptions`
 
 ## Configuration
 
-Config is decoded through `BOOST_DESCRIBE_STRUCT`, `fcl_schema` rules and
-`fcl_config`. Secret-bearing fields are schema-marked as secret so generated
+Config is decoded through `BOOST_DESCRIBE_STRUCT`, `forge_schema` rules and
+`forge_config`. Secret-bearing fields are schema-marked as secret so generated
 diagnostics and redaction paths do not expose raw material.
 
 ```yaml
@@ -60,15 +60,15 @@ Register the descriptor with the application shell and acquire the typed API
 from the plugin context:
 
 ```cpp
-registry.register_plugin(fcl::plugins::crypto::secrets::descriptor());
+registry.register_plugin(forge::plugins::crypto::secrets::descriptor());
 ```
 
 ```cpp
-auto secrets = context.apis().get<fcl::plugins::crypto::secrets::api>(
-   {.id = {"fcl.plugins.crypto.secrets"}, .major = 1});
+auto secrets = context.apis().get<forge::plugins::crypto::secrets::api>(
+   {.id = {"forge.plugins.crypto.secrets"}, .major = 1});
 
 auto derived = co_await secrets->derive_hkdf_sha256(
-   fcl::plugins::crypto::secrets::derive_request{
+   forge::plugins::crypto::secrets::derive_request{
       .secret_id = "service/session-key",
       .purpose = "api.payload.decrypt",
       .salt = salt,

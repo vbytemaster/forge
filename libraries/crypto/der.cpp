@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <openssl/bn.h>
 #include <openssl/core_names.h>
@@ -16,16 +16,16 @@ module;
 #include <string>
 #include <type_traits>
 
-module fcl.crypto.der;
+module forge.crypto.der;
 
-import fcl.crypto.asymmetric;
-import fcl.crypto.ed25519;
-import fcl.crypto.p256;
-import fcl.crypto.rsa;
-import fcl.crypto.secp256k1;
-import fcl.crypto.sha256;
+import forge.crypto.asymmetric;
+import forge.crypto.ed25519;
+import forge.crypto.p256;
+import forge.crypto.rsa;
+import forge.crypto.secp256k1;
+import forge.crypto.sha256;
 
-namespace fcl::crypto::der {
+namespace forge::crypto::der {
 using asymmetric::private_key;
 using asymmetric::public_key;
 
@@ -69,11 +69,11 @@ using bn_ctx_ptr = std::unique_ptr<BN_CTX, bn_ctx_deleter>;
 using pkey_ctx_ptr = std::unique_ptr<EVP_PKEY_CTX, pkey_ctx_deleter>;
 
 [[noreturn]] void invalid_key(std::string message) {
-   FCL_THROW_EXCEPTION(exceptions::invalid_key, std::move(message));
+   FORGE_THROW_EXCEPTION(exceptions::invalid_key, std::move(message));
 }
 
 [[noreturn]] void backend_error(std::string message) {
-   FCL_THROW_EXCEPTION(exceptions::backend_error, std::move(message));
+   FORGE_THROW_EXCEPTION(exceptions::backend_error, std::move(message));
 }
 
 [[nodiscard]] pkey_ptr parse_public(std::span<const std::uint8_t> bytes) {
@@ -274,7 +274,7 @@ public_key read_public_key(std::span<const std::uint8_t> value) {
    auto key = parse_public(value);
    const auto type = EVP_PKEY_get_base_id(key.get());
    if (type == EVP_PKEY_RSA) {
-      return public_key{public_key::storage_type{rsa::public_key_shim{fcl::crypto::bytes{value.begin(), value.end()}}}};
+      return public_key{public_key::storage_type{rsa::public_key_shim{forge::crypto::bytes{value.begin(), value.end()}}}};
    }
    if (type == EVP_PKEY_ED25519) {
       return public_key{public_key::storage_type{
@@ -290,7 +290,7 @@ private_key read_private_key(std::span<const std::uint8_t> value) {
    auto key = parse_private(value);
    const auto type = EVP_PKEY_get_base_id(key.get());
    if (type == EVP_PKEY_RSA) {
-      return private_key{private_key::storage_type{rsa::private_key_shim{fcl::crypto::bytes{value.begin(), value.end()}}}};
+      return private_key{private_key::storage_type{rsa::private_key_shim{forge::crypto::bytes{value.begin(), value.end()}}}};
    }
    if (type == EVP_PKEY_ED25519) {
       return private_key{private_key::storage_type{ed25519::private_key_shim{
@@ -324,9 +324,9 @@ bytes write_public_key(const public_key& key) {
          const auto data = bytes_from_range(value.serialize());
          return write_spki(make_ec_public_key("secp256k1", data).get());
       } else {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "public key DER export is not implemented");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "public key DER export is not implemented");
       }
    });
 }
 
-} // namespace fcl::crypto::der
+} // namespace forge::crypto::der

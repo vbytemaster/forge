@@ -1,15 +1,15 @@
-FCL Third-Party And Upstream Notices
+FORGE Third-Party And Upstream Notices
 ====================================
 
 This file preserves notices for source-derived, embedded, and vendored
-permissively licensed code used by FCL. See PROVENANCE.md for source-lineage
+permissively licensed code used by FORGE. See PROVENANCE.md for source-lineage
 classification and compatibility-only donor boundaries.
 
 
 FC / AntelopeIO / Spring / EOSIO lineage
 ----------------------------------------
 
-Portions of FCL derive from or adapt source originally imported from
+Portions of FORGE derive from or adapt source originally imported from
 AntelopeIO/spring and EOSIO/eos through the FC codebase.
 
 AntelopeIO/spring
@@ -164,7 +164,7 @@ Google CityHash
 ---------------
 
 Embedded in `libraries/crypto/city.cpp` and
-`libraries/crypto/include/fcl/crypto/city.cppm`.
+`libraries/crypto/include/forge/crypto/city.cppm`.
 
 Copyright (c) 2011 Google, Inc.
 
@@ -219,7 +219,7 @@ THE SOFTWARE.
 Rene Nyffenegger Base64 With Kevin Heifner Modifications
 --------------------------------------------------------
 
-Embedded in `libraries/crypto/include/fcl/crypto/base64.cppm`.
+Embedded in `libraries/crypto/include/forge/crypto/base64.cppm`.
 
 base64.cpp and base64.h
 

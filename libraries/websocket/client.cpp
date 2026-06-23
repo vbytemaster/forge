@@ -21,14 +21,14 @@ module;
 #include <boost/beast/core/tcp_stream.hpp>
 #include <boost/beast/ssl.hpp>
 
-module fcl.websocket.client;
+module forge.websocket.client;
 
-import fcl.asio.blocking;
-import fcl.asio.runtime;
-import fcl.websocket.connection;
-import fcl.websocket.exceptions;
+import forge.asio.blocking;
+import forge.asio.runtime;
+import forge.websocket.connection;
+import forge.websocket.exceptions;
 
-namespace fcl::websocket {
+namespace forge::websocket {
 namespace {
 
 namespace asio = boost::asio;
@@ -43,7 +43,7 @@ namespace detail {
 
 class client_impl {
  public:
-   client_impl(fcl::asio::runtime& runtime_value, client_endpoint endpoint_value)
+   client_impl(forge::asio::runtime& runtime_value, client_endpoint endpoint_value)
        : runtime(runtime_value), endpoint(std::move(endpoint_value)), strand(asio::make_strand(runtime.context())),
          resolver(strand), ssl_context(asio::ssl::context::tls_client) {
       ssl_context.set_default_verify_paths();
@@ -84,7 +84,7 @@ class client_impl {
       co_return connection_value;
    }
 
-   fcl::asio::runtime& runtime;
+   forge::asio::runtime& runtime;
    client_endpoint endpoint;
    asio::strand<asio::io_context::executor_type> strand;
    tcp::resolver resolver;
@@ -93,7 +93,7 @@ class client_impl {
 
 } // namespace detail
 
-client::client(fcl::asio::runtime& runtime, client_endpoint endpoint)
+client::client(forge::asio::runtime& runtime, client_endpoint endpoint)
     : impl_(std::make_unique<detail::client_impl>(runtime, std::move(endpoint))) {}
 
 client::~client() = default;
@@ -104,7 +104,7 @@ boost::asio::awaitable<connection::ptr> client::async_connect(std::string_view p
 }
 
 connection::ptr client::connect(std::string_view path, client_options options) {
-   return fcl::asio::blocking::run(impl_->runtime, async_connect(path, options));
+   return forge::asio::blocking::run(impl_->runtime, async_connect(path, options));
 }
 
-} // namespace fcl::websocket
+} // namespace forge::websocket

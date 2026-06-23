@@ -1,12 +1,12 @@
-# fcl_http
+# forge_http
 
-`fcl_http` is the HTTP substrate: URL parsing, FCL-owned request/response
+`forge_http` is the HTTP substrate: URL parsing, FORGE-owned request/response
 messages, streaming body primitives, routing, middleware, server and
 client/connection primitives. It uses Boost.Beast/URL internally but keeps
-FCL-owned public message, route and lifecycle semantics.
+FORGE-owned public message, route and lifecycle semantics.
 
-Application-level server lifecycle can be owned directly with `fcl::http::server`
-or composed through the official `fcl.plugins.http.server` plugin. The library
+Application-level server lifecycle can be owned directly with `forge::http::server`
+or composed through the official `forge.plugins.http.server` plugin. The library
 still owns HTTP mechanics; the plugin owns app lifecycle/config composition.
 
 ## When To Use
@@ -26,49 +26,49 @@ still owns HTTP mechanics; the plugin owns app lifecycle/config composition.
 
 ## Public Modules
 
-- `fcl.http.types` — FCL-owned Beast-like request/response wrappers, HTTP
+- `forge.http.types` — FORGE-owned Beast-like request/response wrappers, HTTP
   method/status enums and endpoint DTO state.
-- `fcl.http.body`, `fcl.http.stream` — FCL-owned chunk, reader, writer and
+- `forge.http.body`, `forge.http.stream` — FORGE-owned chunk, reader, writer and
   stream route types.
-- `fcl.http.file`, `fcl.http.range` — file responses, static roots and byte
+- `forge.http.file`, `forge.http.range` — file responses, static roots and byte
   range parsing.
-- `fcl.http.upload` — upload reader, spill-to-disk spool and multipart form-data
+- `forge.http.upload` — upload reader, spill-to-disk spool and multipart form-data
   parsing.
-- `fcl.http.base_url`, `fcl.http.target`.
-- `fcl.http.router`, `fcl.http.route_context`, `fcl.http.middleware`.
-- `fcl.http.client`, `fcl.http.connection`, `fcl.http.server`.
+- `forge.http.base_url`, `forge.http.target`.
+- `forge.http.router`, `forge.http.route_context`, `forge.http.middleware`.
+- `forge.http.client`, `forge.http.connection`, `forge.http.server`.
 
-Target: `fcl_http`.
+Target: `forge_http`.
 
-Dependencies: `fcl_asio`, `fcl_websocket`, `fcl_json`, `fcl_schema`,
+Dependencies: `forge_asio`, `forge_websocket`, `forge_json`, `forge_schema`,
 Boost.Asio, Boost.Beast, Boost.URL, OpenSSL.
 
 Boost.Beast remains the runtime donor and backend for parser/serializer/socket
-mechanics, but public HTTP APIs use `fcl::http::request` and
-`fcl::http::response` wrappers rather than Beast message aliases.
+mechanics, but public HTTP APIs use `forge::http::request` and
+`forge::http::response` wrappers rather than Beast message aliases.
 
-Typed `FCL_HTTP_API(...)` route binding lives in the separate `fcl_http_api`
-target/component. Its public modules are `fcl.http.api.binding`,
-`fcl.http.api.mapping` and `fcl.http.api.proxy`; its macro header is
-`<fcl/http_api/macros.hpp>`.
+Typed `FORGE_HTTP_API(...)` route binding lives in the separate `forge_http_api`
+target/component. Its public modules are `forge.http.api.binding`,
+`forge.http.api.mapping` and `forge.http.api.proxy`; its macro header is
+`<forge/http_api/macros.hpp>`.
 
 ## Examples
 
 ### Parse Base URL
 
 ```cpp
-import fcl.http.base_url;
+import forge.http.base_url;
 
-auto endpoint = fcl::http::parse_base_url("https://127.0.0.1:8443/api");
+auto endpoint = forge::http::parse_base_url("https://127.0.0.1:8443/api");
 auto target = endpoint.make_target("/healthz"); // "/api/healthz"
 ```
 
 ### Parse A Request Target
 
 ```cpp
-import fcl.http.target;
+import forge.http.target;
 
-auto parsed = fcl::http::parse_target("/v1/items?limit=10&cursor=abc");
+auto parsed = forge::http::parse_target("/v1/items?limit=10&cursor=abc");
 auto first_segment = parsed.segments.front(); // "v1"
 auto query = parsed.query_params.front();
 ```
@@ -78,25 +78,25 @@ auto query = parsed.query_params.front();
 ```cpp
 #include <boost/asio/awaitable.hpp>
 
-import fcl.http.router;
-import fcl.http.types;
+import forge.http.router;
+import forge.http.types;
 
-auto router = fcl::http::router{};
-router.get("/healthz", [](fcl::http::route_context& ctx)
-   -> boost::asio::awaitable<fcl::http::response> {
-   co_return fcl::http::make_text_response(ctx.request, fcl::http::status::ok, "ok");
+auto router = forge::http::router{};
+router.get("/healthz", [](forge::http::route_context& ctx)
+   -> boost::asio::awaitable<forge::http::response> {
+   co_return forge::http::make_text_response(ctx.request, forge::http::status::ok, "ok");
 });
 ```
 
 ### Use Endpoint Request State
 
-Typed HTTP request DTOs may derive from `fcl::http::endpoint_request` when a
+Typed HTTP request DTOs may derive from `forge::http::endpoint_request` when a
 handler needs read-only access to the incoming HTTP request or wants to add
 response metadata. The base is not described with Boost.Describe and is ignored
 by JSON/schema binding.
 
 ```cpp
-struct read_request : fcl::http::endpoint_request {
+struct read_request : forge::http::endpoint_request {
    std::string ref;
 };
 
@@ -114,44 +114,44 @@ cache_impl::read(read_request request) {
 ### Route Streaming Bodies
 
 Use stream routes for upload/download mechanics that should be visible as HTTP
-body flow, not as `FCL_API` DTO calls. The server routes after headers are read;
+body flow, not as `FORGE_API` DTO calls. The server routes after headers are read;
 middleware can reject before the body is consumed.
 
 ```cpp
-import fcl.http.body;
-import fcl.http.router;
-import fcl.http.stream;
+import forge.http.body;
+import forge.http.router;
+import forge.http.stream;
 
-router.post_stream("/upload", [](fcl::http::stream_request& req)
-   -> boost::asio::awaitable<fcl::http::stream_response> {
+router.post_stream("/upload", [](forge::http::stream_request& req)
+   -> boost::asio::awaitable<forge::http::stream_response> {
    std::uint64_t received = 0;
    while (auto chunk = co_await req.body.async_read()) {
       received += chunk->bytes.size();
       consume_upload_chunk(chunk->bytes);
    }
 
-   co_return fcl::http::stream_response::buffered(
-      fcl::http::make_text_response(req.context.request, fcl::http::status::ok, "stored"));
+   co_return forge::http::stream_response::buffered(
+      forge::http::make_text_response(req.context.request, forge::http::status::ok, "stored"));
 });
 
-router.get_stream("/download", [](fcl::http::stream_request& req)
-   -> boost::asio::awaitable<fcl::http::stream_response> {
+router.get_stream("/download", [](forge::http::stream_request& req)
+   -> boost::asio::awaitable<forge::http::stream_response> {
    auto source = open_chunk_source(req.context.request);
-   auto head = fcl::http::response{fcl::http::status::ok, req.context.request.version()};
-   head.set(fcl::http::field::content_type, "application/octet-stream");
+   auto head = forge::http::response{forge::http::status::ok, req.context.request.version()};
+   head.set(forge::http::field::content_type, "application/octet-stream");
 
-   co_return fcl::http::stream_response{
+   co_return forge::http::stream_response{
       .head = std::move(head),
       .body = [source = std::move(source)]() mutable
-         -> boost::asio::awaitable<std::optional<fcl::http::body_chunk>> {
+         -> boost::asio::awaitable<std::optional<forge::http::body_chunk>> {
          co_return co_await source.next_chunk();
       },
    };
 });
 ```
 
-Stream routes provide FCL-owned body readers and response body sources. Use
-`fcl.http.upload` when the request body should be bounded, optionally spooled to
+Stream routes provide FORGE-owned body readers and response body sources. Use
+`forge.http.upload` when the request body should be bounded, optionally spooled to
 disk, or parsed as browser-style `multipart/form-data`.
 
 ### Read Uploads
@@ -162,13 +162,13 @@ when the returned `upload_part` is destroyed unless the caller explicitly
 releases the spool.
 
 ```cpp
-import fcl.http.upload;
+import forge.http.upload;
 
-router.post_stream("/upload", [](fcl::http::stream_request& req)
-   -> boost::asio::awaitable<fcl::http::stream_response> {
-   auto reader = fcl::http::upload_reader{
+router.post_stream("/upload", [](forge::http::stream_request& req)
+   -> boost::asio::awaitable<forge::http::stream_response> {
+   auto reader = forge::http::upload_reader{
       std::move(req.body),
-         fcl::http::upload_options{
+         forge::http::upload_options{
             .memory_threshold_bytes = 1 * 1024 * 1024,
             .max_file_bytes = 64 * 1024 * 1024,
             .max_field_bytes = 1 * 1024 * 1024,
@@ -179,14 +179,14 @@ router.post_stream("/upload", [](fcl::http::stream_request& req)
    auto part = co_await reader.async_read();
    consume_upload(part);
 
-   co_return fcl::http::stream_response::buffered(
-      fcl::http::make_text_response(req.context.request, fcl::http::status::ok, "stored"));
+   co_return forge::http::stream_response::buffered(
+      forge::http::make_text_response(req.context.request, forge::http::status::ok, "stored"));
 });
 ```
 
 `async_read_multipart(content_type)` parses browser-style form uploads into
 fields and file parts. It is not an object-storage multipart workflow; object
-storage state machines belong above `fcl_http`.
+storage state machines belong above `forge_http`.
 
 Multipart limits are separate: `max_total_bytes` bounds the whole envelope,
 `max_file_bytes` bounds each file part, and `max_field_bytes` bounds each
@@ -201,47 +201,47 @@ normalization, traversal rejection, configurable symlink policy, `HEAD`, byte
 ranges and conditional metadata headers.
 
 ```cpp
-import fcl.http.file;
-import fcl.http.router;
-import fcl.http.stream;
+import forge.http.file;
+import forge.http.router;
+import forge.http.stream;
 
-auto files = std::make_shared<fcl::http::static_file_root>(
+auto files = std::make_shared<forge::http::static_file_root>(
    "/srv/public",
-   fcl::http::file_options{
+   forge::http::file_options{
       .content_type = "application/octet-stream",
-      .symlinks = fcl::http::symlink_policy::reject,
+      .symlinks = forge::http::symlink_policy::reject,
    });
 
-router.get_stream("/files/:name", [files](fcl::http::stream_request& req)
-   -> boost::asio::awaitable<fcl::http::stream_response> {
+router.get_stream("/files/:name", [files](forge::http::stream_request& req)
+   -> boost::asio::awaitable<forge::http::stream_response> {
    co_return co_await files->serve(req, *req.context.route_param("name"));
 });
 
-router.head_stream("/files/:name", [files](fcl::http::stream_request& req)
-   -> boost::asio::awaitable<fcl::http::stream_response> {
+router.head_stream("/files/:name", [files](forge::http::stream_request& req)
+   -> boost::asio::awaitable<forge::http::stream_response> {
    co_return co_await files->serve(req, *req.context.route_param("name"));
 });
 ```
 
 This is a file-serving foundation, not a storage product. Object metadata,
 authorization, placement and compatibility-specific error shapes belong above
-`fcl_http`.
+`forge_http`.
 
 ### Mount API Bindings
 
-`FCL_HTTP_API(...)` maps a typed `FCL_API(...)` contract onto native HTTP routes.
+`FORGE_HTTP_API(...)` maps a typed `FORGE_API(...)` contract onto native HTTP routes.
 The binding is a composable artifact; `build()` does not mutate the router.
 
 ```cpp
-#include <fcl/api/macros.hpp>
-#include <fcl/http_api/macros.hpp>
+#include <forge/api/macros.hpp>
+#include <forge/http_api/macros.hpp>
 
-import fcl.api.connection;
-import fcl.api.registry;
-import fcl.api.binding;
-import fcl.http.api.binding;
-import fcl.http.api.proxy;
-import fcl.http.router;
+import forge.api.connection;
+import forge.api.registry;
+import forge.api.binding;
+import forge.http.api.binding;
+import forge.http.api.proxy;
+import forge.http.router;
 
 struct read_chunk {
    std::string ref;
@@ -258,9 +258,9 @@ struct chunk {
    std::string bytes;
 };
 
-class cache : public fcl::api::contract<
+class cache : public forge::api::contract<
    cache,
-   fcl::api::surface::local | fcl::api::surface::remote> {
+   forge::api::surface::local | forge::api::surface::remote> {
  public:
    virtual ~cache() = default;
 
@@ -268,23 +268,23 @@ class cache : public fcl::api::contract<
    virtual boost::asio::awaitable<chunk> write(write_chunk request) = 0;
 };
 
-FCL_API(
+FORGE_API(
    cache,
-   FCL_API_CONTRACT("cache", 1, 0),
-   FCL_API_METHOD(read),
-   FCL_API_METHOD(write))
+   FORGE_API_CONTRACT("cache", 1, 0),
+   FORGE_API_METHOD(read),
+   FORGE_API_METHOD(write))
 
-FCL_HTTP_API(
+FORGE_HTTP_API(
    cache,
-   FCL_HTTP_GET(read, "/cache/chunks/:ref?offset={offset}&limit={limit}"),
-   FCL_HTTP_PUT(write, "/cache/chunks/:ref", created))
+   FORGE_HTTP_GET(read, "/cache/chunks/:ref?offset={offset}&limit={limit}"),
+   FORGE_HTTP_PUT(write, "/cache/chunks/:ref", created))
 
-auto plan = fcl::api::binding()
+auto plan = forge::api::binding()
    .serve(app.apis())
    .export_api<cache>()
    .build();
 
-auto binding = fcl::http::api::binding()
+auto binding = forge::http::api::binding()
    .use(plan)
    .bind<cache>()
    .build();
@@ -300,7 +300,7 @@ not wrap typed calls in a message-frame body.
 For production HTTP endpoints, prefer one described request DTO. FastAPI-style
 parameter categories live as DTO fields, not as a long positional method
 signature. This keeps call sites readable, keeps validation paths named, and
-keeps the HTTP-specific surface out of `fcl_api`.
+keeps the HTTP-specific surface out of `forge_api`.
 
 ```cpp
 struct write_payload {
@@ -317,14 +317,14 @@ BOOST_DESCRIBE_STRUCT(write_receipt, (), (id))
 struct put_object_request {
    std::string bucket;
    std::string key;
-   fcl::http::query<std::uint32_t> ttl;
-   fcl::http::header<std::string> request_id;
-   fcl::http::body<write_payload> body;
+   forge::http::query<std::uint32_t> ttl;
+   forge::http::header<std::string> request_id;
+   forge::http::body<write_payload> body;
 };
 
 BOOST_DESCRIBE_STRUCT(put_object_request, (), (bucket, key, ttl, request_id, body))
 
-class object_api : public fcl::api::contract<object_api> {
+class object_api : public forge::api::contract<object_api> {
  public:
    virtual ~object_api() = default;
 
@@ -332,27 +332,27 @@ class object_api : public fcl::api::contract<object_api> {
    put_object(put_object_request request) = 0;
 };
 
-FCL_API(
+FORGE_API(
    object_api,
-   FCL_API_CONTRACT("object", 1, 0),
-   FCL_API_METHOD(put_object))
+   FORGE_API_CONTRACT("object", 1, 0),
+   FORGE_API_METHOD(put_object))
 
-FCL_HTTP_API(
+FORGE_HTTP_API(
    object_api,
-   FCL_HTTP_PUT(put_object, "/objects/:bucket/:key?ttl={ttl}", created,
-      FCL_HTTP_HEADER(request_id, "X-Request-Id")))
+   FORGE_HTTP_PUT(put_object, "/objects/:bucket/:key?ttl={ttl}", created,
+      FORGE_HTTP_HEADER(request_id, "X-Request-Id")))
 ```
 
 Server binding fills `bucket` and `key` from path placeholders, `ttl` from the
 query string, `request_id` from `X-Request-Id`, and `body` from a JSON request
 body. If a wire header or form name must differ from the DTO field name, use
-the existing route options such as `FCL_HTTP_HEADER(field, "Wire-Name")` or
-`FCL_HTTP_FORM(field, "wire-name")`.
+the existing route options such as `FORGE_HTTP_HEADER(field, "Wire-Name")` or
+`FORGE_HTTP_FORM(field, "wire-name")`.
 
 The same typed client call builds the HTTP request:
 
 ```cpp
-auto objects = co_await fcl::http::api::remote<object_api>(client);
+auto objects = co_await forge::http::api::remote<object_api>(client);
 auto receipt = co_await objects->put_object({
    .bucket = "cache",
    .key = "chunk-1",
@@ -366,7 +366,7 @@ HTTP-only special request types include `query<T>`, `header<T>`, `cookie<T>`,
 `body<T>`, `form<T>`, `form_field<T>`, `upload_file`, `body_bytes` and
 `body_stream`, and they are supported as fields of a described request DTO.
 The typed HTTP client supports JSON, raw bytes, streaming body and browser-style
-multipart DTO fields without routing these wrappers through `fcl.raw`.
+multipart DTO fields without routing these wrappers through `forge.raw`.
 
 HTTP positional methods remain available only as small routing sugar: scalar,
 string, enum and optional arguments may bind to route path/query placeholders,
@@ -386,12 +386,12 @@ background work.
 Low-level middleware can be installed directly on a router:
 
 ```cpp
-router.use([](fcl::http::route_context& ctx, fcl::http::next_handler next)
-   -> boost::asio::awaitable<fcl::http::response> {
-   if (ctx.request.find(fcl::http::field::authorization) == ctx.request.end()) {
-      co_return fcl::http::make_text_response(
+router.use([](forge::http::route_context& ctx, forge::http::next_handler next)
+   -> boost::asio::awaitable<forge::http::response> {
+   if (ctx.request.find(forge::http::field::authorization) == ctx.request.end()) {
+      co_return forge::http::make_text_response(
          ctx.request,
-         fcl::http::status::unauthorized,
+         forge::http::status::unauthorized,
          "missing authorization");
    }
    co_return co_await next();
@@ -402,15 +402,15 @@ Typed API bindings should contribute middleware through the binding artifact so
 route plugins can be composed before the server starts:
 
 ```cpp
-auto binding = fcl::http::api::binding()
+auto binding = forge::http::api::binding()
    .use(plan)
-   .middleware(fcl::http::middleware_descriptor{
+   .middleware(forge::http::middleware_descriptor{
       .id = "cache.authz",
-      .phase = fcl::http::middleware_phase::security,
+      .phase = forge::http::middleware_phase::security,
       .order = 100,
       .path_prefix = "/cache",
-      .handler = [](fcl::http::route_context& ctx, fcl::http::next_handler next)
-         -> boost::asio::awaitable<fcl::http::response> {
+      .handler = [](forge::http::route_context& ctx, forge::http::next_handler next)
+         -> boost::asio::awaitable<forge::http::response> {
          authorize_cache_request(ctx.request);
          co_return co_await next();
       },
@@ -428,11 +428,11 @@ middleware ids and duplicate routes fail deterministically during
 ### Start A Local Server
 
 ```cpp
-import fcl.asio.runtime;
-import fcl.http.server;
+import forge.asio.runtime;
+import forge.http.server;
 
-auto runtime = fcl::asio::runtime{};
-auto server = fcl::http::server{
+auto runtime = forge::asio::runtime{};
+auto server = forge::http::server{
    runtime,
    {
       .bind_address = "127.0.0.1",
@@ -453,12 +453,12 @@ co_await server.async_start();
 ```cpp
 #include <boost/asio/awaitable.hpp>
 
-import fcl.http.client;
-import fcl.http.types;
+import forge.http.client;
+import forge.http.types;
 
-boost::asio::awaitable<void> check_ready(fcl::http::client& client) {
-   fcl::http::response response = co_await client.async_get("/readyz");
-   if (response.result() != fcl::http::status::ok) {
+boost::asio::awaitable<void> check_ready(forge::http::client& client) {
+   forge::http::response response = co_await client.async_get("/readyz");
+   if (response.result() != forge::http::status::ok) {
       report_http_error(response.result(), response.body());
    }
 }
@@ -469,12 +469,12 @@ boost::asio::awaitable<void> check_ready(fcl::http::client& client) {
 ```cpp
 #include <boost/asio/awaitable.hpp>
 
-import fcl.api.handle;
-import fcl.http.client;
-import fcl.http.api.proxy;
+import forge.api.handle;
+import forge.http.client;
+import forge.http.api.proxy;
 
-boost::asio::awaitable<void> read_chunk(fcl::http::client& client) {
-   fcl::api::handle<cache> cache_api = co_await fcl::http::api::remote<cache>(client);
+boost::asio::awaitable<void> read_chunk(forge::http::client& client) {
+   forge::api::handle<cache> cache_api = co_await forge::http::api::remote<cache>(client);
    chunk value = co_await cache_api->read({
       .ref = "abc",
       .offset = 0,
@@ -490,9 +490,9 @@ boost::asio::awaitable<void> read_chunk(fcl::http::client& client) {
 #include <boost/asio/awaitable.hpp>
 #include <boost/describe.hpp>
 
-import fcl.http.client;
-import fcl.http.types;
-import fcl.json;
+import forge.http.client;
+import forge.http.types;
+import forge.json;
 
 struct action_request {
    bool dry_run = false;
@@ -500,30 +500,30 @@ struct action_request {
 
 BOOST_DESCRIBE_STRUCT(action_request, (), (dry_run))
 
-boost::asio::awaitable<void> submit_action(fcl::http::client& client) {
-   auto body = fcl::json::write(action_request{.dry_run = true});
+boost::asio::awaitable<void> submit_action(forge::http::client& client) {
+   auto body = forge::json::write(action_request{.dry_run = true});
    if (!body.ok()) {
       report_diagnostics(body.diagnostics);
       co_return;
    }
 
-   fcl::http::response response = co_await client.async_post_json("/v1/actions", body.text);
-   if (response.result() != fcl::http::status::ok) {
+   forge::http::response response = co_await client.async_post_json("/v1/actions", body.text);
+   if (response.result() != forge::http::status::ok) {
       handle_http_error(response.result(), response.body());
    }
 }
 ```
 
 Raw JSON string literals are fine for tests and probes, but application APIs should
-prefer described DTOs plus `fcl_json` so field names and diagnostics stay in one
+prefer described DTOs plus `forge_json` so field names and diagnostics stay in one
 place.
 
 ### WebSocket Upgrade Route
 
 ```cpp
-import fcl.websocket.connection;
+import forge.websocket.connection;
 
-router.websocket("/events", [](std::shared_ptr<fcl::websocket::connection> ws) {
+router.websocket("/events", [](std::shared_ptr<forge::websocket::connection> ws) {
    // Own the connection lifecycle in the caller.
 });
 ```
@@ -539,19 +539,19 @@ limits/timeouts apply while chunks are read.
 ## Risks And Anti-Patterns
 
 - Do not use HTTP routes as the authorization boundary. Middleware may call a
-  consumer auth service, but application policy lives above `fcl_http`.
+  consumer auth service, but application policy lives above `forge_http`.
 - Do not retry mutating requests implicitly. The caller must decide whether an
   operation is idempotent and safe to replay.
 - Do not log request bodies, headers or query strings before redaction. They may
   contain credentials or user data.
 - Do not catch application exceptions in every route by hand. Prefer typed
-  `fcl_exceptions` categories and let API bindings project them to
-  `fcl::api::error_payload`.
+  `forge_exceptions` categories and let API bindings project them to
+  `forge::api::error_payload`.
 - Do not force all typed APIs into a single generic RPC endpoint; use native HTTP route/status
   mapping where HTTP is the transport.
-- Do not force file upload/download through `FCL_API`; use stream routes and the
+- Do not force file upload/download through `FORGE_API`; use stream routes and the
   file/upload helper layers.
-- Do not hide server bind/TLS/lifecycle in `fcl.http.api.binding`; the API builder owns
+- Do not hide server bind/TLS/lifecycle in `forge.http.api.binding`; the API builder owns
   route mapping, API middleware, status projection and error payloads only.
 - Do not add HTTP API builder options unless they change runtime behavior and
   have tests.
@@ -563,11 +563,11 @@ limits/timeouts apply while chunks are read.
 - Do not put WebSocket server lifecycle in a separate `websocket::server`; v1
   upgrade starts from the HTTP server/router.
 - Do not log headers or bodies containing credentials without redaction.
-- Do not put authentication policy in `fcl_http`; middleware can call a consumer
+- Do not put authentication policy in `forge_http`; middleware can call a consumer
   auth service, but the policy owner is outside this library.
 
 ## Tests
 
-`test_fcl_http_websocket` covers base URL and target parsing, async router and
+`test_forge_http_websocket` covers base URL and target parsing, async router and
 middleware behavior, stream request/response bodies, typed HTTP API mapping,
 client/server roundtrip, reconnects and WebSocket upgrade.

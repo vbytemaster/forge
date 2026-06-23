@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <map>
@@ -9,20 +9,20 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.plugins.crypto.secrets.plugin;
+module forge.plugins.crypto.secrets.plugin;
 
-import fcl.crypto.aes;
-import fcl.crypto.kdf;
-import fcl.crypto.random;
-import fcl.crypto.secret_bytes;
-import fcl.crypto.types;
-import fcl.exceptions;
-import fcl.plugins.crypto.secrets.exceptions;
-import fcl.plugins.crypto.secrets.types;
+import forge.crypto.aes;
+import forge.crypto.kdf;
+import forge.crypto.random;
+import forge.crypto.secret_bytes;
+import forge.crypto.types;
+import forge.exceptions;
+import forge.plugins.crypto.secrets.exceptions;
+import forge.plugins.crypto.secrets.types;
 
 #include "details/plugin_impl.hxx"
 
-namespace fcl::plugins::crypto::secrets {
+namespace forge::plugins::crypto::secrets {
 namespace {
 
 [[nodiscard]] bool contains_purpose(const std::vector<std::string>& allowed, std::string_view purpose) {
@@ -37,8 +37,8 @@ template <typename SecretMap>
 [[nodiscard]] const typename SecretMap::mapped_type& find_secret(const SecretMap& secrets, std::string_view id) {
    const auto found = secrets.find(std::string{id});
    if (found == secrets.end()) {
-      FCL_THROW_EXCEPTION(exceptions::secret_not_found, "secret is not configured",
-                          fcl::exceptions::ctx("secret_id", std::string{id}));
+      FORGE_THROW_EXCEPTION(exceptions::secret_not_found, "secret is not configured",
+                          forge::exceptions::ctx("secret_id", std::string{id}));
    }
    return found->second;
 }
@@ -46,58 +46,58 @@ template <typename SecretMap>
 template <typename Secret>
 void require_allowed(const Secret& secret, std::string_view purpose, operation value) {
    if (!contains_purpose(secret.purposes, purpose)) {
-      FCL_THROW_EXCEPTION(exceptions::purpose_denied, "secret purpose is not allowed",
-                          fcl::exceptions::ctx("secret_id", secret.id),
-                          fcl::exceptions::ctx("purpose", std::string{purpose}));
+      FORGE_THROW_EXCEPTION(exceptions::purpose_denied, "secret purpose is not allowed",
+                          forge::exceptions::ctx("secret_id", secret.id),
+                          forge::exceptions::ctx("purpose", std::string{purpose}));
    }
    if (!contains_operation(secret.operations, value)) {
-      FCL_THROW_EXCEPTION(exceptions::operation_denied, "secret operation is not allowed",
-                          fcl::exceptions::ctx("secret_id", secret.id));
+      FORGE_THROW_EXCEPTION(exceptions::operation_denied, "secret operation is not allowed",
+                          forge::exceptions::ctx("secret_id", secret.id));
    }
 }
 
 void require_size(std::uint64_t actual, std::uint64_t limit, const char* label) {
    if (actual > limit) {
-      FCL_THROW_EXCEPTION(exceptions::size_limit_exceeded, std::string{label} + " exceeds configured limit");
+      FORGE_THROW_EXCEPTION(exceptions::size_limit_exceeded, std::string{label} + " exceeds configured limit");
    }
 }
 
-[[nodiscard]] fcl::crypto::bytes copy_for_explicit_raw_export(const fcl::crypto::secret_bytes& material) {
+[[nodiscard]] forge::crypto::bytes copy_for_explicit_raw_export(const forge::crypto::secret_bytes& material) {
    return material.copy();
 }
 
 template <typename Secret>
-[[nodiscard]] fcl::crypto::aes256_key aes_key_from_secret(const Secret& secret) {
+[[nodiscard]] forge::crypto::aes256_key aes_key_from_secret(const Secret& secret) {
    try {
-      return fcl::crypto::make_aes256_key(secret.material.span());
+      return forge::crypto::make_aes256_key(secret.material.span());
    } catch (const std::exception&) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_secret, "secret is not a valid AES-256 key",
-                          fcl::exceptions::ctx("secret_id", secret.id));
+      FORGE_THROW_EXCEPTION(exceptions::invalid_secret, "secret is not a valid AES-256 key",
+                          forge::exceptions::ctx("secret_id", secret.id));
    }
 }
 
 [[noreturn]] void throw_malformed_aes_gcm_nonce(const std::string& secret_id) {
-   FCL_THROW_EXCEPTION(exceptions::invalid_secret, "AES-GCM nonce is malformed",
-                       fcl::exceptions::ctx("secret_id", secret_id));
+   FORGE_THROW_EXCEPTION(exceptions::invalid_secret, "AES-GCM nonce is malformed",
+                       forge::exceptions::ctx("secret_id", secret_id));
 }
 
 [[noreturn]] void throw_malformed_aes_gcm_tag(const std::string& secret_id) {
-   FCL_THROW_EXCEPTION(exceptions::invalid_secret, "AES-GCM tag is malformed",
-                       fcl::exceptions::ctx("secret_id", secret_id));
+   FORGE_THROW_EXCEPTION(exceptions::invalid_secret, "AES-GCM tag is malformed",
+                       forge::exceptions::ctx("secret_id", secret_id));
 }
 
 [[noreturn]] void throw_malformed_hkdf_request(const std::string& secret_id) {
-   FCL_THROW_EXCEPTION(exceptions::invalid_secret, "HKDF request is malformed",
-                       fcl::exceptions::ctx("secret_id", secret_id));
+   FORGE_THROW_EXCEPTION(exceptions::invalid_secret, "HKDF request is malformed",
+                       forge::exceptions::ctx("secret_id", secret_id));
 }
 
 [[noreturn]] void throw_malformed_aes_gcm_parameter(
-   const fcl::exceptions::runtime_coded_exception<fcl::crypto::aes::exceptions::code>& error,
+   const forge::exceptions::runtime_coded_exception<forge::crypto::aes::exceptions::code>& error,
    const std::string& secret_id) {
    switch (error.value()) {
-   case fcl::crypto::aes::exceptions::code::invalid_nonce:
+   case forge::crypto::aes::exceptions::code::invalid_nonce:
       throw_malformed_aes_gcm_nonce(secret_id);
-   case fcl::crypto::aes::exceptions::code::invalid_tag:
+   case forge::crypto::aes::exceptions::code::invalid_tag:
       throw_malformed_aes_gcm_tag(secret_id);
    default:
       throw;
@@ -105,10 +105,10 @@ template <typename Secret>
 }
 
 [[noreturn]] void throw_malformed_hkdf_parameter(
-   const fcl::exceptions::runtime_coded_exception<fcl::crypto::kdf::exceptions::code>& error,
+   const forge::exceptions::runtime_coded_exception<forge::crypto::kdf::exceptions::code>& error,
    const std::string& secret_id) {
    switch (error.value()) {
-   case fcl::crypto::kdf::exceptions::code::invalid_options:
+   case forge::crypto::kdf::exceptions::code::invalid_options:
       throw_malformed_hkdf_request(secret_id);
    default:
       throw;
@@ -140,8 +140,8 @@ get_result plugin::impl::get_bytes(get_request value) const {
    const auto& secret = find_secret(secrets, value.secret_id);
    require_allowed(secret, value.purpose, operation::get_bytes);
    if (!secret.allow_raw_export) {
-      FCL_THROW_EXCEPTION(exceptions::operation_denied, "raw secret export is disabled",
-                          fcl::exceptions::ctx("secret_id", secret.id));
+      FORGE_THROW_EXCEPTION(exceptions::operation_denied, "raw secret export is disabled",
+                          forge::exceptions::ctx("secret_id", secret.id));
    }
    return get_result{
       .secret_id = secret.id,
@@ -153,16 +153,16 @@ derive_result plugin::impl::derive_hkdf_sha256(derive_request value) const {
    const auto& secret = find_secret(secrets, value.secret_id);
    require_allowed(secret, value.purpose, operation::derive_hkdf_sha256);
    try {
-      auto output = fcl::crypto::derive_hkdf_sha256(fcl::crypto::hkdf_sha256_span_request{
+      auto output = forge::crypto::derive_hkdf_sha256(forge::crypto::hkdf_sha256_span_request{
          .secret = secret.material.span(),
          .salt = value.salt,
          .info = value.info,
          .output_size = static_cast<std::size_t>(value.output_size),
       });
       return derive_result{.secret_id = secret.id, .bytes = std::move(output)};
-   } catch (const fcl::crypto::kdf::exceptions::invalid_options&) {
+   } catch (const forge::crypto::kdf::exceptions::invalid_options&) {
       throw_malformed_hkdf_request(secret.id);
-   } catch (const fcl::exceptions::runtime_coded_exception<fcl::crypto::kdf::exceptions::code>& error) {
+   } catch (const forge::exceptions::runtime_coded_exception<forge::crypto::kdf::exceptions::code>& error) {
       throw_malformed_hkdf_parameter(error, secret.id);
    }
 }
@@ -175,10 +175,10 @@ aead_encrypt_result plugin::impl::encrypt_aes_gcm(aead_encrypt_request value) co
 
    auto nonce = std::move(value.nonce);
    if (nonce.empty()) {
-      nonce = fcl::crypto::random_bytes(fcl::crypto::aes_gcm_nonce_size);
+      nonce = forge::crypto::random_bytes(forge::crypto::aes_gcm_nonce_size);
    }
    try {
-      auto encrypted = fcl::crypto::encrypt_aes256_gcm(fcl::crypto::aes256_gcm_encrypt_request{
+      auto encrypted = forge::crypto::encrypt_aes256_gcm(forge::crypto::aes256_gcm_encrypt_request{
          .key = aes_key_from_secret(secret),
          .nonce = std::move(nonce),
          .plaintext = std::move(value.plaintext),
@@ -190,9 +190,9 @@ aead_encrypt_result plugin::impl::encrypt_aes_gcm(aead_encrypt_request value) co
          .tag = std::move(encrypted.tag),
          .ciphertext = std::move(encrypted.ciphertext),
       };
-   } catch (const fcl::crypto::aes::exceptions::invalid_nonce&) {
+   } catch (const forge::crypto::aes::exceptions::invalid_nonce&) {
       throw_malformed_aes_gcm_nonce(secret.id);
-   } catch (const fcl::exceptions::runtime_coded_exception<fcl::crypto::aes::exceptions::code>& error) {
+   } catch (const forge::exceptions::runtime_coded_exception<forge::crypto::aes::exceptions::code>& error) {
       throw_malformed_aes_gcm_parameter(error, secret.id);
    }
 }
@@ -205,10 +205,10 @@ aead_decrypt_result plugin::impl::decrypt_aes_gcm(aead_decrypt_request value) co
    require_size(value.aad.size(), secret.max_aad_bytes, "AAD");
 
    try {
-      auto plaintext = fcl::crypto::decrypt_aes256_gcm(fcl::crypto::aes256_gcm_decrypt_request{
+      auto plaintext = forge::crypto::decrypt_aes256_gcm(forge::crypto::aes256_gcm_decrypt_request{
          .key = aes_key_from_secret(secret),
          .encrypted =
-            fcl::crypto::aes256_gcm_ciphertext{
+            forge::crypto::aes256_gcm_ciphertext{
                .nonce = std::move(value.nonce),
                .tag = std::move(value.tag),
                .ciphertext = std::move(value.ciphertext),
@@ -217,16 +217,16 @@ aead_decrypt_result plugin::impl::decrypt_aes_gcm(aead_decrypt_request value) co
       });
       require_size(plaintext.size(), secret.max_plaintext_bytes, "plaintext");
       return aead_decrypt_result{.secret_id = secret.id, .plaintext = std::move(plaintext)};
-   } catch (const fcl::crypto::aes::exceptions::invalid_nonce&) {
+   } catch (const forge::crypto::aes::exceptions::invalid_nonce&) {
       throw_malformed_aes_gcm_nonce(secret.id);
-   } catch (const fcl::crypto::aes::exceptions::invalid_tag&) {
+   } catch (const forge::crypto::aes::exceptions::invalid_tag&) {
       throw_malformed_aes_gcm_tag(secret.id);
-   } catch (const fcl::exceptions::runtime_coded_exception<fcl::crypto::aes::exceptions::code>& error) {
+   } catch (const forge::exceptions::runtime_coded_exception<forge::crypto::aes::exceptions::code>& error) {
       throw_malformed_aes_gcm_parameter(error, secret.id);
-   } catch (const fcl::crypto::aes::exceptions::authentication_failed&) {
-      FCL_THROW_EXCEPTION(exceptions::crypto_failed, "AES-GCM authentication failed",
-                          fcl::exceptions::ctx("secret_id", secret.id));
+   } catch (const forge::crypto::aes::exceptions::authentication_failed&) {
+      FORGE_THROW_EXCEPTION(exceptions::crypto_failed, "AES-GCM authentication failed",
+                          forge::exceptions::ctx("secret_id", secret.id));
    }
 }
 
-} // namespace fcl::plugins::crypto::secrets
+} // namespace forge::plugins::crypto::secrets

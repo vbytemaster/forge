@@ -7,9 +7,9 @@ module;
 
 #include <boost/url.hpp>
 
-module fcl.http.target;
+module forge.http.target;
 
-namespace fcl::http {
+namespace forge::http {
 
 target parse_target(std::string_view value) {
    const auto parsed = boost::urls::parse_origin_form(value);
@@ -38,4 +38,4 @@ target parse_target(std::string_view value) {
    return result;
 }
 
-} // namespace fcl::http
+} // namespace forge::http

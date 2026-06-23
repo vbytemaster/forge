@@ -1,7 +1,7 @@
 # TUI Component Library
 
-`fcl_tui` is a reusable terminal UI library over Notcurses core. Notcurses is
-the rendering/input backend; FCL owns models, rendering contracts, navigation
+`forge_tui` is a reusable terminal UI library over Notcurses core. Notcurses is
+the rendering/input backend; FORGE owns models, rendering contracts, navigation
 and redaction rules.
 
 Local guide: [libraries/tui/README.md](../../libraries/tui/README.md).
@@ -10,7 +10,7 @@ Local guide: [libraries/tui/README.md](../../libraries/tui/README.md).
 
 Operator tools need terminal UIs that are pleasant enough for daily use, but
 also testable and safe. Direct backend widgets make logic hard to test and can
-turn UI events into accidental business flow. FCL chooses value models first:
+turn UI events into accidental business flow. FORGE chooses value models first:
 rendering can be deterministic without a terminal, while runner code owns the
 backend session.
 
@@ -70,6 +70,6 @@ Rejected:
 
 ## Verification
 
-`test_fcl_tui` covers stable text rendering, redaction, forms, navigation,
+`test_forge_tui` covers stable text rendering, redaction, forms, navigation,
 disabled/dangerous actions, event logs, headless runner quit and terminal
 capability failure.

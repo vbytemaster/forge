@@ -7,12 +7,12 @@ module;
 #include <string_view>
 #include <utility>
 
-module fcl.config.document;
+module forge.config.document;
 
-import fcl.config.key_path;
-import fcl.config.value;
+import forge.config.key_path;
+import forge.config.value;
 
-namespace fcl::config {
+namespace forge::config {
 
 void document::set(std::string dotted_path, value input, source_location location) {
    auto segments = key_path{.value = dotted_path}.segments();
@@ -140,4 +140,4 @@ document effective_document(std::initializer_list<document> layers) {
    return merge(layers);
 }
 
-} // namespace fcl::config
+} // namespace forge::config

@@ -1,6 +1,6 @@
-# fcl_crypto
+# forge_crypto
 
-`fcl_crypto` contains retained cryptographic primitives and wrappers: hashes,
+`forge_crypto` contains retained cryptographic primitives and wrappers: hashes,
 base encodings, AES/HMAC, AES-256-GCM, KDF helpers, secp256k1/P-256/WebAuthn keys
 and signatures, BLS/BN/GMP helpers, random bytes and OpenSSL 3.0+ integration.
 
@@ -9,7 +9,7 @@ and signatures, BLS/BN/GMP helpers, random bytes and OpenSSL 3.0+ integration.
 - You need in-process key generation/sign/verify/hash primitives.
 - You need retained secp256k1/P-256/WebAuthn/BLS compatibility behavior from
   FC/EOS-like ecosystems.
-- You need crypto wrappers that can participate in `fcl_raw` and `fcl_variant`
+- You need crypto wrappers that can participate in `forge_raw` and `forge_variant`
   compatibility tests.
 
 ## When Not To Use
@@ -23,23 +23,23 @@ and signatures, BLS/BN/GMP helpers, random bytes and OpenSSL 3.0+ integration.
 
 Hashes and encodings:
 
-- `fcl.crypto.sha1`, `sha224`, `sha256`, `sha3`, `sha512`, `ripemd160`, `city`,
+- `forge.crypto.sha1`, `sha224`, `sha256`, `sha3`, `sha512`, `ripemd160`, `city`,
   `blake2`, `hex`, `base58`, `base64`, `hmac`.
 
 Keys and signatures:
 
-- `fcl.crypto.asymmetric`, `secp256k1`, `p256`, `ed25519`, `rsa`,
+- `forge.crypto.asymmetric`, `secp256k1`, `p256`, `ed25519`, `rsa`,
   `x25519`, `webauthn`, `bls`.
 
 Other primitives:
 
-- `fcl.crypto.types`, `random`, `kdf`, `aes`,
+- `forge.crypto.types`, `random`, `kdf`, `aes`,
   `bigint`, `modular_arithmetic`, `packhash`, `pem`, `der`, `x509`.
 
-Target: `fcl_crypto`.
+Target: `forge_crypto`.
 
-Dependencies: `fcl_core`, `fcl_exceptions`, `fcl_raw`, `fcl_reflect`,
-`fcl_variant`, OpenSSL::Crypto, GMP, secp256k1 and BLS vendor code.
+Dependencies: `forge_core`, `forge_exceptions`, `forge_raw`, `forge_reflect`,
+`forge_variant`, OpenSSL::Crypto, GMP, secp256k1 and BLS vendor code.
 
 ## Examples
 
@@ -47,7 +47,7 @@ Dependencies: `fcl_core`, `fcl_exceptions`, `fcl_raw`, `fcl_reflect`,
 
 Application protocols should hash stable binary payloads, not ad-hoc strings. The
 recommended pattern is: describe the DTO, keep member order stable, pack it with
-`fcl::raw::pack` directly into a hash encoder, then sign that digest if needed.
+`forge::raw::pack` directly into a hash encoder, then sign that digest if needed.
 
 ```cpp
 #include <boost/describe.hpp>
@@ -55,22 +55,22 @@ recommended pattern is: describe the DTO, keep member order stable, pack it with
 #include <cstdint>
 #include <string>
 
-import fcl.crypto.sha256;
-import fcl.raw.raw;
+import forge.crypto.sha256;
+import forge.raw.raw;
 
 struct transfer_digest_payload {
    std::uint64_t account = 0;
    std::uint64_t sequence = 0;
    std::string memo;
 
-   [[nodiscard]] fcl::crypto::sha256 digest() const;
+   [[nodiscard]] forge::crypto::sha256 digest() const;
 };
 
 BOOST_DESCRIBE_STRUCT(transfer_digest_payload, (), (account, sequence, memo))
 
-inline fcl::crypto::sha256 transfer_digest_payload::digest() const {
-   auto encoder = fcl::crypto::sha256::encoder{};
-   fcl::raw::pack(encoder, *this);
+inline forge::crypto::sha256 transfer_digest_payload::digest() const {
+   auto encoder = forge::crypto::sha256::encoder{};
+   forge::raw::pack(encoder, *this);
    return encoder.result();
 }
 
@@ -93,12 +93,12 @@ String hashing is useful for vectors, probes and small tooling. Do not copy this
 as the application protocol pattern when the payload is a C++ DTO.
 
 ```cpp
-import fcl.crypto.sha256;
+import forge.crypto.sha256;
 
-auto digest = fcl::crypto::sha256::hash("payload");
+auto digest = forge::crypto::sha256::hash("payload");
 auto hex = digest.str();
 
-auto encoder = fcl::crypto::sha256::encoder{};
+auto encoder = forge::crypto::sha256::encoder{};
 encoder.write("pay", 3);
 encoder.write("load", 4);
 auto streaming_digest = encoder.result();
@@ -107,15 +107,15 @@ auto streaming_digest = encoder.result();
 ### Compare Hash Families
 
 ```cpp
-import fcl.crypto.ripemd160;
-import fcl.crypto.sha1;
-import fcl.crypto.sha256;
-import fcl.crypto.sha512;
+import forge.crypto.ripemd160;
+import forge.crypto.sha1;
+import forge.crypto.sha256;
+import forge.crypto.sha512;
 
-auto sha1 = fcl::crypto::sha1::hash("abc").str();
-auto sha256 = fcl::crypto::sha256::hash("abc").str();
-auto sha512 = fcl::crypto::sha512::hash("abc").str();
-auto ripemd = fcl::crypto::ripemd160::hash("abc").str();
+auto sha1 = forge::crypto::sha1::hash("abc").str();
+auto sha256 = forge::crypto::sha256::hash("abc").str();
+auto sha512 = forge::crypto::sha512::hash("abc").str();
+auto ripemd = forge::crypto::ripemd160::hash("abc").str();
 ```
 
 ### Encode And Decode Bytes
@@ -123,20 +123,20 @@ auto ripemd = fcl::crypto::ripemd160::hash("abc").str();
 ```cpp
 #include <vector>
 
-import fcl.crypto.base58;
-import fcl.crypto.base64;
-import fcl.crypto.hex;
-import fcl.crypto.types;
+import forge.crypto.base58;
+import forge.crypto.base64;
+import forge.crypto.hex;
+import forge.crypto.types;
 
-auto bytes = fcl::crypto::bytes{'o', 'k'};
+auto bytes = forge::crypto::bytes{'o', 'k'};
 
-auto hex = fcl::crypto::to_hex(bytes);
-auto base58 = fcl::crypto::base58_encode(bytes);
-auto base64 = fcl::crypto::base64_encode(bytes);
-auto base64url = fcl::crypto::base64url_encode("hello");
+auto hex = forge::crypto::to_hex(bytes);
+auto base58 = forge::crypto::base58_encode(bytes);
+auto base64 = forge::crypto::base64_encode(bytes);
+auto base64url = forge::crypto::base64url_encode("hello");
 
-auto decoded_base58 = fcl::crypto::base58_decode(base58);
-auto decoded_base64 = fcl::crypto::base64_decode(base64);
+auto decoded_base58 = forge::crypto::base58_decode(base58);
+auto decoded_base64 = forge::crypto::base64_decode(base64);
 ```
 
 ### Generate Random Bytes For A Seed Or Key
@@ -144,12 +144,12 @@ auto decoded_base64 = fcl::crypto::base64_decode(base64);
 ```cpp
 #include <array>
 
-import fcl.crypto.random;
-import fcl.crypto.aes;
+import forge.crypto.random;
+import forge.crypto.aes;
 
-auto token = fcl::crypto::random_bytes(32);
-auto nonce = fcl::crypto::random_array<12>();
-auto key = fcl::crypto::generate_aes256_key();
+auto token = forge::crypto::random_bytes(32);
+auto nonce = forge::crypto::random_array<12>();
+auto key = forge::crypto::generate_aes256_key();
 ```
 
 Random bytes are secret until proven otherwise. Do not log generated material;
@@ -163,32 +163,32 @@ if you need to show an identifier, derive and render a public fingerprint.
 #include <cstdint>
 #include <string>
 
-import fcl.crypto.asymmetric;
-import fcl.crypto.sha256;
-import fcl.crypto.types;
-import fcl.raw.raw;
+import forge.crypto.asymmetric;
+import forge.crypto.sha256;
+import forge.crypto.types;
+import forge.raw.raw;
 
 struct signed_action {
    std::uint64_t actor = 0;
    std::uint64_t nonce = 0;
    std::string operation;
 
-   [[nodiscard]] fcl::crypto::bytes signing_bytes(const fcl::crypto::sha256& chain_id) const;
+   [[nodiscard]] forge::crypto::bytes signing_bytes(const forge::crypto::sha256& chain_id) const;
 };
 
 BOOST_DESCRIBE_STRUCT(signed_action, (), (actor, nonce, operation))
 
-inline fcl::crypto::bytes signed_action::signing_bytes(const fcl::crypto::sha256& chain_id) const {
-   auto bytes = fcl::crypto::bytes{};
-   fcl::raw::pack(bytes, chain_id);
-   fcl::raw::pack(bytes, *this);
+inline forge::crypto::bytes signed_action::signing_bytes(const forge::crypto::sha256& chain_id) const {
+   auto bytes = forge::crypto::bytes{};
+   forge::raw::pack(bytes, chain_id);
+   forge::raw::pack(bytes, *this);
    return bytes;
 }
 
-auto private_key = fcl::crypto::asymmetric::private_key::generate();
+auto private_key = forge::crypto::asymmetric::private_key::generate();
 auto public_key = private_key.get_public_key();
 
-auto chain_id = fcl::crypto::sha256{}; // Replace with the real chain/domain id.
+auto chain_id = forge::crypto::sha256{}; // Replace with the real chain/domain id.
 auto action = signed_action{
    .actor = 42,
    .nonce = 9,
@@ -206,14 +206,14 @@ This snippet reuses the `signed_action` DTO from the secp256k1 example above.
 Keep the same packed payload shape when comparing secp256k1/P-256 behavior.
 
 ```cpp
-import fcl.crypto.p256;
-import fcl.crypto.sha256;
-import fcl.raw.raw;
+import forge.crypto.p256;
+import forge.crypto.sha256;
+import forge.raw.raw;
 
-auto private_key = fcl::crypto::asymmetric::private_key::generate_p256();
+auto private_key = forge::crypto::asymmetric::private_key::generate_p256();
 auto public_key = private_key.get_public_key();
 
-auto chain_id = fcl::crypto::sha256{}; // Replace with the real chain/domain id.
+auto chain_id = forge::crypto::sha256{}; // Replace with the real chain/domain id.
 auto action = signed_action{
    .actor = 42,
    .nonce = 10,
@@ -240,17 +240,17 @@ Signature anti-patterns:
 ### Parse Existing Key Strings
 
 ```cpp
-import fcl.crypto.asymmetric;
+import forge.crypto.asymmetric;
 
-auto generated = fcl::crypto::asymmetric::private_key::generate();
-auto private_text = fcl::crypto::asymmetric::encoding::fcl().format(generated);
+auto generated = forge::crypto::asymmetric::private_key::generate();
+auto private_text = forge::crypto::asymmetric::encoding::forge().format(generated);
 
-auto private_key = fcl::crypto::asymmetric::encoding::fcl().parse_private(private_text);
-auto public_text = fcl::crypto::asymmetric::encoding::fcl().format(private_key.get_public_key());
+auto private_key = forge::crypto::asymmetric::encoding::forge().parse_private(private_text);
+auto public_text = forge::crypto::asymmetric::encoding::forge().format(private_key.get_public_key());
 ```
 
-The generic parser accepts only the canonical FCL profile. EOSIO/Antelope-style
-key text must go through `fcl::crypto::asymmetric::encoding::antelope()`
+The generic parser accepts only the canonical FORGE profile. EOSIO/Antelope-style
+key text must go through `forge::crypto::asymmetric::encoding::antelope()`
 explicitly; `encoding::eos()` remains only as a compatibility alias.
 `private_key::to_string()` returns private key material. It is useful for test
 fixtures and import/export flows, not for logs.
@@ -261,12 +261,12 @@ fixtures and import/export flows, not for logs.
 #include <cstdint>
 #include <string>
 
-import fcl.crypto.hmac;
+import forge.crypto.hmac;
 
 auto key = std::string{"local-test-key"};
 auto payload = std::string{"payload"};
 
-auto hmac = fcl::crypto::hmac_sha256{};
+auto hmac = forge::crypto::hmac_sha256{};
 auto digest = hmac.digest(
    key.data(),
    static_cast<std::uint32_t>(key.size()),
@@ -277,13 +277,13 @@ auto digest = hmac.digest(
 ### Derive Material With HKDF-SHA256
 
 ```cpp
-import fcl.crypto.kdf;
+import forge.crypto.kdf;
 
-auto material = fcl::crypto::derive_hkdf_sha256({
+auto material = forge::crypto::derive_hkdf_sha256({
    .secret = {'w', 'o', 'r', 'k', 's', 'p', 'a', 'c', 'e'},
    .salt = {'s', 'a', 'l', 't'},
    .info = {'c', 'h', 'u', 'n', 'k', '-', 'k', 'e', 'y'},
-   .output_size = fcl::crypto::default_derived_key_size,
+   .output_size = forge::crypto::default_derived_key_size,
 });
 ```
 
@@ -294,17 +294,17 @@ unrelated keys.
 ### Derive Material With Scrypt
 
 ```cpp
-import fcl.crypto.kdf;
-import fcl.crypto.random;
+import forge.crypto.kdf;
+import forge.crypto.random;
 
-auto vault_key = fcl::crypto::derive_scrypt({
+auto vault_key = forge::crypto::derive_scrypt({
    .password = "operator supplied passphrase",
-   .salt = fcl::crypto::random_bytes(16),
+   .salt = forge::crypto::random_bytes(16),
    .n = 16'384,
    .r = 8,
    .p = 1,
    .max_memory_bytes = 32ULL * 1024ULL * 1024ULL,
-   .output_size = fcl::crypto::default_derived_key_size,
+   .output_size = forge::crypto::default_derived_key_size,
 });
 ```
 
@@ -315,31 +315,31 @@ for their latency and memory budget and keep salts non-secret but unique.
 
 One-shot encryption is fine for small already-materialized buffers, such as a
 config secret after validation. For application DTOs and large payloads, prefer the
-streaming encoder below so `fcl::raw::pack` writes directly into authenticated
+streaming encoder below so `forge::raw::pack` writes directly into authenticated
 encryption.
 
 ```cpp
-import fcl.crypto.aes;
-import fcl.crypto.random;
+import forge.crypto.aes;
+import forge.crypto.random;
 
-auto key = fcl::crypto::generate_aes256_key();
-auto nonce = fcl::crypto::random_bytes(fcl::crypto::aes_gcm_nonce_size);
+auto key = forge::crypto::generate_aes256_key();
+auto nonce = forge::crypto::random_bytes(forge::crypto::aes_gcm_nonce_size);
 
-auto encrypted = fcl::crypto::encrypt_aes256_gcm({
+auto encrypted = forge::crypto::encrypt_aes256_gcm({
    .key = key,
    .nonce = nonce,
    .plaintext = {'s', 'e', 'c', 'r', 'e', 't'},
    .aad = {'m', 'e', 't', 'a'},
 });
 
-auto plaintext = fcl::crypto::decrypt_aes256_gcm({
+auto plaintext = forge::crypto::decrypt_aes256_gcm({
    .key = key,
    .encrypted = encrypted,
    .aad = {'m', 'e', 't', 'a'},
 });
 ```
 
-AES-GCM requires nonce uniqueness per key. FCL validates sizes and tag
+AES-GCM requires nonce uniqueness per key. FORGE validates sizes and tag
 authentication, but callers own key lifecycle, nonce policy and secret
 redaction.
 
@@ -351,9 +351,9 @@ redaction.
 #include <cstdint>
 #include <string>
 
-import fcl.crypto.aes;
-import fcl.crypto.random;
-import fcl.raw.raw;
+import forge.crypto.aes;
+import forge.crypto.random;
+import forge.raw.raw;
 
 struct sealed_payload {
    std::uint64_t nonce = 0;
@@ -362,12 +362,12 @@ struct sealed_payload {
 
 BOOST_DESCRIBE_STRUCT(sealed_payload, (), (nonce, body))
 
-auto ciphertext = fcl::crypto::bytes{};
-auto key = fcl::crypto::generate_aes256_key();
-auto nonce = fcl::crypto::random_bytes(fcl::crypto::aes_gcm_nonce_size);
+auto ciphertext = forge::crypto::bytes{};
+auto key = forge::crypto::generate_aes256_key();
+auto nonce = forge::crypto::random_bytes(forge::crypto::aes_gcm_nonce_size);
 
-auto encoder = fcl::crypto::aes256_gcm_encoder{
-   fcl::crypto::aes256_gcm_encoder_options{
+auto encoder = forge::crypto::aes256_gcm_encoder{
+   forge::crypto::aes256_gcm_encoder_options{
       .key = key,
       .nonce = nonce,
       .aad = {'m', 'e', 't', 'a'},
@@ -376,7 +376,7 @@ auto encoder = fcl::crypto::aes256_gcm_encoder{
       },
    }};
 
-fcl::raw::pack(encoder, sealed_payload{.nonce = 7, .body = "large payload"});
+forge::raw::pack(encoder, sealed_payload{.nonce = 7, .body = "large payload"});
 auto authentication = encoder.finalize();
 ```
 
@@ -387,11 +387,11 @@ OpenSSL produces them; callers do not need to materialize all plaintext first.
 ### Stream AES-256-GCM Decryption
 
 ```cpp
-import fcl.crypto.aes;
+import forge.crypto.aes;
 
-auto plaintext = fcl::crypto::bytes{};
-auto decoder = fcl::crypto::aes256_gcm_decoder{
-   fcl::crypto::aes256_gcm_decoder_options{
+auto plaintext = forge::crypto::bytes{};
+auto decoder = forge::crypto::aes256_gcm_decoder{
+   forge::crypto::aes256_gcm_decoder_options{
       .key = key,
       .nonce = authentication.nonce,
       .tag = authentication.tag,
@@ -411,19 +411,19 @@ temporary path and only commit or rename after tag verification succeeds.
 ### AES-256-CBC Compatibility Helper
 
 ```cpp
-import fcl.crypto.aes;
-import fcl.crypto.random;
+import forge.crypto.aes;
+import forge.crypto.random;
 
-auto key = fcl::crypto::generate_aes256_key();
-auto iv = fcl::crypto::random_bytes(fcl::crypto::aes_cbc_iv_size);
+auto key = forge::crypto::generate_aes256_key();
+auto iv = forge::crypto::random_bytes(forge::crypto::aes_cbc_iv_size);
 
-auto cipher = fcl::crypto::encrypt_aes256_cbc({
+auto cipher = forge::crypto::encrypt_aes256_cbc({
    .key = key,
    .iv = iv,
    .plaintext = {'s', 'e', 'c', 'r', 'e', 't'},
 });
 
-auto roundtrip = fcl::crypto::decrypt_aes256_cbc({
+auto roundtrip = forge::crypto::decrypt_aes256_cbc({
    .key = key,
    .encrypted = cipher,
 });
@@ -440,50 +440,50 @@ authenticated encryption; CBC does not authenticate ciphertext by itself.
 #include <cstdint>
 #include <string>
 
-import fcl.crypto.sha256;
-import fcl.raw.raw;
+import forge.crypto.sha256;
+import forge.raw.raw;
 
 struct signed_payload {
    std::uint64_t nonce = 0;
    std::string body;
 
-   [[nodiscard]] fcl::crypto::sha256 digest() const;
+   [[nodiscard]] forge::crypto::sha256 digest() const;
 };
 
 BOOST_DESCRIBE_STRUCT(signed_payload, (), (nonce, body))
 
-inline fcl::crypto::sha256 signed_payload::digest() const {
-   auto encoder = fcl::crypto::sha256::encoder{};
-   fcl::raw::pack(encoder, *this);
+inline forge::crypto::sha256 signed_payload::digest() const {
+   auto encoder = forge::crypto::sha256::encoder{};
+   forge::raw::pack(encoder, *this);
    return encoder.result();
 }
 
 auto digest = signed_payload{.nonce = 7, .body = "approve"}.digest();
 ```
 
-The encoder path is the same path used by `fcl::raw::pack`, so field order is
+The encoder path is the same path used by `forge::raw::pack`, so field order is
 binary compatibility-sensitive.
 
 ### Serialize Through Variant Without Revealing Secrets
 
 ```cpp
-import fcl.variant.exceptions;
-import fcl.variant.value;
-import fcl.variant.conversion;
-import fcl.variant.containers;
-import fcl.variant.chrono;
-import fcl.variant.multiprecision;
-import fcl.variant.format;
-import fcl.variant.described;
+import forge.variant.exceptions;
+import forge.variant.value;
+import forge.variant.conversion;
+import forge.variant.containers;
+import forge.variant.chrono;
+import forge.variant.multiprecision;
+import forge.variant.format;
+import forge.variant.described;
 
-auto private_key = fcl::crypto::asymmetric::private_key::generate();
+auto private_key = forge::crypto::asymmetric::private_key::generate();
 auto public_key = private_key.get_public_key();
 
-fcl::variant rendered_public;
-fcl::to_variant(public_key, rendered_public);
+forge::variant rendered_public;
+forge::to_variant(public_key, rendered_public);
 
 // Avoid this outside explicit import/export tooling:
-// fcl::to_variant(private_key, rendered_secret);
+// forge::to_variant(private_key, rendered_secret);
 ```
 
 Variant conversion is for stable data exchange and tests. It is not automatic
@@ -498,24 +498,24 @@ redaction.
 #include <string>
 #include <vector>
 
-import fcl.crypto.bls;
-import fcl.crypto.sha256;
-import fcl.raw.raw;
+import forge.crypto.bls;
+import forge.crypto.sha256;
+import forge.raw.raw;
 
-using namespace fcl::crypto::bls;
+using namespace forge::crypto::bls;
 
 struct bls_vote_payload {
    std::uint64_t round = 0;
    std::string decision;
 
-   [[nodiscard]] fcl::crypto::sha256 digest() const;
+   [[nodiscard]] forge::crypto::sha256 digest() const;
 };
 
 BOOST_DESCRIBE_STRUCT(bls_vote_payload, (), (round, decision))
 
-inline fcl::crypto::sha256 bls_vote_payload::digest() const {
-   auto encoder = fcl::crypto::sha256::encoder{};
-   fcl::raw::pack(encoder, *this);
+inline forge::crypto::sha256 bls_vote_payload::digest() const {
+   auto encoder = forge::crypto::sha256::encoder{};
+   forge::raw::pack(encoder, *this);
    return encoder.result();
 }
 
@@ -545,12 +545,12 @@ strings and packed bytes covered by tests when changing wrappers.
 ### BLAKE2 With A Progress Callback
 
 ```cpp
-import fcl.crypto.blake2;
+import forge.crypto.blake2;
 
-auto yield = fcl::yield_function_t{[] {
+auto yield = forge::yield_function_t{[] {
    // progress/deadline checkpoint
 }};
-auto digest = fcl::blake2b(rounds, h, message, t0_offset, t1_offset, final_block, yield);
+auto digest = forge::blake2b(rounds, h, message, t0_offset, t1_offset, final_block, yield);
 ```
 
 ### WebAuthn Boundary
@@ -561,22 +561,22 @@ auto digest = fcl::blake2b(rounds, h, message, t0_offset, t1_offset, final_block
 #include <cstdint>
 #include <string>
 
-import fcl.crypto.webauthn;
-import fcl.crypto.sha256;
-import fcl.raw.raw;
+import forge.crypto.webauthn;
+import forge.crypto.sha256;
+import forge.raw.raw;
 
 struct webauthn_challenge_payload {
    std::uint64_t session = 0;
    std::string origin;
 
-   [[nodiscard]] fcl::crypto::sha256 digest() const;
+   [[nodiscard]] forge::crypto::sha256 digest() const;
 };
 
 BOOST_DESCRIBE_STRUCT(webauthn_challenge_payload, (), (session, origin))
 
-inline fcl::crypto::sha256 webauthn_challenge_payload::digest() const {
-   auto encoder = fcl::crypto::sha256::encoder{};
-   fcl::raw::pack(encoder, *this);
+inline forge::crypto::sha256 webauthn_challenge_payload::digest() const {
+   auto encoder = forge::crypto::sha256::encoder{};
+   forge::raw::pack(encoder, *this);
    return encoder.result();
 }
 
@@ -587,7 +587,7 @@ auto digest = webauthn_challenge_payload{
 auto recovered = webauthn_signature.recover(digest, true);
 ```
 
-WebAuthn client data parsing is private to `fcl_crypto`; no JSON backend type is
+WebAuthn client data parsing is private to `forge_crypto`; no JSON backend type is
 part of the public API. Keep high-S WebAuthn recovery and canonical P-256
 recovery tests together when touching this code.
 
@@ -595,9 +595,9 @@ recovery tests together when touching this code.
 
 - `private_key::to_string()` is secret material. Do not print it in diagnostics.
 - Use explicit redaction in config/log/TUI layers before rendering crypto values.
-- OpenSSL 3.0+ is the only SSL/TLS-related crypto backend expected by FCL
+- OpenSSL 3.0+ is the only SSL/TLS-related crypto backend expected by FORGE
   consumers.
-- `fcl_crypto` is synchronous and does not import runtime schedulers; async
+- `forge_crypto` is synchronous and does not import runtime schedulers; async
   scheduling belongs in caller or adapter layers.
 - Canonical signature behavior is compatibility-sensitive; changes require
   regression tests for low/high-s and WebAuthn cases.
@@ -606,7 +606,7 @@ recovery tests together when touching this code.
 
 - Do not hash `std::format(...)`, JSON text or manually joined strings for
   protocol signatures. Whitespace, field order and locale choices will fork
-  consensus. Use `fcl::raw::pack` over a described DTO.
+  consensus. Use `forge::raw::pack` over a described DTO.
 - Do not verify a signature against bytes reconstructed differently from the
   signing path. Put the digest DTO next to the application protocol and cover it
   with golden raw bytes.
@@ -624,13 +624,13 @@ recovery tests together when touching this code.
 - Do not weaken canonical signature checks to make tests pass.
 - Do not introduce another TLS backend through crypto dependencies.
 - Do not put certificate issuance or identity enrollment application flows in
-  `fcl_crypto`; this library provides primitives, not workflows.
+  `forge_crypto`; this library provides primitives, not workflows.
 - Do not copy vector examples into application protocols without a named DTO and
   `BOOST_DESCRIBE_STRUCT` order review.
 
 ## Tests
 
-`test_fcl_crypto` covers hash vectors, base64/base58/hex, random bytes,
+`test_forge_crypto` covers hash vectors, base64/base58/hex, random bytes,
 HKDF/scrypt, AES-256-GCM roundtrip/authentication failure, secp256k1/P-256
 signing and recovery, WebAuthn canonical checks, BLS serialization/verification,
 modular arithmetic and BLAKE2 vectors.

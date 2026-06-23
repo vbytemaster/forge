@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -12,16 +12,16 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.p2p.rendezvous;
+module forge.p2p.rendezvous;
 
-import fcl.multiformats.exceptions;
-import fcl.multiformats.multiaddr;
-import fcl.multiformats.varint;
-import fcl.p2p.exceptions;
+import forge.multiformats.exceptions;
+import forge.multiformats.multiaddr;
+import forge.multiformats.varint;
+import forge.p2p.exceptions;
 
 #include "protobuf.hpp"
 
-namespace fcl::p2p {
+namespace forge::p2p {
 namespace {
 
 constexpr auto legacy_peer_record_domain = std::string_view{"libp2p-routing-state"};
@@ -35,13 +35,13 @@ void validate_options(const rendezvous::options& opts) {
    if (opts.default_ttl.count() <= 0 || opts.min_ttl.count() <= 0 || opts.max_ttl.count() <= 0 ||
        opts.min_ttl > opts.max_ttl || opts.max_namespace_size == 0 || opts.max_registrations_per_peer == 0 ||
        opts.max_discover_limit == 0 || opts.max_message_size == 0) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "invalid rendezvous options");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "invalid rendezvous options");
    }
 }
 
 void validate_namespace(std::string_view value, const rendezvous::options& opts) {
    if (value.size() > opts.max_namespace_size) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous namespace exceeds max size");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous namespace exceeds max size");
    }
 }
 
@@ -54,7 +54,7 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
    case rendezvous::message_type::discover_response:
       return static_cast<rendezvous::message_type>(value);
    }
-   FCL_THROW_EXCEPTION(exceptions::codec_error, "unknown rendezvous message type");
+   FORGE_THROW_EXCEPTION(exceptions::codec_error, "unknown rendezvous message type");
 }
 
 [[nodiscard]] rendezvous::status checked_status(std::uint64_t value) {
@@ -69,17 +69,17 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
    case rendezvous::status::unavailable:
       return static_cast<rendezvous::status>(value);
    }
-   FCL_THROW_EXCEPTION(exceptions::codec_error, "unknown rendezvous response status");
+   FORGE_THROW_EXCEPTION(exceptions::codec_error, "unknown rendezvous response status");
 }
 
 [[nodiscard]] std::vector<std::uint8_t> encode_register(const rendezvous::register_request& value,
                                                         const rendezvous::options& opts) {
    validate_namespace(value.namespace_name, opts);
    if (opts.require_signed_peer_record && value.signed_peer_record.empty()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "rendezvous registration requires signed peer record");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "rendezvous registration requires signed peer record");
    }
    if (value.ttl.count() > 0 && (value.ttl < opts.min_ttl || value.ttl > opts.max_ttl)) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "rendezvous registration TTL outside allowed range");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "rendezvous registration TTL outside allowed range");
    }
    auto out = std::vector<std::uint8_t>{};
    if (!value.namespace_name.empty()) {
@@ -103,20 +103,20 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous namespace must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous namespace must be bytes");
          }
          out.namespace_name = in.string();
          validate_namespace(out.namespace_name, opts);
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous signed peer record must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous signed peer record must be bytes");
          }
          out.signed_peer_record = in.bytes();
          break;
       case 3:
          if (type != detail::wire_type::varint) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous registration TTL must be varint");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous registration TTL must be varint");
          }
          out.ttl = std::chrono::seconds{static_cast<std::int64_t>(in.read_varint())};
          break;
@@ -126,7 +126,7 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
       }
    }
    if (opts.require_signed_peer_record && out.signed_peer_record.empty()) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous registration missing signed peer record");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous registration missing signed peer record");
    }
    return out;
 }
@@ -152,20 +152,20 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
       switch (field) {
       case 1:
          if (type != detail::wire_type::varint) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous status must be varint");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous status must be varint");
          }
          out.status_value = checked_status(in.read_varint());
          saw_status = true;
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous status text must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous status text must be bytes");
          }
          out.status_text = in.string();
          break;
       case 3:
          if (type != detail::wire_type::varint) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous response TTL must be varint");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous response TTL must be varint");
          }
          out.ttl = std::chrono::seconds{static_cast<std::int64_t>(in.read_varint())};
          break;
@@ -175,7 +175,7 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
       }
    }
    if (!saw_status) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous response missing status");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous response missing status");
    }
    return out;
 }
@@ -202,14 +202,14 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous namespace must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous namespace must be bytes");
          }
          out.namespace_name = in.string();
          validate_namespace(out.namespace_name, opts);
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous unregister id must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous unregister id must be bytes");
          }
          out.peer = peer_id::from_bytes(in.bytes());
          break;
@@ -225,7 +225,7 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
                                                         const rendezvous::options& opts) {
    validate_namespace(value.namespace_name, opts);
    if (value.limit > opts.max_discover_limit) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "rendezvous discover limit exceeds max");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "rendezvous discover limit exceeds max");
    }
    auto out = std::vector<std::uint8_t>{};
    if (!value.namespace_name.empty()) {
@@ -249,23 +249,23 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous namespace must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous namespace must be bytes");
          }
          out.namespace_name = in.string();
          validate_namespace(out.namespace_name, opts);
          break;
       case 2:
          if (type != detail::wire_type::varint) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous discover limit must be varint");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous discover limit must be varint");
          }
          out.limit = static_cast<std::size_t>(in.read_varint());
          if (out.limit > opts.max_discover_limit) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous discover limit exceeds max");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous discover limit exceeds max");
          }
          break;
       case 3:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous discover cookie must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous discover cookie must be bytes");
          }
          out.cookie = in.bytes();
          break;
@@ -281,7 +281,7 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
                                                                  const rendezvous::options& opts) {
    auto out = std::vector<std::uint8_t>{};
    if (value.registrations.size() > opts.max_discover_limit) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "rendezvous response has too many registrations");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "rendezvous response has too many registrations");
    }
    for (const auto& registration : value.registrations) {
       detail::append_bytes(out, 1, encode_register(rendezvous::register_request{
@@ -310,7 +310,7 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous registration must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous registration must be bytes");
          }
          {
             const auto request = decode_register(in.bytes(), opts);
@@ -327,25 +327,25 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
             }
             out.registrations.push_back(std::move(registration));
             if (out.registrations.size() > opts.max_discover_limit) {
-               FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous response has too many registrations");
+               FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous response has too many registrations");
             }
          }
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous cookie must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous cookie must be bytes");
          }
          out.cookie = in.bytes();
          break;
       case 3:
          if (type != detail::wire_type::varint) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous status must be varint");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous status must be varint");
          }
          out.status_value = checked_status(in.read_varint());
          break;
       case 4:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous status text must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous status text must be bytes");
          }
          out.status_text = in.string();
          break;
@@ -380,19 +380,19 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
 }
 
 [[nodiscard]] std::vector<std::uint8_t> encode_peer_record_address(const endpoint& value) {
-   const auto address = fcl::multiformats::multiaddr::parse(value.to_string());
+   const auto address = forge::multiformats::multiaddr::parse(value.to_string());
    return address.to_bytes();
 }
 
 [[nodiscard]] std::optional<endpoint> decode_peer_record_address(std::span<const std::uint8_t> bytes,
                                                                  const peer_id& peer) {
    try {
-      auto out = parse_endpoint(fcl::multiformats::multiaddr::from_bytes(bytes).to_string());
+      auto out = parse_endpoint(forge::multiformats::multiaddr::from_bytes(bytes).to_string());
       if (!out.peer) {
          out.peer = peer;
       }
       return out;
-   } catch (const fcl::exceptions::base&) {
+   } catch (const forge::exceptions::base&) {
       return std::nullopt;
    }
 }
@@ -409,7 +409,7 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
       const auto [field, type] = in.key();
       if (field == 1) {
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous peer record address must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous peer record address must be bytes");
          }
          return decode_peer_record_address(in.bytes(), peer);
       }
@@ -446,38 +446,38 @@ rendezvous::message rendezvous::codec::decode(std::span<const std::uint8_t> byte
       switch (field) {
       case 1:
          if (type != detail::wire_type::varint) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous message type must be varint");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous message type must be varint");
          }
          out.type = checked_message_type(in.read_varint());
          saw_type = true;
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous register must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous register must be bytes");
          }
          out.register_value = decode_register(in.bytes(), opts);
          break;
       case 3:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous register response must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous register response must be bytes");
          }
          out.register_response_value = decode_register_response(in.bytes());
          break;
       case 4:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous unregister must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous unregister must be bytes");
          }
          out.unregister_value = decode_unregister(in.bytes(), opts);
          break;
       case 5:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous discover must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous discover must be bytes");
          }
          out.discover_value = decode_discover(in.bytes(), opts);
          break;
       case 6:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous discover response must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous discover response must be bytes");
          }
          out.discover_response_value = decode_discover_response(in.bytes(), opts);
          break;
@@ -487,7 +487,7 @@ rendezvous::message rendezvous::codec::decode(std::span<const std::uint8_t> byte
       }
    }
    if (!saw_type) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous message missing type");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous message missing type");
    }
    return out;
 }
@@ -511,7 +511,7 @@ std::uint64_t rendezvous::codec::read_cookie(std::span<const std::uint8_t> cooki
       return 0;
    }
    if (cookie.size() < 8) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "invalid rendezvous cookie");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "invalid rendezvous cookie");
    }
    auto out = std::uint64_t{};
    for (auto i = std::size_t{}; i < 8; ++i) {
@@ -525,14 +525,14 @@ std::string rendezvous::codec::read_cookie_namespace(std::span<const std::uint8_
       return {};
    }
    if (cookie.size() < 8) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "invalid rendezvous cookie");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "invalid rendezvous cookie");
    }
    return {cookie.begin() + 8, cookie.end()};
 }
 
 std::vector<std::uint8_t> rendezvous::codec::encode_peer_record(const rendezvous::peer_record& value) {
    if (!valid_peer_id(value.peer)) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "rendezvous peer record has invalid peer id");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_identity, "rendezvous peer record has invalid peer id");
    }
    auto out = std::vector<std::uint8_t>{};
    detail::append_bytes(out, 1, value.peer.to_bytes());
@@ -553,20 +553,20 @@ rendezvous::peer_record rendezvous::codec::decode_peer_record(std::span<const st
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous peer record id must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous peer record id must be bytes");
          }
          out.peer = peer_id::from_bytes(in.bytes());
          saw_peer = true;
          break;
       case 2:
          if (type != detail::wire_type::varint) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous peer record sequence must be varint");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous peer record sequence must be varint");
          }
          out.sequence = in.read_varint();
          break;
       case 3:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous peer record address info must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous peer record address info must be bytes");
          }
          address_infos.push_back(in.bytes());
          break;
@@ -576,7 +576,7 @@ rendezvous::peer_record rendezvous::codec::decode_peer_record(std::span<const st
       }
    }
    if (!saw_peer) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous peer record missing peer id");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous peer record missing peer id");
    }
    for (const auto& value : address_infos) {
       const auto address = decode_address_info(value, out.peer);
@@ -592,7 +592,7 @@ std::vector<std::uint8_t> rendezvous::codec::peer_record_payload_type() {
 }
 
 signed_envelope rendezvous::codec::seal_peer_record(const rendezvous::peer_record& value, const public_key& key,
-                                                    const fcl::crypto::asymmetric::private_key& private_key) {
+                                                    const forge::crypto::asymmetric::private_key& private_key) {
    const auto payload = encode_peer_record(value);
    const auto payload_type = peer_record_payload_type();
    return signed_envelope::seal(key, private_key, legacy_peer_record_domain, payload_type, payload);
@@ -602,13 +602,13 @@ rendezvous::peer_record rendezvous::codec::open_peer_record(const signed_envelop
                                                            std::optional<peer_id> expected_signer) {
    envelope.verify(legacy_peer_record_domain, expected_signer);
    if (envelope.payload_type != peer_record_payload_type()) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "rendezvous peer record has unsupported payload type");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous peer record has unsupported payload type");
    }
    auto out = decode_peer_record(envelope.payload);
    if (expected_signer && out.peer != *expected_signer) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_identity, "rendezvous peer record peer id mismatch");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_identity, "rendezvous peer record peer id mismatch");
    }
    return out;
 }
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

@@ -1,4 +1,4 @@
-import fcl.core.chrono;
+import forge.core.chrono;
 
 #include <chrono>
 #include <string>
@@ -6,6 +6,6 @@ import fcl.core.chrono;
 int main()
 {
    const auto instant = std::chrono::sys_seconds{std::chrono::seconds{1}};
-   const auto text = fcl::chrono::to_iso_string(instant);
+   const auto text = forge::chrono::to_iso_string(instant);
    return text.empty() ? 1 : 0;
 }

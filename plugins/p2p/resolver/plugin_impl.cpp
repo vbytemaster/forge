@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <boost/asio/awaitable.hpp>
 
@@ -16,28 +16,28 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.plugins.p2p.resolver.plugin;
+module forge.plugins.p2p.resolver.plugin;
 
-import fcl.api.binding;
-import fcl.api.registry;
-import fcl.transport.api.options;
-import fcl.exceptions;
-import fcl.p2p.identity;
-import fcl.p2p.protocol;
-import fcl.plugins.p2p.resolver.exceptions;
-import fcl.plugins.p2p.resolver.types;
-import fcl.plugins.p2p.node.api;
-import fcl.plugins.p2p.node.exceptions;
+import forge.api.binding;
+import forge.api.registry;
+import forge.transport.api.options;
+import forge.exceptions;
+import forge.p2p.identity;
+import forge.p2p.protocol;
+import forge.plugins.p2p.resolver.exceptions;
+import forge.plugins.p2p.resolver.types;
+import forge.plugins.p2p.node.api;
+import forge.plugins.p2p.node.exceptions;
 
 #include "details/config.hxx"
 #include "details/descriptor_projection.hxx"
 #include "details/plugin_impl.hxx"
 
-namespace fcl::plugins::p2p::resolver {
+namespace forge::plugins::p2p::resolver {
 
-fcl::plugins::p2p::node::api& plugin::impl::require_p2p() const {
+forge::plugins::p2p::node::api& plugin::impl::require_p2p() const {
    if (!initialized || p2p == nullptr) {
-      FCL_THROW_EXCEPTION(exceptions::plugin_not_initialized, "P2P API resolver plugin is not initialized");
+      FORGE_THROW_EXCEPTION(exceptions::plugin_not_initialized, "P2P API resolver plugin is not initialized");
    }
    return *p2p;
 }
@@ -69,7 +69,7 @@ void plugin::impl::evict_cache_locked() {
    }
 }
 
-std::optional<std::vector<entry>> plugin::impl::cached_peer(const fcl::p2p::peer_id& peer,
+std::optional<std::vector<entry>> plugin::impl::cached_peer(const forge::p2p::peer_id& peer,
                                                            resolve_options options) const {
    if (options.force_refresh) {
       return std::nullopt;
@@ -84,7 +84,7 @@ std::optional<std::vector<entry>> plugin::impl::cached_peer(const fcl::p2p::peer
    return found->second.apis;
 }
 
-void plugin::impl::store_peer(const fcl::p2p::peer_id& peer, std::vector<entry> entries) {
+void plugin::impl::store_peer(const forge::p2p::peer_id& peer, std::vector<entry> entries) {
    const auto now = std::chrono::steady_clock::now();
    auto lock = std::scoped_lock{mutex};
    cache[peer.to_string()] = cache_record{
@@ -100,12 +100,12 @@ std::vector<entry> plugin::impl::local_snapshot() const {
    return local;
 }
 
-void plugin::impl::add_local(fcl::api::binding_plan plan, fcl::p2p::protocol_id route, publish_options options) {
+void plugin::impl::add_local(forge::api::binding_plan plan, forge::p2p::protocol_id route, publish_options options) {
    auto& p2p_api = require_p2p();
    validate_transport_options(options.transport);
    if (route.value.empty() || route.value.front() != '/' || plan.exports.empty()) {
-      FCL_THROW_EXCEPTION(exceptions::duplicate_api, "resolver API publication is invalid",
-                          fcl::exceptions::ctx("protocol", route.value));
+      FORGE_THROW_EXCEPTION(exceptions::duplicate_api, "resolver API publication is invalid",
+                          forge::exceptions::ctx("protocol", route.value));
    }
 
    auto projected = std::vector<entry>{};
@@ -120,7 +120,7 @@ void plugin::impl::add_local(fcl::api::binding_plan plan, fcl::p2p::protocol_id 
    {
       auto lock = std::scoped_lock{mutex};
       if (local.size() + projected.size() > settings.max_apis_per_peer) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "resolver local API limit exceeded");
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "resolver local API limit exceeded");
       }
       auto keys = std::set<std::string>{};
       auto protocols = std::set<std::string>{};
@@ -130,22 +130,22 @@ void plugin::impl::add_local(fcl::api::binding_plan plan, fcl::p2p::protocol_id 
       }
       for (const auto& value : projected) {
          if (!keys.insert(api_key(value.id, value.version.major)).second) {
-            FCL_THROW_EXCEPTION(exceptions::duplicate_api, "duplicate resolver API publication",
-                                fcl::exceptions::ctx("api", value.id.value));
+            FORGE_THROW_EXCEPTION(exceptions::duplicate_api, "duplicate resolver API publication",
+                                forge::exceptions::ctx("api", value.id.value));
          }
       }
       if (!protocols.insert(route.value).second) {
-         FCL_THROW_EXCEPTION(exceptions::duplicate_api, "duplicate resolver API protocol",
-                             fcl::exceptions::ctx("protocol", route.value));
+         FORGE_THROW_EXCEPTION(exceptions::duplicate_api, "duplicate resolver API protocol",
+                             forge::exceptions::ctx("protocol", route.value));
       }
    }
 
    try {
       p2p_api.publish_api(std::move(plan), route, options.transport);
-   } catch (const fcl::plugins::p2p::node::exceptions::route_conflict& error) {
-      FCL_THROW_EXCEPTION(exceptions::duplicate_api, "P2P API route conflicts with resolver publication",
-                          fcl::exceptions::ctx("protocol", route.value),
-                          fcl::exceptions::ctx("error", error.message()));
+   } catch (const forge::plugins::p2p::node::exceptions::route_conflict& error) {
+      FORGE_THROW_EXCEPTION(exceptions::duplicate_api, "P2P API route conflicts with resolver publication",
+                          forge::exceptions::ctx("protocol", route.value),
+                          forge::exceptions::ctx("error", error.message()));
    }
 
    auto lock = std::scoped_lock{mutex};
@@ -167,4 +167,4 @@ response plugin::impl::query_local(const query& request) const {
    return response{.apis = std::move(entries)};
 }
 
-} // namespace fcl::plugins::p2p::resolver
+} // namespace forge::plugins::p2p::resolver

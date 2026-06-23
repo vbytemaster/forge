@@ -7,7 +7,7 @@ module;
 #include <system_error>
 #include <utility>
 
-module fcl.exceptions;
+module forge.exceptions;
 
 namespace {
 
@@ -16,8 +16,8 @@ std::mutex& sink_mutex() {
    return mutex;
 }
 
-fcl::exceptions::log_sink& sink_ref() {
-   static fcl::exceptions::log_sink sink;
+forge::exceptions::log_sink& sink_ref() {
+   static forge::exceptions::log_sink sink;
    return sink;
 }
 
@@ -33,7 +33,7 @@ void append_exception_chain(std::ostream& out, const std::exception& exception, 
       out << "caused by: ";
    }
 
-   if (const auto* context = dynamic_cast<const fcl::exceptions::base*>(&exception)) {
+   if (const auto* context = dynamic_cast<const forge::exceptions::base*>(&exception)) {
       out << context->what();
    } else {
       out << exception.what();
@@ -55,7 +55,7 @@ void append_exception_chain(std::ostream& out, const std::exception& exception, 
 
 } // namespace
 
-namespace fcl::exceptions {
+namespace forge::exceptions {
 
 field ctx(std::string_view key, std::string value) {
    return field{std::string(key), std::move(value), false};
@@ -293,4 +293,4 @@ void rethrow_with_context(std::string_view message, fields context, std::source_
    }
 }
 
-} // namespace fcl::exceptions
+} // namespace forge::exceptions

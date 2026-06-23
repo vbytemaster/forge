@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <boost/asio/awaitable.hpp>
 
@@ -14,29 +14,29 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.plugins.p2p.resolver.plugin;
+module forge.plugins.p2p.resolver.plugin;
 
-import fcl.api.descriptor;
-import fcl.transport.api.connection;
-import fcl.exceptions;
-import fcl.p2p.identity;
-import fcl.p2p.protocol;
-import fcl.plugins.p2p.resolver.api;
-import fcl.plugins.p2p.resolver.exceptions;
-import fcl.plugins.p2p.resolver.types;
-import fcl.plugins.p2p.node.api;
-import fcl.plugins.p2p.node.types;
+import forge.api.descriptor;
+import forge.transport.api.connection;
+import forge.exceptions;
+import forge.p2p.identity;
+import forge.p2p.protocol;
+import forge.plugins.p2p.resolver.api;
+import forge.plugins.p2p.resolver.exceptions;
+import forge.plugins.p2p.resolver.types;
+import forge.plugins.p2p.node.api;
+import forge.plugins.p2p.node.types;
 
 #include "details/descriptor_projection.hxx"
 #include "details/plugin_impl.hxx"
 #include "details/resolver_api.hxx"
 
-namespace fcl::plugins::p2p::resolver {
+namespace forge::plugins::p2p::resolver {
 
 plugin::resolver_api::resolver_api(std::shared_ptr<plugin::impl> impl) : impl_{std::move(impl)} {}
 
-void plugin::resolver_api::publish_api(fcl::api::binding_plan plan,
-                                   fcl::p2p::protocol_id protocol,
+void plugin::resolver_api::publish_api(forge::api::binding_plan plan,
+                                   forge::p2p::protocol_id protocol,
                                    publish_options options) {
    impl_->add_local(std::move(plan), std::move(protocol), std::move(options));
 }
@@ -47,7 +47,7 @@ std::vector<entry> plugin::resolver_api::local_apis() const {
 }
 
 boost::asio::awaitable<std::vector<entry>>
-plugin::resolver_api::peer_apis(fcl::p2p::peer_id peer, resolve_options options) {
+plugin::resolver_api::peer_apis(forge::p2p::peer_id peer, resolve_options options) {
    (void)impl_->require_p2p();
    if (auto cached = impl_->cached_peer(peer, options)) {
       co_return *cached;
@@ -60,7 +60,7 @@ plugin::resolver_api::peer_apis(fcl::p2p::peer_id peer, resolve_options options)
 }
 
 boost::asio::awaitable<resolution>
-plugin::resolver_api::resolve(fcl::p2p::peer_id peer, fcl::api::api_ref api, resolve_options options) {
+plugin::resolver_api::resolve(forge::p2p::peer_id peer, forge::api::api_ref api, resolve_options options) {
    const auto entries = co_await peer_apis(std::move(peer), options);
    if (auto selected = select_compatible(entries, api)) {
       co_return resolution{.api = std::move(*selected)};
@@ -69,24 +69,24 @@ plugin::resolver_api::resolve(fcl::p2p::peer_id peer, fcl::api::api_ref api, res
       return candidate.id == api.id && candidate.version.major == api.major;
    });
    if (has_same_api) {
-      FCL_THROW_EXCEPTION(exceptions::incompatible_api, "remote peer has incompatible API revision",
-                          fcl::exceptions::ctx("api", api.id.value));
+      FORGE_THROW_EXCEPTION(exceptions::incompatible_api, "remote peer has incompatible API revision",
+                          forge::exceptions::ctx("api", api.id.value));
    }
-   FCL_THROW_EXCEPTION(exceptions::not_found, "remote peer does not advertise requested API",
-                       fcl::exceptions::ctx("api", api.id.value));
+   FORGE_THROW_EXCEPTION(exceptions::not_found, "remote peer does not advertise requested API",
+                       forge::exceptions::ctx("api", api.id.value));
 }
 
 boost::asio::awaitable<resolved_connection>
-plugin::resolver_api::open_resolved_connection(fcl::p2p::peer_id peer,
-                                           fcl::api::api_ref api,
-                                           fcl::api::descriptor descriptor,
+plugin::resolver_api::open_resolved_connection(forge::p2p::peer_id peer,
+                                           forge::api::api_ref api,
+                                           forge::api::descriptor descriptor,
                                            resolve_options options) {
    auto selected = co_await resolve(peer, api, options);
    validate_descriptor_compatible(descriptor, selected.api);
-   auto protocol = fcl::p2p::protocol_id{.value = selected.api.protocol};
+   auto protocol = forge::p2p::protocol_id{.value = selected.api.protocol};
    auto connection = co_await impl_->p2p->open_api_connection(
       std::move(peer), std::move(protocol),
-      fcl::plugins::p2p::node::remote_options{
+      forge::plugins::p2p::node::remote_options{
          .open_deadline = impl_->open_deadline(options),
          .codec = selected.api.codec,
          .max_inflight = static_cast<std::size_t>(selected.api.max_inflight),
@@ -94,7 +94,7 @@ plugin::resolver_api::open_resolved_connection(fcl::p2p::peer_id peer,
       });
    co_return resolved_connection{
       .connection = std::move(connection),
-      .selected = fcl::api::api_ref{
+      .selected = forge::api::api_ref{
          .id = std::move(selected.api.id),
          .major = selected.api.version.major,
          .min_revision = selected.api.version.revision,
@@ -102,4 +102,4 @@ plugin::resolver_api::open_resolved_connection(fcl::p2p::peer_id peer,
    };
 }
 
-} // namespace fcl::plugins::p2p::resolver
+} // namespace forge::plugins::p2p::resolver

@@ -1,37 +1,37 @@
-# fcl_transport_api
+# forge_transport_api
 
-`fcl_transport_api` binds typed `fcl_api` contracts to `fcl_transport`
+`forge_transport_api` binds typed `forge_api` contracts to `forge_transport`
 streams and sessions. It does not own sockets, QUIC, P2P, WebSocket, HTTP,
 plugins or application policy.
 
 ## Responsibility
 
-- `fcl_api` owns contract descriptors, method dispatch, frame vocabulary and
+- `forge_api` owns contract descriptors, method dispatch, frame vocabulary and
   typed error projection.
-- `fcl_transport` owns byte streams, sessions, frame encoding and cancellation.
-- `fcl_transport_api` owns API frames over `transport::stream`: client pending
+- `forge_transport` owns byte streams, sessions, frame encoding and cancellation.
+- `forge_transport_api` owns API frames over `transport::stream`: client pending
   calls, serialized writes, server frame loop, max-inflight limits, deadlines
   and close/cancel wakeups.
-- `fcl_quic.api` and `fcl_p2p.api` are policy adapters over this layer.
-- `fcl_websocket.api` shares `fcl::api::frame_dispatcher`, but not this layer,
+- `forge_quic.api` and `forge_p2p.api` are policy adapters over this layer.
+- `forge_websocket.api` shares `forge::api::frame_dispatcher`, but not this layer,
   because WebSocket is message-oriented rather than a `transport::stream`.
 
 ## Server Example
 
 ```cpp
-import fcl.api.types;
-import fcl.api.descriptor;
-import fcl.api.connection;
-import fcl.api.registry;
-import fcl.api.binding;
-import fcl.transport.api.options;
-import fcl.transport.api.server;
-#include <fcl/api/macros.hpp>
+import forge.api.types;
+import forge.api.descriptor;
+import forge.api.connection;
+import forge.api.registry;
+import forge.api.binding;
+import forge.transport.api.options;
+import forge.transport.api.server;
+#include <forge/api/macros.hpp>
 
 class cache
-   : public fcl::api::contract<
+   : public forge::api::contract<
         cache,
-        fcl::api::surface::local | fcl::api::surface::remote> {
+        forge::api::surface::local | forge::api::surface::remote> {
  public:
    virtual ~cache() = default;
 
@@ -39,7 +39,7 @@ class cache
    read(read_chunk request) = 0;
 };
 
-FCL_API(cache, FCL_API_CONTRACT("cache", 1, 0), FCL_API_METHOD(read))
+FORGE_API(cache, FORGE_API_CONTRACT("cache", 1, 0), FORGE_API_METHOD(read))
 
 class cache_impl final : public cache {
  public:
@@ -56,17 +56,17 @@ class cache_impl final : public cache {
 };
 
 boost::asio::awaitable<void>
-serve_cache(fcl::transport::stream stream, cache_store& store) {
-   auto apis = fcl::api::registry{};
+serve_cache(forge::transport::stream stream, cache_store& store) {
+   auto apis = forge::api::registry{};
    apis.install<cache>(std::make_shared<cache_impl>(store));
 
-   auto plan = fcl::api::binding().serve(apis).build();
+   auto plan = forge::api::binding().serve(apis).build();
 
-   co_await fcl::transport::api::serve_stream(
+   co_await forge::transport::api::serve_stream(
       std::move(stream),
       std::move(plan),
-      fcl::transport::api::options{
-         .codec = {.value = "fcl.raw"},
+      forge::transport::api::options{
+         .codec = {.value = "forge.raw"},
          .max_inflight = 128,
          .deadline = std::chrono::seconds{5},
          .max_frame_size = 1024 * 1024,
@@ -77,18 +77,18 @@ serve_cache(fcl::transport::stream stream, cache_store& store) {
 ## Client Example
 
 ```cpp
-import fcl.api.types;
-import fcl.api.descriptor;
-import fcl.api.connection;
-import fcl.transport.api.options;
-import fcl.transport.api.connection;
+import forge.api.types;
+import forge.api.descriptor;
+import forge.api.connection;
+import forge.transport.api.options;
+import forge.transport.api.connection;
 
 boost::asio::awaitable<chunk>
-read_remote(fcl::transport::stream stream, std::string ref) {
-   auto connection = fcl::transport::api::connection{
+read_remote(forge::transport::stream stream, std::string ref) {
+   auto connection = forge::transport::api::connection{
       std::move(stream),
-      fcl::transport::api::options{
-         .codec = {.value = "fcl.raw"},
+      forge::transport::api::options{
+         .codec = {.value = "forge.raw"},
          .max_inflight = 64,
          .deadline = std::chrono::seconds{5},
       }};

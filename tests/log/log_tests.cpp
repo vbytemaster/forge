@@ -1,6 +1,6 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exceptions/macros.hpp>
-#include <fcl/log/macros.hpp>
+#include <forge/exceptions/macros.hpp>
+#include <forge/log/macros.hpp>
 
 #include <filesystem>
 #include <fstream>
@@ -11,20 +11,20 @@
 #include <string_view>
 #include <vector>
 
-import fcl.exceptions;
-import fcl.log.log_message;
-import fcl.log.logger;
-import fcl.log.record;
+import forge.exceptions;
+import forge.log.log_message;
+import forge.log.logger;
+import forge.log.record;
 
 namespace {
 
-class capture_sink final : public fcl::sink {
+class capture_sink final : public forge::sink {
  public:
-   void log(const fcl::log_record& record) override {
+   void log(const forge::log_record& record) override {
       records.push_back(record);
    }
 
-   std::vector<fcl::log_record> records;
+   std::vector<forge::log_record> records;
 };
 
 std::string read_file(const std::filesystem::path& path) {
@@ -37,15 +37,15 @@ std::string read_file(const std::filesystem::path& path) {
 BOOST_AUTO_TEST_SUITE(log_test_suite)
 
 BOOST_AUTO_TEST_CASE(disabled_level_does_not_build_record) {
-   auto logger = fcl::logger{"test.disabled"};
-   logger.set_log_level(fcl::log_level::error);
+   auto logger = forge::logger{"test.disabled"};
+   logger.set_log_level(forge::log_level::error);
    auto sink = std::make_shared<capture_sink>();
    logger.add_sink(sink);
 
    bool evaluated = false;
-   fcl_log(logger, fcl::log_level::debug, "hidden", fcl::log_field_provider{[&] {
+   forge_log(logger, forge::log_level::debug, "hidden", forge::log_field_provider{[&] {
               evaluated = true;
-              return fcl::log_field{"expensive", "value"};
+              return forge::log_field{"expensive", "value"};
            }});
 
    BOOST_TEST(!evaluated);
@@ -53,12 +53,12 @@ BOOST_AUTO_TEST_CASE(disabled_level_does_not_build_record) {
 }
 
 BOOST_AUTO_TEST_CASE(error_record_captures_stacktrace_and_redacts_secrets) {
-   auto logger = fcl::logger{"test.error"};
-   logger.set_log_level(fcl::log_level::debug);
+   auto logger = forge::logger{"test.error"};
+   logger.set_log_level(forge::log_level::debug);
    auto sink = std::make_shared<capture_sink>();
    logger.add_sink(sink);
 
-   logger.error("failed login", {fcl::log_ctx("user", "alice"), fcl::log_secret("token", "abc123")});
+   logger.error("failed login", {forge::log_ctx("user", "alice"), forge::log_secret("token", "abc123")});
 
    BOOST_REQUIRE_EQUAL(sink->records.size(), 1U);
    const auto& record = sink->records.front();
@@ -71,13 +71,13 @@ BOOST_AUTO_TEST_CASE(error_record_captures_stacktrace_and_redacts_secrets) {
 }
 
 BOOST_AUTO_TEST_CASE(jsonl_sink_writes_redacted_structured_record) {
-   const auto path = std::filesystem::temp_directory_path() / "fcl-log-jsonl-test.jsonl";
+   const auto path = std::filesystem::temp_directory_path() / "forge-log-jsonl-test.jsonl";
    std::filesystem::remove(path);
 
-   auto logger = fcl::logger{"test.jsonl"};
-   logger.set_log_level(fcl::log_level::debug);
-   logger.add_sink(std::make_shared<fcl::jsonl_sink>(path));
-   logger.info("configured", {fcl::log_ctx("port", 8080), fcl::log_secret("password", "secret")});
+   auto logger = forge::logger{"test.jsonl"};
+   logger.set_log_level(forge::log_level::debug);
+   logger.add_sink(std::make_shared<forge::jsonl_sink>(path));
+   logger.info("configured", {forge::log_ctx("port", 8080), forge::log_secret("password", "secret")});
 
    const auto text = read_file(path);
    BOOST_TEST(text.find("\"logger\":\"test.jsonl\"") != std::string::npos);
@@ -90,22 +90,22 @@ BOOST_AUTO_TEST_CASE(jsonl_sink_writes_redacted_structured_record) {
 }
 
 BOOST_AUTO_TEST_CASE(exception_chain_can_be_routed_to_logger) {
-   auto logger = fcl::logger{"test.exception"};
-   logger.set_log_level(fcl::log_level::debug);
+   auto logger = forge::logger{"test.exception"};
+   logger.set_log_level(forge::log_level::debug);
    auto sink = std::make_shared<capture_sink>();
    logger.add_sink(sink);
 
-   fcl::exceptions::set_log_sink([&](std::string_view message) {
-      logger.error("exception captured", {fcl::log_ctx("chain", message), fcl::log_secret("token", "hidden")});
+   forge::exceptions::set_log_sink([&](std::string_view message) {
+      logger.error("exception captured", {forge::log_ctx("chain", message), forge::log_secret("token", "hidden")});
    });
 
    try {
       try {
          throw std::runtime_error{"inner"};
       }
-      FCL_CAPTURE_AND_LOG("outer", fcl::exceptions::ctx("phase", "startup"), fcl::exceptions::secret("password", "secret"))
+      FORGE_CAPTURE_AND_LOG("outer", forge::exceptions::ctx("phase", "startup"), forge::exceptions::secret("password", "secret"))
    } catch (...) {
-      BOOST_FAIL("FCL_CAPTURE_AND_LOG must not rethrow");
+      BOOST_FAIL("FORGE_CAPTURE_AND_LOG must not rethrow");
    }
 
    BOOST_REQUIRE_EQUAL(sink->records.size(), 1U);
@@ -116,7 +116,7 @@ BOOST_AUTO_TEST_CASE(exception_chain_can_be_routed_to_logger) {
    BOOST_TEST(record.fields.front().value.find("secret") == std::string::npos);
    BOOST_TEST(record.fields.back().value == "<redacted>");
 
-   fcl::exceptions::set_log_sink({});
+   forge::exceptions::set_log_sink({});
 }
 
 BOOST_AUTO_TEST_SUITE_END()

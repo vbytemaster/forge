@@ -1,15 +1,15 @@
-add_library(fcl_http_api STATIC http_api.cpp)
-fcl_target_modules(fcl_http_api http_api)
+add_library(forge_http_api STATIC http_api.cpp)
+forge_target_modules(forge_http_api http_api)
 
-target_include_directories(fcl_http_api PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+target_include_directories(forge_http_api PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
-   fcl_http_api PUBLIC
-      fcl_api
-      fcl_http
-      fcl_json
-      fcl_raw
-      fcl_reflect
-      fcl_schema
+   forge_http_api PUBLIC
+      forge_api
+      forge_http
+      forge_json
+      forge_raw
+      forge_reflect
+      forge_schema
       Boost::asio
 )

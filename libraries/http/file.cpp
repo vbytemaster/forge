@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -19,15 +19,15 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.http.file;
+module forge.http.file;
 
-import fcl.http.body;
-import fcl.http.exceptions;
-import fcl.exceptions;
-import fcl.http.range;
-import fcl.http.types;
+import forge.http.body;
+import forge.http.exceptions;
+import forge.exceptions;
+import forge.http.range;
+import forge.http.types;
 
-namespace fcl::http {
+namespace forge::http {
 namespace {
 
 std::string http_date(std::filesystem::file_time_type value) {
@@ -72,9 +72,9 @@ std::optional<std::string_view> view_of(const std::optional<std::string>& value)
 }
 
 void throw_file_write_failed(const std::filesystem::path& target, std::string_view phase) {
-   FCL_THROW_EXCEPTION(exceptions::internal, "failed to save HTTP file response",
-                       fcl::exceptions::ctx("path", target.string()),
-                       fcl::exceptions::ctx("phase", std::string{phase}));
+   FORGE_THROW_EXCEPTION(exceptions::internal, "failed to save HTTP file response",
+                       forge::exceptions::ctx("path", target.string()),
+                       forge::exceptions::ctx("phase", std::string{phase}));
 }
 
 std::vector<std::string> split_relative_path(std::string_view value) {
@@ -297,4 +297,4 @@ boost::asio::awaitable<stream_response> static_file_root::serve(stream_request& 
    }
 }
 
-} // namespace fcl::http
+} // namespace forge::http

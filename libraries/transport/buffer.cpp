@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -12,13 +12,13 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.transport.buffer;
+module forge.transport.buffer;
 
-namespace fcl::transport {
+namespace forge::transport {
 namespace {
 
 [[noreturn]] void throw_invalid_buffer(std::string message) {
-   FCL_THROW_EXCEPTION(exceptions::invalid_buffer, std::move(message));
+   FORGE_THROW_EXCEPTION(exceptions::invalid_buffer, std::move(message));
 }
 
 [[nodiscard]] std::size_t effective_capacity(const buffer_pool_options& options, std::size_t requested) noexcept {
@@ -240,4 +240,4 @@ buffer_pool_stats buffer_pool::cached() const {
    return state_->stats();
 }
 
-} // namespace fcl::transport
+} // namespace forge::transport

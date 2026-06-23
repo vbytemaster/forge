@@ -1,8 +1,8 @@
-add_library(fcl_reflect STATIC reflect.cpp)
-fcl_target_modules(fcl_reflect reflect)
-target_include_directories(fcl_reflect PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+add_library(forge_reflect STATIC reflect.cpp)
+forge_target_modules(forge_reflect reflect)
+target_include_directories(forge_reflect PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 target_link_libraries(
-   fcl_reflect PUBLIC
-      fcl_core
+   forge_reflect PUBLIC
+      forge_core
       Boost::headers
 )

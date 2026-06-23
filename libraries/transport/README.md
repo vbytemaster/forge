@@ -1,6 +1,6 @@
-# fcl_transport
+# forge_transport
 
-`fcl_transport` is the reusable byte stream/session substrate used by TCP, STCP,
+`forge_transport` is the reusable byte stream/session substrate used by TCP, STCP,
 Yamux, QUIC, P2P and API-over-transport bindings. It owns transport-neutral
 concept wrappers, endpoint values, frame helpers and pooled byte chunks. It does
 not own sockets, peer identity, HTTP, WebSocket, P2P routing or application API
@@ -19,35 +19,35 @@ semantics.
 
 - Do not add peer IDs, relay policy, protocol negotiation or discovery here.
 - Do not put API contracts or RPC method names in this layer. Use
-  `fcl_transport_api` above it.
+  `forge_transport_api` above it.
 - Do not use `buffer_pool` as an unbounded queue or application cache.
 
 ## Public Modules
 
-- `fcl.transport.buffer`
-- `fcl.transport.endpoint`
-- `fcl.transport.frame`
-- `fcl.transport.stream`
-- `fcl.transport.session`
-- `fcl.transport.connector`
-- `fcl.transport.listener`
-- `fcl.transport.registry`
-- `fcl.transport.limits`
-- `fcl.transport.exceptions`
-- `fcl.transport`
+- `forge.transport.buffer`
+- `forge.transport.endpoint`
+- `forge.transport.frame`
+- `forge.transport.stream`
+- `forge.transport.session`
+- `forge.transport.connector`
+- `forge.transport.listener`
+- `forge.transport.registry`
+- `forge.transport.limits`
+- `forge.transport.exceptions`
+- `forge.transport`
 
-Target: `fcl_transport`.
+Target: `forge_transport`.
 
-Dependencies: `fcl_exceptions`, Boost.Asio.
+Dependencies: `forge_exceptions`, Boost.Asio.
 
 ## Examples
 
 ```cpp
-import fcl.transport.buffer;
-import fcl.transport.frame;
+import forge.transport.buffer;
+import forge.transport.frame;
 
-auto pool = fcl::transport::buffer_pool{
-   fcl::transport::buffer_pool_options{
+auto pool = forge::transport::buffer_pool{
+   forge::transport::buffer_pool_options{
       .default_capacity = 64 * 1024,
       .max_cached_buffers = 32,
       .max_cached_bytes = 8 * 1024 * 1024,
@@ -59,14 +59,14 @@ std::copy(payload.begin(), payload.end(), writable.begin());
 auto chunk = builder.commit(payload.size());
 
 std::vector<std::uint8_t> encoded;
-fcl::transport::encode_frame_to(encoded, chunk.bytes());
-auto view = fcl::transport::decode_frame_view(encoded);
+forge::transport::encode_frame_to(encoded, chunk.bytes());
+auto view = forge::transport::decode_frame_view(encoded);
 ```
 
 ```cpp
-import fcl.transport.stream;
+import forge.transport.stream;
 
-boost::asio::awaitable<void> echo_frame(fcl::transport::stream stream) {
+boost::asio::awaitable<void> echo_frame(forge::transport::stream stream) {
    auto frame = co_await stream.async_read_frame_chunk();
    co_await stream.async_write_frame(std::move(frame));
 }
@@ -82,6 +82,6 @@ boost::asio::awaitable<void> echo_frame(fcl::transport::stream stream) {
 
 ## Tests
 
-`test_fcl_transport` covers chunk lifetime, bounded buffer reuse, frame
+`test_forge_transport` covers chunk lifetime, bounded buffer reuse, frame
 encode/decode, decode views without payload allocation, stream/session wrapper
 delegation, registry routing and typed error paths.

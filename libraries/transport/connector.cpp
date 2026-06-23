@@ -1,17 +1,17 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <memory>
 #include <utility>
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.transport.connector;
+module forge.transport.connector;
 
-import fcl.transport.exceptions;
+import forge.transport.exceptions;
 
-namespace fcl::transport {
+namespace forge::transport {
 
 struct stream_connector::impl {
    std::shared_ptr<detail::stream_connector_concept> model;
@@ -37,7 +37,7 @@ bool stream_connector::valid() const noexcept {
 
 boost::asio::awaitable<stream_connection> stream_connector::async_connect(endpoint remote, connect_options options) {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid transport stream connector");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid transport stream connector");
    }
    co_return co_await impl_->model->async_connect(std::move(remote), options);
 }
@@ -64,7 +64,7 @@ bool session_connector::valid() const noexcept {
 
 boost::asio::awaitable<session_connection> session_connector::async_connect(endpoint remote, connect_options options) {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid transport session connector");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid transport session connector");
    }
    co_return co_await impl_->model->async_connect(std::move(remote), options);
 }
@@ -83,4 +83,4 @@ session_connector detail::session_connector_access::make(std::shared_ptr<session
    return session_connector{std::move(model)};
 }
 
-} // namespace fcl::transport
+} // namespace forge::transport

@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -10,9 +10,9 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.quic.framed_stream;
+module forge.quic.framed_stream;
 
-namespace fcl::quic {
+namespace forge::quic {
 namespace {
 
 constexpr auto header_size = std::size_t{4};
@@ -33,7 +33,7 @@ void write_u32_be(std::vector<std::uint8_t>& out, std::uint32_t value) {
 
 std::vector<std::uint8_t> encode_frame(std::span<const std::uint8_t> payload, frame_codec_options options) {
    if (payload.size() > options.max_frame_size) {
-      FCL_THROW_EXCEPTION(exceptions::frame_too_large, "QUIC frame payload exceeds max_frame_size");
+      FORGE_THROW_EXCEPTION(exceptions::frame_too_large, "QUIC frame payload exceeds max_frame_size");
    }
 
    auto out = std::vector<std::uint8_t>{};
@@ -50,7 +50,7 @@ frame_decode_result decode_frame(std::span<const std::uint8_t> bytes, frame_code
 
    const auto size = read_u32_be(std::span<const std::uint8_t, header_size>{bytes.data(), header_size});
    if (size > options.max_frame_size) {
-      FCL_THROW_EXCEPTION(exceptions::frame_too_large, "QUIC frame payload exceeds max_frame_size");
+      FORGE_THROW_EXCEPTION(exceptions::frame_too_large, "QUIC frame payload exceeds max_frame_size");
    }
 
    const auto total = header_size + static_cast<std::size_t>(size);
@@ -99,4 +99,4 @@ boost::asio::awaitable<void> framed_stream::async_close() {
    co_await stream_.async_close();
 }
 
-} // namespace fcl::quic
+} // namespace forge::quic

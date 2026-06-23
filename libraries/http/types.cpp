@@ -11,9 +11,9 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.http.types;
+module forge.http.types;
 
-namespace fcl::http {
+namespace forge::http {
 namespace {
 
 std::vector<header_entry>::const_iterator find_header(const std::vector<header_entry>& headers,
@@ -70,7 +70,7 @@ void set_header(std::vector<header_entry>& headers, std::string name, std::strin
 }
 
 struct request::state {
-   fcl::http::method method_value = fcl::http::method::get;
+   forge::http::method method_value = forge::http::method::get;
    std::string target_value = "/";
    unsigned version_value = 11;
    bool keep_alive_value = true;
@@ -87,8 +87,8 @@ struct response::state {
 };
 
 struct endpoint_state {
-   fcl::http::request request_value;
-   fcl::http::response response_value;
+   forge::http::request request_value;
+   forge::http::response response_value;
 };
 
 const header_entry& header_iterator::operator*() const noexcept {
@@ -174,7 +174,7 @@ std::ostream& operator<<(std::ostream& stream, status value) {
 
 request::request() : state_(std::make_shared<state>()) {}
 
-request::request(fcl::http::method method_value, std::string target_value, unsigned version_value) : request() {
+request::request(forge::http::method method_value, std::string target_value, unsigned version_value) : request() {
    method(method_value);
    target(std::move(target_value));
    version(version_value);
@@ -191,11 +191,11 @@ request& request::operator=(const request& other) {
 }
 request& request::operator=(request&&) noexcept = default;
 
-fcl::http::method request::method() const noexcept {
+forge::http::method request::method() const noexcept {
    return state_->method_value;
 }
 
-void request::method(fcl::http::method value) noexcept {
+void request::method(forge::http::method value) noexcept {
    state_->method_value = value;
 }
 
@@ -438,7 +438,7 @@ void response::prepare_payload() {
 }
 
 endpoint_request::endpoint_request()
-    : state_(endpoint_state_access::make(fcl::http::request{}, fcl::http::response{})) {}
+    : state_(endpoint_state_access::make(forge::http::request{}, forge::http::response{})) {}
 
 endpoint_request::endpoint_request(const endpoint_request&) noexcept = default;
 endpoint_request::endpoint_request(endpoint_request&&) noexcept = default;
@@ -446,20 +446,20 @@ endpoint_request& endpoint_request::operator=(const endpoint_request&) noexcept 
 endpoint_request& endpoint_request::operator=(endpoint_request&&) noexcept = default;
 endpoint_request::~endpoint_request() = default;
 
-const fcl::http::request& endpoint_request::request() const noexcept {
+const forge::http::request& endpoint_request::request() const noexcept {
    return state_->request_value;
 }
 
-fcl::http::response& endpoint_request::response() noexcept {
+forge::http::response& endpoint_request::response() noexcept {
    return state_->response_value;
 }
 
-const fcl::http::response& endpoint_request::response() const noexcept {
+const forge::http::response& endpoint_request::response() const noexcept {
    return state_->response_value;
 }
 
-std::shared_ptr<endpoint_state> endpoint_state_access::make(fcl::http::request request_value,
-                                                            fcl::http::response response_value) {
+std::shared_ptr<endpoint_state> endpoint_state_access::make(forge::http::request request_value,
+                                                            forge::http::response response_value) {
    return std::make_shared<endpoint_state>(endpoint_state{
       .request_value = std::move(request_value),
       .response_value = std::move(response_value),
@@ -470,11 +470,11 @@ void endpoint_state_access::attach(endpoint_request& target, std::shared_ptr<end
    target.state_ = std::move(state);
 }
 
-fcl::http::response& endpoint_state_access::response(std::shared_ptr<endpoint_state>& state) noexcept {
+forge::http::response& endpoint_state_access::response(std::shared_ptr<endpoint_state>& state) noexcept {
    return state->response_value;
 }
 
-const fcl::http::response& endpoint_state_access::response(const std::shared_ptr<endpoint_state>& state) noexcept {
+const forge::http::response& endpoint_state_access::response(const std::shared_ptr<endpoint_state>& state) noexcept {
    return state->response_value;
 }
 
@@ -487,4 +487,4 @@ response make_text_response(const request& source, status result, std::string bo
    return reply;
 }
 
-} // namespace fcl::http
+} // namespace forge::http

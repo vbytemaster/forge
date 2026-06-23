@@ -1,5 +1,5 @@
 module;
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 #include <cstring>
 #include <exception>
 #include <memory>
@@ -7,37 +7,37 @@ module;
 #include <openssl/err.h>
 #include <string>
 
-module fcl.crypto.sha224;
+module forge.crypto.sha224;
 
-import fcl.core.utility;
-import fcl.crypto.hex;
-import fcl.crypto.hmac;
-import fcl.exceptions;
-import fcl.variant.exceptions;
-import fcl.variant.value;
-import fcl.variant.conversion;
-import fcl.variant.containers;
-import fcl.variant.chrono;
-import fcl.variant.multiprecision;
-import fcl.variant.format;
-import fcl.variant.described;
+import forge.core.utility;
+import forge.crypto.hex;
+import forge.crypto.hmac;
+import forge.exceptions;
+import forge.variant.exceptions;
+import forge.variant.value;
+import forge.variant.conversion;
+import forge.variant.containers;
+import forge.variant.chrono;
+import forge.variant.multiprecision;
+import forge.variant.format;
+import forge.variant.described;
 
 #include "_digest_common.hpp"
 #include "_evp_digest.hpp"
 
-namespace fcl::crypto {
+namespace forge::crypto {
 
 sha224::sha224() {
    memset(_hash, 0, sizeof(_hash));
 }
 sha224::sha224(const std::string& hex_str) {
-   auto bytes_written = fcl::crypto::from_hex(hex_str, (char*)_hash, sizeof(_hash));
+   auto bytes_written = forge::crypto::from_hex(hex_str, (char*)_hash, sizeof(_hash));
    if (bytes_written < sizeof(_hash))
       memset((char*)_hash + bytes_written, 0, (sizeof(_hash) - bytes_written));
 }
 
 std::string sha224::str() const {
-   return fcl::crypto::to_hex((char*)_hash, sizeof(_hash));
+   return forge::crypto::to_hex((char*)_hash, sizeof(_hash));
 }
 sha224::operator std::string() const {
    return str();
@@ -51,7 +51,7 @@ const char* sha224::data() const {
 }
 
 struct sha224::encoder::impl {
-   fcl::detail::evp_digest_context ctx;
+   forge::detail::evp_digest_context ctx;
 };
 
 sha224::encoder::~encoder() {}
@@ -69,20 +69,20 @@ sha224 sha224::hash(const std::string& s) {
 }
 
 void sha224::encoder::write(const char* d, uint32_t dlen) {
-   fcl::detail::evp_digest_update(my->ctx.get(), d, dlen);
+   forge::detail::evp_digest_update(my->ctx.get(), d, dlen);
 }
 sha224 sha224::encoder::result() {
    sha224 h;
-   fcl::detail::evp_digest_final(my->ctx.get(), h.data(), h.data_size());
+   forge::detail::evp_digest_final(my->ctx.get(), h.data(), h.data_size());
    return h;
 }
 void sha224::encoder::reset() {
-   fcl::detail::evp_digest_init(my->ctx.get(), EVP_sha224());
+   forge::detail::evp_digest_init(my->ctx.get(), EVP_sha224());
 }
 
 sha224 operator<<(const sha224& h1, uint32_t i) {
    sha224 result;
-   fcl::detail::shift_l(h1.data(), result.data(), result.data_size(), i);
+   forge::detail::shift_l(h1.data(), result.data(), result.data_size(), i);
    return result;
 }
 sha224 operator^(const sha224& h1, const sha224& h2) {
@@ -113,7 +113,7 @@ void to_variant(const sha224& bi, variant& v) {
 void from_variant(const variant& v, sha224& bi) {
    std::vector<char> ve = v.as<std::vector<char>>();
    if (ve.size()) {
-      memcpy(bi.data(), ve.data(), fcl::min<size_t>(ve.size(), sizeof(bi)));
+      memcpy(bi.data(), ve.data(), forge::min<size_t>(ve.size(), sizeof(bi)));
    } else
       memset(bi.data(), char(0), sizeof(bi));
 }
@@ -121,4 +121,4 @@ void from_variant(const variant& v, sha224& bi) {
 template <> unsigned int hmac<sha224>::internal_block_size() const {
    return 64;
 }
-} // namespace fcl::crypto
+} // namespace forge::crypto

@@ -1,12 +1,12 @@
 #pragma once
 
-namespace fcl::plugins::crypto::secrets {
+namespace forge::plugins::crypto::secrets {
 
 struct plugin::impl {
    struct loaded_secret {
       std::string id;
       secret_kind kind = secret_kind::symmetric_key;
-      fcl::crypto::secret_bytes material;
+      forge::crypto::secret_bytes material;
       std::vector<std::string> purposes;
       std::vector<operation> operations;
       bool allow_raw_export = false;
@@ -25,4 +25,4 @@ struct plugin::impl {
    bool stopping = false;
 };
 
-} // namespace fcl::plugins::crypto::secrets
+} // namespace forge::plugins::crypto::secrets

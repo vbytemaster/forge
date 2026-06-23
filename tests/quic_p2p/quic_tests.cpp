@@ -33,19 +33,19 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
-import fcl.asio.blocking;
-import fcl.asio.runtime;
-import fcl.quic.connection;
-import fcl.quic.connector;
-import fcl.quic.endpoint;
-import fcl.quic.exceptions;
-import fcl.quic.framed_stream;
-import fcl.quic.listener;
-import fcl.quic.options;
-import fcl.quic.runtime;
-import fcl.quic.security;
+import forge.asio.blocking;
+import forge.asio.runtime;
+import forge.quic.connection;
+import forge.quic.connector;
+import forge.quic.endpoint;
+import forge.quic.exceptions;
+import forge.quic.framed_stream;
+import forge.quic.listener;
+import forge.quic.options;
+import forge.quic.runtime;
+import forge.quic.security;
 
-namespace fcl::quic {
+namespace forge::quic {
 namespace {
 
 using udp = boost::asio::ip::udp;
@@ -160,7 +160,7 @@ generated_identity generate_test_identity(std::string_view subject_alt_name) {
 
    auto* name = X509_get_subject_name(certificate.get());
    BOOST_REQUIRE(name != nullptr);
-   const auto common_name = std::string{"fcl-quic-test"};
+   const auto common_name = std::string{"forge-quic-test"};
    BOOST_REQUIRE(X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
                                             reinterpret_cast<const unsigned char*>(common_name.data()),
                                             static_cast<int>(common_name.size()), -1, 0) == 1);
@@ -197,7 +197,7 @@ std::vector<std::uint8_t> test_certificate_der() {
    return der;
 }
 
-server_options loopback_server_options(std::string alpn = "fcl-p2p/1", transport_limits limits = {}) {
+server_options loopback_server_options(std::string alpn = "forge-p2p/1", transport_limits limits = {}) {
    return server_options{
        .alpn = std::move(alpn),
        .limits = limits,
@@ -207,7 +207,7 @@ server_options loopback_server_options(std::string alpn = "fcl-p2p/1", transport
    };
 }
 
-client_options loopback_client_options(std::string alpn = "fcl-p2p/1", transport_limits limits = {}) {
+client_options loopback_client_options(std::string alpn = "forge-p2p/1", transport_limits limits = {}) {
    return client_options{
        .alpn = std::move(alpn),
        .handshake_timeout = std::chrono::milliseconds{5'000},
@@ -244,7 +244,7 @@ void get_with_deadline(std::future<void>& future, std::chrono::milliseconds time
 }
 
 template <typename T>
-T get_with_deadline_or_stop(fcl::asio::runtime& runtime, std::future<T>& future, std::chrono::milliseconds timeout,
+T get_with_deadline_or_stop(forge::asio::runtime& runtime, std::future<T>& future, std::chrono::milliseconds timeout,
                             std::string_view label) {
    if (future.wait_for(timeout) != std::future_status::ready) {
       runtime.stop();
@@ -255,7 +255,7 @@ T get_with_deadline_or_stop(fcl::asio::runtime& runtime, std::future<T>& future,
 }
 
 template <typename Awaitable>
-auto run_with_deadline(fcl::asio::runtime& runtime, Awaitable&& awaitable, std::chrono::milliseconds timeout,
+auto run_with_deadline(forge::asio::runtime& runtime, Awaitable&& awaitable, std::chrono::milliseconds timeout,
                        std::string_view label) {
    auto future = boost::asio::co_spawn(runtime.context(), std::forward<Awaitable>(awaitable), boost::asio::use_future);
    return get_with_deadline_or_stop(runtime, future, timeout, label);
@@ -489,13 +489,13 @@ BOOST_AUTO_TEST_CASE(quic_endpoint_rejects_non_quic_scheme) {
    try {
       (void)parse_endpoint(std::string{"https"} + "://" + std::string{"127.0.0.1"} + ":" + std::to_string(9443));
       BOOST_FAIL("expected typed QUIC exception");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_endpoint));
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_endpoint));
    }
 }
 
 BOOST_AUTO_TEST_CASE(quic_connect_timeout_wins_over_pre_connection_error_race) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto client = connector{runtime};
    auto options = loopback_client_options();
    options.test_failpoint = [](std::string_view name) {
@@ -508,8 +508,8 @@ BOOST_AUTO_TEST_CASE(quic_connect_timeout_wins_over_pre_connection_error_race) {
           client.async_connect(endpoint{.host = "not a valid host name", .port = 443}, std::move(options)),
           std::chrono::milliseconds{2'000}, "pre-connection error timeout winner");
       BOOST_FAIL("expected QUIC connect timeout");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::connect_timeout));
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::connect_timeout));
    }
 }
 
@@ -540,8 +540,8 @@ BOOST_AUTO_TEST_CASE(quic_frame_codec_rejects_oversized_payload) {
    try {
       (void)encode_frame(payload, frame_codec_options{.max_frame_size = 3});
       BOOST_FAIL("expected typed QUIC exception");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::frame_too_large));
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::frame_too_large));
    }
 }
 
@@ -569,8 +569,8 @@ BOOST_AUTO_TEST_CASE(quic_options_validation_rejects_bad_alpn) {
    try {
       validate(options);
       BOOST_FAIL("expected typed QUIC exception");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_options));
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::invalid_options));
    }
 }
 
@@ -584,7 +584,7 @@ BOOST_AUTO_TEST_CASE(quic_runtime_initializes_ngtcp2_crypto_ossl) {
 }
 
 BOOST_AUTO_TEST_CASE(quic_loopback_handshake_and_echo_frame_over_udp) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = listener{
        runtime,
        endpoint{.host = "127.0.0.1", .port = 0},
@@ -594,7 +594,7 @@ BOOST_AUTO_TEST_CASE(quic_loopback_handshake_and_echo_frame_over_udp) {
    auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto client = connector{runtime};
    auto client_connection =
-       fcl::asio::blocking::run(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()));
+       forge::asio::blocking::run(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()));
    auto server_connection = accept_future.get();
 
    auto server_echo = boost::asio::co_spawn(
@@ -609,11 +609,11 @@ BOOST_AUTO_TEST_CASE(quic_loopback_handshake_and_echo_frame_over_udp) {
        },
        boost::asio::use_future);
 
-   auto client_stream = fcl::asio::blocking::run(runtime, client_connection.async_open_stream());
+   auto client_stream = forge::asio::blocking::run(runtime, client_connection.async_open_stream());
    auto framed = framed_stream{std::move(client_stream)};
    const auto payload = std::vector<std::uint8_t>{'p', 'i', 'n', 'g'};
-   fcl::asio::blocking::run(runtime, framed.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, framed.async_read_frame());
+   forge::asio::blocking::run(runtime, framed.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, framed.async_read_frame());
    const auto server_seen = server_echo.get();
 
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
@@ -621,17 +621,17 @@ BOOST_AUTO_TEST_CASE(quic_loopback_handshake_and_echo_frame_over_udp) {
    BOOST_TEST(client_connection.metrics().handshakes_completed >= 1U);
    BOOST_TEST(client_connection.metrics().streams_opened >= 1U);
 
-   fcl::asio::blocking::run(runtime, client_connection.async_close());
+   forge::asio::blocking::run(runtime, client_connection.async_close());
    server.stop();
 }
 
 BOOST_AUTO_TEST_CASE(quic_loopback_medium_frame_and_small_frame_burst) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options()};
    auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto client = connector{runtime};
    auto client_connection =
-       fcl::asio::blocking::run(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()));
+       forge::asio::blocking::run(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()));
    auto server_connection = accept_future.get();
 
    constexpr auto small_frame_count = 10'000U;
@@ -653,17 +653,17 @@ BOOST_AUTO_TEST_CASE(quic_loopback_medium_frame_and_small_frame_burst) {
        },
        boost::asio::use_future);
 
-   auto client_stream = fcl::asio::blocking::run(runtime, client_connection.async_open_stream());
+   auto client_stream = forge::asio::blocking::run(runtime, client_connection.async_open_stream());
    auto framed = framed_stream{std::move(client_stream)};
    auto large_payload = std::vector<std::uint8_t>(256 * 1024);
    for (std::size_t index = 0; index < large_payload.size(); ++index) {
       large_payload[index] = static_cast<std::uint8_t>(index % 251U);
    }
-   fcl::asio::blocking::run(runtime, framed.async_write_frame(large_payload));
-   const auto large_reply = fcl::asio::blocking::run(runtime, framed.async_read_frame());
+   forge::asio::blocking::run(runtime, framed.async_write_frame(large_payload));
+   const auto large_reply = forge::asio::blocking::run(runtime, framed.async_read_frame());
    BOOST_TEST(large_reply == large_payload, boost::test_tools::per_element());
 
-   fcl::asio::blocking::run(runtime, [&framed]() -> boost::asio::awaitable<void> {
+   forge::asio::blocking::run(runtime, [&framed]() -> boost::asio::awaitable<void> {
       for (auto index = 0U; index < small_frame_count; ++index) {
          const auto payload = std::vector<std::uint8_t>{static_cast<std::uint8_t>(index & 0xffU)};
          co_await framed.async_write_frame(payload);
@@ -676,17 +676,17 @@ BOOST_AUTO_TEST_CASE(quic_loopback_medium_frame_and_small_frame_burst) {
    BOOST_TEST(client_connection.metrics().frames_sent >= small_frame_count + 1U);
    BOOST_TEST(client_connection.metrics().backpressure_rejections == 0U);
 
-   fcl::asio::blocking::run(runtime, client_connection.async_close());
+   forge::asio::blocking::run(runtime, client_connection.async_close());
    server.stop();
 }
 
 BOOST_AUTO_TEST_CASE(quic_loopback_large_frame_over_real_quic_stream) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options()};
    auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto client = connector{runtime};
    auto client_connection =
-       fcl::asio::blocking::run(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()));
+       forge::asio::blocking::run(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()));
    auto server_connection = accept_future.get();
 
    auto server_echo = boost::asio::co_spawn(
@@ -701,14 +701,14 @@ BOOST_AUTO_TEST_CASE(quic_loopback_large_frame_over_real_quic_stream) {
        },
        boost::asio::use_future);
 
-   auto client_stream = fcl::asio::blocking::run(runtime, client_connection.async_open_stream());
+   auto client_stream = forge::asio::blocking::run(runtime, client_connection.async_open_stream());
    auto framed = framed_stream{std::move(client_stream)};
    auto payload = std::vector<std::uint8_t>(4 * 1024 * 1024);
    for (std::size_t index = 0; index < payload.size(); ++index) {
       payload[index] = static_cast<std::uint8_t>((index * 17U) % 251U);
    }
-   fcl::asio::blocking::run(runtime, framed.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, framed.async_read_frame());
+   forge::asio::blocking::run(runtime, framed.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, framed.async_read_frame());
    const auto server_seen = server_echo.get();
 
    BOOST_TEST(server_seen == payload.size());
@@ -716,20 +716,20 @@ BOOST_AUTO_TEST_CASE(quic_loopback_large_frame_over_real_quic_stream) {
    BOOST_TEST(std::equal(reply.begin(), reply.end(), payload.begin(), payload.end()));
    BOOST_TEST(client_connection.metrics().backpressure_rejections == 0U);
 
-   fcl::asio::blocking::run(runtime, client_connection.async_close());
+   forge::asio::blocking::run(runtime, client_connection.async_close());
    server.stop();
 }
 
 BOOST_AUTO_TEST_CASE(quic_loopback_many_parallel_streams_echo_frames) {
    auto limits =
        transport_limits{.max_connections = 16, .max_streams_per_connection = 64, .max_queued_bytes = 16 * 1024 * 1024};
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server =
-       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("fcl-p2p/1", limits)};
+       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("forge-p2p/1", limits)};
    auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto client = connector{runtime};
-   auto client_connection = fcl::asio::blocking::run(
-       runtime, client.async_connect(server.local_endpoint(), loopback_client_options("fcl-p2p/1", limits)));
+   auto client_connection = forge::asio::blocking::run(
+       runtime, client.async_connect(server.local_endpoint(), loopback_client_options("forge-p2p/1", limits)));
    auto server_connection = accept_future.get();
 
    constexpr auto stream_count = 32U;
@@ -748,7 +748,7 @@ BOOST_AUTO_TEST_CASE(quic_loopback_many_parallel_streams_echo_frames) {
        },
        boost::asio::use_future);
 
-   auto replies = fcl::asio::blocking::run(
+   auto replies = forge::asio::blocking::run(
        runtime, [&client_connection]() mutable -> boost::asio::awaitable<std::vector<std::vector<std::uint8_t>>> {
           auto streams = std::vector<framed_stream>{};
           auto expected = std::vector<std::vector<std::uint8_t>>{};
@@ -783,12 +783,12 @@ BOOST_AUTO_TEST_CASE(quic_loopback_many_parallel_streams_echo_frames) {
    BOOST_TEST(client_connection.metrics().streams_opened == stream_count);
    BOOST_TEST(client_connection.metrics().backpressure_rejections == 0U);
 
-   fcl::asio::blocking::run(runtime, client_connection.async_close());
+   forge::asio::blocking::run(runtime, client_connection.async_close());
    server.stop();
 }
 
 BOOST_AUTO_TEST_CASE(quic_loopback_repeated_connect_transfer_close_soak) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
 
    constexpr auto iteration_count = 10U;
    for (auto iteration = 0U; iteration < iteration_count; ++iteration) {
@@ -796,7 +796,7 @@ BOOST_AUTO_TEST_CASE(quic_loopback_repeated_connect_transfer_close_soak) {
       auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
       auto client = connector{runtime};
       auto client_connection =
-          fcl::asio::blocking::run(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()));
+          forge::asio::blocking::run(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()));
       auto server_connection = accept_future.get();
 
       auto server_echo = boost::asio::co_spawn(
@@ -809,15 +809,15 @@ BOOST_AUTO_TEST_CASE(quic_loopback_repeated_connect_transfer_close_soak) {
           },
           boost::asio::use_future);
 
-      auto client_stream = fcl::asio::blocking::run(runtime, client_connection.async_open_stream());
+      auto client_stream = forge::asio::blocking::run(runtime, client_connection.async_open_stream());
       auto framed = framed_stream{std::move(client_stream)};
       const auto payload = std::vector<std::uint8_t>{static_cast<std::uint8_t>(iteration), 1, 2, 3};
-      fcl::asio::blocking::run(runtime, framed.async_write_frame(payload));
-      const auto reply = fcl::asio::blocking::run(runtime, framed.async_read_frame());
+      forge::asio::blocking::run(runtime, framed.async_write_frame(payload));
+      const auto reply = forge::asio::blocking::run(runtime, framed.async_read_frame());
       server_echo.get();
 
       BOOST_TEST(reply == payload, boost::test_tools::per_element());
-      fcl::asio::blocking::run(runtime, client_connection.async_close());
+      forge::asio::blocking::run(runtime, client_connection.async_close());
       server.stop();
    }
 }
@@ -825,9 +825,9 @@ BOOST_AUTO_TEST_CASE(quic_loopback_repeated_connect_transfer_close_soak) {
 BOOST_AUTO_TEST_CASE(quic_fault_proxy_handshake_survives_mild_loss) {
    auto limits =
        transport_limits{.max_connections = 16, .max_streams_per_connection = 16, .max_queued_bytes = 16 * 1024 * 1024};
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server =
-       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("fcl-p2p/1", limits)};
+       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("forge-p2p/1", limits)};
    auto proxy = std::make_shared<udp_fault_proxy>(
        runtime.context(), server.local_endpoint(),
        fault_proxy_rules{
@@ -839,7 +839,7 @@ BOOST_AUTO_TEST_CASE(quic_fault_proxy_handshake_survives_mild_loss) {
    auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto client = connector{runtime};
    auto client_connection = run_with_deadline(
-       runtime, client.async_connect(proxy->local_endpoint(), loopback_client_options("fcl-p2p/1", limits)),
+       runtime, client.async_connect(proxy->local_endpoint(), loopback_client_options("forge-p2p/1", limits)),
        std::chrono::milliseconds{10'000}, "lossy handshake connect");
    auto server_connection =
        get_with_deadline(accept_future, std::chrono::milliseconds{10'000}, "lossy handshake accept");
@@ -862,9 +862,9 @@ BOOST_AUTO_TEST_CASE(quic_fault_proxy_framed_echo_survives_loss_delay_reorder_du
    constexpr auto lossy_close_deadline = std::chrono::milliseconds{10'000};
    auto limits =
        transport_limits{.max_connections = 16, .max_streams_per_connection = 16, .max_queued_bytes = 16 * 1024 * 1024};
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server =
-       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("fcl-p2p/1", limits)};
+       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("forge-p2p/1", limits)};
    auto proxy = std::make_shared<udp_fault_proxy>(runtime.context(), server.local_endpoint(),
                                                   fault_proxy_rules{
                                                       .client_to_server =
@@ -893,7 +893,7 @@ BOOST_AUTO_TEST_CASE(quic_fault_proxy_framed_echo_survives_loss_delay_reorder_du
    auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto client = connector{runtime};
    auto client_connection = run_with_deadline(
-       runtime, client.async_connect(proxy->local_endpoint(), loopback_client_options("fcl-p2p/1", limits)),
+       runtime, client.async_connect(proxy->local_endpoint(), loopback_client_options("forge-p2p/1", limits)),
        lossy_connect_deadline, "lossy echo connect");
    auto server_connection = get_with_deadline_or_stop(runtime, accept_future, lossy_connect_deadline, "lossy echo accept");
 
@@ -941,7 +941,7 @@ BOOST_AUTO_TEST_CASE(quic_fault_proxy_repeated_connect_transfer_close) {
    constexpr auto lossy_stream_deadline = std::chrono::milliseconds{10'000};
    constexpr auto lossy_transfer_deadline = std::chrono::milliseconds{30'000};
    constexpr auto lossy_close_deadline = std::chrono::milliseconds{10'000};
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
 
    constexpr auto iteration_count = 3U;
    auto client = connector{runtime};
@@ -1004,12 +1004,12 @@ BOOST_AUTO_TEST_CASE(quic_fault_proxy_repeated_connect_transfer_close) {
 }
 
 BOOST_AUTO_TEST_CASE(quic_loopback_rejects_alpn_mismatch) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
-   auto server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("fcl-p2p/1")};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("forge-p2p/1")};
    auto client = connector{runtime};
 
    try {
-      (void)fcl::asio::blocking::run(
+      (void)forge::asio::blocking::run(
           runtime,
           client.async_connect(server.local_endpoint(), client_options{
                                                             .alpn = "wrong-alpn",
@@ -1017,16 +1017,16 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_alpn_mismatch) {
                                                             .security = security_options{.verify_peer = false},
                                                         }));
       BOOST_FAIL("expected QUIC handshake/alpn failure");
-   } catch (const fcl::exceptions::base& error) {
-      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout ||
-                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::alpn_mismatch || fcl::quic::exceptions::code_of(error).value() == exceptions::code::internal;
+   } catch (const forge::exceptions::base& error) {
+      const auto acceptable = forge::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout ||
+                              forge::quic::exceptions::code_of(error).value() == exceptions::code::alpn_mismatch || forge::quic::exceptions::code_of(error).value() == exceptions::code::internal;
       BOOST_TEST(acceptable);
    }
    server.stop();
 }
 
 BOOST_AUTO_TEST_CASE(quic_connect_timeout_limits_stalled_handshake_budget) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto blackhole = udp::socket{runtime.context()};
    blackhole.open(udp::v4());
    blackhole.bind(udp::endpoint{boost::asio::ip::make_address("127.0.0.1"), 0});
@@ -1042,8 +1042,8 @@ BOOST_AUTO_TEST_CASE(quic_connect_timeout_limits_stalled_handshake_budget) {
                               client.async_connect(to_quic_endpoint(blackhole.local_endpoint()), std::move(options)),
                               std::chrono::milliseconds{2'000}, "blackhole connect timeout");
       BOOST_FAIL("expected QUIC connect timeout");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::connect_timeout));
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::connect_timeout));
    }
    const auto elapsed =
        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started);
@@ -1054,9 +1054,9 @@ BOOST_AUTO_TEST_CASE(quic_connect_timeout_limits_stalled_handshake_budget) {
 BOOST_AUTO_TEST_CASE(quic_failed_handshake_releases_listener_connection_slot) {
    auto limits =
        transport_limits{.max_connections = 1, .max_streams_per_connection = 16, .max_queued_bytes = 16 * 1024 * 1024};
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server =
-       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("fcl-p2p/1", limits)};
+       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("forge-p2p/1", limits)};
    auto client = connector{runtime};
 
    try {
@@ -1070,15 +1070,15 @@ BOOST_AUTO_TEST_CASE(quic_failed_handshake_releases_listener_connection_slot) {
                                                    }),
                               std::chrono::milliseconds{2'000}, "failed alpn connect");
       BOOST_FAIL("expected QUIC ALPN failure");
-   } catch (const fcl::exceptions::base& error) {
-      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout ||
-                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::alpn_mismatch || fcl::quic::exceptions::code_of(error).value() == exceptions::code::internal;
+   } catch (const forge::exceptions::base& error) {
+      const auto acceptable = forge::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout ||
+                              forge::quic::exceptions::code_of(error).value() == exceptions::code::alpn_mismatch || forge::quic::exceptions::code_of(error).value() == exceptions::code::internal;
       BOOST_TEST(acceptable);
    }
 
    auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto valid = run_with_deadline(
-       runtime, client.async_connect(server.local_endpoint(), loopback_client_options("fcl-p2p/1", limits)),
+       runtime, client.async_connect(server.local_endpoint(), loopback_client_options("forge-p2p/1", limits)),
        std::chrono::milliseconds{5'000}, "valid connect after failed alpn");
    auto accepted = get_with_deadline(accept_future, std::chrono::milliseconds{5'000}, "accept after failed alpn");
    BOOST_TEST(valid.valid());
@@ -1091,12 +1091,12 @@ BOOST_AUTO_TEST_CASE(quic_failed_handshake_releases_listener_connection_slot) {
 }
 
 BOOST_AUTO_TEST_CASE(quic_remote_close_during_active_read_is_reported) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options()};
    auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto client = connector{runtime};
    auto client_connection =
-       fcl::asio::blocking::run(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()));
+       forge::asio::blocking::run(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()));
    auto server_connection = accept_future.get();
 
    auto server_close = boost::asio::co_spawn(
@@ -1109,33 +1109,33 @@ BOOST_AUTO_TEST_CASE(quic_remote_close_during_active_read_is_reported) {
        },
        boost::asio::use_future);
 
-   auto client_stream = fcl::asio::blocking::run(runtime, client_connection.async_open_stream());
+   auto client_stream = forge::asio::blocking::run(runtime, client_connection.async_open_stream());
    auto framed = framed_stream{std::move(client_stream)};
-   fcl::asio::blocking::run(runtime, framed.async_write_frame(std::vector<std::uint8_t>{'c', 'l', 'o', 's', 'e'}));
+   forge::asio::blocking::run(runtime, framed.async_write_frame(std::vector<std::uint8_t>{'c', 'l', 'o', 's', 'e'}));
    try {
-      (void)fcl::asio::blocking::run(runtime, framed.async_read_frame());
+      (void)forge::asio::blocking::run(runtime, framed.async_read_frame());
       BOOST_FAIL("expected remote stream close to unblock read with typed error");
-   } catch (const fcl::exceptions::base& error) {
-      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_closed ||
-                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_reset;
+   } catch (const forge::exceptions::base& error) {
+      const auto acceptable = forge::quic::exceptions::code_of(error).value() == exceptions::code::stream_closed ||
+                              forge::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed || forge::quic::exceptions::code_of(error).value() == exceptions::code::stream_reset;
       BOOST_TEST(acceptable);
    }
    server_close.get();
-   fcl::asio::blocking::run(runtime, client_connection.async_close());
+   forge::asio::blocking::run(runtime, client_connection.async_close());
    server.stop();
 }
 
 BOOST_AUTO_TEST_CASE(quic_listener_reuses_connection_slot_after_close) {
    auto limits =
        transport_limits{.max_connections = 1, .max_streams_per_connection = 16, .max_queued_bytes = 16 * 1024 * 1024};
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server =
-       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("fcl-p2p/1", limits)};
+       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("forge-p2p/1", limits)};
    auto client = connector{runtime};
 
    auto accept_first = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto first = run_with_deadline(
-       runtime, client.async_connect(server.local_endpoint(), loopback_client_options("fcl-p2p/1", limits)),
+       runtime, client.async_connect(server.local_endpoint(), loopback_client_options("forge-p2p/1", limits)),
        std::chrono::milliseconds{5'000}, "first connect with max one connection");
    auto first_server =
        get_with_deadline(accept_first, std::chrono::milliseconds{5'000}, "first accept with max one connection");
@@ -1144,7 +1144,7 @@ BOOST_AUTO_TEST_CASE(quic_listener_reuses_connection_slot_after_close) {
 
    auto accept_second = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto second = run_with_deadline(
-       runtime, client.async_connect(server.local_endpoint(), loopback_client_options("fcl-p2p/1", limits)),
+       runtime, client.async_connect(server.local_endpoint(), loopback_client_options("forge-p2p/1", limits)),
        std::chrono::milliseconds{5'000}, "second connect after cleanup");
    auto second_server =
        get_with_deadline(accept_second, std::chrono::milliseconds{5'000}, "second accept after cleanup");
@@ -1157,20 +1157,20 @@ BOOST_AUTO_TEST_CASE(quic_listener_reuses_connection_slot_after_close) {
 }
 
 BOOST_AUTO_TEST_CASE(quic_connection_cancel_rejects_new_streams) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options()};
    auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto client = connector{runtime};
    auto client_connection =
-       fcl::asio::blocking::run(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()));
+       forge::asio::blocking::run(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()));
    (void)accept_future.get();
    client_connection.cancel();
 
    try {
-      (void)fcl::asio::blocking::run(runtime, client_connection.async_open_stream());
+      (void)forge::asio::blocking::run(runtime, client_connection.async_open_stream());
       BOOST_FAIL("expected canceled connection to reject new streams");
-   } catch (const fcl::exceptions::base& error) {
-      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::canceled;
+   } catch (const forge::exceptions::base& error) {
+      const auto acceptable = forge::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed || forge::quic::exceptions::code_of(error).value() == exceptions::code::canceled;
       BOOST_TEST(acceptable);
    }
    server.stop();
@@ -1178,11 +1178,11 @@ BOOST_AUTO_TEST_CASE(quic_connection_cancel_rejects_new_streams) {
 
 BOOST_AUTO_TEST_CASE(quic_loopback_verifies_pinned_peer_fingerprint) {
    const auto expected = sha256_fingerprint(test_certificate_der());
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options()};
    auto client = connector{runtime};
 
-   auto connection = fcl::asio::blocking::run(
+   auto connection = forge::asio::blocking::run(
        runtime, client.async_connect(
                     server.local_endpoint(),
                     client_options{
@@ -1191,13 +1191,13 @@ BOOST_AUTO_TEST_CASE(quic_loopback_verifies_pinned_peer_fingerprint) {
                     }));
 
    BOOST_TEST(connection.valid());
-   fcl::asio::blocking::run(runtime, connection.async_close());
+   forge::asio::blocking::run(runtime, connection.async_close());
    server.stop();
 }
 
 BOOST_AUTO_TEST_CASE(quic_loopback_verifies_ca_certificate_hostname) {
    const auto identity = generate_test_identity("DNS:localhost,IP:127.0.0.1");
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server_options_value = loopback_server_options();
    server_options_value.certificate_pem = identity.certificate_pem;
    server_options_value.private_key_pem = identity.private_key_pem;
@@ -1220,7 +1220,7 @@ BOOST_AUTO_TEST_CASE(quic_loopback_verifies_ca_certificate_hostname) {
 
 BOOST_AUTO_TEST_CASE(quic_loopback_rejects_ca_certificate_hostname_mismatch) {
    const auto identity = generate_test_identity("DNS:example.invalid,IP:127.0.0.2");
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server_options_value = loopback_server_options();
    server_options_value.handshake_timeout = std::chrono::milliseconds{500};
    server_options_value.certificate_pem = identity.certificate_pem;
@@ -1237,11 +1237,11 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_ca_certificate_hostname_mismatch) {
       (void)run_with_deadline(runtime, client.async_connect(server.local_endpoint(), std::move(client_options_value)),
                               std::chrono::milliseconds{5'000}, "CA hostname mismatch connect");
       BOOST_FAIL("expected QUIC hostname verification failure");
-   } catch (const fcl::exceptions::base& error) {
-      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::tls_failed ||
-                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::peer_verification_failed ||
-                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout || fcl::quic::exceptions::code_of(error).value() == exceptions::code::canceled;
-      BOOST_TEST_CONTEXT("error kind=" << static_cast<int>(fcl::quic::exceptions::code_of(error).value()) << " message=" << error.what()) {
+   } catch (const forge::exceptions::base& error) {
+      const auto acceptable = forge::quic::exceptions::code_of(error).value() == exceptions::code::tls_failed ||
+                              forge::quic::exceptions::code_of(error).value() == exceptions::code::peer_verification_failed ||
+                              forge::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout || forge::quic::exceptions::code_of(error).value() == exceptions::code::canceled;
+      BOOST_TEST_CONTEXT("error kind=" << static_cast<int>(forge::quic::exceptions::code_of(error).value()) << " message=" << error.what()) {
          BOOST_TEST(acceptable);
       }
    }
@@ -1249,7 +1249,7 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_ca_certificate_hostname_mismatch) {
 }
 
 BOOST_AUTO_TEST_CASE(quic_loopback_accepts_mtls_client_certificate) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server_options_value = loopback_server_options();
    server_options_value.security = security_options{
        .verify_peer = true,
@@ -1275,7 +1275,7 @@ BOOST_AUTO_TEST_CASE(quic_loopback_accepts_mtls_client_certificate) {
 }
 
 BOOST_AUTO_TEST_CASE(quic_loopback_rejects_missing_mtls_client_certificate) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server_options_value = loopback_server_options();
    server_options_value.handshake_timeout = std::chrono::milliseconds{500};
    server_options_value.security = security_options{.verify_peer = true};
@@ -1291,18 +1291,18 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_missing_mtls_client_certificate) {
       client_connected = connection.valid();
       run_with_deadline(runtime, connection.async_close(), std::chrono::milliseconds{5'000},
                         "close missing-cert client");
-   } catch (const fcl::exceptions::base& error) {
-      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::peer_verification_failed ||
-                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::tls_failed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout;
+   } catch (const forge::exceptions::base& error) {
+      const auto acceptable = forge::quic::exceptions::code_of(error).value() == exceptions::code::peer_verification_failed ||
+                              forge::quic::exceptions::code_of(error).value() == exceptions::code::tls_failed || forge::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout;
       BOOST_TEST(acceptable);
    }
    try {
       (void)get_with_deadline(accept_future, std::chrono::milliseconds{5'000}, "missing-cert server accept");
       BOOST_FAIL("expected missing client certificate to reject server accept");
-   } catch (const fcl::exceptions::base& error) {
-      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::peer_verification_failed ||
-                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::tls_failed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout ||
-                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed;
+   } catch (const forge::exceptions::base& error) {
+      const auto acceptable = forge::quic::exceptions::code_of(error).value() == exceptions::code::peer_verification_failed ||
+                              forge::quic::exceptions::code_of(error).value() == exceptions::code::tls_failed || forge::quic::exceptions::code_of(error).value() == exceptions::code::handshake_timeout ||
+                              forge::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed;
       BOOST_TEST(acceptable);
    }
    (void)client_connected;
@@ -1310,12 +1310,12 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_missing_mtls_client_certificate) {
 }
 
 BOOST_AUTO_TEST_CASE(quic_loopback_rejects_wrong_peer_fingerprint) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options()};
    auto client = connector{runtime};
 
    try {
-      (void)fcl::asio::blocking::run(
+      (void)forge::asio::blocking::run(
           runtime,
           client.async_connect(server.local_endpoint(),
                                client_options{
@@ -1328,21 +1328,21 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_wrong_peer_fingerprint) {
                                        },
                                }));
       BOOST_FAIL("expected peer fingerprint rejection");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::peer_verification_failed));
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::peer_verification_failed));
    }
    server.stop();
 }
 
 BOOST_AUTO_TEST_CASE(quic_connection_close_unblocks_pending_stream_read) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options()};
    auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto client = connector{runtime};
    auto client_connection =
-       fcl::asio::blocking::run(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()));
+       forge::asio::blocking::run(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()));
    auto server_connection = accept_future.get();
-   auto stream = fcl::asio::blocking::run(runtime, client_connection.async_open_stream());
+   auto stream = forge::asio::blocking::run(runtime, client_connection.async_open_stream());
 
    auto read_future = boost::asio::co_spawn(runtime.context(), stream.async_read(), boost::asio::use_future);
    run_with_deadline(runtime, client_connection.async_close(), std::chrono::milliseconds{5'000},
@@ -1351,9 +1351,9 @@ BOOST_AUTO_TEST_CASE(quic_connection_close_unblocks_pending_stream_read) {
    try {
       (void)get_with_deadline(read_future, std::chrono::milliseconds{5'000}, "pending stream read after close");
       BOOST_FAIL("expected pending stream read to unblock with a close error");
-   } catch (const fcl::exceptions::base& error) {
-      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed ||
-                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_closed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_reset;
+   } catch (const forge::exceptions::base& error) {
+      const auto acceptable = forge::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed ||
+                              forge::quic::exceptions::code_of(error).value() == exceptions::code::stream_closed || forge::quic::exceptions::code_of(error).value() == exceptions::code::stream_reset;
       BOOST_TEST(acceptable);
    }
    run_with_deadline(runtime, server_connection.async_close(), std::chrono::milliseconds{5'000},
@@ -1364,22 +1364,22 @@ BOOST_AUTO_TEST_CASE(quic_connection_close_unblocks_pending_stream_read) {
 BOOST_AUTO_TEST_CASE(quic_loopback_rejects_max_streams_backpressure) {
    auto limits =
        transport_limits{.max_connections = 16, .max_streams_per_connection = 1, .max_queued_bytes = 16 * 1024 * 1024};
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server =
-       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("fcl-p2p/1", limits)};
+       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("forge-p2p/1", limits)};
    auto client = connector{runtime};
-   auto connection = fcl::asio::blocking::run(
-       runtime, client.async_connect(server.local_endpoint(), loopback_client_options("fcl-p2p/1", limits)));
+   auto connection = forge::asio::blocking::run(
+       runtime, client.async_connect(server.local_endpoint(), loopback_client_options("forge-p2p/1", limits)));
 
-   auto first = fcl::asio::blocking::run(runtime, connection.async_open_stream());
+   auto first = forge::asio::blocking::run(runtime, connection.async_open_stream());
    BOOST_TEST(first.valid());
    try {
-      (void)fcl::asio::blocking::run(runtime, connection.async_open_stream());
+      (void)forge::asio::blocking::run(runtime, connection.async_open_stream());
       BOOST_FAIL("expected max streams rejection");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::backpressure_rejected));
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::backpressure_rejected));
    }
-   fcl::asio::blocking::run(runtime, connection.async_close());
+   forge::asio::blocking::run(runtime, connection.async_close());
    server.stop();
 }
 
@@ -1388,15 +1388,15 @@ BOOST_AUTO_TEST_CASE(quic_loopback_allows_new_stream_after_previous_stream_close
        transport_limits{.max_connections = 16, .max_streams_per_connection = 1, .max_queued_bytes = 16 * 1024 * 1024};
    auto server_limits =
        transport_limits{.max_connections = 16, .max_streams_per_connection = 16, .max_queued_bytes = 16 * 1024 * 1024};
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server =
-       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("fcl-p2p/1", server_limits)};
+       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("forge-p2p/1", server_limits)};
    auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto client = connector{runtime};
    auto connection = run_with_deadline(
-       runtime, client.async_connect(server.local_endpoint(), loopback_client_options("fcl-p2p/1", client_limits)),
+       runtime, client.async_connect(server.local_endpoint(), loopback_client_options("forge-p2p/1", client_limits)),
        std::chrono::milliseconds{5'000}, "stream reuse connect");
-   auto server_connection = std::make_shared<fcl::quic::connection>(
+   auto server_connection = std::make_shared<forge::quic::connection>(
        get_with_deadline(accept_future, std::chrono::milliseconds{5'000}, "stream reuse accept"));
 
    for (auto index = 0U; index < 2U; ++index) {
@@ -1419,10 +1419,10 @@ BOOST_AUTO_TEST_CASE(quic_loopback_allows_new_stream_after_previous_stream_close
       try {
          (void)run_with_deadline(runtime, framed.async_read_frame(), std::chrono::milliseconds{5'000},
                                  "observe active-limited stream close");
-      } catch (const fcl::exceptions::base& error) {
-         const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_closed ||
-                                 fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed ||
-                                 fcl::quic::exceptions::code_of(error).value() == exceptions::code::stream_reset;
+      } catch (const forge::exceptions::base& error) {
+         const auto acceptable = forge::quic::exceptions::code_of(error).value() == exceptions::code::stream_closed ||
+                                 forge::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed ||
+                                 forge::quic::exceptions::code_of(error).value() == exceptions::code::stream_reset;
          BOOST_TEST(acceptable);
       }
       get_with_deadline(server_task, std::chrono::milliseconds{5'000}, "stream reuse server task");
@@ -1435,31 +1435,31 @@ BOOST_AUTO_TEST_CASE(quic_loopback_allows_new_stream_after_previous_stream_close
 
 BOOST_AUTO_TEST_CASE(quic_loopback_rejects_max_queued_bytes_backpressure) {
    auto limits = transport_limits{.max_connections = 16, .max_streams_per_connection = 16, .max_queued_bytes = 3};
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server =
-       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("fcl-p2p/1", limits)};
+       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("forge-p2p/1", limits)};
    auto client = connector{runtime};
-   auto connection = fcl::asio::blocking::run(
-       runtime, client.async_connect(server.local_endpoint(), loopback_client_options("fcl-p2p/1", limits)));
-   auto outbound = fcl::asio::blocking::run(runtime, connection.async_open_stream());
+   auto connection = forge::asio::blocking::run(
+       runtime, client.async_connect(server.local_endpoint(), loopback_client_options("forge-p2p/1", limits)));
+   auto outbound = forge::asio::blocking::run(runtime, connection.async_open_stream());
 
    try {
       const auto payload = std::vector<std::uint8_t>{1, 2, 3, 4};
-      fcl::asio::blocking::run(runtime, outbound.async_write(payload));
+      forge::asio::blocking::run(runtime, outbound.async_write(payload));
       BOOST_FAIL("expected queued bytes rejection");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::backpressure_rejected));
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::backpressure_rejected));
    }
    BOOST_TEST(connection.metrics().backpressure_rejections >= 1U);
-   fcl::asio::blocking::run(runtime, connection.async_close());
+   forge::asio::blocking::run(runtime, connection.async_close());
    server.stop();
 }
 
 BOOST_AUTO_TEST_CASE(quic_stream_cancel_releases_queued_write_budget) {
    auto limits = transport_limits{.max_connections = 16, .max_streams_per_connection = 16, .max_queued_bytes = 8};
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server =
-       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("fcl-p2p/1", limits)};
+       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("forge-p2p/1", limits)};
    auto proxy = std::make_shared<udp_fault_proxy>(
        runtime.context(), server.local_endpoint(),
        fault_proxy_rules{.server_to_client = fault_rule{.delay = std::chrono::milliseconds{250}}});
@@ -1468,7 +1468,7 @@ BOOST_AUTO_TEST_CASE(quic_stream_cancel_releases_queued_write_budget) {
    auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto client = connector{runtime};
    auto connection =
-       run_with_deadline(runtime, client.async_connect(proxy->local_endpoint(), loopback_client_options("fcl-p2p/1", limits)),
+       run_with_deadline(runtime, client.async_connect(proxy->local_endpoint(), loopback_client_options("forge-p2p/1", limits)),
                          std::chrono::milliseconds{10'000}, "queued-budget cancel connect");
    auto server_connection =
        get_with_deadline(accept_future, std::chrono::milliseconds{10'000}, "queued-budget cancel accept");
@@ -1507,9 +1507,9 @@ BOOST_AUTO_TEST_CASE(quic_stream_cancel_releases_queued_write_budget) {
 
 BOOST_AUTO_TEST_CASE(quic_peer_reset_releases_retained_write_budget) {
    auto limits = transport_limits{.max_connections = 16, .max_streams_per_connection = 16, .max_queued_bytes = 8};
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server =
-       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("fcl-p2p/1", limits)};
+       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("forge-p2p/1", limits)};
    auto proxy = std::make_shared<udp_fault_proxy>(
        runtime.context(), server.local_endpoint(),
        fault_proxy_rules{.server_to_client = fault_rule{.delay = std::chrono::milliseconds{250}}});
@@ -1518,7 +1518,7 @@ BOOST_AUTO_TEST_CASE(quic_peer_reset_releases_retained_write_budget) {
    auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto client = connector{runtime};
    auto connection =
-       run_with_deadline(runtime, client.async_connect(proxy->local_endpoint(), loopback_client_options("fcl-p2p/1", limits)),
+       run_with_deadline(runtime, client.async_connect(proxy->local_endpoint(), loopback_client_options("forge-p2p/1", limits)),
                          std::chrono::milliseconds{10'000}, "queued-budget peer-reset connect");
    auto server_connection =
        get_with_deadline(accept_future, std::chrono::milliseconds{10'000}, "queued-budget peer-reset accept");
@@ -1579,25 +1579,25 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_inbound_packet_queue_overflow) {
        .max_inbound_queued_bytes = 1,
        .max_inbound_queued_packets = 16,
    };
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server =
-       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("fcl-p2p/1", server_limits)};
+       listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options("forge-p2p/1", server_limits)};
    auto client = connector{runtime};
 
    try {
       (void)run_with_deadline(
-          runtime, client.async_connect(server.local_endpoint(), loopback_client_options("fcl-p2p/1", client_limits)),
+          runtime, client.async_connect(server.local_endpoint(), loopback_client_options("forge-p2p/1", client_limits)),
           std::chrono::milliseconds{5'000}, "inbound overflow connect");
       BOOST_FAIL("expected inbound packet queue overflow to close the connection");
-   } catch (const fcl::exceptions::base& error) {
-      const auto acceptable = fcl::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed || fcl::quic::exceptions::code_of(error).value() == exceptions::code::canceled ||
-                              fcl::quic::exceptions::code_of(error).value() == exceptions::code::backpressure_rejected;
+   } catch (const forge::exceptions::base& error) {
+      const auto acceptable = forge::quic::exceptions::code_of(error).value() == exceptions::code::connection_closed || forge::quic::exceptions::code_of(error).value() == exceptions::code::canceled ||
+                              forge::quic::exceptions::code_of(error).value() == exceptions::code::backpressure_rejected;
       BOOST_TEST(acceptable);
    }
 
    auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto valid = run_with_deadline(
-       runtime, client.async_connect(server.local_endpoint(), loopback_client_options("fcl-p2p/1", server_limits)),
+       runtime, client.async_connect(server.local_endpoint(), loopback_client_options("forge-p2p/1", server_limits)),
        std::chrono::milliseconds{5'000}, "valid connect after inbound overflow");
    auto accepted = get_with_deadline(accept_future, std::chrono::milliseconds{5'000}, "accept after inbound overflow");
    BOOST_TEST(valid.valid());
@@ -1611,12 +1611,12 @@ BOOST_AUTO_TEST_CASE(quic_loopback_rejects_inbound_packet_queue_overflow) {
 }
 
 BOOST_AUTO_TEST_CASE(quic_framed_stream_rejects_oversized_remote_frame) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options()};
    auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
    auto client = connector{runtime};
    auto client_connection =
-       fcl::asio::blocking::run(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()));
+       forge::asio::blocking::run(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()));
    auto server_connection = accept_future.get();
 
    auto server_send = boost::asio::co_spawn(
@@ -1630,22 +1630,22 @@ BOOST_AUTO_TEST_CASE(quic_framed_stream_rejects_oversized_remote_frame) {
        },
        boost::asio::use_future);
 
-   auto client_stream = fcl::asio::blocking::run(runtime, client_connection.async_open_stream());
+   auto client_stream = forge::asio::blocking::run(runtime, client_connection.async_open_stream());
    auto framed = framed_stream{std::move(client_stream), frame_codec_options{.max_frame_size = 3}};
-   fcl::asio::blocking::run(runtime, framed.async_write_frame(std::vector<std::uint8_t>{'g', 'o'}));
+   forge::asio::blocking::run(runtime, framed.async_write_frame(std::vector<std::uint8_t>{'g', 'o'}));
    try {
-      (void)fcl::asio::blocking::run(runtime, framed.async_read_frame());
+      (void)forge::asio::blocking::run(runtime, framed.async_read_frame());
       BOOST_FAIL("expected oversized frame rejection");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::frame_too_large));
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::frame_too_large));
    }
    server_send.get();
-   fcl::asio::blocking::run(runtime, client_connection.async_close());
+   forge::asio::blocking::run(runtime, client_connection.async_close());
    server.stop();
 }
 
 BOOST_AUTO_TEST_CASE(quic_listener_stop_unblocks_pending_accept) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options()};
    auto accept_future = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
 
@@ -1654,10 +1654,10 @@ BOOST_AUTO_TEST_CASE(quic_listener_stop_unblocks_pending_accept) {
    try {
       (void)accept_future.get();
       BOOST_FAIL("expected stopped listener to unblock accept with an error");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::connection_closed));
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::quic::exceptions::code_of(error).value()) == static_cast<int>(exceptions::code::connection_closed));
    }
 }
 
 } // namespace
-} // namespace fcl::quic
+} // namespace forge::quic

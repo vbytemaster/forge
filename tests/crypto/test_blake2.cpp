@@ -1,18 +1,18 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 #include <ostream>
 #include <string>
 #include <string_view>
 #include <tuple>
 #include <vector>
 
-import fcl.exceptions;
-import fcl.crypto.hex;
-import fcl.crypto.blake2;
-import fcl.core.utility;
+import forge.exceptions;
+import forge.crypto.hex;
+import forge.crypto.blake2;
+import forge.core.utility;
 
-using namespace fcl;
-using namespace fcl::crypto;
+using namespace forge;
+using namespace forge::crypto;
 
 #include "test_utils.hpp"
 
@@ -104,21 +104,21 @@ BOOST_AUTO_TEST_CASE(compress) try {
 
       auto res = blake2b(_rounds, _h, _m, _t0_offset, _t1_offset, _f, yield);
 
-      BOOST_CHECK_EQUAL(fcl::crypto::to_hex(res), fcl::crypto::to_hex(expected_result));
+      BOOST_CHECK_EQUAL(forge::crypto::to_hex(res), forge::crypto::to_hex(expected_result));
    }
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(compress_rejects_invalid_input_lengths) try {
    const auto call_with_bad_state = [] {
       (void)blake2b(0, to_bytes("00"), bytes(128, 0), bytes(8, 0), bytes(8, 0), true, [] {});
    };
 
-   BOOST_CHECK_EXCEPTION(call_with_bad_state(), fcl::crypto::blake2::exceptions::invalid_input,
-                         [](const fcl::crypto::blake2::exceptions::invalid_input& error) {
-      return error.code().category().name() == std::string_view{"fcl.crypto.blake2"};
+   BOOST_CHECK_EXCEPTION(call_with_bad_state(), forge::crypto::blake2::exceptions::invalid_input,
+                         [](const forge::crypto::blake2::exceptions::invalid_input& error) {
+      return error.code().category().name() == std::string_view{"forge.crypto.blake2"};
    });
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_SUITE_END()

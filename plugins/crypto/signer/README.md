@@ -1,26 +1,26 @@
 # Signing Provider Plugin
 
-`fcl::plugins::crypto::signer` publishes a local-only typed API for signing
+`forge::plugins::crypto::signer` publishes a local-only typed API for signing
 digests with configured private keys and output encoding profiles.
 
 ## Identity
 
-- Target: `fcl_plugins_crypto_signer`
+- Target: `forge_plugins_crypto_signer`
 - Package component: `plugins_crypto_signer`
-- Plugin id: `fcl.plugins.crypto.signer`
-- Main API id: `fcl.plugins.crypto.signer`
+- Plugin id: `forge.plugins.crypto.signer`
+- Main API id: `forge.plugins.crypto.signer`
 - Config section: `plugins.crypto.signer`
 - Public modules:
-  - `fcl.plugins.crypto.signer.plugin`
-  - `fcl.plugins.crypto.signer.api`
-  - `fcl.plugins.crypto.signer.types`
-  - `fcl.plugins.crypto.signer.exceptions`
+  - `forge.plugins.crypto.signer.plugin`
+  - `forge.plugins.crypto.signer.api`
+  - `forge.plugins.crypto.signer.types`
+  - `forge.plugins.crypto.signer.exceptions`
 
 ## What It Provides
 
-- Loads configured local private keys through `fcl_crypto`.
+- Loads configured local private keys through `forge_crypto`.
 - Enforces key ids, allowed purposes, required algorithms and output profiles.
-- Signs `fcl::crypto::sha256` digests through a local-only `fcl_api` contract.
+- Signs `forge::crypto::sha256` digests through a local-only `forge_api` contract.
 - Keeps key material config secret/redacted through schema/config metadata.
 
 It is not a wallet, vault, hardware security module or authorization layer. It
@@ -33,11 +33,11 @@ configured keys.
 plugins:
    crypto:
       signer:
-         default-output-profile: fcl
+         default-output-profile: forge
          keys:
             - id: service-key
               private-key: "<redacted private key>"
-              input-profile: fcl
+              input-profile: forge
               purposes: ["api.receipt"]
 ```
 
@@ -47,23 +47,23 @@ do not rely on generated CLI or environment options for key material.
 ## Example
 
 ```cpp
-import fcl.plugins.crypto.signer.api;
-import fcl.plugins.crypto.signer.plugin;
+import forge.plugins.crypto.signer.api;
+import forge.plugins.crypto.signer.plugin;
 
-auto signer = context.apis().get<fcl::plugins::crypto::signer::api>(
-   {.id = {"fcl.plugins.crypto.signer"}, .major = 1});
+auto signer = context.apis().get<forge::plugins::crypto::signer::api>(
+   {.id = {"forge.plugins.crypto.signer"}, .major = 1});
 
 auto result = co_await signer->sign(
-   fcl::plugins::crypto::signer::request{
+   forge::plugins::crypto::signer::request{
       .key_id = "service-key",
       .purpose = "api.receipt",
       .digest = digest,
       .required_algorithm =
-         fcl::plugins::crypto::signer::key_algorithm::secp256k1,
-      .output_profile = "fcl",
+         forge::plugins::crypto::signer::key_algorithm::secp256k1,
+      .output_profile = "forge",
    });
 ```
 
 ```cpp
-registry.register_plugin(fcl::plugins::crypto::signer::descriptor());
+registry.register_plugin(forge::plugins::crypto::signer::descriptor());
 ```

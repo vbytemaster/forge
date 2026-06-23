@@ -7,13 +7,13 @@ module;
 #include <string>
 #include <string_view>
 
-module fcl.multiformats.multicodec;
+module forge.multiformats.multicodec;
 
-import fcl.multiformats.exceptions;
+import forge.multiformats.exceptions;
 
-import fcl.multiformats.varint;
+import forge.multiformats.varint;
 
-namespace fcl::multiformats {
+namespace forge::multiformats {
 namespace {
 
 struct protocol_entry {
@@ -105,4 +105,4 @@ multicodec_code parse_protocol_code(std::string_view name) {
    throw exceptions::invalid_format{"unsupported multiaddr protocol"};
 }
 
-} // namespace fcl::multiformats
+} // namespace forge::multiformats

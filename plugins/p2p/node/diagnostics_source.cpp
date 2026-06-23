@@ -11,31 +11,31 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.plugins.p2p.node.plugin;
+module forge.plugins.p2p.node.plugin;
 
-import fcl.transport.api.options;
-import fcl.asio.runtime;
-import fcl.p2p.diagnostics;
-import fcl.p2p.endpoint;
-import fcl.p2p.identity;
-import fcl.p2p.node;
-import fcl.p2p.protocol;
-import fcl.p2p.pubsub;
-import fcl.p2p.scoring;
-import fcl.plugins.p2p.node.api;
-import fcl.plugins.p2p.node.types;
+import forge.transport.api.options;
+import forge.asio.runtime;
+import forge.p2p.diagnostics;
+import forge.p2p.endpoint;
+import forge.p2p.identity;
+import forge.p2p.node;
+import forge.p2p.protocol;
+import forge.p2p.pubsub;
+import forge.p2p.scoring;
+import forge.plugins.p2p.node.api;
+import forge.plugins.p2p.node.types;
 
 #include "details/plugin_impl.hxx"
 #include "details/diagnostics_source.hxx"
 
-namespace fcl::plugins::p2p::node {
+namespace forge::plugins::p2p::node {
 
 plugin::diagnostics_source_adapter::diagnostics_source_adapter(std::shared_ptr<plugin::impl> impl)
     : impl_{std::move(impl)} {}
 
-fcl::p2p::diagnostics::snapshot
-plugin::diagnostics_source_adapter::snapshot(fcl::p2p::diagnostics::options options) const {
+forge::p2p::diagnostics::snapshot
+plugin::diagnostics_source_adapter::snapshot(forge::p2p::diagnostics::options options) const {
    return impl_->require_node().diagnostics(options);
 }
 
-} // namespace fcl::plugins::p2p::node
+} // namespace forge::plugins::p2p::node

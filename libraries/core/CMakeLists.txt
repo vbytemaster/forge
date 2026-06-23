@@ -6,7 +6,7 @@ configure_file(
 )
 
 add_library(
-   fcl_core STATIC
+   forge_core STATIC
    chrono.cpp
    encoding.cpp
    string.cpp
@@ -14,21 +14,21 @@ add_library(
    utf8.cpp
    "${CMAKE_CURRENT_BINARY_DIR}/generated/git_revision.cpp"
 )
-fcl_target_modules(fcl_core core)
+forge_target_modules(forge_core core)
 
 target_include_directories(
-   fcl_core
-   PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS}
+   forge_core
+   PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS}
    PRIVATE "${PROJECT_SOURCE_DIR}/vendor/utf8cpp"
 )
 target_link_libraries(
-   fcl_core PRIVATE
+   forge_core PRIVATE
       Boost::headers
       Boost::date_time
       Boost::multiprecision
 )
 target_compile_definitions(
-   fcl_core
+   forge_core
    PUBLIC OPENSSL_API_COMPAT=0x30000000L
           OPENSSL_NO_DEPRECATED
 )

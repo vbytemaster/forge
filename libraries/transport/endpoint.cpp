@@ -2,9 +2,9 @@ module;
 
 #include <string>
 
-module fcl.transport.endpoint;
+module forge.transport.endpoint;
 
-namespace fcl::transport {
+namespace forge::transport {
 
 std::string endpoint::authority() const {
    if (host_type == host_kind::ip6) {
@@ -13,4 +13,4 @@ std::string endpoint::authority() const {
    return host + ":" + std::to_string(port);
 }
 
-} // namespace fcl::transport
+} // namespace forge::transport

@@ -10,7 +10,7 @@
 #include <string_view>
 #include <vector>
 
-namespace fcl::p2p {
+namespace forge::p2p {
 
 class connection_manager {
  public:
@@ -76,4 +76,4 @@ class connection_manager {
 
 [[nodiscard]] connection_manager::policy connection_policy_for(const node::limits& limits);
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

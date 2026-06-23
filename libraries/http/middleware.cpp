@@ -9,12 +9,12 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.http.middleware;
+module forge.http.middleware;
 
-namespace fcl::http {
+namespace forge::http {
 namespace {
 
-constexpr std::string_view stream_token_header = "X-FCL-Stream-Token";
+constexpr std::string_view stream_token_header = "X-FORGE-Stream-Token";
 
 std::string make_stream_token() {
    static auto next_token = std::atomic<std::uint64_t>{0};
@@ -70,4 +70,4 @@ boost::asio::awaitable<response> run_middleware_chain(middleware_list middleware
    co_return co_await invoke(0);
 }
 
-} // namespace fcl::http
+} // namespace forge::http

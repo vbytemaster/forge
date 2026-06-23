@@ -1,5 +1,5 @@
 add_library(
-   fcl_app STATIC
+   forge_app STATIC
    application.cpp
    events.cpp
    diagnostics.cpp
@@ -12,18 +12,18 @@ add_library(
    runner.cpp
    daemon.cpp
 )
-fcl_target_modules(fcl_app app)
+forge_target_modules(forge_app app)
 
-target_include_directories(fcl_app PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+target_include_directories(forge_app PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
-   fcl_app PUBLIC
-      fcl_exceptions
-      fcl_api
-      fcl_asio
-      fcl_config
-      fcl_env
-      fcl_program_options
-      fcl_yaml
+   forge_app PUBLIC
+      forge_exceptions
+      forge_api
+      forge_asio
+      forge_config
+      forge_env
+      forge_program_options
+      forge_yaml
       Boost::headers
 )

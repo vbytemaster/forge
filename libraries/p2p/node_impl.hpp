@@ -9,15 +9,15 @@
 #include "relay_discovery.hpp"
 #include "relay_transport.hpp"
 
-namespace fcl::p2p {
+namespace forge::p2p {
 
-[[nodiscard]] exceptions::code p2p_code(const fcl::exceptions::base& error);
-[[noreturn]] void rethrow_transport_as_p2p(const fcl::exceptions::base& error);
-[[nodiscard]] bool is_orderly_stream_close(const fcl::exceptions::base& error) noexcept;
+[[nodiscard]] exceptions::code p2p_code(const forge::exceptions::base& error);
+[[noreturn]] void rethrow_transport_as_p2p(const forge::exceptions::base& error);
+[[nodiscard]] bool is_orderly_stream_close(const forge::exceptions::base& error) noexcept;
 [[nodiscard]] std::uint64_t random_nonce();
 [[nodiscard]] std::string bytes_key(std::span<const std::uint8_t> bytes);
 boost::asio::awaitable<std::vector<std::uint8_t>>
-async_read_length_delimited(fcl::p2p::stream& stream, std::vector<std::uint8_t>& buffer, std::size_t max_payload_size);
+async_read_length_delimited(forge::p2p::stream& stream, std::vector<std::uint8_t>& buffer, std::size_t max_payload_size);
 [[nodiscard]] std::vector<std::uint8_t> wrap_length_delimited(std::span<const std::uint8_t> payload);
 [[nodiscard]] std::vector<std::uint8_t> unwrap_length_delimited(std::span<const std::uint8_t> bytes,
                                                                 std::size_t max_payload_size);
@@ -36,9 +36,9 @@ struct node::impl : std::enable_shared_from_this<impl> {
    struct session_state {
       std::uint64_t id = 0;
       node::session_info info;
-      fcl::transport::session connection;
-      std::optional<fcl::p2p::endpoint> direct_endpoint;
-      std::optional<fcl::p2p::endpoint> remote_endpoint;
+      forge::transport::session connection;
+      std::optional<forge::p2p::endpoint> direct_endpoint;
+      std::optional<forge::p2p::endpoint> remote_endpoint;
       connection_manager::direction direction = connection_manager::direction::outbound;
       bool closed = false;
    };
@@ -63,7 +63,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
       std::map<std::string, pubsub::message> cache;
       std::deque<std::string> history;
       std::map<peer_id, pubsub::score> scores;
-      std::map<peer_id, std::shared_ptr<fcl::p2p::stream>> outbound_streams;
+      std::map<peer_id, std::shared_ptr<forge::p2p::stream>> outbound_streams;
       std::map<peer_id, std::size_t> active_validations_by_peer;
       std::size_t active_validations = 0;
       std::uint64_t next_seqno = 1;
@@ -78,8 +78,8 @@ struct node::impl : std::enable_shared_from_this<impl> {
       std::map<std::pair<peer_id, std::string>, std::vector<std::uint8_t>> rendezvous_cookies;
    };
 
-   impl(fcl::asio::runtime& runtime_value, node::options options_value);
-   fcl::asio::runtime& runtime;
+   impl(forge::asio::runtime& runtime_value, node::options options_value);
+   forge::asio::runtime& runtime;
    node::options options;
    peer_id local;
    direct::registry direct_registry;
@@ -102,16 +102,16 @@ struct node::impl : std::enable_shared_from_this<impl> {
    std::size_t active_ping_streams = 0;
    bool stopped = false;
 
-   [[nodiscard]] std::vector<fcl::p2p::endpoint> local_endpoints_for_control() const;
-   [[nodiscard]] std::vector<fcl::p2p::endpoint> local_endpoints_for_control_locked() const;
+   [[nodiscard]] std::vector<forge::p2p::endpoint> local_endpoints_for_control() const;
+   [[nodiscard]] std::vector<forge::p2p::endpoint> local_endpoints_for_control_locked() const;
 
    void learn_from_message(const peer_exchange_message& message,
-                           std::optional<fcl::p2p::endpoint> remote_endpoint = std::nullopt);
+                           std::optional<forge::p2p::endpoint> remote_endpoint = std::nullopt);
 
    [[nodiscard]] identify::document local_identify_document() const;
 
    void learn_from_identify(const peer_id& peer, const identify::document& document,
-                            std::optional<fcl::p2p::endpoint> remote_endpoint = std::nullopt);
+                            std::optional<forge::p2p::endpoint> remote_endpoint = std::nullopt);
 
    [[nodiscard]] std::vector<std::shared_ptr<session_state>>
    remember_session(std::shared_ptr<session_state> session, connection_manager::direction direction);
@@ -182,7 +182,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
    void record_direct_failure(const peer_id& peer);
 
    [[nodiscard]] std::chrono::system_clock::time_point endpoint_backoff_until(const peer_id& peer,
-                                                                              const fcl::p2p::endpoint& endpoint,
+                                                                              const forge::p2p::endpoint& endpoint,
                                                                               path::kind kind) const;
 
    void record_relay_failure();
@@ -232,7 +232,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
 
    boost::asio::awaitable<void> pubsub_heartbeat_once();
 
-   boost::asio::awaitable<std::shared_ptr<session_state>> connect_direct(fcl::p2p::endpoint endpoint,
+   boost::asio::awaitable<std::shared_ptr<session_state>> connect_direct(forge::p2p::endpoint endpoint,
                                                                          node::connect_options connect_options_value);
 
    boost::asio::awaitable<std::shared_ptr<session_state>> ensure_direct_session(
@@ -240,7 +240,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
        std::size_t max_direct_endpoints = node::connect_options{}.max_direct_endpoints,
        std::chrono::milliseconds direct_attempt_timeout = node::connect_options{}.direct_attempt_timeout);
 
-   boost::asio::awaitable<fcl::p2p::stream>
+   boost::asio::awaitable<forge::p2p::stream>
    open_protocol_direct(const peer_id& peer, const protocol_id& protocol, std::chrono::milliseconds timeout,
                         std::size_t max_direct_endpoints = node::open_options{}.max_direct_endpoints,
                         std::chrono::milliseconds direct_attempt_timeout = node::open_options{}.direct_attempt_timeout);
@@ -256,70 +256,70 @@ struct node::impl : std::enable_shared_from_this<impl> {
 
    void launch_relay_discovery_maintenance();
 
-   boost::asio::awaitable<std::shared_ptr<fcl::yamux::session>>
+   boost::asio::awaitable<std::shared_ptr<forge::yamux::session>>
    open_relay_yamux(const peer_id& peer, const peer_id& relay_peer, std::chrono::milliseconds timeout);
 
-   boost::asio::awaitable<fcl::p2p::stream> open_protocol_via_relay(const peer_id& peer, const protocol_id& protocol,
+   boost::asio::awaitable<forge::p2p::stream> open_protocol_via_relay(const peer_id& peer, const protocol_id& protocol,
                                                                     const peer_id& relay_peer,
                                                                     std::chrono::milliseconds timeout);
 
    boost::asio::awaitable<void> request_peer_exchange(const peer_id& peer);
 
-   void launch_accept_loop(fcl::p2p::endpoint local_endpoint);
+   void launch_accept_loop(forge::p2p::endpoint local_endpoint);
 
    boost::asio::awaitable<void> handle_inbound_connection(direct::connection connection);
 
    void launch_session_accept_loop(std::shared_ptr<session_state> session);
 
    boost::asio::awaitable<void> handle_incoming_stream(std::shared_ptr<session_state> session,
-                                                       fcl::transport::stream raw);
+                                                       forge::transport::stream raw);
 
-   boost::asio::awaitable<void> handle_ping(fcl::p2p::stream stream);
+   boost::asio::awaitable<void> handle_ping(forge::p2p::stream stream);
 
-   boost::asio::awaitable<void> handle_identify(fcl::p2p::stream stream);
+   boost::asio::awaitable<void> handle_identify(forge::p2p::stream stream);
 
-   boost::asio::awaitable<void> handle_identify_push(std::shared_ptr<session_state> session, fcl::p2p::stream stream);
+   boost::asio::awaitable<void> handle_identify_push(std::shared_ptr<session_state> session, forge::p2p::stream stream);
 
    boost::asio::awaitable<void> handle_autonat_v2_dial_back(std::shared_ptr<session_state> session,
-                                                            fcl::p2p::stream stream);
+                                                            forge::p2p::stream stream);
 
    boost::asio::awaitable<void> handle_autonat_v2_dial_request(std::shared_ptr<session_state> session,
-                                                               fcl::p2p::stream stream);
+                                                               forge::p2p::stream stream);
 
-   boost::asio::awaitable<void> handle_autonat_v1(fcl::p2p::stream stream);
+   boost::asio::awaitable<void> handle_autonat_v1(forge::p2p::stream stream);
 
    boost::asio::awaitable<void> handle_relayed_yamux_stream(std::shared_ptr<session_state> session,
-                                                            fcl::p2p::stream stream);
+                                                            forge::p2p::stream stream);
 
-   boost::asio::awaitable<void> handle_relay_stop(std::shared_ptr<session_state> session, fcl::p2p::stream stream);
+   boost::asio::awaitable<void> handle_relay_stop(std::shared_ptr<session_state> session, forge::p2p::stream stream);
 
-   boost::asio::awaitable<void> handle_relay_hop(std::shared_ptr<session_state> session, fcl::p2p::stream stream);
+   boost::asio::awaitable<void> handle_relay_hop(std::shared_ptr<session_state> session, forge::p2p::stream stream);
 
-   boost::asio::awaitable<void> handle_dcutr(std::shared_ptr<session_state> session, fcl::p2p::stream stream);
+   boost::asio::awaitable<void> handle_dcutr(std::shared_ptr<session_state> session, forge::p2p::stream stream);
 
-   boost::asio::awaitable<void> handle_dht(std::shared_ptr<session_state> session, fcl::p2p::stream stream);
+   boost::asio::awaitable<void> handle_dht(std::shared_ptr<session_state> session, forge::p2p::stream stream);
 
-   boost::asio::awaitable<void> handle_rendezvous(std::shared_ptr<session_state> session, fcl::p2p::stream stream);
+   boost::asio::awaitable<void> handle_rendezvous(std::shared_ptr<session_state> session, forge::p2p::stream stream);
 
-   boost::asio::awaitable<void> handle_pubsub(std::shared_ptr<session_state> session, fcl::p2p::stream stream);
+   boost::asio::awaitable<void> handle_pubsub(std::shared_ptr<session_state> session, forge::p2p::stream stream);
 
    boost::asio::awaitable<bool> wait_for_direct_session(const peer_id& peer, std::chrono::milliseconds timeout);
 
    boost::asio::awaitable<hole_punch::status> run_dcutr_initiator(const peer_id& peer,
-                                                                  std::shared_ptr<fcl::yamux::session> yamux,
+                                                                  std::shared_ptr<forge::yamux::session> yamux,
                                                                   std::chrono::milliseconds timeout);
 
    boost::asio::awaitable<hole_punch::status>
    serve_relayed_streams_until_hole_punch(peer_id peer, std::optional<peer_id> relay_peer,
-                                          std::shared_ptr<fcl::yamux::session> yamux,
+                                          std::shared_ptr<forge::yamux::session> yamux,
                                           std::chrono::milliseconds timeout);
 
-   boost::asio::awaitable<void> handle_peer_exchange(fcl::p2p::stream stream, std::uint64_t request_id);
+   boost::asio::awaitable<void> handle_peer_exchange(forge::p2p::stream stream, std::uint64_t request_id);
 
-   void launch_relay_pumps(peer_id owner, fcl::p2p::stream left, fcl::p2p::stream right);
+   void launch_relay_pumps(peer_id owner, forge::p2p::stream left, forge::p2p::stream right);
 
    boost::asio::awaitable<hole_punch::status> attempt_hole_punch(peer_id peer, std::optional<peer_id> relay_peer,
                                                                  std::chrono::milliseconds timeout);
 };
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

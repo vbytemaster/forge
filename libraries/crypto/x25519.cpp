@@ -1,14 +1,14 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <openssl/evp.h>
 
 #include <memory>
 
-module fcl.crypto.x25519;
+module forge.crypto.x25519;
 
-namespace fcl::crypto::x25519 {
+namespace forge::crypto::x25519 {
 namespace {
 
 struct pkey_deleter {
@@ -27,13 +27,13 @@ using pkey_ptr = std::unique_ptr<EVP_PKEY, pkey_deleter>;
 using pkey_ctx_ptr = std::unique_ptr<EVP_PKEY_CTX, pkey_ctx_deleter>;
 
 [[noreturn]] void fail(std::string message) {
-   FCL_THROW_EXCEPTION(exceptions::backend_error, std::move(message));
+   FORGE_THROW_EXCEPTION(exceptions::backend_error, std::move(message));
 }
 
 [[nodiscard]] pkey_ptr make_private(const private_key_secret& secret) {
    auto* raw = EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, secret.data(), secret.size());
    if (raw == nullptr) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_key, "invalid X25519 private key");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_key, "invalid X25519 private key");
    }
    return pkey_ptr{raw};
 }
@@ -41,7 +41,7 @@ using pkey_ctx_ptr = std::unique_ptr<EVP_PKEY_CTX, pkey_ctx_deleter>;
 [[nodiscard]] pkey_ptr make_public(const public_key_data& data) {
    auto* raw = EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, nullptr, data.data(), data.size());
    if (raw == nullptr) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_key, "invalid X25519 public key");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_key, "invalid X25519 public key");
    }
    return pkey_ptr{raw};
 }
@@ -108,4 +108,4 @@ shared_secret private_key::get_shared_secret(const public_key& remote) const {
    return out;
 }
 
-} // namespace fcl::crypto::x25519
+} // namespace forge::crypto::x25519

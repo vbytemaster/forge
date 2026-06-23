@@ -1,6 +1,6 @@
 #include <boost/describe.hpp>
 #include <boost/test/unit_test.hpp>
-#include <fcl/raw/serialization.hpp>
+#include <forge/raw/serialization.hpp>
 #include <chrono>
 #include <cstdint>
 #include <optional>
@@ -10,23 +10,23 @@
 #include <string_view>
 #include <vector>
 
-import fcl.exceptions;
-import fcl.crypto.hex;
-import fcl.crypto.sha256;
-import fcl.raw.datastream;
-import fcl.raw.exceptions;
-import fcl.raw.raw;
-import fcl.variant.exceptions;
-import fcl.variant.value;
-import fcl.variant.conversion;
-import fcl.variant.containers;
-import fcl.variant.chrono;
-import fcl.variant.multiprecision;
-import fcl.variant.format;
-import fcl.variant.described;
-import fcl.variant.dynamic_bitset;
+import forge.exceptions;
+import forge.crypto.hex;
+import forge.crypto.sha256;
+import forge.raw.datastream;
+import forge.raw.exceptions;
+import forge.raw.raw;
+import forge.variant.exceptions;
+import forge.variant.value;
+import forge.variant.conversion;
+import forge.variant.containers;
+import forge.variant.chrono;
+import forge.variant.multiprecision;
+import forge.variant.format;
+import forge.variant.described;
+import forge.variant.dynamic_bitset;
 
-using namespace fcl;
+using namespace forge;
 
 struct A {
    int x;
@@ -62,32 +62,32 @@ struct macro_serialized_record {
 };
 BOOST_DESCRIBE_STRUCT(macro_serialized_record, (), (id, name))
 
-FCL_DECLARE_SERIALIZATION(macro_serialized_record)
-FCL_IMPLEMENT_SERIALIZATION(macro_serialized_record)
+FORGE_DECLARE_SERIALIZATION(macro_serialized_record)
+FORGE_IMPLEMENT_SERIALIZATION(macro_serialized_record)
 
 BOOST_AUTO_TEST_SUITE(raw_test_suite)
 
 BOOST_AUTO_TEST_CASE(raw_string_golden_bytes) {
-   const auto packed = fcl::raw::pack(std::string("abc"));
-   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(packed), "03616263");
+   const auto packed = forge::raw::pack(std::string("abc"));
+   BOOST_CHECK_EQUAL(forge::crypto::to_hex(packed), "03616263");
 }
 
 BOOST_AUTO_TEST_CASE(boost_describe_struct_preserves_fc_reflect_member_order) {
    const A value{2, 2.25f, std::string("abc")};
-   const auto packed = fcl::raw::pack(value);
+   const auto packed = forge::raw::pack(value);
 
-   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(packed), "02000000000010400103616263");
+   BOOST_CHECK_EQUAL(forge::crypto::to_hex(packed), "02000000000010400103616263");
 
-   const auto unpacked = fcl::raw::unpack<A>(packed);
+   const auto unpacked = forge::raw::unpack<A>(packed);
    BOOST_CHECK(value == unpacked);
 }
 
 BOOST_AUTO_TEST_CASE(boost_describe_enum_uses_old_reflected_enum_int64_layout) {
-   const auto packed = fcl::raw::pack(described_mode::write);
+   const auto packed = forge::raw::pack(described_mode::write);
 
-   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(packed), "0900000000000000");
+   BOOST_CHECK_EQUAL(forge::crypto::to_hex(packed), "0900000000000000");
 
-   const auto unpacked = fcl::raw::unpack<described_mode>(packed);
+   const auto unpacked = forge::raw::unpack<described_mode>(packed);
    BOOST_CHECK(unpacked == described_mode::write);
 }
 
@@ -96,94 +96,94 @@ BOOST_AUTO_TEST_CASE(boost_describe_derived_types_pack_base_first_then_local_mem
    value.parent = 0x1234;
    value.child = 0x56;
 
-   const auto packed = fcl::raw::pack(value);
+   const auto packed = forge::raw::pack(value);
 
-   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(packed), "341256");
+   BOOST_CHECK_EQUAL(forge::crypto::to_hex(packed), "341256");
 
-   const auto unpacked = fcl::raw::unpack<described_child>(packed);
+   const auto unpacked = forge::raw::unpack<described_child>(packed);
    BOOST_CHECK(value == unpacked);
 }
 
 BOOST_AUTO_TEST_CASE(serialization_macros_instantiate_raw_variant_and_digest_pack_paths) {
    const macro_serialized_record value{0x1234, "node"};
 
-   fcl::variant variant_value;
-   fcl::to_variant(value, variant_value);
+   forge::variant variant_value;
+   forge::to_variant(value, variant_value);
    auto from_variant = macro_serialized_record{};
-   fcl::from_variant(variant_value, from_variant);
+   forge::from_variant(variant_value, from_variant);
    BOOST_CHECK(value == from_variant);
 
-   fcl::datastream<size_t> size_stream;
-   fcl::raw::pack(size_stream, value);
+   forge::datastream<size_t> size_stream;
+   forge::raw::pack(size_stream, value);
    BOOST_CHECK_EQUAL(size_stream.tellp(), 7u);
 
    char buffer[32]{};
-   fcl::datastream<char*> write_stream(buffer, sizeof(buffer));
-   fcl::raw::pack(write_stream, value);
-   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(std::vector<char>(buffer, buffer + write_stream.tellp())), "3412046e6f6465");
+   forge::datastream<char*> write_stream(buffer, sizeof(buffer));
+   forge::raw::pack(write_stream, value);
+   BOOST_CHECK_EQUAL(forge::crypto::to_hex(std::vector<char>(buffer, buffer + write_stream.tellp())), "3412046e6f6465");
 
-   fcl::datastream<const char*> read_stream(buffer, write_stream.tellp());
+   forge::datastream<const char*> read_stream(buffer, write_stream.tellp());
    auto unpacked = macro_serialized_record{};
-   fcl::raw::unpack(read_stream, unpacked);
+   forge::raw::unpack(read_stream, unpacked);
    BOOST_CHECK(value == unpacked);
 
-   fcl::crypto::sha256::encoder digest_stream;
-   fcl::raw::pack(digest_stream, value);
+   forge::crypto::sha256::encoder digest_stream;
+   forge::raw::pack(digest_stream, value);
    BOOST_CHECK_EQUAL(digest_stream.result().str(),
-                     fcl::crypto::sha256::hash(buffer, static_cast<uint32_t>(write_stream.tellp())).str());
+                     forge::crypto::sha256::hash(buffer, static_cast<uint32_t>(write_stream.tellp())).str());
 }
 
 BOOST_AUTO_TEST_CASE(raw_can_pack_into_uint8_byte_containers_without_changing_legacy_char_pack) {
    const macro_serialized_record value{0x1234, "node"};
 
-   const auto legacy = fcl::raw::pack(value);
+   const auto legacy = forge::raw::pack(value);
    auto bytes = std::vector<std::uint8_t>{};
-   fcl::raw::pack(bytes, value);
+   forge::raw::pack(bytes, value);
 
-   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(std::vector<char>{bytes.begin(), bytes.end()}), fcl::crypto::to_hex(legacy));
-   BOOST_CHECK(fcl::raw::unpack<macro_serialized_record>(bytes) == value);
+   BOOST_CHECK_EQUAL(forge::crypto::to_hex(std::vector<char>{bytes.begin(), bytes.end()}), forge::crypto::to_hex(legacy));
+   BOOST_CHECK(forge::raw::unpack<macro_serialized_record>(bytes) == value);
 
    const auto view = std::span<const std::uint8_t>{bytes.data(), bytes.size()};
-   BOOST_CHECK(fcl::raw::unpack<macro_serialized_record>(view) == value);
+   BOOST_CHECK(forge::raw::unpack<macro_serialized_record>(view) == value);
 }
 
 BOOST_AUTO_TEST_CASE(unknown_variant_wire_type_throws_codec_error) {
    const std::vector<std::uint8_t> invalid_variant{0xff};
-   BOOST_CHECK_EXCEPTION((void)fcl::raw::unpack<fcl::variant>(invalid_variant), fcl::raw::exceptions::codec_error,
-                         [](const fcl::raw::exceptions::codec_error& error) {
-      return error.code().category().name() == std::string_view{"fcl.raw"};
+   BOOST_CHECK_EXCEPTION((void)forge::raw::unpack<forge::variant>(invalid_variant), forge::raw::exceptions::codec_error,
+                         [](const forge::raw::exceptions::codec_error& error) {
+      return error.code().category().name() == std::string_view{"forge.raw"};
    });
 }
 
 BOOST_AUTO_TEST_CASE(std_chrono_preserves_old_fc_raw_layout) {
    using sys_time_us = std::chrono::sys_time<std::chrono::microseconds>;
 
-   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(fcl::raw::pack(sys_time_us{})), "0000000000000000");
-   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(fcl::raw::pack(sys_time_us{std::chrono::seconds{1}})), "40420f0000000000");
-   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(fcl::raw::pack(std::chrono::sys_seconds{std::chrono::seconds{1}})), "01000000");
-   BOOST_CHECK_EQUAL(fcl::crypto::to_hex(fcl::raw::pack(std::chrono::microseconds{-1})), "ffffffffffffffff");
+   BOOST_CHECK_EQUAL(forge::crypto::to_hex(forge::raw::pack(sys_time_us{})), "0000000000000000");
+   BOOST_CHECK_EQUAL(forge::crypto::to_hex(forge::raw::pack(sys_time_us{std::chrono::seconds{1}})), "40420f0000000000");
+   BOOST_CHECK_EQUAL(forge::crypto::to_hex(forge::raw::pack(std::chrono::sys_seconds{std::chrono::seconds{1}})), "01000000");
+   BOOST_CHECK_EQUAL(forge::crypto::to_hex(forge::raw::pack(std::chrono::microseconds{-1})), "ffffffffffffffff");
 
-   BOOST_CHECK(fcl::raw::unpack<sys_time_us>(fcl::raw::pack(sys_time_us{std::chrono::seconds{1}})) ==
+   BOOST_CHECK(forge::raw::unpack<sys_time_us>(forge::raw::pack(sys_time_us{std::chrono::seconds{1}})) ==
                sys_time_us{std::chrono::seconds{1}});
-   BOOST_CHECK(fcl::raw::unpack<std::chrono::sys_seconds>(fcl::raw::pack(std::chrono::sys_seconds{
+   BOOST_CHECK(forge::raw::unpack<std::chrono::sys_seconds>(forge::raw::pack(std::chrono::sys_seconds{
                    std::chrono::seconds{1}})) == std::chrono::sys_seconds{std::chrono::seconds{1}});
-   BOOST_CHECK(fcl::raw::unpack<std::chrono::microseconds>(fcl::raw::pack(std::chrono::microseconds{-1})) ==
+   BOOST_CHECK(forge::raw::unpack<std::chrono::microseconds>(forge::raw::pack(std::chrono::microseconds{-1})) ==
                std::chrono::microseconds{-1});
-   BOOST_CHECK_THROW(fcl::raw::pack(std::chrono::sys_seconds{std::chrono::seconds{-1}}), std::out_of_range);
+   BOOST_CHECK_THROW(forge::raw::pack(std::chrono::sys_seconds{std::chrono::seconds{-1}}), std::out_of_range);
 }
 
 BOOST_AUTO_TEST_CASE(dynamic_bitset_test) {
    constexpr uint8_t bits = 0b00011110;
-   fcl::dynamic_bitset bs1(8, bits); // bit set size 8
+   forge::dynamic_bitset bs1(8, bits); // bit set size 8
 
    char buff[32];
    datastream<char*> ds(buff, sizeof(buff));
 
-   fcl::raw::pack(ds, bs1);
+   forge::raw::pack(ds, bs1);
 
-   fcl::dynamic_bitset bs2(8);
+   forge::dynamic_bitset bs2(8);
    ds.seekp(0);
-   fcl::raw::unpack(ds, bs2);
+   forge::raw::unpack(ds, bs2);
 
    // 0b00011110
    BOOST_CHECK(!bs2.test(0));
@@ -198,15 +198,15 @@ BOOST_AUTO_TEST_CASE(dynamic_bitset_test) {
 }
 
 BOOST_AUTO_TEST_CASE(dynamic_bitset_large_test) {
-   fcl::dynamic_bitset bs1;
+   forge::dynamic_bitset bs1;
    bs1.resize(12345);
 
    bs1.set(42);
    bs1.set(23);
    bs1.set(12000);
 
-   auto packed = fcl::raw::pack(bs1);
-   auto unpacked = fcl::raw::unpack<fcl::dynamic_bitset>(packed);
+   auto packed = forge::raw::pack(bs1);
+   auto unpacked = forge::raw::unpack<forge::dynamic_bitset>(packed);
 
    BOOST_TEST(unpacked.at(42));
    BOOST_TEST(unpacked.at(23));
@@ -218,14 +218,14 @@ BOOST_AUTO_TEST_CASE(dynamic_bitset_large_test) {
 }
 
 BOOST_AUTO_TEST_CASE(dynamic_bitset_small_test) {
-   fcl::dynamic_bitset bs1;
+   forge::dynamic_bitset bs1;
    bs1.resize(21);
 
    bs1.set(2);
    bs1.set(7);
 
-   auto packed = fcl::raw::pack(bs1);
-   auto unpacked = fcl::raw::unpack<fcl::dynamic_bitset>(packed);
+   auto packed = forge::raw::pack(bs1);
+   auto unpacked = forge::raw::unpack<forge::dynamic_bitset>(packed);
 
    BOOST_TEST(unpacked.at(2));
    BOOST_TEST(unpacked.at(7));
@@ -239,11 +239,11 @@ BOOST_AUTO_TEST_CASE(struct_serialization) {
    datastream<char*> ds(buff, sizeof(buff));
 
    A a{2, 2.2, "abc"};
-   fcl::raw::pack(ds, a);
+   forge::raw::pack(ds, a);
 
    A a2{0, 0};
    ds.seekp(0);
-   fcl::raw::unpack(ds, a2);
+   forge::raw::unpack(ds, a2);
    bool same = a == a2;
    BOOST_TEST(same);
 }
@@ -255,12 +255,12 @@ BOOST_AUTO_TEST_CASE(unpacking_optional) {
    char buff[8];
    datastream<char*> ds(buff, sizeof(buff));
    std::optional<uint32_t> s; // no value
-   fcl::raw::pack(ds, s);
+   forge::raw::pack(ds, s);
 
    { // target has value. This test used to fail.
       std::optional<uint32_t> t = 10;
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST((s == t));
    }
 
@@ -268,44 +268,44 @@ BOOST_AUTO_TEST_CASE(unpacking_optional) {
       char buff[8];
       datastream<char*> ds1(buff, sizeof(buff));
       std::optional<uint32_t> s1 = 15;
-      fcl::raw::pack(ds1, s1);
+      forge::raw::pack(ds1, s1);
 
       std::optional<uint32_t> t; // target is empty initially
 
       // Unpacking to t the first time so t has value
       ds1.seekp(0);
-      fcl::raw::unpack(ds1, t);
+      forge::raw::unpack(ds1, t);
       BOOST_TEST((s1 == t));
 
       // Unpacking to t the second time. Afterwards, t does not have value.
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST((s == t));
    }
 
    { // target is empty.
       std::optional<uint32_t> t;
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST((s == t));
    }
 
    // Source has value
    s = 5;
    ds.seekp(0);
-   fcl::raw::pack(ds, s);
+   forge::raw::pack(ds, s);
 
    { // target has value.
       std::optional<uint32_t> t = 10;
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST((s == t));
    }
 
    { // target is empty.
       std::optional<uint32_t> t;
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST((s == t));
    }
 }
@@ -317,38 +317,38 @@ BOOST_AUTO_TEST_CASE(packing_shared_ptr) {
    char buff[8];
    datastream<char*> ds(buff, sizeof(buff));
    std::shared_ptr<uint32_t> s; // null_ptr
-   fcl::raw::pack(ds, s);
+   forge::raw::pack(ds, s);
 
    { // target has value. This test used to fail.
       std::shared_ptr<uint32_t> t = std::make_shared<uint32_t>(10);
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST(!t);
    }
 
    { // target is null.
       std::shared_ptr<uint32_t> t;
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST(!t);
    }
 
    // source is not null
    ds.seekp(0);
    s = std::make_shared<uint32_t>(50);
-   fcl::raw::pack(ds, s);
+   forge::raw::pack(ds, s);
 
    { // target has value.
       std::shared_ptr<uint32_t> t = std::make_shared<uint32_t>(10);
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST((*s == *t));
    }
 
    { // target is null.
       std::shared_ptr<uint32_t> t;
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST((*s == *t));
    }
 }
@@ -360,38 +360,38 @@ BOOST_AUTO_TEST_CASE(packing_set) {
    char buff[16];
    datastream<char*> ds(buff, sizeof(buff));
    std::set<uint32_t> s; // empty
-   fcl::raw::pack(ds, s);
+   forge::raw::pack(ds, s);
 
    { // target is not empty. This test used to fail.
       std::set<uint32_t> t{10};
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST(t.empty());
    }
 
    { // target is empty.
       std::set<uint32_t> t;
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST(t.empty());
    }
 
    // Source has values
    ds.seekp(0);
    s = {1, 2};
-   fcl::raw::pack(ds, s);
+   forge::raw::pack(ds, s);
 
    { // target is not empty. This test used to fail (ending up with {1, 2, 3}).
       std::set<uint32_t> t{3};
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST((s == t));
    }
 
    { // target is empty.
       std::set<uint32_t> t;
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST((s == t));
    }
 }
@@ -403,38 +403,38 @@ BOOST_AUTO_TEST_CASE(packing_list) {
    char buff[16];
    datastream<char*> ds(buff, sizeof(buff));
    std::list<uint32_t> s; // empty
-   fcl::raw::pack(ds, s);
+   forge::raw::pack(ds, s);
 
    { // target has value. This test used to fail.
       std::list<uint32_t> t{10};
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST((t.size() == 0));
    }
 
    { // target is empty.
       std::list<uint32_t> t;
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST((t.size() == 0));
    }
 
    // Source has values
    ds.seekp(0);
    s = {1, 2};
-   fcl::raw::pack(ds, s);
+   forge::raw::pack(ds, s);
 
    { // target is not empty. This test used to fail (ending up with {1, 2, 3}).
       std::list<uint32_t> t{3};
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST((s == t));
    }
 
    { // target is empty.
       std::list<uint32_t> t;
       ds.seekp(0);
-      fcl::raw::unpack(ds, t);
+      forge::raw::unpack(ds, t);
       BOOST_TEST((s == t));
    }
 }

@@ -8,11 +8,11 @@ module;
 #include <string>
 #include <string_view>
 
-module fcl.core.chrono;
+module forge.core.chrono;
 
-import fcl.core.string;
+import forge.core.string;
 
-namespace fcl::chrono {
+namespace forge::chrono {
 namespace {
 boost::posix_time::ptime epoch() {
    return boost::posix_time::from_time_t(0);
@@ -164,4 +164,4 @@ std::string get_approximate_relative_time_string(sys_time_us event_time, sys_tim
                                                std::chrono::time_point_cast<std::chrono::seconds>(relative_to_time),
                                                ago);
 }
-} // namespace fcl::chrono
+} // namespace forge::chrono

@@ -1,11 +1,11 @@
-# fcl_app
+# forge_app
 
-`fcl_app` is the opinionated application shell for FCL services. It owns the
+`forge_app` is the opinionated application shell for FORGE services. It owns the
 runtime objects that every daemon tends to duplicate by hand: `runtime`,
 `task_scheduler`, API registry, signal bus, event bus, diagnostics, plugin
 registry, plugin context and lifecycle runtime.
 
-The preferred production entrypoint is `fcl::app::application_builder`, which
+The preferred production entrypoint is `forge::app::application_builder`, which
 returns an `application_shell` without asking the application to subclass the shell.
 Derived `application_shell` classes remain available as an advanced escape hatch
 for applications with substantial state or custom lifecycle hooks.
@@ -23,10 +23,10 @@ for applications with substantial state or custom lifecycle hooks.
 
 ## When Not To Use
 
-- Do not use `fcl_app` as a generic dependency injection container.
+- Do not use `forge_app` as a generic dependency injection container.
 - Do not parse `argv`, YAML or JSON inside plugins. Use `run_daemon(...)` for
-  normal foreground daemons, or use `fcl_program_options`, `fcl_yaml` and
-  `fcl_json` before `application_shell::configure(...)` in custom hosts.
+  normal foreground daemons, or use `forge_program_options`, `forge_yaml` and
+  `forge_json` before `application_shell::configure(...)` in custom hosts.
 - Do not put security authority into UI/events/diagnostics. They are
   observability surfaces, not permission boundaries.
 - Do not invent hook names that repeat the application context. The shell
@@ -34,22 +34,22 @@ for applications with substantial state or custom lifecycle hooks.
 
 ## Public Modules
 
-- `fcl.app.application_shell` — production app shell and hook contexts.
-- `fcl.app.application_builder` — convenience builder that creates an
+- `forge.app.application_shell` — production app shell and hook contexts.
+- `forge.app.application_builder` — convenience builder that creates an
   `application_shell`.
-- `fcl.app.daemon` — foreground daemon runner that loads YAML, explicit `.env`,
+- `forge.app.daemon` — foreground daemon runner that loads YAML, explicit `.env`,
   process env and CLI, merges defaults and handles help/check/print/configure
   actions.
-- `fcl.app.runner` — foreground lifecycle runner with signal policy.
-- `fcl.app.application` — lower-level `application_base` and
+- `forge.app.runner` — foreground lifecycle runner with signal policy.
+- `forge.app.application` — lower-level `application_base` and
   `application_runtime`.
-- `fcl.app.plugin`, `fcl.app.plugin_context`, `fcl.app.plugin_registry`.
-- `fcl.app.events`, `fcl.app.diagnostics`, `fcl.app.signals`.
+- `forge.app.plugin`, `forge.app.plugin_context`, `forge.app.plugin_registry`.
+- `forge.app.events`, `forge.app.diagnostics`, `forge.app.signals`.
 
-Target: `fcl_app`.
+Target: `forge_app`.
 
-Dependencies: `fcl_asio`, `fcl_config`, `fcl_yaml`, `fcl_env`,
-`fcl_program_options`, Boost headers.
+Dependencies: `forge_asio`, `forge_config`, `forge_yaml`, `forge_env`,
+`forge_program_options`, Boost headers.
 
 ## Examples
 
@@ -63,8 +63,8 @@ shell-owned.
 
 ```cpp
 boost::asio::awaitable<void> run_configured_app(
-   fcl::app::application_shell& app,
-   const fcl::config::document& document) {
+   forge::app::application_shell& app,
+   const forge::config::document& document) {
    app.describe_config();
    app.configure(document);
    co_await app.initialize();
@@ -82,7 +82,7 @@ Derived applications only implement hooks:
 - `on_provide(application_context&)`
 - `on_run_foreground()`
 
-This is deliberately strict. The application controls composition, but FCL controls
+This is deliberately strict. The application controls composition, but FORGE controls
 the order: collect config, configure app and plugins, provide app APIs, let
 plugins provide APIs, initialize
 plugins, startup plugins, request stop, shutdown in reverse order.
@@ -98,13 +98,13 @@ before calling `on_configure(...)` and plugin `configure(...)`.
 
 #include <cstdint>
 
-import fcl.app.events;
-import fcl.app.plugin_context;
-import fcl.app.plugin;
-import fcl.app.plugin_registry;
-import fcl.app.application_shell;
-import fcl.config.document;
-import fcl.schema.object;
+import forge.app.events;
+import forge.app.plugin_context;
+import forge.app.plugin;
+import forge.app.plugin_registry;
+import forge.app.application_shell;
+import forge.config.document;
+import forge.schema.object;
 
 struct http_config {
    std::uint16_t bind_port = 8080;
@@ -114,32 +114,32 @@ struct http_config {
 BOOST_DESCRIBE_STRUCT(http_config, (), (bind_port, tls_enabled))
 
 template <>
-struct fcl::schema::rules<http_config> {
-   static fcl::schema::object_schema<http_config> define() {
-      auto schema = fcl::schema::object<http_config>();
+struct forge::schema::rules<http_config> {
+   static forge::schema::object_schema<http_config> define() {
+      auto schema = forge::schema::object<http_config>();
       schema.field<&http_config::bind_port>("bind-port").default_value(8080).range(1, 65'535);
       schema.field<&http_config::tls_enabled>("tls-enabled").default_value(false);
       return schema;
    }
 };
 
-class http_plugin final : public fcl::app::plugin {
+class http_plugin final : public forge::app::plugin {
  public:
-   fcl::app::plugin_id id() const override { return fcl::app::plugin_id{"http"}; }
+   forge::app::plugin_id id() const override { return forge::app::plugin_id{"http"}; }
    std::string version() const override { return "1"; }
 
-   std::optional<fcl::config::component_descriptor> describe_config() const override {
-      return fcl::config::describe_component<http_config>("http");
+   std::optional<forge::config::component_descriptor> describe_config() const override {
+      return forge::config::describe_component<http_config>("http");
    }
 
-   boost::asio::awaitable<void> configure(fcl::config::component_view view) override {
+   boost::asio::awaitable<void> configure(forge::config::component_view view) override {
       bind_port_ = view.get_or<std::uint16_t>("bind-port", 8080);
       tls_enabled_ = view.get_or<bool>("tls-enabled", false);
       co_return;
    }
 
-   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
-      context.events().publish(fcl::app::event_severity::info, "http.initialize", "configured");
+   boost::asio::awaitable<void> initialize(forge::app::plugin_context& context) override {
+      context.events().publish(forge::app::event_severity::info, "http.initialize", "configured");
       co_return;
    }
 
@@ -169,24 +169,24 @@ are not configured, initialized, started or shut down. If an enabled plugin
 depends on a disabled plugin, the shell fails before lifecycle side effects.
 
 ```cpp
-void on_register_plugins(fcl::app::plugin_registry& registry) override {
-   registry.register_plugin(fcl::app::plugin_descriptor{
-      .id = fcl::app::plugin_id{"store"},
+void on_register_plugins(forge::app::plugin_registry& registry) override {
+   registry.register_plugin(forge::app::plugin_descriptor{
+      .id = forge::app::plugin_id{"store"},
       .factory = [] { return std::make_unique<store_plugin>(); },
    });
-   registry.register_plugin(fcl::app::plugin_descriptor{
-      .id = fcl::app::plugin_id{"api"},
-      .dependencies = {fcl::app::plugin_id{"store"}},
+   registry.register_plugin(forge::app::plugin_descriptor{
+      .id = forge::app::plugin_id{"api"},
+      .dependencies = {forge::app::plugin_id{"store"}},
       .factory = [] { return std::make_unique<api_plugin>(); },
    });
-   registry.register_plugin(fcl::app::plugin_descriptor{
-      .id = fcl::app::plugin_id{"metrics"},
+   registry.register_plugin(forge::app::plugin_descriptor{
+      .id = forge::app::plugin_id{"metrics"},
       .enabled_by_default = false,
       .factory = [] { return std::make_unique<metrics_plugin>(); },
    });
 }
 
-auto document = fcl::config::document{};
+auto document = forge::config::document{};
 document.set("plugins.metrics.enabled", true);
 document.set("plugins.api.enabled", false);
 app.configure(document);
@@ -206,44 +206,44 @@ struct service_config {
 BOOST_DESCRIBE_STRUCT(service_config, (), (workers))
 
 template <>
-struct fcl::schema::rules<service_config> {
-   static fcl::schema::object_schema<service_config> define() {
-      auto schema = fcl::schema::object<service_config>();
+struct forge::schema::rules<service_config> {
+   static forge::schema::object_schema<service_config> define() {
+      auto schema = forge::schema::object<service_config>();
       schema.field<&service_config::workers>("workers").default_value(2).range(1, 64);
       return schema;
    }
 };
 
-class service_application final : public fcl::app::application_shell {
+class service_application final : public forge::app::application_shell {
  public:
    service_application()
-       : fcl::app::application_shell{fcl::app::application_shell_options{
+       : forge::app::application_shell{forge::app::application_shell_options{
             .name = "service",
             .runtime = {.worker_threads = 2, .thread_name = "service"},
          }} {}
 
  protected:
-   void on_describe_config(fcl::config::component_registry& registry) const override {
-      registry.add(fcl::config::describe_component<service_config>("service"));
+   void on_describe_config(forge::config::component_registry& registry) const override {
+      registry.add(forge::config::describe_component<service_config>("service"));
    }
 
-   boost::asio::awaitable<void> on_configure(fcl::app::configure_context& context) override {
+   boost::asio::awaitable<void> on_configure(forge::app::configure_context& context) override {
       workers_ = context.view("service").get_or<std::uint16_t>("workers", 2);
       co_return;
    }
 
-   void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::app::plugin_descriptor{
-         .id = fcl::app::plugin_id{"http"},
+   void on_register_plugins(forge::app::plugin_registry& registry) override {
+      registry.register_plugin(forge::app::plugin_descriptor{
+         .id = forge::app::plugin_id{"http"},
          .factory = [] {
             return std::make_unique<http_plugin>();
          },
       });
    }
 
-   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+   boost::asio::awaitable<void> on_provide(forge::app::application_context& context) override {
       context.events().publish(
-         fcl::app::event_severity::info,
+         forge::app::event_severity::info,
          "service.configure",
          "worker slots: " + std::to_string(workers_));
       co_return;
@@ -258,43 +258,43 @@ class service_application final : public fcl::app::application_shell {
 
 `application_builder` is the normal production path when callbacks are enough.
 It does not define a second lifecycle: `build()` returns
-`std::unique_ptr<fcl::app::application_shell>`, and the generated shell still
+`std::unique_ptr<forge::app::application_shell>`, and the generated shell still
 owns config merge, plugin lifecycle, rollback, API registry, events and
 diagnostics.
 
 ```cpp
-import fcl.app.events;
-import fcl.app.plugin_context;
-import fcl.app.plugin;
-import fcl.app.application_shell;
-import fcl.app.application_builder;
-import fcl.asio.runtime;
+import forge.app.events;
+import forge.app.plugin_context;
+import forge.app.plugin;
+import forge.app.application_shell;
+import forge.app.application_builder;
+import forge.asio.runtime;
 
 auto workers = std::uint16_t{0};
-auto builder = fcl::app::application_builder{};
+auto builder = forge::app::application_builder{};
 
 builder.name("service")
-   .runtime(fcl::asio::runtime_options{.worker_threads = 2, .thread_name = "service"})
+   .runtime(forge::asio::runtime_options{.worker_threads = 2, .thread_name = "service"})
    .config<service_config>("service", [&](const service_config& config) {
       workers = config.workers;
    })
-   .provide([&](fcl::app::application_context& context) {
+   .provide([&](forge::app::application_context& context) {
       context.events().publish(
-         fcl::app::event_severity::info,
+         forge::app::event_severity::info,
          "service.configure",
          "worker slots: " + std::to_string(workers));
    })
-   .plugin(fcl::app::plugin_descriptor{
-      .id = fcl::app::plugin_id{"http"},
+   .plugin(forge::app::plugin_descriptor{
+      .id = forge::app::plugin_id{"http"},
       .factory = [] {
          return std::make_unique<http_plugin>();
       },
    })
-   .run_foreground([](fcl::app::application_shell&) {
+   .run_foreground([](forge::app::application_shell&) {
       return 0;
    });
 
-std::unique_ptr<fcl::app::application_shell> app = std::move(builder).build();
+std::unique_ptr<forge::app::application_shell> app = std::move(builder).build();
 ```
 
 Use the subclass form only when the application has substantial state or
@@ -304,22 +304,22 @@ cleanly.
 ## Running The Shell
 
 Config can come from YAML, JSON, environment adapters or CLI. The shell only
-receives a neutral `fcl::config::document`.
+receives a neutral `forge::config::document`.
 
 ```cpp
-import fcl.asio.blocking;
-import fcl.config.document;
+import forge.asio.blocking;
+import forge.config.document;
 
 auto app = service_application{};
 
-auto document = fcl::config::document{};
+auto document = forge::config::document{};
 document.set("service.workers", 4U);
 document.set("http.bind-port", 9090U);
 
 app.configure(document);
-fcl::asio::blocking::run(app.runtime(), app.startup());
+forge::asio::blocking::run(app.runtime(), app.startup());
 app.request_stop();
-fcl::asio::blocking::run(app.runtime(), app.shutdown());
+forge::asio::blocking::run(app.runtime(), app.shutdown());
 ```
 
 `startup()` calls `initialize()` automatically when the shell is still in the
@@ -330,21 +330,21 @@ For production foreground daemons prefer `run_application(...)`. It
 standardizes the common flow: configure, startup, wait, request stop, shutdown.
 
 ```cpp
-import fcl.app.application_shell;
-import fcl.app.runner;
-import fcl.config.document;
+import forge.app.application_shell;
+import forge.app.runner;
+import forge.config.document;
 
 auto app = service_application{};
-auto document = fcl::config::document{};
+auto document = forge::config::document{};
 document.set("service.workers", 4U);
 
-auto options = fcl::app::run_options{
+auto options = forge::app::run_options{
    .handle_sigint = true,
    .handle_sigterm = true,
    .shutdown_timeout = std::chrono::seconds{10},
 };
 
-return fcl::app::run_application(app, document, options);
+return forge::app::run_application(app, document, options);
 ```
 
 Tests and embedders can replace OS signals with a custom async waiter:
@@ -352,7 +352,7 @@ Tests and embedders can replace OS signals with a custom async waiter:
 ```cpp
 options.handle_sigint = false;
 options.handle_sigterm = false;
-options.wait_for_stop = [](fcl::app::application_shell& app) -> boost::asio::awaitable<void> {
+options.wait_for_stop = [](forge::app::application_shell& app) -> boost::asio::awaitable<void> {
    auto timer = boost::asio::steady_timer{app.runtime().context()};
    timer.expires_after(std::chrono::milliseconds{50});
    co_await timer.async_wait(boost::asio::use_awaitable);
@@ -370,8 +370,8 @@ call `run_application(...)`.
 
 ```cpp
 int main(int argc, char** argv) {
-   return fcl::app::run_daemon(
-      [](const fcl::app::daemon_context& context) {
+   return forge::app::run_daemon(
+      [](const forge::app::daemon_context& context) {
          return std::make_unique<service_application>(service_application_options{
             .data_dir = context.data_dir,
             .profile = context.profile,
@@ -380,7 +380,7 @@ int main(int argc, char** argv) {
       },
       argc,
       argv,
-      fcl::app::daemon_options{
+      forge::app::daemon_options{
          .name = "service",
          .display_name = "Service daemon",
          .default_data_dir_name = "service",
@@ -403,9 +403,9 @@ Built-in daemon YAML:
 ```yaml
 daemon:
    profile: dev_local
-   data-dir: /home/user/.fcl/service
-   config: /home/user/.fcl/service/config.yml
-   dotenv: /home/user/.fcl/service/.env
+   data-dir: /home/user/.forge/service
+   config: /home/user/.forge/service/config.yml
+   dotenv: /home/user/.forge/service/.env
    runtime-threads: 2
    scheduler-queue-depth: 4096
    shutdown-timeout-ms: 10000
@@ -439,7 +439,7 @@ values.
 
 `request_stop()` remains synchronous and `noexcept`; that makes it safe to call
 from OS signal bridges and platform service callbacks. Use the runner for
-normal foreground daemons; write a manual bridge only when embedding FCL into a
+normal foreground daemons; write a manual bridge only when embedding FORGE into a
 larger host runtime.
 
 ```cpp
@@ -468,29 +468,29 @@ boost::asio::co_spawn(
 
 ## APIs
 
-Plugin-to-plugin contracts use `fcl_api`: the application can publish
+Plugin-to-plugin contracts use `forge_api`: the application can publish
 implementations during the `on_provide(...)` phase, plugins can publish
 implementations during their `provide(...)` phase, and runtime consumers receive
-a read-only API view. This keeps lifecycle in `fcl_app` and contract/version/error
-semantics in `fcl_api`.
+a read-only API view. This keeps lifecycle in `forge_app` and contract/version/error
+semantics in `forge_api`.
 
 ```cpp
-#include <fcl/api/macros.hpp>
+#include <forge/api/macros.hpp>
 
-class cache : public fcl::api::contract<cache> {
+class cache : public forge::api::contract<cache> {
  public:
    virtual ~cache() = default;
    virtual boost::asio::awaitable<models::chunk> read(protocol::read_chunk request) = 0;
 };
 
-FCL_API(cache, FCL_API_CONTRACT("cache", 1, 8), FCL_API_METHOD(read))
+FORGE_API(cache, FORGE_API_CONTRACT("cache", 1, 8), FORGE_API_METHOD(read))
 
-boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+boost::asio::awaitable<void> on_provide(forge::app::application_context& context) override {
    context.apis().install<cache>(std::make_shared<cache_impl>());
    co_return;
 }
 
-boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+boost::asio::awaitable<void> initialize(forge::app::plugin_context& context) override {
    cache_ = context.apis().get<cache>({.id = {"cache"}, .major = 1, .min_revision = 8});
    co_return;
 }
@@ -500,7 +500,7 @@ Infrastructure plugins should publish narrow APIs instead of leaking their
 transport/runtime internals:
 
 ```cpp
-boost::asio::awaitable<void> provide(fcl::api::provider& provider) override {
+boost::asio::awaitable<void> provide(forge::api::provider& provider) override {
    provider.install<node_admin_api>(std::make_shared<node_admin_api_impl>(impl_));
    co_return;
 }
@@ -520,7 +520,7 @@ last errors for app/plugin startup.
 ```cpp
 auto subscription = app.events().subscribe({
    .topic = "app",
-   .min_severity = fcl::app::event_severity::warning,
+   .min_severity = forge::app::event_severity::warning,
    .include_child_topics = true,
 });
 
@@ -540,14 +540,14 @@ plugin `A` started, the shell asks the runtime to shut down started plugins and
 records diagnostics.
 
 ```cpp
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 try {
    app.configure(document);
-   fcl::asio::blocking::run(app.runtime(), app.startup());
-} FCL_CAPTURE_AND_RETHROW(
+   forge::asio::blocking::run(app.runtime(), app.startup());
+} FORGE_CAPTURE_AND_RETHROW(
    "application startup failed",
-   fcl::exceptions::ctx("component", "service"))
+   forge::exceptions::ctx("component", "service"))
 ```
 
 The app should still call `request_stop()` and `shutdown()` from the outer
@@ -567,8 +567,8 @@ daemon pattern. Prefer `application_shell` or `application_builder` for new
 services.
 
 ```cpp
-auto runtime = fcl::app::application_runtime{context, std::move(plugins), &diagnostics};
-boost::asio::awaitable<void> run_runtime(fcl::app::application_runtime& runtime) {
+auto runtime = forge::app::application_runtime{context, std::move(plugins), &diagnostics};
+boost::asio::awaitable<void> run_runtime(forge::app::application_runtime& runtime) {
    co_await runtime.configure(document);
    co_await runtime.startup();
    co_await runtime.shutdown();
@@ -616,10 +616,10 @@ boost::asio::awaitable<void> run_runtime(fcl::app::application_runtime& runtime)
 
 ## Tests
 
-`test_fcl_app` covers API publication, event bus bounds, plugin dependency order,
+`test_forge_app` covers API publication, event bus bounds, plugin dependency order,
 config collection, shell-owned default merge, configure-before-initialize,
 startup rollback, reverse shutdown and diagnostics.
 
-Executable lifecycle coverage lives in `test_fcl_app`. Consumer snippets stay in
+Executable lifecycle coverage lives in `test_forge_app`. Consumer snippets stay in
 this README and the runtime docs so they cannot drift behind an unbuilt example
 tree.

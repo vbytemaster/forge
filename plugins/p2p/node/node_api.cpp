@@ -11,38 +11,38 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.plugins.p2p.node.plugin;
+module forge.plugins.p2p.node.plugin;
 
-import fcl.api.binding;
-import fcl.transport.api.connection;
-import fcl.transport.api.options;
-import fcl.asio.runtime;
-import fcl.p2p.api;
-import fcl.p2p.endpoint;
-import fcl.p2p.identity;
-import fcl.p2p.node;
-import fcl.p2p.protocol;
-import fcl.p2p.pubsub;
-import fcl.p2p.scoring;
-import fcl.plugins.p2p.node.api;
-import fcl.plugins.p2p.node.types;
+import forge.api.binding;
+import forge.transport.api.connection;
+import forge.transport.api.options;
+import forge.asio.runtime;
+import forge.p2p.api;
+import forge.p2p.endpoint;
+import forge.p2p.identity;
+import forge.p2p.node;
+import forge.p2p.protocol;
+import forge.p2p.pubsub;
+import forge.p2p.scoring;
+import forge.plugins.p2p.node.api;
+import forge.plugins.p2p.node.types;
 
 #include "details/plugin_impl.hxx"
 #include "details/node_api.hxx"
 
-namespace fcl::plugins::p2p::node {
+namespace forge::plugins::p2p::node {
 
 plugin::node_api::node_api(std::shared_ptr<plugin::impl> impl) : impl_{std::move(impl)} {}
 
-fcl::p2p::peer_id plugin::node_api::local_peer() const {
+forge::p2p::peer_id plugin::node_api::local_peer() const {
    return impl_->require_node().local_peer();
 }
 
-std::optional<fcl::p2p::endpoint> plugin::node_api::local_endpoint() const {
+std::optional<forge::p2p::endpoint> plugin::node_api::local_endpoint() const {
    return impl_->require_node().local_endpoint();
 }
 
-std::vector<fcl::p2p::endpoint> plugin::node_api::local_endpoints() const {
+std::vector<forge::p2p::endpoint> plugin::node_api::local_endpoints() const {
    return impl_->require_node().local_endpoints();
 }
 
@@ -54,13 +54,13 @@ info plugin::node_api::network_info() const {
    };
 }
 
-void plugin::node_api::publish_api(fcl::api::binding_plan plan, fcl::p2p::protocol_id protocol) {
+void plugin::node_api::publish_api(forge::api::binding_plan plan, forge::p2p::protocol_id protocol) {
    publish_api(std::move(plan), std::move(protocol), impl_->api_options);
 }
 
-void plugin::node_api::publish_api(fcl::api::binding_plan plan, fcl::p2p::protocol_id protocol,
-                                   fcl::transport::api::options options) {
-   auto binding = fcl::p2p::api()
+void plugin::node_api::publish_api(forge::api::binding_plan plan, forge::p2p::protocol_id protocol,
+                                   forge::transport::api::options options) {
+   auto binding = forge::p2p::api()
                      .use(std::move(plan))
                      .protocol_id(protocol)
                      .codec(options.codec)
@@ -71,18 +71,18 @@ void plugin::node_api::publish_api(fcl::api::binding_plan plan, fcl::p2p::protoc
    impl_->add_route(binding.protocol(), binding.handler());
 }
 
-void plugin::node_api::publish_protocol(fcl::p2p::protocol_id protocol, fcl::p2p::node::protocol_handler handler) {
-   auto binding = fcl::p2p::route().protocol_id(std::move(protocol)).handler(std::move(handler)).build();
+void plugin::node_api::publish_protocol(forge::p2p::protocol_id protocol, forge::p2p::node::protocol_handler handler) {
+   auto binding = forge::p2p::route().protocol_id(std::move(protocol)).handler(std::move(handler)).build();
    impl_->add_route(binding.protocol(), binding.handler());
 }
 
-boost::asio::awaitable<fcl::transport::api::connection>
-plugin::node_api::open_api_connection(fcl::p2p::peer_id peer,
-                                      fcl::p2p::protocol_id protocol,
+boost::asio::awaitable<forge::transport::api::connection>
+plugin::node_api::open_api_connection(forge::p2p::peer_id peer,
+                                      forge::p2p::protocol_id protocol,
                                       remote_options options) {
    auto stream = co_await impl_->require_node().async_open_protocol_stream(std::move(peer), std::move(protocol),
                                                                             impl_->open_options_for(options));
-   co_return fcl::transport::api::connection{std::move(stream).into_transport_stream(), impl_->api_options_for(options)};
+   co_return forge::transport::api::connection{std::move(stream).into_transport_stream(), impl_->api_options_for(options)};
 }
 
-} // namespace fcl::plugins::p2p::node
+} // namespace forge::plugins::p2p::node

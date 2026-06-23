@@ -8,9 +8,9 @@ module;
 #include <string_view>
 #include <vector>
 
-module fcl.core.encoding;
+module forge.core.encoding;
 
-namespace fcl::encoding {
+namespace forge::encoding {
 namespace {
 
 constexpr char base64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -160,4 +160,4 @@ std::size_t from_hex(std::string_view input, std::span<std::uint8_t> output) {
    return count;
 }
 
-} // namespace fcl::encoding
+} // namespace forge::encoding

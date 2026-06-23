@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
@@ -18,15 +18,15 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.plugins.p2p.pubsub.plugin;
+module forge.plugins.p2p.pubsub.plugin;
 
-import fcl.exceptions;
-import fcl.p2p.identity;
-import fcl.p2p.pubsub;
-import fcl.plugins.p2p.node.api;
-import fcl.plugins.p2p.pubsub.api;
-import fcl.plugins.p2p.pubsub.exceptions;
-import fcl.plugins.p2p.pubsub.types;
+import forge.exceptions;
+import forge.p2p.identity;
+import forge.p2p.pubsub;
+import forge.plugins.p2p.node.api;
+import forge.plugins.p2p.pubsub.api;
+import forge.plugins.p2p.pubsub.exceptions;
+import forge.plugins.p2p.pubsub.types;
 
 #include "details/config.hxx"
 #include "details/join_flow.hxx"
@@ -34,23 +34,23 @@ import fcl.plugins.p2p.pubsub.types;
 #include "details/plugin_impl.hxx"
 #include "details/subscription_api.hxx"
 
-namespace fcl::plugins::p2p::pubsub {
+namespace forge::plugins::p2p::pubsub {
 
 plugin::subscription_api::subscription_api(std::shared_ptr<plugin::impl> impl) : impl_{std::move(impl)} {}
 
 boost::asio::awaitable<message>
-plugin::subscription_api::publish(fcl::p2p::pubsub::topic subject,
+plugin::subscription_api::publish(forge::p2p::pubsub::topic subject,
                           std::vector<std::uint8_t> data,
                           publish_options options) {
    auto& source = impl_->require_source();
    impl_->ensure_topic_allowed(subject);
    if (data.size() > impl_->settings.max_message_size) {
-      FCL_THROW_EXCEPTION(exceptions::message_too_large, "P2P PubSub message exceeds configured limit",
-                          fcl::exceptions::ctx("topic", subject.value));
+      FORGE_THROW_EXCEPTION(exceptions::message_too_large, "P2P PubSub message exceeds configured limit",
+                          forge::exceptions::ctx("topic", subject.value));
    }
    auto published = co_await source.async_publish_message(
       std::move(subject), std::move(data),
-      fcl::p2p::pubsub::publish_options{.sign = options.sign.value_or(impl_->settings.sign_publishes)});
+      forge::p2p::pubsub::publish_options{.sign = options.sign.value_or(impl_->settings.sign_publishes)});
    {
       auto lock = std::scoped_lock{impl_->mutex};
       ++impl_->messages_published;
@@ -59,13 +59,13 @@ plugin::subscription_api::publish(fcl::p2p::pubsub::topic subject,
 }
 
 boost::asio::awaitable<subscription>
-plugin::subscription_api::subscribe(fcl::p2p::pubsub::topic subject,
+plugin::subscription_api::subscribe(forge::p2p::pubsub::topic subject,
                             handler callback,
                             subscribe_options options) {
    auto& source = impl_->require_source();
    impl_->ensure_topic_allowed(subject);
    if (!callback) {
-      FCL_THROW_EXCEPTION(exceptions::handler_limit, "P2P PubSub subscription requires handler");
+      FORGE_THROW_EXCEPTION(exceptions::handler_limit, "P2P PubSub subscription requires handler");
    }
 
    auto value = subscription{};
@@ -76,13 +76,13 @@ plugin::subscription_api::subscribe(fcl::p2p::pubsub::topic subject,
       auto lock = std::scoped_lock{impl_->mutex};
       const auto new_topic = !impl_->topics.contains(subject.value);
       if (new_topic && impl_->topics.size() >= impl_->settings.max_topics) {
-         FCL_THROW_EXCEPTION(exceptions::handler_limit, "P2P PubSub topic limit reached",
-                             fcl::exceptions::ctx("topic", subject.value));
+         FORGE_THROW_EXCEPTION(exceptions::handler_limit, "P2P PubSub topic limit reached",
+                             forge::exceptions::ctx("topic", subject.value));
       }
       auto& state = impl_->topics[subject.value];
       if (state.handlers.size() >= impl_->settings.max_handlers_per_topic) {
-         FCL_THROW_EXCEPTION(exceptions::handler_limit, "P2P PubSub handler limit reached",
-                             fcl::exceptions::ctx("topic", subject.value));
+         FORGE_THROW_EXCEPTION(exceptions::handler_limit, "P2P PubSub handler limit reached",
+                             forge::exceptions::ctx("topic", subject.value));
       }
       value = subscription{.id = impl_->next_subscription++, .subject = subject};
       auto deadline = options.handler_deadline;
@@ -121,8 +121,8 @@ plugin::subscription_api::subscribe(fcl::p2p::pubsub::topic subject,
       auto self = impl_;
       try {
          (void)co_await source.async_join_topic(
-            subject, [self](fcl::p2p::pubsub::event event) mutable
-                        -> boost::asio::awaitable<fcl::p2p::pubsub::validation_result> {
+            subject, [self](forge::p2p::pubsub::event event) mutable
+                        -> boost::asio::awaitable<forge::p2p::pubsub::validation_result> {
                co_return co_await self->handle_event(std::move(event));
             });
          auto waiters = std::vector<std::shared_ptr<join_waiter>>{};
@@ -163,8 +163,8 @@ boost::asio::awaitable<void> plugin::subscription_api::unsubscribe(subscription 
       auto lock = std::scoped_lock{impl_->mutex};
       auto found = impl_->topics.find(value.subject.value);
       if (found == impl_->topics.end() || !found->second.handlers.erase(value.id)) {
-         FCL_THROW_EXCEPTION(exceptions::subscription_not_found, "P2P PubSub subscription was not found",
-                             fcl::exceptions::ctx("topic", value.subject.value));
+         FORGE_THROW_EXCEPTION(exceptions::subscription_not_found, "P2P PubSub subscription was not found",
+                             forge::exceptions::ctx("topic", value.subject.value));
       }
       last_for_topic = found->second.handlers.empty();
       if (last_for_topic) {
@@ -188,14 +188,14 @@ std::vector<subscription> plugin::subscription_api::subscriptions() const {
    return out;
 }
 
-::fcl::plugins::p2p::pubsub::snapshot plugin::subscription_api::snapshot() const {
+::forge::plugins::p2p::pubsub::snapshot plugin::subscription_api::snapshot() const {
    auto& source = impl_->require_source();
    auto lock = std::scoped_lock{impl_->mutex};
    auto subscriptions = std::size_t{};
    for (const auto& [_, topic] : impl_->topics) {
       subscriptions += topic.handlers.size();
    }
-   return ::fcl::plugins::p2p::pubsub::snapshot{
+   return ::forge::plugins::p2p::pubsub::snapshot{
       .topics = impl_->topics.size(),
       .subscriptions = subscriptions,
       .active_handlers = impl_->active_handlers,
@@ -210,4 +210,4 @@ std::vector<subscription> plugin::subscription_api::subscriptions() const {
    };
 }
 
-} // namespace fcl::plugins::p2p::pubsub
+} // namespace forge::plugins::p2p::pubsub

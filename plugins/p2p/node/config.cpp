@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -12,57 +12,57 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.plugins.p2p.node.plugin;
+module forge.plugins.p2p.node.plugin;
 
-import fcl.transport.api.options;
-import fcl.asio.runtime;
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.exceptions;
-import fcl.p2p.endpoint;
-import fcl.p2p.identity;
-import fcl.p2p.node;
-import fcl.p2p.protocol;
-import fcl.p2p.pubsub;
-import fcl.p2p.scoring;
-import fcl.plugins.p2p.node.exceptions;
-import fcl.plugins.p2p.node.types;
+import forge.transport.api.options;
+import forge.asio.runtime;
+import forge.config.component;
+import forge.config.decode;
+import forge.exceptions;
+import forge.p2p.endpoint;
+import forge.p2p.identity;
+import forge.p2p.node;
+import forge.p2p.protocol;
+import forge.p2p.pubsub;
+import forge.p2p.scoring;
+import forge.plugins.p2p.node.exceptions;
+import forge.plugins.p2p.node.types;
 
 #include "details/config.hxx"
 #include "details/plugin_impl.hxx"
 
-namespace fcl::plugins::p2p::node {
+namespace forge::plugins::p2p::node {
 namespace {
 
-[[nodiscard]] fcl::p2p::path::policy parse_path_policy(path_policy value, bool relay_client_enabled,
+[[nodiscard]] forge::p2p::path::policy parse_path_policy(path_policy value, bool relay_client_enabled,
                                                        std::size_t relay_max_candidates) {
    if (relay_max_candidates == 0) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_config, "P2P relay candidate limit must be positive");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_config, "P2P relay candidate limit must be positive");
    }
    switch (value) {
    case path_policy::direct_only:
-      return fcl::p2p::path::policy{
+      return forge::p2p::path::policy{
          .allow_direct = true,
          .allow_hole_punch = false,
          .allow_relay = false,
          .max_relay_candidates = relay_max_candidates,
       };
    case path_policy::direct_preferred:
-      return fcl::p2p::path::policy{
+      return forge::p2p::path::policy{
          .allow_direct = true,
          .allow_hole_punch = relay_client_enabled,
          .allow_relay = relay_client_enabled,
          .max_relay_candidates = relay_max_candidates,
       };
    case path_policy::relay_only:
-      return fcl::p2p::path::policy{
+      return forge::p2p::path::policy{
          .allow_direct = false,
          .allow_hole_punch = false,
          .allow_relay = relay_client_enabled,
          .max_relay_candidates = relay_max_candidates,
       };
    }
-   FCL_THROW_EXCEPTION(exceptions::invalid_config, "invalid P2P path policy");
+   FORGE_THROW_EXCEPTION(exceptions::invalid_config, "invalid P2P path policy");
 }
 
 } // namespace
@@ -71,11 +71,11 @@ std::chrono::milliseconds to_ms(std::uint64_t value) {
    return std::chrono::milliseconds{static_cast<std::chrono::milliseconds::rep>(value)};
 }
 
-config decode_config(const fcl::config::component_view& view) {
-   auto decoded = fcl::config::decode<config>(view.source(), view.section());
+config decode_config(const forge::config::component_view& view) {
+   auto decoded = forge::config::decode<config>(view.source(), view.section());
    if (!decoded.ok()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_config,
-                          fcl::config::format_decode_diagnostics("invalid P2P node config",
+      FORGE_THROW_EXCEPTION(exceptions::invalid_config,
+                          forge::config::format_decode_diagnostics("invalid P2P node config",
                                                                  decoded.diagnostics));
    }
    return std::move(decoded.value);
@@ -94,15 +94,15 @@ parsed_policy parse_policy(const config& config) {
    };
 }
 
-std::vector<fcl::p2p::endpoint> parse_endpoint_list(const std::vector<std::string>& values) {
-   auto out = std::vector<fcl::p2p::endpoint>{};
+std::vector<forge::p2p::endpoint> parse_endpoint_list(const std::vector<std::string>& values) {
+   auto out = std::vector<forge::p2p::endpoint>{};
    out.reserve(values.size());
    for (const auto& value : values) {
       try {
-         out.push_back(fcl::p2p::parse_endpoint(value));
+         out.push_back(forge::p2p::parse_endpoint(value));
       } catch (const std::exception& error) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_config, "invalid P2P endpoint",
-                             fcl::exceptions::ctx("endpoint", value), fcl::exceptions::ctx("error", error.what()));
+         FORGE_THROW_EXCEPTION(exceptions::invalid_config, "invalid P2P endpoint",
+                             forge::exceptions::ctx("endpoint", value), forge::exceptions::ctx("error", error.what()));
       }
    }
    return out;
@@ -110,8 +110,8 @@ std::vector<fcl::p2p::endpoint> parse_endpoint_list(const std::vector<std::strin
 
 void apply_config(plugin::impl& state, const config& config) {
    state.policy = parse_policy(config);
-   state.api_options = fcl::transport::api::options{
-      .codec = fcl::api::codec_id{.value = config.api_codec},
+   state.api_options = forge::transport::api::options{
+      .codec = forge::api::codec_id{.value = config.api_codec},
       .max_inflight = static_cast<std::size_t>(config.max_inflight_per_peer),
       .deadline = to_ms(config.api_deadline_ms),
       .max_frame_size = static_cast<std::uint32_t>(config.api_max_frame_size),
@@ -121,15 +121,15 @@ void apply_config(plugin::impl& state, const config& config) {
    state.options.advertised_endpoints = parse_endpoint_list(config.advertised_endpoints);
    state.options.certificate_pem = config.certificate_pem;
    state.options.private_key_pem = config.private_key_pem;
-   state.options.capabilities = fcl::p2p::capability_set{
-      .bits = fcl::p2p::capabilities::direct_quic | fcl::p2p::capabilities::peer_exchange,
+   state.options.capabilities = forge::p2p::capability_set{
+      .bits = forge::p2p::capabilities::direct_quic | forge::p2p::capabilities::peer_exchange,
    };
    if (state.policy.relay_client_enabled) {
-      state.options.capabilities.add(fcl::p2p::capabilities::hole_punching);
+      state.options.capabilities.add(forge::p2p::capabilities::hole_punching);
    }
    if (state.policy.relay_server_enabled) {
-      state.options.capabilities.add(fcl::p2p::capabilities::relay);
-      state.options.capabilities.add(fcl::p2p::capabilities::relay_reservation);
+      state.options.capabilities.add(forge::p2p::capabilities::relay);
+      state.options.capabilities.add(forge::p2p::capabilities::relay_reservation);
    }
    state.options.path_policy = state.policy.path;
    state.options.relay_policy.client_enabled = state.policy.relay_client_enabled;
@@ -144,7 +144,7 @@ void apply_config(plugin::impl& state, const config& config) {
    state.options.limits.relay.reservation_ttl = state.policy.relay_reservation_ttl;
    const auto& peer_id = config.peer_id;
    state.options.explicit_peer_id =
-      peer_id.empty() ? std::nullopt : std::make_optional(fcl::p2p::peer_id{.value = peer_id});
+      peer_id.empty() ? std::nullopt : std::make_optional(forge::p2p::peer_id{.value = peer_id});
    state.options.limits.max_sessions = static_cast<std::size_t>(config.max_sessions);
    state.options.limits.session_low_watermark =
       std::min(state.options.limits.session_low_watermark, state.options.limits.max_sessions);
@@ -156,4 +156,4 @@ void apply_config(plugin::impl& state, const config& config) {
    state.options.allow_insecure_test_mode = config.allow_insecure_test_mode;
 }
 
-} // namespace fcl::plugins::p2p::node
+} // namespace forge::plugins::p2p::node

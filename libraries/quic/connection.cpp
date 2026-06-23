@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include "wrapper_handles.hpp"
 
@@ -10,14 +10,14 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.quic.connection;
+module forge.quic.connection;
 
-import fcl.quic.exceptions;
-import fcl.quic.endpoint;
-import fcl.quic.security;
-import fcl.quic.stream;
+import forge.quic.exceptions;
+import forge.quic.endpoint;
+import forge.quic.security;
+import forge.quic.stream;
 
-namespace fcl::quic {
+namespace forge::quic {
 namespace {
 
 [[nodiscard]] exceptions::code map_error(detail::engine_error_kind kind) noexcept {
@@ -61,7 +61,7 @@ namespace {
 }
 
 [[noreturn]] void raise_engine_failure(const detail::engine_failure& error) {
-   FCL_THROW_CODE(map_error(error.kind()), error.what());
+   FORGE_THROW_CODE(map_error(error.kind()), error.what());
 }
 
 [[nodiscard]] connection_metrics map_metrics(const detail::engine_connection_metrics& metrics) noexcept {
@@ -137,7 +137,7 @@ std::optional<peer_certificate> connection::peer_certificate() const {
    if (!peer) {
       return std::nullopt;
    }
-   return fcl::quic::peer_certificate{
+   return forge::quic::peer_certificate{
        .der = std::move(peer->der),
        .sha256_fingerprint = std::move(peer->sha256_fingerprint),
    };
@@ -145,7 +145,7 @@ std::optional<peer_certificate> connection::peer_certificate() const {
 
 boost::asio::awaitable<stream> connection::async_open_stream() {
    if (!impl_ || !impl_->engine) {
-      FCL_THROW_EXCEPTION(exceptions::connection_closed, "invalid QUIC connection");
+      FORGE_THROW_EXCEPTION(exceptions::connection_closed, "invalid QUIC connection");
    }
    try {
       auto engine_stream = co_await impl_->engine->async_open_stream();
@@ -157,7 +157,7 @@ boost::asio::awaitable<stream> connection::async_open_stream() {
 
 boost::asio::awaitable<stream> connection::async_accept_stream() {
    if (!impl_ || !impl_->engine) {
-      FCL_THROW_EXCEPTION(exceptions::connection_closed, "invalid QUIC connection");
+      FORGE_THROW_EXCEPTION(exceptions::connection_closed, "invalid QUIC connection");
    }
    try {
       auto engine_stream = co_await impl_->engine->async_accept_stream();
@@ -188,4 +188,4 @@ connection detail::connection_access::make(detail::connection_handle handle) {
    return connection{std::move(handle)};
 }
 
-} // namespace fcl::quic
+} // namespace forge::quic

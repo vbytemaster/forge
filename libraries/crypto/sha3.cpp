@@ -1,5 +1,5 @@
 module;
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 #include <cmath>
 #include <cstring>
 #include <exception>
@@ -8,23 +8,23 @@ module;
 #include <string>
 #include <variant>
 
-module fcl.crypto.sha3;
+module forge.crypto.sha3;
 
-import fcl.core.utility;
-import fcl.crypto.hex;
-import fcl.crypto.hmac;
-import fcl.exceptions;
-import fcl.variant.exceptions;
-import fcl.variant.value;
-import fcl.variant.conversion;
-import fcl.variant.containers;
-import fcl.variant.chrono;
-import fcl.variant.multiprecision;
-import fcl.variant.format;
-import fcl.variant.described;
+import forge.core.utility;
+import forge.crypto.hex;
+import forge.crypto.hmac;
+import forge.exceptions;
+import forge.variant.exceptions;
+import forge.variant.value;
+import forge.variant.conversion;
+import forge.variant.containers;
+import forge.variant.chrono;
+import forge.variant.multiprecision;
+import forge.variant.format;
+import forge.variant.described;
 
 #include "_digest_common.hpp"
-namespace fcl::crypto {
+namespace forge::crypto {
 
 template <class... Ts> struct overloaded : Ts... {
    using Ts::operator()...;
@@ -195,17 +195,17 @@ sha3::sha3() {
 }
 sha3::sha3(const char* data, size_t size) {
    if (size != sizeof(_hash))
-      FCL_THROW_EXCEPTION(digest::exceptions::invalid_size, "sha3 size mismatch");
+      FORGE_THROW_EXCEPTION(digest::exceptions::invalid_size, "sha3 size mismatch");
    memcpy(_hash, data, size);
 }
 sha3::sha3(const std::string& hex_str) {
-   auto bytes_written = fcl::crypto::from_hex(hex_str, (char*)_hash, sizeof(_hash));
+   auto bytes_written = forge::crypto::from_hex(hex_str, (char*)_hash, sizeof(_hash));
    if (bytes_written < sizeof(_hash))
       memset((char*)_hash + bytes_written, 0, (sizeof(_hash) - bytes_written));
 }
 
 std::string sha3::str() const {
-   return fcl::crypto::to_hex((char*)_hash, sizeof(_hash));
+   return forge::crypto::to_hex((char*)_hash, sizeof(_hash));
 }
 sha3::operator std::string() const {
    return str();
@@ -242,12 +242,12 @@ void sha3::encoder::reset() {
 
 sha3 operator<<(const sha3& h1, uint32_t i) {
    sha3 result;
-   fcl::detail::shift_l(h1.data(), result.data(), result.data_size(), i);
+   forge::detail::shift_l(h1.data(), result.data(), result.data_size(), i);
    return result;
 }
 sha3 operator>>(const sha3& h1, uint32_t i) {
    sha3 result;
-   fcl::detail::shift_r(h1.data(), result.data(), result.data_size(), i);
+   forge::detail::shift_r(h1.data(), result.data(), result.data_size(), i);
    return result;
 }
 sha3 operator^(const sha3& h1, const sha3& h2) {
@@ -283,8 +283,8 @@ void to_variant(const sha3& bi, variant& v) {
 void from_variant(const variant& v, sha3& bi) {
    const auto& ve = v.as<std::vector<char>>();
    if (ve.size())
-      memcpy(bi.data(), ve.data(), fcl::min<size_t>(ve.size(), sizeof(bi)));
+      memcpy(bi.data(), ve.data(), forge::min<size_t>(ve.size(), sizeof(bi)));
    else
       memset(bi.data(), char(0), sizeof(bi));
 }
-} // namespace fcl::crypto
+} // namespace forge::crypto

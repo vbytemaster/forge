@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -11,21 +11,21 @@ module;
 #include <string_view>
 #include <vector>
 
-module fcl.plugins.p2p.resolver.plugin;
+module forge.plugins.p2p.resolver.plugin;
 
-import fcl.api.descriptor;
-import fcl.api.error_projection;
-import fcl.transport.api.options;
-import fcl.api.types;
-import fcl.exceptions;
-import fcl.p2p.protocol;
-import fcl.plugins.p2p.resolver.exceptions;
-import fcl.plugins.p2p.resolver.types;
+import forge.api.descriptor;
+import forge.api.error_projection;
+import forge.transport.api.options;
+import forge.api.types;
+import forge.exceptions;
+import forge.p2p.protocol;
+import forge.plugins.p2p.resolver.exceptions;
+import forge.plugins.p2p.resolver.types;
 
 #include "details/config.hxx"
 #include "details/descriptor_projection.hxx"
 
-namespace fcl::plugins::p2p::resolver {
+namespace forge::plugins::p2p::resolver {
 namespace {
 
 [[nodiscard]] bool valid_protocol(std::string_view value) noexcept {
@@ -36,7 +36,7 @@ namespace {
    return api_key(value.id, value.version.major) + "#" + std::to_string(value.version.revision);
 }
 
-[[nodiscard]] error project_error(const fcl::api::error_descriptor& value) {
+[[nodiscard]] error project_error(const forge::api::error_descriptor& value) {
    return error{
       .name = value.name,
       .identity = value.identity,
@@ -45,7 +45,7 @@ namespace {
    };
 }
 
-[[nodiscard]] method project_method(const fcl::api::method_descriptor& value) {
+[[nodiscard]] method project_method(const forge::api::method_descriptor& value) {
    auto errors = std::vector<error>{};
    errors.reserve(value.errors.size());
    for (const auto& error : value.errors) {
@@ -60,13 +60,13 @@ namespace {
 
 } // namespace
 
-std::string api_key(const fcl::api::api_id& id, std::uint16_t major) {
+std::string api_key(const forge::api::api_id& id, std::uint16_t major) {
    return id.value + "#" + std::to_string(major);
 }
 
-entry project_descriptor(const fcl::api::descriptor& descriptor,
-                         const fcl::p2p::protocol_id& protocol,
-                         const fcl::transport::api::options& options) {
+entry project_descriptor(const forge::api::descriptor& descriptor,
+                         const forge::p2p::protocol_id& protocol,
+                         const forge::transport::api::options& options) {
    auto methods = std::vector<method>{};
    methods.reserve(descriptor.methods.size());
    for (const auto& method : descriptor.methods) {
@@ -85,78 +85,78 @@ entry project_descriptor(const fcl::api::descriptor& descriptor,
 
 void validate_entry(const entry& value, const config& limits, std::string_view source) {
    if (value.id.value.empty() || value.version.major == 0 || !valid_protocol(value.protocol)) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "resolver API entry is invalid",
-                          fcl::exceptions::ctx("source", source), fcl::exceptions::ctx("api", value.id.value),
-                          fcl::exceptions::ctx("protocol", value.protocol));
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "resolver API entry is invalid",
+                          forge::exceptions::ctx("source", source), forge::exceptions::ctx("api", value.id.value),
+                          forge::exceptions::ctx("protocol", value.protocol));
    }
    if (value.codec.value.empty() || value.max_inflight == 0 || value.max_frame_size == 0) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "resolver API entry limits are invalid",
-                          fcl::exceptions::ctx("source", source), fcl::exceptions::ctx("api", value.id.value));
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "resolver API entry limits are invalid",
+                          forge::exceptions::ctx("source", source), forge::exceptions::ctx("api", value.id.value));
    }
    if (value.max_frame_size > (std::numeric_limits<std::uint32_t>::max)()) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error,
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error,
                           "resolver API max frame size exceeds transport limit",
-                          fcl::exceptions::ctx("source", source), fcl::exceptions::ctx("api", value.id.value));
+                          forge::exceptions::ctx("source", source), forge::exceptions::ctx("api", value.id.value));
    }
    if (value.methods.size() > limits.max_methods_per_api) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "resolver API method limit exceeded",
-                          fcl::exceptions::ctx("source", source), fcl::exceptions::ctx("api", value.id.value));
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "resolver API method limit exceeded",
+                          forge::exceptions::ctx("source", source), forge::exceptions::ctx("api", value.id.value));
    }
    auto method_names = std::set<std::string>{};
    for (const auto& method : value.methods) {
       if (method.name.empty() || !method_names.insert(method.name).second) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "resolver API method is invalid",
-                             fcl::exceptions::ctx("source", source), fcl::exceptions::ctx("api", value.id.value));
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "resolver API method is invalid",
+                             forge::exceptions::ctx("source", source), forge::exceptions::ctx("api", value.id.value));
       }
       if (method.errors.size() > limits.max_errors_per_method) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "resolver API error limit exceeded",
-                             fcl::exceptions::ctx("source", source), fcl::exceptions::ctx("api", value.id.value),
-                             fcl::exceptions::ctx("method", method.name));
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "resolver API error limit exceeded",
+                             forge::exceptions::ctx("source", source), forge::exceptions::ctx("api", value.id.value),
+                             forge::exceptions::ctx("method", method.name));
       }
    }
 }
 
 void validate_response(const std::vector<entry>& entries, const config& limits) {
    if (entries.size() > limits.max_apis_per_peer) {
-      FCL_THROW_EXCEPTION(exceptions::protocol_error, "resolver API response limit exceeded");
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "resolver API response limit exceeded");
    }
    auto keys = std::set<std::string>{};
    for (const auto& entry : entries) {
       validate_entry(entry, limits, "remote");
       if (!keys.insert(entry_key(entry)).second) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error,
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error,
                              "resolver API response contains duplicate entry",
-                             fcl::exceptions::ctx("api", entry.id.value));
+                             forge::exceptions::ctx("api", entry.id.value));
       }
    }
 }
 
-void validate_descriptor_compatible(const fcl::api::descriptor& descriptor, const entry& remote) {
-   if (!fcl::api::compatible(fcl::api::descriptor{.id = remote.id, .version = remote.version},
-                             fcl::api::api_ref{.id = descriptor.id,
+void validate_descriptor_compatible(const forge::api::descriptor& descriptor, const entry& remote) {
+   if (!forge::api::compatible(forge::api::descriptor{.id = remote.id, .version = remote.version},
+                             forge::api::api_ref{.id = descriptor.id,
                                                .major = descriptor.version.major,
                                                .min_revision = descriptor.version.revision})) {
-      FCL_THROW_EXCEPTION(exceptions::incompatible_api, "remote API version is incompatible",
-                          fcl::exceptions::ctx("api", descriptor.id.value));
+      FORGE_THROW_EXCEPTION(exceptions::incompatible_api, "remote API version is incompatible",
+                          forge::exceptions::ctx("api", descriptor.id.value));
    }
    for (const auto& local_method : descriptor.methods) {
       const auto found = std::ranges::find_if(remote.methods, [&](const auto& candidate) {
-         return fcl::api::compatible(fcl::api::method_descriptor{.name = candidate.name, .kind = candidate.kind},
+         return forge::api::compatible(forge::api::method_descriptor{.name = candidate.name, .kind = candidate.kind},
                                      local_method);
       });
       if (found == remote.methods.end()) {
-         FCL_THROW_EXCEPTION(exceptions::incompatible_api, "remote API method is incompatible",
-                             fcl::exceptions::ctx("api", descriptor.id.value),
-                             fcl::exceptions::ctx("method", local_method.name));
+         FORGE_THROW_EXCEPTION(exceptions::incompatible_api, "remote API method is incompatible",
+                             forge::exceptions::ctx("api", descriptor.id.value),
+                             forge::exceptions::ctx("method", local_method.name));
       }
    }
 }
 
 std::optional<entry> select_compatible(const std::vector<entry>& entries,
-                                       const fcl::api::api_ref& requested) {
+                                       const forge::api::api_ref& requested) {
    auto selected = std::optional<entry>{};
    for (const auto& entry : entries) {
-      if (!fcl::api::compatible(fcl::api::descriptor{.id = entry.id, .version = entry.version}, requested)) {
+      if (!forge::api::compatible(forge::api::descriptor{.id = entry.id, .version = entry.version}, requested)) {
          continue;
       }
       if (!selected || entry.version.revision > selected->version.revision) {
@@ -166,4 +166,4 @@ std::optional<entry> select_compatible(const std::vector<entry>& entries,
    return selected;
 }
 
-} // namespace fcl::plugins::p2p::resolver
+} // namespace forge::plugins::p2p::resolver

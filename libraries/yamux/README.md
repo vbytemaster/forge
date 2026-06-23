@@ -1,7 +1,7 @@
-# fcl_yamux
+# forge_yamux
 
-`fcl_yamux` implements Yamux multiplexed sessions over a single
-`fcl_transport::stream`. It gives higher layers a `transport::session` with
+`forge_yamux` implements Yamux multiplexed sessions over a single
+`forge_transport::stream`. It gives higher layers a `transport::session` with
 independent logical streams while keeping flow control, reset, close and
 resource accounting inside the Yamux owner.
 
@@ -17,32 +17,32 @@ resource accounting inside the Yamux owner.
 - Do not use Yamux as a security layer. TLS/Noise/STCP owns authentication.
 - Do not put peer identity, protocol negotiation, DHT, relay or application
   retries here.
-- Do not bypass `fcl_transport` stream/session handles with Yamux-specific
+- Do not bypass `forge_transport` stream/session handles with Yamux-specific
   application APIs.
 
 ## Public Modules
 
-- `fcl.yamux.options`
-- `fcl.yamux.session`
-- `fcl.yamux.exceptions`
-- `fcl.yamux`
+- `forge.yamux.options`
+- `forge.yamux.session`
+- `forge.yamux.exceptions`
+- `forge.yamux`
 
-Target: `fcl_yamux`.
+Target: `forge_yamux`.
 
-Dependencies: `fcl_exceptions`, `fcl_transport`, Boost.Asio.
+Dependencies: `forge_exceptions`, `forge_transport`, Boost.Asio.
 
 ## Examples
 
 ```cpp
-import fcl.yamux.exceptions;
-import fcl.yamux.options;
-import fcl.yamux.session;
+import forge.yamux.exceptions;
+import forge.yamux.options;
+import forge.yamux.session;
 
-boost::asio::awaitable<void> run_client_mux(fcl::transport::stream base) {
-   auto mux = fcl::yamux::session{
+boost::asio::awaitable<void> run_client_mux(forge::transport::stream base) {
+   auto mux = forge::yamux::session{
       std::move(base),
-      fcl::yamux::side::initiator,
-      fcl::yamux::options{.max_streams = 1024},
+      forge::yamux::side::initiator,
+      forge::yamux::options{.max_streams = 1024},
    };
 
    auto stream = co_await mux.async_open_stream();
@@ -52,10 +52,10 @@ boost::asio::awaitable<void> run_client_mux(fcl::transport::stream base) {
 ```
 
 ```cpp
-boost::asio::awaitable<void> serve_mux(fcl::transport::stream base) {
-   auto session = fcl::yamux::make_session(
+boost::asio::awaitable<void> serve_mux(forge::transport::stream base) {
+   auto session = forge::yamux::make_session(
       std::move(base),
-      fcl::yamux::side::responder);
+      forge::yamux::side::responder);
 
    auto stream = co_await session.async_accept_stream();
    auto frame = co_await stream.async_read_frame_chunk();
@@ -72,6 +72,6 @@ boost::asio::awaitable<void> serve_mux(fcl::transport::stream base) {
 
 ## Tests
 
-`test_fcl_yamux` covers stream open/accept, flow control, resource limits,
+`test_forge_yamux` covers stream open/accept, flow control, resource limits,
 reset validity, cancel propagation, lower transport write failures, clean close
-and integration through `fcl_transport::session`.
+and integration through `forge_transport::session`.

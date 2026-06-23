@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include "wrapper_handles.hpp"
 
@@ -9,13 +9,13 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.quic.connector;
+module forge.quic.connector;
 
-import fcl.quic.exceptions;
-import fcl.quic.runtime;
-import fcl.quic.security;
+import forge.quic.exceptions;
+import forge.quic.runtime;
+import forge.quic.security;
 
-namespace fcl::quic {
+namespace forge::quic {
 namespace {
 
 [[nodiscard]] exceptions::code map_error(detail::engine_error_kind kind) noexcept {
@@ -59,7 +59,7 @@ namespace {
 }
 
 [[noreturn]] void raise_engine_failure(const detail::engine_failure& error) {
-   FCL_THROW_CODE(map_error(error.kind()), error.what());
+   FORGE_THROW_CODE(map_error(error.kind()), error.what());
 }
 
 [[nodiscard]] detail::engine_transport_limits map_limits(const transport_limits& limits) noexcept {
@@ -107,24 +107,24 @@ namespace {
 } // namespace
 
 struct connector::impl {
-   explicit impl(fcl::asio::runtime& runtime_value) : runtime(runtime_value), engine(runtime_value.context()) {}
+   explicit impl(forge::asio::runtime& runtime_value) : runtime(runtime_value), engine(runtime_value.context()) {}
 
-   fcl::asio::runtime& runtime;
+   forge::asio::runtime& runtime;
    detail::engine_connector engine;
 };
 
-connector::connector(fcl::asio::runtime& runtime) : impl_(std::make_unique<impl>(runtime)) {}
+connector::connector(forge::asio::runtime& runtime) : impl_(std::make_unique<impl>(runtime)) {}
 
 connector::~connector() = default;
 
 boost::asio::awaitable<connection> connector::async_connect(endpoint remote, client_options options) {
    if (!impl_) {
-      FCL_THROW_EXCEPTION(exceptions::canceled, "invalid QUIC connector");
+      FORGE_THROW_EXCEPTION(exceptions::canceled, "invalid QUIC connector");
    }
    validate(options);
    const auto capabilities = initialize_runtime();
    if (!capabilities.crypto_ossl_initialized) {
-      FCL_THROW_EXCEPTION(exceptions::dependency_unavailable, "ngtcp2 OpenSSL crypto backend initialization failed");
+      FORGE_THROW_EXCEPTION(exceptions::dependency_unavailable, "ngtcp2 OpenSSL crypto backend initialization failed");
    }
    try {
       auto engine_connection = co_await impl_->engine.async_connect(
@@ -141,4 +141,4 @@ void connector::cancel() {
    }
 }
 
-} // namespace fcl::quic
+} // namespace forge::quic

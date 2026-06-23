@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <openssl/asn1.h>
 #include <openssl/bio.h>
@@ -11,14 +11,14 @@ module;
 #include <memory>
 #include <string>
 
-module fcl.crypto.x509;
+module forge.crypto.x509;
 
-import fcl.crypto.asymmetric;
-import fcl.crypto.der;
-import fcl.crypto.hex;
-import fcl.crypto.sha256;
+import forge.crypto.asymmetric;
+import forge.crypto.der;
+import forge.crypto.hex;
+import forge.crypto.sha256;
 
-namespace fcl::crypto::x509 {
+namespace forge::crypto::x509 {
 namespace {
 
 struct bio_deleter {
@@ -54,7 +54,7 @@ using asn1_object_ptr = std::unique_ptr<ASN1_OBJECT, asn1_object_deleter>;
    const auto* cursor = bytes.data();
    auto out = x509_ptr{d2i_X509(nullptr, &cursor, static_cast<long>(bytes.size()))};
    if (!out) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_key, "failed to parse X.509 certificate DER");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_key, "failed to parse X.509 certificate DER");
    }
    return out;
 }
@@ -62,12 +62,12 @@ using asn1_object_ptr = std::unique_ptr<ASN1_OBJECT, asn1_object_deleter>;
 [[nodiscard]] bytes write_der(X509* certificate) {
    const auto length = i2d_X509(certificate, nullptr);
    if (length <= 0) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_key, "failed to size X.509 certificate DER");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_key, "failed to size X.509 certificate DER");
    }
    auto out = bytes(static_cast<std::size_t>(length));
    auto* cursor = out.data();
    if (i2d_X509(certificate, &cursor) != length) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_key, "failed to write X.509 certificate DER");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_key, "failed to write X.509 certificate DER");
    }
    return out;
 }
@@ -84,11 +84,11 @@ certificate certificate::from_der(std::span<const std::uint8_t> bytes_value) {
 certificate certificate::from_pem(std::string_view text) {
    auto bio = bio_ptr{BIO_new_mem_buf(text.data(), static_cast<int>(text.size()))};
    if (!bio) {
-      FCL_THROW_EXCEPTION(exceptions::backend_error, "failed to allocate X.509 PEM BIO");
+      FORGE_THROW_EXCEPTION(exceptions::backend_error, "failed to allocate X.509 PEM BIO");
    }
    auto parsed = x509_ptr{PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr)};
    if (!parsed) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_key, "failed to parse X.509 certificate PEM");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_key, "failed to parse X.509 certificate PEM");
    }
    return certificate{write_der(parsed.get())};
 }
@@ -101,16 +101,16 @@ bytes certificate::public_key_der() const {
    auto parsed = parse_der(der_);
    auto key = pkey_ptr{X509_get_pubkey(parsed.get())};
    if (!key) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_key, "X.509 certificate has no public key");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_key, "X.509 certificate has no public key");
    }
    const auto length = i2d_PUBKEY(key.get(), nullptr);
    if (length <= 0) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_key, "failed to size certificate public key DER");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_key, "failed to size certificate public key DER");
    }
    auto out = bytes(static_cast<std::size_t>(length));
    auto* cursor = out.data();
    if (i2d_PUBKEY(key.get(), &cursor) != length) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_key, "failed to write certificate public key DER");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_key, "failed to write certificate public key DER");
    }
    return out;
 }
@@ -143,7 +143,7 @@ bytes certificate::fingerprint_sha256() const {
 }
 
 std::string certificate::fingerprint_sha256_text() const {
-   return fcl::crypto::to_hex(fingerprint_sha256());
+   return forge::crypto::to_hex(fingerprint_sha256());
 }
 
-} // namespace fcl::crypto::x509
+} // namespace forge::crypto::x509

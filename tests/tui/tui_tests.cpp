@@ -3,14 +3,14 @@
 #include <string>
 #include <vector>
 
-import fcl.tui.navigation;
-import fcl.tui.render;
-import fcl.tui.runner;
-import fcl.tui.types;
+import forge.tui.navigation;
+import forge.tui.render;
+import forge.tui.runner;
+import forge.tui.types;
 
 BOOST_AUTO_TEST_CASE(status_badge_renders_stable_text) {
-   const auto lines = fcl::tui::render_status_badge(fcl::tui::status_badge_model{
-       .value = fcl::tui::status::degraded,
+   const auto lines = forge::tui::render_status_badge(forge::tui::status_badge_model{
+       .value = forge::tui::status::degraded,
        .label = "service degraded",
    });
    BOOST_REQUIRE_EQUAL(lines.size(), 1);
@@ -18,18 +18,18 @@ BOOST_AUTO_TEST_CASE(status_badge_renders_stable_text) {
 }
 
 BOOST_AUTO_TEST_CASE(table_states_render_without_terminal_backend) {
-   auto loading = fcl::tui::table_model{.loading = true};
-   BOOST_TEST(fcl::tui::render_table(loading)[0] == "loading...");
+   auto loading = forge::tui::table_model{.loading = true};
+   BOOST_TEST(forge::tui::render_table(loading)[0] == "loading...");
 
-   auto empty = fcl::tui::table_model{.empty_text = "no rows"};
-   BOOST_TEST(fcl::tui::render_table(empty)[0] == "no rows");
+   auto empty = forge::tui::table_model{.empty_text = "no rows"};
+   BOOST_TEST(forge::tui::render_table(empty)[0] == "no rows");
 
-   auto error = fcl::tui::table_model{.error = "failed"};
-   BOOST_TEST(fcl::tui::render_table(error)[0] == "error: failed");
+   auto error = forge::tui::table_model{.error = "failed"};
+   BOOST_TEST(forge::tui::render_table(error)[0] == "error: failed");
 }
 
 BOOST_AUTO_TEST_CASE(key_value_panel_redacts_sensitive_values) {
-   const auto lines = fcl::tui::render_key_value_panel({
+   const auto lines = forge::tui::render_key_value_panel({
        {.key = "actor", .value = "operator"},
        {.key = "token", .value = "secret-token-value"},
        {.key = "workspace_secret", .value = "abc"},
@@ -44,7 +44,7 @@ BOOST_AUTO_TEST_CASE(key_value_panel_redacts_sensitive_values) {
 }
 
 BOOST_AUTO_TEST_CASE(form_validation_reports_required_and_field_errors) {
-   const auto result = fcl::tui::validate_form(fcl::tui::form_model{
+   const auto result = forge::tui::validate_form(forge::tui::form_model{
        .fields =
            {
                {.name = "workspace", .label = "Workspace", .required = true},
@@ -60,7 +60,7 @@ BOOST_AUTO_TEST_CASE(form_validation_reports_required_and_field_errors) {
 }
 
 BOOST_AUTO_TEST_CASE(form_render_redacts_sensitive_field_identity) {
-   const auto lines = fcl::tui::render_form(fcl::tui::form_model{
+   const auto lines = forge::tui::render_form(forge::tui::form_model{
        .fields =
            {
                {.name = "token", .label = "Token", .value = "random-looking-value"},
@@ -76,7 +76,7 @@ BOOST_AUTO_TEST_CASE(form_render_redacts_sensitive_field_identity) {
 }
 
 BOOST_AUTO_TEST_CASE(shell_render_redacts_endpoint_credentials_and_queries) {
-   const auto lines = fcl::tui::render_shell(fcl::tui::shell_model{
+   const auto lines = forge::tui::render_shell(forge::tui::shell_model{
        .profile = "production",
        .endpoint = "https://user:pass@example.test:443/api?signature=abcdef&expires=1#frag",
        .actor = "operator",
@@ -89,11 +89,11 @@ BOOST_AUTO_TEST_CASE(shell_render_redacts_endpoint_credentials_and_queries) {
 }
 
 BOOST_AUTO_TEST_CASE(event_log_redacts_sensitive_messages) {
-   const auto lines = fcl::tui::render_event_log(fcl::tui::event_log_model{
+   const auto lines = forge::tui::render_event_log(forge::tui::event_log_model{
        .events =
            {
-               {.level = fcl::tui::severity::info, .topic = "runtime", .message = "started"},
-               {.level = fcl::tui::severity::critical, .topic = "auth", .message = "token abc"},
+               {.level = forge::tui::severity::info, .topic = "runtime", .message = "started"},
+               {.level = forge::tui::severity::critical, .topic = "auth", .message = "token abc"},
            },
        .max_items = 4,
    });
@@ -105,8 +105,8 @@ BOOST_AUTO_TEST_CASE(event_log_redacts_sensitive_messages) {
 }
 
 BOOST_AUTO_TEST_CASE(navigation_stack_push_pop_and_selection) {
-   auto stack = fcl::tui::navigation_stack{};
-   stack.push(fcl::tui::navigation_model{
+   auto stack = forge::tui::navigation_stack{};
+   stack.push(forge::tui::navigation_model{
        .items =
            {
                {.id = "apps", .label = "Applications"},
@@ -128,9 +128,9 @@ BOOST_AUTO_TEST_CASE(navigation_stack_push_pop_and_selection) {
 }
 
 BOOST_AUTO_TEST_CASE(disabled_and_dangerous_action_states_are_visible) {
-   const auto lines = fcl::tui::render_action_bar({
-       {.id = "approve", .label = "Approve", .state = fcl::tui::action_state::disabled},
-       {.id = "revoke", .label = "Revoke", .state = fcl::tui::action_state::dangerous},
+   const auto lines = forge::tui::render_action_bar({
+       {.id = "approve", .label = "Approve", .state = forge::tui::action_state::disabled},
+       {.id = "revoke", .label = "Revoke", .state = forge::tui::action_state::dangerous},
    });
 
    BOOST_REQUIRE_EQUAL(lines.size(), 1);
@@ -140,14 +140,14 @@ BOOST_AUTO_TEST_CASE(disabled_and_dangerous_action_states_are_visible) {
 
 BOOST_AUTO_TEST_CASE(headless_runner_exits_through_injected_quit_event) {
    auto calls = 0;
-   auto runner = fcl::tui::screen_runner{};
-   const auto rc = runner.run(fcl::tui::screen_runner_options{
+   auto runner = forge::tui::screen_runner{};
+   const auto rc = runner.run(forge::tui::screen_runner_options{
        .headless = true,
-       .input = [&]() -> std::optional<fcl::tui::input_event> {
+       .input = [&]() -> std::optional<forge::tui::input_event> {
           ++calls;
-          return fcl::tui::input_event{.value = fcl::tui::input_event::kind::quit};
+          return forge::tui::input_event{.value = forge::tui::input_event::kind::quit};
        },
-       .model = [] { return fcl::tui::shell_model{.title = "test"}; },
+       .model = [] { return forge::tui::shell_model{.title = "test"}; },
    });
 
    BOOST_TEST(rc == 0);
@@ -156,7 +156,7 @@ BOOST_AUTO_TEST_CASE(headless_runner_exits_through_injected_quit_event) {
 }
 
 BOOST_AUTO_TEST_CASE(terminal_capability_detection_does_not_throw) {
-   const auto capabilities = fcl::tui::detect_terminal_capabilities();
+   const auto capabilities = forge::tui::detect_terminal_capabilities();
    if (!capabilities.available) {
       BOOST_TEST(!capabilities.degraded_reason.empty());
    }

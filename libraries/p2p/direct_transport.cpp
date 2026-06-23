@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <iterator>
@@ -11,25 +11,25 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.p2p.node;
+module forge.p2p.node;
 
-import fcl.asio.runtime;
-import fcl.p2p.endpoint;
-import fcl.p2p.exceptions;
-import fcl.transport.session;
+import forge.asio.runtime;
+import forge.p2p.endpoint;
+import forge.p2p.exceptions;
+import forge.transport.session;
 
 #include "direct_transport.hpp"
 
-namespace fcl::p2p::direct {
+namespace forge::p2p::direct {
 namespace {
 
-[[nodiscard]] profile& profile_for(std::vector<profile>& profiles, const fcl::p2p::endpoint& endpoint) {
+[[nodiscard]] profile& profile_for(std::vector<profile>& profiles, const forge::p2p::endpoint& endpoint) {
    for (auto& candidate : profiles) {
       if (candidate.supports(endpoint)) {
          return candidate;
       }
    }
-   FCL_THROW_EXCEPTION(exceptions::unsupported_protocol, "unsupported P2P direct transport");
+   FORGE_THROW_EXCEPTION(exceptions::unsupported_protocol, "unsupported P2P direct transport");
 }
 
 } // namespace
@@ -38,7 +38,7 @@ struct registry::state {
    std::vector<profile> profiles;
 };
 
-registry::registry(fcl::asio::runtime& runtime, const node::options& options) : state_(std::make_unique<state>()) {
+registry::registry(forge::asio::runtime& runtime, const node::options& options) : state_(std::make_unique<state>()) {
    register_quic_profile(*this, runtime, options);
    register_tcp_profile(*this, runtime, options);
 }
@@ -51,7 +51,7 @@ bool registry::listening() const noexcept {
    });
 }
 
-std::optional<fcl::p2p::endpoint> registry::local_endpoint() const {
+std::optional<forge::p2p::endpoint> registry::local_endpoint() const {
    auto endpoints = local_endpoints();
    if (endpoints.empty()) {
       return std::nullopt;
@@ -59,8 +59,8 @@ std::optional<fcl::p2p::endpoint> registry::local_endpoint() const {
    return endpoints.front();
 }
 
-std::vector<fcl::p2p::endpoint> registry::local_endpoints() const {
-   auto out = std::vector<fcl::p2p::endpoint>{};
+std::vector<forge::p2p::endpoint> registry::local_endpoints() const {
+   auto out = std::vector<forge::p2p::endpoint>{};
    if (!state_) {
       return out;
    }
@@ -74,16 +74,16 @@ std::vector<fcl::p2p::endpoint> registry::local_endpoints() const {
 void registry::add(profile value) {
    if (!value.supports || !value.listening || !value.local_endpoints || !value.listen || !value.stop ||
        !value.async_connect || !value.async_accept) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P direct transport profile is empty");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "P2P direct transport profile is empty");
    }
    state_->profiles.push_back(std::move(value));
 }
 
-fcl::p2p::endpoint registry::listen(fcl::p2p::endpoint endpoint) {
+forge::p2p::endpoint registry::listen(forge::p2p::endpoint endpoint) {
    const auto requested = endpoint.to_string();
    const auto existing = local_endpoints();
    if (std::ranges::any_of(existing, [&](const auto& value) { return value.to_string() == requested; })) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P direct listener endpoint is already active");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "P2P direct listener endpoint is already active");
    }
    auto& selected = profile_for(state_->profiles, endpoint);
    return selected.listen(std::move(endpoint));
@@ -100,15 +100,15 @@ void registry::stop() {
    }
 }
 
-boost::asio::awaitable<connection> registry::async_connect(fcl::p2p::endpoint endpoint,
+boost::asio::awaitable<connection> registry::async_connect(forge::p2p::endpoint endpoint,
                                                            const node::connect_options& options) {
    auto& selected = profile_for(state_->profiles, endpoint);
    co_return co_await selected.async_connect(std::move(endpoint), options);
 }
 
-boost::asio::awaitable<connection> registry::async_accept(fcl::p2p::endpoint endpoint) {
+boost::asio::awaitable<connection> registry::async_accept(forge::p2p::endpoint endpoint) {
    auto& selected = profile_for(state_->profiles, endpoint);
    co_return co_await selected.async_accept(std::move(endpoint));
 }
 
-} // namespace fcl::p2p::direct
+} // namespace forge::p2p::direct

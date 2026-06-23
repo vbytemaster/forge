@@ -1,34 +1,34 @@
 # P2P Node Plugin
 
-`fcl::plugins::p2p::node` owns one shared `fcl_p2p` node and exposes typed
+`forge::plugins::p2p::node` owns one shared `forge_p2p` node and exposes typed
 contribution APIs for protocol handlers and API-over-P2P publication.
 
 ## Identity
 
-- Target: `fcl_plugins_p2p_node`
+- Target: `forge_plugins_p2p_node`
 - Package component: `plugins_p2p_node`
-- Plugin id: `fcl.plugins.p2p.node`
-- Main API id: `fcl.plugins.p2p.node`
+- Plugin id: `forge.plugins.p2p.node`
+- Main API id: `forge.plugins.p2p.node`
 - Extra API ids:
-  - `fcl.plugins.p2p.node.diagnostics_source`
-  - `fcl.plugins.p2p.node.pubsub_source`
+  - `forge.plugins.p2p.node.diagnostics_source`
+  - `forge.plugins.p2p.node.pubsub_source`
 - Config section: `plugins.p2p.node`
 - Public modules:
-  - `fcl.plugins.p2p.node.plugin`
-  - `fcl.plugins.p2p.node.api`
-  - `fcl.plugins.p2p.node.types`
-  - `fcl.plugins.p2p.node.exceptions`
+  - `forge.plugins.p2p.node.plugin`
+  - `forge.plugins.p2p.node.api`
+  - `forge.plugins.p2p.node.types`
+  - `forge.plugins.p2p.node.exceptions`
 
 ## What It Provides
 
-- Starts and stops a shared P2P node through the `fcl_app` lifecycle.
+- Starts and stops a shared P2P node through the `forge_app` lifecycle.
 - Maps config into listen/bootstrap/advertised endpoints and relay/path policy.
 - Lets application plugins publish typed APIs over a P2P protocol id.
 - Opens typed remote API handles to peers through `remote<Interface>()`.
 - Provides internal source APIs used by focused diagnostics and pubsub plugins.
 
 The plugin does not implement product routing policy or durable application
-queues. Core libp2p-style mechanics belong to `fcl_p2p`; this plugin composes
+queues. Core libp2p-style mechanics belong to `forge_p2p`; this plugin composes
 that substrate for applications.
 
 ## Config
@@ -43,7 +43,7 @@ plugins:
          peer-id: ""
          certificate-pem: ""
          private-key-pem: ""
-         api-codec: fcl.raw
+         api-codec: forge.raw
          api:
             deadline-ms: 5000
             max-frame-size: 16777216
@@ -68,27 +68,27 @@ provide real identity material or an explicitly configured peer identity.
 ## Example
 
 ```cpp
-import fcl.api.binding;
-import fcl.plugins.p2p.node.api;
-import fcl.plugins.p2p.node.plugin;
+import forge.api.binding;
+import forge.plugins.p2p.node.api;
+import forge.plugins.p2p.node.plugin;
 
-class catalog_p2p_plugin final : public fcl::app::plugin {
+class catalog_p2p_plugin final : public forge::app::plugin {
  public:
-   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
-      auto p2p = context.apis().get<fcl::plugins::p2p::node::api>(
-         {.id = {"fcl.plugins.p2p.node"}, .major = 1});
+   boost::asio::awaitable<void> initialize(forge::app::plugin_context& context) override {
+      auto p2p = context.apis().get<forge::plugins::p2p::node::api>(
+         {.id = {"forge.plugins.p2p.node"}, .major = 1});
 
-      auto plan = fcl::api::binding()
+      auto plan = forge::api::binding()
          .serve(context.apis())
          .export_api<catalog_api>()
          .build();
 
-      p2p->publish_api(std::move(plan), fcl::p2p::protocol_id{.value = "/catalog/api/1"});
+      p2p->publish_api(std::move(plan), forge::p2p::protocol_id{.value = "/catalog/api/1"});
       co_return;
    }
 };
 ```
 
 ```cpp
-registry.register_plugin(fcl::plugins::p2p::node::descriptor());
+registry.register_plugin(forge::plugins::p2p::node::descriptor());
 ```

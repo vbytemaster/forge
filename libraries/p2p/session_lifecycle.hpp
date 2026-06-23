@@ -3,7 +3,7 @@
 #include <map>
 #include <memory>
 
-namespace fcl::p2p::detail {
+namespace forge::p2p::detail {
 
 template <typename Id, typename Session>
 bool erase_current_session(std::map<Id, std::shared_ptr<Session>>& sessions,
@@ -25,4 +25,4 @@ void cancel_rejected_session(const std::shared_ptr<Session>& session) {
    session->connection.cancel();
 }
 
-} // namespace fcl::p2p::detail
+} // namespace forge::p2p::detail

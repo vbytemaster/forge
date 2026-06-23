@@ -1,6 +1,6 @@
 #pragma once
 
-namespace fcl::p2p {
+namespace forge::p2p {
 
 [[nodiscard]] inline capability_set capabilities_for(std::span<const protocol_id> protocols) noexcept {
    auto out = capability_set{};
@@ -26,4 +26,4 @@ namespace fcl::p2p {
    return out;
 }
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

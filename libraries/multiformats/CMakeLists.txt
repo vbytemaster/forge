@@ -1,12 +1,12 @@
-file(GLOB FCL_MULTIFORMATS_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+file(GLOB FORGE_MULTIFORMATS_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 
-add_library(fcl_multiformats STATIC ${FCL_MULTIFORMATS_SOURCES})
-fcl_target_modules(fcl_multiformats multiformats)
+add_library(forge_multiformats STATIC ${FORGE_MULTIFORMATS_SOURCES})
+forge_target_modules(forge_multiformats multiformats)
 
-target_include_directories(fcl_multiformats PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+target_include_directories(forge_multiformats PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
-   fcl_multiformats PUBLIC
-      fcl_exceptions
-      fcl_crypto
+   forge_multiformats PUBLIC
+      forge_exceptions
+      forge_crypto
 )

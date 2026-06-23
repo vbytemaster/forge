@@ -1,6 +1,6 @@
 # Upstream
 
-This repository is the canonical upstream for FCL unless it is mirrored or
+This repository is the canonical upstream for FORGE unless it is mirrored or
 vendored elsewhere.
 
 Canonical upstream:
@@ -14,4 +14,4 @@ Apache License, Version 2.0.
 
 Mirrors or vendor copies may exist for dependency consumption, CI, evaluation,
 integration and business development support. They do not transfer ownership,
-authorship, copyright, exclusive rights, or control over FCL to another party.
+authorship, copyright, exclusive rights, or control over FORGE to another party.

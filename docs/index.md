@@ -1,6 +1,6 @@
-# FCL Docs Index
+# FORGE Docs Index
 
-This index points at current FCL-owned documentation. FCL is a neutral C++23
+This index points at current FORGE-owned documentation. FORGE is a neutral C++23
 infrastructure framework and constructor substrate for distributed services,
 DePIN systems, blockchain/control-plane runtimes and plugin-based daemons. It is
 not a product layer and does not own downstream storage, billing,
@@ -16,23 +16,23 @@ Documents below explain cross-library architecture decisions.
 | [roadmap.md](roadmap.md) | Post-1.0 direction, architecture gates and framework boundaries. |
 | [runtime/asio-app.md](runtime/asio-app.md) | Runtime ownership, bounded scheduler, plugin lifecycle and rollback. |
 | [web/http-websocket.md](web/http-websocket.md) | HTTP/WebSocket layering, routing, upgrade, retry and backpressure rules. |
-| [web/http-fastapi-style-parameters.md](web/http-fastapi-style-parameters.md) | FastAPI-style HTTP parameter binding for multi-argument FCL API methods. |
+| [web/http-fastapi-style-parameters.md](web/http-fastapi-style-parameters.md) | FastAPI-style HTTP parameter binding for multi-argument FORGE API methods. |
 | [web/http-files-and-s3.md](web/http-files-and-s3.md) | HTTP file upload/download gaps, Beast capabilities and S3-ready substrate plan. |
 | [network/quic-p2p.md](network/quic-p2p.md) | QUIC transport, P2P peer identity, protocol streams and failure model. |
 | [tui/notcurses-component-library.md](tui/notcurses-component-library.md) | TUI value models, deterministic rendering, navigation and Notcurses boundary. |
 | [codecs/json-yaml-glaze.md](codecs/json-yaml-glaze.md) | JSON/YAML API shape, Glaze backend isolation and diagnostics. |
 | [config/schema-config-program-options.md](config/schema-config-program-options.md) | Schema, config documents, env/CLI adapters, merge order and redaction. |
-| [iterations/fcl-secret-provider-v1.md](iterations/fcl-secret-provider-v1.md) | Local secret provider plugin: source loading, redaction, purpose-gated crypto operations and donor baseline. |
-| [fcl_concept_ru.md](fcl_concept_ru.md) | Original Russian concept and long-form design motivation. |
+| [iterations/forge-secret-provider-v1.md](iterations/forge-secret-provider-v1.md) | Local secret provider plugin: source loading, redaction, purpose-gated crypto operations and donor baseline. |
+| [forge_concept_ru.md](forge_concept_ru.md) | Original Russian concept and long-form design motivation. |
 
 ## Blueprints
 
-Blueprints are planning documents for possible future FCL directions. They are
+Blueprints are planning documents for possible future FORGE directions. They are
 not current public API commitments.
 
 | Blueprint | Purpose |
 | --- | --- |
-| [blockchain-constructor](blueprints/blockchain-constructor/README.md) | Planning map for neutral FCL building blocks that can support blockchain and DePIN construction without turning FCL into a product runtime. |
+| [blockchain-constructor](blueprints/blockchain-constructor/README.md) | Planning map for neutral FORGE building blocks that can support blockchain and DePIN construction without turning FORGE into a product runtime. |
 
 ## Library Guides
 

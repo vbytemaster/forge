@@ -1,6 +1,6 @@
-import fcl.plugins.crypto.signer.plugin;
+import forge.plugins.crypto.signer.plugin;
 
 int main() {
-   const auto descriptor = fcl::plugins::crypto::signer::descriptor();
-   return descriptor.id.value == "fcl.plugins.crypto.signer" ? 0 : 1;
+   const auto descriptor = forge::plugins::crypto::signer::descriptor();
+   return descriptor.id.value == "forge.plugins.crypto.signer" ? 0 : 1;
 }

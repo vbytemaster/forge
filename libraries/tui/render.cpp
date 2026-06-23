@@ -7,11 +7,11 @@ module;
 #include <string_view>
 #include <vector>
 
-module fcl.tui.render;
+module forge.tui.render;
 
-import fcl.tui.types;
+import forge.tui.types;
 
-namespace fcl::tui {
+namespace forge::tui {
 namespace {
 
 std::string lower(std::string_view value) {
@@ -281,4 +281,4 @@ validation_result validate_form(const form_model& model) {
    return result;
 }
 
-} // namespace fcl::tui
+} // namespace forge::tui

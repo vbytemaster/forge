@@ -5,9 +5,9 @@ module;
 #include <string>
 #include <string_view>
 
-module fcl.variant.format;
+module forge.variant.format;
 
-import fcl.variant.value;
+import forge.variant.value;
 
 namespace {
 constexpr size_t minimize_max_size = 1024;
@@ -51,9 +51,9 @@ void append_json_string(std::string& out, std::string_view value) {
    out.push_back('"');
 }
 
-void append_variant_json(std::string& out, const fcl::variant& value);
+void append_variant_json(std::string& out, const forge::variant& value);
 
-void append_object_json(std::string& out, const fcl::variant_object& object) {
+void append_object_json(std::string& out, const forge::variant_object& object) {
    out.push_back('{');
    bool first = true;
    for (auto itr = object.begin(); itr != object.end(); ++itr) {
@@ -68,7 +68,7 @@ void append_object_json(std::string& out, const fcl::variant_object& object) {
    out.push_back('}');
 }
 
-void append_array_json(std::string& out, const fcl::variants& values) {
+void append_array_json(std::string& out, const forge::variants& values) {
    out.push_back('[');
    for (std::size_t i = 0; i < values.size(); ++i) {
       if (i != 0) {
@@ -79,35 +79,35 @@ void append_array_json(std::string& out, const fcl::variants& values) {
    out.push_back(']');
 }
 
-void append_variant_json(std::string& out, const fcl::variant& value) {
+void append_variant_json(std::string& out, const forge::variant& value) {
    switch (value.get_type()) {
-   case fcl::variant::null_type:
+   case forge::variant::null_type:
       out += "null";
       break;
-   case fcl::variant::int64_type:
-   case fcl::variant::uint64_type:
-   case fcl::variant::double_type:
+   case forge::variant::int64_type:
+   case forge::variant::uint64_type:
+   case forge::variant::double_type:
       out += value.as_string();
       break;
-   case fcl::variant::bool_type:
+   case forge::variant::bool_type:
       out += value.as_bool() ? "true" : "false";
       break;
-   case fcl::variant::string_type:
+   case forge::variant::string_type:
       append_json_string(out, value.get_string());
       break;
-   case fcl::variant::array_type:
+   case forge::variant::array_type:
       append_array_json(out, value.get_array());
       break;
-   case fcl::variant::object_type:
+   case forge::variant::object_type:
       append_object_json(out, value.get_object());
       break;
-   case fcl::variant::blob_type:
+   case forge::variant::blob_type:
       append_json_string(out, value.as_string());
       break;
    }
 }
 
-std::string variant_json_string(const fcl::variant& value) {
+std::string variant_json_string(const forge::variant& value) {
    std::string out;
    append_variant_json(out, value);
    return out;
@@ -120,7 +120,7 @@ void clean_append(std::string& app, const std::string_view& s, size_t pos = 0, s
 }
 } // namespace
 
-namespace fcl {
+namespace forge {
 std::string format_string(const std::string& frmt, const variant_object& args, bool minimize) {
    std::string result;
    const std::string format =
@@ -204,4 +204,4 @@ std::string format_string(const std::string& frmt, const variant_object& args, b
    }
    return result;
 }
-} // namespace fcl
+} // namespace forge

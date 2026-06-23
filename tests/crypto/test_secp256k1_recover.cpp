@@ -1,19 +1,19 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 #include <ostream>
 #include <string>
 #include <string_view>
 #include <tuple>
 #include <vector>
 
-import fcl.exceptions;
-import fcl.crypto.hex;
-import fcl.crypto.secp256k1;
-import fcl.core.utility;
+import forge.exceptions;
+import forge.crypto.hex;
+import forge.crypto.secp256k1;
+import forge.core.utility;
 
-using namespace fcl;
-using namespace fcl::crypto;
-using recover_bytes = fcl::crypto::secp256k1::recover_bytes;
+using namespace forge;
+using namespace forge::crypto;
+using recover_bytes = forge::crypto::secp256k1::recover_bytes;
 
 #include "test_utils.hpp"
 
@@ -37,50 +37,50 @@ BOOST_AUTO_TEST_CASE(recover) try {
       const auto& digest = to_bytes(std::get<1>(test));
       const auto& expected_result = std::get<2>(test);
 
-      auto res = fcl::crypto::secp256k1::recover(signature, digest);
-      BOOST_CHECK_EQUAL(fcl::crypto::to_hex(res), fcl::crypto::to_hex(expected_result));
+      auto res = forge::crypto::secp256k1::recover(signature, digest);
+      BOOST_CHECK_EQUAL(forge::crypto::to_hex(res), forge::crypto::to_hex(expected_result));
    }
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(recover_rejects_invalid_signature) try {
    const auto call_with_bad_recovery_id = [] {
-      (void)fcl::crypto::secp256k1::recover(
+      (void)forge::crypto::secp256k1::recover(
          to_bytes("01174de755b55bd29026d626f7313a5560353dc5175f29c78d79d961b81a0c04360d833ca789bc16d4ee714a6d1a19461d890966e0ec5c"
                   "074f67be67e631d33aa7"),
          to_bytes("45fd65f6dd062fe7020f11d19fe5c35dc4d425e1479c0968c8e932c208f25399"));
    };
 
-   BOOST_CHECK_EXCEPTION(call_with_bad_recovery_id(), fcl::crypto::secp256k1::exceptions::invalid_signature,
-                         [](const fcl::crypto::secp256k1::exceptions::invalid_signature& error) {
-      return error.code().category().name() == std::string_view{"fcl.crypto.secp256k1"};
+   BOOST_CHECK_EXCEPTION(call_with_bad_recovery_id(), forge::crypto::secp256k1::exceptions::invalid_signature,
+                         [](const forge::crypto::secp256k1::exceptions::invalid_signature& error) {
+      return error.code().category().name() == std::string_view{"forge.crypto.secp256k1"};
    });
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(recover_rejects_invalid_input_sizes) try {
    const auto call_with_short_signature = [] {
-      (void)fcl::crypto::secp256k1::recover(
+      (void)forge::crypto::secp256k1::recover(
          to_bytes("174de755b55bd29026d626f7313a5560353dc5175f29c78d79d961b81a0c04360d833ca789bc16d4ee714a6d1a19461d890966e0ec5c07"
                   "4f67be67e631d33aa7"),
          to_bytes("45fd65f6dd062fe7020f11d19fe5c35dc4d425e1479c0968c8e932c208f25399"));
    };
-   BOOST_CHECK_EXCEPTION(call_with_short_signature(), fcl::crypto::secp256k1::exceptions::invalid_input,
-                         [](const fcl::crypto::secp256k1::exceptions::invalid_input& error) {
-      return error.code().category().name() == std::string_view{"fcl.crypto.secp256k1"};
+   BOOST_CHECK_EXCEPTION(call_with_short_signature(), forge::crypto::secp256k1::exceptions::invalid_input,
+                         [](const forge::crypto::secp256k1::exceptions::invalid_input& error) {
+      return error.code().category().name() == std::string_view{"forge.crypto.secp256k1"};
    });
 
    const auto call_with_short_digest = [] {
-      (void)fcl::crypto::secp256k1::recover(
+      (void)forge::crypto::secp256k1::recover(
          to_bytes("00174de755b55bd29026d626f7313a5560353dc5175f29c78d79d961b81a0c04360d833ca789bc16d4ee714a6d1a19461d890966e0ec5c"
                   "074f67be67e631d33aa7"),
          to_bytes("fd65f6dd062fe7020f11d19fe5c35dc4d425e1479c0968c8e932c208f25399"));
    };
-   BOOST_CHECK_EXCEPTION(call_with_short_digest(), fcl::crypto::secp256k1::exceptions::invalid_input,
-                         [](const fcl::crypto::secp256k1::exceptions::invalid_input& error) {
-      return error.code().category().name() == std::string_view{"fcl.crypto.secp256k1"};
+   BOOST_CHECK_EXCEPTION(call_with_short_digest(), forge::crypto::secp256k1::exceptions::invalid_input,
+                         [](const forge::crypto::secp256k1::exceptions::invalid_input& error) {
+      return error.code().category().name() == std::string_view{"forge.crypto.secp256k1"};
    });
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_SUITE_END()

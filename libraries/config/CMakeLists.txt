@@ -1,5 +1,5 @@
 add_library(
-   fcl_config STATIC
+   forge_config STATIC
    key_path.cpp
    document.cpp
    component.cpp
@@ -7,11 +7,11 @@ add_library(
    migration.cpp
    config.cpp
 )
-fcl_target_modules(fcl_config config)
+forge_target_modules(forge_config config)
 
-target_include_directories(fcl_config PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+target_include_directories(forge_config PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
-   fcl_config PUBLIC
-      fcl_schema
+   forge_config PUBLIC
+      forge_schema
 )

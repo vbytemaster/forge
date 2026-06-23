@@ -9,16 +9,16 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.plugins.crypto.secrets.plugin;
+module forge.plugins.crypto.secrets.plugin;
 
-import fcl.crypto.secret_bytes;
-import fcl.plugins.crypto.secrets.api;
-import fcl.plugins.crypto.secrets.types;
+import forge.crypto.secret_bytes;
+import forge.plugins.crypto.secrets.api;
+import forge.plugins.crypto.secrets.types;
 
 #include "details/plugin_impl.hxx"
 #include "details/secret_api.hxx"
 
-namespace fcl::plugins::crypto::secrets {
+namespace forge::plugins::crypto::secrets {
 
 plugin::secret_api::secret_api(std::shared_ptr<impl> state) : state_{std::move(state)} {}
 
@@ -42,4 +42,4 @@ boost::asio::awaitable<aead_decrypt_result> plugin::secret_api::decrypt_aes_gcm(
    co_return state_->decrypt_aes_gcm(std::move(value));
 }
 
-} // namespace fcl::plugins::crypto::secrets
+} // namespace forge::plugins::crypto::secrets

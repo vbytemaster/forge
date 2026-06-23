@@ -1,5 +1,5 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 #include <chrono>
 #include <limits>
 #include <ostream>
@@ -9,13 +9,13 @@
 #include <tuple>
 #include <vector>
 
-import fcl.exceptions;
-import fcl.crypto.hex;
-import fcl.crypto.modular_arithmetic;
-import fcl.core.utility;
+import forge.exceptions;
+import forge.crypto.hex;
+import forge.crypto.modular_arithmetic;
+import forge.core.utility;
 
-using namespace fcl;
-using namespace fcl::crypto;
+using namespace forge;
+using namespace forge::crypto;
 #include "test_utils.hpp"
 
 BOOST_AUTO_TEST_SUITE(modular_arithmetic)
@@ -91,23 +91,23 @@ BOOST_AUTO_TEST_CASE(modexp) try {
       auto exponent = to_bytes(parts[1]);
       auto modulus = to_bytes(parts[2]);
 
-      auto res = fcl::crypto::modexp(base, exponent, modulus);
-      BOOST_CHECK_EQUAL(fcl::crypto::to_hex(res), fcl::crypto::to_hex(expected_result));
+      auto res = forge::crypto::modexp(base, exponent, modulus);
+      BOOST_CHECK_EQUAL(forge::crypto::to_hex(res), forge::crypto::to_hex(expected_result));
    }
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(modexp_rejects_empty_modulus) try {
    const auto call_with_empty_modulus = [] {
-      (void)fcl::crypto::modexp(to_bytes("01"), to_bytes("02"), bytes{});
+      (void)forge::crypto::modexp(to_bytes("01"), to_bytes("02"), bytes{});
    };
 
-   BOOST_CHECK_EXCEPTION(call_with_empty_modulus(), fcl::crypto::modular_arithmetic::exceptions::invalid_modulus,
-                         [](const fcl::crypto::modular_arithmetic::exceptions::invalid_modulus& error) {
-      return error.code().category().name() == std::string_view{"fcl.crypto.modular_arithmetic"};
+   BOOST_CHECK_EXCEPTION(call_with_empty_modulus(), forge::crypto::modular_arithmetic::exceptions::invalid_modulus,
+                         [](const forge::crypto::modular_arithmetic::exceptions::invalid_modulus& error) {
+      return error.code().category().name() == std::string_view{"forge.crypto.modular_arithmetic"};
    });
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(modexp_vectors) try {
    struct modexp_test_params {
@@ -1003,11 +1003,11 @@ BOOST_AUTO_TEST_CASE(modexp_vectors) try {
       // the host function's result is always length of modulus; pad expected result with enough 0x00s to match up
       expected_result.insert(expected_result.begin(), modulus.size() - expected_result.size(), 0x00);
 
-      BOOST_CHECK_EQUAL(fcl::crypto::to_hex(fcl::crypto::modexp(base, exponent, modulus)),
-                        fcl::crypto::to_hex(expected_result));
+      BOOST_CHECK_EQUAL(forge::crypto::to_hex(forge::crypto::modexp(base, exponent, modulus)),
+                        forge::crypto::to_hex(expected_result));
    }
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(modexp_benchmarking) try {
 
@@ -1081,7 +1081,7 @@ BOOST_AUTO_TEST_CASE(modexp_benchmarking) try {
 
             auto start_time = std::chrono::steady_clock::now();
 
-            auto res = fcl::crypto::modexp(base, exponent, modulus);
+            auto res = forge::crypto::modexp(base, exponent, modulus);
 
             auto end_time = std::chrono::steady_clock::now();
 
@@ -1183,6 +1183,6 @@ BOOST_AUTO_TEST_CASE(modexp_benchmarking) try {
    // On the other hand, consider a 4096-bit modulus/base and a 1024-bit exponent (which on average took 3.69 ms).
    // 5*ceil(log2(1024)) + 8*ceil(log2(4096)) = 5*10 + 8*12 = 146 which is greater than the limit of 145.
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_SUITE_END()

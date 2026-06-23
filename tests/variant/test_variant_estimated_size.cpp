@@ -1,18 +1,18 @@
 #include <boost/test/unit_test.hpp>
 #include <string>
 
-import fcl.variant.exceptions;
-import fcl.variant.value;
-import fcl.variant.conversion;
-import fcl.variant.containers;
-import fcl.variant.chrono;
-import fcl.variant.multiprecision;
-import fcl.variant.format;
-import fcl.variant.described;
-import fcl.exceptions;
-import fcl.crypto.base64;
+import forge.variant.exceptions;
+import forge.variant.value;
+import forge.variant.conversion;
+import forge.variant.containers;
+import forge.variant.chrono;
+import forge.variant.multiprecision;
+import forge.variant.format;
+import forge.variant.described;
+import forge.exceptions;
+import forge.crypto.base64;
 
-using namespace fcl;
+using namespace forge;
 using std::string;
 
 BOOST_AUTO_TEST_SUITE(variant_estimated_size_suite)

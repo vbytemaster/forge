@@ -1,29 +1,29 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 #include <array>
 #include <bls12-381/bls12-381.hpp>
 #include <iostream>
 #include <vector>
 
-import fcl.exceptions;
+import forge.exceptions;
 
-import fcl.crypto.bls;
+import forge.crypto.bls;
 
-import fcl.raw.raw;
-import fcl.crypto.sha256;
-import fcl.json;
-import fcl.variant.exceptions;
-import fcl.variant.value;
-import fcl.variant.conversion;
-import fcl.variant.containers;
-import fcl.variant.chrono;
-import fcl.variant.multiprecision;
-import fcl.variant.format;
-import fcl.variant.described;
+import forge.raw.raw;
+import forge.crypto.sha256;
+import forge.json;
+import forge.variant.exceptions;
+import forge.variant.value;
+import forge.variant.conversion;
+import forge.variant.containers;
+import forge.variant.chrono;
+import forge.variant.multiprecision;
+import forge.variant.format;
+import forge.variant.described;
 
 using std::cout;
 
-using namespace fcl::crypto::bls;
+using namespace forge::crypto::bls;
 
 BOOST_AUTO_TEST_SUITE(bls_test)
 
@@ -43,7 +43,7 @@ std::vector<uint8_t> message_1 = {51,  23, 56, 93,  212, 129, 128, 27,
 std::vector<uint8_t> message_2 = {16, 38, 54,  125, 71, 214, 217, 78,
                                   73, 23, 127, 235, 8,  94,  41,  53}; // Message is passed in as a byte vector
 
-fcl::crypto::sha256 message_3 = fcl::crypto::sha256("1097cf48a15ba1c618237d3d79f3c684c031a9844c27e6b95c6d27d8a5f401a1");
+forge::crypto::sha256 message_3 = forge::crypto::sha256("1097cf48a15ba1c618237d3d79f3c684c031a9844c27e6b95c6d27d8a5f401a1");
 
 // test a single key signature + verification
 BOOST_AUTO_TEST_CASE(bls_sig_verif) try {
@@ -58,7 +58,7 @@ BOOST_AUTO_TEST_CASE(bls_sig_verif) try {
 
    BOOST_CHECK_EQUAL(ok, true);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 // test a single key signature + verification of digest_type
 BOOST_AUTO_TEST_CASE(bls_sig_verif_digest) try {
@@ -75,7 +75,7 @@ BOOST_AUTO_TEST_CASE(bls_sig_verif_digest) try {
 
    BOOST_CHECK_EQUAL(ok, true);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 // test a single key signature + verification of finality tuple
 BOOST_AUTO_TEST_CASE(bls_sig_verif_finality_types) try {
@@ -89,8 +89,8 @@ BOOST_AUTO_TEST_CASE(bls_sig_verif_finality_types) try {
    std::string s_view_number = std::to_string(view_number);
    std::string c_s = cmt + s_view_number;
 
-   fcl::crypto::sha256 h1 = fcl::crypto::sha256::hash(c_s);
-   fcl::crypto::sha256 h2 = fcl::crypto::sha256::hash(std::make_pair(h1, message_3));
+   forge::crypto::sha256 h1 = forge::crypto::sha256::hash(c_s);
+   forge::crypto::sha256 h2 = forge::crypto::sha256::hash(std::make_pair(h1, message_3));
 
    std::vector<unsigned char> v = std::vector<unsigned char>(h2.data(), h2.data() + 32);
 
@@ -109,7 +109,7 @@ BOOST_AUTO_TEST_CASE(bls_sig_verif_finality_types) try {
 
    BOOST_CHECK_EQUAL(ok, true);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 // test public keys + signatures aggregation + verification
 BOOST_AUTO_TEST_CASE(bls_agg_sig_verif) try {
@@ -135,7 +135,7 @@ BOOST_AUTO_TEST_CASE(bls_agg_sig_verif) try {
 
    BOOST_CHECK_EQUAL(ok, true);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 // test signature aggregation + aggregate tree verification
 BOOST_AUTO_TEST_CASE(bls_agg_tree_verif) try {
@@ -162,7 +162,7 @@ BOOST_AUTO_TEST_CASE(bls_agg_tree_verif) try {
 
    BOOST_CHECK_EQUAL(ok, true);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 // test random key generation, signature + verification
 BOOST_AUTO_TEST_CASE(bls_key_gen) try {
@@ -177,7 +177,7 @@ BOOST_AUTO_TEST_CASE(bls_key_gen) try {
 
    BOOST_CHECK_EQUAL(ok, true);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 // test wrong key and wrong signature
 BOOST_AUTO_TEST_CASE(bls_bad_sig_verif) try {
@@ -199,7 +199,7 @@ BOOST_AUTO_TEST_CASE(bls_bad_sig_verif) try {
    BOOST_CHECK_EQUAL(ok1, false);
    BOOST_CHECK_EQUAL(ok2, false);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 // test bls private key base58 encoding / decoding / serialization / deserialization
 BOOST_AUTO_TEST_CASE(private_key_serialization) try {
@@ -219,7 +219,7 @@ BOOST_AUTO_TEST_CASE(private_key_serialization) try {
 
    BOOST_CHECK_EQUAL(ok, true);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 // test bls public key and bls signature base58 encoding / decoding / serialization / deserialization
 BOOST_AUTO_TEST_CASE(bls_pub_key_sig_serialization) try {
@@ -239,7 +239,7 @@ BOOST_AUTO_TEST_CASE(bls_pub_key_sig_serialization) try {
 
    BOOST_CHECK_EQUAL(ok, true);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(bls_binary_keys_encoding_check) try {
 
@@ -279,7 +279,7 @@ BOOST_AUTO_TEST_CASE(bls_binary_keys_encoding_check) try {
    BOOST_CHECK_EQUAL(ok7, true); // succeeds
    BOOST_CHECK_EQUAL(ok8, true); // succeeds
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(bls_regenerate_check) try {
 
@@ -293,7 +293,7 @@ BOOST_AUTO_TEST_CASE(bls_regenerate_check) try {
 
    BOOST_CHECK_EQUAL(pk1.to_string(), pk2.to_string());
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(bls_prefix_encoding_check) try {
 
@@ -309,115 +309,115 @@ BOOST_AUTO_TEST_CASE(bls_prefix_encoding_check) try {
 
    // test no pivot delimiter
    BOOST_CHECK_THROW(private_key("PVTBLSvh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("PUBBLS82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("SIGBLSRrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
-       fcl::exceptions::context_error);
+       forge::exceptions::context_error);
 
    // test first prefix validation
    BOOST_CHECK_THROW(private_key("XYZ_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("XYZ_BLS_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("XYZ_BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
-       fcl::exceptions::context_error);
+       forge::exceptions::context_error);
 
    // test second prefix validation
    BOOST_CHECK_THROW(private_key("PVT_XYZ_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("PUB_XYZ_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("SIG_XYZ_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
-       fcl::exceptions::context_error);
+       forge::exceptions::context_error);
 
    // test missing prefix
-   BOOST_CHECK_THROW(private_key("vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"), fcl::exceptions::context_error);
+   BOOST_CHECK_THROW(private_key("vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"), forge::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
-       fcl::exceptions::context_error);
+       forge::exceptions::context_error);
 
    // test incomplete prefix
    BOOST_CHECK_THROW(private_key("PVT_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("PUB_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("SIG_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
-       fcl::exceptions::context_error);
+       forge::exceptions::context_error);
    BOOST_CHECK_THROW(private_key("BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("BLS_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
-       fcl::exceptions::context_error);
+       forge::exceptions::context_error);
 
    // test invalid data / invalid checksum
    BOOST_CHECK_THROW(private_key("PVT_BLS_wh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("PUB_BLS_92P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhcg"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("SIG_BLS_SrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg"),
-       fcl::exceptions::context_error);
+       forge::exceptions::context_error);
    BOOST_CHECK_THROW(private_key("PVT_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5zc"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("PUB_BLS_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhdg"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("SIG_BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJug"),
-       fcl::exceptions::context_error);
+       forge::exceptions::context_error);
    BOOST_CHECK_THROW(private_key("PVT_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yd"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(public_key("PUB_BLS_82P3oM1u0IEv64u9i4vSzvg1-"
                                     "QDl4Fb2n50Mp8Sk7Fr1Tz0MJypzL39nSd5VPFgFC9WqrjopRbBm1Pf0RkP018fo1k2rXaJY7Wtzd9RKlE8"
                                     "PoQ6XhDm4PyZlIupQg_gOuiMhTg"),
-                     fcl::exceptions::context_error);
+                     forge::exceptions::context_error);
    BOOST_CHECK_THROW(
        signature("SIG_BLS_RrwvP79LxfahskX-ceZpbgrJ1aUkSSIzE2sMFj0twuhK8QwjcGMvT2tZ_-QMHvAV83tWZYOs7SEvoyteCKGD_"
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJUg"),
-       fcl::exceptions::context_error);
+       forge::exceptions::context_error);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(bls_variant) try {
    private_key prk("PVT_BLS_vh0bYgBLOLxs_h9zvYNtj20yj8UJxWeFFAtDUW2_pG44e5yc");
@@ -428,20 +428,20 @@ BOOST_AUTO_TEST_CASE(bls_variant) try {
                      "Tk6YySkw1HONgvVeNWM8ZwuNgonOHkegNNPIXSIvWMTczfkg2lEtEh-ngBa5t9-4CvZ6aOjg29XPVvu6dimzHix-"
                      "9E0M53YkWZ-gW5GDkkOLoN2FMxjXaELmhuI64xSeSlcWLFfZa6TMVTctBFWsHDXm1ZMkURoB83dokKHEi4OQTbJtg");
 
-   fcl::variant v;
+   forge::variant v;
    std::string s;
    v = prk;
-   s = fcl::json::write_value(v).text;
+   s = forge::json::write_value(v).text;
    BOOST_CHECK_EQUAL(s, "\"" + prk.to_string() + "\"");
 
    v = pk;
-   s = fcl::json::write_value(v).text;
+   s = forge::json::write_value(v).text;
    BOOST_CHECK_EQUAL(s, "\"" + pk.to_string() + "\"");
 
    v = sig;
-   s = fcl::json::write_value(v).text;
+   s = forge::json::write_value(v).text;
    BOOST_CHECK_EQUAL(s, "\"" + sig.to_string() + "\"");
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_SUITE_END()

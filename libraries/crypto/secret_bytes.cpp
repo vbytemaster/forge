@@ -6,9 +6,9 @@ module;
 #include <span>
 #include <utility>
 
-module fcl.crypto.secret_bytes;
+module forge.crypto.secret_bytes;
 
-namespace fcl::crypto {
+namespace forge::crypto {
 
 namespace {
 
@@ -68,4 +68,4 @@ void secret_bytes::clear() noexcept {
    wipe(value_);
 }
 
-} // namespace fcl::crypto
+} // namespace forge::crypto

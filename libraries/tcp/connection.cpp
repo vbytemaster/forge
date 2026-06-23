@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <atomic>
 #include <cstdint>
@@ -19,11 +19,11 @@ module;
 #include <boost/asio/write.hpp>
 #include <boost/system/error_code.hpp>
 
-module fcl.tcp.connection;
+module forge.tcp.connection;
 
-import fcl.transport.stream;
+import forge.transport.stream;
 
-namespace fcl::tcp {
+namespace forge::tcp {
 namespace {
 
 using asio_tcp = boost::asio::ip::tcp;
@@ -34,21 +34,21 @@ using asio_tcp = boost::asio::ip::tcp;
 }
 
 [[noreturn]] void throw_invalid_options(std::string message) {
-   FCL_THROW_EXCEPTION(exceptions::invalid_options, std::move(message));
+   FORGE_THROW_EXCEPTION(exceptions::invalid_options, std::move(message));
 }
 
 [[noreturn]] void throw_io_error(std::string message, const boost::system::error_code& error) {
-   FCL_THROW_EXCEPTION(exceptions::io_error, std::move(message), fcl::exceptions::ctx("reason", error.message()));
+   FORGE_THROW_EXCEPTION(exceptions::io_error, std::move(message), forge::exceptions::ctx("reason", error.message()));
 }
 
 [[noreturn]] void throw_read_write_error(const boost::system::error_code& error) {
    if (error == boost::asio::error::operation_aborted) {
-      FCL_THROW_EXCEPTION(exceptions::canceled, "tcp connection operation canceled",
-                          fcl::exceptions::ctx("reason", error.message()));
+      FORGE_THROW_EXCEPTION(exceptions::canceled, "tcp connection operation canceled",
+                          forge::exceptions::ctx("reason", error.message()));
    }
    if (error == boost::asio::error::eof || error == boost::asio::error::connection_reset ||
        error == boost::asio::error::broken_pipe) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "tcp connection closed", fcl::exceptions::ctx("reason", error.message()));
+      FORGE_THROW_EXCEPTION(exceptions::closed, "tcp connection closed", forge::exceptions::ctx("reason", error.message()));
    }
    throw_io_error("tcp connection I/O failed", error);
 }
@@ -90,7 +90,7 @@ class socket_stream final : public transport::detail::stream_concept {
 
    boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> bytes) override {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp stream");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp stream");
       }
       auto error = boost::system::error_code{};
       co_await boost::asio::async_write(*socket_, boost::asio::buffer(bytes),
@@ -102,7 +102,7 @@ class socket_stream final : public transport::detail::stream_concept {
 
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read() override {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp stream");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp stream");
       }
       auto out = std::vector<std::uint8_t>(options_.read_chunk_size);
       auto error = boost::system::error_code{};
@@ -117,7 +117,7 @@ class socket_stream final : public transport::detail::stream_concept {
 
    boost::asio::awaitable<transport::chunk> async_read_chunk() override {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp stream");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp stream");
       }
       auto builder = pool_.acquire(options_.read_chunk_size);
       auto writable = builder.writable();
@@ -172,7 +172,7 @@ struct connection::impl final {
 
    [[nodiscard]] transport::endpoint local_endpoint() const {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
       }
       auto error = boost::system::error_code{};
       const auto endpoint = socket->local_endpoint(error);
@@ -184,7 +184,7 @@ struct connection::impl final {
 
    [[nodiscard]] transport::endpoint remote_endpoint() const {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
       }
       auto error = boost::system::error_code{};
       const auto endpoint = socket->remote_endpoint(error);
@@ -196,7 +196,7 @@ struct connection::impl final {
 
    boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> bytes) {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
       }
       auto error = boost::system::error_code{};
       co_await boost::asio::async_write(*socket, boost::asio::buffer(bytes),
@@ -208,7 +208,7 @@ struct connection::impl final {
 
    boost::asio::awaitable<std::size_t> async_read_some(std::span<std::uint8_t> bytes) {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
       }
       auto error = boost::system::error_code{};
       const auto size = co_await socket->async_read_some(boost::asio::buffer(bytes),
@@ -221,7 +221,7 @@ struct connection::impl final {
 
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read() {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
       }
       auto out = std::vector<std::uint8_t>(tcp_options.read_chunk_size);
       auto error = boost::system::error_code{};
@@ -250,7 +250,7 @@ struct connection::impl final {
 
    [[nodiscard]] transport::stream_connection into_transport_stream() {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
       }
       auto local = local_endpoint();
       auto remote = remote_endpoint();
@@ -263,7 +263,7 @@ struct connection::impl final {
 
    [[nodiscard]] asio_tcp::socket release_socket() {
       if (!valid()) {
-         FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
+         FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
       }
       auto out = std::move(*socket);
       socket.reset();
@@ -288,35 +288,35 @@ bool connection::valid() const noexcept {
 
 transport::endpoint connection::local_endpoint() const {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
    }
    return impl_->local_endpoint();
 }
 
 transport::endpoint connection::remote_endpoint() const {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
    }
    return impl_->remote_endpoint();
 }
 
 boost::asio::awaitable<void> connection::async_write(std::span<const std::uint8_t> bytes) {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
    }
    co_await impl_->async_write(bytes);
 }
 
 boost::asio::awaitable<std::size_t> connection::async_read_some(std::span<std::uint8_t> bytes) {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
    }
    co_return co_await impl_->async_read_some(bytes);
 }
 
 boost::asio::awaitable<std::vector<std::uint8_t>> connection::async_read() {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
    }
    co_return co_await impl_->async_read();
 }
@@ -336,7 +336,7 @@ void connection::cancel() {
 
 transport::stream_connection connection::into_transport_stream() && {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
    }
    auto out = impl_->into_transport_stream();
    impl_.reset();
@@ -345,11 +345,11 @@ transport::stream_connection connection::into_transport_stream() && {
 
 boost::asio::ip::tcp::socket connection::release_socket() && {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
    }
    auto out = impl_->release_socket();
    impl_.reset();
    return out;
 }
 
-} // namespace fcl::tcp
+} // namespace forge::tcp

@@ -38,55 +38,55 @@
 #include <openssl/rsa.h>
 #include <openssl/x509.h>
 
-import fcl.asio.blocking;
-import fcl.asio.runtime;
-import fcl.crypto.asymmetric;
-import fcl.crypto.der;
-import fcl.crypto.p256;
-import fcl.crypto.pem;
-import fcl.crypto.rsa;
-import fcl.crypto.secp256k1;
-import fcl.crypto.x509;
-import fcl.p2p.dht;
-import fcl.p2p.discovery;
-import fcl.p2p.endpoint;
-import fcl.p2p.envelope;
-import fcl.p2p.exceptions;
-import fcl.p2p.diagnostics;
-import fcl.p2p.hole_punch;
-import fcl.p2p.identify;
-import fcl.p2p.identity;
-import fcl.p2p.message;
-import fcl.p2p.negotiation;
-import fcl.p2p.node;
-import fcl.p2p.peer_store;
-import fcl.p2p.protocol;
-import fcl.p2p.pubsub;
-import fcl.p2p.reachability;
-import fcl.p2p.rendezvous;
-import fcl.p2p.relay;
-import fcl.p2p.resource_manager;
-import fcl.p2p.scoring;
-import fcl.p2p.stream;
-import fcl.quic.endpoint;
-import fcl.quic.libp2p;
-import fcl.quic.transport;
-import fcl.transport.endpoint;
-import fcl.transport.frame;
-import fcl.transport.stream;
-import fcl.tcp.listener;
-import fcl.multiformats.exceptions;
-import fcl.multiformats.types;
-import fcl.multiformats.varint;
-import fcl.multiformats.multicodec;
-import fcl.multiformats.multihash;
-import fcl.multiformats.multibase;
-import fcl.multiformats.multiaddr;
+import forge.asio.blocking;
+import forge.asio.runtime;
+import forge.crypto.asymmetric;
+import forge.crypto.der;
+import forge.crypto.p256;
+import forge.crypto.pem;
+import forge.crypto.rsa;
+import forge.crypto.secp256k1;
+import forge.crypto.x509;
+import forge.p2p.dht;
+import forge.p2p.discovery;
+import forge.p2p.endpoint;
+import forge.p2p.envelope;
+import forge.p2p.exceptions;
+import forge.p2p.diagnostics;
+import forge.p2p.hole_punch;
+import forge.p2p.identify;
+import forge.p2p.identity;
+import forge.p2p.message;
+import forge.p2p.negotiation;
+import forge.p2p.node;
+import forge.p2p.peer_store;
+import forge.p2p.protocol;
+import forge.p2p.pubsub;
+import forge.p2p.reachability;
+import forge.p2p.rendezvous;
+import forge.p2p.relay;
+import forge.p2p.resource_manager;
+import forge.p2p.scoring;
+import forge.p2p.stream;
+import forge.quic.endpoint;
+import forge.quic.libp2p;
+import forge.quic.transport;
+import forge.transport.endpoint;
+import forge.transport.frame;
+import forge.transport.stream;
+import forge.tcp.listener;
+import forge.multiformats.exceptions;
+import forge.multiformats.types;
+import forge.multiformats.varint;
+import forge.multiformats.multicodec;
+import forge.multiformats.multihash;
+import forge.multiformats.multibase;
+import forge.multiformats.multiaddr;
 
 #include "../../libraries/p2p/session_lifecycle.hpp"
 #include "../../libraries/p2p/relay_accounting.hpp"
 
-namespace fcl::p2p {
+namespace forge::p2p {
 namespace {
 
 struct product_announce {
@@ -141,7 +141,7 @@ struct x509_extension_deleter {
 
 struct test_identity {
    public_key key;
-   fcl::crypto::asymmetric::private_key private_key;
+   forge::crypto::asymmetric::private_key private_key;
    std::string private_key_pem;
    peer_id peer;
 };
@@ -186,7 +186,7 @@ test_identity make_test_identity() {
    const auto private_key_pem = bio_to_string(private_key_bio.get());
    auto out = test_identity{
        .key = public_key{.type = public_key::type::ed25519, .data = std::move(public_bytes)},
-       .private_key = fcl::crypto::pem::read_private_key(private_key_pem),
+       .private_key = forge::crypto::pem::read_private_key(private_key_pem),
        .private_key_pem = private_key_pem,
    };
    out.peer = make_peer_id(out.key);
@@ -208,10 +208,10 @@ std::vector<std::uint8_t> signed_key_der(std::span<const std::uint8_t> public_ke
 std::vector<std::uint8_t> tls_identity_message(std::span<const std::uint8_t> certificate_public_key);
 
 test_identity make_secp256k1_identity() {
-   auto private_key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::secp256k1::private_key_shim>();
+   auto private_key = forge::crypto::asymmetric::private_key::generate<forge::crypto::secp256k1::private_key_shim>();
    auto key = public_key{
        .type = public_key::type::secp256k1,
-       .data = bytes_from_range(private_key.get_public_key().as<fcl::crypto::secp256k1::public_key_shim>().serialize()),
+       .data = bytes_from_range(private_key.get_public_key().as<forge::crypto::secp256k1::public_key_shim>().serialize()),
    };
    auto out = test_identity{.key = std::move(key), .private_key = private_key};
    out.peer = make_peer_id(out.key);
@@ -219,10 +219,10 @@ test_identity make_secp256k1_identity() {
 }
 
 test_identity make_p256_identity() {
-   auto private_key = fcl::crypto::asymmetric::private_key::generate_p256<fcl::crypto::p256::private_key_shim>();
+   auto private_key = forge::crypto::asymmetric::private_key::generate_p256<forge::crypto::p256::private_key_shim>();
    auto key = public_key{
        .type = public_key::type::ecdsa,
-       .data = fcl::crypto::der::write_public_key(private_key.get_public_key()),
+       .data = forge::crypto::der::write_public_key(private_key.get_public_key()),
    };
    auto out = test_identity{.key = std::move(key), .private_key = private_key};
    out.peer = make_peer_id(out.key);
@@ -230,10 +230,10 @@ test_identity make_p256_identity() {
 }
 
 test_identity make_rsa_identity() {
-   auto private_key = fcl::crypto::asymmetric::private_key::generate<fcl::crypto::rsa::private_key_shim>();
+   auto private_key = forge::crypto::asymmetric::private_key::generate<forge::crypto::rsa::private_key_shim>();
    auto key = public_key{
        .type = public_key::type::rsa,
-       .data = private_key.get_public_key().as<fcl::crypto::rsa::public_key_shim>().serialize(),
+       .data = private_key.get_public_key().as<forge::crypto::rsa::public_key_shim>().serialize(),
    };
    auto out = test_identity{.key = std::move(key), .private_key = private_key};
    out.peer = make_peer_id(out.key);
@@ -252,17 +252,17 @@ std::vector<std::uint8_t> make_signed_rendezvous_peer_record(const test_identity
                   .endpoints = std::move(endpoints),
                   .sequence = sequence,
               },
-              identity.key, fcl::crypto::pem::read_private_key(identity.private_key_pem))
+              identity.key, forge::crypto::pem::read_private_key(identity.private_key_pem))
        .encode();
 }
 
 std::vector<std::uint8_t> make_signed_rendezvous_peer_record(const test_certificate_identity& identity,
                                                              std::vector<endpoint> endpoints = {},
                                                              std::uint64_t sequence = 1) {
-   const auto private_key = fcl::crypto::pem::read_private_key(identity.private_key_pem);
+   const auto private_key = forge::crypto::pem::read_private_key(identity.private_key_pem);
    const auto key = public_key{
        .type = public_key::type::rsa,
-       .data = fcl::crypto::der::write_public_key(private_key.get_public_key()),
+       .data = forge::crypto::der::write_public_key(private_key.get_public_key()),
    };
    if (endpoints.empty()) {
       endpoints.push_back(parse_endpoint("/ip4/127.0.0.1/udp/4401/quic-v1/p2p/" + identity.peer.to_string()));
@@ -318,10 +318,10 @@ test_certificate_identity make_test_certificate_identity(std::string_view common
       throw std::runtime_error{"failed to configure test certificate subject"};
    }
 
-   const auto identity_private_key = fcl::crypto::pem::read_private_key(private_key_pem);
+   const auto identity_private_key = forge::crypto::pem::read_private_key(private_key_pem);
    const auto identity_key = public_key{
        .type = public_key::type::rsa,
-       .data = fcl::crypto::der::write_public_key(identity_private_key.get_public_key()),
+       .data = forge::crypto::der::write_public_key(identity_private_key.get_public_key()),
    };
    const auto spki = certificate_public_key_der(certificate.get());
    const auto signature = identity_private_key.sign(tls_identity_message(spki)).visit([](const auto& value) {
@@ -406,14 +406,14 @@ std::string_view test_private_key() {
 }
 
 peer_id legacy_cert_hash_peer_id(std::string_view certificate_pem) {
-   const auto certificate = fcl::crypto::x509::certificate::from_pem(certificate_pem);
+   const auto certificate = forge::crypto::x509::certificate::from_pem(certificate_pem);
    const auto der = certificate.der();
-   return peer_id::from_bytes(fcl::multiformats::multihash::sha2_256(der).encode());
+   return peer_id::from_bytes(forge::multiformats::multihash::sha2_256(der).encode());
 }
 
 peer_id peer(std::uint8_t value) {
-   const auto payload = fcl::multiformats::bytes{value};
-   return peer_id::from_bytes(fcl::multiformats::multihash::identity(payload).encode());
+   const auto payload = forge::multiformats::bytes{value};
+   return peer_id::from_bytes(forge::multiformats::multihash::identity(payload).encode());
 }
 
 std::uint8_t hex_value(char value) {
@@ -512,7 +512,7 @@ std::vector<std::uint8_t> make_certificate_der_with_libp2p_extension_from_factor
       throw std::runtime_error{"failed to configure certificate"};
    }
    auto* name = X509_get_subject_name(certificate.get());
-   const auto common_name = std::string_view{"fcl-libp2p-identity-test"};
+   const auto common_name = std::string_view{"forge-libp2p-identity-test"};
    if (name == nullptr ||
        X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, reinterpret_cast<const unsigned char*>(common_name.data()),
                                   static_cast<int>(common_name.size()), -1, 0) != 1 ||
@@ -562,10 +562,10 @@ std::vector<std::uint8_t> tls_identity_message(std::span<const std::uint8_t> cer
 std::vector<std::uint8_t> sign_test_identity(const test_identity& identity, std::span<const std::uint8_t> message) {
    return identity.private_key.visit([&](const auto& key) -> std::vector<std::uint8_t> {
       using key_type = std::decay_t<decltype(key)>;
-      if constexpr (std::is_same_v<key_type, fcl::crypto::secp256k1::private_key_shim>) {
-         return fcl::crypto::secp256k1::sign_der(key, message);
-      } else if constexpr (std::is_same_v<key_type, fcl::crypto::p256::private_key_shim>) {
-         return fcl::crypto::p256::sign_der(key, message);
+      if constexpr (std::is_same_v<key_type, forge::crypto::secp256k1::private_key_shim>) {
+         return forge::crypto::secp256k1::sign_der(key, message);
+      } else if constexpr (std::is_same_v<key_type, forge::crypto::p256::private_key_shim>) {
+         return forge::crypto::p256::sign_der(key, message);
       } else {
          return bytes_from_range(key.sign(message).serialize());
       }
@@ -614,7 +614,7 @@ public_key test_rsa_public_key() {
    return public_key{
        .type = public_key::type::rsa,
        .data =
-           fcl::crypto::der::write_public_key(fcl::crypto::pem::read_private_key(test_private_key()).get_public_key()),
+           forge::crypto::der::write_public_key(forge::crypto::pem::read_private_key(test_private_key()).get_public_key()),
    };
 }
 
@@ -634,7 +634,7 @@ node::options pubsub_options_for(const test_certificate_identity& identity,
 
 std::filesystem::path temp_store_path(std::string_view name) {
    auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-   auto path = std::filesystem::temp_directory_path() / ("fcl-p2p-" + std::string{name} + "-" + std::to_string(stamp));
+   auto path = std::filesystem::temp_directory_path() / ("forge-p2p-" + std::string{name} + "-" + std::to_string(stamp));
    std::filesystem::remove_all(path);
    return path;
 }
@@ -693,15 +693,15 @@ void register_echo(node& value, protocol_id protocol) {
                                  .port = port}};
 }
 
-endpoint listen(node& value, fcl::asio::runtime& runtime) {
-   fcl::asio::blocking::run(runtime, value.async_listen(make_quic_endpoint(0)));
+endpoint listen(node& value, forge::asio::runtime& runtime) {
+   forge::asio::blocking::run(runtime, value.async_listen(make_quic_endpoint(0)));
    auto endpoint = value.local_endpoint();
    BOOST_REQUIRE(endpoint.has_value());
    return *endpoint;
 }
 
-endpoint listen_tcp(node& value, fcl::asio::runtime& runtime) {
-   fcl::asio::blocking::run(runtime, value.async_listen(make_tcp_endpoint(0)));
+endpoint listen_tcp(node& value, forge::asio::runtime& runtime) {
+   forge::asio::blocking::run(runtime, value.async_listen(make_tcp_endpoint(0)));
    auto endpoint = value.local_endpoint();
    BOOST_REQUIRE(endpoint.has_value());
    return *endpoint;
@@ -719,7 +719,7 @@ endpoint listen_tcp(node& value, fcl::asio::runtime& runtime) {
    return *found;
 }
 
-endpoint start_stalling_tcp_peer(fcl::asio::runtime& runtime,
+endpoint start_stalling_tcp_peer(forge::asio::runtime& runtime,
                                  std::chrono::milliseconds hold = std::chrono::seconds{2}) {
    namespace asio = boost::asio;
    using asio_tcp = asio::ip::tcp;
@@ -753,7 +753,7 @@ void wait_for_server(std::future<void>& future, std::chrono::milliseconds timeou
    future.get();
 }
 
-void wait_on_runtime(fcl::asio::runtime& runtime, std::chrono::milliseconds delay, std::string_view label) {
+void wait_on_runtime(forge::asio::runtime& runtime, std::chrono::milliseconds delay, std::string_view label) {
    auto future = boost::asio::co_spawn(
        runtime.context(),
        [delay]() -> boost::asio::awaitable<void> {
@@ -767,13 +767,13 @@ void wait_on_runtime(fcl::asio::runtime& runtime, std::chrono::milliseconds dela
 }
 
 std::vector<std::uint8_t> wrap_length_delimited(std::span<const std::uint8_t> payload) {
-   auto out = fcl::multiformats::varint_encode(payload.size());
+   auto out = forge::multiformats::varint_encode(payload.size());
    out.insert(out.end(), payload.begin(), payload.end());
    return out;
 }
 
 std::vector<std::uint8_t> unwrap_length_delimited(std::span<const std::uint8_t> bytes, std::size_t max_payload_size) {
-   const auto decoded = fcl::multiformats::varint_decode(bytes);
+   const auto decoded = forge::multiformats::varint_decode(bytes);
    BOOST_REQUIRE(decoded.value <= max_payload_size);
    const auto total = decoded.size + static_cast<std::size_t>(decoded.value);
    BOOST_REQUIRE_EQUAL(total, bytes.size());
@@ -785,14 +785,14 @@ read_length_delimited(stream& value, std::size_t max_payload_size = 4 * 1024 * 1
    auto buffer = std::vector<std::uint8_t>{};
    while (true) {
       try {
-         const auto decoded = fcl::multiformats::varint_decode(buffer);
+         const auto decoded = forge::multiformats::varint_decode(buffer);
          BOOST_REQUIRE(decoded.value <= max_payload_size);
          const auto total = decoded.size + static_cast<std::size_t>(decoded.value);
          if (buffer.size() >= total) {
             auto frame = std::vector<std::uint8_t>{buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(total)};
             co_return unwrap_length_delimited(frame, max_payload_size);
          }
-      } catch (const fcl::multiformats::exceptions::invalid_format& error) {
+      } catch (const forge::multiformats::exceptions::invalid_format& error) {
          if (std::string_view{error.what()}.find("unterminated") == std::string_view::npos) {
             throw;
          }
@@ -802,7 +802,7 @@ read_length_delimited(stream& value, std::size_t max_payload_size = 4 * 1024 * 1
    }
 }
 
-class queued_transport_stream final : public fcl::transport::detail::stream_concept {
+class queued_transport_stream final : public forge::transport::detail::stream_concept {
  public:
    explicit queued_transport_stream(std::int64_t stream_id) : stream_id_{stream_id} {}
 
@@ -819,7 +819,7 @@ class queued_transport_stream final : public fcl::transport::detail::stream_conc
       co_return;
    }
 
-   boost::asio::awaitable<void> async_write_chunk(fcl::transport::chunk bytes) override {
+   boost::asio::awaitable<void> async_write_chunk(forge::transport::chunk bytes) override {
       ++chunk_writes;
       writes.push_back(bytes.to_vector());
       co_return;
@@ -832,12 +832,12 @@ class queued_transport_stream final : public fcl::transport::detail::stream_conc
       co_return out;
    }
 
-   boost::asio::awaitable<fcl::transport::chunk> async_read_chunk() override {
+   boost::asio::awaitable<forge::transport::chunk> async_read_chunk() override {
       ++chunk_reads;
       BOOST_REQUIRE(!reads.empty());
       auto out = std::move(reads.front());
       reads.pop_front();
-      co_return fcl::transport::chunk{std::move(out)};
+      co_return forge::transport::chunk{std::move(out)};
    }
 
    boost::asio::awaitable<void> async_close() override {
@@ -866,7 +866,7 @@ class counting_peer_store_backend final : public peer_store::backend {
       records[value.peer] = std::move(value);
    }
 
-   void learn_endpoint(peer_id value, fcl::p2p::endpoint endpoint, capability_set capabilities) override {
+   void learn_endpoint(peer_id value, forge::p2p::endpoint endpoint, capability_set capabilities) override {
       ++learn_endpoint_count;
       auto& record = records[value];
       record.peer = std::move(value);
@@ -875,7 +875,7 @@ class counting_peer_store_backend final : public peer_store::backend {
    }
 
    void mark_reachability(peer_id value, reachability::state state,
-                          std::optional<fcl::p2p::endpoint> observed) override {
+                          std::optional<forge::p2p::endpoint> observed) override {
       auto& record = records[value];
       record.peer = std::move(value);
       record.reachability = state;
@@ -895,7 +895,7 @@ class counting_peer_store_backend final : public peer_store::backend {
       ++record.failures;
    }
 
-   void mark_endpoint_success(const peer_id& value, const fcl::p2p::endpoint& endpoint, path::kind kind,
+   void mark_endpoint_success(const peer_id& value, const forge::p2p::endpoint& endpoint, path::kind kind,
                               std::chrono::milliseconds latency) override {
       auto& record = records[value];
       record.peer = value;
@@ -903,7 +903,7 @@ class counting_peer_store_backend final : public peer_store::backend {
           peer_store::endpoint_record{.endpoint = endpoint, .kind = kind, .last_latency = latency});
    }
 
-   void mark_endpoint_failure(const peer_id& value, const fcl::p2p::endpoint& endpoint, path::kind kind,
+   void mark_endpoint_failure(const peer_id& value, const forge::p2p::endpoint& endpoint, path::kind kind,
                               std::chrono::system_clock::time_point backoff_until) override {
       auto& record = records[value];
       record.peer = value;
@@ -1014,33 +1014,33 @@ BOOST_AUTO_TEST_CASE(p2p_identity_uses_libp2p_multihash_shape) {
 
    BOOST_TEST(id.to_string() == identity.peer.to_string());
    BOOST_TEST(valid_peer_id(id));
-   auto decoded = fcl::multiformats::multihash::decode(id.to_bytes());
-   BOOST_TEST(decoded.code == fcl::multiformats::code_value(fcl::multiformats::multicodec_code::sha2_256));
+   auto decoded = forge::multiformats::multihash::decode(id.to_bytes());
+   BOOST_TEST(decoded.code == forge::multiformats::code_value(forge::multiformats::multicodec_code::sha2_256));
    BOOST_TEST(decoded.digest.size() == 32U);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_certificate_without_libp2p_extension_is_rejected) {
    BOOST_CHECK_THROW((void)make_peer_id_from_certificate_pem(test_certificate()), exceptions::invalid_identity);
-   const auto certificate = fcl::crypto::x509::certificate::from_pem(test_certificate());
+   const auto certificate = forge::crypto::x509::certificate::from_pem(test_certificate());
    BOOST_CHECK_THROW((void)make_peer_id_from_certificate_der(certificate.der()), exceptions::invalid_identity);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_public_key_encoding_matches_libp2p_vectors) {
    const auto ed25519_public_key = bytes_from_hex("1ed1e8fae2c4a144b8be8fd4b47bf3d3b34b871c3cacf6010f0e42d474fce27e");
    const auto ed25519_encoded = encode_public_key({.type = public_key::type::ed25519, .data = ed25519_public_key});
-   BOOST_CHECK_EQUAL(fcl::multiformats::multihash::identity(ed25519_encoded).digest_hex(),
+   BOOST_CHECK_EQUAL(forge::multiformats::multihash::identity(ed25519_encoded).digest_hex(),
                      "080112201ed1e8fae2c4a144b8be8fd4b47bf3d3b34b871c3cacf6010f0e42d474fce27e");
 
    auto ed25519_peer = make_peer_id({.type = public_key::type::ed25519, .data = ed25519_public_key});
-   auto ed25519_hash = fcl::multiformats::multihash::decode(ed25519_peer.to_bytes());
-   BOOST_TEST(ed25519_hash.code == fcl::multiformats::code_value(fcl::multiformats::multicodec_code::identity));
+   auto ed25519_hash = forge::multiformats::multihash::decode(ed25519_peer.to_bytes());
+   BOOST_TEST(ed25519_hash.code == forge::multiformats::code_value(forge::multiformats::multicodec_code::identity));
 
    const auto ecdsa_public_key =
        bytes_from_hex("3059301306072a8648ce3d020106082a8648ce3d03010703420004de3d300fa36ae0e8f5d530899d83abab44ab"
                       "f3161f162a4bc901d8e6ecda020e8b6d5f8da30525e71d6851510c098e5c47c646a597fb4dcec034e9f77c409e62");
    auto ecdsa_peer = make_peer_id({.type = public_key::type::ecdsa, .data = ecdsa_public_key});
-   auto ecdsa_hash = fcl::multiformats::multihash::decode(ecdsa_peer.to_bytes());
-   BOOST_TEST(ecdsa_hash.code == fcl::multiformats::code_value(fcl::multiformats::multicodec_code::sha2_256));
+   auto ecdsa_hash = forge::multiformats::multihash::decode(ecdsa_peer.to_bytes());
+   BOOST_TEST(ecdsa_hash.code == forge::multiformats::code_value(forge::multiformats::multicodec_code::sha2_256));
 }
 
 BOOST_AUTO_TEST_CASE(p2p_certificate_extension_rejects_unverified_non_ed25519_identity) {
@@ -1080,7 +1080,7 @@ BOOST_AUTO_TEST_CASE(p2p_identity_signatures_support_supported_key_types) {
           .from = identity.peer,
           .data = std::vector<std::uint8_t>{'m', 'u', 'l', 't', 'i', '-', 'k', 'e', 'y'},
           .seqno = std::vector<std::uint8_t>{0, 0, 0, 0, 0, 0, 0, 9},
-          .subject = pubsub::topic{.value = "fcl.identity"},
+          .subject = pubsub::topic{.value = "forge.identity"},
           .key = encode_public_key(identity.key),
       };
       pubsub::codec::sign_message(message, identity.private_key);
@@ -1090,7 +1090,7 @@ BOOST_AUTO_TEST_CASE(p2p_identity_signatures_support_supported_key_types) {
       tampered.signature.back() ^= 0x01U;
       BOOST_TEST(!pubsub::codec::verify_message(tampered));
 
-      const auto payload_type = fcl::multiformats::varint_encode(0x0302);
+      const auto payload_type = forge::multiformats::varint_encode(0x0302);
       const auto payload = std::vector<std::uint8_t>{7, 8, 9};
       const auto envelope =
           signed_envelope::seal(identity.key, identity.private_key, "libp2p-relay-rsvp", payload_type, payload);
@@ -1159,7 +1159,7 @@ BOOST_AUTO_TEST_CASE(p2p_endpoint_uses_multiaddr_for_tcp_wss_and_relay_views) {
 }
 
 BOOST_AUTO_TEST_CASE(p2p_websocket_multiaddr_is_parseable_but_not_dialable) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto value = node{runtime, options_for(peer(44))};
    const auto endpoints = std::vector<endpoint>{
        parse_endpoint("/dns4/example.com/tcp/80/ws/p2p/" + peer(46).to_string()),
@@ -1168,32 +1168,32 @@ BOOST_AUTO_TEST_CASE(p2p_websocket_multiaddr_is_parseable_but_not_dialable) {
 
    for (const auto& endpoint : endpoints) {
       try {
-         fcl::asio::blocking::run(runtime, value.async_listen(endpoint));
+         forge::asio::blocking::run(runtime, value.async_listen(endpoint));
          BOOST_FAIL("expected unsupported listen endpoint");
-      } catch (const fcl::exceptions::base& error) {
-         BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
-         BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+      } catch (const forge::exceptions::base& error) {
+         BOOST_REQUIRE(forge::p2p::exceptions::code_of(error).has_value());
+         BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                     static_cast<int>(exceptions::code::unsupported_protocol));
       }
 
       try {
-         fcl::asio::blocking::run(runtime, value.async_connect(endpoint));
+         forge::asio::blocking::run(runtime, value.async_connect(endpoint));
          BOOST_FAIL("expected unsupported connect endpoint");
-      } catch (const fcl::exceptions::base& error) {
-         BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
-         BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+      } catch (const forge::exceptions::base& error) {
+         BOOST_REQUIRE(forge::p2p::exceptions::code_of(error).has_value());
+         BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                     static_cast<int>(exceptions::code::unsupported_protocol));
       }
    }
 }
 
 BOOST_AUTO_TEST_CASE(p2p_node_listens_on_quic_and_tcp_and_identify_advertises_both) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = node{runtime, options_for(peer(210))};
    auto client = node{runtime, options_for(peer(211))};
 
-   fcl::asio::blocking::run(runtime, server.async_listen(make_quic_endpoint(0)));
-   fcl::asio::blocking::run(runtime, server.async_listen(make_tcp_endpoint(0)));
+   forge::asio::blocking::run(runtime, server.async_listen(make_quic_endpoint(0)));
+   forge::asio::blocking::run(runtime, server.async_listen(make_tcp_endpoint(0)));
 
    const auto local = server.local_endpoints();
    BOOST_REQUIRE_EQUAL(local.size(), 2U);
@@ -1206,12 +1206,12 @@ BOOST_AUTO_TEST_CASE(p2p_node_listens_on_quic_and_tcp_and_identify_advertises_bo
    BOOST_REQUIRE(server.local_endpoint().has_value());
 
    const auto quic = require_endpoint_for(local, endpoint::protocol_kind::quic_v1);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(quic, node::connect_options{.expected_peer = server.local_peer()}));
 
    auto stream =
-       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::identify));
-   const auto payload = fcl::asio::blocking::run(runtime, read_length_delimited(stream));
+       forge::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::identify));
+   const auto payload = forge::asio::blocking::run(runtime, read_length_delimited(stream));
    const auto doc = identify::decode(payload);
    BOOST_TEST(contains_protocol(doc.listen_endpoints, endpoint::protocol_kind::quic_v1));
    BOOST_TEST(contains_protocol(doc.listen_endpoints, endpoint::protocol_kind::tcp));
@@ -1220,46 +1220,46 @@ BOOST_AUTO_TEST_CASE(p2p_node_listens_on_quic_and_tcp_and_identify_advertises_bo
       BOOST_TEST(item.peer->value == server.local_peer().value);
    }
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_duplicate_direct_listen_rejects_typed) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto value = node{runtime, options_for(peer(212))};
 
-   fcl::asio::blocking::run(runtime, value.async_listen(make_tcp_endpoint(0)));
+   forge::asio::blocking::run(runtime, value.async_listen(make_tcp_endpoint(0)));
    const auto local = require_endpoint_for(value.local_endpoints(), endpoint::protocol_kind::tcp);
 
    try {
-      fcl::asio::blocking::run(runtime, value.async_listen(local));
+      forge::asio::blocking::run(runtime, value.async_listen(local));
       BOOST_FAIL("expected duplicate listen rejection");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
-      BOOST_TEST(static_cast<int>(*fcl::p2p::exceptions::code_of(error)) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_REQUIRE(forge::p2p::exceptions::code_of(error).has_value());
+      BOOST_TEST(static_cast<int>(*forge::p2p::exceptions::code_of(error)) ==
                  static_cast<int>(exceptions::code::invalid_options));
    }
 
-   fcl::asio::blocking::run(runtime, value.async_stop());
+   forge::asio::blocking::run(runtime, value.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_peer_exchange_preserves_multiple_direct_endpoints_without_duplicates) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    const auto server_identity = make_test_certificate_identity("peer-exchange-multi-server");
    const auto client_identity = make_test_certificate_identity("peer-exchange-multi-client");
    auto server = node{runtime, options_for(server_identity)};
    auto client = node{runtime, options_for(client_identity)};
 
-   fcl::asio::blocking::run(runtime, server.async_listen(make_quic_endpoint(0)));
-   fcl::asio::blocking::run(runtime, server.async_listen(make_tcp_endpoint(0)));
+   forge::asio::blocking::run(runtime, server.async_listen(make_quic_endpoint(0)));
+   forge::asio::blocking::run(runtime, server.async_listen(make_tcp_endpoint(0)));
    const auto advertised = server.local_endpoints();
    BOOST_REQUIRE_EQUAL(advertised.size(), 2U);
 
    const auto quic = require_endpoint_for(advertised, endpoint::protocol_kind::quic_v1);
    client.peers().learn_endpoint(server.local_peer(), quic,
                                  capability_set{.bits = capabilities::direct_quic | capabilities::peer_exchange});
-   fcl::asio::blocking::run(runtime, client.async_request_peer_exchange(server.local_peer()));
-   fcl::asio::blocking::run(runtime, client.async_request_peer_exchange(server.local_peer()));
+   forge::asio::blocking::run(runtime, client.async_request_peer_exchange(server.local_peer()));
+   forge::asio::blocking::run(runtime, client.async_request_peer_exchange(server.local_peer()));
 
    const auto learned = client.peers().find(server.local_peer());
    BOOST_REQUIRE(learned);
@@ -1277,12 +1277,12 @@ BOOST_AUTO_TEST_CASE(p2p_peer_exchange_preserves_multiple_direct_endpoints_witho
       BOOST_TEST(seen.insert(item.endpoint.to_string()).second);
    }
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_local_endpoints_collapse_canonical_equivalent_advertised_endpoints) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    const auto local = peer(219);
    auto configured = make_tcp_endpoint(4001, "127.0.0.1");
    configured.peer = local;
@@ -1300,7 +1300,7 @@ BOOST_AUTO_TEST_CASE(p2p_local_endpoints_collapse_canonical_equivalent_advertise
 }
 
 BOOST_AUTO_TEST_CASE(p2p_peer_exchange_filters_non_routable_third_party_endpoints) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    const auto server_identity = make_test_certificate_identity("peer-exchange-filter-server");
    const auto client_identity = make_test_certificate_identity("peer-exchange-filter-client");
    auto server = node{runtime, options_for(server_identity)};
@@ -1319,11 +1319,11 @@ BOOST_AUTO_TEST_CASE(p2p_peer_exchange_filters_non_routable_third_party_endpoint
       server.peers().learn_endpoint(third, *endpoint_value, capability_set{});
    }
 
-   fcl::asio::blocking::run(runtime, server.async_listen(make_quic_endpoint(0)));
+   forge::asio::blocking::run(runtime, server.async_listen(make_quic_endpoint(0)));
    const auto quic = require_endpoint_for(server.local_endpoints(), endpoint::protocol_kind::quic_v1);
    client.peers().learn_endpoint(server.local_peer(), quic,
                                  capability_set{.bits = capabilities::direct_quic | capabilities::peer_exchange});
-   fcl::asio::blocking::run(runtime, client.async_request_peer_exchange(server.local_peer()));
+   forge::asio::blocking::run(runtime, client.async_request_peer_exchange(server.local_peer()));
 
    const auto learned = client.peers().find(third);
    BOOST_REQUIRE(learned);
@@ -1338,12 +1338,12 @@ BOOST_AUTO_TEST_CASE(p2p_peer_exchange_filters_non_routable_third_party_endpoint
    BOOST_TEST(!seen.contains(link_local.to_string()));
    BOOST_TEST(!seen.contains(localhost_dns.to_string()));
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_host_addresses_rejects_third_party_relay_with_non_routable_transport) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    const auto server_identity = make_test_certificate_identity("peer-exchange-relay-filter-server");
    const auto client_identity = make_test_certificate_identity("peer-exchange-relay-filter-client");
    auto server = node{runtime, options_for(server_identity)};
@@ -1359,11 +1359,11 @@ BOOST_AUTO_TEST_CASE(p2p_host_addresses_rejects_third_party_relay_with_non_routa
       server.peers().learn_endpoint(third, endpoint_value, capability_set{});
    }
 
-   fcl::asio::blocking::run(runtime, server.async_listen(make_quic_endpoint(0)));
+   forge::asio::blocking::run(runtime, server.async_listen(make_quic_endpoint(0)));
    const auto quic = require_endpoint_for(server.local_endpoints(), endpoint::protocol_kind::quic_v1);
    client.peers().learn_endpoint(server.local_peer(), quic,
                                  capability_set{.bits = capabilities::direct_quic | capabilities::peer_exchange});
-   fcl::asio::blocking::run(runtime, client.async_request_peer_exchange(server.local_peer()));
+   forge::asio::blocking::run(runtime, client.async_request_peer_exchange(server.local_peer()));
 
    const auto learned = client.peers().find(third);
    BOOST_REQUIRE(learned);
@@ -1377,12 +1377,12 @@ BOOST_AUTO_TEST_CASE(p2p_host_addresses_rejects_third_party_relay_with_non_routa
    BOOST_TEST(!seen.contains(private_relay.to_string()));
    BOOST_TEST(!seen.contains(link_local_relay.to_string()));
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_dht_discovery_rejects_third_party_non_routable_endpoints) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server_options = options_for(peer(221), capability_set{.bits = capabilities::direct_quic | capabilities::dht});
    server_options.limits.dht.operating_mode = dht::mode::server;
    auto client_options = options_for(peer(222), capability_set{.bits = capabilities::direct_quic | capabilities::dht});
@@ -1422,7 +1422,7 @@ BOOST_AUTO_TEST_CASE(p2p_dht_discovery_rejects_third_party_non_routable_endpoint
       });
    }
 
-   const auto providers = fcl::asio::blocking::run(runtime, client.async_find_providers(key));
+   const auto providers = forge::asio::blocking::run(runtime, client.async_find_providers(key));
    BOOST_REQUIRE_EQUAL(providers.size(), 1U);
    BOOST_TEST(providers.front().id.to_string() == public_provider.to_string());
    BOOST_REQUIRE_EQUAL(providers.front().endpoints.size(), 1U);
@@ -1434,12 +1434,12 @@ BOOST_AUTO_TEST_CASE(p2p_dht_discovery_rejects_third_party_non_routable_endpoint
    BOOST_REQUIRE_EQUAL(stored_providers.front().provider.endpoints.size(), 1U);
    BOOST_TEST(stored_providers.front().provider.endpoints.front().to_string() == public_endpoint.to_string());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_dht_add_provider_drops_empty_sanitized_provider) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server_options = options_for(peer(226), capability_set{.bits = capabilities::direct_quic | capabilities::dht});
    server_options.limits.dht.operating_mode = dht::mode::server;
    auto server_store = std::make_shared<counting_peer_store_backend>();
@@ -1453,7 +1453,7 @@ BOOST_AUTO_TEST_CASE(p2p_dht_add_provider_drops_empty_sanitized_provider) {
 
    const auto key = make_dht_key(std::vector<std::uint8_t>{'f', 'c', 'l', '-', 'a', 'd', 'd', '-', 'p', 'r', 'o',
                                                            'v', 'i', 'd', 'e', 'r'});
-   auto stream = fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::kad_dht));
+   auto stream = forge::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::kad_dht));
    auto authenticated_peer = std::optional<peer_id>{};
    for (auto attempt = 0U; attempt < 20U && !authenticated_peer; ++attempt) {
       const auto sessions = server.diagnostics().sessions;
@@ -1466,7 +1466,7 @@ BOOST_AUTO_TEST_CASE(p2p_dht_add_provider_drops_empty_sanitized_provider) {
    BOOST_REQUIRE(authenticated_peer.has_value());
    auto provider_endpoint = make_quic_endpoint(4227, "169.254.10.20");
    provider_endpoint.peer = *authenticated_peer;
-   fcl::asio::blocking::run(runtime, stream.async_write(dht::codec::encode(dht::message{
+   forge::asio::blocking::run(runtime, stream.async_write(dht::codec::encode(dht::message{
                                       .type = dht::message_type::add_provider,
                                       .key_value = key,
                                       .provider_peers = std::vector<dht::peer>{dht::peer{
@@ -1475,7 +1475,7 @@ BOOST_AUTO_TEST_CASE(p2p_dht_add_provider_drops_empty_sanitized_provider) {
                                           .connection = dht::connection_type::connected,
                                       }},
                                   })));
-   fcl::asio::blocking::run(runtime, stream.async_close());
+   forge::asio::blocking::run(runtime, stream.async_close());
    for (auto attempt = 0U; attempt < 20U && server.metrics().dht_queries == 0; ++attempt) {
       wait_on_runtime(runtime, std::chrono::milliseconds{50}, "DHT ADD_PROVIDER handling");
    }
@@ -1483,12 +1483,12 @@ BOOST_AUTO_TEST_CASE(p2p_dht_add_provider_drops_empty_sanitized_provider) {
    BOOST_TEST(server.metrics().dht_queries >= 1U);
    BOOST_TEST(server_store->find_providers(key).empty());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_rendezvous_discovery_rejects_third_party_non_routable_endpoints) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server_options =
        options_for(peer(226), capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
    server_options.limits.rendezvous.operating_role = rendezvous::role::server;
@@ -1520,7 +1520,7 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_discovery_rejects_third_party_non_routable_e
    const auto expires_at = std::chrono::system_clock::now() + std::chrono::hours{1};
 
    server.peers().upsert_rendezvous(rendezvous::registration{
-       .namespace_name = "fcl.discovery",
+       .namespace_name = "forge.discovery",
        .peer = public_identity.peer,
        .endpoints = std::vector<endpoint>{public_endpoint},
        .signed_peer_record = make_signed_rendezvous_peer_record(public_identity, std::vector<endpoint>{public_endpoint}, 1),
@@ -1529,7 +1529,7 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_discovery_rejects_third_party_non_routable_e
        .sequence = 1,
    });
    server.peers().upsert_rendezvous(rendezvous::registration{
-       .namespace_name = "fcl.discovery",
+       .namespace_name = "forge.discovery",
        .peer = relay_identity.peer,
        .endpoints = std::vector<endpoint>{relay_endpoint},
        .signed_peer_record = make_signed_rendezvous_peer_record(relay_identity, std::vector<endpoint>{relay_endpoint}, 2),
@@ -1538,7 +1538,7 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_discovery_rejects_third_party_non_routable_e
        .sequence = 2,
    });
    server.peers().upsert_rendezvous(rendezvous::registration{
-       .namespace_name = "fcl.discovery",
+       .namespace_name = "forge.discovery",
        .peer = loopback_identity.peer,
        .endpoints = std::vector<endpoint>{loopback_endpoint},
        .signed_peer_record = make_signed_rendezvous_peer_record(loopback_identity, std::vector<endpoint>{loopback_endpoint}, 3),
@@ -1547,7 +1547,7 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_discovery_rejects_third_party_non_routable_e
        .sequence = 3,
    });
    server.peers().upsert_rendezvous(rendezvous::registration{
-       .namespace_name = "fcl.discovery",
+       .namespace_name = "forge.discovery",
        .peer = private_identity.peer,
        .endpoints = std::vector<endpoint>{private_endpoint},
        .signed_peer_record = make_signed_rendezvous_peer_record(private_identity, std::vector<endpoint>{private_endpoint}, 4),
@@ -1556,7 +1556,7 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_discovery_rejects_third_party_non_routable_e
        .sequence = 4,
    });
    server.peers().upsert_rendezvous(rendezvous::registration{
-       .namespace_name = "fcl.discovery",
+       .namespace_name = "forge.discovery",
        .peer = loopback_relay_identity.peer,
        .endpoints = std::vector<endpoint>{loopback_relay_endpoint},
        .signed_peer_record =
@@ -1566,7 +1566,7 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_discovery_rejects_third_party_non_routable_e
        .sequence = 5,
    });
    server.peers().upsert_rendezvous(rendezvous::registration{
-       .namespace_name = "fcl.discovery",
+       .namespace_name = "forge.discovery",
        .peer = private_relay_identity.peer,
        .endpoints = std::vector<endpoint>{private_relay_endpoint},
        .signed_peer_record =
@@ -1576,9 +1576,9 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_discovery_rejects_third_party_non_routable_e
        .sequence = 6,
    });
 
-   const auto discovered = fcl::asio::blocking::run(
+   const auto discovered = forge::asio::blocking::run(
        runtime, client.async_rendezvous_discover(server.local_peer(), rendezvous::discover_request{
-                                                                        .namespace_name = "fcl.discovery",
+                                                                        .namespace_name = "forge.discovery",
                                                                         .limit = 10,
                                                                     }));
    auto peers = std::set<std::string>{};
@@ -1592,32 +1592,32 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_discovery_rejects_third_party_non_routable_e
    BOOST_TEST(!peers.contains(loopback_relay_identity.peer.to_string()));
    BOOST_TEST(!peers.contains(private_relay_identity.peer.to_string()));
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_stop_closes_all_direct_listeners) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = node{runtime, options_for(peer(216))};
-   fcl::asio::blocking::run(runtime, server.async_listen(make_quic_endpoint(0)));
-   fcl::asio::blocking::run(runtime, server.async_listen(make_tcp_endpoint(0)));
+   forge::asio::blocking::run(runtime, server.async_listen(make_quic_endpoint(0)));
+   forge::asio::blocking::run(runtime, server.async_listen(make_tcp_endpoint(0)));
    const auto local = server.local_endpoints();
    const auto quic = require_endpoint_for(local, endpoint::protocol_kind::quic_v1);
    const auto tcp = require_endpoint_for(local, endpoint::protocol_kind::tcp);
 
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 
    auto rebound = node{runtime, options_for(peer(217))};
-   fcl::asio::blocking::run(runtime, rebound.async_listen(quic));
-   auto tcp_rebound = fcl::tcp::listener{runtime.context().get_executor(), tcp.transport};
+   forge::asio::blocking::run(runtime, rebound.async_listen(quic));
+   auto tcp_rebound = forge::tcp::listener{runtime.context().get_executor(), tcp.transport};
    BOOST_TEST(tcp_rebound.valid());
 
-   fcl::asio::blocking::run(runtime, tcp_rebound.async_close());
-   fcl::asio::blocking::run(runtime, rebound.async_stop());
+   forge::asio::blocking::run(runtime, tcp_rebound.async_close());
+   forge::asio::blocking::run(runtime, rebound.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_direct_tcp_nodes_prefer_tls_yamux_and_echo_frames) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    const auto server_identity = make_test_identity();
    const auto client_identity = make_test_identity();
    auto server = node{runtime, options_for(server_identity)};
@@ -1627,26 +1627,26 @@ BOOST_AUTO_TEST_CASE(p2p_direct_tcp_nodes_prefer_tls_yamux_and_echo_frames) {
    const auto server_endpoint = listen_tcp(server, runtime);
    BOOST_TEST(server_endpoint.is_direct_tcp());
 
-   const auto session = fcl::asio::blocking::run(
+   const auto session = forge::asio::blocking::run(
        runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
    BOOST_TEST(session.remote_peer.value == server.local_peer().value);
 
    auto stream =
-       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::echo));
+       forge::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::echo));
    const auto payload = std::vector<std::uint8_t>{'t', 'c', 'p'};
-   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   forge::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read_frame());
 
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
    BOOST_TEST(client.metrics().path_direct_opens >= 1U);
    BOOST_TEST(server.metrics().protocol_streams_accepted >= 1U);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_direct_tcp_rejects_tls_peer_mismatch) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    const auto server_identity = make_test_identity();
    const auto client_identity = make_test_identity();
    auto server_options = options_for(server_identity);
@@ -1660,26 +1660,26 @@ BOOST_AUTO_TEST_CASE(p2p_direct_tcp_rejects_tls_peer_mismatch) {
 
    const auto server_endpoint = listen_tcp(server, runtime);
    try {
-      (void)fcl::asio::blocking::run(
+      (void)forge::asio::blocking::run(
           runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = peer(150)}));
       BOOST_FAIL("expected TCP TLS peer mismatch");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_REQUIRE(forge::p2p::exceptions::code_of(error).has_value());
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::peer_verification_failed));
    }
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_direct_tcp_upgrade_honors_attempt_timeout) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto client = node{runtime, options_for(peer(201))};
    const auto stalled_endpoint = start_stalling_tcp_peer(runtime);
 
    auto saw_timeout = false;
-   const auto completed = fcl::asio::blocking::run_for(
+   const auto completed = forge::asio::blocking::run_for(
        runtime,
        [&]() -> boost::asio::awaitable<void> {
           try {
@@ -1688,9 +1688,9 @@ BOOST_AUTO_TEST_CASE(p2p_direct_tcp_upgrade_honors_attempt_timeout) {
                                                                        .allow_relay = false,
                                                                        .timeout = std::chrono::milliseconds{100}});
              BOOST_FAIL("expected stalled TCP direct connect timeout");
-          } catch (const fcl::exceptions::base& error) {
-             BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
-             BOOST_TEST(static_cast<int>(*fcl::p2p::exceptions::code_of(error)) ==
+          } catch (const forge::exceptions::base& error) {
+             BOOST_REQUIRE(forge::p2p::exceptions::code_of(error).has_value());
+             BOOST_TEST(static_cast<int>(*forge::p2p::exceptions::code_of(error)) ==
                         static_cast<int>(exceptions::code::timeout));
              saw_timeout = true;
           }
@@ -1699,118 +1699,118 @@ BOOST_AUTO_TEST_CASE(p2p_direct_tcp_upgrade_honors_attempt_timeout) {
 
    BOOST_TEST(completed);
    BOOST_TEST(saw_timeout);
-   fcl::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_direct_tcp_stop_closes_listener_port) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto server = node{runtime, options_for(peer(203))};
    const auto server_endpoint = listen_tcp(server, runtime);
 
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 
-   auto rebound = fcl::tcp::listener{runtime.context().get_executor(), server_endpoint.transport};
+   auto rebound = forge::tcp::listener{runtime.context().get_executor(), server_endpoint.transport};
    BOOST_TEST(rebound.valid());
-   fcl::asio::blocking::run(runtime, rebound.async_close());
+   forge::asio::blocking::run(runtime, rebound.async_close());
 }
 
 BOOST_AUTO_TEST_CASE(quic_libp2p_profile_sets_required_alpn) {
-   auto client = fcl::quic::libp2p::client_profile();
-   auto server = fcl::quic::libp2p::server_profile();
+   auto client = forge::quic::libp2p::client_profile();
+   auto server = forge::quic::libp2p::server_profile();
 
    BOOST_TEST(client.alpn == "libp2p");
    BOOST_TEST(server.alpn == "libp2p");
-   BOOST_TEST(fcl::quic::libp2p::is_profile_alpn(client.alpn));
+   BOOST_TEST(forge::quic::libp2p::is_profile_alpn(client.alpn));
 }
 
 BOOST_AUTO_TEST_CASE(transport_frame_and_stream_round_trip_payload) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto backend = std::make_shared<queued_transport_stream>(42);
-   auto value = fcl::transport::detail::stream_access::make(backend);
+   auto value = forge::transport::detail::stream_access::make(backend);
    const auto payload = std::vector<std::uint8_t>{'t', 'r', 'a', 'n', 's', 'p', 'o', 'r', 't'};
-   const auto encoded = fcl::transport::encode_frame(payload);
-   const auto decoded = fcl::transport::decode_frame(encoded);
-   BOOST_TEST(static_cast<int>(decoded.status) == static_cast<int>(fcl::transport::frame_decode_status::complete));
+   const auto encoded = forge::transport::encode_frame(payload);
+   const auto decoded = forge::transport::decode_frame(encoded);
+   BOOST_TEST(static_cast<int>(decoded.status) == static_cast<int>(forge::transport::frame_decode_status::complete));
    BOOST_TEST(decoded.payload == payload, boost::test_tools::per_element());
 
-   fcl::asio::blocking::run(runtime, value.async_write_frame(payload));
+   forge::asio::blocking::run(runtime, value.async_write_frame(payload));
    BOOST_REQUIRE_EQUAL(backend->writes.size(), 1U);
-   BOOST_TEST(fcl::transport::decode_frame(backend->writes.front()).payload == payload,
+   BOOST_TEST(forge::transport::decode_frame(backend->writes.front()).payload == payload,
               boost::test_tools::per_element());
 
    backend->reads.push_back({encoded.begin(), encoded.begin() + 3});
    backend->reads.push_back({encoded.begin() + 3, encoded.end()});
-   const auto read = fcl::asio::blocking::run(runtime, value.async_read_frame());
+   const auto read = forge::asio::blocking::run(runtime, value.async_read_frame());
    BOOST_TEST(read == payload, boost::test_tools::per_element());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_stream_wraps_transport_stream) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto backend = std::make_shared<queued_transport_stream>(77);
-   auto value = fcl::p2p::stream{fcl::transport::detail::stream_access::make(backend)};
+   auto value = forge::p2p::stream{forge::transport::detail::stream_access::make(backend)};
    const auto payload = std::vector<std::uint8_t>{'p', '2', 'p'};
    const auto reply = std::vector<std::uint8_t>{'o', 'k'};
 
    BOOST_TEST(value.valid());
    BOOST_TEST(value.id() == 77);
 
-   fcl::asio::blocking::run(runtime, value.async_write(payload));
+   forge::asio::blocking::run(runtime, value.async_write(payload));
    BOOST_REQUIRE_EQUAL(backend->writes.size(), 1U);
    BOOST_TEST(backend->writes.front() == payload, boost::test_tools::per_element());
 
    backend->reads.push_back(reply);
-   const auto read = fcl::asio::blocking::run(runtime, value.async_read());
+   const auto read = forge::asio::blocking::run(runtime, value.async_read());
    BOOST_TEST(read == reply, boost::test_tools::per_element());
 
-   fcl::asio::blocking::run(runtime, value.async_close());
+   forge::asio::blocking::run(runtime, value.async_close());
    BOOST_TEST(backend->closed);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_stream_delegates_chunk_read_write_and_preserves_framed_trailing_bytes) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto backend = std::make_shared<queued_transport_stream>(78);
-   auto value = fcl::p2p::stream{fcl::transport::detail::stream_access::make(backend)};
+   auto value = forge::p2p::stream{forge::transport::detail::stream_access::make(backend)};
    const auto payload = std::vector<std::uint8_t>{'c', 'h', 'u', 'n', 'k'};
    const auto first = std::vector<std::uint8_t>{'o', 'n', 'e'};
    const auto second = std::vector<std::uint8_t>{'t', 'w', 'o'};
 
-   fcl::asio::blocking::run(runtime, value.async_write(fcl::transport::chunk{payload}));
+   forge::asio::blocking::run(runtime, value.async_write(forge::transport::chunk{payload}));
    BOOST_REQUIRE_EQUAL(backend->chunk_writes, 1U);
    BOOST_REQUIRE_EQUAL(backend->writes.size(), 1U);
    BOOST_TEST(backend->writes.front() == payload, boost::test_tools::per_element());
 
    backend->reads.push_back(payload);
-   auto read = fcl::asio::blocking::run(runtime, value.async_read_chunk());
+   auto read = forge::asio::blocking::run(runtime, value.async_read_chunk());
    BOOST_REQUIRE_EQUAL(backend->chunk_reads, 1U);
    BOOST_TEST(read.to_vector() == payload, boost::test_tools::per_element());
 
-   auto combined = fcl::transport::encode_frame(first);
-   auto encoded_second = fcl::transport::encode_frame(second);
+   auto combined = forge::transport::encode_frame(first);
+   auto encoded_second = forge::transport::encode_frame(second);
    combined.insert(combined.end(), encoded_second.begin(), encoded_second.end());
    backend->reads.push_back(std::move(combined));
 
-   auto first_read = fcl::asio::blocking::run(runtime, value.async_read_frame_chunk());
+   auto first_read = forge::asio::blocking::run(runtime, value.async_read_frame_chunk());
    BOOST_TEST(first_read.to_vector() == first, boost::test_tools::per_element());
-   const auto second_read = fcl::asio::blocking::run(runtime, value.async_read_frame());
+   const auto second_read = forge::asio::blocking::run(runtime, value.async_read_frame());
    BOOST_TEST(second_read == second, boost::test_tools::per_element());
    BOOST_REQUIRE_EQUAL(backend->chunk_reads, 2U);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_stream_with_buffer_preserves_prefetched_framed_chunks) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto backend = std::make_shared<queued_transport_stream>(79);
    auto first = std::vector<std::uint8_t>{'p', 'r', 'e'};
    auto second = std::vector<std::uint8_t>{'b', 'u', 'f'};
-   auto buffered = fcl::transport::encode_frame(first);
-   auto encoded_second = fcl::transport::encode_frame(second);
+   auto buffered = forge::transport::encode_frame(first);
+   auto encoded_second = forge::transport::encode_frame(second);
    buffered.insert(buffered.end(), encoded_second.begin(), encoded_second.end());
 
-   auto value = fcl::p2p::detail::stream_access::with_buffer(
-       fcl::p2p::stream{fcl::transport::detail::stream_access::make(backend)}, std::move(buffered));
+   auto value = forge::p2p::detail::stream_access::with_buffer(
+       forge::p2p::stream{forge::transport::detail::stream_access::make(backend)}, std::move(buffered));
 
-   auto first_read = fcl::asio::blocking::run(runtime, value.async_read_frame_chunk());
+   auto first_read = forge::asio::blocking::run(runtime, value.async_read_frame_chunk());
    BOOST_TEST(first_read.to_vector() == first, boost::test_tools::per_element());
-   const auto second_read = fcl::asio::blocking::run(runtime, value.async_read_frame());
+   const auto second_read = forge::asio::blocking::run(runtime, value.async_read_frame());
    BOOST_TEST(second_read == second, boost::test_tools::per_element());
    BOOST_TEST(backend->chunk_reads == 0U);
 }
@@ -1860,16 +1860,16 @@ BOOST_AUTO_TEST_CASE(p2p_session_lifecycle_cancels_rejected_new_session) {
 }
 
 BOOST_AUTO_TEST_CASE(quic_transport_adapter_preserves_endpoint_kind_and_authority) {
-   const auto ip4 = fcl::quic::to_transport_endpoint(fcl::quic::endpoint{.host = "127.0.0.1", .port = 4001});
-   BOOST_TEST(static_cast<int>(ip4.host_type) == static_cast<int>(fcl::transport::endpoint::host_kind::ip4));
-   BOOST_TEST(static_cast<int>(ip4.protocol) == static_cast<int>(fcl::transport::endpoint::protocol_kind::quic_v1));
+   const auto ip4 = forge::quic::to_transport_endpoint(forge::quic::endpoint{.host = "127.0.0.1", .port = 4001});
+   BOOST_TEST(static_cast<int>(ip4.host_type) == static_cast<int>(forge::transport::endpoint::host_kind::ip4));
+   BOOST_TEST(static_cast<int>(ip4.protocol) == static_cast<int>(forge::transport::endpoint::protocol_kind::quic_v1));
    const auto authority = std::string{"127.0.0.1"} + ":" + std::to_string(4001);
    BOOST_TEST(ip4.authority() == authority);
-   const auto roundtrip = fcl::quic::from_transport_endpoint(ip4);
+   const auto roundtrip = forge::quic::from_transport_endpoint(ip4);
    BOOST_TEST(roundtrip.authority() == authority);
 
-   const auto dns = fcl::quic::to_transport_endpoint(fcl::quic::endpoint{.host = "localhost", .port = 4002});
-   BOOST_TEST(static_cast<int>(dns.host_type) == static_cast<int>(fcl::transport::endpoint::host_kind::dns));
+   const auto dns = forge::quic::to_transport_endpoint(forge::quic::endpoint{.host = "localhost", .port = 4002});
+   BOOST_TEST(static_cast<int>(dns.host_type) == static_cast<int>(forge::transport::endpoint::host_kind::dns));
 }
 
 BOOST_AUTO_TEST_CASE(p2p_multistream_select_encodes_libp2p_messages) {
@@ -1893,8 +1893,8 @@ BOOST_AUTO_TEST_CASE(p2p_multistream_select_encodes_libp2p_messages) {
    BOOST_REQUIRE_EQUAL(list.protocols.size(), 1U);
    BOOST_TEST(list.protocols.front().value == ping.value);
 
-   BOOST_CHECK_THROW((void)decode_frame(std::vector<std::uint8_t>{0x81, 0x81, 0x01}), fcl::exceptions::base);
-   BOOST_CHECK_THROW((void)decode_message(std::vector<std::uint8_t>{'b', 'a', 'd', '\n'}), fcl::exceptions::base);
+   BOOST_CHECK_THROW((void)decode_frame(std::vector<std::uint8_t>{0x81, 0x81, 0x01}), forge::exceptions::base);
+   BOOST_CHECK_THROW((void)decode_message(std::vector<std::uint8_t>{'b', 'a', 'd', '\n'}), forge::exceptions::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_libp2p_reachability_relay_protocol_ids_are_exact) {
@@ -1960,8 +1960,8 @@ BOOST_AUTO_TEST_CASE(p2p_dht_codec_roundtrips_libp2p_message_shape_and_rejects_m
    BOOST_TEST(static_cast<int>(decoded.provider_peers.front().connection) ==
               static_cast<int>(dht::connection_type::connected));
 
-   BOOST_CHECK_THROW((void)dht::codec::decode(std::vector<std::uint8_t>{0x02, 0x08, 0x63}), fcl::exceptions::base);
-   BOOST_CHECK_THROW((void)dht::codec::decode(std::vector<std::uint8_t>{0x01, 0x10}), fcl::exceptions::base);
+   BOOST_CHECK_THROW((void)dht::codec::decode(std::vector<std::uint8_t>{0x02, 0x08, 0x63}), forge::exceptions::base);
+   BOOST_CHECK_THROW((void)dht::codec::decode(std::vector<std::uint8_t>{0x01, 0x10}), forge::exceptions::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_dht_routing_table_uses_sha256_xor_distance_and_bounds_results) {
@@ -1990,7 +1990,7 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_codec_roundtrips_register_discover_cookie_an
        .type = rendezvous::message_type::register_peer,
        .register_value =
            rendezvous::register_request{
-               .namespace_name = "fcl.discovery",
+               .namespace_name = "forge.discovery",
                .signed_peer_record = record,
                .ttl = std::chrono::seconds{7'200},
            },
@@ -1998,7 +1998,7 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_codec_roundtrips_register_discover_cookie_an
    const auto decoded_register = rendezvous::codec::decode(encoded_register, opts);
    BOOST_TEST(static_cast<int>(decoded_register.type) == static_cast<int>(rendezvous::message_type::register_peer));
    BOOST_REQUIRE(decoded_register.register_value.has_value());
-   BOOST_TEST(decoded_register.register_value->namespace_name == "fcl.discovery");
+   BOOST_TEST(decoded_register.register_value->namespace_name == "forge.discovery");
    BOOST_TEST(decoded_register.register_value->signed_peer_record == record, boost::test_tools::per_element());
    BOOST_TEST(decoded_register.register_value->ttl == std::chrono::seconds{7'200});
 
@@ -2007,15 +2007,15 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_codec_roundtrips_register_discover_cookie_an
    BOOST_REQUIRE_EQUAL(decoded_peer_record.endpoints.size(), 1U);
    BOOST_TEST(decoded_peer_record.sequence == 42U);
 
-   const auto cookie = rendezvous::codec::make_cookie(42, "fcl.discovery");
+   const auto cookie = rendezvous::codec::make_cookie(42, "forge.discovery");
    BOOST_TEST(rendezvous::codec::read_cookie(cookie) == 42U);
-   BOOST_TEST(rendezvous::codec::read_cookie_namespace(cookie) == "fcl.discovery");
+   BOOST_TEST(rendezvous::codec::read_cookie_namespace(cookie) == "forge.discovery");
    const auto encoded_discover = rendezvous::codec::encode(rendezvous::message{
        .type = rendezvous::message_type::discover_response,
        .discover_response_value =
            rendezvous::discover_response{
                .registrations = std::vector<rendezvous::registration>{rendezvous::registration{
-                   .namespace_name = "fcl.discovery",
+                   .namespace_name = "forge.discovery",
                    .signed_peer_record = record,
                    .ttl = std::chrono::seconds{7'200},
                }},
@@ -2027,19 +2027,19 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_codec_roundtrips_register_discover_cookie_an
    BOOST_TEST(static_cast<int>(decoded_discover.type) == static_cast<int>(rendezvous::message_type::discover_response));
    BOOST_REQUIRE(decoded_discover.discover_response_value.has_value());
    BOOST_REQUIRE_EQUAL(decoded_discover.discover_response_value->registrations.size(), 1U);
-   BOOST_TEST(decoded_discover.discover_response_value->registrations.front().namespace_name == "fcl.discovery");
+   BOOST_TEST(decoded_discover.discover_response_value->registrations.front().namespace_name == "forge.discovery");
    BOOST_TEST(decoded_discover.discover_response_value->registrations.front().peer.to_string() ==
               identity.peer.to_string());
    BOOST_TEST(decoded_discover.discover_response_value->registrations.front().signed_peer_record == record,
               boost::test_tools::per_element());
    BOOST_TEST(rendezvous::codec::read_cookie(decoded_discover.discover_response_value->cookie) == 42U);
 
-   BOOST_CHECK_THROW((void)rendezvous::codec::read_cookie(std::vector<std::uint8_t>{1, 2, 3}), fcl::exceptions::base);
+   BOOST_CHECK_THROW((void)rendezvous::codec::read_cookie(std::vector<std::uint8_t>{1, 2, 3}), forge::exceptions::base);
    BOOST_CHECK_THROW((void)rendezvous::codec::encode(rendezvous::message{
                          .type = rendezvous::message_type::discover,
                          .discover_value = rendezvous::discover_request{.namespace_name = std::string(300, 'x')},
                      }),
-                     fcl::exceptions::base);
+                     forge::exceptions::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_gossipsub_codec_roundtrips_v11_rpc_and_rejects_malformed) {
@@ -2048,10 +2048,10 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_codec_roundtrips_v11_rpc_and_rejects_malforme
        .from = identity.peer,
        .data = std::vector<std::uint8_t>{'h', 'e', 'l', 'l', 'o'},
        .seqno = std::vector<std::uint8_t>{0, 0, 0, 0, 0, 0, 0, 7},
-       .subject = pubsub::topic{.value = "fcl.topic"},
+       .subject = pubsub::topic{.value = "forge.topic"},
        .key = encode_public_key(identity.key),
    };
-   pubsub::codec::sign_message(message, fcl::crypto::pem::read_private_key(identity.private_key_pem));
+   pubsub::codec::sign_message(message, forge::crypto::pem::read_private_key(identity.private_key_pem));
    BOOST_TEST(pubsub::codec::verify_message(message));
 
    const auto id = pubsub::codec::message_id(message);
@@ -2062,21 +2062,21 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_codec_roundtrips_v11_rpc_and_rejects_malforme
            pubsub::rpc{
                .subscriptions =
                    std::vector<pubsub::subscription>{
-                       pubsub::subscription{.subscribe = true, .subject = pubsub::topic{.value = "fcl.topic"}},
-                       pubsub::subscription{.subscribe = false, .subject = pubsub::topic{.value = "fcl.old"}},
+                       pubsub::subscription{.subscribe = true, .subject = pubsub::topic{.value = "forge.topic"}},
+                       pubsub::subscription{.subscribe = false, .subject = pubsub::topic{.value = "forge.old"}},
                    },
                .messages = std::vector<pubsub::message>{message},
                .control_value =
                    pubsub::control{
                        .have = std::vector<pubsub::control::ihave>{pubsub::control::ihave{
-                           .subject = pubsub::topic{.value = "fcl.topic"},
+                           .subject = pubsub::topic{.value = "forge.topic"},
                            .message_ids = std::vector<std::vector<std::uint8_t>>{id}}},
                        .want = std::vector<pubsub::control::iwant>{pubsub::control::iwant{
                            .message_ids = std::vector<std::vector<std::uint8_t>>{id}}},
                        .grafts = std::vector<pubsub::control::graft>{pubsub::control::graft{
-                           .subject = pubsub::topic{.value = "fcl.topic"}}},
+                           .subject = pubsub::topic{.value = "forge.topic"}}},
                        .prunes = std::vector<pubsub::control::prune>{pubsub::control::prune{
-                           .subject = pubsub::topic{.value = "fcl.topic"},
+                           .subject = pubsub::topic{.value = "forge.topic"},
                            .peers = std::vector<pubsub::peer_info>{pubsub::peer_info{.peer = identity.peer}},
                            .backoff = std::chrono::seconds{60},
                        }},
@@ -2086,7 +2086,7 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_codec_roundtrips_v11_rpc_and_rejects_malforme
    const auto decoded = pubsub::codec::decode(encoded, pubsub::options{});
    BOOST_REQUIRE_EQUAL(decoded.subscriptions.size(), 2U);
    BOOST_TEST(decoded.subscriptions.front().subscribe);
-   BOOST_TEST(decoded.subscriptions.front().subject.value == "fcl.topic");
+   BOOST_TEST(decoded.subscriptions.front().subject.value == "forge.topic");
    BOOST_REQUIRE_EQUAL(decoded.messages.size(), 1U);
    BOOST_TEST(decoded.messages.front().data == message.data, boost::test_tools::per_element());
    BOOST_TEST(pubsub::codec::verify_message(decoded.messages.front()));
@@ -2098,10 +2098,10 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_codec_roundtrips_v11_rpc_and_rejects_malforme
    BOOST_TEST(decoded.control_value->prunes.front().backoff == std::chrono::seconds{60});
 
    BOOST_CHECK_THROW((void)pubsub::codec::decode(std::vector<std::uint8_t>{0xff, 0xff, 0xff, 0xff}, pubsub::options{}),
-                     fcl::exceptions::base);
+                     forge::exceptions::base);
    auto strict = pubsub::options{};
    strict.limits.max_rpc_size = 4;
-   BOOST_CHECK_THROW((void)pubsub::codec::decode(encoded, strict), fcl::exceptions::base);
+   BOOST_CHECK_THROW((void)pubsub::codec::decode(encoded, strict), forge::exceptions::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_gossipsub_signing_rejects_tampered_payload) {
@@ -2110,10 +2110,10 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_signing_rejects_tampered_payload) {
        .from = identity.peer,
        .data = std::vector<std::uint8_t>{'s', 'i', 'g', 'n', 'e', 'd'},
        .seqno = std::vector<std::uint8_t>{0, 0, 0, 0, 0, 0, 0, 1},
-       .subject = pubsub::topic{.value = "fcl.signed"},
+       .subject = pubsub::topic{.value = "forge.signed"},
        .key = encode_public_key(identity.key),
    };
-   pubsub::codec::sign_message(message, fcl::crypto::pem::read_private_key(identity.private_key_pem));
+   pubsub::codec::sign_message(message, forge::crypto::pem::read_private_key(identity.private_key_pem));
    BOOST_TEST(pubsub::codec::verify_message(message));
 
    message.data.push_back('!');
@@ -2122,11 +2122,11 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_signing_rejects_tampered_payload) {
 
 BOOST_AUTO_TEST_CASE(p2p_signed_envelope_seals_and_verifies_domain_payload_and_signer) {
    const auto identity = make_test_identity();
-   const auto payload_type = fcl::multiformats::varint_encode(0x0302);
+   const auto payload_type = forge::multiformats::varint_encode(0x0302);
    const auto payload = std::vector<std::uint8_t>{1, 2, 3, 4, 5};
 
    const auto envelope =
-       signed_envelope::seal(identity.key, fcl::crypto::pem::read_private_key(identity.private_key_pem),
+       signed_envelope::seal(identity.key, forge::crypto::pem::read_private_key(identity.private_key_pem),
                              "libp2p-relay-rsvp", payload_type, payload);
    const auto encoded = envelope.encode();
    const auto decoded = signed_envelope::decode(encoded);
@@ -2135,11 +2135,11 @@ BOOST_AUTO_TEST_CASE(p2p_signed_envelope_seals_and_verifies_domain_payload_and_s
    BOOST_TEST(decoded.payload == payload, boost::test_tools::per_element());
    BOOST_TEST(decoded.signer().to_string() == identity.peer.to_string());
    BOOST_CHECK_NO_THROW(decoded.verify("libp2p-relay-rsvp", identity.peer));
-   BOOST_CHECK_THROW(decoded.verify("wrong-domain", identity.peer), fcl::exceptions::base);
+   BOOST_CHECK_THROW(decoded.verify("wrong-domain", identity.peer), forge::exceptions::base);
 
    auto tampered = decoded;
    tampered.payload.back() ^= 0x01U;
-   BOOST_CHECK_THROW(tampered.verify("libp2p-relay-rsvp", identity.peer), fcl::exceptions::base);
+   BOOST_CHECK_THROW(tampered.verify("libp2p-relay-rsvp", identity.peer), forge::exceptions::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_relay_voucher_uses_signed_envelope_and_rejects_stale_or_wrong_signer) {
@@ -2152,7 +2152,7 @@ BOOST_AUTO_TEST_CASE(p2p_relay_voucher_uses_signed_envelope_and_rejects_stale_or
    };
 
    const auto envelope = relay::codec::seal_reservation_voucher(
-       reservation, relay_identity.key, fcl::crypto::pem::read_private_key(relay_identity.private_key_pem));
+       reservation, relay_identity.key, forge::crypto::pem::read_private_key(relay_identity.private_key_pem));
    const auto decoded = relay::codec::open_reservation_voucher(envelope, relay_identity.peer, 4'102'444'799ULL);
 
    BOOST_TEST(decoded.relay_peer.to_string() == reservation.relay_peer.to_string());
@@ -2161,9 +2161,9 @@ BOOST_AUTO_TEST_CASE(p2p_relay_voucher_uses_signed_envelope_and_rejects_stale_or
 
    BOOST_CHECK_THROW(
        (void)relay::codec::open_reservation_voucher(envelope, relay_identity.peer, reservation.expires_at),
-       fcl::exceptions::base);
+       forge::exceptions::base);
    BOOST_CHECK_THROW((void)relay::codec::open_reservation_voucher(envelope, other_identity.peer, 4'102'444'799ULL),
-                     fcl::exceptions::base);
+                     forge::exceptions::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_resource_manager_enforces_relay_stream_and_byte_limits) {
@@ -2359,7 +2359,7 @@ BOOST_AUTO_TEST_CASE(p2p_resource_manager_enforces_connection_session_scopes) {
 }
 
 BOOST_AUTO_TEST_CASE(p2p_node_peer_protection_api_is_tagged_and_additive) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto value = node{runtime, options_for(peer(233))};
    const auto protected_peer = peer(234);
 
@@ -2371,11 +2371,11 @@ BOOST_AUTO_TEST_CASE(p2p_node_peer_protection_api_is_tagged_and_additive) {
    BOOST_TEST(!value.unprotect_peer(protected_peer, "bootstrap"));
    BOOST_TEST(!value.is_peer_protected(protected_peer));
 
-   fcl::asio::blocking::run(runtime, value.async_stop());
+   forge::asio::blocking::run(runtime, value.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_diagnostics_snapshot_reports_live_network_state_without_mutation) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto server = node{runtime, options_for(peer(250), capability_set{.bits = capabilities::direct_quic |
                                                                              capabilities::peer_exchange |
                                                                              capabilities::pubsub})};
@@ -2393,7 +2393,7 @@ BOOST_AUTO_TEST_CASE(p2p_diagnostics_snapshot_reports_live_network_state_without
                                  capability_set{.bits = capabilities::direct_quic | capabilities::peer_exchange |
                                                         capabilities::pubsub | capabilities::relay |
                                                         capabilities::relay_reservation});
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
       runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
    client.protect_peer(server.local_peer(), "diagnostics-test");
    client.peers().mark_endpoint_failure(server.local_peer(), server_endpoint, path::kind::direct,
@@ -2421,12 +2421,12 @@ BOOST_AUTO_TEST_CASE(p2p_diagnostics_snapshot_reports_live_network_state_without
    BOOST_TEST(static_cast<int>(snapshot.sessions.front().direction) ==
               static_cast<int>(diagnostics::session_direction::outbound));
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_diagnostics_snapshot_caps_are_deterministic) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto value = node{runtime, options_for(peer(252))};
    value.peers().learn_endpoint(peer(253), make_quic_endpoint(4001), capability_set{.bits = capabilities::direct_quic});
    value.peers().learn_endpoint(peer(254), make_tcp_endpoint(4002), capability_set{.bits = capabilities::peer_exchange});
@@ -2443,11 +2443,11 @@ BOOST_AUTO_TEST_CASE(p2p_diagnostics_snapshot_caps_are_deterministic) {
    BOOST_TEST(snapshot.sessions.empty());
    BOOST_REQUIRE_EQUAL(snapshot.peers.front().endpoints.size(), 1U);
 
-   fcl::asio::blocking::run(runtime, value.async_stop());
+   forge::asio::blocking::run(runtime, value.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_connection_manager_prunes_unprotected_sessions_and_keeps_protected_peer) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto client_options = options_for(peer(235));
    client_options.limits.max_sessions = 2;
    client_options.limits.max_outbound_sessions = 2;
@@ -2466,12 +2466,12 @@ BOOST_AUTO_TEST_CASE(p2p_connection_manager_prunes_unprotected_sessions_and_keep
    const auto first_endpoint = listen(first, runtime);
    const auto second_endpoint = listen(second, runtime);
    const auto third_endpoint = listen(third, runtime);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(first_endpoint, node::connect_options{.expected_peer = first.local_peer()}));
    client.protect_peer(first.local_peer(), "bootstrap");
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(second_endpoint, node::connect_options{.expected_peer = second.local_peer()}));
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(third_endpoint, node::connect_options{.expected_peer = third.local_peer()}));
 
    auto metrics = client.metrics();
@@ -2480,21 +2480,21 @@ BOOST_AUTO_TEST_CASE(p2p_connection_manager_prunes_unprotected_sessions_and_keep
    BOOST_TEST(client.is_peer_protected(first.local_peer()));
 
    auto stream =
-       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(first.local_peer(), builtins::echo,
+       forge::asio::blocking::run(runtime, client.async_open_protocol_stream(first.local_peer(), builtins::echo,
                                                                            node::open_options{.allow_relay = false}));
    const auto payload = std::vector<std::uint8_t>{'p', 'r', 'o', 't', 'e', 'c', 't'};
-   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   forge::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read_frame());
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, third.async_stop());
-   fcl::asio::blocking::run(runtime, second.async_stop());
-   fcl::asio::blocking::run(runtime, first.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, third.async_stop());
+   forge::asio::blocking::run(runtime, second.async_stop());
+   forge::asio::blocking::run(runtime, first.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_connection_manager_prunes_batch_to_low_watermark) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 6}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 6}};
    auto client_options = options_for(peer(60));
    client_options.limits.max_sessions = 4;
    client_options.limits.max_outbound_sessions = 4;
@@ -2515,15 +2515,15 @@ BOOST_AUTO_TEST_CASE(p2p_connection_manager_prunes_batch_to_low_watermark) {
    const auto third_endpoint = listen(third, runtime);
    const auto fourth_endpoint = listen(fourth, runtime);
    const auto fifth_endpoint = listen(fifth, runtime);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(first_endpoint, node::connect_options{.expected_peer = first.local_peer()}));
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(second_endpoint, node::connect_options{.expected_peer = second.local_peer()}));
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(third_endpoint, node::connect_options{.expected_peer = third.local_peer()}));
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(fourth_endpoint, node::connect_options{.expected_peer = fourth.local_peer()}));
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(fifth_endpoint, node::connect_options{.expected_peer = fifth.local_peer()}));
 
    auto metrics = client.metrics();
@@ -2531,23 +2531,23 @@ BOOST_AUTO_TEST_CASE(p2p_connection_manager_prunes_batch_to_low_watermark) {
    BOOST_TEST(metrics.sessions_pruned >= 3U);
 
    auto stream =
-       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(fifth.local_peer(), builtins::echo,
+       forge::asio::blocking::run(runtime, client.async_open_protocol_stream(fifth.local_peer(), builtins::echo,
                                                                            node::open_options{.allow_relay = false}));
    const auto payload = std::vector<std::uint8_t>{'b', 'a', 't', 'c', 'h'};
-   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   forge::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read_frame());
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, fifth.async_stop());
-   fcl::asio::blocking::run(runtime, fourth.async_stop());
-   fcl::asio::blocking::run(runtime, third.async_stop());
-   fcl::asio::blocking::run(runtime, second.async_stop());
-   fcl::asio::blocking::run(runtime, first.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, fifth.async_stop());
+   forge::asio::blocking::run(runtime, fourth.async_stop());
+   forge::asio::blocking::run(runtime, third.async_stop());
+   forge::asio::blocking::run(runtime, second.async_stop());
+   forge::asio::blocking::run(runtime, first.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_connection_manager_rejects_when_all_sessions_are_protected) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto client_options = options_for(peer(239));
    client_options.limits.max_sessions = 2;
    client_options.limits.max_outbound_sessions = 2;
@@ -2563,33 +2563,33 @@ BOOST_AUTO_TEST_CASE(p2p_connection_manager_rejects_when_all_sessions_are_protec
    const auto first_endpoint = listen(first, runtime);
    const auto second_endpoint = listen(second, runtime);
    const auto third_endpoint = listen(third, runtime);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(first_endpoint, node::connect_options{.expected_peer = first.local_peer()}));
    client.protect_peer(first.local_peer(), "bootstrap");
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(second_endpoint, node::connect_options{.expected_peer = second.local_peer()}));
    client.protect_peer(second.local_peer(), "bootstrap");
 
    try {
-      (void)fcl::asio::blocking::run(
+      (void)forge::asio::blocking::run(
           runtime, client.async_connect(third_endpoint, node::connect_options{.expected_peer = third.local_peer()}));
       BOOST_FAIL("expected all-protected session limit rejection");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::backpressure_rejected));
    }
    const auto metrics = client.metrics();
    BOOST_TEST(metrics.active_sessions == 2U);
    BOOST_TEST(metrics.connection_rejections >= 1U);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, third.async_stop());
-   fcl::asio::blocking::run(runtime, second.async_stop());
-   fcl::asio::blocking::run(runtime, first.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, third.async_stop());
+   forge::asio::blocking::run(runtime, second.async_stop());
+   forge::asio::blocking::run(runtime, first.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_connection_manager_rejects_direction_limit_before_pruning_unrelated_sessions) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto client_options = options_for(peer(254));
    client_options.limits.max_sessions = 2;
    client_options.limits.max_inbound_sessions = 4;
@@ -2611,20 +2611,20 @@ BOOST_AUTO_TEST_CASE(p2p_connection_manager_rejects_direction_limit_before_pruni
    (void)listen(second, runtime);
    const auto client_endpoint = listen(client, runtime);
    const auto third_endpoint = listen(third, runtime);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(first_endpoint, node::connect_options{.expected_peer = first.local_peer()}));
    client.protect_peer(first.local_peer(), "bootstrap");
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, second.async_connect(client_endpoint, node::connect_options{.expected_peer = client.local_peer()}));
    wait_on_runtime(runtime, std::chrono::milliseconds{100}, "inbound session admission");
    const auto before = client.metrics();
    BOOST_TEST(before.active_sessions == 2U);
 
    try {
-      (void)fcl::asio::blocking::run(
+      (void)forge::asio::blocking::run(
           runtime, client.async_connect(third_endpoint, node::connect_options{.expected_peer = third.local_peer()}));
       BOOST_FAIL("expected outbound session limit rejection");
-   } catch (const fcl::exceptions::base&) {
+   } catch (const forge::exceptions::base&) {
    }
 
    const auto after = client.metrics();
@@ -2633,21 +2633,21 @@ BOOST_AUTO_TEST_CASE(p2p_connection_manager_rejects_direction_limit_before_pruni
    BOOST_TEST(after.connection_rejections >= before.connection_rejections + 1U);
 
    auto stream =
-       fcl::asio::blocking::run(runtime, second.async_open_protocol_stream(client.local_peer(), builtins::echo,
+       forge::asio::blocking::run(runtime, second.async_open_protocol_stream(client.local_peer(), builtins::echo,
                                                                            node::open_options{.allow_relay = false}));
    const auto payload = std::vector<std::uint8_t>{'s', 't', 'a', 'y'};
-   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   forge::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read_frame());
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, third.async_stop());
-   fcl::asio::blocking::run(runtime, second.async_stop());
-   fcl::asio::blocking::run(runtime, first.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, third.async_stop());
+   forge::asio::blocking::run(runtime, second.async_stop());
+   forge::asio::blocking::run(runtime, first.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_connection_manager_prunes_direction_saturated_stale_session_before_global_cap) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto client_options = options_for(peer(3));
    client_options.limits.max_sessions = 4;
    client_options.limits.max_inbound_sessions = 4;
@@ -2665,12 +2665,12 @@ BOOST_AUTO_TEST_CASE(p2p_connection_manager_prunes_direction_saturated_stale_ses
 
    const auto first_endpoint = listen(first, runtime);
    const auto second_endpoint = listen(second, runtime);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(first_endpoint, node::connect_options{.expected_peer = first.local_peer()}));
    const auto before = client.metrics();
    BOOST_TEST(before.active_sessions == 1U);
 
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(second_endpoint, node::connect_options{.expected_peer = second.local_peer()}));
 
    const auto after = client.metrics();
@@ -2679,20 +2679,20 @@ BOOST_AUTO_TEST_CASE(p2p_connection_manager_prunes_direction_saturated_stale_ses
    BOOST_TEST(after.connection_rejections == before.connection_rejections);
 
    auto stream =
-       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(second.local_peer(), builtins::echo,
+       forge::asio::blocking::run(runtime, client.async_open_protocol_stream(second.local_peer(), builtins::echo,
                                                                            node::open_options{.allow_relay = false}));
    const auto payload = std::vector<std::uint8_t>{'d', 'i', 'r'};
-   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   forge::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read_frame());
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, second.async_stop());
-   fcl::asio::blocking::run(runtime, first.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, second.async_stop());
+   forge::asio::blocking::run(runtime, first.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_connection_manager_prunes_direction_saturated_session_below_low_watermark) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto client_options = options_for(peer(6));
    client_options.limits.max_sessions = 100;
    client_options.limits.max_inbound_sessions = 100;
@@ -2710,12 +2710,12 @@ BOOST_AUTO_TEST_CASE(p2p_connection_manager_prunes_direction_saturated_session_b
 
    const auto first_endpoint = listen(first, runtime);
    const auto second_endpoint = listen(second, runtime);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(first_endpoint, node::connect_options{.expected_peer = first.local_peer()}));
    const auto before = client.metrics();
    BOOST_TEST(before.active_sessions == 1U);
 
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(second_endpoint, node::connect_options{.expected_peer = second.local_peer()}));
 
    const auto after = client.metrics();
@@ -2724,20 +2724,20 @@ BOOST_AUTO_TEST_CASE(p2p_connection_manager_prunes_direction_saturated_session_b
    BOOST_TEST(after.connection_rejections == before.connection_rejections);
 
    auto stream =
-       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(second.local_peer(), builtins::echo,
+       forge::asio::blocking::run(runtime, client.async_open_protocol_stream(second.local_peer(), builtins::echo,
                                                                            node::open_options{.allow_relay = false}));
    const auto payload = std::vector<std::uint8_t>{'l', 'o', 'w'};
-   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   forge::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read_frame());
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, second.async_stop());
-   fcl::asio::blocking::run(runtime, first.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, second.async_stop());
+   forge::asio::blocking::run(runtime, first.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_connection_manager_enforces_outbound_session_limit) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto client_options = options_for(peer(243));
    client_options.limits.max_sessions = 4;
    client_options.limits.max_outbound_sessions = 1;
@@ -2751,34 +2751,34 @@ BOOST_AUTO_TEST_CASE(p2p_connection_manager_enforces_outbound_session_limit) {
 
    const auto first_endpoint = listen(first, runtime);
    const auto second_endpoint = listen(second, runtime);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(first_endpoint, node::connect_options{.expected_peer = first.local_peer()}));
    client.protect_peer(first.local_peer(), "bootstrap");
    try {
-      (void)fcl::asio::blocking::run(
+      (void)forge::asio::blocking::run(
           runtime, client.async_connect(second_endpoint, node::connect_options{.expected_peer = second.local_peer()}));
       BOOST_FAIL("expected outbound session limit rejection");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::backpressure_rejected));
    }
 
    auto stream =
-       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(first.local_peer(), builtins::echo,
+       forge::asio::blocking::run(runtime, client.async_open_protocol_stream(first.local_peer(), builtins::echo,
                                                                            node::open_options{.allow_relay = false}));
    const auto payload = std::vector<std::uint8_t>{'l', 'i', 'm', 'i', 't'};
-   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   forge::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read_frame());
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
    BOOST_TEST(client.metrics().connection_rejections >= 1U);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, second.async_stop());
-   fcl::asio::blocking::run(runtime, first.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, second.async_stop());
+   forge::asio::blocking::run(runtime, first.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_connection_manager_allows_bounded_parallel_sessions_per_peer) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto client_options = options_for(peer(250));
    client_options.limits.max_sessions = 4;
    client_options.limits.max_outbound_sessions = 4;
@@ -2789,26 +2789,26 @@ BOOST_AUTO_TEST_CASE(p2p_connection_manager_allows_bounded_parallel_sessions_per
    register_echo(server);
 
    const auto endpoint = listen(server, runtime);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(endpoint, node::connect_options{.expected_peer = server.local_peer()}));
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(endpoint, node::connect_options{.expected_peer = server.local_peer()}));
    BOOST_TEST(client.metrics().active_sessions == 2U);
 
    auto stream =
-       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::echo,
+       forge::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::echo,
                                                                            node::open_options{.allow_relay = false}));
    const auto payload = std::vector<std::uint8_t>{'p', 'a', 'r', 'a', 'l', 'l', 'e', 'l'};
-   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   forge::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read_frame());
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_connection_manager_enforces_sessions_per_peer_limit) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto client_options = options_for(peer(252));
    client_options.limits.max_sessions = 4;
    client_options.limits.max_outbound_sessions = 4;
@@ -2818,25 +2818,25 @@ BOOST_AUTO_TEST_CASE(p2p_connection_manager_enforces_sessions_per_peer_limit) {
    auto client = node{runtime, std::move(client_options)};
 
    const auto endpoint = listen(server, runtime);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(endpoint, node::connect_options{.expected_peer = server.local_peer()}));
    try {
-      (void)fcl::asio::blocking::run(
+      (void)forge::asio::blocking::run(
           runtime, client.async_connect(endpoint, node::connect_options{.expected_peer = server.local_peer()}));
       BOOST_FAIL("expected per-peer session limit rejection");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::backpressure_rejected));
    }
    BOOST_TEST(client.metrics().active_sessions == 1U);
    BOOST_TEST(client.metrics().connection_rejections >= 1U);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_connection_manager_rejects_pending_outbound_limit_without_killing_first_attempt) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto client_options = options_for(peer(246));
    client_options.limits.max_pending_outbound_sessions = 1;
    auto client = node{runtime, std::move(client_options)};
@@ -2854,7 +2854,7 @@ BOOST_AUTO_TEST_CASE(p2p_connection_manager_rejects_pending_outbound_limit_witho
    wait_on_runtime(runtime, std::chrono::milliseconds{50}, "pending outbound admission");
 
    try {
-      (void)fcl::asio::blocking::run(
+      (void)forge::asio::blocking::run(
           runtime, client.async_connect(stalled_endpoint,
                                        node::connect_options{
                                            .expected_peer = peer(247),
@@ -2862,18 +2862,18 @@ BOOST_AUTO_TEST_CASE(p2p_connection_manager_rejects_pending_outbound_limit_witho
                                            .timeout = std::chrono::milliseconds{100},
                                        }));
       BOOST_FAIL("expected pending outbound session limit rejection");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::backpressure_rejected));
    }
 
    try {
       (void)first.get();
-   } catch (const fcl::exceptions::base&) {
+   } catch (const forge::exceptions::base&) {
    }
    BOOST_TEST(client.metrics().connection_rejections >= 1U);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_libp2p_relay_hop_codec_matches_spec_shape) {
@@ -2903,7 +2903,7 @@ BOOST_AUTO_TEST_CASE(p2p_libp2p_relay_wire_roundtrips_statuses_limits_and_vouche
            .peer = target_peer,
            .expires_at = 1'777'000'000,
        },
-       identity.key, fcl::crypto::pem::read_private_key(identity.private_key_pem));
+       identity.key, forge::crypto::pem::read_private_key(identity.private_key_pem));
 
    auto decoded_voucher = relay::codec::open_reservation_voucher(voucher, relay_peer, 1'776'999'999);
    BOOST_TEST(decoded_voucher.relay_peer.to_string() == relay_peer.to_string());
@@ -2938,7 +2938,7 @@ BOOST_AUTO_TEST_CASE(p2p_libp2p_relay_wire_roundtrips_statuses_limits_and_vouche
    }
 
    BOOST_CHECK_THROW((void)relay::codec::decode_hop(std::vector<std::uint8_t>{0x02, 0x28, 0x64}),
-                     fcl::exceptions::base);
+                     forge::exceptions::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_libp2p_dcutr_codec_matches_spec_shape) {
@@ -2977,7 +2977,7 @@ BOOST_AUTO_TEST_CASE(p2p_libp2p_autonat_v1_codec_matches_spec_shape) {
        .peer =
            reachability::peer_info{
                .peer = id,
-               .endpoints = std::vector<fcl::p2p::endpoint>{endpoint},
+               .endpoints = std::vector<forge::p2p::endpoint>{endpoint},
            },
    };
 
@@ -3009,7 +3009,7 @@ BOOST_AUTO_TEST_CASE(p2p_libp2p_autonat_v2_codec_covers_nonce_data_and_statuses)
        .type = reachability::v2::message::kind::dial_request,
        .dial_request =
            reachability::v2::dial_request{
-               .endpoints = std::vector<fcl::p2p::endpoint>{remote_endpoint},
+               .endpoints = std::vector<forge::p2p::endpoint>{remote_endpoint},
                .nonce = 0x0102'0304'0506'0708ULL,
            },
    };
@@ -3068,16 +3068,16 @@ BOOST_AUTO_TEST_CASE(p2p_libp2p_autonat_v2_rejects_oversized_data_response_and_u
            .type = reachability::v2::message::kind::dial_data_response,
            .dial_data_response = reachability::v2::dial_data_response{.data = std::vector<std::uint8_t>(4097, 0x42)},
        }),
-       fcl::exceptions::base);
+       forge::exceptions::base);
 
    // Message { dialResponse: DialResponse { status: 999 } }
    BOOST_CHECK_THROW(
        (void)reachability::codec::decode_v2(std::vector<std::uint8_t>{0x06, 0x12, 0x04, 0x08, 0xe7, 0x07}),
-       fcl::exceptions::base);
+       forge::exceptions::base);
 }
 
 BOOST_AUTO_TEST_CASE(p2p_autonat_v2_probe_public_and_persists_observation) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto observer =
        node{runtime, options_for(peer(100), capability_set{.bits = capabilities::direct_quic | capabilities::autonat})};
    auto subject =
@@ -3088,7 +3088,7 @@ BOOST_AUTO_TEST_CASE(p2p_autonat_v2_probe_public_and_persists_observation) {
    subject.peers().learn_endpoint(observer.local_peer(), observer_endpoint,
                                   capability_set{.bits = capabilities::direct_quic | capabilities::autonat});
 
-   const auto state = fcl::asio::blocking::run(runtime, subject.async_probe_reachability(observer.local_peer()));
+   const auto state = forge::asio::blocking::run(runtime, subject.async_probe_reachability(observer.local_peer()));
    BOOST_TEST(static_cast<int>(state) == static_cast<int>(reachability::state::publicly_reachable));
 
    const auto stored = subject.peers().find(subject.local_peer());
@@ -3096,12 +3096,12 @@ BOOST_AUTO_TEST_CASE(p2p_autonat_v2_probe_public_and_persists_observation) {
    BOOST_TEST(static_cast<int>(stored->reachability) == static_cast<int>(reachability::state::publicly_reachable));
    BOOST_REQUIRE(stored->observed_endpoint.has_value());
 
-   fcl::asio::blocking::run(runtime, subject.async_stop());
-   fcl::asio::blocking::run(runtime, observer.async_stop());
+   forge::asio::blocking::run(runtime, subject.async_stop());
+   forge::asio::blocking::run(runtime, observer.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_relay_reservation_persists_candidate) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto relay_node =
        node{runtime, options_for(peer(102), capability_set{.bits = capabilities::direct_quic | capabilities::relay |
                                                                    capabilities::relay_reservation})};
@@ -3113,7 +3113,7 @@ BOOST_AUTO_TEST_CASE(p2p_relay_reservation_persists_candidate) {
        relay_node.local_peer(), relay_endpoint,
        capability_set{.bits = capabilities::direct_quic | capabilities::relay | capabilities::relay_reservation});
 
-   const auto info = fcl::asio::blocking::run(runtime, client.async_reserve_relay(relay_node.local_peer()));
+   const auto info = forge::asio::blocking::run(runtime, client.async_reserve_relay(relay_node.local_peer()));
    BOOST_TEST(info.relay_peer.to_string() == relay_node.local_peer().to_string());
    BOOST_TEST(!info.voucher.has_value());
 
@@ -3123,12 +3123,12 @@ BOOST_AUTO_TEST_CASE(p2p_relay_reservation_persists_candidate) {
    BOOST_TEST(stored->relay_reservations.front().relay.to_string() == relay_node.local_peer().to_string());
    BOOST_TEST(stored->relay_reservations.front().voucher.empty());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, relay_node.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, relay_node.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_autorelay_refresh_reserves_peer_store_candidate) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto relay_node =
        node{runtime, options_for(peer(104), capability_set{.bits = capabilities::direct_quic | capabilities::relay |
                                                                    capabilities::relay_reservation})};
@@ -3144,7 +3144,7 @@ BOOST_AUTO_TEST_CASE(p2p_autorelay_refresh_reserves_peer_store_candidate) {
        relay_node.local_peer(), relay_endpoint,
        capability_set{.bits = capabilities::direct_quic | capabilities::relay | capabilities::relay_reservation});
 
-   const auto reservations = fcl::asio::blocking::run(runtime, client.async_refresh_relay_candidates());
+   const auto reservations = forge::asio::blocking::run(runtime, client.async_refresh_relay_candidates());
    BOOST_REQUIRE_EQUAL(reservations.size(), 1U);
    BOOST_TEST(reservations.front().relay_peer.to_string() == relay_node.local_peer().to_string());
 
@@ -3156,12 +3156,12 @@ BOOST_AUTO_TEST_CASE(p2p_autorelay_refresh_reserves_peer_store_candidate) {
    BOOST_TEST(client.metrics().relay_discovery_attempts == 1U);
    BOOST_TEST(client.metrics().relay_discovery_successes == 1U);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, relay_node.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, relay_node.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_autorelay_refresh_backs_off_failed_candidate_and_tries_next) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto bad_options =
        options_for(peer(106), capability_set{.bits = capabilities::direct_quic | capabilities::relay |
                                                      capabilities::relay_reservation});
@@ -3190,7 +3190,7 @@ BOOST_AUTO_TEST_CASE(p2p_autorelay_refresh_backs_off_failed_candidate_and_tries_
    bad_record.score = 100.0;
    client.peers().upsert(std::move(bad_record));
 
-   const auto reservations = fcl::asio::blocking::run(runtime, client.async_refresh_relay_candidates());
+   const auto reservations = forge::asio::blocking::run(runtime, client.async_refresh_relay_candidates());
    BOOST_REQUIRE_EQUAL(reservations.size(), 1U);
    BOOST_TEST(reservations.front().relay_peer.to_string() == good_relay.local_peer().to_string());
    BOOST_TEST(client.metrics().relay_discovery_attempts == 2U);
@@ -3201,13 +3201,13 @@ BOOST_AUTO_TEST_CASE(p2p_autorelay_refresh_backs_off_failed_candidate_and_tries_
    BOOST_REQUIRE(failed.has_value());
    BOOST_TEST(failed->discovery_backoff_until > std::chrono::system_clock::now());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, good_relay.async_stop());
-   fcl::asio::blocking::run(runtime, bad_relay.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, good_relay.async_stop());
+   forge::asio::blocking::run(runtime, bad_relay.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_autorelay_refresh_accepts_dht_and_rendezvous_sourced_candidates) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto dht_relay =
        node{runtime, options_for(peer(116), capability_set{.bits = capabilities::direct_quic | capabilities::relay |
                                                                    capabilities::relay_reservation})};
@@ -3241,18 +3241,18 @@ BOOST_AUTO_TEST_CASE(p2p_autorelay_refresh_accepts_dht_and_rendezvous_sourced_ca
        .discovery_expires_at = std::chrono::system_clock::now() + std::chrono::minutes{5},
    });
 
-   const auto reservations = fcl::asio::blocking::run(runtime, client.async_refresh_relay_candidates());
+   const auto reservations = forge::asio::blocking::run(runtime, client.async_refresh_relay_candidates());
    BOOST_REQUIRE_EQUAL(reservations.size(), 2U);
    BOOST_TEST(client.metrics().relay_discovery_attempts == 2U);
    BOOST_TEST(client.metrics().relay_discovery_successes == 2U);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, rendezvous_relay.async_stop());
-   fcl::asio::blocking::run(runtime, dht_relay.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, rendezvous_relay.async_stop());
+   forge::asio::blocking::run(runtime, dht_relay.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_autorelay_refresh_respects_candidate_and_target_limits) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto first =
        node{runtime, options_for(peer(113), capability_set{.bits = capabilities::direct_quic | capabilities::relay |
                                                                    capabilities::relay_reservation})};
@@ -3275,18 +3275,18 @@ BOOST_AUTO_TEST_CASE(p2p_autorelay_refresh_respects_candidate_and_target_limits)
        second.local_peer(), second_endpoint,
        capability_set{.bits = capabilities::direct_quic | capabilities::relay | capabilities::relay_reservation});
 
-   const auto reservations = fcl::asio::blocking::run(runtime, client.async_refresh_relay_candidates());
+   const auto reservations = forge::asio::blocking::run(runtime, client.async_refresh_relay_candidates());
    BOOST_REQUIRE_EQUAL(reservations.size(), 1U);
    BOOST_TEST(client.metrics().relay_discovery_attempts == 1U);
    BOOST_TEST(client.metrics().relay_discovery_successes == 1U);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, second.async_stop());
-   fcl::asio::blocking::run(runtime, first.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, second.async_stop());
+   forge::asio::blocking::run(runtime, first.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_relay_fallback_refreshes_candidate_without_explicit_relay_peer) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    const auto relay_identity = make_test_certificate_identity("autorelay-fallback-relay");
    const auto source_identity = make_test_certificate_identity("autorelay-fallback-source");
    const auto target_identity = make_test_certificate_identity("autorelay-fallback-target");
@@ -3311,9 +3311,9 @@ BOOST_AUTO_TEST_CASE(p2p_relay_fallback_refreshes_candidate_without_explicit_rel
    target.peers().learn_endpoint(
        relay_node.local_peer(), relay_endpoint,
        capability_set{.bits = capabilities::direct_quic | capabilities::relay | capabilities::relay_reservation});
-   (void)fcl::asio::blocking::run(runtime, target.async_reserve_relay(relay_node.local_peer()));
+   (void)forge::asio::blocking::run(runtime, target.async_reserve_relay(relay_node.local_peer()));
 
-   auto stream = fcl::asio::blocking::run(
+   auto stream = forge::asio::blocking::run(
        runtime, source.async_open_protocol_stream(target.local_peer(), builtins::echo,
                                                   node::open_options{
                                                       .allow_relay = true,
@@ -3322,21 +3322,21 @@ BOOST_AUTO_TEST_CASE(p2p_relay_fallback_refreshes_candidate_without_explicit_rel
                                                       .allow_hole_punch = false,
                                                   }));
    const auto payload = std::vector<std::uint8_t>{'a', 'u', 't', 'o'};
-   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   forge::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read_frame());
 
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
    BOOST_TEST(source.metrics().relay_discovery_refreshes >= 1U);
    BOOST_TEST(source.metrics().relay_discovery_successes >= 1U);
    BOOST_TEST(source.metrics().path_relay_opens >= 1U);
 
-   fcl::asio::blocking::run(runtime, target.async_stop());
-   fcl::asio::blocking::run(runtime, source.async_stop());
-   fcl::asio::blocking::run(runtime, relay_node.async_stop());
+   forge::asio::blocking::run(runtime, target.async_stop());
+   forge::asio::blocking::run(runtime, source.async_stop());
+   forge::asio::blocking::run(runtime, relay_node.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_relay_policy_options_are_behavioral) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto relay_options = options_for(peer(110), capability_set{.bits = capabilities::direct_quic | capabilities::relay |
                                                                       capabilities::relay_reservation});
    relay_options.relay_policy.service_enabled = false;
@@ -3350,10 +3350,10 @@ BOOST_AUTO_TEST_CASE(p2p_relay_policy_options_are_behavioral) {
        capability_set{.bits = capabilities::direct_quic | capabilities::relay | capabilities::relay_reservation});
 
    try {
-      (void)fcl::asio::blocking::run(runtime, client.async_reserve_relay(relay_node.local_peer()));
+      (void)forge::asio::blocking::run(runtime, client.async_reserve_relay(relay_node.local_peer()));
       BOOST_FAIL("expected relay service policy rejection");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::relay_rejected));
    }
 
@@ -3361,20 +3361,20 @@ BOOST_AUTO_TEST_CASE(p2p_relay_policy_options_are_behavioral) {
    disabled_client_options.relay_policy.client_enabled = false;
    auto disabled_client = node{runtime, std::move(disabled_client_options)};
    try {
-      (void)fcl::asio::blocking::run(runtime, disabled_client.async_reserve_relay(relay_node.local_peer()));
+      (void)forge::asio::blocking::run(runtime, disabled_client.async_reserve_relay(relay_node.local_peer()));
       BOOST_FAIL("expected relay client policy rejection");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::relay_not_available));
    }
 
-   fcl::asio::blocking::run(runtime, disabled_client.async_stop());
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, relay_node.async_stop());
+   forge::asio::blocking::run(runtime, disabled_client.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, relay_node.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_relay_connect_requires_target_reservation) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    const auto relay_identity = make_test_certificate_identity("relay-reservation-owner-relay");
    const auto source_identity = make_test_certificate_identity("relay-reservation-owner-source");
    const auto target_identity = make_test_certificate_identity("relay-reservation-owner-target");
@@ -3392,10 +3392,10 @@ BOOST_AUTO_TEST_CASE(p2p_relay_connect_requires_target_reservation) {
        capability_set{.bits = capabilities::direct_quic | capabilities::relay | capabilities::relay_reservation});
    relay_node.peers().learn_endpoint(target.local_peer(), target_endpoint,
                                      capability_set{.bits = capabilities::direct_quic});
-   (void)fcl::asio::blocking::run(runtime, source.async_reserve_relay(relay_node.local_peer()));
+   (void)forge::asio::blocking::run(runtime, source.async_reserve_relay(relay_node.local_peer()));
 
    try {
-      (void)fcl::asio::blocking::run(
+      (void)forge::asio::blocking::run(
           runtime, source.async_open_protocol_stream(target.local_peer(), builtins::echo,
                                                      node::open_options{
                                                          .allow_relay = true,
@@ -3405,18 +3405,18 @@ BOOST_AUTO_TEST_CASE(p2p_relay_connect_requires_target_reservation) {
                                                          .allow_hole_punch = false,
                                                      }));
       BOOST_FAIL("expected relay CONNECT rejection without target reservation");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::relay_rejected));
    }
 
-   fcl::asio::blocking::run(runtime, target.async_stop());
-   fcl::asio::blocking::run(runtime, source.async_stop());
-   fcl::asio::blocking::run(runtime, relay_node.async_stop());
+   forge::asio::blocking::run(runtime, target.async_stop());
+   forge::asio::blocking::run(runtime, source.async_stop());
+   forge::asio::blocking::run(runtime, relay_node.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_relay_stop_connect_passes_frames_after_target_reservation) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    const auto relay_identity = make_test_certificate_identity("relay-stop-connect-relay");
    const auto source_identity = make_test_certificate_identity("relay-stop-connect-source");
    const auto target_identity = make_test_certificate_identity("relay-stop-connect-target");
@@ -3436,9 +3436,9 @@ BOOST_AUTO_TEST_CASE(p2p_relay_stop_connect_passes_frames_after_target_reservati
    target.peers().learn_endpoint(
        relay_node.local_peer(), relay_endpoint,
        capability_set{.bits = capabilities::direct_quic | capabilities::relay | capabilities::relay_reservation});
-   (void)fcl::asio::blocking::run(runtime, target.async_reserve_relay(relay_node.local_peer()));
+   (void)forge::asio::blocking::run(runtime, target.async_reserve_relay(relay_node.local_peer()));
 
-   auto stream = fcl::asio::blocking::run(
+   auto stream = forge::asio::blocking::run(
        runtime, source.async_open_protocol_stream(target.local_peer(), builtins::echo,
                                                   node::open_options{
                                                       .allow_relay = true,
@@ -3448,20 +3448,20 @@ BOOST_AUTO_TEST_CASE(p2p_relay_stop_connect_passes_frames_after_target_reservati
                                                       .allow_hole_punch = false,
                                                   }));
    const auto payload = std::vector<std::uint8_t>{'r', 'e', 'l', 'a', 'y'};
-   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   forge::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read_frame());
 
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
    BOOST_TEST(relay_node.metrics().relays_opened >= 1U);
    BOOST_TEST(source.metrics().path_relay_opens >= 1U);
 
-   fcl::asio::blocking::run(runtime, target.async_stop());
-   fcl::asio::blocking::run(runtime, source.async_stop());
-   fcl::asio::blocking::run(runtime, relay_node.async_stop());
+   forge::asio::blocking::run(runtime, target.async_stop());
+   forge::asio::blocking::run(runtime, source.async_stop());
+   forge::asio::blocking::run(runtime, relay_node.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_relay_transport_opens_arbitrary_registered_protocol) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    const auto protocol = protocol_id{.value = "/product/relay-arbitrary/1"};
    const auto relay_identity = make_test_certificate_identity("relay-arbitrary-protocol-relay");
    const auto source_identity = make_test_certificate_identity("relay-arbitrary-protocol-source");
@@ -3482,9 +3482,9 @@ BOOST_AUTO_TEST_CASE(p2p_relay_transport_opens_arbitrary_registered_protocol) {
    target.peers().learn_endpoint(
        relay_node.local_peer(), relay_endpoint,
        capability_set{.bits = capabilities::direct_quic | capabilities::relay | capabilities::relay_reservation});
-   (void)fcl::asio::blocking::run(runtime, target.async_reserve_relay(relay_node.local_peer()));
+   (void)forge::asio::blocking::run(runtime, target.async_reserve_relay(relay_node.local_peer()));
 
-   auto stream = fcl::asio::blocking::run(
+   auto stream = forge::asio::blocking::run(
        runtime, source.async_open_protocol_stream(target.local_peer(), protocol,
                                                   node::open_options{
                                                       .allow_relay = true,
@@ -3494,23 +3494,23 @@ BOOST_AUTO_TEST_CASE(p2p_relay_transport_opens_arbitrary_registered_protocol) {
                                                       .allow_hole_punch = false,
                                                   }));
    const auto payload = std::vector<std::uint8_t>{'p', 'r', 'o', 'd', 'u', 'c', 't'};
-   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   forge::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read_frame());
 
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
    BOOST_TEST(relay_node.metrics().relays_opened >= 1U);
    BOOST_TEST(source.metrics().path_relay_opens >= 1U);
 
-   fcl::asio::blocking::run(runtime, target.async_stop());
-   fcl::asio::blocking::run(runtime, source.async_stop());
-   fcl::asio::blocking::run(runtime, relay_node.async_stop());
+   forge::asio::blocking::run(runtime, target.async_stop());
+   forge::asio::blocking::run(runtime, source.async_stop());
+   forge::asio::blocking::run(runtime, relay_node.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_identify_document_roundtrips_libp2p_fields) {
    const auto id = peer(74);
    auto doc = identify::document{
-       .protocol_version = "/fcl/test/1",
-       .agent_version = "fcl-test/1",
+       .protocol_version = "/forge/test/1",
+       .agent_version = "forge-test/1",
        .public_key = std::vector<std::uint8_t>{1, 2, 3},
        .listen_endpoints =
            std::vector<endpoint>{parse_endpoint("/ip4/127.0.0.1/udp/4001/quic-v1/p2p/" + id.to_string())},
@@ -3534,32 +3534,32 @@ BOOST_AUTO_TEST_CASE(p2p_identify_document_roundtrips_libp2p_fields) {
 }
 
 BOOST_AUTO_TEST_CASE(p2p_direct_nodes_negotiate_protocol_and_echo_frames) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = node{runtime, options_for(peer(2))};
    auto client = node{runtime, options_for(peer(1))};
    register_echo(server);
 
    const auto server_endpoint = listen(server, runtime);
-   const auto session = fcl::asio::blocking::run(
+   const auto session = forge::asio::blocking::run(
        runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
    BOOST_TEST(session.remote_peer.value == server.local_peer().value);
 
    auto stream =
-       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::echo));
+       forge::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::echo));
    const auto payload = std::vector<std::uint8_t>{'p', '2', 'p'};
-   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   forge::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read_frame());
 
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
    BOOST_TEST(client.metrics().protocol_streams_opened >= 1U);
    BOOST_TEST(server.metrics().protocol_streams_accepted >= 1U);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_direct_quic_uses_endpoint_peer_when_expected_peer_is_absent) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server_options = options_for(make_test_certificate_identity("quic-endpoint-peer-server"));
    auto client_options = options_for(make_test_certificate_identity("quic-endpoint-peer-client"));
    server_options.allow_insecure_test_mode = false;
@@ -3571,16 +3571,16 @@ BOOST_AUTO_TEST_CASE(p2p_direct_quic_uses_endpoint_peer_when_expected_peer_is_ab
 
    auto server_endpoint = listen(server, runtime);
    server_endpoint.peer = server.local_peer();
-   const auto session = fcl::asio::blocking::run(runtime, client.async_connect(server_endpoint));
+   const auto session = forge::asio::blocking::run(runtime, client.async_connect(server_endpoint));
 
    BOOST_TEST(session.remote_peer.value == server.local_peer().value);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_direct_quic_rejects_endpoint_peer_mismatch) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server_options = options_for(make_test_certificate_identity("quic-endpoint-peer-mismatch-server"));
    auto client_options = options_for(make_test_certificate_identity("quic-endpoint-peer-mismatch-client"));
    server_options.allow_insecure_test_mode = false;
@@ -3593,20 +3593,20 @@ BOOST_AUTO_TEST_CASE(p2p_direct_quic_rejects_endpoint_peer_mismatch) {
    auto server_endpoint = listen(server, runtime);
    server_endpoint.peer = peer(150);
    try {
-      (void)fcl::asio::blocking::run(runtime, client.async_connect(server_endpoint));
+      (void)forge::asio::blocking::run(runtime, client.async_connect(server_endpoint));
       BOOST_FAIL("expected QUIC endpoint peer mismatch");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_REQUIRE(forge::p2p::exceptions::code_of(error).has_value());
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::peer_verification_failed));
    }
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_direct_quic_explicit_expected_peer_matches_certificate_peer_id) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server_options = options_for(make_test_certificate_identity("quic-expected-peer-server"));
    auto client_options = options_for(make_test_certificate_identity("quic-expected-peer-client"));
    server_options.allow_insecure_test_mode = false;
@@ -3617,17 +3617,17 @@ BOOST_AUTO_TEST_CASE(p2p_direct_quic_explicit_expected_peer_matches_certificate_
    auto client = node{runtime, std::move(client_options)};
 
    const auto server_endpoint = listen(server, runtime);
-   const auto session = fcl::asio::blocking::run(
+   const auto session = forge::asio::blocking::run(
        runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
 
    BOOST_TEST(session.remote_peer.value == server.local_peer().value);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_direct_quic_rejects_missing_certificate_identity_without_expected_peer) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server_options = node::options{
        .certificate_pem = std::string{test_certificate()},
        .private_key_pem = std::string{test_private_key()},
@@ -3642,20 +3642,20 @@ BOOST_AUTO_TEST_CASE(p2p_direct_quic_rejects_missing_certificate_identity_withou
 
    const auto server_endpoint = listen(server, runtime);
    try {
-      (void)fcl::asio::blocking::run(runtime, client.async_connect(server_endpoint));
+      (void)forge::asio::blocking::run(runtime, client.async_connect(server_endpoint));
       BOOST_FAIL("expected missing QUIC certificate identity extension to fail");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_REQUIRE(forge::p2p::exceptions::code_of(error).has_value());
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::peer_verification_failed));
    }
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_direct_quic_rejects_missing_certificate_identity_with_endpoint_peer) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    const auto legacy_peer = legacy_cert_hash_peer_id(test_certificate());
    auto server_options = node::options{
        .certificate_pem = std::string{test_certificate()},
@@ -3672,82 +3672,82 @@ BOOST_AUTO_TEST_CASE(p2p_direct_quic_rejects_missing_certificate_identity_with_e
    auto server_endpoint = listen(server, runtime);
    server_endpoint.peer = legacy_peer;
    try {
-      (void)fcl::asio::blocking::run(runtime, client.async_connect(server_endpoint));
+      (void)forge::asio::blocking::run(runtime, client.async_connect(server_endpoint));
       BOOST_FAIL("expected missing QUIC certificate identity extension to fail");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_REQUIRE(fcl::p2p::exceptions::code_of(error).has_value());
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_REQUIRE(forge::p2p::exceptions::code_of(error).has_value());
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::peer_verification_failed));
    }
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_ping_protocol_uses_libp2p_payload_echo) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = node{runtime, options_for(peer(72))};
    auto client = node{runtime, options_for(peer(73))};
 
    const auto server_endpoint = listen(server, runtime);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
 
    auto stream =
-       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::ping));
+       forge::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::ping));
    const auto payload = std::vector<std::uint8_t>(32, 0x42);
-   fcl::asio::blocking::run(runtime, stream.async_write(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read());
+   forge::asio::blocking::run(runtime, stream.async_write(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read());
 
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_ping_api_returns_rtt) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = node{runtime, options_for(peer(82))};
    auto client = node{runtime, options_for(peer(83))};
 
    const auto server_endpoint = listen(server, runtime);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
 
-   const auto rtt = fcl::asio::blocking::run(runtime, client.async_ping(server.local_peer()));
+   const auto rtt = forge::asio::blocking::run(runtime, client.async_ping(server.local_peer()));
    BOOST_TEST(rtt.count() >= 0);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_identify_protocol_advertises_supported_protocols) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = node{runtime, options_for(peer(75))};
    auto client = node{runtime, options_for(peer(76))};
    register_echo(server);
 
    const auto server_endpoint = listen(server, runtime);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
 
    auto stream =
-       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::identify));
-   const auto payload = fcl::asio::blocking::run(runtime, read_length_delimited(stream));
+       forge::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::identify));
+   const auto payload = forge::asio::blocking::run(runtime, read_length_delimited(stream));
    const auto doc = identify::decode(payload);
 
-   BOOST_TEST(doc.agent_version == "fcl/1.0.0");
+   BOOST_TEST(doc.agent_version == "forge/1.0.0");
    BOOST_TEST(std::ranges::any_of(doc.protocols, [](const protocol_id& value) { return value == builtins::ping; }));
    BOOST_TEST(std::ranges::any_of(doc.protocols, [](const protocol_id& value) { return value == builtins::identify; }));
    BOOST_TEST(std::ranges::any_of(doc.protocols, [](const protocol_id& value) { return value == builtins::echo; }));
    BOOST_TEST(!doc.listen_endpoints.empty());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_dht_node_finds_peer_and_provider_over_negotiated_stream) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server_options = options_for(peer(118), capability_set{.bits = capabilities::direct_quic | capabilities::dht});
    server_options.limits.dht.operating_mode = dht::mode::server;
    auto client_options = options_for(peer(119), capability_set{.bits = capabilities::direct_quic | capabilities::dht});
@@ -3782,13 +3782,13 @@ BOOST_AUTO_TEST_CASE(p2p_dht_node_finds_peer_and_provider_over_negotiated_stream
        .expires_at = std::chrono::system_clock::now() + std::chrono::hours{1},
    });
 
-   const auto found_peer = fcl::asio::blocking::run(runtime, client.async_find_peer(target));
+   const auto found_peer = forge::asio::blocking::run(runtime, client.async_find_peer(target));
    BOOST_TEST(std::ranges::any_of(found_peer.closest_peers, [&](const dht::peer& value) {
       return value.id == target && !value.endpoints.empty() &&
              value.endpoints.front().to_string() == target_endpoint.to_string();
    }));
 
-   const auto providers = fcl::asio::blocking::run(runtime, client.async_find_providers(key));
+   const auto providers = forge::asio::blocking::run(runtime, client.async_find_providers(key));
    BOOST_TEST(std::ranges::any_of(providers, [&](const dht::peer& value) {
       return value.id == provider && !value.endpoints.empty() &&
              value.endpoints.front().to_string() == provider_endpoint.to_string();
@@ -3796,12 +3796,12 @@ BOOST_AUTO_TEST_CASE(p2p_dht_node_finds_peer_and_provider_over_negotiated_stream
    BOOST_TEST(server.metrics().dht_queries >= 2U);
    BOOST_TEST(server.metrics().dht_responses >= 2U);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_dht_iterative_lookup_walks_many_peer_topology) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    const auto seed_identity = make_test_certificate_identity("dht-seed");
    const auto hop_identity = make_test_certificate_identity("dht-hop");
    const auto client_identity = make_test_certificate_identity("dht-client");
@@ -3844,7 +3844,7 @@ BOOST_AUTO_TEST_CASE(p2p_dht_iterative_lookup_walks_many_peer_topology) {
        },
        discovery::source::dht, std::chrono::system_clock::now() + std::chrono::hours{1});
 
-   const auto found = fcl::asio::blocking::run(runtime, client.async_find_peer(target));
+   const auto found = forge::asio::blocking::run(runtime, client.async_find_peer(target));
    BOOST_TEST(found.complete);
    BOOST_TEST(std::ranges::any_of(found.closest_peers, [&](const dht::peer& value) {
       return value.id == target && !value.endpoints.empty() &&
@@ -3853,13 +3853,13 @@ BOOST_AUTO_TEST_CASE(p2p_dht_iterative_lookup_walks_many_peer_topology) {
    BOOST_TEST(seed.metrics().dht_queries >= 1U);
    BOOST_TEST(hop.metrics().dht_queries >= 1U);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, hop.async_stop());
-   fcl::asio::blocking::run(runtime, seed.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, hop.async_stop());
+   forge::asio::blocking::run(runtime, seed.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_dht_iterative_provider_lookup_and_provide_reach_closest_peers) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    const auto seed_identity = make_test_certificate_identity("dht-provider-seed");
    const auto hop_identity = make_test_certificate_identity("dht-provider-hop");
    const auto client_identity = make_test_certificate_identity("dht-provider-client");
@@ -3922,7 +3922,7 @@ BOOST_AUTO_TEST_CASE(p2p_dht_iterative_provider_lookup_and_provide_reach_closest
        .expires_at = std::chrono::system_clock::now() - std::chrono::seconds{1},
    });
 
-   const auto providers = fcl::asio::blocking::run(runtime, client.async_find_providers(key));
+   const auto providers = forge::asio::blocking::run(runtime, client.async_find_providers(key));
    BOOST_TEST(std::ranges::any_of(providers, [&](const dht::peer& value) {
       return value.id == provider && !value.endpoints.empty() &&
              value.endpoints.front().to_string() == provider_endpoint.to_string();
@@ -3933,7 +3933,7 @@ BOOST_AUTO_TEST_CASE(p2p_dht_iterative_provider_lookup_and_provide_reach_closest
 
    const auto publish_key =
        make_dht_key(std::vector<std::uint8_t>{'f', 'c', 'l', '-', 'd', 'h', 't', '-', 'r', 'e', 'p', 'u', 'b'});
-   fcl::asio::blocking::run(runtime, client.async_provide(publish_key));
+   forge::asio::blocking::run(runtime, client.async_provide(publish_key));
    auto provider_stored = false;
    for (auto attempt = 0U; attempt < 20U && !provider_stored; ++attempt) {
       const auto stored = hop.peers().find_providers(publish_key);
@@ -3946,13 +3946,13 @@ BOOST_AUTO_TEST_CASE(p2p_dht_iterative_provider_lookup_and_provide_reach_closest
    }
    BOOST_TEST(provider_stored);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, hop.async_stop());
-   fcl::asio::blocking::run(runtime, seed.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, hop.async_stop());
+   forge::asio::blocking::run(runtime, seed.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_rendezvous_node_registers_and_discovers_over_negotiated_stream) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server_options =
        options_for(peer(122), capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
    server_options.limits.rendezvous.operating_role = rendezvous::role::server;
@@ -3966,34 +3966,34 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_node_registers_and_discovers_over_negotiated
    client.peers().learn_endpoint(server.local_peer(), server_endpoint,
                                  capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
 
-   const auto response = fcl::asio::blocking::run(
+   const auto response = forge::asio::blocking::run(
        runtime, client.async_rendezvous_register(server.local_peer(), rendezvous::register_request{
-                                                                          .namespace_name = "fcl.discovery",
+                                                                          .namespace_name = "forge.discovery",
                                                                           .ttl = std::chrono::seconds{7'200},
                                                                       }));
    BOOST_TEST(static_cast<int>(response.status_value) == static_cast<int>(rendezvous::status::ok));
    BOOST_TEST(response.ttl == std::chrono::seconds{7'200});
 
-   const auto discovered = fcl::asio::blocking::run(
+   const auto discovered = forge::asio::blocking::run(
        runtime, client.async_rendezvous_discover(server.local_peer(), rendezvous::discover_request{
-                                                                          .namespace_name = "fcl.discovery",
+                                                                          .namespace_name = "forge.discovery",
                                                                           .limit = 10,
                                                                       }));
    BOOST_TEST(static_cast<int>(discovered.status_value) == static_cast<int>(rendezvous::status::ok));
    BOOST_REQUIRE_EQUAL(discovered.registrations.size(), 1U);
-   BOOST_TEST(discovered.registrations.front().namespace_name == "fcl.discovery");
+   BOOST_TEST(discovered.registrations.front().namespace_name == "forge.discovery");
    BOOST_TEST(discovered.registrations.front().peer.to_string().empty());
    BOOST_TEST(discovered.registrations.front().signed_peer_record.empty());
    BOOST_TEST(rendezvous::codec::read_cookie(discovered.cookie) >= 1U);
    BOOST_TEST(server.metrics().rendezvous_registrations >= 1U);
    BOOST_TEST(server.metrics().rendezvous_discovers >= 1U);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_rendezvous_refresh_replaces_registration_and_cookie_discovers_new_records) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server_options =
        options_for(peer(132), capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
    server_options.limits.rendezvous.operating_role = rendezvous::role::server;
@@ -4014,33 +4014,33 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_refresh_replaces_registration_and_cookie_dis
    const auto first_record = make_signed_rendezvous_peer_record(identity, std::vector<endpoint>{first_endpoint}, 1);
    const auto second_record = make_signed_rendezvous_peer_record(identity, std::vector<endpoint>{second_endpoint}, 2);
 
-   auto first = fcl::asio::blocking::run(
+   auto first = forge::asio::blocking::run(
        runtime, client.async_rendezvous_register(server.local_peer(), rendezvous::register_request{
-                                                                          .namespace_name = "fcl.discovery",
+                                                                          .namespace_name = "forge.discovery",
                                                                           .signed_peer_record = first_record,
                                                                           .ttl = std::chrono::seconds{7'200},
                                                                       }));
    BOOST_TEST(static_cast<int>(first.status_value) == static_cast<int>(rendezvous::status::ok));
 
-   const auto after_first = fcl::asio::blocking::run(
+   const auto after_first = forge::asio::blocking::run(
        runtime, client.async_rendezvous_discover(server.local_peer(), rendezvous::discover_request{
-                                                                          .namespace_name = "fcl.discovery",
+                                                                          .namespace_name = "forge.discovery",
                                                                           .limit = 10,
                                                                       }));
    BOOST_REQUIRE_EQUAL(after_first.registrations.size(), 1U);
    const auto cookie = after_first.cookie;
 
-   auto second = fcl::asio::blocking::run(
+   auto second = forge::asio::blocking::run(
        runtime, client.async_rendezvous_register(server.local_peer(), rendezvous::register_request{
-                                                                          .namespace_name = "fcl.discovery",
+                                                                          .namespace_name = "forge.discovery",
                                                                           .signed_peer_record = second_record,
                                                                           .ttl = std::chrono::seconds{7'200},
                                                                       }));
    BOOST_TEST(static_cast<int>(second.status_value) == static_cast<int>(rendezvous::status::ok));
 
-   const auto after_cookie = fcl::asio::blocking::run(
+   const auto after_cookie = forge::asio::blocking::run(
        runtime, client.async_rendezvous_discover(server.local_peer(), rendezvous::discover_request{
-                                                                          .namespace_name = "fcl.discovery",
+                                                                          .namespace_name = "forge.discovery",
                                                                           .limit = 10,
                                                                           .cookie = cookie,
                                                                       }));
@@ -4049,12 +4049,12 @@ BOOST_AUTO_TEST_CASE(p2p_rendezvous_refresh_replaces_registration_and_cookie_dis
    BOOST_REQUIRE_EQUAL(after_cookie.registrations.front().endpoints.size(), 1U);
    BOOST_TEST(after_cookie.registrations.front().endpoints.front().to_string() == second_endpoint.to_string());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_discovery_refresh_learns_dht_and_rendezvous_relay_candidates_for_autorelay) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto relay_identity = make_test_certificate_identity("discovery-refresh-relay");
    auto dht_options = options_for(peer(133), capability_set{.bits = capabilities::direct_quic | capabilities::dht});
    dht_options.limits.dht.operating_mode = dht::mode::server;
@@ -4094,9 +4094,9 @@ BOOST_AUTO_TEST_CASE(p2p_discovery_refresh_learns_dht_and_rendezvous_relay_candi
                                 capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
    const auto relay_record =
        make_signed_rendezvous_peer_record(relay_identity, std::vector<endpoint>{advertised_relay_endpoint}, 1);
-   auto registered = fcl::asio::blocking::run(
+   auto registered = forge::asio::blocking::run(
        runtime, relay.async_rendezvous_register(rendezvous_server.local_peer(), rendezvous::register_request{
-                                                                                  .namespace_name = "fcl.discovery",
+                                                                                  .namespace_name = "forge.discovery",
                                                                                   .signed_peer_record = relay_record,
                                                                                   .ttl = std::chrono::seconds{7'200},
                                                                               }));
@@ -4108,7 +4108,7 @@ BOOST_AUTO_TEST_CASE(p2p_discovery_refresh_learns_dht_and_rendezvous_relay_candi
                                  capability_set{.bits = capabilities::direct_quic | capabilities::rendezvous});
    client.peers().learn_endpoint(relay.local_peer(), relay_endpoint, capability_set{});
 
-   const auto discovered = fcl::asio::blocking::run(runtime, client.async_refresh_discovery());
+   const auto discovered = forge::asio::blocking::run(runtime, client.async_refresh_discovery());
    BOOST_TEST(std::ranges::any_of(discovered, [&](const discovery::result& value) {
       return value.peer == relay.local_peer();
    }));
@@ -4117,18 +4117,18 @@ BOOST_AUTO_TEST_CASE(p2p_discovery_refresh_learns_dht_and_rendezvous_relay_candi
    BOOST_TEST(learned->capabilities.has(capabilities::relay));
    BOOST_TEST(learned->capabilities.has(capabilities::relay_reservation));
 
-   const auto reservations = fcl::asio::blocking::run(runtime, client.async_refresh_relay_candidates());
+   const auto reservations = forge::asio::blocking::run(runtime, client.async_refresh_relay_candidates());
    BOOST_REQUIRE_EQUAL(reservations.size(), 1U);
    BOOST_TEST(reservations.front().relay_peer.to_string() == relay.local_peer().to_string());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, relay.async_stop());
-   fcl::asio::blocking::run(runtime, rendezvous_server.async_stop());
-   fcl::asio::blocking::run(runtime, dht_server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, relay.async_stop());
+   forge::asio::blocking::run(runtime, rendezvous_server.async_stop());
+   forge::asio::blocking::run(runtime, dht_server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_gossipsub_nodes_deliver_signed_publish_over_negotiated_stream) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto publisher_options = pubsub_options_for();
    auto subscriber_options = pubsub_options_for();
    subscriber_options.explicit_peer_id = peer(150);
@@ -4140,16 +4140,16 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_nodes_deliver_signed_publish_over_negotiated_
 
    auto received = std::make_shared<std::promise<std::vector<std::uint8_t>>>();
    auto future = received->get_future();
-   fcl::asio::blocking::run(
+   forge::asio::blocking::run(
        runtime, subscriber.async_subscribe(
-                    pubsub::topic{.value = "fcl.pubsub"},
+                    pubsub::topic{.value = "forge.pubsub"},
                     [received](pubsub::event event) mutable -> boost::asio::awaitable<pubsub::validation_result> {
                        received->set_value(event.value.data);
                        co_return pubsub::validation_result::accept;
                     }));
 
-   const auto published = fcl::asio::blocking::run(
-       runtime, publisher.async_publish(pubsub::topic{.value = "fcl.pubsub"},
+   const auto published = forge::asio::blocking::run(
+       runtime, publisher.async_publish(pubsub::topic{.value = "forge.pubsub"},
                                         std::vector<std::uint8_t>{'p', 'u', 'b', 's', 'u', 'b'}));
    BOOST_TEST(!published.signature.empty());
 
@@ -4165,12 +4165,12 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_nodes_deliver_signed_publish_over_negotiated_
    BOOST_TEST(publisher.pubsub_snapshot().messages_published >= 1U);
    BOOST_TEST(subscriber.pubsub_snapshot().messages_delivered >= 1U);
 
-   fcl::asio::blocking::run(runtime, publisher.async_stop());
-   fcl::asio::blocking::run(runtime, subscriber.async_stop());
+   forge::asio::blocking::run(runtime, publisher.async_stop());
+   forge::asio::blocking::run(runtime, subscriber.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_gossipsub_forwards_between_subscribed_peers) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 6}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 6}};
    auto publisher_options = pubsub_options_for();
    auto hub_options = pubsub_options_for();
    auto subscriber_options = pubsub_options_for();
@@ -4192,15 +4192,15 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_forwards_between_subscribed_peers) {
 
    auto received = std::make_shared<std::promise<std::vector<std::uint8_t>>>();
    auto future = received->get_future();
-   fcl::asio::blocking::run(
+   forge::asio::blocking::run(
        runtime, subscriber.async_subscribe(
-                    pubsub::topic{.value = "fcl.mesh"},
+                    pubsub::topic{.value = "forge.mesh"},
                     [received](pubsub::event event) mutable -> boost::asio::awaitable<pubsub::validation_result> {
                        received->set_value(event.value.data);
                        co_return pubsub::validation_result::accept;
                     }));
 
-   fcl::asio::blocking::run(runtime, publisher.async_publish(pubsub::topic{.value = "fcl.mesh"},
+   forge::asio::blocking::run(runtime, publisher.async_publish(pubsub::topic{.value = "forge.mesh"},
                                                              std::vector<std::uint8_t>{'m', 'e', 's', 'h'}));
 
    if (future.wait_for(std::chrono::milliseconds{5'000}) != std::future_status::ready) {
@@ -4216,13 +4216,13 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_forwards_between_subscribed_peers) {
    BOOST_TEST(hub.pubsub_snapshot().mesh_edges >= 1U);
    BOOST_TEST(subscriber.pubsub_snapshot().messages_delivered >= 1U);
 
-   fcl::asio::blocking::run(runtime, publisher.async_stop());
-   fcl::asio::blocking::run(runtime, hub.async_stop());
-   fcl::asio::blocking::run(runtime, subscriber.async_stop());
+   forge::asio::blocking::run(runtime, publisher.async_stop());
+   forge::asio::blocking::run(runtime, hub.async_stop());
+   forge::asio::blocking::run(runtime, subscriber.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_gossipsub_control_spam_is_penalized_without_stopping_node) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto server_options = pubsub_options_for();
    server_options.limits.pubsub.limits.max_ihave_per_peer = 1;
    server_options.limits.pubsub.limits.max_iwant_per_peer = 1;
@@ -4236,14 +4236,14 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_control_spam_is_penalized_without_stopping_no
    client.peers().learn_endpoint(server.local_peer(), server_endpoint,
                                  capability_set{.bits = capabilities::direct_quic | capabilities::pubsub});
 
-   fcl::asio::blocking::run(
-       runtime, server.async_subscribe(pubsub::topic{.value = "fcl.spam"},
+   forge::asio::blocking::run(
+       runtime, server.async_subscribe(pubsub::topic{.value = "forge.spam"},
                                        [](pubsub::event) -> boost::asio::awaitable<pubsub::validation_result> {
                                           co_return pubsub::validation_result::accept;
                                        }));
 
    auto stream =
-       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::meshsub_v11));
+       forge::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::meshsub_v11));
    const auto id = std::vector<std::uint8_t>{'i', 'd'};
    auto spam =
        pubsub::rpc{
@@ -4251,9 +4251,9 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_control_spam_is_penalized_without_stopping_no
                pubsub::control{
                    .have =
                        std::vector<pubsub::control::ihave>{
-                           pubsub::control::ihave{.subject = pubsub::topic{.value = "fcl.spam"},
+                           pubsub::control::ihave{.subject = pubsub::topic{.value = "forge.spam"},
                                                   .message_ids = std::vector<std::vector<std::uint8_t>>{id}},
-                           pubsub::control::ihave{.subject = pubsub::topic{.value = "fcl.spam"},
+                           pubsub::control::ihave{.subject = pubsub::topic{.value = "forge.spam"},
                                                   .message_ids = std::vector<std::vector<std::uint8_t>>{id}}},
                    .want =
                        std::vector<pubsub::control::iwant>{
@@ -4261,24 +4261,24 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_control_spam_is_penalized_without_stopping_no
                            pubsub::control::iwant{.message_ids = std::vector<std::vector<std::uint8_t>>{id}}},
                    .grafts =
                        std::vector<pubsub::control::graft>{
-                           pubsub::control::graft{.subject = pubsub::topic{.value = "fcl.spam"}},
-                           pubsub::control::graft{.subject = pubsub::topic{.value = "fcl.spam"}}},
+                           pubsub::control::graft{.subject = pubsub::topic{.value = "forge.spam"}},
+                           pubsub::control::graft{.subject = pubsub::topic{.value = "forge.spam"}}},
                },
        };
-   fcl::asio::blocking::run(runtime, stream.async_write(pubsub::codec::encode(spam)));
+   forge::asio::blocking::run(runtime, stream.async_write(pubsub::codec::encode(spam)));
    wait_on_runtime(runtime, std::chrono::milliseconds{250}, "gossipsub spam accounting");
 
    BOOST_TEST(server.metrics().pubsub_invalid_messages >= 1U);
    BOOST_TEST(server.metrics().protocol_rejections >= 1U);
    BOOST_TEST(!server.metrics().stopped);
 
-   fcl::asio::blocking::run(runtime, stream.async_close());
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, stream.async_close());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_abusive_peer_crossing_malformed_threshold_closes_only_offender_session) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto server_options = pubsub_options_for();
    server_options.limits.resources.max_malformed_messages_per_peer = 1;
    server_options.limits.max_sessions = 2;
@@ -4300,9 +4300,9 @@ BOOST_AUTO_TEST_CASE(p2p_abusive_peer_crossing_malformed_threshold_closes_only_o
                               capability_set{.bits = capabilities::direct_quic | capabilities::pubsub});
    good.peers().learn_endpoint(server.local_peer(), server_endpoint,
                                capability_set{.bits = capabilities::direct_quic | capabilities::pubsub});
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, bad.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, good.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
 
    const auto id = std::vector<std::uint8_t>{'i', 'd'};
@@ -4311,16 +4311,16 @@ BOOST_AUTO_TEST_CASE(p2p_abusive_peer_crossing_malformed_threshold_closes_only_o
            pubsub::control{
                .have =
                    std::vector<pubsub::control::ihave>{
-                       pubsub::control::ihave{.subject = pubsub::topic{.value = "fcl.abuse"},
+                       pubsub::control::ihave{.subject = pubsub::topic{.value = "forge.abuse"},
                                               .message_ids = std::vector<std::vector<std::uint8_t>>{id}},
-                       pubsub::control::ihave{.subject = pubsub::topic{.value = "fcl.abuse"},
+                       pubsub::control::ihave{.subject = pubsub::topic{.value = "forge.abuse"},
                                               .message_ids = std::vector<std::vector<std::uint8_t>>{id}}},
            },
    };
    for (auto index = 0; index != 2; ++index) {
       auto stream =
-          fcl::asio::blocking::run(runtime, bad.async_open_protocol_stream(server.local_peer(), builtins::meshsub_v11));
-      fcl::asio::blocking::run(runtime, stream.async_write(pubsub::codec::encode(spam)));
+          forge::asio::blocking::run(runtime, bad.async_open_protocol_stream(server.local_peer(), builtins::meshsub_v11));
+      forge::asio::blocking::run(runtime, stream.async_write(pubsub::codec::encode(spam)));
       wait_on_runtime(runtime, std::chrono::milliseconds{150}, "gossipsub abuse accounting");
    }
 
@@ -4329,20 +4329,20 @@ BOOST_AUTO_TEST_CASE(p2p_abusive_peer_crossing_malformed_threshold_closes_only_o
    BOOST_TEST(server.metrics().connection_rejections >= 1U);
 
    auto stream =
-       fcl::asio::blocking::run(runtime, good.async_open_protocol_stream(server.local_peer(), builtins::echo,
+       forge::asio::blocking::run(runtime, good.async_open_protocol_stream(server.local_peer(), builtins::echo,
                                                                          node::open_options{.allow_relay = false}));
    const auto payload = std::vector<std::uint8_t>{'g', 'o', 'o', 'd'};
-   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   forge::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read_frame());
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
 
-   fcl::asio::blocking::run(runtime, good.async_stop());
-   fcl::asio::blocking::run(runtime, bad.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, good.async_stop());
+   forge::asio::blocking::run(runtime, bad.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_gossipsub_outbound_byte_limit_rejects_publish_without_stopping_node) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 4}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
    auto publisher_options = pubsub_options_for();
    publisher_options.limits.pubsub.limits.max_outbound_queue_bytes = 8;
    auto subscriber_options = pubsub_options_for();
@@ -4353,25 +4353,25 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_outbound_byte_limit_rejects_publish_without_s
    const auto subscriber_endpoint = listen(subscriber, runtime);
    publisher.peers().learn_endpoint(subscriber.local_peer(), subscriber_endpoint,
                                     capability_set{.bits = capabilities::direct_quic | capabilities::pubsub});
-   fcl::asio::blocking::run(
-       runtime, subscriber.async_subscribe(pubsub::topic{.value = "fcl.limit"},
+   forge::asio::blocking::run(
+       runtime, subscriber.async_subscribe(pubsub::topic{.value = "forge.limit"},
                                            [](pubsub::event) -> boost::asio::awaitable<pubsub::validation_result> {
                                               co_return pubsub::validation_result::accept;
                                            }));
 
    BOOST_CHECK_THROW(
-       (void)fcl::asio::blocking::run(runtime, publisher.async_publish(pubsub::topic{.value = "fcl.limit"},
+       (void)forge::asio::blocking::run(runtime, publisher.async_publish(pubsub::topic{.value = "forge.limit"},
                                                                        std::vector<std::uint8_t>{'o', 'v', 'e', 'r'})),
-       fcl::exceptions::base);
+       forge::exceptions::base);
    BOOST_TEST(publisher.metrics().backpressure_rejections >= 1U);
    BOOST_TEST(!publisher.metrics().stopped);
 
-   fcl::asio::blocking::run(runtime, publisher.async_stop());
-   fcl::asio::blocking::run(runtime, subscriber.async_stop());
+   forge::asio::blocking::run(runtime, publisher.async_stop());
+   forge::asio::blocking::run(runtime, subscriber.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_gossipsub_validation_queue_limit_drops_excess_and_shutdown_is_clean) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 6}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 6}};
    auto subscriber_options = pubsub_options_for(make_test_certificate_identity("pubsub-validation-subscriber"));
    subscriber_options.limits.pubsub.limits.max_validation_queue = 1;
    subscriber_options.limits.pubsub.signatures = pubsub::signature_policy::lax_no_sign;
@@ -4390,9 +4390,9 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_validation_queue_limit_drops_excess_and_shutd
                                       capability_set{.bits = capabilities::direct_quic | capabilities::pubsub});
 
    auto entered = std::make_shared<std::atomic_uint64_t>(0);
-   fcl::asio::blocking::run(
+   forge::asio::blocking::run(
        runtime, subscriber.async_subscribe(
-                    pubsub::topic{.value = "fcl.validation"},
+                    pubsub::topic{.value = "forge.validation"},
                     [entered](pubsub::event) mutable -> boost::asio::awaitable<pubsub::validation_result> {
                        entered->fetch_add(1, std::memory_order_relaxed);
                        auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
@@ -4405,7 +4405,7 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_validation_queue_limit_drops_excess_and_shutd
    auto publish_a = boost::asio::co_spawn(
        runtime.context(),
        [&publisher_a]() -> boost::asio::awaitable<void> {
-          (void)co_await publisher_a.async_publish(pubsub::topic{.value = "fcl.validation"},
+          (void)co_await publisher_a.async_publish(pubsub::topic{.value = "forge.validation"},
                                                    std::vector<std::uint8_t>{'a'},
                                                    pubsub::publish_options{.sign = false});
        },
@@ -4413,7 +4413,7 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_validation_queue_limit_drops_excess_and_shutd
    auto publish_b = boost::asio::co_spawn(
        runtime.context(),
        [&publisher_b]() -> boost::asio::awaitable<void> {
-          (void)co_await publisher_b.async_publish(pubsub::topic{.value = "fcl.validation"},
+          (void)co_await publisher_b.async_publish(pubsub::topic{.value = "forge.validation"},
                                                    std::vector<std::uint8_t>{'b'},
                                                    pubsub::publish_options{.sign = false});
        },
@@ -4426,16 +4426,16 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_validation_queue_limit_drops_excess_and_shutd
    BOOST_TEST(subscriber.metrics().pubsub_invalid_messages >= 1U);
    BOOST_TEST(subscriber.pubsub_snapshot().messages_delivered == 1U);
 
-   fcl::asio::blocking::run(runtime, subscriber.async_stop());
+   forge::asio::blocking::run(runtime, subscriber.async_stop());
    BOOST_TEST(subscriber.metrics().stopped);
-   fcl::asio::blocking::run(runtime, publisher_a.async_stop());
-   fcl::asio::blocking::run(runtime, publisher_b.async_stop());
+   forge::asio::blocking::run(runtime, publisher_a.async_stop());
+   forge::asio::blocking::run(runtime, publisher_b.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_gossipsub_ten_node_mesh_delivers_multiple_publishes_once) {
    constexpr auto node_count = std::size_t{10};
    constexpr auto publish_count = std::size_t{3};
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 12}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 12}};
    auto identities = std::vector<test_certificate_identity>{};
    auto nodes = std::vector<std::unique_ptr<node>>{};
    auto endpoints = std::vector<endpoint>{};
@@ -4467,10 +4467,10 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_ten_node_mesh_delivers_multiple_publishes_onc
    };
    auto state = std::make_shared<delivery_state>();
    for (auto index = std::size_t{}; index < node_count; ++index) {
-      fcl::asio::blocking::run(
+      forge::asio::blocking::run(
           runtime,
           nodes[index]->async_subscribe(
-              pubsub::topic{.value = "fcl.mesh.stress"},
+              pubsub::topic{.value = "forge.mesh.stress"},
               [state, index](pubsub::event event) mutable -> boost::asio::awaitable<pubsub::validation_result> {
                  const auto payload = std::string{event.value.data.begin(), event.value.data.end()};
                  {
@@ -4486,8 +4486,8 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_ten_node_mesh_delivers_multiple_publishes_onc
 
    for (auto index = std::size_t{}; index < publish_count; ++index) {
       const auto payload = std::string{"stress-" + std::to_string(index)};
-      fcl::asio::blocking::run(runtime,
-                               nodes[index]->async_publish(pubsub::topic{.value = "fcl.mesh.stress"},
+      forge::asio::blocking::run(runtime,
+                               nodes[index]->async_publish(pubsub::topic{.value = "forge.mesh.stress"},
                                                            std::vector<std::uint8_t>{payload.begin(), payload.end()},
                                                            pubsub::publish_options{.sign = false}));
    }
@@ -4512,104 +4512,104 @@ BOOST_AUTO_TEST_CASE(p2p_gossipsub_ten_node_mesh_delivers_multiple_publishes_onc
       BOOST_TEST(!state->delivered[payload].contains(index));
    }
    for (auto& value : nodes) {
-      fcl::asio::blocking::run(runtime, value->async_stop());
+      forge::asio::blocking::run(runtime, value->async_stop());
    }
 }
 
 BOOST_AUTO_TEST_CASE(p2p_identify_push_updates_peer_store) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    const auto server_identity = make_test_certificate_identity("identify-push-update-server");
    const auto client_identity = make_test_certificate_identity("identify-push-update-client");
    auto server = node{runtime, options_for(server_identity)};
    auto client = node{runtime, options_for(client_identity)};
 
    const auto server_endpoint = listen(server, runtime);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
 
-   auto stream = fcl::asio::blocking::run(
+   auto stream = forge::asio::blocking::run(
        runtime, client.async_open_protocol_stream(server.local_peer(), builtins::identify_push));
    auto pushed = identify::document{
-       .protocol_version = "/fcl/push-test/1",
-       .agent_version = "fcl-push-test/1",
+       .protocol_version = "/forge/push-test/1",
+       .agent_version = "forge-push-test/1",
        .listen_endpoints = std::vector<endpoint>{parse_endpoint("/ip4/127.0.0.1/udp/4101/quic-v1/p2p/" +
                                                                 client.local_peer().to_string())},
        .protocols = std::vector<protocol_id>{builtins::ping},
    };
-   fcl::asio::blocking::run(runtime, stream.async_write(wrap_length_delimited(identify::encode(pushed))));
-   fcl::asio::blocking::run(runtime, stream.async_close());
+   forge::asio::blocking::run(runtime, stream.async_write(wrap_length_delimited(identify::encode(pushed))));
+   forge::asio::blocking::run(runtime, stream.async_close());
    wait_on_runtime(runtime, std::chrono::milliseconds{100}, "identify push propagation");
 
    const auto found = server.peers().find(client.local_peer());
    BOOST_REQUIRE(found);
-   BOOST_TEST(found->protocol_version == "/fcl/push-test/1");
+   BOOST_TEST(found->protocol_version == "/forge/push-test/1");
    BOOST_TEST(
        std::ranges::any_of(found->protocols, [](const protocol_id& protocol) { return protocol == builtins::ping; }));
    BOOST_REQUIRE_EQUAL(found->endpoints.size(), 1U);
    BOOST_TEST(found->endpoints.front().endpoint.peer->to_bytes() == client.local_peer().to_bytes(),
               boost::test_tools::per_element());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_identify_push_rejects_mismatched_endpoint_peer_suffix) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    const auto server_identity = make_test_certificate_identity("identify-push-mismatch-server");
    const auto client_identity = make_test_certificate_identity("identify-push-mismatch-client");
    auto server = node{runtime, options_for(server_identity)};
    auto client = node{runtime, options_for(client_identity)};
 
    const auto server_endpoint = listen(server, runtime);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
 
    const auto bad_endpoint = parse_endpoint("/ip4/127.0.0.1/udp/4107/quic-v1/p2p/" + peer(215).to_string());
-   auto stream = fcl::asio::blocking::run(
+   auto stream = forge::asio::blocking::run(
        runtime, client.async_open_protocol_stream(server.local_peer(), builtins::identify_push));
    auto pushed = identify::document{
-       .protocol_version = "/fcl/push-bad-peer/1",
-       .agent_version = "fcl-push-bad-peer/1",
+       .protocol_version = "/forge/push-bad-peer/1",
+       .agent_version = "forge-push-bad-peer/1",
        .listen_endpoints = std::vector<endpoint>{bad_endpoint},
        .protocols = std::vector<protocol_id>{builtins::ping},
    };
-   fcl::asio::blocking::run(runtime, stream.async_write(wrap_length_delimited(identify::encode(pushed))));
-   fcl::asio::blocking::run(runtime, stream.async_close());
+   forge::asio::blocking::run(runtime, stream.async_write(wrap_length_delimited(identify::encode(pushed))));
+   forge::asio::blocking::run(runtime, stream.async_close());
    wait_on_runtime(runtime, std::chrono::milliseconds{100}, "identify push mismatch propagation");
 
    const auto found = server.peers().find(client.local_peer());
    BOOST_REQUIRE(found);
-   BOOST_TEST(found->protocol_version == "/fcl/push-bad-peer/1");
+   BOOST_TEST(found->protocol_version == "/forge/push-bad-peer/1");
    BOOST_TEST(std::ranges::none_of(found->endpoints, [&](const peer_store::endpoint_record& record) {
       return record.endpoint.to_string() == bad_endpoint.to_string();
    }));
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
-#if FCL_HAS_ROCKSDB
+#if FORGE_HAS_ROCKSDB
 BOOST_AUTO_TEST_CASE(p2p_identify_push_persists_rocksdb_peer_record) {
    auto temp = temp_store_dir{"identify-push-rocksdb"};
    const auto server_identity = make_test_certificate_identity("identify-push-rocksdb-server");
    const auto client_identity = make_test_certificate_identity("identify-push-rocksdb-client");
 
    {
-      auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+      auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
       auto server_options = options_for(server_identity);
       server_options.peer_store_path = temp.path();
       auto server = node{runtime, std::move(server_options)};
       auto client = node{runtime, options_for(client_identity)};
 
       const auto server_endpoint = listen(server, runtime);
-      (void)fcl::asio::blocking::run(
+      (void)forge::asio::blocking::run(
           runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
 
-      auto stream = fcl::asio::blocking::run(
+      auto stream = forge::asio::blocking::run(
           runtime, client.async_open_protocol_stream(server.local_peer(), builtins::identify_push));
       auto pushed = identify::document{
-          .protocol_version = "/fcl/push-persist/1",
-          .agent_version = "fcl-push-persist/1",
+          .protocol_version = "/forge/push-persist/1",
+          .agent_version = "forge-push-persist/1",
           .public_key = std::vector<std::uint8_t>{9, 8, 7},
           .listen_endpoints = std::vector<endpoint>{parse_endpoint("/ip4/127.0.0.1/udp/4201/quic-v1/p2p/" +
                                                                    client.local_peer().to_string())},
@@ -4621,12 +4621,12 @@ BOOST_AUTO_TEST_CASE(p2p_identify_push_persists_rocksdb_peer_record) {
       BOOST_REQUIRE(decoded.listen_endpoints.front().peer.has_value());
       BOOST_TEST(decoded.listen_endpoints.front().peer->to_bytes() == client.local_peer().to_bytes(),
                  boost::test_tools::per_element());
-      fcl::asio::blocking::run(runtime, stream.async_write(wrap_length_delimited(identify::encode(pushed))));
-      fcl::asio::blocking::run(runtime, stream.async_close());
+      forge::asio::blocking::run(runtime, stream.async_write(wrap_length_delimited(identify::encode(pushed))));
+      forge::asio::blocking::run(runtime, stream.async_close());
       wait_on_runtime(runtime, std::chrono::milliseconds{100}, "identify push persistence");
 
-      fcl::asio::blocking::run(runtime, client.async_stop());
-      fcl::asio::blocking::run(runtime, server.async_stop());
+      forge::asio::blocking::run(runtime, client.async_stop());
+      forge::asio::blocking::run(runtime, server.async_stop());
    }
 
    auto reopened = peer_store{peer_store::options{
@@ -4634,10 +4634,10 @@ BOOST_AUTO_TEST_CASE(p2p_identify_push_persists_rocksdb_peer_record) {
    }};
    const auto snapshot = reopened.snapshot();
    const auto found = std::ranges::find_if(
-       snapshot, [](const peer_store::record& value) { return value.protocol_version == "/fcl/push-persist/1"; });
+       snapshot, [](const peer_store::record& value) { return value.protocol_version == "/forge/push-persist/1"; });
    BOOST_REQUIRE(found != snapshot.end());
    BOOST_TEST(found->peer.to_bytes() == client_identity.peer.to_bytes(), boost::test_tools::per_element());
-   BOOST_TEST(found->agent_version == "fcl-push-persist/1");
+   BOOST_TEST(found->agent_version == "forge-push-persist/1");
    BOOST_TEST(found->public_key == std::vector<std::uint8_t>({9, 8, 7}), boost::test_tools::per_element());
    BOOST_TEST(found->signed_peer_record == std::vector<std::uint8_t>({6, 5, 4}), boost::test_tools::per_element());
    BOOST_TEST(
@@ -4648,35 +4648,35 @@ BOOST_AUTO_TEST_CASE(p2p_identify_push_persists_rocksdb_peer_record) {
 #endif
 
 BOOST_AUTO_TEST_CASE(p2p_unsupported_protocol_rejection_keeps_session_usable) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = node{runtime, options_for(peer(79))};
    auto client = node{runtime, options_for(peer(80))};
 
    const auto server_endpoint = listen(server, runtime);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime, client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer()}));
 
    try {
-      (void)fcl::asio::blocking::run(
+      (void)forge::asio::blocking::run(
           runtime, client.async_open_protocol_stream(server.local_peer(), protocol_id{.value = "/product/missing/1"}));
       BOOST_FAIL("expected unsupported protocol rejection");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::unsupported_protocol));
    }
 
    auto stream =
-       fcl::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::ping));
+       forge::asio::blocking::run(runtime, client.async_open_protocol_stream(server.local_peer(), builtins::ping));
    const auto payload = std::vector<std::uint8_t>(32, 0x24);
-   fcl::asio::blocking::run(runtime, stream.async_write(payload));
-   BOOST_TEST(fcl::asio::blocking::run(runtime, stream.async_read()) == payload, boost::test_tools::per_element());
+   forge::asio::blocking::run(runtime, stream.async_write(payload));
+   BOOST_TEST(forge::asio::blocking::run(runtime, stream.async_read()) == payload, boost::test_tools::per_element());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_path_manager_tries_next_direct_endpoint_after_attempt_timeout) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = node{runtime, options_for(peer(64))};
    auto client = node{runtime, options_for(peer(65))};
    register_echo(server);
@@ -4687,7 +4687,7 @@ BOOST_AUTO_TEST_CASE(p2p_path_manager_tries_next_direct_endpoint_after_attempt_t
    client.peers().learn_endpoint(server.local_peer(), server_endpoint,
                                  capability_set{.bits = capabilities::direct_quic});
 
-   auto stream = fcl::asio::blocking::run(
+   auto stream = forge::asio::blocking::run(
        runtime, client.async_open_protocol_stream(server.local_peer(), builtins::echo,
                                                   node::open_options{
                                                       .allow_relay = false,
@@ -4696,8 +4696,8 @@ BOOST_AUTO_TEST_CASE(p2p_path_manager_tries_next_direct_endpoint_after_attempt_t
                                                       .max_direct_endpoints = 2,
                                                   }));
    const auto payload = std::vector<std::uint8_t>{'d', 'i', 'r', 'e', 'c', 't'};
-   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   forge::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read_frame());
 
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
    BOOST_TEST(client.metrics().path_direct_attempts >= 2U);
@@ -4717,12 +4717,12 @@ BOOST_AUTO_TEST_CASE(p2p_path_manager_tries_next_direct_endpoint_after_attempt_t
    BOOST_TEST(succeeded->successes >= 1U);
    BOOST_TEST(succeeded->backoff_until == std::chrono::system_clock::time_point{});
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_path_manager_tries_next_tcp_endpoint_after_upgrade_timeout) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = node{runtime, options_for(peer(205))};
    auto client = node{runtime, options_for(peer(206))};
    register_echo(server);
@@ -4734,7 +4734,7 @@ BOOST_AUTO_TEST_CASE(p2p_path_manager_tries_next_tcp_endpoint_after_upgrade_time
    client.peers().learn_endpoint(server.local_peer(), server_endpoint,
                                  capability_set{.bits = capabilities::direct_quic});
 
-   auto stream = fcl::asio::blocking::run(
+   auto stream = forge::asio::blocking::run(
        runtime, client.async_open_protocol_stream(server.local_peer(), builtins::echo,
                                                   node::open_options{
                                                       .allow_relay = false,
@@ -4743,52 +4743,52 @@ BOOST_AUTO_TEST_CASE(p2p_path_manager_tries_next_tcp_endpoint_after_upgrade_time
                                                       .max_direct_endpoints = 2,
                                                   }));
    const auto payload = std::vector<std::uint8_t>{'t', 'c', 'p', '-', 'd', 'e', 'a', 'd'};
-   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   forge::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read_frame());
 
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
    BOOST_TEST(client.metrics().path_direct_attempts >= 2U);
    BOOST_TEST(client.metrics().path_direct_opens >= 1U);
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_successful_connect_deadline_does_not_poison_session) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = node{runtime, options_for(peer(41))};
    auto client = node{runtime, options_for(peer(42))};
    register_echo(server);
 
    const auto server_endpoint = listen(server, runtime);
-   (void)fcl::asio::blocking::run(
+   (void)forge::asio::blocking::run(
        runtime,
        client.async_connect(server_endpoint, node::connect_options{.expected_peer = server.local_peer(),
                                                                    .timeout = std::chrono::milliseconds{500}}));
    wait_on_runtime(runtime, std::chrono::milliseconds{700}, "post-connect deadline grace");
 
-   auto stream = fcl::asio::blocking::run(
+   auto stream = forge::asio::blocking::run(
        runtime, client.async_open_protocol_stream(server.local_peer(), builtins::echo,
                                                   node::open_options{.timeout = std::chrono::milliseconds{1'000}}));
    const auto payload = std::vector<std::uint8_t>{'d', 'e', 'a', 'd', 'l', 'i', 'n', 'e'};
-   fcl::asio::blocking::run(runtime, stream.async_write_frame(payload));
-   const auto reply = fcl::asio::blocking::run(runtime, stream.async_read_frame());
+   forge::asio::blocking::run(runtime, stream.async_write_frame(payload));
+   const auto reply = forge::asio::blocking::run(runtime, stream.async_read_frame());
    BOOST_TEST(reply == payload, boost::test_tools::per_element());
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
-   fcl::asio::blocking::run(runtime, server.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, server.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_duplicate_protocol_handler_is_rejected) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto value = node{runtime, options_for(peer(3))};
    register_echo(value);
 
    try {
       register_echo(value);
       BOOST_FAIL("expected duplicate protocol handler rejection");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::duplicate_protocol));
    }
 }
@@ -4797,47 +4797,47 @@ BOOST_AUTO_TEST_CASE(p2p_product_message_packs_typed_payload_as_data) {
    const auto protocol = protocol_id{.value = "/product/chunk-announce/1"};
    const auto value = product_announce{.ref = "chunk-1"};
 
-   const auto message = fcl::p2p::message{protocol, value};
+   const auto message = forge::p2p::message{protocol, value};
 
    BOOST_TEST(message.protocol().value == protocol.value);
-   BOOST_TEST(message.codec().value == "fcl.raw");
+   BOOST_TEST(message.codec().value == "forge.raw");
    BOOST_TEST(message.as<product_announce>().ref == value.ref);
    BOOST_TEST(!message.data().empty());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_connect_rejects_non_positive_timeout) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto client = node{runtime, options_for(peer(32))};
 
    try {
-      (void)fcl::asio::blocking::run(
+      (void)forge::asio::blocking::run(
           runtime,
           client.async_connect(make_quic_endpoint(9), node::connect_options{.expected_peer = peer(33),
                                                                             .timeout = std::chrono::milliseconds{0}}));
       BOOST_FAIL("expected invalid connect timeout");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::invalid_options));
    }
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_open_protocol_rejects_non_positive_timeout) {
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto client = node{runtime, options_for(peer(39))};
 
    try {
-      (void)fcl::asio::blocking::run(
+      (void)forge::asio::blocking::run(
           runtime, client.async_open_protocol_stream(peer(40), builtins::echo,
                                                      node::open_options{.timeout = std::chrono::milliseconds{0}}));
       BOOST_FAIL("expected invalid protocol open timeout");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::invalid_options));
    }
 
-   fcl::asio::blocking::run(runtime, client.async_stop());
+   forge::asio::blocking::run(runtime, client.async_stop());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_peer_store_expires_stale_reachability_observation) {
@@ -4867,8 +4867,8 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_uses_injected_backend) {
 
    store.upsert(peer_store::record{
        .peer = id,
-       .protocol_version = "/fcl/test/1",
-       .agent_version = "fcl-test/1",
+       .protocol_version = "/forge/test/1",
+       .agent_version = "forge-test/1",
        .protocols = std::vector<protocol_id>{builtins::ping},
    });
    store.learn_endpoint(id, make_quic_endpoint(4001), capability_set{.bits = capabilities::direct_quic});
@@ -4877,12 +4877,12 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_uses_injected_backend) {
    BOOST_TEST(backend->learn_endpoint_count == 1U);
    const auto found = store.find(id);
    BOOST_REQUIRE(found.has_value());
-   BOOST_TEST(found->protocol_version == "/fcl/test/1");
+   BOOST_TEST(found->protocol_version == "/forge/test/1");
    BOOST_REQUIRE_EQUAL(found->endpoints.size(), 1U);
    BOOST_TEST(found->endpoints.front().endpoint.transport.port == 4001);
 }
 
-#if FCL_HAS_ROCKSDB
+#if FORGE_HAS_ROCKSDB
 BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_survives_reopen) {
    auto temp = temp_store_dir{"rocksdb-reopen"};
    const auto id = peer(82);
@@ -4899,8 +4899,8 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_survives_reopen) {
       store.upsert(peer_store::record{
           .peer = id,
           .capabilities = capability_set{.bits = capabilities::direct_quic | capabilities::peer_exchange},
-          .protocol_version = "/fcl/reopen/1",
-          .agent_version = "fcl-reopen/1",
+          .protocol_version = "/forge/reopen/1",
+          .agent_version = "forge-reopen/1",
           .public_key = std::vector<std::uint8_t>{1, 2, 3, 4},
           .protocols = std::vector<protocol_id>{builtins::ping, builtins::identify},
           .signed_peer_record = std::vector<std::uint8_t>{5, 6, 7},
@@ -4916,7 +4916,7 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_survives_reopen) {
               .relay = relay_id,
               .reservation_id = 99,
               .expires_at = reservation_expires_at,
-              .endpoints = std::vector<fcl::p2p::endpoint>{relay_endpoint},
+              .endpoints = std::vector<forge::p2p::endpoint>{relay_endpoint},
               .voucher = std::vector<std::uint8_t>{8, 9, 10},
               .successes = 3,
               .failures = 1,
@@ -4935,8 +4935,8 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_survives_reopen) {
    }};
    const auto found = reopened.find(id);
    BOOST_REQUIRE(found.has_value());
-   BOOST_TEST(found->protocol_version == "/fcl/reopen/1");
-   BOOST_TEST(found->agent_version == "fcl-reopen/1");
+   BOOST_TEST(found->protocol_version == "/forge/reopen/1");
+   BOOST_TEST(found->agent_version == "forge-reopen/1");
    BOOST_TEST(found->public_key == std::vector<std::uint8_t>({1, 2, 3, 4}), boost::test_tools::per_element());
    BOOST_TEST(found->signed_peer_record == std::vector<std::uint8_t>({5, 6, 7}), boost::test_tools::per_element());
    BOOST_TEST(found->observed_endpoint.has_value());
@@ -4995,7 +4995,7 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_persists_discovery_dht_and_rendezvou
           .successes = 2,
       });
       store.upsert_rendezvous(rendezvous::registration{
-          .namespace_name = "fcl.discovery",
+          .namespace_name = "forge.discovery",
           .peer = rendezvous_peer,
           .endpoints = std::vector<endpoint>{rendezvous_endpoint},
           .signed_peer_record = std::vector<std::uint8_t>{9, 8, 7},
@@ -5020,15 +5020,15 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_persists_discovery_dht_and_rendezvou
    BOOST_TEST(providers.front().provider.endpoints.front().to_string() == provider_endpoint.to_string());
    BOOST_TEST(providers.front().successes == 2U);
 
-   const auto registrations = reopened.discover_rendezvous("fcl.discovery", 0, 10);
+   const auto registrations = reopened.discover_rendezvous("forge.discovery", 0, 10);
    BOOST_REQUIRE_EQUAL(registrations.size(), 1U);
    BOOST_TEST(registrations.front().peer.to_string() == rendezvous_peer.to_string());
-   BOOST_TEST(registrations.front().namespace_name == "fcl.discovery");
+   BOOST_TEST(registrations.front().namespace_name == "forge.discovery");
    BOOST_TEST(registrations.front().signed_peer_record == std::vector<std::uint8_t>({9, 8, 7}),
               boost::test_tools::per_element());
    BOOST_REQUIRE_EQUAL(registrations.front().endpoints.size(), 1U);
    BOOST_TEST(registrations.front().endpoints.front().to_string() == rendezvous_endpoint.to_string());
-   BOOST_TEST(reopened.discover_rendezvous("fcl.discovery", registrations.front().sequence, 10).empty());
+   BOOST_TEST(reopened.discover_rendezvous("forge.discovery", registrations.front().sequence, 10).empty());
 }
 #else
 BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_backend_reports_disabled_when_not_built) {
@@ -5041,8 +5041,8 @@ BOOST_AUTO_TEST_CASE(p2p_production_options_reject_missing_mtls_identity) {
    try {
       validate(node::options{});
       BOOST_FAIL("expected missing mTLS identity rejection");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::invalid_options));
    }
 }
@@ -5054,16 +5054,16 @@ BOOST_AUTO_TEST_CASE(p2p_production_options_require_peer_store_path) {
           .private_key_pem = std::string{test_private_key()},
       });
       BOOST_FAIL("expected missing persistent peer store rejection");
-   } catch (const fcl::exceptions::base& error) {
-      BOOST_TEST(static_cast<int>(fcl::p2p::exceptions::code_of(error).value()) ==
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::p2p::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::invalid_options));
    }
 }
 
-#if FCL_HAS_ROCKSDB
+#if FORGE_HAS_ROCKSDB
 BOOST_AUTO_TEST_CASE(p2p_production_options_use_rocksdb_peer_store_path) {
    auto temp = temp_store_dir{"node-rocksdb-path"};
-   auto runtime = fcl::asio::runtime{fcl::asio::runtime_options{.worker_threads = 1}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    const auto id = peer(83);
    {
       auto value = node{runtime, node::options{
@@ -5074,11 +5074,11 @@ BOOST_AUTO_TEST_CASE(p2p_production_options_use_rocksdb_peer_store_path) {
                                  }};
       value.peers().upsert(peer_store::record{
           .peer = peer(84),
-          .protocol_version = "/fcl/node-rocksdb/1",
-          .agent_version = "fcl-node-rocksdb/1",
+          .protocol_version = "/forge/node-rocksdb/1",
+          .agent_version = "forge-node-rocksdb/1",
           .protocols = std::vector<protocol_id>{builtins::identify_push},
       });
-      fcl::asio::blocking::run(runtime, value.async_stop());
+      forge::asio::blocking::run(runtime, value.async_stop());
    }
    {
       auto value = node{runtime, node::options{
@@ -5089,10 +5089,10 @@ BOOST_AUTO_TEST_CASE(p2p_production_options_use_rocksdb_peer_store_path) {
                                  }};
       const auto found = value.peers().find(peer(84));
       BOOST_REQUIRE(found.has_value());
-      BOOST_TEST(found->protocol_version == "/fcl/node-rocksdb/1");
-      fcl::asio::blocking::run(runtime, value.async_stop());
+      BOOST_TEST(found->protocol_version == "/forge/node-rocksdb/1");
+      forge::asio::blocking::run(runtime, value.async_stop());
    }
 }
 #endif
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

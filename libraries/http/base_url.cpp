@@ -6,9 +6,9 @@ module;
 
 #include <boost/url.hpp>
 
-module fcl.http.base_url;
+module forge.http.base_url;
 
-namespace fcl::http {
+namespace forge::http {
 
 bool base_url::secure() const {
    return scheme == "https" || scheme == "wss";
@@ -74,4 +74,4 @@ base_url parse_base_url(std::string_view value) {
    return result;
 }
 
-} // namespace fcl::http
+} // namespace forge::http

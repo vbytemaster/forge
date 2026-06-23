@@ -4,7 +4,7 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/describe.hpp>
-#include <fcl/api/macros.hpp>
+#include <forge/api/macros.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -22,44 +22,44 @@
 #include <string>
 #include <vector>
 
-import fcl.app.exceptions;
-import fcl.app.application;
-import fcl.app.events;
-import fcl.app.diagnostics;
-import fcl.app.signals;
-import fcl.app.plugin_context;
-import fcl.app.plugin;
-import fcl.app.plugin_registry;
-import fcl.app.application_shell;
-import fcl.app.application_builder;
-import fcl.app.runner;
-import fcl.app.daemon;
-import fcl.api.exceptions;
-import fcl.api.types;
-import fcl.api.descriptor;
-import fcl.api.error_projection;
-import fcl.api.handle;
-import fcl.api.connection;
-import fcl.api.registry;
-import fcl.api.binding;
-import fcl.api.dispatcher;
-import fcl.asio.blocking;
-import fcl.asio.runtime;
-import fcl.asio.task_scheduler;
-import fcl.config.key_path;
-import fcl.config.value;
-import fcl.config.document;
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.config.migration;
-import fcl.schema.diagnostic;
-import fcl.schema.value_kind;
-import fcl.schema.object;
-import fcl.schema.enums;
+import forge.app.exceptions;
+import forge.app.application;
+import forge.app.events;
+import forge.app.diagnostics;
+import forge.app.signals;
+import forge.app.plugin_context;
+import forge.app.plugin;
+import forge.app.plugin_registry;
+import forge.app.application_shell;
+import forge.app.application_builder;
+import forge.app.runner;
+import forge.app.daemon;
+import forge.api.exceptions;
+import forge.api.types;
+import forge.api.descriptor;
+import forge.api.error_projection;
+import forge.api.handle;
+import forge.api.connection;
+import forge.api.registry;
+import forge.api.binding;
+import forge.api.dispatcher;
+import forge.asio.blocking;
+import forge.asio.runtime;
+import forge.asio.task_scheduler;
+import forge.config.key_path;
+import forge.config.value;
+import forge.config.document;
+import forge.config.component;
+import forge.config.decode;
+import forge.config.migration;
+import forge.schema.diagnostic;
+import forge.schema.value_kind;
+import forge.schema.object;
+import forge.schema.enums;
 
 namespace app_test_contract {
 
-class sample_api : public fcl::api::contract<sample_api> {
+class sample_api : public forge::api::contract<sample_api> {
  public:
    virtual ~sample_api() = default;
    virtual boost::asio::awaitable<int> value(int input) = 0;
@@ -67,7 +67,7 @@ class sample_api : public fcl::api::contract<sample_api> {
 
 } // namespace app_test_contract
 
-FCL_API(::app_test_contract::sample_api, FCL_API_CONTRACT("sample", 1, 0), FCL_API_METHOD(value))
+FORGE_API(::app_test_contract::sample_api, FORGE_API_CONTRACT("sample", 1, 0), FORGE_API_METHOD(value))
 
 namespace {
 
@@ -89,19 +89,19 @@ class sample_api_impl final : public sample_api {
    int offset_ = 1;
 };
 
-class sample_api_consumer_plugin final : public fcl::app::plugin {
+class sample_api_consumer_plugin final : public forge::app::plugin {
  public:
    sample_api_consumer_plugin(lifecycle_log& log) : log_{&log} {}
 
-   fcl::app::plugin_id id() const override {
-      return fcl::app::plugin_id{.value = "api-consumer"};
+   forge::app::plugin_id id() const override {
+      return forge::app::plugin_id{.value = "api-consumer"};
    }
 
    std::string version() const override {
       return "1";
    }
 
-   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+   boost::asio::awaitable<void> initialize(forge::app::plugin_context& context) override {
       api_ = context.apis().get<sample_api>({.id = {"sample"}, .major = 1});
       log_->entries.push_back("api.initialize:" + std::to_string(static_cast<bool>(api_)));
       co_return;
@@ -117,7 +117,7 @@ class sample_api_consumer_plugin final : public fcl::app::plugin {
 
  private:
    lifecycle_log* log_ = nullptr;
-   fcl::api::handle<sample_api> api_;
+   forge::api::handle<sample_api> api_;
 };
 
 struct slow_shutdown_state {
@@ -186,19 +186,19 @@ struct daemon_service_config {
 
 BOOST_DESCRIBE_STRUCT(daemon_service_config, (), (workers, token))
 
-class test_plugin final : public fcl::app::plugin {
+class test_plugin final : public forge::app::plugin {
  public:
    test_plugin(std::string id, lifecycle_log& log, bool fail_startup = false)
        : id_{std::move(id)}, log_{&log}, fail_startup_{fail_startup} {}
 
-   fcl::app::plugin_id id() const override {
-      return fcl::app::plugin_id{.value = id_};
+   forge::app::plugin_id id() const override {
+      return forge::app::plugin_id{.value = id_};
    }
    std::string version() const override {
       return "1";
    }
 
-   boost::asio::awaitable<void> initialize(fcl::app::plugin_context&) override {
+   boost::asio::awaitable<void> initialize(forge::app::plugin_context&) override {
       log_->entries.push_back("initialize:" + id_);
       co_return;
    }
@@ -206,7 +206,7 @@ class test_plugin final : public fcl::app::plugin {
    boost::asio::awaitable<void> startup() override {
       log_->entries.push_back("startup:" + id_);
       if (fail_startup_) {
-         throw fcl::app::exceptions::startup_failed{"startup failed"};
+         throw forge::app::exceptions::startup_failed{"startup failed"};
       }
       co_return;
    }
@@ -222,37 +222,37 @@ class test_plugin final : public fcl::app::plugin {
    bool fail_startup_ = false;
 };
 
-class configurable_plugin final : public fcl::app::plugin {
+class configurable_plugin final : public forge::app::plugin {
  public:
    configurable_plugin(lifecycle_log& log) : log_{&log} {}
 
-   fcl::app::plugin_id id() const override {
-      return fcl::app::plugin_id{.value = "configurable"};
+   forge::app::plugin_id id() const override {
+      return forge::app::plugin_id{.value = "configurable"};
    }
    std::string version() const override {
       return "1";
    }
 
-   std::optional<fcl::config::component_descriptor> describe_config() const override {
-      return fcl::config::component_descriptor{
+   std::optional<forge::config::component_descriptor> describe_config() const override {
+      return forge::config::component_descriptor{
           .section = "http",
-          .fields = {fcl::config::field_descriptor{
+          .fields = {forge::config::field_descriptor{
               .name = "bind-port",
-              .kind = fcl::schema::value_kind::unsigned_integer,
+              .kind = forge::schema::value_kind::unsigned_integer,
               .required = true,
           }},
       };
    }
 
-   boost::asio::awaitable<void> configure(fcl::config::component_view view) override {
+   boost::asio::awaitable<void> configure(forge::config::component_view view) override {
       bind_port_ = view.get_or<std::uint16_t>("bind-port", 0);
       log_->entries.push_back("configure:" + std::to_string(bind_port_));
       co_return;
    }
 
-   boost::asio::awaitable<void> initialize(fcl::app::plugin_context&) override {
+   boost::asio::awaitable<void> initialize(forge::app::plugin_context&) override {
       if (bind_port_ == 0) {
-         throw fcl::app::exceptions::config_failed{"not configured"};
+         throw forge::app::exceptions::config_failed{"not configured"};
       }
       log_->entries.push_back("initialize:configurable");
       co_return;
@@ -273,12 +273,12 @@ class configurable_plugin final : public fcl::app::plugin {
    std::uint16_t bind_port_ = 0;
 };
 
-fcl::app::plugin_descriptor descriptor(std::string id, lifecycle_log& log,
-                                       std::vector<fcl::app::plugin_id> dependencies = {},
+forge::app::plugin_descriptor descriptor(std::string id, lifecycle_log& log,
+                                       std::vector<forge::app::plugin_id> dependencies = {},
                                        bool enabled_by_default = true, bool fail_startup = false) {
-   auto id_value = fcl::app::plugin_id{.value = std::move(id)};
+   auto id_value = forge::app::plugin_id{.value = std::move(id)};
    auto id_copy = id_value;
-   return fcl::app::plugin_descriptor{
+   return forge::app::plugin_descriptor{
        .id = std::move(id_value),
        .dependencies = std::move(dependencies),
        .enabled_by_default = enabled_by_default,
@@ -290,27 +290,27 @@ fcl::app::plugin_descriptor descriptor(std::string id, lifecycle_log& log,
 } // namespace
 
 template <>
-struct fcl::schema::rules<shell_service_config> {
-   static fcl::schema::object_schema<shell_service_config> define() {
-      auto schema = fcl::schema::object<shell_service_config>();
+struct forge::schema::rules<shell_service_config> {
+   static forge::schema::object_schema<shell_service_config> define() {
+      auto schema = forge::schema::object<shell_service_config>();
       schema.field<&shell_service_config::workers>("workers").default_value(2).range(1, 32);
       return schema;
    }
 };
 
 template <>
-struct fcl::schema::rules<shell_plugin_config> {
-   static fcl::schema::object_schema<shell_plugin_config> define() {
-      auto schema = fcl::schema::object<shell_plugin_config>();
+struct forge::schema::rules<shell_plugin_config> {
+   static forge::schema::object_schema<shell_plugin_config> define() {
+      auto schema = forge::schema::object<shell_plugin_config>();
       schema.field<&shell_plugin_config::port>("port").default_value(9000).range(1, 65'535);
       return schema;
    }
 };
 
 template <>
-struct fcl::schema::rules<daemon_service_config> {
-   static fcl::schema::object_schema<daemon_service_config> define() {
-      auto schema = fcl::schema::object<daemon_service_config>();
+struct forge::schema::rules<daemon_service_config> {
+   static forge::schema::object_schema<daemon_service_config> define() {
+      auto schema = forge::schema::object<daemon_service_config>();
       schema.field<&daemon_service_config::workers>("workers").default_value(2).range(1, 32);
       schema.field<&daemon_service_config::token>("token").default_value(std::string{}).secret();
       return schema;
@@ -392,31 +392,31 @@ class env_var_guard {
    std::optional<std::string> old_value_;
 };
 
-class shell_config_plugin final : public fcl::app::plugin {
+class shell_config_plugin final : public forge::app::plugin {
  public:
    shell_config_plugin(lifecycle_log& log) : log_{&log} {}
 
-   fcl::app::plugin_id id() const override {
-      return fcl::app::plugin_id{.value = "http"};
+   forge::app::plugin_id id() const override {
+      return forge::app::plugin_id{.value = "http"};
    }
 
    std::string version() const override {
       return "1";
    }
 
-   std::optional<fcl::config::component_descriptor> describe_config() const override {
-      return fcl::config::describe_component<shell_plugin_config>("http");
+   std::optional<forge::config::component_descriptor> describe_config() const override {
+      return forge::config::describe_component<shell_plugin_config>("http");
    }
 
-   boost::asio::awaitable<void> configure(fcl::config::component_view view) override {
+   boost::asio::awaitable<void> configure(forge::config::component_view view) override {
       port_ = view.get_or<std::uint16_t>("port", 0);
       log_->entries.push_back("plugin.configure:" + std::to_string(port_));
       co_return;
    }
 
-   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+   boost::asio::awaitable<void> initialize(forge::app::plugin_context& context) override {
       log_->entries.push_back("plugin.initialize:" + std::to_string(port_));
-      context.events().publish(fcl::app::event_severity::info, "shell.plugin", "initialized");
+      context.events().publish(forge::app::event_severity::info, "shell.plugin", "initialized");
       co_return;
    }
 
@@ -435,19 +435,19 @@ class shell_config_plugin final : public fcl::app::plugin {
    std::uint16_t port_ = 0;
 };
 
-class shell_dependency_plugin final : public fcl::app::plugin {
+class shell_dependency_plugin final : public forge::app::plugin {
  public:
    shell_dependency_plugin(std::string id, lifecycle_log& log) : id_{std::move(id)}, log_{&log} {}
 
-   fcl::app::plugin_id id() const override {
-      return fcl::app::plugin_id{.value = id_};
+   forge::app::plugin_id id() const override {
+      return forge::app::plugin_id{.value = id_};
    }
 
    std::string version() const override {
       return "1";
    }
 
-   boost::asio::awaitable<void> initialize(fcl::app::plugin_context&) override {
+   boost::asio::awaitable<void> initialize(forge::app::plugin_context&) override {
       log_->entries.push_back("initialize:" + id_);
       co_return;
    }
@@ -467,19 +467,19 @@ class shell_dependency_plugin final : public fcl::app::plugin {
    lifecycle_log* log_ = nullptr;
 };
 
-class scheduler_cleanup_plugin final : public fcl::app::plugin {
+class scheduler_cleanup_plugin final : public forge::app::plugin {
  public:
    explicit scheduler_cleanup_plugin(lifecycle_log& log) : log_{&log} {}
 
-   fcl::app::plugin_id id() const override {
-      return fcl::app::plugin_id{.value = "cleanup"};
+   forge::app::plugin_id id() const override {
+      return forge::app::plugin_id{.value = "cleanup"};
    }
 
    std::string version() const override {
       return "1";
    }
 
-   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+   boost::asio::awaitable<void> initialize(forge::app::plugin_context& context) override {
       scheduler_ = &context.scheduler();
       log_->entries.push_back("initialize:cleanup");
       co_return;
@@ -495,8 +495,8 @@ class scheduler_cleanup_plugin final : public fcl::app::plugin {
    }
 
    boost::asio::awaitable<void> shutdown() override {
-      auto handle = scheduler_->submit(fcl::asio::task{
-         .priority = fcl::asio::priority{1},
+      auto handle = scheduler_->submit(forge::asio::task{
+         .priority = forge::asio::priority{1},
          .name = "cleanup-flush",
          .work = [this] {
             log_->entries.push_back("cleanup.scheduler.work");
@@ -508,24 +508,24 @@ class scheduler_cleanup_plugin final : public fcl::app::plugin {
 
  private:
    lifecycle_log* log_ = nullptr;
-   fcl::asio::task_scheduler* scheduler_ = nullptr;
+   forge::asio::task_scheduler* scheduler_ = nullptr;
 };
 
-class failing_initialize_plugin final : public fcl::app::plugin {
+class failing_initialize_plugin final : public forge::app::plugin {
  public:
    explicit failing_initialize_plugin(lifecycle_log& log) : log_{&log} {}
 
-   fcl::app::plugin_id id() const override {
-      return fcl::app::plugin_id{.value = "init-fail"};
+   forge::app::plugin_id id() const override {
+      return forge::app::plugin_id{.value = "init-fail"};
    }
 
    std::string version() const override {
       return "1";
    }
 
-   boost::asio::awaitable<void> initialize(fcl::app::plugin_context&) override {
+   boost::asio::awaitable<void> initialize(forge::app::plugin_context&) override {
       log_->entries.push_back("initialize:init-fail");
-      throw fcl::app::exceptions::initialize_failed{"initialize failed"};
+      throw forge::app::exceptions::initialize_failed{"initialize failed"};
    }
 
    boost::asio::awaitable<void> startup() override {
@@ -542,20 +542,20 @@ class failing_initialize_plugin final : public fcl::app::plugin {
    lifecycle_log* log_ = nullptr;
 };
 
-class slow_shutdown_plugin final : public fcl::app::plugin {
+class slow_shutdown_plugin final : public forge::app::plugin {
  public:
    slow_shutdown_plugin(lifecycle_log& log, std::shared_ptr<slow_shutdown_state> state)
        : log_{&log}, state_{std::move(state)} {}
 
-   fcl::app::plugin_id id() const override {
-      return fcl::app::plugin_id{.value = "slow"};
+   forge::app::plugin_id id() const override {
+      return forge::app::plugin_id{.value = "slow"};
    }
 
    std::string version() const override {
       return "1";
    }
 
-   boost::asio::awaitable<void> initialize(fcl::app::plugin_context& context) override {
+   boost::asio::awaitable<void> initialize(forge::app::plugin_context& context) override {
       context_ = &context;
       log_->entries.push_back("initialize:slow");
       co_return;
@@ -577,13 +577,13 @@ class slow_shutdown_plugin final : public fcl::app::plugin {
  private:
    lifecycle_log* log_ = nullptr;
    std::shared_ptr<slow_shutdown_state> state_;
-   fcl::app::plugin_context* context_ = nullptr;
+   forge::app::plugin_context* context_ = nullptr;
 };
 
-class shell_test_application final : public fcl::app::application_shell {
+class shell_test_application final : public forge::app::application_shell {
  public:
    explicit shell_test_application(lifecycle_log& log)
-       : fcl::app::application_shell{fcl::app::application_shell_options{
+       : forge::app::application_shell{forge::app::application_shell_options{
             .name = "shell-test",
             .runtime = {.worker_threads = 1, .thread_name = "shell-test"},
          }},
@@ -598,26 +598,26 @@ class shell_test_application final : public fcl::app::application_shell {
    }
 
  protected:
-   void on_describe_config(fcl::config::component_registry& registry) const override {
-      registry.add(fcl::config::describe_component<shell_service_config>("service"));
+   void on_describe_config(forge::config::component_registry& registry) const override {
+      registry.add(forge::config::describe_component<shell_service_config>("service"));
    }
 
-   boost::asio::awaitable<void> on_configure(fcl::app::configure_context& context) override {
+   boost::asio::awaitable<void> on_configure(forge::app::configure_context& context) override {
       workers_ = context.view("service").get_or<std::uint16_t>("workers", 0);
       log_->entries.push_back("app.configure:" + std::to_string(workers_));
       co_return;
    }
 
-   void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::app::plugin_descriptor{
-         .id = fcl::app::plugin_id{.value = "http"},
+   void on_register_plugins(forge::app::plugin_registry& registry) override {
+      registry.register_plugin(forge::app::plugin_descriptor{
+         .id = forge::app::plugin_id{.value = "http"},
          .factory = [this] {
             return std::make_unique<shell_config_plugin>(*log_);
          },
       });
    }
 
-   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+   boost::asio::awaitable<void> on_provide(forge::app::application_context& context) override {
       context.apis().install<sample_api>(sample_api::describe(), std::make_shared<sample_api_impl>(workers_));
       log_->entries.push_back("app.provide");
       co_return;
@@ -634,21 +634,21 @@ class shell_test_application final : public fcl::app::application_shell {
    std::uint16_t workers_ = 0;
 };
 
-class shell_api_application final : public fcl::app::application_shell {
+class shell_api_application final : public forge::app::application_shell {
  public:
    explicit shell_api_application(lifecycle_log& log) : log_{&log} {}
 
  protected:
-   void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::app::plugin_descriptor{
-         .id = fcl::app::plugin_id{.value = "api-consumer"},
+   void on_register_plugins(forge::app::plugin_registry& registry) override {
+      registry.register_plugin(forge::app::plugin_descriptor{
+         .id = forge::app::plugin_id{.value = "api-consumer"},
          .factory = [this] {
             return std::make_unique<sample_api_consumer_plugin>(*log_);
          },
       });
    }
 
-   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+   boost::asio::awaitable<void> on_provide(forge::app::application_context& context) override {
       context.apis().install<sample_api>(sample_api::describe(), std::make_shared<sample_api_impl>());
       log_->entries.push_back("app.provide");
       co_return;
@@ -658,21 +658,21 @@ class shell_api_application final : public fcl::app::application_shell {
    lifecycle_log* log_ = nullptr;
 };
 
-class shell_order_application final : public fcl::app::application_shell {
+class shell_order_application final : public forge::app::application_shell {
  public:
    explicit shell_order_application(lifecycle_log& log) : log_{&log} {}
 
  protected:
-   void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::app::plugin_descriptor{
-         .id = fcl::app::plugin_id{.value = "store"},
+   void on_register_plugins(forge::app::plugin_registry& registry) override {
+      registry.register_plugin(forge::app::plugin_descriptor{
+         .id = forge::app::plugin_id{.value = "store"},
          .factory = [this] {
             return std::make_unique<shell_dependency_plugin>("store", *log_);
          },
       });
-      registry.register_plugin(fcl::app::plugin_descriptor{
-         .id = fcl::app::plugin_id{.value = "api"},
-         .dependencies = {fcl::app::plugin_id{.value = "store"}},
+      registry.register_plugin(forge::app::plugin_descriptor{
+         .id = forge::app::plugin_id{.value = "api"},
+         .dependencies = {forge::app::plugin_id{.value = "store"}},
          .factory = [this] {
             return std::make_unique<shell_dependency_plugin>("api", *log_);
          },
@@ -683,17 +683,17 @@ class shell_order_application final : public fcl::app::application_shell {
    lifecycle_log* log_ = nullptr;
 };
 
-class shell_failure_application final : public fcl::app::application_shell {
+class shell_failure_application final : public forge::app::application_shell {
  public:
    explicit shell_failure_application(lifecycle_log& log) : log_{&log} {}
 
  protected:
-   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+   void on_register_plugins(forge::app::plugin_registry& registry) override {
       registry.register_plugin(descriptor("store", *log_));
       registry.register_plugin(descriptor(
          "api",
          *log_,
-         {fcl::app::plugin_id{.value = "store"}},
+         {forge::app::plugin_id{.value = "store"}},
          true,
          true));
    }
@@ -702,14 +702,14 @@ class shell_failure_application final : public fcl::app::application_shell {
    lifecycle_log* log_ = nullptr;
 };
 
-class shell_initialize_failure_application final : public fcl::app::application_shell {
+class shell_initialize_failure_application final : public forge::app::application_shell {
  public:
    explicit shell_initialize_failure_application(lifecycle_log& log) : log_{&log} {}
 
  protected:
-   void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::app::plugin_descriptor{
-         .id = fcl::app::plugin_id{.value = "init-fail"},
+   void on_register_plugins(forge::app::plugin_registry& registry) override {
+      registry.register_plugin(forge::app::plugin_descriptor{
+         .id = forge::app::plugin_id{.value = "init-fail"},
          .factory = [this] {
             return std::make_unique<failing_initialize_plugin>(*log_);
          },
@@ -720,14 +720,14 @@ class shell_initialize_failure_application final : public fcl::app::application_
    lifecycle_log* log_ = nullptr;
 };
 
-class shell_scheduler_cleanup_application final : public fcl::app::application_shell {
+class shell_scheduler_cleanup_application final : public forge::app::application_shell {
  public:
    explicit shell_scheduler_cleanup_application(lifecycle_log& log) : log_{&log} {}
 
  protected:
-   void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::app::plugin_descriptor{
-         .id = fcl::app::plugin_id{.value = "cleanup"},
+   void on_register_plugins(forge::app::plugin_registry& registry) override {
+      registry.register_plugin(forge::app::plugin_descriptor{
+         .id = forge::app::plugin_id{.value = "cleanup"},
          .factory = [this] {
             return std::make_unique<scheduler_cleanup_plugin>(*log_);
          },
@@ -738,10 +738,10 @@ class shell_scheduler_cleanup_application final : public fcl::app::application_s
    lifecycle_log* log_ = nullptr;
 };
 
-class shell_slow_shutdown_application final : public fcl::app::application_shell {
+class shell_slow_shutdown_application final : public forge::app::application_shell {
  public:
    shell_slow_shutdown_application(lifecycle_log& log, std::shared_ptr<slow_shutdown_state> state)
-       : fcl::app::application_shell{fcl::app::application_shell_options{
+       : forge::app::application_shell{forge::app::application_shell_options{
             .name = "slow-shutdown",
             .runtime = {.worker_threads = 1, .thread_name = "slow-shutdown"},
          }},
@@ -753,9 +753,9 @@ class shell_slow_shutdown_application final : public fcl::app::application_shell
    }
 
  protected:
-   void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::app::plugin_descriptor{
-         .id = fcl::app::plugin_id{.value = "slow"},
+   void on_register_plugins(forge::app::plugin_registry& registry) override {
+      registry.register_plugin(forge::app::plugin_descriptor{
+         .id = forge::app::plugin_id{.value = "slow"},
          .factory = [this] {
             return std::make_unique<slow_shutdown_plugin>(*log_, state_);
          },
@@ -767,14 +767,14 @@ class shell_slow_shutdown_application final : public fcl::app::application_shell
    std::shared_ptr<slow_shutdown_state> state_;
 };
 
-class shell_selection_application final : public fcl::app::application_shell {
+class shell_selection_application final : public forge::app::application_shell {
  public:
    explicit shell_selection_application(lifecycle_log& log) : log_{&log} {}
 
  protected:
-   void on_register_plugins(fcl::app::plugin_registry& registry) override {
+   void on_register_plugins(forge::app::plugin_registry& registry) override {
       registry.register_plugin(descriptor("store", *log_));
-      registry.register_plugin(descriptor("api", *log_, {fcl::app::plugin_id{.value = "store"}}));
+      registry.register_plugin(descriptor("api", *log_, {forge::app::plugin_id{.value = "store"}}));
       registry.register_plugin(descriptor("metrics", *log_, {}, false));
    }
 
@@ -782,13 +782,13 @@ class shell_selection_application final : public fcl::app::application_shell {
    lifecycle_log* log_ = nullptr;
 };
 
-class shell_official_plugin_selection_application final : public fcl::app::application_shell {
+class shell_official_plugin_selection_application final : public forge::app::application_shell {
  public:
    explicit shell_official_plugin_selection_application(lifecycle_log& log) : log_{&log} {}
 
  protected:
-   void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(descriptor("fcl.plugins.p2p.node", *log_));
+   void on_register_plugins(forge::app::plugin_registry& registry) override {
+      registry.register_plugin(descriptor("forge.plugins.p2p.node", *log_));
    }
 
  private:
@@ -808,10 +808,10 @@ struct daemon_test_state {
    std::string profile;
 };
 
-class daemon_test_application final : public fcl::app::application_shell {
+class daemon_test_application final : public forge::app::application_shell {
  public:
-   daemon_test_application(fcl::app::daemon_context context, daemon_test_state& state)
-       : fcl::app::application_shell{context.shell}, state_{&state} {
+   daemon_test_application(forge::app::daemon_context context, daemon_test_state& state)
+       : forge::app::application_shell{context.shell}, state_{&state} {
       state_->runtime_threads = context.shell.runtime.worker_threads;
       state_->blocking_tasks = context.shell.scheduler.max_blocking_tasks;
       state_->queue_depth = context.shell.scheduler.max_pending_tasks;
@@ -822,12 +822,12 @@ class daemon_test_application final : public fcl::app::application_shell {
    }
 
  protected:
-   void on_describe_config(fcl::config::component_registry& registry) const override {
-      registry.add(fcl::config::describe_component<daemon_service_config>("service"));
+   void on_describe_config(forge::config::component_registry& registry) const override {
+      registry.add(forge::config::describe_component<daemon_service_config>("service"));
    }
 
-   boost::asio::awaitable<void> on_configure(fcl::app::configure_context& context) override {
-      auto decoded = fcl::config::decode<daemon_service_config>(context.document(), "service");
+   boost::asio::awaitable<void> on_configure(forge::app::configure_context& context) override {
+      auto decoded = forge::config::decode<daemon_service_config>(context.document(), "service");
       if (!decoded.ok()) {
          throw std::invalid_argument{decoded.diagnostics.entries.front().message};
       }
@@ -837,16 +837,16 @@ class daemon_test_application final : public fcl::app::application_shell {
       co_return;
    }
 
-   void on_register_plugins(fcl::app::plugin_registry& registry) override {
-      registry.register_plugin(fcl::app::plugin_descriptor{
-         .id = fcl::app::plugin_id{.value = "http"},
+   void on_register_plugins(forge::app::plugin_registry& registry) override {
+      registry.register_plugin(forge::app::plugin_descriptor{
+         .id = forge::app::plugin_id{.value = "http"},
          .factory = [this] {
             return std::make_unique<shell_config_plugin>(state_->log);
          },
       });
    }
 
-   boost::asio::awaitable<void> on_provide(fcl::app::application_context& context) override {
+   boost::asio::awaitable<void> on_provide(forge::app::application_context& context) override {
       context.apis().install<sample_api>(sample_api::describe(), std::make_shared<sample_api_impl>(state_->workers));
       state_->log.entries.push_back("app.provide");
       co_return;
@@ -862,7 +862,7 @@ class daemon_test_application final : public fcl::app::application_shell {
    daemon_test_state* state_ = nullptr;
 };
 
-int run_test_daemon(std::vector<std::string> args, daemon_test_state& state, fcl::app::daemon_options options = {},
+int run_test_daemon(std::vector<std::string> args, daemon_test_state& state, forge::app::daemon_options options = {},
                     bool read_process_env = false) {
    auto argv = std::vector<char*>{};
    argv.reserve(args.size());
@@ -881,18 +881,18 @@ int run_test_daemon(std::vector<std::string> args, daemon_test_state& state, fcl
    if (read_process_env) {
       options.read_process_env = true;
       if (options.env_prefix.empty()) {
-         options.env_prefix = "FCL_TESTD";
+         options.env_prefix = "FORGE_TESTD";
       }
    }
    options.run.handle_sigint = false;
    options.run.handle_sigterm = false;
    if (!options.run.wait_for_stop) {
-      options.run.wait_for_stop = [](fcl::app::application_shell&) -> boost::asio::awaitable<void> {
+      options.run.wait_for_stop = [](forge::app::application_shell&) -> boost::asio::awaitable<void> {
          co_return;
       };
    }
-   return fcl::app::run_daemon(
-      [&state](const fcl::app::daemon_context& context) {
+   return forge::app::run_daemon(
+      [&state](const forge::app::daemon_context& context) {
          return std::make_unique<daemon_test_application>(context, state);
       },
       static_cast<int>(argv.size()),
@@ -903,18 +903,18 @@ int run_test_daemon(std::vector<std::string> args, daemon_test_state& state, fcl
 } // namespace
 
 BOOST_AUTO_TEST_CASE(event_bus_bounds_queues_and_keeps_critical_ring) {
-   auto bus = fcl::app::event_bus{fcl::app::event_bus_options{
+   auto bus = forge::app::event_bus{forge::app::event_bus_options{
        .max_subscription_events = 1,
        .max_critical_events = 2,
        .max_recent_events = 3,
    }};
-   auto subscription = bus.subscribe(fcl::app::event_filter{.topic = "app"});
+   auto subscription = bus.subscribe(forge::app::event_filter{.topic = "app"});
 
-   bus.publish(fcl::app::event_severity::info, "app.start", "first");
-   bus.publish(fcl::app::event_severity::info, "app.start", "dropped");
-   bus.publish(fcl::app::event_severity::critical, "system", "critical-a");
-   bus.publish(fcl::app::event_severity::critical, "system", "critical-b");
-   bus.publish(fcl::app::event_severity::critical, "system", "critical-c");
+   bus.publish(forge::app::event_severity::info, "app.start", "first");
+   bus.publish(forge::app::event_severity::info, "app.start", "dropped");
+   bus.publish(forge::app::event_severity::critical, "system", "critical-a");
+   bus.publish(forge::app::event_severity::critical, "system", "critical-b");
+   bus.publish(forge::app::event_severity::critical, "system", "critical-c");
 
    BOOST_TEST(bus.metrics().dropped == 1);
    auto first = subscription.poll();
@@ -935,9 +935,9 @@ BOOST_AUTO_TEST_CASE(event_bus_bounds_queues_and_keeps_critical_ring) {
 
 BOOST_AUTO_TEST_CASE(plugin_registry_orders_dependencies_and_rejects_bad_graphs) {
    auto log = lifecycle_log{};
-   auto registry = fcl::app::plugin_registry{};
+   auto registry = forge::app::plugin_registry{};
    registry.register_plugin(descriptor("store", log, {}, false));
-   registry.register_plugin(descriptor("provider", log, {fcl::app::plugin_id{.value = "store"}}));
+   registry.register_plugin(descriptor("provider", log, {forge::app::plugin_id{.value = "store"}}));
 
    auto plugins = registry.instantiate_enabled({});
    BOOST_REQUIRE_EQUAL(plugins.size(), 2);
@@ -946,32 +946,32 @@ BOOST_AUTO_TEST_CASE(plugin_registry_orders_dependencies_and_rejects_bad_graphs)
 
    BOOST_CHECK_THROW(registry.register_plugin(descriptor("store", log)), std::invalid_argument);
 
-   auto broken = fcl::app::plugin_registry{};
-   broken.register_plugin(descriptor("broken", log, {fcl::app::plugin_id{.value = "missing"}}));
+   auto broken = forge::app::plugin_registry{};
+   broken.register_plugin(descriptor("broken", log, {forge::app::plugin_id{.value = "missing"}}));
    BOOST_CHECK_THROW(static_cast<void>(broken.instantiate_enabled({})), std::logic_error);
 
-   BOOST_CHECK_THROW(static_cast<void>(registry.instantiate_enabled({fcl::app::plugin_config{
-                         .id = fcl::app::plugin_id{.value = "store"},
+   BOOST_CHECK_THROW(static_cast<void>(registry.instantiate_enabled({forge::app::plugin_config{
+                         .id = forge::app::plugin_id{.value = "store"},
                          .enabled = false,
                      }})),
                      std::logic_error);
 }
 
 BOOST_AUTO_TEST_CASE(application_runtime_rolls_back_and_shutdown_is_idempotent) {
-   auto runtime = fcl::asio::runtime{};
-   auto scheduler = fcl::asio::task_scheduler{runtime};
-   auto signals = fcl::app::signal_bus{};
-   auto events = fcl::app::event_bus{};
-   auto context = fcl::app::plugin_context{scheduler, signals, events};
+   auto runtime = forge::asio::runtime{};
+   auto scheduler = forge::asio::task_scheduler{runtime};
+   auto signals = forge::app::signal_bus{};
+   auto events = forge::app::event_bus{};
+   auto context = forge::app::plugin_context{scheduler, signals, events};
    auto log = lifecycle_log{};
 
-   auto registry = fcl::app::plugin_registry{};
+   auto registry = forge::app::plugin_registry{};
    registry.register_plugin(descriptor("a", log));
    registry.register_plugin(descriptor("b", log, {}, true, true));
 
-   auto app = fcl::app::application_runtime{context, registry.instantiate_enabled({})};
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, app.startup()), fcl::app::exceptions::startup_failed);
-   BOOST_CHECK(app.state() == fcl::app::application_state::stopped);
+   auto app = forge::app::application_runtime{context, registry.instantiate_enabled({})};
+   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime, app.startup()), forge::app::exceptions::startup_failed);
+   BOOST_CHECK(app.state() == forge::app::application_state::stopped);
    BOOST_REQUIRE_EQUAL(log.entries.size(), 6);
    BOOST_TEST(log.entries[0] == "initialize:a");
    BOOST_TEST(log.entries[1] == "initialize:b");
@@ -980,106 +980,106 @@ BOOST_AUTO_TEST_CASE(application_runtime_rolls_back_and_shutdown_is_idempotent) 
    BOOST_TEST(log.entries[4] == "shutdown:b");
    BOOST_TEST(log.entries[5] == "shutdown:a");
 
-   fcl::asio::blocking::run(runtime, app.shutdown());
-   fcl::asio::blocking::run(runtime, app.shutdown());
+   forge::asio::blocking::run(runtime, app.shutdown());
+   forge::asio::blocking::run(runtime, app.shutdown());
 }
 
 BOOST_AUTO_TEST_CASE(application_runtime_rejects_startup_after_shutdown) {
-   auto runtime = fcl::asio::runtime{};
-   auto scheduler = fcl::asio::task_scheduler{runtime};
-   auto signals = fcl::app::signal_bus{};
-   auto events = fcl::app::event_bus{};
-   auto context = fcl::app::plugin_context{scheduler, signals, events};
+   auto runtime = forge::asio::runtime{};
+   auto scheduler = forge::asio::task_scheduler{runtime};
+   auto signals = forge::app::signal_bus{};
+   auto events = forge::app::event_bus{};
+   auto context = forge::app::plugin_context{scheduler, signals, events};
    auto log = lifecycle_log{};
 
-   auto registry = fcl::app::plugin_registry{};
+   auto registry = forge::app::plugin_registry{};
    registry.register_plugin(descriptor("a", log));
 
-   auto app = fcl::app::application_runtime{context, registry.instantiate_enabled({})};
-   fcl::asio::blocking::run(runtime, app.startup());
-   fcl::asio::blocking::run(runtime, app.shutdown());
+   auto app = forge::app::application_runtime{context, registry.instantiate_enabled({})};
+   forge::asio::blocking::run(runtime, app.startup());
+   forge::asio::blocking::run(runtime, app.shutdown());
 
-   BOOST_CHECK(app.state() == fcl::app::application_state::stopped);
+   BOOST_CHECK(app.state() == forge::app::application_state::stopped);
    BOOST_REQUIRE_EQUAL(log.entries.size(), 3);
    BOOST_TEST(log.entries[0] == "initialize:a");
    BOOST_TEST(log.entries[1] == "startup:a");
    BOOST_TEST(log.entries[2] == "shutdown:a");
 
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, app.startup()), std::logic_error);
-   BOOST_CHECK(app.state() == fcl::app::application_state::stopped);
+   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime, app.startup()), std::logic_error);
+   BOOST_CHECK(app.state() == forge::app::application_state::stopped);
    BOOST_REQUIRE_EQUAL(log.entries.size(), 3);
 }
 
 BOOST_AUTO_TEST_CASE(application_runtime_records_diagnostics_and_events) {
-   auto runtime = fcl::asio::runtime{};
-   auto scheduler = fcl::asio::task_scheduler{runtime};
-   auto signals = fcl::app::signal_bus{};
-   auto events = fcl::app::event_bus{};
-   auto diagnostics = fcl::app::diagnostics_store{};
-   auto context = fcl::app::plugin_context{scheduler, signals, events, &diagnostics};
+   auto runtime = forge::asio::runtime{};
+   auto scheduler = forge::asio::task_scheduler{runtime};
+   auto signals = forge::app::signal_bus{};
+   auto events = forge::app::event_bus{};
+   auto diagnostics = forge::app::diagnostics_store{};
+   auto context = forge::app::plugin_context{scheduler, signals, events, &diagnostics};
    auto log = lifecycle_log{};
 
-   auto registry = fcl::app::plugin_registry{};
+   auto registry = forge::app::plugin_registry{};
    registry.register_plugin(descriptor("a", log));
 
-   auto app = fcl::app::application_runtime{context, registry.instantiate_enabled({}), &diagnostics};
-   fcl::asio::blocking::run(runtime, app.startup());
+   auto app = forge::app::application_runtime{context, registry.instantiate_enabled({}), &diagnostics};
+   forge::asio::blocking::run(runtime, app.startup());
 
    auto snapshot = diagnostics.snapshot(events);
    BOOST_REQUIRE_EQUAL(snapshot.plugins.size(), 1U);
    BOOST_TEST(snapshot.plugins.front().id == "a");
-   BOOST_TEST(static_cast<int>(snapshot.plugins.front().state) == static_cast<int>(fcl::app::lifecycle_state::started));
+   BOOST_TEST(static_cast<int>(snapshot.plugins.front().state) == static_cast<int>(forge::app::lifecycle_state::started));
    BOOST_TEST(snapshot.events.published >= 4U);
    BOOST_TEST(!snapshot.recent_events.empty());
 
-   fcl::asio::blocking::run(runtime, app.shutdown());
+   forge::asio::blocking::run(runtime, app.shutdown());
    snapshot = diagnostics.snapshot(events);
-   BOOST_TEST(static_cast<int>(snapshot.plugins.front().state) == static_cast<int>(fcl::app::lifecycle_state::stopped));
+   BOOST_TEST(static_cast<int>(snapshot.plugins.front().state) == static_cast<int>(forge::app::lifecycle_state::stopped));
 }
 
 BOOST_AUTO_TEST_CASE(application_runtime_records_failed_plugin_diagnostics) {
-   auto runtime = fcl::asio::runtime{};
-   auto scheduler = fcl::asio::task_scheduler{runtime};
-   auto signals = fcl::app::signal_bus{};
-   auto events = fcl::app::event_bus{};
-   auto diagnostics = fcl::app::diagnostics_store{};
-   auto context = fcl::app::plugin_context{scheduler, signals, events, &diagnostics};
+   auto runtime = forge::asio::runtime{};
+   auto scheduler = forge::asio::task_scheduler{runtime};
+   auto signals = forge::app::signal_bus{};
+   auto events = forge::app::event_bus{};
+   auto diagnostics = forge::app::diagnostics_store{};
+   auto context = forge::app::plugin_context{scheduler, signals, events, &diagnostics};
    auto log = lifecycle_log{};
 
-   auto registry = fcl::app::plugin_registry{};
+   auto registry = forge::app::plugin_registry{};
    registry.register_plugin(descriptor("a", log, {}, true, true));
 
-   auto app = fcl::app::application_runtime{context, registry.instantiate_enabled({}), &diagnostics};
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(runtime, app.startup()), fcl::app::exceptions::startup_failed);
+   auto app = forge::app::application_runtime{context, registry.instantiate_enabled({}), &diagnostics};
+   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime, app.startup()), forge::app::exceptions::startup_failed);
 
    const auto snapshot = diagnostics.snapshot(events);
-   BOOST_TEST(static_cast<int>(snapshot.state) == static_cast<int>(fcl::app::lifecycle_state::failed));
+   BOOST_TEST(static_cast<int>(snapshot.state) == static_cast<int>(forge::app::lifecycle_state::failed));
    BOOST_REQUIRE_EQUAL(snapshot.plugins.size(), 1U);
-   BOOST_TEST(static_cast<int>(snapshot.plugins.front().state) == static_cast<int>(fcl::app::lifecycle_state::failed));
+   BOOST_TEST(static_cast<int>(snapshot.plugins.front().state) == static_cast<int>(forge::app::lifecycle_state::failed));
    BOOST_TEST(snapshot.plugins.front().last_error == "startup failed");
 }
 
 BOOST_AUTO_TEST_CASE(application_runtime_collects_and_applies_plugin_config_before_initialize) {
-   auto runtime = fcl::asio::runtime{};
-   auto scheduler = fcl::asio::task_scheduler{runtime};
-   auto signals = fcl::app::signal_bus{};
-   auto events = fcl::app::event_bus{};
-   auto context = fcl::app::plugin_context{scheduler, signals, events};
+   auto runtime = forge::asio::runtime{};
+   auto scheduler = forge::asio::task_scheduler{runtime};
+   auto signals = forge::app::signal_bus{};
+   auto events = forge::app::event_bus{};
+   auto context = forge::app::plugin_context{scheduler, signals, events};
    auto log = lifecycle_log{};
 
-   auto plugins = std::vector<std::unique_ptr<fcl::app::plugin>>{};
+   auto plugins = std::vector<std::unique_ptr<forge::app::plugin>>{};
    plugins.push_back(std::make_unique<configurable_plugin>(log));
 
-   auto app = fcl::app::application_runtime{context, std::move(plugins)};
+   auto app = forge::app::application_runtime{context, std::move(plugins)};
    const auto registry = app.describe_config();
    BOOST_REQUIRE_EQUAL(registry.components().size(), 1U);
    BOOST_TEST(registry.components().front().section == "http");
 
-   auto document = fcl::config::document{};
+   auto document = forge::config::document{};
    document.set("http.bind-port", 7777);
-   fcl::asio::blocking::run(runtime, app.configure(document));
-   fcl::asio::blocking::run(runtime, app.startup());
-   fcl::asio::blocking::run(runtime, app.shutdown());
+   forge::asio::blocking::run(runtime, app.configure(document));
+   forge::asio::blocking::run(runtime, app.startup());
+   forge::asio::blocking::run(runtime, app.shutdown());
 
    BOOST_REQUIRE_EQUAL(log.entries.size(), 4U);
    BOOST_TEST(log.entries[0] == "configure:7777");
@@ -1098,20 +1098,20 @@ BOOST_AUTO_TEST_CASE(application_shell_owns_config_plugin_lifecycle_and_context)
    BOOST_TEST(registry.components()[1].section == "plugins");
    BOOST_TEST(registry.components()[2].section == "http");
 
-   auto document = fcl::config::document{};
+   auto document = forge::config::document{};
    document.set("service.workers", 4);
    app.configure(document);
 
-   fcl::asio::blocking::run(app.runtime(), app.initialize());
-   fcl::asio::blocking::run(app.runtime(), app.startup());
+   forge::asio::blocking::run(app.runtime(), app.initialize());
+   forge::asio::blocking::run(app.runtime(), app.startup());
 
    BOOST_TEST(app.workers() == 4U);
    auto api = app.apis().get<sample_api>({.id = {"sample"}, .major = 1});
-   BOOST_TEST(fcl::asio::blocking::run(app.runtime(), api->value(0)) == 4);
+   BOOST_TEST(forge::asio::blocking::run(app.runtime(), api->value(0)) == 4);
 
    const auto exit_code = app.run_count();
    BOOST_TEST(exit_code == 7);
-   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+   forge::asio::blocking::run(app.runtime(), app.shutdown());
 
    const auto expected = std::vector<std::string>{
       "app.configure:4",
@@ -1129,7 +1129,7 @@ BOOST_AUTO_TEST_CASE(application_shell_publishes_api_before_plugin_initialize) {
    auto log = lifecycle_log{};
    auto app = shell_api_application{log};
 
-   fcl::asio::blocking::run(app.runtime(), app.initialize());
+   forge::asio::blocking::run(app.runtime(), app.initialize());
 
    const auto expected = std::vector<std::string>{
       "app.provide",
@@ -1138,16 +1138,16 @@ BOOST_AUTO_TEST_CASE(application_shell_publishes_api_before_plugin_initialize) {
    BOOST_TEST(log.entries == expected, boost::test_tools::per_element());
    BOOST_TEST(app.apis().describe({.id = {"sample"}, .major = 1}) != nullptr);
 
-   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+   forge::asio::blocking::run(app.runtime(), app.shutdown());
 }
 
 BOOST_AUTO_TEST_CASE(application_shell_preserves_dependency_order_and_reverse_shutdown) {
    auto log = lifecycle_log{};
    auto app = shell_order_application{log};
 
-   app.configure(fcl::config::document{});
-   fcl::asio::blocking::run(app.runtime(), app.startup());
-   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+   app.configure(forge::config::document{});
+   forge::asio::blocking::run(app.runtime(), app.startup());
+   forge::asio::blocking::run(app.runtime(), app.shutdown());
 
    const auto expected = std::vector<std::string>{
       "initialize:store",
@@ -1164,8 +1164,8 @@ BOOST_AUTO_TEST_CASE(application_shell_rolls_back_started_plugins_on_startup_fai
    auto log = lifecycle_log{};
    auto app = shell_failure_application{log};
 
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.startup()), fcl::app::exceptions::startup_failed);
-   BOOST_TEST(static_cast<int>(app.state()) == static_cast<int>(fcl::app::application_state::stopped));
+   BOOST_CHECK_THROW(forge::asio::blocking::run(app.runtime(), app.startup()), forge::app::exceptions::startup_failed);
+   BOOST_TEST(static_cast<int>(app.state()) == static_cast<int>(forge::app::application_state::stopped));
 
    const auto expected = std::vector<std::string>{
       "initialize:store",
@@ -1178,7 +1178,7 @@ BOOST_AUTO_TEST_CASE(application_shell_rolls_back_started_plugins_on_startup_fai
    BOOST_TEST(log.entries == expected, boost::test_tools::per_element());
 
    const auto snapshot = app.diagnostics().snapshot(app.events());
-   BOOST_TEST(static_cast<int>(snapshot.state) == static_cast<int>(fcl::app::lifecycle_state::failed));
+   BOOST_TEST(static_cast<int>(snapshot.state) == static_cast<int>(forge::app::lifecycle_state::failed));
    BOOST_TEST(snapshot.last_error == "startup failed");
 }
 
@@ -1186,9 +1186,9 @@ BOOST_AUTO_TEST_CASE(application_shell_keeps_scheduler_available_until_shutdown_
    auto log = lifecycle_log{};
    auto app = shell_scheduler_cleanup_application{log};
 
-   fcl::asio::blocking::run(app.runtime(), app.startup());
+   forge::asio::blocking::run(app.runtime(), app.startup());
    app.request_stop();
-   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+   forge::asio::blocking::run(app.runtime(), app.shutdown());
 
    const auto cleanup = std::ranges::find(log.entries, "cleanup.scheduler.work");
    const auto shutdown = std::ranges::find(log.entries, "shutdown:cleanup");
@@ -1201,9 +1201,9 @@ BOOST_AUTO_TEST_CASE(application_shell_initialize_failure_transitions_to_stopped
    auto log = lifecycle_log{};
    auto app = shell_initialize_failure_application{log};
 
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.initialize()), fcl::app::exceptions::initialize_failed);
-   BOOST_TEST(static_cast<int>(app.state()) == static_cast<int>(fcl::app::application_state::stopped));
-   BOOST_CHECK_THROW(fcl::asio::blocking::run(app.runtime(), app.startup()), std::logic_error);
+   BOOST_CHECK_THROW(forge::asio::blocking::run(app.runtime(), app.initialize()), forge::app::exceptions::initialize_failed);
+   BOOST_TEST(static_cast<int>(app.state()) == static_cast<int>(forge::app::application_state::stopped));
+   BOOST_CHECK_THROW(forge::asio::blocking::run(app.runtime(), app.startup()), std::logic_error);
 
    const auto expected = std::vector<std::string>{
       "initialize:init-fail",
@@ -1231,12 +1231,12 @@ BOOST_AUTO_TEST_CASE(application_shell_applies_plugin_selection_from_config) {
    }
    BOOST_TEST(found_plugins_section);
 
-   auto document = fcl::config::document{};
+   auto document = forge::config::document{};
    document.set("plugins.api.enabled", false);
    document.set("plugins.metrics.enabled", true);
    app.configure(document);
-   fcl::asio::blocking::run(app.runtime(), app.startup());
-   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+   forge::asio::blocking::run(app.runtime(), app.startup());
+   forge::asio::blocking::run(app.runtime(), app.shutdown());
 
    const auto expected = std::vector<std::string>{
       "initialize:store",
@@ -1264,11 +1264,11 @@ BOOST_AUTO_TEST_CASE(application_shell_uses_nested_official_plugin_selection_pat
    }
    BOOST_TEST(found_plugins_section);
 
-   auto document = fcl::config::document{};
+   auto document = forge::config::document{};
    document.set("plugins.p2p.node.enabled", false);
    app.configure(document);
-   fcl::asio::blocking::run(app.runtime(), app.startup());
-   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+   forge::asio::blocking::run(app.runtime(), app.startup());
+   forge::asio::blocking::run(app.runtime(), app.shutdown());
 
    BOOST_TEST(log.entries.empty());
 }
@@ -1277,12 +1277,12 @@ BOOST_AUTO_TEST_CASE(application_shell_accepts_textual_plugin_selection_flags) {
    auto log = lifecycle_log{};
    auto app = shell_selection_application{log};
 
-   auto document = fcl::config::document{};
+   auto document = forge::config::document{};
    document.set("plugins.api.enabled", "false");
    document.set("plugins.metrics.enabled", "true");
    app.configure(document);
-   fcl::asio::blocking::run(app.runtime(), app.startup());
-   fcl::asio::blocking::run(app.runtime(), app.shutdown());
+   forge::asio::blocking::run(app.runtime(), app.startup());
+   forge::asio::blocking::run(app.runtime(), app.shutdown());
 
    const auto expected = std::vector<std::string>{
       "initialize:store",
@@ -1299,7 +1299,7 @@ BOOST_AUTO_TEST_CASE(application_shell_rejects_invalid_textual_plugin_selection_
    auto log = lifecycle_log{};
    auto app = shell_selection_application{log};
 
-   auto document = fcl::config::document{};
+   auto document = forge::config::document{};
    document.set("plugins.api.enabled", "definitely");
 
    BOOST_CHECK_THROW(app.configure(document), std::invalid_argument);
@@ -1310,7 +1310,7 @@ BOOST_AUTO_TEST_CASE(application_shell_rejects_enabled_plugin_with_disabled_depe
    auto log = lifecycle_log{};
    auto app = shell_selection_application{log};
 
-   auto document = fcl::config::document{};
+   auto document = forge::config::document{};
    document.set("plugins.store.enabled", false);
    document.set("plugins.api.enabled", true);
 
@@ -1322,19 +1322,19 @@ BOOST_AUTO_TEST_CASE(run_application_executes_lifecycle_and_custom_stop_waiter) 
    auto log = lifecycle_log{};
    auto app = shell_order_application{log};
 
-   auto options = fcl::app::run_options{};
+   auto options = forge::app::run_options{};
    options.handle_sigint = false;
    options.handle_sigterm = false;
-   options.wait_for_stop = [](fcl::app::application_shell& shell) -> boost::asio::awaitable<void> {
+   options.wait_for_stop = [](forge::app::application_shell& shell) -> boost::asio::awaitable<void> {
       auto timer = boost::asio::steady_timer{shell.runtime().context()};
       timer.expires_after(std::chrono::milliseconds{5});
       co_await timer.async_wait(boost::asio::use_awaitable);
       co_return;
    };
 
-   const auto exit_code = fcl::app::run_application(app, fcl::config::document{}, options);
+   const auto exit_code = forge::app::run_application(app, forge::config::document{}, options);
    BOOST_TEST(exit_code == 0);
-   BOOST_TEST(static_cast<int>(app.state()) == static_cast<int>(fcl::app::application_state::stopped));
+   BOOST_TEST(static_cast<int>(app.state()) == static_cast<int>(forge::app::application_state::stopped));
 
    const auto expected = std::vector<std::string>{
       "initialize:store",
@@ -1352,13 +1352,13 @@ BOOST_AUTO_TEST_CASE(run_application_unique_ptr_reports_shutdown_timeout_after_c
    auto state = std::make_shared<slow_shutdown_state>();
 
    auto app = std::make_unique<shell_slow_shutdown_application>(log, state);
-   auto options = fcl::app::run_options{};
+   auto options = forge::app::run_options{};
    options.handle_sigint = false;
    options.handle_sigterm = false;
    options.shutdown_timeout = std::chrono::milliseconds{1};
 
-   BOOST_CHECK_THROW(fcl::app::run_application(std::move(app), fcl::config::document{}, options),
-                     fcl::app::exceptions::shutdown_failed);
+   BOOST_CHECK_THROW(forge::app::run_application(std::move(app), forge::config::document{}, options),
+                     forge::app::exceptions::shutdown_failed);
    BOOST_TEST(!state->shutdown_finished());
    BOOST_TEST(!state->shell_destroyed());
    BOOST_TEST(state->wait_for_shutdown(std::chrono::seconds{1}));
@@ -1377,15 +1377,15 @@ BOOST_AUTO_TEST_CASE(run_application_reference_reports_timeout_only_after_shutdo
    auto state = std::make_shared<slow_shutdown_state>();
 
    auto app = shell_slow_shutdown_application{log, state};
-   auto options = fcl::app::run_options{};
+   auto options = forge::app::run_options{};
    options.handle_sigint = false;
    options.handle_sigterm = false;
    options.shutdown_timeout = std::chrono::milliseconds{1};
 
    auto threw_timeout = false;
    try {
-      static_cast<void>(fcl::app::run_application(app, fcl::config::document{}, options));
-   } catch (const fcl::app::exceptions::shutdown_failed&) {
+      static_cast<void>(forge::app::run_application(app, forge::config::document{}, options));
+   } catch (const forge::app::exceptions::shutdown_failed&) {
       threw_timeout = true;
    }
 
@@ -1408,7 +1408,7 @@ BOOST_AUTO_TEST_CASE(run_application_reference_reports_timeout_only_after_shutdo
 
 BOOST_AUTO_TEST_CASE(run_daemon_builds_shell_options_before_factory) {
    auto state = daemon_test_state{};
-   const auto data_dir = make_temp_dir("fcl-daemon-shell-options");
+   const auto data_dir = make_temp_dir("forge-daemon-shell-options");
 
    const auto exit_code = run_test_daemon(
       {
@@ -1452,7 +1452,7 @@ BOOST_AUTO_TEST_CASE(run_daemon_help_prints_daemon_app_and_plugin_options_withou
 
 BOOST_AUTO_TEST_CASE(run_daemon_merges_yaml_and_cli_before_check_config) {
    auto state = daemon_test_state{};
-   const auto dir = make_temp_dir("fcl-daemon-merge");
+   const auto dir = make_temp_dir("forge-daemon-merge");
    const auto config = dir / "config.yml";
    write_text(
       config,
@@ -1484,11 +1484,11 @@ http:
 }
 
 BOOST_AUTO_TEST_CASE(run_daemon_merges_yaml_dotenv_process_env_and_cli_in_order) {
-   auto service_workers = env_var_guard{"FCL_TESTD_SERVICE_WORKERS", "6"};
-   auto http_port = env_var_guard{"FCL_TESTD_HTTP_PORT", "8001"};
+   auto service_workers = env_var_guard{"FORGE_TESTD_SERVICE_WORKERS", "6"};
+   auto http_port = env_var_guard{"FORGE_TESTD_HTTP_PORT", "8001"};
 
    auto state = daemon_test_state{};
-   const auto dir = make_temp_dir("fcl-daemon-source-merge");
+   const auto dir = make_temp_dir("forge-daemon-source-merge");
    const auto config = dir / "config.yml";
    const auto dotenv = dir / ".env";
    write_text(
@@ -1500,9 +1500,9 @@ http:
 )");
    write_text(
       dotenv,
-      R"(FCL_TESTD_DAEMON_RUNTIME_THREADS=4
-FCL_TESTD_SERVICE_WORKERS=7
-FCL_TESTD_HTTP_PORT=8000
+      R"(FORGE_TESTD_DAEMON_RUNTIME_THREADS=4
+FORGE_TESTD_SERVICE_WORKERS=7
+FORGE_TESTD_HTTP_PORT=8000
 )");
 
    const auto exit_code = run_test_daemon(
@@ -1528,16 +1528,16 @@ FCL_TESTD_HTTP_PORT=8000
 }
 
 BOOST_AUTO_TEST_CASE(run_daemon_source_flags_disable_yaml_dotenv_process_env_and_app_cli) {
-   auto env_workers = env_var_guard{"FCL_TESTD_SERVICE_WORKERS", "9"};
+   auto env_workers = env_var_guard{"FORGE_TESTD_SERVICE_WORKERS", "9"};
 
    auto state = daemon_test_state{};
-   const auto dir = make_temp_dir("fcl-daemon-source-flags");
+   const auto dir = make_temp_dir("forge-daemon-source-flags");
    const auto config = dir / "missing.yml";
    const auto dotenv = dir / ".env";
-   write_text(dotenv, "FCL_TESTD_SERVICE_WORKERS=8\n");
+   write_text(dotenv, "FORGE_TESTD_SERVICE_WORKERS=8\n");
 
-   auto options = fcl::app::daemon_options{};
-   options.env_prefix = "FCL_TESTD";
+   auto options = forge::app::daemon_options{};
+   options.env_prefix = "FORGE_TESTD";
    options.read_yaml = false;
    options.read_dotenv = false;
    options.read_process_env = false;
@@ -1564,14 +1564,14 @@ BOOST_AUTO_TEST_CASE(run_daemon_source_flags_disable_yaml_dotenv_process_env_and
 }
 
 BOOST_AUTO_TEST_CASE(run_daemon_empty_env_prefix_disables_dotenv_and_process_env) {
-   auto env_workers = env_var_guard{"FCL_TESTD_SERVICE_WORKERS", "9"};
+   auto env_workers = env_var_guard{"FORGE_TESTD_SERVICE_WORKERS", "9"};
 
    auto state = daemon_test_state{};
-   const auto dir = make_temp_dir("fcl-daemon-empty-env-prefix");
+   const auto dir = make_temp_dir("forge-daemon-empty-env-prefix");
    const auto dotenv = dir / ".env";
-   write_text(dotenv, "FCL_TESTD_SERVICE_WORKERS=8\n");
+   write_text(dotenv, "FORGE_TESTD_SERVICE_WORKERS=8\n");
 
-   auto options = fcl::app::daemon_options{};
+   auto options = forge::app::daemon_options{};
    options.env_prefix = "";
    options.read_process_env = true;
 
@@ -1600,7 +1600,7 @@ BOOST_AUTO_TEST_CASE(run_daemon_help_ignores_missing_explicit_config) {
       {
          "testd",
          "--config",
-         (make_temp_dir("fcl-daemon-help") / "missing.yml").string(),
+         (make_temp_dir("forge-daemon-help") / "missing.yml").string(),
          "--help",
       },
       state);
@@ -1612,7 +1612,7 @@ BOOST_AUTO_TEST_CASE(run_daemon_help_ignores_missing_explicit_config) {
 
 BOOST_AUTO_TEST_CASE(run_daemon_help_ignores_malformed_explicit_config) {
    auto state = daemon_test_state{};
-   const auto dir = make_temp_dir("fcl-daemon-help-broken-config");
+   const auto dir = make_temp_dir("forge-daemon-help-broken-config");
    const auto config = dir / "broken.yml";
    write_text(config, "daemon: [\n");
    auto output = stream_capture{std::cout};
@@ -1640,7 +1640,7 @@ BOOST_AUTO_TEST_CASE(run_daemon_explicit_missing_config_is_error_for_check_confi
       {
          "testd",
          "--config",
-         (make_temp_dir("fcl-daemon-missing-config") / "missing.yml").string(),
+         (make_temp_dir("forge-daemon-missing-config") / "missing.yml").string(),
          "--check-config",
       },
       state);
@@ -1654,14 +1654,14 @@ BOOST_AUTO_TEST_CASE(run_daemon_explicit_missing_dotenv_is_error_when_dotenv_sou
    auto state = daemon_test_state{};
    auto errors = stream_capture{std::cerr};
 
-   auto options = fcl::app::daemon_options{};
-   options.env_prefix = "FCL_TESTD";
+   auto options = forge::app::daemon_options{};
+   options.env_prefix = "FORGE_TESTD";
 
    const auto exit_code = run_test_daemon(
       {
          "testd",
          "--dotenv",
-         (make_temp_dir("fcl-daemon-missing-dotenv") / ".env").string(),
+         (make_temp_dir("forge-daemon-missing-dotenv") / ".env").string(),
          "--check-config",
       },
       state,
@@ -1674,7 +1674,7 @@ BOOST_AUTO_TEST_CASE(run_daemon_explicit_missing_dotenv_is_error_when_dotenv_sou
 
 BOOST_AUTO_TEST_CASE(run_daemon_reports_bootstrap_type_error_as_diagnostic) {
    auto state = daemon_test_state{};
-   const auto dir = make_temp_dir("fcl-daemon-bootstrap-type-error");
+   const auto dir = make_temp_dir("forge-daemon-bootstrap-type-error");
    const auto config = dir / "config.yml";
    write_text(
       config,
@@ -1701,7 +1701,7 @@ BOOST_AUTO_TEST_CASE(run_daemon_reports_bootstrap_type_error_as_diagnostic) {
 
 BOOST_AUTO_TEST_CASE(run_daemon_reports_invalid_action_flag_type_as_diagnostic) {
    auto state = daemon_test_state{};
-   const auto dir = make_temp_dir("fcl-daemon-bootstrap-bool-error");
+   const auto dir = make_temp_dir("forge-daemon-bootstrap-bool-error");
    const auto config = dir / "config.yml";
    write_text(
       config,
@@ -1727,7 +1727,7 @@ BOOST_AUTO_TEST_CASE(run_daemon_reports_invalid_action_flag_type_as_diagnostic) 
 
 BOOST_AUTO_TEST_CASE(run_daemon_print_effective_config_redacts_secret_fields) {
    auto state = daemon_test_state{};
-   const auto dir = make_temp_dir("fcl-daemon-print");
+   const auto dir = make_temp_dir("forge-daemon-print");
    const auto config = dir / "config.yml";
    write_text(
       config,
@@ -1754,7 +1754,7 @@ BOOST_AUTO_TEST_CASE(run_daemon_print_effective_config_redacts_secret_fields) {
 
 BOOST_AUTO_TEST_CASE(run_daemon_configure_writes_generated_config_without_product_template) {
    auto state = daemon_test_state{};
-   const auto dir = make_temp_dir("fcl-daemon-configure");
+   const auto dir = make_temp_dir("forge-daemon-configure");
    const auto config = dir / "generated.yml";
 
    const auto exit_code = run_test_daemon(
@@ -1779,7 +1779,7 @@ BOOST_AUTO_TEST_CASE(run_daemon_configure_writes_generated_config_without_produc
 
 BOOST_AUTO_TEST_CASE(run_daemon_configure_refuses_to_overwrite_existing_config) {
    auto state = daemon_test_state{};
-   const auto dir = make_temp_dir("fcl-daemon-configure-overwrite");
+   const auto dir = make_temp_dir("forge-daemon-configure-overwrite");
    const auto config = dir / "generated.yml";
    write_text(config, "service:\n  workers: 3\n");
    auto errors = stream_capture{std::cerr};
@@ -1839,28 +1839,28 @@ BOOST_AUTO_TEST_CASE(application_builder_creates_shell_and_applies_config_handle
    auto workers = std::uint16_t{0};
    auto async_config_called = false;
 
-   auto builder = fcl::app::application_builder{};
+   auto builder = forge::app::application_builder{};
    builder.name("builder-test")
-      .runtime(fcl::asio::runtime_options{.worker_threads = 1, .thread_name = "builder-test"})
-      .config<shell_service_config>("service", [&](fcl::app::configure_context& context, const shell_service_config& config)
+      .runtime(forge::asio::runtime_options{.worker_threads = 1, .thread_name = "builder-test"})
+      .config<shell_service_config>("service", [&](forge::app::configure_context& context, const shell_service_config& config)
                                     -> boost::asio::awaitable<void> {
          workers = config.workers;
          log.entries.push_back("typed.configure:" + std::to_string(workers));
          BOOST_TEST(context.view("service").get_or<std::uint16_t>("workers", 0) == 6U);
          co_return;
       })
-      .configure([&](fcl::app::configure_context&) {
+      .configure([&](forge::app::configure_context&) {
          async_config_called = true;
          log.entries.push_back("configure.extra");
       })
-      .provide([&](fcl::app::application_context& context) {
+      .provide([&](forge::app::application_context& context) {
          context.apis().install<sample_api>(sample_api::describe(), std::make_shared<sample_api_impl>(workers));
          log.entries.push_back("provide");
       })
-      .run_foreground([&](fcl::app::application_shell& shell) {
+      .run_foreground([&](forge::app::application_shell& shell) {
          log.entries.push_back("run");
          auto api = shell.apis().get<sample_api>({.id = {"sample"}, .major = 1});
-         return fcl::asio::blocking::run(shell.runtime(), api->value(0));
+         return forge::asio::blocking::run(shell.runtime(), api->value(0));
       });
 
    auto app = std::move(builder).build();
@@ -1868,18 +1868,18 @@ BOOST_AUTO_TEST_CASE(application_builder_creates_shell_and_applies_config_handle
    BOOST_REQUIRE_EQUAL(registry.components().size(), 1U);
    BOOST_TEST(registry.components()[0].section == "service");
 
-   auto document = fcl::config::document{};
+   auto document = forge::config::document{};
    document.set("service.workers", 6);
    app->configure(document);
-   fcl::asio::blocking::run(app->runtime(), app->startup());
+   forge::asio::blocking::run(app->runtime(), app->startup());
 
    BOOST_TEST(async_config_called);
    BOOST_TEST(workers == 6U);
    auto api = app->apis().get<sample_api>({.id = {"sample"}, .major = 1});
-   BOOST_TEST(fcl::asio::blocking::run(app->runtime(), api->value(0)) == 6);
+   BOOST_TEST(forge::asio::blocking::run(app->runtime(), api->value(0)) == 6);
    BOOST_TEST(app->run() == 6);
 
-   fcl::asio::blocking::run(app->runtime(), app->shutdown());
+   forge::asio::blocking::run(app->runtime(), app->shutdown());
 
    const auto expected = std::vector<std::string>{
       "typed.configure:6",
@@ -1892,22 +1892,22 @@ BOOST_AUTO_TEST_CASE(application_builder_creates_shell_and_applies_config_handle
 
 BOOST_AUTO_TEST_CASE(application_builder_collects_plugin_config_and_preserves_dependency_order) {
    auto log = lifecycle_log{};
-   auto builder = fcl::app::application_builder{};
-   builder.plugin(fcl::app::plugin_descriptor{
-      .id = fcl::app::plugin_id{.value = "http"},
+   auto builder = forge::app::application_builder{};
+   builder.plugin(forge::app::plugin_descriptor{
+      .id = forge::app::plugin_id{.value = "http"},
       .factory = [&log] {
          return std::make_unique<shell_config_plugin>(log);
       },
    });
-   builder.plugin(fcl::app::plugin_descriptor{
-      .id = fcl::app::plugin_id{.value = "store"},
+   builder.plugin(forge::app::plugin_descriptor{
+      .id = forge::app::plugin_id{.value = "store"},
       .factory = [&log] {
          return std::make_unique<shell_dependency_plugin>("store", log);
       },
    });
-   builder.plugin(fcl::app::plugin_descriptor{
-      .id = fcl::app::plugin_id{.value = "api"},
-      .dependencies = {fcl::app::plugin_id{.value = "store"}},
+   builder.plugin(forge::app::plugin_descriptor{
+      .id = forge::app::plugin_id{.value = "api"},
+      .dependencies = {forge::app::plugin_id{.value = "store"}},
       .factory = [&log] {
          return std::make_unique<shell_dependency_plugin>("api", log);
       },
@@ -1919,9 +1919,9 @@ BOOST_AUTO_TEST_CASE(application_builder_collects_plugin_config_and_preserves_de
    BOOST_TEST(registry.components()[0].section == "plugins");
    BOOST_TEST(registry.components()[1].section == "http");
 
-   app->configure(fcl::config::document{});
-   fcl::asio::blocking::run(app->runtime(), app->startup());
-   fcl::asio::blocking::run(app->runtime(), app->shutdown());
+   app->configure(forge::config::document{});
+   forge::asio::blocking::run(app->runtime(), app->startup());
+   forge::asio::blocking::run(app->runtime(), app->shutdown());
 
    const auto expected = std::vector<std::string>{
       "plugin.configure:9000",
@@ -1942,17 +1942,17 @@ BOOST_AUTO_TEST_CASE(application_builder_rejects_invalid_typed_config_before_sid
    auto configured = false;
    auto provided = false;
 
-   auto builder = fcl::app::application_builder{};
+   auto builder = forge::app::application_builder{};
    builder.config<shell_service_config>("service", [&](const shell_service_config&) {
       configured = true;
    });
-   builder.provide([&](fcl::app::application_context& context) {
+   builder.provide([&](forge::app::application_context& context) {
       provided = true;
       context.apis().install<sample_api>(sample_api::describe(), std::make_shared<sample_api_impl>(1));
    });
 
    auto app = std::move(builder).build();
-   auto document = fcl::config::document{};
+   auto document = forge::config::document{};
    document.set("service.workers", 99);
 
    BOOST_CHECK_THROW(app->configure(document), std::invalid_argument);

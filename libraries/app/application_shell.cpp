@@ -10,34 +10,34 @@ module;
 #include <vector>
 #include <variant>
 
-module fcl.app.application_shell;
+module forge.app.application_shell;
 
-import fcl.asio.blocking;
-import fcl.asio.runtime;
-import fcl.asio.task_scheduler;
-import fcl.config.key_path;
-import fcl.config.value;
-import fcl.config.document;
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.config.migration;
-import fcl.exceptions;
-import fcl.schema.value_kind;
-import fcl.app.application;
-import fcl.app.diagnostics;
-import fcl.app.events;
-import fcl.app.plugin;
-import fcl.app.plugin_context;
-import fcl.app.plugin_registry;
-import fcl.app.signals;
+import forge.asio.blocking;
+import forge.asio.runtime;
+import forge.asio.task_scheduler;
+import forge.config.key_path;
+import forge.config.value;
+import forge.config.document;
+import forge.config.component;
+import forge.config.decode;
+import forge.config.migration;
+import forge.exceptions;
+import forge.schema.value_kind;
+import forge.app.application;
+import forge.app.diagnostics;
+import forge.app.events;
+import forge.app.plugin;
+import forge.app.plugin_context;
+import forge.app.plugin_registry;
+import forge.app.signals;
 
-namespace fcl::app {
+namespace forge::app {
 namespace {
 
 std::string current_exception_message() {
    try {
       throw;
-   } catch (const fcl::exceptions::base& error) {
+   } catch (const forge::exceptions::base& error) {
       return error.message();
    } catch (const std::exception& error) {
       return error.what();
@@ -66,20 +66,20 @@ void publish_application_event(event_bus& events, event_severity severity, std::
 }
 
 [[nodiscard]] std::string plugin_selection_key(const plugin_id& id) {
-   constexpr auto official_prefix = std::string_view{"fcl.plugins."};
+   constexpr auto official_prefix = std::string_view{"forge.plugins."};
    if (id.value.starts_with(official_prefix)) {
       return id.value.substr(official_prefix.size());
    }
    return id.value;
 }
 
-[[nodiscard]] fcl::config::component_descriptor plugin_selection_descriptor(const plugin_registry& registry) {
-   auto descriptor = fcl::config::component_descriptor{.section = "plugins"};
+[[nodiscard]] forge::config::component_descriptor plugin_selection_descriptor(const plugin_registry& registry) {
+   auto descriptor = forge::config::component_descriptor{.section = "plugins"};
    for (const auto& plugin : registry.descriptors()) {
       const auto key = plugin_selection_key(plugin.id);
-      descriptor.fields.push_back(fcl::config::field_descriptor{
+      descriptor.fields.push_back(forge::config::field_descriptor{
          .name = key + ".enabled",
-         .kind = fcl::schema::value_kind::boolean,
+         .kind = forge::schema::value_kind::boolean,
          .has_default = true,
          .default_value = plugin.enabled_by_default,
          .description = "Enable plugin " + plugin.id.value,
@@ -89,7 +89,7 @@ void publish_application_event(event_bus& events, event_severity severity, std::
 }
 
 [[nodiscard]] std::vector<plugin_config> plugin_selection_from_document(const plugin_registry& registry,
-                                                                        const fcl::config::document& document) {
+                                                                        const forge::config::document& document) {
    auto out = std::vector<plugin_config>{};
    for (const auto& descriptor : registry.descriptors()) {
       auto enabled = descriptor.enabled_by_default;
@@ -99,7 +99,7 @@ void publish_application_event(event_bus& events, event_severity severity, std::
             enabled = *value;
          } else if (const auto* text = std::get_if<std::string>(&configured->storage)) {
             auto parsed = false;
-            if (!fcl::config::parse_bool_text(*text, parsed)) {
+            if (!forge::config::parse_bool_text(*text, parsed)) {
                throw std::invalid_argument{"plugin enabled flag must be boolean: " + path};
             }
             enabled = parsed;
@@ -117,22 +117,22 @@ void publish_application_event(event_bus& events, event_severity severity, std::
 
 } // namespace
 
-application_context::application_context(fcl::asio::runtime& runtime, fcl::asio::task_scheduler& scheduler,
-                                         fcl::api::registry& apis, signal_bus& signals,
+application_context::application_context(forge::asio::runtime& runtime, forge::asio::task_scheduler& scheduler,
+                                         forge::api::registry& apis, signal_bus& signals,
                                          event_bus& events, diagnostics_store& diagnostics)
     : runtime_{&runtime}, scheduler_{&scheduler}, apis_{&apis}, signals_{&signals},
       events_{&events}, diagnostics_{&diagnostics} {}
 
-fcl::asio::runtime& application_context::runtime() noexcept {
+forge::asio::runtime& application_context::runtime() noexcept {
    return *runtime_;
 }
 
-fcl::asio::task_scheduler& application_context::scheduler() noexcept {
+forge::asio::task_scheduler& application_context::scheduler() noexcept {
    return *scheduler_;
 }
 
-fcl::api::installer application_context::apis() noexcept {
-   return fcl::api::installer{*apis_};
+forge::api::installer application_context::apis() noexcept {
+   return forge::api::installer{*apis_};
 }
 
 signal_bus& application_context::signals() noexcept {
@@ -147,14 +147,14 @@ diagnostics_store& application_context::diagnostics() noexcept {
    return *diagnostics_;
 }
 
-configure_context::configure_context(const fcl::config::document& document) : document_{&document} {}
+configure_context::configure_context(const forge::config::document& document) : document_{&document} {}
 
-const fcl::config::document& configure_context::document() const noexcept {
+const forge::config::document& configure_context::document() const noexcept {
    return *document_;
 }
 
-fcl::config::component_view configure_context::view(std::string section) const {
-   return fcl::config::component_view{*document_, std::move(section)};
+forge::config::component_view configure_context::view(std::string section) const {
+   return forge::config::component_view{*document_, std::move(section)};
 }
 
 struct application_shell::impl {
@@ -169,9 +169,9 @@ struct application_shell::impl {
    }
 
    application_shell_options options;
-   fcl::asio::runtime runtime;
-   fcl::asio::task_scheduler scheduler;
-   fcl::api::registry apis;
+   forge::asio::runtime runtime;
+   forge::asio::task_scheduler scheduler;
+   forge::api::registry apis;
    signal_bus signals;
    event_bus events;
    diagnostics_store diagnostics;
@@ -179,7 +179,7 @@ struct application_shell::impl {
    plugin_registry registry;
    std::unique_ptr<plugin_context> plugin_context_value;
    std::unique_ptr<application_runtime> plugin_runtime;
-   fcl::config::document effective_config;
+   forge::config::document effective_config;
    bool plugins_registered = false;
    bool configured = false;
    bool apis_provided = false;
@@ -190,7 +190,7 @@ application_shell::application_shell(application_shell_options options) : impl_{
 
 application_shell::~application_shell() = default;
 
-void application_shell::on_describe_config(fcl::config::component_registry&) const {}
+void application_shell::on_describe_config(forge::config::component_registry&) const {}
 
 boost::asio::awaitable<void> application_shell::on_configure(configure_context&) {
    co_return;
@@ -214,7 +214,7 @@ void application_shell::ensure_plugins_registered() {
    impl_->plugins_registered = true;
 }
 
-void application_shell::instantiate_plugins(const fcl::config::document& document) {
+void application_shell::instantiate_plugins(const forge::config::document& document) {
    ensure_plugins_registered();
    impl_->plugin_runtime.reset();
    impl_->plugin_context_value.reset();
@@ -226,9 +226,9 @@ void application_shell::instantiate_plugins(const fcl::config::document& documen
       &impl_->diagnostics);
 }
 
-fcl::config::component_registry application_shell::collect_config() {
+forge::config::component_registry application_shell::collect_config() {
    ensure_plugins_registered();
-   auto registry = fcl::config::component_registry{};
+   auto registry = forge::config::component_registry{};
    on_describe_config(registry);
    if (!impl_->registry.descriptors().empty()) {
       registry.add(plugin_selection_descriptor(impl_->registry));
@@ -246,12 +246,12 @@ fcl::config::component_registry application_shell::collect_config() {
    return registry;
 }
 
-fcl::config::document application_shell::make_effective_config(const fcl::config::document& document) {
+forge::config::document application_shell::make_effective_config(const forge::config::document& document) {
    auto registry = collect_config();
-   return fcl::config::merge({fcl::config::defaults_for(registry), document});
+   return forge::config::merge({forge::config::defaults_for(registry), document});
 }
 
-boost::asio::awaitable<void> application_shell::apply_effective_config(fcl::config::document document) {
+boost::asio::awaitable<void> application_shell::apply_effective_config(forge::config::document document) {
    impl_->effective_config = std::move(document);
    instantiate_plugins(impl_->effective_config);
    auto context = configure_context{impl_->effective_config};
@@ -260,13 +260,13 @@ boost::asio::awaitable<void> application_shell::apply_effective_config(fcl::conf
    impl_->configured = true;
 }
 
-fcl::config::component_registry application_shell::describe_config() {
+forge::config::component_registry application_shell::describe_config() {
    return collect_config();
 }
 
-void application_shell::configure(const fcl::config::document& document) {
+void application_shell::configure(const forge::config::document& document) {
    impl_->require_created("configure");
-   fcl::asio::blocking::run(impl_->runtime, apply_effective_config(make_effective_config(document)));
+   forge::asio::blocking::run(impl_->runtime, apply_effective_config(make_effective_config(document)));
 }
 
 boost::asio::awaitable<void> application_shell::initialize() {
@@ -274,7 +274,7 @@ boost::asio::awaitable<void> application_shell::initialize() {
       co_return;
    }
    if (!impl_->configured) {
-      co_await apply_effective_config(make_effective_config(fcl::config::document{}));
+      co_await apply_effective_config(make_effective_config(forge::config::document{}));
    }
    try {
       impl_->diagnostics.set_application_state(lifecycle_state::initializing, "initialize");
@@ -370,15 +370,15 @@ application_state application_shell::state() const noexcept {
    return impl_->state;
 }
 
-fcl::asio::runtime& application_shell::runtime() noexcept {
+forge::asio::runtime& application_shell::runtime() noexcept {
    return impl_->runtime;
 }
 
-fcl::asio::task_scheduler& application_shell::scheduler() noexcept {
+forge::asio::task_scheduler& application_shell::scheduler() noexcept {
    return impl_->scheduler;
 }
 
-fcl::api::registry& application_shell::apis() noexcept {
+forge::api::registry& application_shell::apis() noexcept {
    return impl_->apis;
 }
 
@@ -394,4 +394,4 @@ diagnostics_store& application_shell::diagnostics() noexcept {
    return impl_->diagnostics;
 }
 
-} // namespace fcl::app
+} // namespace forge::app

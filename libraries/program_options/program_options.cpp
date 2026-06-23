@@ -12,19 +12,19 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.program_options;
+module forge.program_options;
 
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.config.document;
-import fcl.config.value;
-import fcl.schema.diagnostic;
-import fcl.schema.value_kind;
-import fcl.schema.object;
-import fcl.schema.enums;
-import fcl.schema.scalar;
+import forge.config.component;
+import forge.config.decode;
+import forge.config.document;
+import forge.config.value;
+import forge.schema.diagnostic;
+import forge.schema.value_kind;
+import forge.schema.object;
+import forge.schema.enums;
+import forge.schema.scalar;
 
-namespace fcl::program_options {
+namespace forge::program_options {
 namespace {
 
 namespace po = boost::program_options;
@@ -172,7 +172,7 @@ bool pre_scan_result::present(std::string_view path) const {
 
 parse_result parse(int argc, const char* const* argv, const config::component_registry& registry) {
    auto result = parse_result{};
-   auto description = build_description(registry, "FCL options");
+   auto description = build_description(registry, "FORGE options");
    try {
       auto parsed = po::command_line_parser(argc, argv).options(description).run();
       auto variables = po::variables_map{};
@@ -271,4 +271,4 @@ std::string help(const config::component_registry& registry, std::string caption
    return output.str();
 }
 
-} // namespace fcl::program_options
+} // namespace forge::program_options

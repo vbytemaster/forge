@@ -1,23 +1,23 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 #include <span>
 #include <string>
 #include <vector>
 
-import fcl.crypto.asymmetric;
-import fcl.crypto.secp256k1;
-import fcl.crypto.p256;
-import fcl.crypto.ed25519;
-import fcl.crypto.rsa;
-import fcl.crypto.x25519;
-import fcl.crypto.chacha20_poly1305;
-import fcl.crypto.sha256;
-import fcl.core.utility;
-import fcl.exceptions;
+import forge.crypto.asymmetric;
+import forge.crypto.secp256k1;
+import forge.crypto.p256;
+import forge.crypto.ed25519;
+import forge.crypto.rsa;
+import forge.crypto.x25519;
+import forge.crypto.chacha20_poly1305;
+import forge.crypto.sha256;
+import forge.core.utility;
+import forge.exceptions;
 
-using namespace fcl::crypto;
-using namespace fcl::crypto::asymmetric;
-using namespace fcl;
+using namespace forge::crypto;
+using namespace forge::crypto::asymmetric;
+using namespace forge;
 
 BOOST_AUTO_TEST_SUITE(cypher_suites)
 
@@ -34,9 +34,9 @@ BOOST_AUTO_TEST_CASE(test_k1) try {
 
    BOOST_CHECK_EQUAL(private_key_string, encoding::eos().format(test_private_key));
    BOOST_CHECK_EQUAL(expected_public_key, encoding::eos().format(test_public_key));
-   BOOST_CHECK(encoding::fcl().format(test_public_key).starts_with("PUB_SECP256K1_"));
+   BOOST_CHECK(encoding::forge().format(test_public_key).starts_with("PUB_SECP256K1_"));
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(test_p256_eos_encoding) try {
    auto private_key_string = std::string("PVT_R1_iyQmnyPEGvFd8uffnk152WC2WryBjgTrg22fXQryuGL9mU6qW");
@@ -46,9 +46,9 @@ BOOST_AUTO_TEST_CASE(test_p256_eos_encoding) try {
 
    BOOST_CHECK_EQUAL(private_key_string, encoding::eos().format(test_private_key));
    BOOST_CHECK_EQUAL(expected_public_key, encoding::eos().format(test_public_key));
-   BOOST_CHECK(encoding::fcl().format(test_public_key).starts_with("PUB_P256_"));
+   BOOST_CHECK(encoding::forge().format(test_public_key).starts_with("PUB_P256_"));
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(antelope_encoding_matches_legacy_eos_profile) try {
    const auto message = std::vector<std::uint8_t>{'a', 'n', 't', 'e', 'l', 'o', 'p', 'e'};
@@ -68,7 +68,7 @@ BOOST_AUTO_TEST_CASE(antelope_encoding_matches_legacy_eos_profile) try {
                  signature.to_string({}));
    }
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 #if defined(__clang__)
 #pragma clang diagnostic pop
@@ -109,10 +109,10 @@ BOOST_AUTO_TEST_CASE(custom_encoding_profile_controls_text_prefixes) try {
    BOOST_TEST(spring.parse_public(public_text).to_string({}) == public_key.to_string({}));
    BOOST_TEST(spring.parse_private(private_text).to_string({}) == key.to_string({}));
    BOOST_TEST(spring.parse_signature(signature_text).to_string({}) == signature.to_string({}));
-   BOOST_CHECK_THROW((void)spring.parse_public(encoding::fcl().format(public_key)),
+   BOOST_CHECK_THROW((void)spring.parse_public(encoding::forge().format(public_key)),
                      asymmetric::exceptions::invalid_key);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(custom_encoding_rejects_unsupported_algorithm_for_profile) try {
    auto profile = text_encoding_profile{.id = "k1-only"};
@@ -126,7 +126,7 @@ BOOST_AUTO_TEST_CASE(custom_encoding_rejects_unsupported_algorithm_for_profile) 
    const auto p256_key = private_key::generate<p256::private_key_shim>().get_public_key();
    BOOST_CHECK_THROW((void)k1_only.format(p256_key), asymmetric::exceptions::invalid_options);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(built_in_profiles_cover_common_text_encoding_families) try {
    const auto k1 = private_key::generate<secp256k1::private_key_shim>();
@@ -181,7 +181,7 @@ BOOST_AUTO_TEST_CASE(built_in_profiles_cover_common_text_encoding_families) try 
    BOOST_TEST(tezos.parse_private(tezos_private).to_string({}) == ed25519.to_string({}));
    BOOST_TEST(tezos.parse_signature(tezos_signature).to_string({}) == ed25519_signature.to_string({}));
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(test_secp256k1_recovery) try {
    const auto payload = std::vector<std::uint8_t>{'T', 'e', 's', 't'};
@@ -195,7 +195,7 @@ BOOST_AUTO_TEST_CASE(test_secp256k1_recovery) try {
 
    BOOST_CHECK_EQUAL(recovered_pub.to_string({}), pub.to_string({}));
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(test_p256_recovery) try {
    const auto payload = std::vector<std::uint8_t>{'T', 'e', 's', 't'};
@@ -209,7 +209,7 @@ BOOST_AUTO_TEST_CASE(test_p256_recovery) try {
 
    BOOST_CHECK_EQUAL(recovered_pub.to_string({}), pub.to_string({}));
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(secp256k1_der_signature_matches_message_api) try {
    const auto message = std::vector<std::uint8_t>{'l', 'i', 'b', 'p', '2', 'p', '-', 'i', 'd'};
@@ -225,7 +225,7 @@ BOOST_AUTO_TEST_CASE(secp256k1_der_signature_matches_message_api) try {
    BOOST_CHECK_THROW((void)secp256k1::verify_der(key.get_public_key(), message, malformed),
                      secp256k1::exceptions::invalid_signature);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(p256_der_signature_matches_message_api) try {
    const auto message = std::vector<std::uint8_t>{'l', 'i', 'b', 'p', '2', 'p', '-', 'e', 'c', 'd', 's', 'a'};
@@ -241,7 +241,7 @@ BOOST_AUTO_TEST_CASE(p256_der_signature_matches_message_api) try {
    BOOST_CHECK_THROW((void)p256::verify_der(key.get_public_key(), message, malformed),
                      p256::exceptions::invalid_signature);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(test_k1_recyle) try {
    auto key = private_key::generate<secp256k1::private_key_shim>();
@@ -253,7 +253,7 @@ BOOST_AUTO_TEST_CASE(test_k1_recyle) try {
 
    BOOST_CHECK_EQUAL(pub.to_string({}), recycled_pub.to_string({}));
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(test_p256_recycle) try {
    auto key = private_key::generate<p256::private_key_shim>();
@@ -265,7 +265,7 @@ BOOST_AUTO_TEST_CASE(test_p256_recycle) try {
 
    BOOST_CHECK_EQUAL(pub.to_string({}), recycled_pub.to_string({}));
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(generic_sign_verify_all_supported_algorithms) try {
    const auto message = std::vector<std::uint8_t>{'f', 'c', 'l', '-', 'c', 'r', 'y', 'p', 't', 'o'};
@@ -282,14 +282,14 @@ BOOST_AUTO_TEST_CASE(generic_sign_verify_all_supported_algorithms) try {
       auto pub = key.get_public_key();
       BOOST_CHECK(pub.verify(message, sig));
       BOOST_CHECK(!pub.verify(wrong_message, sig));
-      BOOST_CHECK_EQUAL(encoding::fcl().format(pub).substr(0, 4), "PUB_");
-      BOOST_CHECK_EQUAL(encoding::fcl().format(sig).substr(0, 4), "SIG_");
+      BOOST_CHECK_EQUAL(encoding::forge().format(pub).substr(0, 4), "PUB_");
+      BOOST_CHECK_EQUAL(encoding::forge().format(sig).substr(0, 4), "SIG_");
    }
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(generic_sign_digest_all_supported_algorithms) try {
-   const auto digest = fcl::crypto::sha256::hash("fcl-crypto-digest");
+   const auto digest = forge::crypto::sha256::hash("forge-crypto-digest");
    const auto keys = std::vector<private_key>{
       private_key::generate<secp256k1::private_key_shim>(),
       private_key::generate<p256::private_key_shim>(),
@@ -315,7 +315,7 @@ BOOST_AUTO_TEST_CASE(generic_sign_digest_all_supported_algorithms) try {
       }
    }
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(x25519_key_agreement_roundtrip) try {
    auto alice = x25519::private_key::generate();
@@ -323,7 +323,7 @@ BOOST_AUTO_TEST_CASE(x25519_key_agreement_roundtrip) try {
 
    BOOST_CHECK(alice.get_shared_secret(bob.get_public_key()) == bob.get_shared_secret(alice.get_public_key()));
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(chacha20_poly1305_authenticates_ciphertext) try {
    auto key = chacha20_poly1305::key{};
@@ -338,8 +338,8 @@ BOOST_AUTO_TEST_CASE(chacha20_poly1305_authenticates_ciphertext) try {
    BOOST_CHECK_EQUAL_COLLECTIONS(plaintext.begin(), plaintext.end(), decrypted.begin(), decrypted.end());
 
    encrypted.back() ^= 0x01;
-   BOOST_CHECK_THROW((void)chacha20_poly1305::decrypt(key, nonce, ad, encrypted), fcl::exceptions::base);
+   BOOST_CHECK_THROW((void)chacha20_poly1305::decrypt(key, nonce, ad, encrypted), forge::exceptions::base);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -11,24 +11,24 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.http.router;
+module forge.http.router;
 
-import fcl.api.exceptions;
-import fcl.api.types;
-import fcl.api.descriptor;
-import fcl.api.error_projection;
-import fcl.api.handle;
-import fcl.api.connection;
-import fcl.api.registry;
-import fcl.api.binding;
-import fcl.api.dispatcher;
-import fcl.http.exceptions;
-import fcl.http.middleware;
-import fcl.http.stream;
-import fcl.http.target;
-import fcl.json;
+import forge.api.exceptions;
+import forge.api.types;
+import forge.api.descriptor;
+import forge.api.error_projection;
+import forge.api.handle;
+import forge.api.connection;
+import forge.api.registry;
+import forge.api.binding;
+import forge.api.dispatcher;
+import forge.http.exceptions;
+import forge.http.middleware;
+import forge.http.stream;
+import forge.http.target;
+import forge.json;
 
-namespace fcl::http {
+namespace forge::http {
 namespace {
 
 std::string http_error_name(int code) {
@@ -60,8 +60,8 @@ std::string http_error_name(int code) {
    }
 }
 
-status http_status_for(const fcl::exceptions::base& error) {
-   if (std::string_view{error.code().category().name()} == "fcl.http") {
+status http_status_for(const forge::exceptions::base& error) {
+   if (std::string_view{error.code().category().name()} == "forge.http") {
       const auto value = error.code().value();
       if (value >= 400 && value <= 599) {
          return static_cast<status>(value);
@@ -70,9 +70,9 @@ status http_status_for(const fcl::exceptions::base& error) {
    return status::internal_server_error;
 }
 
-fcl::api::error_payload http_error_payload(const fcl::exceptions::base& error) {
-   if (std::string_view{error.code().category().name()} == "fcl.http") {
-      return fcl::api::error_payload{
+forge::api::error_payload http_error_payload(const forge::exceptions::base& error) {
+   if (std::string_view{error.code().category().name()} == "forge.http") {
+      return forge::api::error_payload{
           .error = http_error_name(error.code().value()),
           .message = error.message().empty() ? http_error_name(error.code().value()) : error.message(),
           .retryable = error.code().value() == 429 || error.code().value() == 503 || error.code().value() == 504,
@@ -84,13 +84,13 @@ fcl::api::error_payload http_error_payload(const fcl::exceptions::base& error) {
       };
    }
 
-   return fcl::api::error_payload{
+   return forge::api::error_payload{
        .error = "internal",
        .message = "internal error",
        .retryable = false,
        .identity =
            {
-               .category = "fcl.http",
+               .category = "forge.http",
                .code = static_cast<std::uint32_t>(status::internal_server_error),
            },
    };
@@ -126,15 +126,15 @@ void restore_stream_transfer_framing(response& value, const stream_transfer_fram
    }
 }
 
-std::string encode_error_payload(const fcl::api::error_payload& payload) {
-   auto encoded = fcl::json::write(payload);
+std::string encode_error_payload(const forge::api::error_payload& payload) {
+   auto encoded = forge::json::write(payload);
    if (encoded.ok()) {
       return std::move(encoded.text);
    }
-   return fcl::json::write(fcl::api::make_internal_error_payload()).text;
+   return forge::json::write(forge::api::make_internal_error_payload()).text;
 }
 
-response make_exception_response(const request& request, const fcl::exceptions::base& error) {
+response make_exception_response(const request& request, const forge::exceptions::base& error) {
    return make_text_response(request, http_status_for(error), encode_error_payload(http_error_payload(error)),
                              "application/json");
 }
@@ -369,16 +369,16 @@ boost::asio::awaitable<response> router::handle(route_context& context) const {
          co_return make_text_response(context.request, status::upgrade_required, "websocket upgrade required");
       }
       co_return make_text_response(context.request, status::not_found, "not found");
-   } catch (const fcl::exceptions::base& error) {
+   } catch (const forge::exceptions::base& error) {
       co_return make_exception_response(context.request, error);
    } catch (const std::exception&) {
       co_return make_text_response(context.request, status::internal_server_error,
-                                   encode_error_payload(fcl::api::error_payload{
+                                   encode_error_payload(forge::api::error_payload{
                                        .error = "internal",
                                        .message = "internal error",
                                        .identity =
                                            {
-                                               .category = "fcl.http",
+                                               .category = "forge.http",
                                                .code = static_cast<std::uint32_t>(status::internal_server_error),
                                            },
                                    }),
@@ -445,16 +445,16 @@ boost::asio::awaitable<stream_response> router::handle_stream(stream_request& re
             make_text_response(context.request, status::method_not_allowed, "method not allowed"));
       }
       co_return stream_response::buffered(make_text_response(context.request, status::not_found, "not found"));
-   } catch (const fcl::exceptions::base& error) {
+   } catch (const forge::exceptions::base& error) {
       co_return stream_response::buffered(make_exception_response(context.request, error));
    } catch (const std::exception&) {
       co_return stream_response::buffered(make_text_response(context.request, status::internal_server_error,
-                                                            encode_error_payload(fcl::api::error_payload{
+                                                            encode_error_payload(forge::api::error_payload{
                                                                 .error = "internal",
                                                                 .message = "internal error",
                                                                 .identity =
                                                                     {
-                                                                        .category = "fcl.http",
+                                                                        .category = "forge.http",
                                                                         .code = static_cast<std::uint32_t>(
                                                                            status::internal_server_error),
                                                                     },
@@ -521,4 +521,4 @@ void router::add_stream_route(method verb, std::string path, stream_route_handle
    });
 }
 
-} // namespace fcl::http
+} // namespace forge::http

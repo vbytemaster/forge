@@ -22,11 +22,11 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.asio.task_scheduler;
+module forge.asio.task_scheduler;
 
-import fcl.asio.exceptions;
+import forge.asio.exceptions;
 
-namespace fcl::asio {
+namespace forge::asio {
 namespace {
 
 std::exception_ptr make_error(exceptions::code code, std::string message) {
@@ -638,4 +638,4 @@ void task_scheduler::stop() {
    impl_->stop();
 }
 
-} // namespace fcl::asio
+} // namespace forge::asio

@@ -36,9 +36,9 @@ import (
 	mh "github.com/multiformats/go-multihash"
 )
 
-const echoProtocol = protocol.ID("/fcl/interop/relay-echo/1")
-const pubsubTopic = "fcl.pubsub.interop"
-const pubsubPayload = "fcl-gossipsub-live"
+const echoProtocol = protocol.ID("/forge/interop/relay-echo/1")
+const pubsubTopic = "forge.pubsub.interop"
+const pubsubPayload = "forge-gossipsub-live"
 
 type options struct {
 	command     string
@@ -98,7 +98,7 @@ func parseArgs() (options, error) {
 			}
 			out.expected = n
 		case "--store-dir", "--features":
-			// Accepted for CLI parity with the FCL fixture.
+			// Accepted for CLI parity with the FORGE fixture.
 		default:
 			return options{}, fmt.Errorf("unknown argument %s", key)
 		}
@@ -252,7 +252,7 @@ func newHost(transport string) (*fixtureHost, error) {
 }
 
 func providerCID() (cid.Cid, error) {
-	hash, err := mh.Sum([]byte("fcl-libp2p-dht-provider"), mh.SHA2_256, -1)
+	hash, err := mh.Sum([]byte("forge-libp2p-dht-provider"), mh.SHA2_256, -1)
 	if err != nil {
 		return cid.Undef, err
 	}
@@ -729,7 +729,7 @@ func dial(opts options) error {
 		result["mesh_peer"] = meshPeer
 		result["publish_attempts"] = publishAttempts
 	case "unknown_protocol":
-		expected, err := expectUnsupportedProtocol(ctx, h, info.ID, protocol.ID("/fcl/interop/unknown/1"))
+		expected, err := expectUnsupportedProtocol(ctx, h, info.ID, protocol.ID("/forge/interop/unknown/1"))
 		if err != nil {
 			return err
 		}

@@ -1,5 +1,5 @@
 module;
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2012 The Bitcoin Developers
 // Distributed under the MIT/X11 software license, see the accompanying
@@ -29,15 +29,15 @@ module;
 #include <vector>
 #include <openssl/bn.h>
 
-module fcl.crypto.base58;
+module forge.crypto.base58;
 
-import fcl.core.string;
-import fcl.core.utility;
-import fcl.exceptions;
-import fcl.crypto.types;
+import forge.core.string;
+import forge.core.utility;
+import forge.exceptions;
+import forge.crypto.types;
 
 [[noreturn]] void raise_bignum_failure(std::string message) {
-   FCL_THROW_EXCEPTION(fcl::crypto::base58::exceptions::backend_error, std::move(message));
+   FORGE_THROW_EXCEPTION(forge::crypto::base58::exceptions::backend_error, std::move(message));
 }
 
 /** RAII encapsulated BN_CTX (OpenSSL bignum context) */
@@ -502,7 +502,7 @@ static const char* pszBase58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnop
 
 // Encode a byte sequence as a base58-encoded string
 inline std::string EncodeBase58(const unsigned char* pbegin, const unsigned char* pend,
-                                const fcl::yield_function_t& yield) {
+                                const forge::yield_function_t& yield) {
    CAutoBN_CTX pctx;
    CBigNum bn58 = 58;
    CBigNum bn0 = 0;
@@ -548,7 +548,7 @@ inline std::string EncodeBase58(const unsigned char* pbegin, const unsigned char
 }
 
 // Encode a byte vector as a base58-encoded string
-inline std::string EncodeBase58(const std::vector<unsigned char>& vch, const fcl::yield_function_t& yield) {
+inline std::string EncodeBase58(const std::vector<unsigned char>& vch, const forge::yield_function_t& yield) {
    return EncodeBase58(&vch[0], &vch[0] + vch.size(), yield);
 }
 
@@ -605,9 +605,9 @@ inline bool DecodeBase58(const std::string& str, std::vector<unsigned char>& vch
    return DecodeBase58(str.c_str(), vchRet);
 }
 
-namespace fcl::crypto {
+namespace forge::crypto {
 
-std::string base58_encode(std::span<const std::uint8_t> data, const fcl::yield_function_t& yield) {
+std::string base58_encode(std::span<const std::uint8_t> data, const forge::yield_function_t& yield) {
    if (data.empty()) {
       return {};
    }
@@ -618,28 +618,28 @@ bytes base58_decode(std::string_view base58_str) {
    std::vector<unsigned char> out;
    const auto input = std::string{base58_str};
    if (!DecodeBase58(input.c_str(), out)) {
-      FCL_THROW_EXCEPTION(base58::exceptions::invalid_character, "unable to decode base58 string",
-                          fcl::exceptions::ctx("base58_str", input));
+      FORGE_THROW_EXCEPTION(base58::exceptions::invalid_character, "unable to decode base58 string",
+                          forge::exceptions::ctx("base58_str", input));
    }
    return bytes{out.begin(), out.end()};
 }
 
-} // namespace fcl::crypto
+} // namespace forge::crypto
 
-namespace fcl::crypto {
+namespace forge::crypto {
 
-std::string to_base58(const char* d, size_t s, const fcl::yield_function_t& yield) {
+std::string to_base58(const char* d, size_t s, const forge::yield_function_t& yield) {
    const auto bytes = std::span{reinterpret_cast<const std::uint8_t*>(d), s};
-   return fcl::crypto::base58_encode(bytes, yield);
+   return forge::crypto::base58_encode(bytes, yield);
 }
 
-std::string to_base58(const std::vector<char>& d, const fcl::yield_function_t& yield) {
+std::string to_base58(const std::vector<char>& d, const forge::yield_function_t& yield) {
    if (d.size())
       return to_base58(d.data(), d.size(), yield);
    return std::string();
 }
 std::vector<char> from_base58(const std::string& base58_str) {
-   auto out = fcl::crypto::base58_decode(base58_str);
+   auto out = forge::crypto::base58_decode(base58_str);
    return std::vector<char>(out.begin(), out.end());
 }
 /**
@@ -647,11 +647,11 @@ std::vector<char> from_base58(const std::string& base58_str) {
  */
 size_t from_base58(const std::string& base58_str, char* out_data, size_t out_data_len) {
    // slog( "%s", base58_str.c_str() );
-   auto out = fcl::crypto::base58_decode(base58_str);
-   FCL_ASSERT(out.size() <= out_data_len);
+   auto out = forge::crypto::base58_decode(base58_str);
+   FORGE_ASSERT(out.size() <= out_data_len);
    memcpy(out_data, out.data(), out.size());
    return out.size();
 }
-} // namespace fcl::crypto
+} // namespace forge::crypto
 
 #endif

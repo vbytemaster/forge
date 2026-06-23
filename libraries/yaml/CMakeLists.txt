@@ -1,13 +1,13 @@
-add_library(fcl_yaml STATIC yaml.cpp)
-fcl_target_modules(fcl_yaml yaml)
+add_library(forge_yaml STATIC yaml.cpp)
+forge_target_modules(forge_yaml yaml)
 
-target_include_directories(fcl_yaml PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+target_include_directories(forge_yaml PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
-   fcl_yaml PUBLIC
-      fcl_config
-      fcl_schema
-      fcl_variant
+   forge_yaml PUBLIC
+      forge_config
+      forge_schema
+      forge_variant
    PRIVATE
       glaze::glaze
 )

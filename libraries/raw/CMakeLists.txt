@@ -1,17 +1,17 @@
 add_library(
-   fcl_raw STATIC
+   forge_raw STATIC
    datastream.cpp
    raw.cpp
    varint.cpp
 )
-fcl_target_modules(fcl_raw raw)
-target_include_directories(fcl_raw PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+forge_target_modules(forge_raw raw)
+target_include_directories(forge_raw PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 target_link_libraries(
-   fcl_raw PUBLIC
-      fcl_core
-      fcl_exceptions
-      fcl_reflect
-      fcl_variant
+   forge_raw PUBLIC
+      forge_core
+      forge_exceptions
+      forge_reflect
+      forge_variant
       Boost::headers
       Boost::multiprecision
 )

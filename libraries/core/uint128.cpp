@@ -3,9 +3,9 @@ module;
 
 #include <stdexcept>
 
-module fcl.core.uint128;
+module forge.core.uint128;
 
-namespace fcl {
+namespace forge {
 typedef boost::multiprecision::uint128_t m128;
 
 template <typename T> static void divide(const T& numerator, const T& denominator, T& quotient, T& remainder) {
@@ -334,7 +334,7 @@ uint8_t uint128::popcount() const {
    return _popcount_64(lo) + _popcount_64(hi);
 }
 
-} // namespace fcl
+} // namespace forge
 
 /*
  * Portions of the above code were adapted from the work of Evan Teran.

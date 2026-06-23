@@ -1,5 +1,5 @@
 add_library(
-   fcl_p2p STATIC
+   forge_p2p STATIC
    identity.cpp
    identity_signature.cpp
    identity_signature.hpp
@@ -45,31 +45,31 @@ add_library(
    stream_upgrade.hpp
    tcp_stream_upgrade.hpp
 )
-fcl_target_modules(fcl_p2p p2p)
+forge_target_modules(forge_p2p p2p)
 
-target_include_directories(fcl_p2p PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
-target_compile_definitions(fcl_p2p PRIVATE FCL_HAS_ROCKSDB=$<BOOL:${FCL_HAS_ROCKSDB}>)
+target_include_directories(forge_p2p PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
+target_compile_definitions(forge_p2p PRIVATE FORGE_HAS_ROCKSDB=$<BOOL:${FORGE_HAS_ROCKSDB}>)
 
 target_link_libraries(
-   fcl_p2p PUBLIC
-      fcl_exceptions
-      fcl_api
-      fcl_transport_api
-      fcl_raw
-      fcl_crypto
-      fcl_multiformats
-      fcl_asio
-      fcl_transport
-      fcl_quic
-      fcl_tcp
-      fcl_stcp
-      fcl_yamux
+   forge_p2p PUBLIC
+      forge_exceptions
+      forge_api
+      forge_transport_api
+      forge_raw
+      forge_crypto
+      forge_multiformats
+      forge_asio
+      forge_transport
+      forge_quic
+      forge_tcp
+      forge_stcp
+      forge_yamux
       Boost::asio
 )
 
-if(FCL_HAS_ROCKSDB)
+if(FORGE_HAS_ROCKSDB)
    target_link_libraries(
-      fcl_p2p PRIVATE
+      forge_p2p PRIVATE
          RocksDB::rocksdb
    )
 endif()

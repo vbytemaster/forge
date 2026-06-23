@@ -10,14 +10,14 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.p2p.node;
+module forge.p2p.node;
 
-import fcl.p2p.endpoint;
-import fcl.p2p.identity;
+import forge.p2p.endpoint;
+import forge.p2p.identity;
 
 #include "host_addresses.hpp"
 
-namespace fcl::p2p::host_addresses {
+namespace forge::p2p::host_addresses {
 namespace {
 
 enum class scope {
@@ -192,4 +192,4 @@ std::vector<endpoint> sanitize_discovered_endpoints(std::vector<endpoint> values
    return out;
 }
 
-} // namespace fcl::p2p::host_addresses
+} // namespace forge::p2p::host_addresses

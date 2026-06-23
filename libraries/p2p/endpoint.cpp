@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <cstdint>
 #include <optional>
@@ -8,96 +8,96 @@ module;
 #include <string_view>
 #include <utility>
 
-module fcl.p2p.endpoint;
+module forge.p2p.endpoint;
 
-import fcl.multiformats.exceptions;
-import fcl.multiformats.types;
-import fcl.multiformats.varint;
-import fcl.multiformats.multicodec;
-import fcl.multiformats.multihash;
-import fcl.multiformats.multibase;
-import fcl.multiformats.multiaddr;
-import fcl.p2p.exceptions;
+import forge.multiformats.exceptions;
+import forge.multiformats.types;
+import forge.multiformats.varint;
+import forge.multiformats.multicodec;
+import forge.multiformats.multihash;
+import forge.multiformats.multibase;
+import forge.multiformats.multiaddr;
+import forge.p2p.exceptions;
 
-namespace fcl::p2p {
+namespace forge::p2p {
 namespace {
 
-[[nodiscard]] fcl::multiformats::protocol_code host_kind_code(endpoint::host_kind kind) {
+[[nodiscard]] forge::multiformats::protocol_code host_kind_code(endpoint::host_kind kind) {
    using enum endpoint::host_kind;
    switch (kind) {
       case ip4:
-         return fcl::multiformats::protocol_code::ip4;
+         return forge::multiformats::protocol_code::ip4;
       case ip6:
-         return fcl::multiformats::protocol_code::ip6;
+         return forge::multiformats::protocol_code::ip6;
       case dns:
-         return fcl::multiformats::protocol_code::dns;
+         return forge::multiformats::protocol_code::dns;
       case dns4:
-         return fcl::multiformats::protocol_code::dns4;
+         return forge::multiformats::protocol_code::dns4;
       case dns6:
-         return fcl::multiformats::protocol_code::dns6;
+         return forge::multiformats::protocol_code::dns6;
    }
-   FCL_THROW_EXCEPTION(exceptions::invalid_options, "unsupported P2P endpoint address kind");
+   FORGE_THROW_EXCEPTION(exceptions::invalid_options, "unsupported P2P endpoint address kind");
 }
 
-[[nodiscard]] fcl::multiformats::protocol_code protocol_kind_code(endpoint::protocol_kind kind) {
+[[nodiscard]] forge::multiformats::protocol_code protocol_kind_code(endpoint::protocol_kind kind) {
    using enum endpoint::protocol_kind;
    switch (kind) {
       case quic_v1:
-         return fcl::multiformats::protocol_code::quic_v1;
+         return forge::multiformats::protocol_code::quic_v1;
       case tcp:
-         return fcl::multiformats::protocol_code::tcp;
+         return forge::multiformats::protocol_code::tcp;
    }
-   FCL_THROW_EXCEPTION(exceptions::invalid_options, "unsupported P2P endpoint transport kind");
+   FORGE_THROW_EXCEPTION(exceptions::invalid_options, "unsupported P2P endpoint transport kind");
 }
 
-[[nodiscard]] endpoint::host_kind endpoint_host_kind(fcl::multiformats::protocol_code code) {
+[[nodiscard]] endpoint::host_kind endpoint_host_kind(forge::multiformats::protocol_code code) {
    switch (code) {
-      case fcl::multiformats::protocol_code::ip4:
+      case forge::multiformats::protocol_code::ip4:
          return endpoint::host_kind::ip4;
-      case fcl::multiformats::protocol_code::ip6:
+      case forge::multiformats::protocol_code::ip6:
          return endpoint::host_kind::ip6;
-      case fcl::multiformats::protocol_code::dns:
+      case forge::multiformats::protocol_code::dns:
          return endpoint::host_kind::dns;
-      case fcl::multiformats::protocol_code::dns4:
+      case forge::multiformats::protocol_code::dns4:
          return endpoint::host_kind::dns4;
-      case fcl::multiformats::protocol_code::dns6:
+      case forge::multiformats::protocol_code::dns6:
          return endpoint::host_kind::dns6;
       default:
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P endpoint must start with an address component");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "P2P endpoint must start with an address component");
    }
 }
 
-[[nodiscard]] endpoint::protocol_kind protocol_kind(fcl::multiformats::protocol_code code) {
+[[nodiscard]] endpoint::protocol_kind protocol_kind(forge::multiformats::protocol_code code) {
    switch (code) {
-      case fcl::multiformats::protocol_code::quic_v1:
+      case forge::multiformats::protocol_code::quic_v1:
          return endpoint::protocol_kind::quic_v1;
-      case fcl::multiformats::protocol_code::tcp:
+      case forge::multiformats::protocol_code::tcp:
          return endpoint::protocol_kind::tcp;
       default:
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P endpoint is missing supported transport component");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "P2P endpoint is missing supported transport component");
    }
 }
 
-[[nodiscard]] fcl::multiformats::protocol_code encapsulation_code(endpoint::encapsulation_kind value) {
+[[nodiscard]] forge::multiformats::protocol_code encapsulation_code(endpoint::encapsulation_kind value) {
    switch (value) {
       case endpoint::encapsulation_kind::none:
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P endpoint has no encapsulation component");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "P2P endpoint has no encapsulation component");
       case endpoint::encapsulation_kind::ws:
-         return fcl::multiformats::protocol_code::ws;
+         return forge::multiformats::protocol_code::ws;
       case endpoint::encapsulation_kind::wss:
-         return fcl::multiformats::protocol_code::wss;
+         return forge::multiformats::protocol_code::wss;
    }
-   FCL_THROW_EXCEPTION(exceptions::invalid_options, "unsupported P2P endpoint encapsulation kind");
+   FORGE_THROW_EXCEPTION(exceptions::invalid_options, "unsupported P2P endpoint encapsulation kind");
 }
 
 } // namespace
 
-fcl::multiformats::multiaddr endpoint::to_multiaddr() const {
-   auto out = fcl::multiformats::multiaddr{};
+forge::multiformats::multiaddr endpoint::to_multiaddr() const {
+   auto out = forge::multiformats::multiaddr{};
    out.push({.code = host_kind_code(transport.host_type), .value = transport.host});
    if (transport.protocol == protocol_kind::quic_v1) {
-      out.push({.code = fcl::multiformats::protocol_code::udp, .value = std::to_string(transport.port)});
-      out.push({.code = fcl::multiformats::protocol_code::quic_v1, .value = {}});
+      out.push({.code = forge::multiformats::protocol_code::udp, .value = std::to_string(transport.port)});
+      out.push({.code = forge::multiformats::protocol_code::quic_v1, .value = {}});
    } else {
       out.push({.code = protocol_kind_code(transport.protocol), .value = std::to_string(transport.port)});
    }
@@ -105,11 +105,11 @@ fcl::multiformats::multiaddr endpoint::to_multiaddr() const {
       out.push({.code = encapsulation_code(encapsulation), .value = {}});
    }
    if (peer.has_value()) {
-      out.push({.code = fcl::multiformats::protocol_code::p2p, .value = peer->to_string()});
+      out.push({.code = forge::multiformats::protocol_code::p2p, .value = peer->to_string()});
    }
    if (relayed.has_value()) {
-      out.push({.code = fcl::multiformats::protocol_code::p2p_circuit, .value = {}});
-      out.push({.code = fcl::multiformats::protocol_code::p2p, .value = relayed->target.to_string()});
+      out.push({.code = forge::multiformats::protocol_code::p2p_circuit, .value = {}});
+      out.push({.code = forge::multiformats::protocol_code::p2p, .value = relayed->target.to_string()});
    }
    return out;
 }
@@ -127,28 +127,28 @@ bool endpoint::is_direct_tcp() const noexcept {
 }
 
 endpoint parse_endpoint(std::string_view value) {
-   const auto parsed = fcl::multiformats::multiaddr::parse(value);
+   const auto parsed = forge::multiformats::multiaddr::parse(value);
    const auto& components = parsed.components();
    if (components.size() < 2) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P endpoint must include address and transport components");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "P2P endpoint must include address and transport components");
    }
 
-   auto result = endpoint{.transport = fcl::transport::endpoint{
+   auto result = endpoint{.transport = forge::transport::endpoint{
                               .host_type = endpoint_host_kind(components[0].code),
                               .host = components[0].value,
                           }};
    auto suffix = std::size_t{2};
-   if (components[1].code == fcl::multiformats::protocol_code::udp) {
+   if (components[1].code == forge::multiformats::protocol_code::udp) {
       if (components.size() < 3) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P UDP endpoint must include quic-v1 component");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "P2P UDP endpoint must include quic-v1 component");
       }
       try {
          result.transport.port = static_cast<std::uint16_t>(std::stoul(components[1].value));
       } catch (...) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P endpoint port is invalid");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "P2P endpoint port is invalid");
       }
-      if (components[2].code != fcl::multiformats::protocol_code::quic_v1) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P UDP endpoint is missing quic-v1 component");
+      if (components[2].code != forge::multiformats::protocol_code::quic_v1) {
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "P2P UDP endpoint is missing quic-v1 component");
       }
       result.transport.protocol = endpoint::protocol_kind::quic_v1;
       suffix = 3;
@@ -157,36 +157,36 @@ endpoint parse_endpoint(std::string_view value) {
       try {
          result.transport.port = static_cast<std::uint16_t>(std::stoul(components[1].value));
       } catch (...) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P endpoint port is invalid");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "P2P endpoint port is invalid");
       }
    }
 
-   if (suffix < components.size() && (components[suffix].code == fcl::multiformats::protocol_code::ws ||
-                                      components[suffix].code == fcl::multiformats::protocol_code::wss)) {
-      result.encapsulation = components[suffix].code == fcl::multiformats::protocol_code::ws
+   if (suffix < components.size() && (components[suffix].code == forge::multiformats::protocol_code::ws ||
+                                      components[suffix].code == forge::multiformats::protocol_code::wss)) {
+      result.encapsulation = components[suffix].code == forge::multiformats::protocol_code::ws
                                  ? endpoint::encapsulation_kind::ws
                                  : endpoint::encapsulation_kind::wss;
       ++suffix;
    }
 
-   if (suffix < components.size() && components[suffix].code == fcl::multiformats::protocol_code::p2p) {
+   if (suffix < components.size() && components[suffix].code == forge::multiformats::protocol_code::p2p) {
       result.peer = peer_id::from_string(components[suffix].value);
       ++suffix;
    }
 
-   if (suffix < components.size() && components[suffix].code == fcl::multiformats::protocol_code::p2p_circuit) {
+   if (suffix < components.size() && components[suffix].code == forge::multiformats::protocol_code::p2p_circuit) {
       ++suffix;
-      if (suffix >= components.size() || components[suffix].code != fcl::multiformats::protocol_code::p2p) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P relayed endpoint must use p2p-circuit/p2p suffix");
+      if (suffix >= components.size() || components[suffix].code != forge::multiformats::protocol_code::p2p) {
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "P2P relayed endpoint must use p2p-circuit/p2p suffix");
       }
       result.relayed = endpoint::circuit{.target = peer_id::from_string(components[suffix].value)};
       ++suffix;
    }
 
    if (suffix != components.size()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "P2P endpoint contains unsupported extra components");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "P2P endpoint contains unsupported extra components");
    }
    return result;
 }
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

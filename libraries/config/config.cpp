@@ -1,3 +1,3 @@
-namespace fcl::config {
+namespace forge::config {
 void anchor() {}
-} // namespace fcl::config
+} // namespace forge::config

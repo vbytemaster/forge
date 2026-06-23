@@ -1,34 +1,34 @@
 module;
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 #include <bit>
 #include <openssl/bn.h>
 #include <string>
 #include <utility>
 #include <vector>
 
-module fcl.crypto.bigint;
+module forge.crypto.bigint;
 
-import fcl.core.utility;
-import fcl.variant.exceptions;
-import fcl.variant.value;
-import fcl.variant.conversion;
-import fcl.variant.containers;
-import fcl.variant.chrono;
-import fcl.variant.multiprecision;
-import fcl.variant.format;
-import fcl.variant.described;
-import fcl.crypto.base64;
+import forge.core.utility;
+import forge.variant.exceptions;
+import forge.variant.value;
+import forge.variant.conversion;
+import forge.variant.containers;
+import forge.variant.chrono;
+import forge.variant.multiprecision;
+import forge.variant.format;
+import forge.variant.described;
+import forge.crypto.base64;
 
-import fcl.exceptions;
+import forge.exceptions;
 
-namespace fcl::crypto {
+namespace forge::crypto {
 bigint::bigint(const std::uint8_t* bige, uint32_t l) {
    n = BN_bin2bn(bige, l, NULL);
-   FCL_ASSERT(n != nullptr);
+   FORGE_ASSERT(n != nullptr);
 }
 bigint::bigint(std::span<const std::uint8_t> bige) {
    n = BN_bin2bn(bige.data(), static_cast<int>(bige.size()), NULL);
-   FCL_ASSERT(n != nullptr);
+   FORGE_ASSERT(n != nullptr);
 }
 bigint::bigint() : n(BN_new()) {}
 
@@ -56,7 +56,7 @@ bool bigint::is_negative() const {
 }
 
 int64_t bigint::to_int64() const {
-   FCL_ASSERT(BN_num_bits(n) <= 63);
+   FORGE_ASSERT(BN_num_bits(n) <= 63);
    size_t size = BN_num_bytes(n);
    uint64_t abs_value = 0;
    BN_bn2bin(n, (unsigned char*)&abs_value + (sizeof(uint64_t) - size));
@@ -145,7 +145,7 @@ bigint bigint::operator/=(const bigint& a) {
    BN_CTX* ctx = BN_CTX_new();
    bigint tmp; //*this);
    BN_div(tmp.n, NULL, n, a.n, ctx);
-   fcl_swap(tmp.n, n);
+   forge_swap(tmp.n, n);
    BN_CTX_free(ctx);
    return tmp;
 }
@@ -163,8 +163,8 @@ bigint& bigint::operator>>=(uint32_t i) {
 
 bigint& bigint::operator<<=(uint32_t i) {
    bigint tmp;
-   FCL_ASSERT(tmp.n != nullptr);
-   FCL_ASSERT(n != nullptr);
+   FORGE_ASSERT(tmp.n != nullptr);
+   FORGE_ASSERT(n != nullptr);
    BN_lshift(tmp.n, n, i);
    std::swap(*this, tmp);
    return *this;
@@ -184,7 +184,7 @@ bigint bigint::exp(const bigint& a) const {
 }
 
 bigint& bigint::operator=(bigint&& a) {
-   fcl_swap(a.n, n);
+   forge_swap(a.n, n);
    return *this;
 }
 bigint& bigint::operator=(const bigint& a) {
@@ -206,7 +206,7 @@ bytes bigint::to_bytes() const {
 /** encodes the big int as base64 string, or a number */
 void to_variant(const bigint& bi, variant& v) {
    auto ve = bi.to_bytes();
-   v = fcl::variant(base64_encode(reinterpret_cast<const unsigned char*>(ve.data()), ve.size(), false));
+   v = forge::variant(base64_encode(reinterpret_cast<const unsigned char*>(ve.data()), ve.size(), false));
 }
 
 /** decodes the big int as base64 string, or a number */
@@ -221,4 +221,4 @@ void from_variant(const variant& v, bigint& bi) {
    }
 }
 
-} // namespace fcl::crypto
+} // namespace forge::crypto

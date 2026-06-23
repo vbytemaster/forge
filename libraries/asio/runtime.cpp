@@ -13,9 +13,9 @@ module;
 #include <pthread.h>
 #endif
 
-module fcl.asio.runtime;
+module forge.asio.runtime;
 
-namespace fcl::asio {
+namespace forge::asio {
 namespace {
 
 void set_current_thread_name(const std::string& name) noexcept {
@@ -92,4 +92,4 @@ void runtime::stop() {
    impl_->stop();
 }
 
-} // namespace fcl::asio
+} // namespace forge::asio

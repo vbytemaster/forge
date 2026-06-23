@@ -1,19 +1,19 @@
 add_library(
-   fcl_stcp STATIC
+   forge_stcp STATIC
    connection.cpp
    connector.cpp
    listener.cpp
 )
-fcl_target_modules(fcl_stcp stcp)
+forge_target_modules(forge_stcp stcp)
 
-target_include_directories(fcl_stcp PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+target_include_directories(forge_stcp PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
-   fcl_stcp PUBLIC
-      fcl_exceptions
-      fcl_transport
-      fcl_tcp
-      fcl_crypto
+   forge_stcp PUBLIC
+      forge_exceptions
+      forge_transport
+      forge_tcp
+      forge_crypto
       Boost::asio
       OpenSSL::SSL
 )

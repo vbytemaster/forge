@@ -1,5 +1,5 @@
 add_library(
-   fcl_transport STATIC
+   forge_transport STATIC
    buffer.cpp
    connector.cpp
    endpoint.cpp
@@ -9,12 +9,12 @@ add_library(
    stream.cpp
    session.cpp
 )
-fcl_target_modules(fcl_transport transport)
+forge_target_modules(forge_transport transport)
 
-target_include_directories(fcl_transport PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+target_include_directories(forge_transport PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
-   fcl_transport PUBLIC
-      fcl_exceptions
+   forge_transport PUBLIC
+      forge_exceptions
       Boost::asio
 )

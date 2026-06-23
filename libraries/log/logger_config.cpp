@@ -6,14 +6,14 @@ module;
 #include <unordered_map>
 #include <string>
 
-module fcl.log.logger_config;
+module forge.log.logger_config;
 
-import fcl.log.appender;
-import fcl.log.console_appender;
-import fcl.log.exceptions;
-import fcl.variant.described;
+import forge.log.appender;
+import forge.log.console_appender;
+import forge.log.exceptions;
+import forge.variant.described;
 
-namespace fcl {
+namespace forge {
 
 log_config& log_config::get() {
    // allocate dynamically which will leak on exit but allow loggers to be used until the very end of execution
@@ -58,7 +58,7 @@ void log_config::initialize_appenders() {
 
 void configure_logging(const std::filesystem::path& lc) {
    static_cast<void>(lc);
-   throw log::exceptions::invalid_config{"file-based logging config parsing is not part of fcl_log"};
+   throw log::exceptions::invalid_config{"file-based logging config parsing is not part of forge_log"};
 }
 bool configure_logging(const logging_config& cfg) {
    return log_config::configure_logging(cfg);
@@ -147,4 +147,4 @@ logging_config logging_config::default_config() {
    return cfg;
 }
 
-} // namespace fcl
+} // namespace forge

@@ -20,8 +20,8 @@ use libp2p_stream as raw_stream;
 use rand::rngs::OsRng;
 use serde_json::json;
 
-const PUBSUB_TOPIC: &str = "fcl.pubsub.interop";
-const PUBSUB_PAYLOAD: &[u8] = b"fcl-gossipsub-live";
+const PUBSUB_TOPIC: &str = "forge.pubsub.interop";
+const PUBSUB_PAYLOAD: &[u8] = b"forge-gossipsub-live";
 
 #[derive(Debug, Default)]
 struct Options {
@@ -125,7 +125,7 @@ fn behaviour_for(key: &identity::Keypair, relay_client: relay::client::Behaviour
         .expect("valid gossipsub behaviour"),
         ping: ping::Behaviour::new(ping::Config::new()),
         identify: identify::Behaviour::new(identify::Config::new(
-            "/fcl-interop/0.1.0".into(),
+            "/forge-interop/0.1.0".into(),
             key.public(),
         )),
         dcutr: dcutr::Behaviour::new(peer),
@@ -301,7 +301,7 @@ async fn open_echo_stream_direct(
 ) -> Result<usize, Box<dyn Error>> {
     let mut control = swarm.behaviour().stream.new_control();
     let mut open =
-        Box::pin(control.open_stream(peer, StreamProtocol::new("/fcl/interop/relay-echo/1")));
+        Box::pin(control.open_stream(peer, StreamProtocol::new("/forge/interop/relay-echo/1")));
     let deadline = tokio::time::sleep(Duration::from_secs(15));
     tokio::pin!(deadline);
     loop {
@@ -444,7 +444,7 @@ async fn wait_rendezvous_register_discover(
     swarm: &mut libp2p::Swarm<Behaviour>,
     remote_peer: PeerId,
 ) -> Result<usize, Box<dyn Error>> {
-    let namespace = rendezvous::Namespace::new("fcl.discovery".to_string())?;
+    let namespace = rendezvous::Namespace::new("forge.discovery".to_string())?;
     swarm
         .behaviour_mut()
         .rendezvous_client
@@ -513,7 +513,7 @@ async fn wait_gossipsub_peer_and_publish(
 
 async fn listen(opts: Options) -> Result<(), Box<dyn Error>> {
     let mut swarm = new_swarm(&opts.transport).await?;
-    spawn_incoming_stream_echo(&mut swarm, "/fcl/interop/relay-echo/1")?;
+    spawn_incoming_stream_echo(&mut swarm, "/forge/interop/relay-echo/1")?;
     if opts.scenario == "gossipsub_publish" || opts.scenario == "gossipsub_mixed_mesh_stress" {
         let topic = gossipsub::IdentTopic::new(PUBSUB_TOPIC);
         swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
@@ -690,7 +690,7 @@ async fn dial(opts: Options) -> Result<(), Box<dyn Error>> {
                     "role": "dialer",
                     "scenario": opts.scenario,
                     "status": "ok",
-                    "protocol": "/fcl/interop/relay-echo/1",
+                    "protocol": "/forge/interop/relay-echo/1",
                     "payload_bytes": bytes,
                     "echo_ok": true
                 }),
@@ -763,7 +763,7 @@ async fn dial(opts: Options) -> Result<(), Box<dyn Error>> {
         }
         "unknown_protocol" => {
             let error =
-                expect_unknown_stream_rejection(&mut swarm, remote_peer, "/fcl/interop/unknown/1")
+                expect_unknown_stream_rejection(&mut swarm, remote_peer, "/forge/interop/unknown/1")
                     .await?;
             write_json(
                 &opts.result_file,
@@ -794,7 +794,7 @@ async fn dial(opts: Options) -> Result<(), Box<dyn Error>> {
 
 async fn destination(opts: Options) -> Result<(), Box<dyn Error>> {
     let mut swarm = new_swarm(&opts.transport).await?;
-    spawn_incoming_stream_echo(&mut swarm, "/fcl/interop/relay-echo/1")?;
+    spawn_incoming_stream_echo(&mut swarm, "/forge/interop/relay-echo/1")?;
     let peer = *swarm.local_peer_id();
     let relay_addr: Multiaddr = opts.relay_addr.parse()?;
     swarm.listen_on(relay_addr.clone().with(Protocol::P2pCircuit))?;
@@ -882,7 +882,7 @@ async fn open_echo_stream(
 ) -> Result<bool, Box<dyn Error>> {
     let mut control = swarm.behaviour().stream.new_control();
     let mut open =
-        Box::pin(control.open_stream(peer, StreamProtocol::new("/fcl/interop/relay-echo/1")));
+        Box::pin(control.open_stream(peer, StreamProtocol::new("/forge/interop/relay-echo/1")));
     let deadline = tokio::time::sleep(Duration::from_secs(30));
     tokio::pin!(deadline);
     let mut direct_upgrade = false;

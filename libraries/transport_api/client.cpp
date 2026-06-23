@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -29,13 +29,13 @@ module;
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/system/error_code.hpp>
 
-module fcl.transport.api.client;
+module forge.transport.api.client;
 
-import fcl.raw.raw;
-import fcl.transport.exceptions;
-import fcl.transport.frame;
+import forge.raw.raw;
+import forge.transport.exceptions;
+import forge.transport.frame;
 
-namespace fcl::transport::api {
+namespace forge::transport::api {
 namespace {
 
 constexpr auto compact_threshold = std::size_t{65'536};
@@ -64,15 +64,15 @@ void compact_buffer(std::vector<std::uint8_t>& buffer, std::size_t& consumed) {
    return {buffer.data() + consumed, buffer.size() - consumed};
 }
 
-boost::asio::awaitable<fcl::transport::chunk> read_transport_frame(fcl::transport::stream& stream,
+boost::asio::awaitable<forge::transport::chunk> read_transport_frame(forge::transport::stream& stream,
                                                                    std::vector<std::uint8_t>& buffer,
                                                                    std::size_t& consumed,
                                                                    std::uint32_t max_frame_size) {
    while (true) {
-      const auto decoded = fcl::transport::decode_frame_view(available_bytes(buffer, consumed),
-                                                             fcl::transport::frame_options{.max_size = max_frame_size});
-      if (decoded.status == fcl::transport::frame_decode_status::complete) {
-         const auto payload = fcl::transport::chunk{decoded.payload};
+      const auto decoded = forge::transport::decode_frame_view(available_bytes(buffer, consumed),
+                                                             forge::transport::frame_options{.max_size = max_frame_size});
+      if (decoded.status == forge::transport::frame_decode_status::complete) {
+         const auto payload = forge::transport::chunk{decoded.payload};
          consumed += decoded.consumed;
          if (consumed >= buffer.size() || consumed > compact_threshold) {
             compact_buffer(buffer, consumed);
@@ -87,16 +87,16 @@ boost::asio::awaitable<fcl::transport::chunk> read_transport_frame(fcl::transpor
    }
 }
 
-boost::asio::awaitable<void> write_transport_frame(fcl::transport::stream& stream, std::span<const std::uint8_t> payload,
+boost::asio::awaitable<void> write_transport_frame(forge::transport::stream& stream, std::span<const std::uint8_t> payload,
                                                   std::uint32_t max_frame_size) {
    auto encoded = std::vector<std::uint8_t>{};
-   fcl::transport::encode_frame_to(encoded, payload, fcl::transport::frame_options{.max_size = max_frame_size});
-   co_await stream.async_write(fcl::transport::chunk{std::move(encoded)});
+   forge::transport::encode_frame_to(encoded, payload, forge::transport::frame_options{.max_size = max_frame_size});
+   co_await stream.async_write(forge::transport::chunk{std::move(encoded)});
 }
 
 [[nodiscard]] std::exception_ptr make_cancelled_error(const char* message) {
    try {
-      FCL_THROW_EXCEPTION(exceptions::cancelled, message);
+      FORGE_THROW_EXCEPTION(exceptions::cancelled, message);
    } catch (...) {
       return std::current_exception();
    }
@@ -109,10 +109,10 @@ boost::asio::awaitable<void> write_transport_frame(fcl::transport::stream& strea
    return client_options.deadline;
 }
 
-[[nodiscard]] std::exception_ptr make_deadline_error(fcl::api::call_id id) {
+[[nodiscard]] std::exception_ptr make_deadline_error(forge::api::call_id id) {
    try {
-      FCL_THROW_EXCEPTION(exceptions::deadline_exceeded, "API transport call deadline exceeded",
-                          fcl::exceptions::ctx("call_id", id.value));
+      FORGE_THROW_EXCEPTION(exceptions::deadline_exceeded, "API transport call deadline exceeded",
+                          forge::exceptions::ctx("call_id", id.value));
    } catch (...) {
       return std::current_exception();
    }
@@ -134,7 +134,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
 
       boost::asio::steady_timer timer;
       std::optional<boost::asio::steady_timer::time_point> deadline_at;
-      std::vector<fcl::api::frame> responses;
+      std::vector<forge::api::frame> responses;
       std::exception_ptr error;
       bool done = false;
    };
@@ -146,12 +146,12 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
 
       boost::asio::steady_timer timer;
       std::optional<boost::asio::steady_timer::time_point> deadline_at;
-      fcl::api::call_id id;
+      forge::api::call_id id;
       std::exception_ptr error;
       bool ready = false;
    };
 
-   fcl::transport::stream stream;
+   forge::transport::stream stream;
    options settings;
    std::vector<std::uint8_t> read_buffer;
    std::size_t consumed = 0;
@@ -227,19 +227,19 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
    }
 
    struct reservation {
-      fcl::api::call_id id;
+      forge::api::call_id id;
       std::shared_ptr<pending_call> pending;
       bool start_reader = false;
    };
 
-   reservation reserve_call_on_strand(fcl::api::frame& request, call_options& value, const strand_type& executor) {
+   reservation reserve_call_on_strand(forge::api::frame& request, call_options& value, const strand_type& executor) {
       auto pending_value = std::make_shared<pending_call>(executor);
       if (!valid_on_strand()) {
-         FCL_THROW_EXCEPTION(exceptions::cancelled, "API transport client is closed");
+         FORGE_THROW_EXCEPTION(exceptions::cancelled, "API transport client is closed");
       }
       if (pending.size() >= settings.max_inflight) {
-         FCL_THROW_EXCEPTION(exceptions::resource_exhausted, "API transport max inflight calls exceeded",
-                             fcl::exceptions::ctx("max_inflight", settings.max_inflight));
+         FORGE_THROW_EXCEPTION(exceptions::resource_exhausted, "API transport max inflight calls exceeded",
+                             forge::exceptions::ctx("max_inflight", settings.max_inflight));
       }
       if (value.id.value != 0) {
          request.id = value.id;
@@ -252,8 +252,8 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       request.codec = settings.codec;
 
       if (pending.contains(request.id.value)) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "duplicate active API transport call",
-                             fcl::exceptions::ctx("call_id", request.id.value));
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "duplicate active API transport call",
+                             forge::exceptions::ctx("call_id", request.id.value));
       }
       const auto deadline = effective_deadline(value, settings);
       if (deadline.count() > 0) {
@@ -270,7 +270,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       return reservation{.id = request.id, .pending = std::move(pending_value), .start_reader = start};
    }
 
-   void remove_pending_on_strand(fcl::api::call_id id, const std::shared_ptr<pending_call>& pending_value) {
+   void remove_pending_on_strand(forge::api::call_id id, const std::shared_ptr<pending_call>& pending_value) {
       if (auto found = pending.find(id.value); found != pending.end() && found->second == pending_value) {
          pending.erase(found);
       }
@@ -283,25 +283,25 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       }
    }
 
-   void complete_pending_on_strand(fcl::api::frame response) {
-      if (response.kind != fcl::api::frame_kind::response && response.kind != fcl::api::frame_kind::error &&
-          response.kind != fcl::api::frame_kind::stream_item && response.kind != fcl::api::frame_kind::stream_end) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "API transport received non-response frame",
-                             fcl::exceptions::ctx("call_id", response.id.value));
+   void complete_pending_on_strand(forge::api::frame response) {
+      if (response.kind != forge::api::frame_kind::response && response.kind != forge::api::frame_kind::error &&
+          response.kind != forge::api::frame_kind::stream_item && response.kind != forge::api::frame_kind::stream_end) {
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport received non-response frame",
+                             forge::exceptions::ctx("call_id", response.id.value));
       }
       if (response.codec != settings.codec) {
-         FCL_THROW_EXCEPTION(exceptions::codec_failed, "API transport response codec is not accepted",
-                             fcl::exceptions::ctx("codec", response.codec.value));
+         FORGE_THROW_EXCEPTION(exceptions::codec_failed, "API transport response codec is not accepted",
+                             forge::exceptions::ctx("codec", response.codec.value));
       }
       auto found = pending.find(response.id.value);
       if (found == pending.end()) {
-         FCL_THROW_EXCEPTION(exceptions::protocol_error, "API transport received unknown call_id",
-                             fcl::exceptions::ctx("call_id", response.id.value));
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport received unknown call_id",
+                             forge::exceptions::ctx("call_id", response.id.value));
       }
       auto pending_value = found->second;
-      const auto terminal = response.kind == fcl::api::frame_kind::response ||
-                            response.kind == fcl::api::frame_kind::error ||
-                            response.kind == fcl::api::frame_kind::stream_end;
+      const auto terminal = response.kind == forge::api::frame_kind::response ||
+                            response.kind == forge::api::frame_kind::error ||
+                            response.kind == forge::api::frame_kind::stream_end;
       pending_value->responses.push_back(std::move(response));
       if (!terminal) {
          return;
@@ -327,7 +327,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       try {
          while (!canceled) {
             auto payload = co_await read_transport_frame(stream, read_buffer, consumed, settings.max_frame_size);
-            complete_pending_on_strand(fcl::raw::unpack<fcl::api::frame>(payload.to_vector()));
+            complete_pending_on_strand(forge::raw::unpack<forge::api::frame>(payload.to_vector()));
             if (no_pending_and_stop_reader_on_strand()) {
                co_return;
             }
@@ -348,7 +348,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
           boost::asio::detached);
    }
 
-   boost::asio::awaitable<void> acquire_write_on_strand(fcl::api::call_id id,
+   boost::asio::awaitable<void> acquire_write_on_strand(forge::api::call_id id,
                                                         const std::shared_ptr<pending_call>& pending_value,
                                                         const strand_type& executor) {
       auto waiter = std::shared_ptr<write_waiter>{};
@@ -356,7 +356,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
          std::rethrow_exception(failure);
       }
       if (canceled) {
-         FCL_THROW_EXCEPTION(exceptions::cancelled, "API transport client is closed");
+         FORGE_THROW_EXCEPTION(exceptions::cancelled, "API transport client is closed");
       }
       if (pending_value->deadline_at &&
           boost::asio::steady_timer::clock_type::now() >= *pending_value->deadline_at) {
@@ -408,7 +408,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       write_busy = false;
    }
 
-   boost::asio::awaitable<std::vector<fcl::api::frame>> async_call_stream_on_strand(fcl::api::frame request,
+   boost::asio::awaitable<std::vector<forge::api::frame>> async_call_stream_on_strand(forge::api::frame request,
                                                                                     call_options value,
                                                                                     const strand_type& executor) {
       auto reservation = reserve_call_on_strand(request, value, executor);
@@ -416,8 +416,8 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
          start_reader_on_strand(executor);
       }
 
-      auto encoded = fcl::api::bytes{};
-      fcl::raw::pack(encoded, request);
+      auto encoded = forge::api::bytes{};
+      forge::raw::pack(encoded, request);
 
       try {
          co_await acquire_write_on_strand(reservation.id, reservation.pending, executor);
@@ -459,7 +459,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
 
 client::client() = default;
 
-client::client(fcl::transport::stream stream, options value) : impl_(std::make_shared<impl>()) {
+client::client(forge::transport::stream stream, options value) : impl_(std::make_shared<impl>()) {
    impl_->stream = std::move(stream);
    impl_->settings = std::move(value);
 }
@@ -477,31 +477,31 @@ const options& client::settings() const noexcept {
    return impl_ ? impl_->settings : defaults;
 }
 
-boost::asio::awaitable<std::vector<fcl::api::frame>> client::async_call_stream(fcl::api::frame request,
+boost::asio::awaitable<std::vector<forge::api::frame>> client::async_call_stream(forge::api::frame request,
                                                                                call_options value) {
    auto self = impl_;
    if (!self) {
-      FCL_THROW_EXCEPTION(exceptions::cancelled, "API transport client is closed");
+      FORGE_THROW_EXCEPTION(exceptions::cancelled, "API transport client is closed");
    }
    const auto executor = co_await boost::asio::this_coro::executor;
    auto strand = self->ensure_strand(executor);
    co_return co_await boost::asio::co_spawn(
        strand,
        [self, strand, request = std::move(request), value = std::move(value)]() mutable
-           -> boost::asio::awaitable<std::vector<fcl::api::frame>> {
+           -> boost::asio::awaitable<std::vector<forge::api::frame>> {
           co_return co_await self->async_call_stream_on_strand(std::move(request), std::move(value), strand);
        },
        boost::asio::use_awaitable);
 }
 
-boost::asio::awaitable<fcl::api::frame> client::async_call(fcl::api::frame request, call_options value) {
+boost::asio::awaitable<forge::api::frame> client::async_call(forge::api::frame request, call_options value) {
    auto responses = co_await async_call_stream(std::move(request), std::move(value));
    for (auto& response : responses) {
-      if (response.kind != fcl::api::frame_kind::stream_end) {
+      if (response.kind != forge::api::frame_kind::stream_end) {
          co_return std::move(response);
       }
    }
-   FCL_THROW_EXCEPTION(exceptions::protocol_error, "API transport streaming response has no item");
+   FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport streaming response has no item");
 }
 
 boost::asio::awaitable<void> client::async_close() {
@@ -537,4 +537,4 @@ void client::cancel() {
    });
 }
 
-} // namespace fcl::transport::api
+} // namespace forge::transport::api

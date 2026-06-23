@@ -1,9 +1,9 @@
 #pragma once
 
-namespace fcl::plugins::http::server {
+namespace forge::plugins::http::server {
 
 struct pending_binding {
-   fcl::http::api::binding_plan binding;
+   forge::http::api::binding_plan binding;
    publish_options options;
 };
 
@@ -15,11 +15,11 @@ struct startup_snapshot {
 struct plugin::impl {
    mutable std::mutex mutex;
    config settings;
-   fcl::asio::runtime* runtime = nullptr;
-   const fcl::api::registry* apis = nullptr;
+   forge::asio::runtime* runtime = nullptr;
+   const forge::api::registry* apis = nullptr;
    std::vector<pending_binding> bindings;
    std::vector<middleware_descriptor> middleware;
-   std::unique_ptr<fcl::http::server> server;
+   std::unique_ptr<forge::http::server> server;
    bool publication_closed = false;
    bool stopping = false;
 
@@ -29,4 +29,4 @@ struct plugin::impl {
    void reset_runtime() noexcept;
 };
 
-} // namespace fcl::plugins::http::server
+} // namespace forge::plugins::http::server

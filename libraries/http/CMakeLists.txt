@@ -1,5 +1,5 @@
 add_library(
-   fcl_http STATIC
+   forge_http STATIC
    types.cpp
    base_url.cpp
    target.cpp
@@ -13,18 +13,18 @@ add_library(
    file.cpp
    server.cpp
 )
-fcl_target_modules(fcl_http http)
+forge_target_modules(forge_http http)
 
-target_include_directories(fcl_http PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+target_include_directories(forge_http PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
-   fcl_http PUBLIC
-      fcl_exceptions
-      fcl_api
-      fcl_asio
-      fcl_json
-      fcl_schema
-      fcl_websocket
+   forge_http PUBLIC
+      forge_exceptions
+      forge_api
+      forge_asio
+      forge_json
+      forge_schema
+      forge_websocket
       Boost::asio
       Boost::beast
       Boost::url

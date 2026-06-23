@@ -6,7 +6,7 @@
 
 /* Common stuff for cryptographic hashes
  */
-namespace fcl::detail {
+namespace forge::detail {
 inline void shift_l_bytes(const uint8_t* in, uint8_t* out, std::size_t n, unsigned int i) {
    if (i < n) {
       memcpy(out, in + i, n - i);
@@ -56,4 +56,4 @@ inline void shift_r(const char* in, char* out, std::size_t n, unsigned int i) {
       out8[p] = (in8[p] >> i) | (in8[p - 1] << (8 - i));
    out8[p] = in8[p] >> i;
 }
-} // namespace fcl::detail
+} // namespace forge::detail

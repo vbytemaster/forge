@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <boost/describe.hpp>
 
@@ -31,17 +31,17 @@ module;
 #include <boost/asio/strand.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
-module fcl.otlp.log_exporter;
+module forge.otlp.log_exporter;
 
-import fcl.asio.runtime;
-import fcl.exceptions;
-import fcl.http.base_url;
-import fcl.http.client;
-import fcl.http.types;
-import fcl.json;
-import fcl.log.log_message;
+import forge.asio.runtime;
+import forge.exceptions;
+import forge.http.base_url;
+import forge.http.client;
+import forge.http.types;
+import forge.json;
+import forge.log.log_message;
 
-namespace fcl::otlp {
+namespace forge::otlp {
 namespace {
 
 namespace asio = boost::asio;
@@ -49,50 +49,50 @@ using asio::awaitable;
 using asio::use_awaitable;
 using namespace std::chrono_literals;
 
-constexpr auto instrumentation_scope_name = std::string_view{"fcl.log"};
+constexpr auto instrumentation_scope_name = std::string_view{"forge.log"};
 constexpr auto instrumentation_scope_version = std::string_view{"1.0.0"};
 
 bool positive(std::chrono::milliseconds value) {
    return value.count() > 0;
 }
 
-std::string severity_text(fcl::log_level level) {
-   switch (static_cast<fcl::log_level::values>(static_cast<int>(level))) {
-   case fcl::log_level::debug:
+std::string severity_text(forge::log_level level) {
+   switch (static_cast<forge::log_level::values>(static_cast<int>(level))) {
+   case forge::log_level::debug:
       return "DEBUG";
-   case fcl::log_level::info:
+   case forge::log_level::info:
       return "INFO";
-   case fcl::log_level::warn:
+   case forge::log_level::warn:
       return "WARN";
-   case fcl::log_level::error:
+   case forge::log_level::error:
       return "ERROR";
-   case fcl::log_level::all:
+   case forge::log_level::all:
       return "TRACE";
-   case fcl::log_level::off:
+   case forge::log_level::off:
       return "UNSPECIFIED";
    }
    return "UNSPECIFIED";
 }
 
-int severity_number(fcl::log_level level) {
-   switch (static_cast<fcl::log_level::values>(static_cast<int>(level))) {
-   case fcl::log_level::all:
+int severity_number(forge::log_level level) {
+   switch (static_cast<forge::log_level::values>(static_cast<int>(level))) {
+   case forge::log_level::all:
       return 1;
-   case fcl::log_level::debug:
+   case forge::log_level::debug:
       return 5;
-   case fcl::log_level::info:
+   case forge::log_level::info:
       return 9;
-   case fcl::log_level::warn:
+   case forge::log_level::warn:
       return 13;
-   case fcl::log_level::error:
+   case forge::log_level::error:
       return 17;
-   case fcl::log_level::off:
+   case forge::log_level::off:
       return 0;
    }
    return 0;
 }
 
-std::uint64_t timestamp_nanos(const fcl::log_record& record) {
+std::uint64_t timestamp_nanos(const forge::log_record& record) {
    const auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(record.timestamp.time_since_epoch());
    if (nanos.count() <= 0) {
       return 0;
@@ -100,7 +100,7 @@ std::uint64_t timestamp_nanos(const fcl::log_record& record) {
    return static_cast<std::uint64_t>(nanos.count());
 }
 
-std::size_t estimate_record_bytes(const fcl::log_record& record) {
+std::size_t estimate_record_bytes(const forge::log_record& record) {
    auto result = std::size_t{256};
    result += record.logger.size() + record.component.size() + record.message.size();
    result += record.thread_id.size() + record.thread_name.size() + record.exception_chain.size();
@@ -133,12 +133,12 @@ std::optional<std::chrono::milliseconds> parse_retry_after(std::string_view valu
    return std::chrono::seconds{seconds};
 }
 
-bool retryable_status(fcl::http::status status) {
-   return status == fcl::http::status::too_many_requests || status == fcl::http::status::bad_gateway ||
-          status == fcl::http::status::service_unavailable || status == fcl::http::status::gateway_timeout;
+bool retryable_status(forge::http::status status) {
+   return status == forge::http::status::too_many_requests || status == forge::http::status::bad_gateway ||
+          status == forge::http::status::service_unavailable || status == forge::http::status::gateway_timeout;
 }
 
-bool success_status(fcl::http::status status) {
+bool success_status(forge::http::status status) {
    const auto value = static_cast<unsigned>(status);
    return value >= 200 && value < 300;
 }
@@ -223,7 +223,7 @@ BOOST_DESCRIBE_STRUCT(otlp_export_request, (), (resourceLogs))
    return otlp_attribute{.key = std::move(key), .value = otlp_string_value{.stringValue = std::move(value)}};
 }
 
-[[nodiscard]] std::vector<otlp_attribute> record_attributes(const fcl::log_record& record) {
+[[nodiscard]] std::vector<otlp_attribute> record_attributes(const forge::log_record& record) {
    auto attributes = std::vector<otlp_attribute>{};
    attributes.reserve(record.fields.size() + 10);
    attributes.push_back(make_string_attribute("logger", record.logger));
@@ -269,7 +269,7 @@ BOOST_DESCRIBE_STRUCT(otlp_export_request, (), (resourceLogs))
    return attributes;
 }
 
-[[nodiscard]] otlp_log_record make_log_record(const fcl::log_record& record) {
+[[nodiscard]] otlp_log_record make_log_record(const forge::log_record& record) {
    return otlp_log_record{
       .timeUnixNano = std::to_string(timestamp_nanos(record)),
       .severityNumber = severity_number(record.level),
@@ -283,7 +283,7 @@ BOOST_DESCRIBE_STRUCT(otlp_export_request, (), (resourceLogs))
 
 struct log_exporter::impl : std::enable_shared_from_this<impl> {
    struct queued_record {
-      fcl::log_record record;
+      forge::log_record record;
       std::size_t bytes = 0;
    };
 
@@ -296,48 +296,48 @@ struct log_exporter::impl : std::enable_shared_from_this<impl> {
       std::exception_ptr error;
    };
 
-   impl(fcl::asio::runtime& runtime_value, log_exporter_options options_value)
+   impl(forge::asio::runtime& runtime_value, log_exporter_options options_value)
        : runtime(runtime_value), options(std::move(options_value)), strand(asio::make_strand(runtime.context())),
          flush_timer(strand, (std::chrono::steady_clock::time_point::max)()) {
       validate_options();
       try {
-         endpoint = fcl::http::parse_base_url(options.endpoint);
+         endpoint = forge::http::parse_base_url(options.endpoint);
       } catch (const std::exception& error) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "invalid OTLP endpoint",
-                             fcl::exceptions::ctx("endpoint", options.endpoint),
-                             fcl::exceptions::ctx("reason", error.what()));
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "invalid OTLP endpoint",
+                             forge::exceptions::ctx("endpoint", options.endpoint),
+                             forge::exceptions::ctx("reason", error.what()));
       }
-      client = std::make_unique<fcl::http::client>(runtime, endpoint);
+      client = std::make_unique<forge::http::client>(runtime, endpoint);
    }
 
    void validate_options() const {
       if (options.endpoint.empty()) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP endpoint must not be empty");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "OTLP endpoint must not be empty");
       }
       if (options.logs_path.empty()) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP logs path must not be empty");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "OTLP logs path must not be empty");
       }
       if (options.batch.max_records == 0 || options.batch.max_bytes == 0) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP batch limits must be positive");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "OTLP batch limits must be positive");
       }
       if (options.queue.max_records == 0 || options.queue.max_bytes == 0) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP queue limits must be positive");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "OTLP queue limits must be positive");
       }
       if (!positive(options.batch.flush_interval)) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP flush interval must be positive");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "OTLP flush interval must be positive");
       }
       if (!positive(options.request_timeout)) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP request timeout must be positive");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "OTLP request timeout must be positive");
       }
       if (!positive(options.shutdown_timeout)) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP shutdown timeout must be positive");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "OTLP shutdown timeout must be positive");
       }
       if (!positive(options.retry.base_delay) || !positive(options.retry.max_delay)) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "OTLP retry delays must be positive");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "OTLP retry delays must be positive");
       }
    }
 
-   bool enqueue(const fcl::log_record& record) {
+   bool enqueue(const forge::log_record& record) {
       const auto bytes = estimate_record_bytes(record);
       auto should_flush = false;
       {
@@ -481,7 +481,7 @@ struct log_exporter::impl : std::enable_shared_from_this<impl> {
       }
    }
 
-   awaitable<export_result> export_now(std::vector<fcl::log_record> records) {
+   awaitable<export_result> export_now(std::vector<forge::log_record> records) {
       co_await asio::post(strand, use_awaitable);
       auto result = export_result{.submitted_records = records.size()};
       if (records.empty()) {
@@ -499,8 +499,8 @@ struct log_exporter::impl : std::enable_shared_from_this<impl> {
       co_return result;
    }
 
-   std::vector<fcl::log_record> take_batch() {
-      auto records = std::vector<fcl::log_record>{};
+   std::vector<forge::log_record> take_batch() {
+      auto records = std::vector<forge::log_record>{};
       const auto lock = std::scoped_lock{mutex};
       auto bytes = std::size_t{0};
       while (!queue.empty() && records.size() < options.batch.max_records) {
@@ -517,7 +517,7 @@ struct log_exporter::impl : std::enable_shared_from_this<impl> {
       return records;
    }
 
-   awaitable<bool> export_batch(const std::vector<fcl::log_record>& records) {
+   awaitable<bool> export_batch(const std::vector<forge::log_record>& records) {
       const auto payload = encode_logs(records);
       auto attempt = std::uint32_t{0};
       for (;;) {
@@ -541,7 +541,7 @@ struct log_exporter::impl : std::enable_shared_from_this<impl> {
             if (!retryable_status(response.result()) || attempt >= options.retry.max_attempts) {
                co_return false;
             }
-            const auto retry_after = response.find(fcl::http::field::retry_after);
+            const auto retry_after = response.find(forge::http::field::retry_after);
             auto response_delay = retry_after != response.end()
                                       ? parse_retry_after(std::string_view{retry_after->value()})
                                       : std::optional<std::chrono::milliseconds>{};
@@ -565,15 +565,15 @@ struct log_exporter::impl : std::enable_shared_from_this<impl> {
       }
    }
 
-   fcl::http::request make_request(const std::string& payload) const {
-      auto request = fcl::http::request{};
-      request.method(fcl::http::method::post);
+   forge::http::request make_request(const std::string& payload) const {
+      auto request = forge::http::request{};
+      request.method(forge::http::method::post);
       request.target(endpoint.make_target(options.logs_path));
       request.version(11);
       request.body() = payload;
-      request.set(fcl::http::field::content_type, "application/json");
+      request.set(forge::http::field::content_type, "application/json");
       if (!options.user_agent.empty()) {
-         request.set(fcl::http::field::user_agent, options.user_agent);
+         request.set(forge::http::field::user_agent, options.user_agent);
       }
       for (const auto& header : options.headers) {
          request.set(header.key, header.value);
@@ -629,7 +629,7 @@ struct log_exporter::impl : std::enable_shared_from_this<impl> {
       return shutdown_deadline.has_value() && std::chrono::steady_clock::now() >= *shutdown_deadline;
    }
 
-   std::string encode_logs(const std::vector<fcl::log_record>& records) const {
+   std::string encode_logs(const std::vector<forge::log_record>& records) const {
       auto attributes = std::vector<otlp_attribute>{};
       attributes.reserve(options.resource.attributes.size());
       for (const auto& entry : options.resource.attributes) {
@@ -662,12 +662,12 @@ struct log_exporter::impl : std::enable_shared_from_this<impl> {
             },
       };
 
-      auto encoded = fcl::json::write(request);
+      auto encoded = forge::json::write(request);
       if (!encoded.ok()) {
          const auto message = encoded.diagnostics.empty() ? std::string{"unknown JSON encoding error"}
                                                           : encoded.diagnostics.front().message;
-         FCL_THROW_EXCEPTION(exceptions::export_failed, "failed to encode OTLP logs",
-                             fcl::exceptions::ctx("reason", message));
+         FORGE_THROW_EXCEPTION(exceptions::export_failed, "failed to encode OTLP logs",
+                             forge::exceptions::ctx("reason", message));
       }
       return std::move(encoded.text);
    }
@@ -742,12 +742,12 @@ struct log_exporter::impl : std::enable_shared_from_this<impl> {
       return snapshot;
    }
 
-   fcl::asio::runtime& runtime;
+   forge::asio::runtime& runtime;
    log_exporter_options options;
    asio::strand<asio::io_context::executor_type> strand;
    asio::steady_timer flush_timer;
-   fcl::http::base_url endpoint;
-   std::unique_ptr<fcl::http::client> client;
+   forge::http::base_url endpoint;
+   std::unique_ptr<forge::http::client> client;
 
    mutable std::mutex mutex;
    mutable exporter_metrics current_metrics;
@@ -762,7 +762,7 @@ struct log_exporter::impl : std::enable_shared_from_this<impl> {
    std::minstd_rand jitter_source{0x0f7c10};
 };
 
-log_exporter::log_exporter(fcl::asio::runtime& runtime, log_exporter_options options)
+log_exporter::log_exporter(forge::asio::runtime& runtime, log_exporter_options options)
     : impl_(std::make_shared<impl>(runtime, std::move(options))) {}
 
 log_exporter::~log_exporter() {
@@ -771,7 +771,7 @@ log_exporter::~log_exporter() {
    }
 }
 
-bool log_exporter::enqueue(const fcl::log_record& record) {
+bool log_exporter::enqueue(const forge::log_record& record) {
    return impl_->enqueue(record);
 }
 
@@ -779,7 +779,7 @@ exporter_metrics log_exporter::metrics() const {
    return impl_->metrics();
 }
 
-boost::asio::awaitable<export_result> log_exporter::async_export(std::vector<fcl::log_record> records) {
+boost::asio::awaitable<export_result> log_exporter::async_export(std::vector<forge::log_record> records) {
    co_return co_await impl_->export_now(std::move(records));
 }
 
@@ -792,4 +792,4 @@ boost::asio::awaitable<void> log_exporter::async_shutdown() {
    co_await impl_->shutdown();
 }
 
-} // namespace fcl::otlp
+} // namespace forge::otlp

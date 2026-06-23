@@ -1,17 +1,17 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <memory>
 #include <utility>
 
 #include <boost/asio/awaitable.hpp>
 
-module fcl.transport.session;
+module forge.transport.session;
 
-import fcl.transport.exceptions;
+import forge.transport.exceptions;
 
-namespace fcl::transport {
+namespace forge::transport {
 
 struct session::impl {
    std::shared_ptr<detail::session_concept> model;
@@ -32,14 +32,14 @@ bool session::valid() const noexcept {
 
 boost::asio::awaitable<stream> session::async_open_stream() {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid transport session");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid transport session");
    }
    co_return co_await impl_->model->async_open_stream();
 }
 
 boost::asio::awaitable<stream> session::async_accept_stream() {
    if (!valid()) {
-      FCL_THROW_EXCEPTION(exceptions::closed, "invalid transport session");
+      FORGE_THROW_EXCEPTION(exceptions::closed, "invalid transport session");
    }
    co_return co_await impl_->model->async_accept_stream();
 }
@@ -61,4 +61,4 @@ session detail::session_access::make(std::shared_ptr<session_concept> model) {
    return session{std::move(model)};
 }
 
-} // namespace fcl::transport
+} // namespace forge::transport

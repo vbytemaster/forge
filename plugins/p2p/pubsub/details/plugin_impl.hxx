@@ -1,10 +1,10 @@
 #pragma once
 
-namespace fcl::plugins::p2p::pubsub {
+namespace forge::plugins::p2p::pubsub {
 
 struct plugin::impl : public std::enable_shared_from_this<plugin::impl> {
    config settings;
-   std::shared_ptr<fcl::plugins::p2p::node::pubsub_source> source;
+   std::shared_ptr<forge::plugins::p2p::node::pubsub_source> source;
    std::map<std::string, topic_state> topics;
    std::uint64_t next_subscription = 1;
    std::size_t active_handlers = 0;
@@ -19,16 +19,16 @@ struct plugin::impl : public std::enable_shared_from_this<plugin::impl> {
    bool initialized = false;
    bool stopping = false;
 
-   [[nodiscard]] fcl::plugins::p2p::node::pubsub_source& require_source() const;
-   void ensure_topic_allowed(const fcl::p2p::pubsub::topic& subject) const;
+   [[nodiscard]] forge::plugins::p2p::node::pubsub_source& require_source() const;
+   void ensure_topic_allowed(const forge::p2p::pubsub::topic& subject) const;
    [[nodiscard]] std::vector<handler_record> handlers_for(const std::string& topic) const;
    [[nodiscard]] bool try_begin_handler();
    void finish_handler();
    void record_handler_failure();
    void record_drop();
-   boost::asio::awaitable<fcl::p2p::pubsub::validation_result>
+   boost::asio::awaitable<forge::p2p::pubsub::validation_result>
    call_handler(handler_record handler, message value);
-   boost::asio::awaitable<fcl::p2p::pubsub::validation_result> handle_event(fcl::p2p::pubsub::event event);
+   boost::asio::awaitable<forge::p2p::pubsub::validation_result> handle_event(forge::p2p::pubsub::event event);
 };
 
-} // namespace fcl::plugins::p2p::pubsub
+} // namespace forge::plugins::p2p::pubsub

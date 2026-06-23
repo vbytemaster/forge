@@ -1,7 +1,7 @@
 # JSON + YAML Codecs
 
-`fcl_json` and `fcl_yaml` expose a symmetric typed codec API over a Glaze
-backend. FCL owns the public API, value/document model, schema diagnostics and
+`forge_json` and `forge_yaml` expose a symmetric typed codec API over a Glaze
+backend. FORGE owns the public API, value/document model, schema diagnostics and
 redaction boundary.
 
 Local guides:
@@ -12,11 +12,11 @@ Local guides:
 ## Задача
 
 The old parser facade shape made JSON look like a namespace while being a fake
-class with static methods. YAML had a narrower config-only surface. FCL now uses
+class with static methods. YAML had a narrower config-only surface. FORGE now uses
 one modern API shape for both formats:
 
-- `read_value` / `write_value` for generic `fcl::variant`;
-- `read_document` / `write_document` for `fcl::config::document`;
+- `read_value` / `write_value` for generic `forge::variant`;
+- `read_document` / `write_document` for `forge::config::document`;
 - `read<T>` / `write<T>` for typed described objects;
 - `load_*` / `save_*` for filesystem paths.
 
@@ -25,24 +25,24 @@ one modern API shape for both formats:
 ```text
 JSON/YAML text
   -> Glaze backend parse
-  -> fcl::variant or fcl::config::document
-  -> optional fcl_schema decode/validation
+  -> forge::variant or forge::config::document
+  -> optional forge_schema decode/validation
   -> read_result<T> with diagnostics
 ```
 
-Typed reads do not expose Glaze reflection as the canonical FCL model. FCL uses
-Boost.Describe plus `fcl_schema` rules for public typed behavior.
+Typed reads do not expose Glaze reflection as the canonical FORGE model. FORGE uses
+Boost.Describe plus `forge_schema` rules for public typed behavior.
 
 ## Diagnostics
 
 All parser/type/schema errors are converted into
-`std::vector<fcl::schema::diagnostic>`. Diagnostics carry path, code, severity
+`std::vector<forge::schema::diagnostic>`. Diagnostics carry path, code, severity
 and message. Backend parser error types do not cross the module boundary.
 
 ## Redaction
 
 Codecs serialize the value or document they receive. They do not guess which
-fields are secret. Callers must use `fcl_config::redact` or another explicit
+fields are secret. Callers must use `forge_config::redact` or another explicit
 redaction step before writing logs, diagnostics or operator-visible output.
 
 ## Unknown Fields
@@ -58,7 +58,7 @@ This policy only has meaning when schema rules can provide known field names.
 ## Backend Boundary
 
 - Backend parser types do not appear in public `.cppm`.
-- YAML parser nodes are not used or exposed by FCL YAML after the codec
+- YAML parser nodes are not used or exposed by FORGE YAML after the codec
   migration.
 - Large integer behavior is tested to prevent silent double conversion.
 - Pretty/flow-style output options are codec concerns; schema and config stay
@@ -66,7 +66,7 @@ This policy only has meaning when schema rules can provide known field names.
 
 ## Verification
 
-- `test_fcl_json`: generic value roundtrip, large integers, config document
+- `test_forge_json`: generic value roundtrip, large integers, config document
   roundtrip, typed schema read and malformed input diagnostics.
-- `test_fcl_yaml`: scalar/list/map roundtrip, config document roundtrip, typed
+- `test_forge_yaml`: scalar/list/map roundtrip, config document roundtrip, typed
   schema read and malformed YAML diagnostics.

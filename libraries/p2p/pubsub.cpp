@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -10,21 +10,21 @@ module;
 #include <string_view>
 #include <vector>
 
-module fcl.p2p.pubsub;
+module forge.p2p.pubsub;
 
-import fcl.crypto.asymmetric;
-import fcl.crypto.sha256;
-import fcl.multiformats.multicodec;
-import fcl.multiformats.exceptions;
-import fcl.multiformats.multihash;
-import fcl.multiformats.varint;
-import fcl.p2p.exceptions;
-import fcl.p2p.identity;
+import forge.crypto.asymmetric;
+import forge.crypto.sha256;
+import forge.multiformats.multicodec;
+import forge.multiformats.exceptions;
+import forge.multiformats.multihash;
+import forge.multiformats.varint;
+import forge.p2p.exceptions;
+import forge.p2p.identity;
 
 #include "identity_signature.hpp"
 #include "protobuf.hpp"
 
-namespace fcl::p2p::pubsub {
+namespace forge::p2p::pubsub {
 namespace {
 
 constexpr auto signing_prefix = std::string_view{"libp2p-pubsub:"};
@@ -41,20 +41,20 @@ void validate_options(const options& opts) {
        limits.unsubscribe_backoff.count() <= 0 || limits.mesh_n == 0 || limits.mesh_n_low == 0 ||
        limits.mesh_n_high < limits.mesh_n_low || limits.history_length == 0 || limits.history_gossip == 0 ||
        limits.gossip_lazy == 0 || limits.gossip_factor <= 0.0 || limits.gossip_retransmission == 0) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "invalid GossipSub options");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "invalid GossipSub options");
    }
 }
 
 void validate_topic(const topic& value, const options& opts) {
    if (value.value.empty()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub topic must not be empty");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub topic must not be empty");
    }
    if (value.value.size() > opts.limits.max_topic_size) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub topic exceeds max size");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub topic exceeds max size");
    }
 }
 
-[[nodiscard]] std::vector<std::uint8_t> digest_bytes(const fcl::crypto::sha256& digest) {
+[[nodiscard]] std::vector<std::uint8_t> digest_bytes(const forge::crypto::sha256& digest) {
    const auto span = digest.to_uint8_span();
    return {span.begin(), span.end()};
 }
@@ -80,13 +80,13 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
       switch (field) {
       case 1:
          if (type != detail::wire_type::varint) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub subscription flag must be varint");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub subscription flag must be varint");
          }
          out.subscribe = in.read_varint() != 0;
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub subscription topic must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub subscription topic must be bytes");
          }
          out.subject.value = in.string();
          saw_topic = true;
@@ -97,7 +97,7 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
       }
    }
    if (!saw_topic) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub subscription is missing topic");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub subscription is missing topic");
    }
    validate_topic(out.subject, opts);
    return out;
@@ -107,7 +107,7 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
                                                                bool include_signature_key) {
    validate_topic(value.subject, opts);
    if (value.data.size() > opts.limits.max_data_size) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub message exceeds max data size");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub message exceeds max data size");
    }
    auto out = std::vector<std::uint8_t>{};
    if (value.from) {
@@ -127,14 +127,14 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
       detail::append_bytes(out, 6, value.key);
    }
    if (out.size() > opts.limits.max_message_size) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub message exceeds max size");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub message exceeds max size");
    }
    return out;
 }
 
 [[nodiscard]] message decode_message_payload(std::span<const std::uint8_t> bytes, const options& opts) {
    if (bytes.size() > opts.limits.max_message_size) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message exceeds max size");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message exceeds max size");
    }
    auto out = message{};
    auto saw_topic = false;
@@ -144,41 +144,41 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message source must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message source must be bytes");
          }
          out.from = peer_id::from_bytes(in.bytes());
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message data must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message data must be bytes");
          }
          out.data = in.bytes();
          if (out.data.size() > opts.limits.max_data_size) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message exceeds max data size");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message exceeds max data size");
          }
          break;
       case 3:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message seqno must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message seqno must be bytes");
          }
          out.seqno = in.bytes();
          break;
       case 4:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message topic must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message topic must be bytes");
          }
          out.subject.value = in.string();
          saw_topic = true;
          break;
       case 5:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message signature must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message signature must be bytes");
          }
          out.signature = in.bytes();
          break;
       case 6:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message key must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message key must be bytes");
          }
          out.key = in.bytes();
          break;
@@ -188,7 +188,7 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
       }
    }
    if (!saw_topic) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message is missing topic");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub message is missing topic");
    }
    validate_topic(out.subject, opts);
    return out;
@@ -212,14 +212,14 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub peer id must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub peer id must be bytes");
          }
          out.peer = peer_id::from_bytes(in.bytes());
          saw_peer = true;
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub signed peer record must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub signed peer record must be bytes");
          }
          out.signed_peer_record = in.bytes();
          break;
@@ -229,7 +229,7 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
       }
    }
    if (!saw_peer) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub peer info is missing peer id");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub peer info is missing peer id");
    }
    return out;
 }
@@ -237,11 +237,11 @@ void append_bool(std::vector<std::uint8_t>& out, std::uint32_t field, bool value
 void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
                         const std::vector<std::vector<std::uint8_t>>& ids, const options& opts) {
    if (ids.size() > opts.limits.max_message_ids) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub control has too many message ids");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub control has too many message ids");
    }
    for (const auto& id : ids) {
       if (id.empty()) {
-         FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub message id must not be empty");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub message id must not be empty");
       }
       detail::append_bytes(out, field, id);
    }
@@ -264,14 +264,14 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IHAVE topic must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IHAVE topic must be bytes");
          }
          out.subject.value = in.string();
          saw_topic = true;
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IHAVE message id must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IHAVE message id must be bytes");
          }
          out.message_ids.push_back(in.bytes());
          break;
@@ -281,11 +281,11 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
       }
    }
    if (!saw_topic) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IHAVE is missing topic");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IHAVE is missing topic");
    }
    validate_topic(out.subject, opts);
    if (out.message_ids.size() > opts.limits.max_message_ids) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IHAVE has too many message ids");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IHAVE has too many message ids");
    }
    return out;
 }
@@ -304,7 +304,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IWANT message id must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IWANT message id must be bytes");
          }
          out.message_ids.push_back(in.bytes());
          break;
@@ -314,7 +314,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
       }
    }
    if (out.message_ids.size() > opts.limits.max_message_ids) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IWANT has too many message ids");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub IWANT has too many message ids");
    }
    return out;
 }
@@ -335,7 +335,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub GRAFT topic must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub GRAFT topic must be bytes");
          }
          out.subject.value = in.string();
          saw_topic = true;
@@ -346,7 +346,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
       }
    }
    if (!saw_topic) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub GRAFT is missing topic");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub GRAFT is missing topic");
    }
    validate_topic(out.subject, opts);
    return out;
@@ -355,7 +355,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
 [[nodiscard]] std::vector<std::uint8_t> encode_prune_payload(const control::prune& value, const options& opts) {
    validate_topic(value.subject, opts);
    if (value.peers.size() > opts.limits.max_peers_per_topic) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub PRUNE has too many peers");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub PRUNE has too many peers");
    }
    auto out = std::vector<std::uint8_t>{};
    detail::append_string(out, 1, value.subject.value);
@@ -377,20 +377,20 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub PRUNE topic must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub PRUNE topic must be bytes");
          }
          out.subject.value = in.string();
          saw_topic = true;
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub PRUNE peer must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub PRUNE peer must be bytes");
          }
          out.peers.push_back(decode_peer_payload(in.bytes()));
          break;
       case 3:
          if (type != detail::wire_type::varint) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub PRUNE backoff must be varint");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub PRUNE backoff must be varint");
          }
          out.backoff = std::chrono::seconds{static_cast<std::int64_t>(in.read_varint())};
          break;
@@ -400,11 +400,11 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
       }
    }
    if (!saw_topic) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub PRUNE is missing topic");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub PRUNE is missing topic");
    }
    validate_topic(out.subject, opts);
    if (out.peers.size() > opts.limits.max_peers_per_topic) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub PRUNE has too many peers");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub PRUNE has too many peers");
    }
    return out;
 }
@@ -412,7 +412,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
 [[nodiscard]] std::vector<std::uint8_t> encode_control_payload(const control& value, const options& opts) {
    const auto total = value.have.size() + value.want.size() + value.grafts.size() + value.prunes.size();
    if (total > opts.limits.max_control_entries) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub control message has too many entries");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub control message has too many entries");
    }
    auto out = std::vector<std::uint8_t>{};
    for (const auto& item : value.have) {
@@ -436,7 +436,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
    while (!in.done()) {
       const auto [field, type] = in.key();
       if (type != detail::wire_type::length_delimited) {
-         FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub control entry must be bytes");
+         FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub control entry must be bytes");
       }
       switch (field) {
       case 1:
@@ -458,7 +458,7 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
    }
    const auto total = out.have.size() + out.want.size() + out.grafts.size() + out.prunes.size();
    if (total > opts.limits.max_control_entries) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub control message has too many entries");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub control message has too many entries");
    }
    return out;
 }
@@ -470,8 +470,8 @@ void append_message_ids(std::vector<std::uint8_t>& out, std::uint32_t field,
    if (!value.key.empty()) {
       return decode_public_key(value.key);
    }
-   const auto hash = fcl::multiformats::multihash::decode(value.from->to_bytes());
-   if (hash.code != fcl::multiformats::code_value(fcl::multiformats::multicodec_code::identity) ||
+   const auto hash = forge::multiformats::multihash::decode(value.from->to_bytes());
+   if (hash.code != forge::multiformats::code_value(forge::multiformats::multicodec_code::identity) ||
        hash.digest.empty()) {
       return std::nullopt;
    }
@@ -497,10 +497,10 @@ std::vector<std::uint8_t> codec::encode(const rpc& value) {
 std::vector<std::uint8_t> codec::encode(const rpc& value, const options& opts) {
    validate_options(opts);
    if (value.subscriptions.size() > opts.limits.max_subscriptions) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub RPC has too many subscriptions");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub RPC has too many subscriptions");
    }
    if (value.messages.size() > opts.limits.max_messages) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub RPC has too many messages");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub RPC has too many messages");
    }
    auto out = std::vector<std::uint8_t>{};
    for (const auto& item : value.subscriptions) {
@@ -513,7 +513,7 @@ std::vector<std::uint8_t> codec::encode(const rpc& value, const options& opts) {
       detail::append_bytes(out, 3, encode_control_payload(*value.control_value, opts));
    }
    if (out.size() > opts.limits.max_rpc_size) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub RPC exceeds max size");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub RPC exceeds max size");
    }
    return detail::wrap_message(out);
 }
@@ -526,7 +526,7 @@ rpc codec::decode(std::span<const std::uint8_t> bytes, const options& opts) {
    validate_options(opts);
    const auto payload = detail::unwrap_message(bytes, opts.limits.max_rpc_size);
    if (payload.size() > opts.limits.max_rpc_size) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub RPC exceeds max size");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub RPC exceeds max size");
    }
    auto out = rpc{};
    auto in = detail::reader{payload};
@@ -535,19 +535,19 @@ rpc codec::decode(std::span<const std::uint8_t> bytes, const options& opts) {
       switch (field) {
       case 1:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub subscription must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub subscription must be bytes");
          }
          out.subscriptions.push_back(decode_subscription_payload(in.bytes(), opts));
          break;
       case 2:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub publish message must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub publish message must be bytes");
          }
          out.messages.push_back(decode_message_payload(in.bytes(), opts));
          break;
       case 3:
          if (type != detail::wire_type::length_delimited) {
-            FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub control message must be bytes");
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub control message must be bytes");
          }
          out.control_value = decode_control_payload(in.bytes(), opts);
          break;
@@ -557,7 +557,7 @@ rpc codec::decode(std::span<const std::uint8_t> bytes, const options& opts) {
       }
    }
    if (out.subscriptions.size() > opts.limits.max_subscriptions || out.messages.size() > opts.limits.max_messages) {
-      FCL_THROW_EXCEPTION(exceptions::codec_error, "GossipSub RPC exceeds element limits");
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "GossipSub RPC exceeds element limits");
    }
    return out;
 }
@@ -580,12 +580,12 @@ std::vector<std::uint8_t> codec::message_id(const message& value) {
       return out;
    }
    const auto encoded = encode_message_payload(value, options{}, true);
-   return digest_bytes(fcl::crypto::sha256::hash(std::span<const std::uint8_t>{encoded}));
+   return digest_bytes(forge::crypto::sha256::hash(std::span<const std::uint8_t>{encoded}));
 }
 
-void codec::sign_message(message& value, const fcl::crypto::asymmetric::private_key& key) {
+void codec::sign_message(message& value, const forge::crypto::asymmetric::private_key& key) {
    if (value.seqno.empty()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub signed message requires seqno");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub signed message requires seqno");
    }
    const auto public_value = public_key_from_crypto(key.get_public_key());
    value.from = make_peer_id(public_value);
@@ -606,9 +606,9 @@ bool codec::verify_message(const message& value) {
       }
       const auto payload = signing_payload(value);
       return verify_identity_signature(*key, payload, value.signature);
-   } catch (const fcl::exceptions::base&) {
+   } catch (const forge::exceptions::base&) {
       return false;
    }
 }
 
-} // namespace fcl::p2p::pubsub
+} // namespace forge::p2p::pubsub

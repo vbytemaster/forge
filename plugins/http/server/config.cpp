@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -8,24 +8,24 @@ module;
 #include <string_view>
 #include <utility>
 
-module fcl.plugins.http.server.plugin;
+module forge.plugins.http.server.plugin;
 
-import fcl.config.component;
-import fcl.config.decode;
-import fcl.exceptions;
-import fcl.http.server;
-import fcl.plugins.http.server.exceptions;
-import fcl.plugins.http.server.types;
+import forge.config.component;
+import forge.config.decode;
+import forge.exceptions;
+import forge.http.server;
+import forge.plugins.http.server.exceptions;
+import forge.plugins.http.server.types;
 
 #include "details/config.hxx"
 
-namespace fcl::plugins::http::server {
+namespace forge::plugins::http::server {
 
-config decode_config(const fcl::config::component_view& view) {
-   auto decoded = fcl::config::decode<config>(view.source(), view.section());
+config decode_config(const forge::config::component_view& view) {
+   auto decoded = forge::config::decode<config>(view.source(), view.section());
    if (!decoded.ok()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_config,
-                          fcl::config::format_decode_diagnostics("invalid HTTP server config",
+      FORGE_THROW_EXCEPTION(exceptions::invalid_config,
+                          forge::config::format_decode_diagnostics("invalid HTTP server config",
                                                                  decoded.diagnostics));
    }
    decoded.value.api_base_path = normalize_base_path(decoded.value.api_base_path);
@@ -34,11 +34,11 @@ config decode_config(const fcl::config::component_view& view) {
 
 std::string normalize_base_path(std::string_view value) {
    if (value.empty()) {
-      FCL_THROW_EXCEPTION(exceptions::invalid_config, "HTTP server API base path must not be empty");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_config, "HTTP server API base path must not be empty");
    }
    if (value.front() != '/') {
-      FCL_THROW_EXCEPTION(exceptions::invalid_config, "HTTP server API base path must start with /",
-                          fcl::exceptions::ctx("base_path", std::string{value}));
+      FORGE_THROW_EXCEPTION(exceptions::invalid_config, "HTTP server API base path must start with /",
+                          forge::exceptions::ctx("base_path", std::string{value}));
    }
    while (value.size() > 1U && value.back() == '/') {
       value.remove_suffix(1U);
@@ -53,8 +53,8 @@ std::string resolve_base_path(const config& settings, std::string_view override_
    return normalize_base_path(settings.api_base_path);
 }
 
-fcl::http::server_config to_server_config(const config& value) {
-   return fcl::http::server_config{
+forge::http::server_config to_server_config(const config& value) {
+   return forge::http::server_config{
       .bind_address = value.bind_address,
       .port = static_cast<std::uint16_t>(value.port),
       .max_request_body_bytes = value.max_request_body_bytes,
@@ -64,4 +64,4 @@ fcl::http::server_config to_server_config(const config& value) {
    };
 }
 
-} // namespace fcl::plugins::http::server
+} // namespace forge::plugins::http::server

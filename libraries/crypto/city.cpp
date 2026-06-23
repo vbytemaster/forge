@@ -106,11 +106,11 @@ uint64_t mm_crc32_u64(uint64_t a, uint64_t b);
 #endif
 #endif
 
-module fcl.crypto.city;
+module forge.crypto.city;
 
-import fcl.core.uint128;
+import forge.core.uint128;
 
-namespace fcl::crypto {
+namespace forge::crypto {
 
 using namespace std;
 
@@ -679,6 +679,6 @@ uint128 city_hash_crc_128(const char* s, size_t len) {
    }
 }
 
-} // end namespace fcl
+} // end namespace forge
 
 // #endif

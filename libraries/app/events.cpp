@@ -9,9 +9,9 @@ module;
 #include <utility>
 #include <vector>
 
-module fcl.app.events;
+module forge.app.events;
 
-namespace fcl::app {
+namespace forge::app {
 namespace {
 
 [[nodiscard]] bool severity_at_least(event_severity value, event_severity minimum) noexcept {
@@ -165,4 +165,4 @@ event_bus_metrics event_bus::metrics() const {
    return impl_->metrics;
 }
 
-} // namespace fcl::app
+} // namespace forge::app

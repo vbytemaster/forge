@@ -4,9 +4,9 @@ module;
 #include <cstdint>
 #include <string>
 
-module fcl.p2p.resource_manager;
+module forge.p2p.resource_manager;
 
-namespace fcl::p2p {
+namespace forge::p2p {
 
 resource_manager::resource_manager() = default;
 
@@ -232,4 +232,4 @@ bool resource_manager::add_relay_bytes(std::uint64_t bytes) noexcept {
    return true;
 }
 
-} // namespace fcl::p2p
+} // namespace forge::p2p

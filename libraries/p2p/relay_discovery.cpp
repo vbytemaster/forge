@@ -5,18 +5,18 @@ module;
 #include <span>
 #include <vector>
 
-module fcl.p2p.node;
+module forge.p2p.node;
 
-import fcl.p2p.discovery;
-import fcl.p2p.endpoint;
-import fcl.p2p.identity;
-import fcl.p2p.peer_store;
-import fcl.p2p.protocol;
-import fcl.p2p.relay;
+import forge.p2p.discovery;
+import forge.p2p.endpoint;
+import forge.p2p.identity;
+import forge.p2p.peer_store;
+import forge.p2p.protocol;
+import forge.p2p.relay;
 
 #include "relay_discovery.hpp"
 
-namespace fcl::p2p::relay_discovery {
+namespace forge::p2p::relay_discovery {
 namespace {
 
 [[nodiscard]] bool usable_endpoint(const peer_store::endpoint_record& value) {
@@ -90,4 +90,4 @@ void prune_expired_reservations(peer_store& store, std::chrono::system_clock::ti
    }
 }
 
-} // namespace fcl::p2p::relay_discovery
+} // namespace forge::p2p::relay_discovery

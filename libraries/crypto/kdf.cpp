@@ -1,6 +1,6 @@
 module;
 
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -11,20 +11,20 @@ module;
 #include <span>
 #include <string>
 
-module fcl.crypto.kdf;
+module forge.crypto.kdf;
 
-namespace fcl::crypto {
+namespace forge::crypto {
 namespace {
 
 void require_output_size(std::size_t size) {
    if (size == 0 || size > 255U * 32U) {
-      FCL_THROW_EXCEPTION(kdf::exceptions::invalid_options, "invalid KDF output size");
+      FORGE_THROW_EXCEPTION(kdf::exceptions::invalid_options, "invalid KDF output size");
    }
 }
 
 int checked_int_size(std::size_t size, const char* label) {
    if (size > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-      FCL_THROW_EXCEPTION(kdf::exceptions::invalid_options, std::string(label) + " is too large");
+      FORGE_THROW_EXCEPTION(kdf::exceptions::invalid_options, std::string(label) + " is too large");
    }
    return static_cast<int>(size);
 }
@@ -34,7 +34,7 @@ int checked_int_size(std::size_t size, const char* label) {
    auto out_size = 0U;
    if (HMAC(EVP_sha256(), key.data(), checked_int_size(key.size(), "HMAC key"), input.data(), input.size(), out.data(),
             &out_size) == nullptr) {
-      FCL_THROW_EXCEPTION(kdf::exceptions::backend_error, "OpenSSL HMAC-SHA256 failed");
+      FORGE_THROW_EXCEPTION(kdf::exceptions::backend_error, "OpenSSL HMAC-SHA256 failed");
    }
    out.resize(out_size);
    return out;
@@ -78,7 +78,7 @@ bytes derive_hkdf_sha256(const hkdf_sha256_request& request) {
 bytes derive_hkdf_sha256(const hkdf_sha256_span_request& request) {
    require_output_size(request.output_size);
    if (request.secret.empty()) {
-      FCL_THROW_EXCEPTION(kdf::exceptions::invalid_key, "HKDF requires secret input");
+      FORGE_THROW_EXCEPTION(kdf::exceptions::invalid_key, "HKDF requires secret input");
    }
 
    if (request.salt.empty()) {
@@ -90,19 +90,19 @@ bytes derive_hkdf_sha256(const hkdf_sha256_span_request& request) {
 
 bytes derive_scrypt(const scrypt_request& request) {
    if (request.password.empty() || request.salt.empty()) {
-      FCL_THROW_EXCEPTION(kdf::exceptions::invalid_options, "scrypt requires password and salt");
+      FORGE_THROW_EXCEPTION(kdf::exceptions::invalid_options, "scrypt requires password and salt");
    }
    require_output_size(request.output_size);
    if (request.n == 0 || request.r == 0 || request.p == 0 || request.max_memory_bytes == 0) {
-      FCL_THROW_EXCEPTION(kdf::exceptions::invalid_options, "invalid scrypt parameters");
+      FORGE_THROW_EXCEPTION(kdf::exceptions::invalid_options, "invalid scrypt parameters");
    }
 
    auto out = bytes(request.output_size);
    if (EVP_PBE_scrypt(request.password.data(), request.password.size(), request.salt.data(), request.salt.size(),
                       request.n, request.r, request.p, request.max_memory_bytes, out.data(), out.size()) != 1) {
-      FCL_THROW_EXCEPTION(kdf::exceptions::backend_error, "OpenSSL scrypt failed");
+      FORGE_THROW_EXCEPTION(kdf::exceptions::backend_error, "OpenSSL scrypt failed");
    }
    return out;
 }
 
-} // namespace fcl::crypto
+} // namespace forge::crypto

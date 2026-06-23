@@ -20,10 +20,10 @@ PUBSUB_STRESS_SCENARIO = "gossipsub_mixed_mesh_stress"
 TOPOLOGY_SCENARIOS = ("relay_echo_topology", "dcutr_relay_topology")
 DIAL_TIMEOUT_SECONDS = 90
 NATIVE_TOPOLOGIES = (
-    ("fcl", "go", "go"),
-    ("go", "fcl", "fcl"),
-    ("fcl", "rust", "rust"),
-    ("rust", "fcl", "fcl"),
+    ("forge", "go", "go"),
+    ("go", "forge", "forge"),
+    ("forge", "rust", "rust"),
+    ("rust", "forge", "forge"),
 )
 
 
@@ -32,7 +32,7 @@ def run(command: list[str], cwd: Optional[Path] = None, env: Optional[dict[str, 
 
 
 def enabled_from_args(value: str) -> bool:
-    env = os.environ.get("FCL_ENABLE_LIBP2P_INTEROP")
+    env = os.environ.get("FORGE_ENABLE_LIBP2P_INTEROP")
     if env is not None:
         return env in ("1", "ON", "on", "true", "TRUE", "yes", "YES")
     return value in ("1", "ON", "on", "true", "TRUE", "yes", "YES")
@@ -258,10 +258,10 @@ def run_pubsub_mixed_mesh_stress(binaries: dict[str, Path], root: Path) -> dict:
     seed_file = work / "mesh-seeds.txt"
     expected_messages = 3
     participants = [
-        ("fcl", "fcl0"),
-        ("fcl", "fcl1"),
-        ("fcl", "fcl2"),
-        ("fcl", "fcl3"),
+        ("forge", "forge0"),
+        ("forge", "forge1"),
+        ("forge", "forge2"),
+        ("forge", "forge3"),
         ("go", "go0"),
         ("go", "go1"),
         ("go", "go2"),
@@ -293,7 +293,7 @@ def run_pubsub_mixed_mesh_stress(binaries: dict[str, Path], root: Path) -> dict:
         time.sleep(8)
 
         publishers = [
-            ("fcl", "stress-fcl", "fcl0"),
+            ("forge", "stress-forge", "forge0"),
             ("go", "stress-go", "go0"),
             ("rust", "stress-rust", "rust0"),
         ]
@@ -379,7 +379,7 @@ def prepare_go_fixture(source_dir: Path, build_dir: Path, donors_root: Path) -> 
     work.mkdir(parents=True, exist_ok=True)
     (work / "main.go").write_text((source_dir / "go_fixture" / "main.go").read_text())
     (work / "go.mod").write_text(
-        "module fcl-libp2p-go-fixture\n\n"
+        "module forge-libp2p-go-fixture\n\n"
         "go 1.24\n\n"
         "require (\n"
         "\tgithub.com/libp2p/go-libp2p v0.0.0\n"
@@ -405,7 +405,7 @@ def prepare_rust_fixture(source_dir: Path, build_dir: Path, donors_root: Path) -
     (src / "main.rs").write_text((source_dir / "rust_fixture" / "main.rs").read_text())
     (work / "Cargo.toml").write_text(
         "[package]\n"
-        "name = \"fcl-libp2p-rust-fixture\"\n"
+        "name = \"forge-libp2p-rust-fixture\"\n"
         "version = \"0.1.0\"\n"
         "edition = \"2024\"\n\n"
         "[dependencies]\n"
@@ -417,7 +417,7 @@ def prepare_rust_fixture(source_dir: Path, build_dir: Path, donors_root: Path) -
         "tokio = { version = \"1\", features = [\"macros\", \"rt-multi-thread\", \"time\"] }\n"
     )
     run(["cargo", "build", "--release"], cwd=work)
-    return work / "target" / "release" / "fcl-libp2p-rust-fixture"
+    return work / "target" / "release" / "forge-libp2p-rust-fixture"
 
 
 def run_pair(dialer_binary: Path, dialer: str, listener_binary: Path, listener: str, scenario: str, root: Path) -> dict:
@@ -539,14 +539,14 @@ def run_native_relay_topology(binaries: dict[str, Path], source: str, relay_impl
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--enabled", required=True)
-    parser.add_argument("--fcl-fixture", required=True)
+    parser.add_argument("--forge-fixture", required=True)
     parser.add_argument("--source-dir", required=True)
     parser.add_argument("--build-dir", required=True)
     parser.add_argument("--donors-root", required=True)
     args = parser.parse_args()
 
     if not enabled_from_args(args.enabled):
-        print("SKIP: live libp2p interop disabled; configure FCL_ENABLE_LIBP2P_INTEROP=ON or set FCL_ENABLE_LIBP2P_INTEROP=1.")
+        print("SKIP: live libp2p interop disabled; configure FORGE_ENABLE_LIBP2P_INTEROP=ON or set FORGE_ENABLE_LIBP2P_INTEROP=1.")
         return 0
 
     donors_root = Path(args.donors_root).resolve()
@@ -562,12 +562,12 @@ def main() -> int:
     require_donor(donors_root, "rust-libp2p")
     require_donor(donors_root, "libp2p-specs")
 
-    fcl_fixture = Path(args.fcl_fixture).resolve()
+    forge_fixture = Path(args.forge_fixture).resolve()
     go_fixture = prepare_go_fixture(source_dir, build_dir, donors_root)
     rust_fixture = prepare_rust_fixture(source_dir, build_dir, donors_root)
 
     binaries = {
-        "fcl": fcl_fixture,
+        "forge": forge_fixture,
         "go": go_fixture,
         "rust": rust_fixture,
     }
@@ -578,8 +578,8 @@ def main() -> int:
     if root.exists():
         shutil.rmtree(root)
     root.mkdir(parents=True)
-    for listener in ("go", "rust", "fcl"):
-        for dialer in ("fcl", "go", "rust"):
+    for listener in ("go", "rust", "forge"):
+        for dialer in ("forge", "go", "rust"):
             if listener == dialer:
                 continue
             for scenario in SCENARIOS:
@@ -593,13 +593,13 @@ def main() -> int:
                 except Exception as error:
                     failures.append(f"{dialer}->{listener} {scenario}: {error}")
             for scenario in PUBSUB_SCENARIOS:
-                if "fcl" not in (dialer, listener):
+                if "forge" not in (dialer, listener):
                     continue
                 try:
                     artifacts.append(run_pair(binaries[dialer], dialer, binaries[listener], listener, scenario, root))
                 except Exception as error:
                     failures.append(f"{dialer}->{listener} {scenario}: {error}")
-    for dialer, listener in (("fcl", "go"), ("go", "fcl"), ("fcl", "rust"), ("rust", "fcl")):
+    for dialer, listener in (("forge", "go"), ("go", "forge"), ("forge", "rust"), ("rust", "forge")):
         for scenario in TCP_DIRECT_SCENARIOS:
             try:
                 artifacts.append(
@@ -621,7 +621,7 @@ def main() -> int:
         artifacts.append(run_pubsub_mixed_mesh_stress(binaries, root))
     except Exception as error:
         failures.append(f"{PUBSUB_STRESS_SCENARIO}: {error}")
-    for listener, dialer in (("rust", "fcl"), ("fcl", "rust")):
+    for listener, dialer in (("rust", "forge"), ("forge", "rust")):
         for scenario in RENDEZVOUS_SCENARIOS:
             try:
                 artifacts.append(run_pair(binaries[dialer], dialer, binaries[listener], listener, scenario, root))
@@ -629,9 +629,9 @@ def main() -> int:
                 failures.append(f"{dialer}->{listener} {scenario}: {error}")
     for scenario in TOPOLOGY_SCENARIOS:
         try:
-            artifacts.append(run_topology(binaries["fcl"], "fcl", scenario, root))
+            artifacts.append(run_topology(binaries["forge"], "forge", scenario, root))
         except Exception as error:
-            failures.append(f"fcl topology {scenario}: {error}")
+            failures.append(f"forge topology {scenario}: {error}")
         for source, relay_impl, destination_impl in NATIVE_TOPOLOGIES:
             try:
                 artifacts.append(run_native_relay_topology(binaries, source, relay_impl, destination_impl, scenario, root))

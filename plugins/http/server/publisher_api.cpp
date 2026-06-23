@@ -1,32 +1,32 @@
 module;
 
 #include <boost/asio/awaitable.hpp>
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <memory>
 #include <utility>
 
-module fcl.plugins.http.server.plugin;
+module forge.plugins.http.server.plugin;
 
-import fcl.api.registry;
-import fcl.asio.runtime;
-import fcl.http.api.binding;
-import fcl.http.server;
-import fcl.plugins.http.server.api;
-import fcl.plugins.http.server.exceptions;
-import fcl.plugins.http.server.middleware;
-import fcl.plugins.http.server.types;
+import forge.api.registry;
+import forge.asio.runtime;
+import forge.http.api.binding;
+import forge.http.server;
+import forge.plugins.http.server.api;
+import forge.plugins.http.server.exceptions;
+import forge.plugins.http.server.middleware;
+import forge.plugins.http.server.types;
 
 #include "details/plugin_impl.hxx"
 #include "details/publisher_api.hxx"
 
-namespace fcl::plugins::http::server {
+namespace forge::plugins::http::server {
 
 plugin::publisher_api::publisher_api(std::shared_ptr<plugin::impl> impl) : impl_{std::move(impl)} {}
 
-const fcl::api::registry& plugin::publisher_api::registry() const {
+const forge::api::registry& plugin::publisher_api::registry() const {
    if (impl_->apis == nullptr) {
-      FCL_THROW_EXCEPTION(exceptions::startup_failed, "HTTP server plugin is not initialized");
+      FORGE_THROW_EXCEPTION(exceptions::startup_failed, "HTTP server plugin is not initialized");
    }
    return *impl_->apis;
 }
@@ -42,4 +42,4 @@ boost::asio::awaitable<void> plugin::publisher_api::use(middleware_descriptor de
    co_return;
 }
 
-} // namespace fcl::plugins::http::server
+} // namespace forge::plugins::http::server

@@ -3,7 +3,7 @@
 #include <optional>
 #include <vector>
 
-namespace fcl::p2p::host_addresses {
+namespace forge::p2p::host_addresses {
 
 enum class source_kind {
    authenticated,
@@ -12,17 +12,17 @@ enum class source_kind {
 
 struct learning_context {
    source_kind source = source_kind::third_party;
-   std::optional<fcl::p2p::endpoint> remote_endpoint;
+   std::optional<forge::p2p::endpoint> remote_endpoint;
 };
 
-[[nodiscard]] std::vector<fcl::p2p::endpoint> merge_advertised(const std::vector<fcl::p2p::endpoint>& configured,
-                                                               const std::vector<fcl::p2p::endpoint>& listened,
+[[nodiscard]] std::vector<forge::p2p::endpoint> merge_advertised(const std::vector<forge::p2p::endpoint>& configured,
+                                                               const std::vector<forge::p2p::endpoint>& listened,
                                                                const peer_id& local);
 
-[[nodiscard]] std::optional<fcl::p2p::endpoint> learned(fcl::p2p::endpoint value, const peer_id& peer);
-[[nodiscard]] std::optional<fcl::p2p::endpoint> learned(fcl::p2p::endpoint value, const peer_id& peer,
+[[nodiscard]] std::optional<forge::p2p::endpoint> learned(forge::p2p::endpoint value, const peer_id& peer);
+[[nodiscard]] std::optional<forge::p2p::endpoint> learned(forge::p2p::endpoint value, const peer_id& peer,
                                                         learning_context context);
-[[nodiscard]] std::vector<fcl::p2p::endpoint>
-sanitize_discovered_endpoints(std::vector<fcl::p2p::endpoint> values, const peer_id& peer, learning_context context);
+[[nodiscard]] std::vector<forge::p2p::endpoint>
+sanitize_discovered_endpoints(std::vector<forge::p2p::endpoint> values, const peer_id& peer, learning_context context);
 
-} // namespace fcl::p2p::host_addresses
+} // namespace forge::p2p::host_addresses

@@ -9,13 +9,13 @@ module;
 
 #include <notcurses/notcurses.h>
 
-module fcl.tui.runner;
+module forge.tui.runner;
 
-import fcl.tui.exceptions;
-import fcl.tui.render;
-import fcl.tui.types;
+import forge.tui.exceptions;
+import forge.tui.render;
+import forge.tui.types;
 
-namespace fcl::tui {
+namespace forge::tui {
 namespace {
 
 class notcurses_session {
@@ -171,4 +171,4 @@ terminal_capabilities detect_terminal_capabilities() {
    }
 }
 
-} // namespace fcl::tui
+} // namespace forge::tui

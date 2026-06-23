@@ -1,18 +1,18 @@
 add_library(
-   fcl_transport_api STATIC
+   forge_transport_api STATIC
    client.cpp
    connection.cpp
    server.cpp
 )
-fcl_target_modules(fcl_transport_api transport_api)
+forge_target_modules(forge_transport_api transport_api)
 
-target_include_directories(fcl_transport_api PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+target_include_directories(forge_transport_api PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
-   fcl_transport_api PUBLIC
-      fcl_exceptions
-      fcl_api
-      fcl_raw
-      fcl_transport
+   forge_transport_api PUBLIC
+      forge_exceptions
+      forge_api
+      forge_raw
+      forge_transport
       Boost::asio
 )

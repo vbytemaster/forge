@@ -1,8 +1,8 @@
 #include <boost/test/unit_test.hpp>
-#include <fcl/exceptions/macros.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <bls12-381/bls12-381.hpp>
-import fcl.exceptions;
+import forge.exceptions;
 
 using namespace std;
 using namespace bls12_381;
@@ -30,7 +30,7 @@ BOOST_AUTO_TEST_CASE(bls_sig_verify) try {
    bool ok = verify(pk, message_1, signature);
    BOOST_CHECK_EQUAL(ok, true);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 // test serialization / deserialization of private key, public key and signature
 BOOST_AUTO_TEST_CASE(bls_serialization_test) try {
@@ -48,7 +48,7 @@ BOOST_AUTO_TEST_CASE(bls_serialization_test) try {
    bool ok = verify(pk2, message_1, signature2);
    BOOST_CHECK_EQUAL(ok, true);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 // test public keys + signatures aggregation + verification
 BOOST_AUTO_TEST_CASE(bls_agg_sig_verify) try {
@@ -65,7 +65,7 @@ BOOST_AUTO_TEST_CASE(bls_agg_sig_verify) try {
    bool ok = aggregate_verify(vector<g1>{pk1, pk2}, vector<vector<uint8_t>>{message_1, message_2}, aggSig);
    BOOST_CHECK_EQUAL(ok, true);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 // test signature aggregation + aggregate tree verification
 BOOST_AUTO_TEST_CASE(bls_agg_tree_verify) try {
@@ -89,7 +89,7 @@ BOOST_AUTO_TEST_CASE(bls_agg_tree_verify) try {
                               aggSigFinal);
    BOOST_CHECK_EQUAL(ok, true);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 // test public key aggregation
 BOOST_AUTO_TEST_CASE(bls_agg_pk_verify) try {
@@ -111,7 +111,7 @@ BOOST_AUTO_TEST_CASE(bls_agg_pk_verify) try {
    bool ok = verify(pkAgg, message_1, sigAgg);
    BOOST_CHECK_EQUAL(ok, true);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 // test wrong key and wrong signature
 BOOST_AUTO_TEST_CASE(bls_bad_sig_verify) try {
@@ -128,7 +128,7 @@ BOOST_AUTO_TEST_CASE(bls_bad_sig_verify) try {
    BOOST_CHECK_EQUAL(ok1, false);
    BOOST_CHECK_EQUAL(ok2, false);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_CASE(bls_pop_verify) try {
    array<uint64_t, 4> sk1 = secret_key(seed_1);
@@ -143,6 +143,6 @@ BOOST_AUTO_TEST_CASE(bls_pop_verify) try {
    bool ok = pop_fast_aggregate_verify(vector<g1>{pk1, pk2}, message_1, aggsig);
    BOOST_CHECK_EQUAL(ok, true);
 }
-FCL_LOG_AND_RETHROW();
+FORGE_LOG_AND_RETHROW();
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -1,11 +1,11 @@
-add_library(fcl_program_options STATIC program_options.cpp)
-fcl_target_modules(fcl_program_options program_options)
+add_library(forge_program_options STATIC program_options.cpp)
+forge_target_modules(forge_program_options program_options)
 
-target_include_directories(fcl_program_options PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
+target_include_directories(forge_program_options PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
-   fcl_program_options PUBLIC
-      fcl_config
-      fcl_schema
+   forge_program_options PUBLIC
+      forge_config
+      forge_schema
       Boost::program_options
 )

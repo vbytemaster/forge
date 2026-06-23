@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.31)
 
-project(fcl-package-core-lightweight LANGUAGES CXX)
+project(forge-package-core-lightweight LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(FCL CONFIG REQUIRED)
+find_package(Forge CONFIG REQUIRED)
 
-add_executable(fcl_package_core_lightweight main.cpp)
-target_link_libraries(fcl_package_core_lightweight PRIVATE FCL::fcl_core)
+add_executable(forge_package_core_lightweight main.cpp)
+target_link_libraries(forge_package_core_lightweight PRIVATE Forge::forge_core)

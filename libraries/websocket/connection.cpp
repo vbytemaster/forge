@@ -26,12 +26,12 @@ module;
 #include <boost/beast/ssl.hpp>
 #include <boost/beast/websocket.hpp>
 
-module fcl.websocket.connection;
+module forge.websocket.connection;
 
-import fcl.exceptions;
-import fcl.websocket.exceptions;
+import forge.exceptions;
+import forge.websocket.exceptions;
 
-namespace fcl::websocket {
+namespace forge::websocket {
 namespace {
 
 namespace asio = boost::asio;
@@ -358,7 +358,7 @@ void connection::start_read_loop() {
              if (self->impl_->on_message) {
                 try {
                    co_await self->impl_->on_message(*self, std::move(message));
-                } catch (const fcl::exceptions::base&) {
+                } catch (const forge::exceptions::base&) {
                    self->impl_->record_handler_failure();
                    if (self->impl_->on_close) {
                       self->impl_->on_close(*self);
@@ -391,4 +391,4 @@ connection_metrics connection::metrics() const {
    return impl_->metrics();
 }
 
-} // namespace fcl::websocket
+} // namespace forge::websocket

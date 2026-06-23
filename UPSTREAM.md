@@ -4,7 +4,7 @@ This repository is the canonical upstream for FORGE unless it is mirrored or
 vendored elsewhere.
 
 Canonical upstream:
-https://github.com/vbytemaster/storlane-fc
+https://github.com/vbytemaster/forge
 
 Copyright:
 Copyright (c) 2026 Vladimir Tarnakin.

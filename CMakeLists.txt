@@ -226,8 +226,8 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/app/include"
 )
 
-set(FCL_PLUGINS_SIGNING_PROVIDER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/signing/provider/include")
-set(FCL_PLUGINS_SECRET_PROVIDER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/secret/provider/include")
+set(FCL_PLUGINS_CRYPTO_SIGNER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/crypto/signer/include")
+set(FCL_PLUGINS_CRYPTO_SECRETS_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/crypto/secrets/include")
 set(FCL_PLUGINS_P2P_NODE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/node/include")
 set(FCL_PLUGINS_P2P_RESOLVER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/resolver/include")
 set(FCL_PLUGINS_P2P_DIAGNOSTICS_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/diagnostics/include")
@@ -397,8 +397,8 @@ set(
    fcl_quic
    fcl_p2p
    fcl_app
-   fcl_plugins_signing_provider
-   fcl_plugins_secret_provider
+   fcl_plugins_crypto_signer
+   fcl_plugins_crypto_secrets
    fcl_plugins_p2p_node
    fcl_plugins_p2p_resolver
    fcl_plugins_p2p_diagnostics
@@ -470,8 +470,8 @@ install(
              libraries/stcp/include/fcl
              libraries/p2p/include/fcl
              libraries/app/include/fcl
-             plugins/signing/provider/include/fcl
-             plugins/secret/provider/include/fcl
+             plugins/crypto/signer/include/fcl
+             plugins/crypto/secrets/include/fcl
              plugins/p2p/node/include/fcl
              plugins/p2p/resolver/include/fcl
              plugins/p2p/diagnostics/include/fcl

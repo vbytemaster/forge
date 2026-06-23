@@ -103,10 +103,10 @@ class service_node {
 - `fcl_plugins`
 - `fcl_tui`
 - Official infrastructure plugin packages live under
-  `plugins/<name>/include/fcl/plugins/<name>/...`. They are the framework
-  plugin layer and may expose module slices such as `types.cppm`, `api.cppm`,
-  `exceptions.cppm` and `plugin.cppm`; normal low-level libraries still live
-  under `libraries/<lib>/include/fcl/<lib>/...`.
+  `plugins/<family>/<name>/include/fcl/plugins/<family>/<name>/...`. They are
+  the framework plugin layer and may expose module slices such as `types.cppm`,
+  `api.cppm`, `exceptions.cppm` and `plugin.cppm`; normal low-level libraries
+  still live under `libraries/<lib>/include/fcl/<lib>/...`.
 - Heavy classes that own sockets, event loops, crypto contexts, terminal state, or other external resources should use pimpl.
 - Value types, protocol records, and simple POD-like structs should not use pimpl.
 - `_impl` in a file name is allowed only for a large pimpl owner implementation,
@@ -116,6 +116,48 @@ class service_node {
 - Ordinary private `struct`/`class` helpers should use a semantic or type-based
   file name such as `operation_deadline.cpp`, `relay_transport.cpp` or
   `node_state.cpp`, not `_impl`.
+
+## Namespace And Target Naming
+
+FCL uses one deterministic namespace-to-target rule. Nested namespaces are
+allowed, but the CMake target must be derivable by replacing `::` with `_` and
+prefixing with `fcl_` where appropriate. Example:
+`fcl::plugins::crypto::signer` maps to `fcl_plugins_crypto_signer`.
+
+- A top-level library uses a flat `fcl::<lib>` namespace, for example
+  `fcl::core`, `fcl::raw`, `fcl::http`, `fcl::p2p`, `fcl::api` and
+  `fcl::crypto`.
+- A nested family such as `X::a::b` is allowed only when `a` and `b` are kinds
+  of `X`. The deciding question is: "`X::child` - is child a kind of `X`?"
+  If yes, it may be a family, for example `fcl::plugins::p2p::node`.
+- Code that exposes or adapts core `X` over channel `C` is rooted in the
+  channel: `C::X`, never `X::C`. `fcl::api` is the neutral contract core and
+  remains a leaf. HTTP API binding is `fcl::http::api`; transport API binding
+  is `fcl::transport::api`. Do not introduce `fcl::api::http` or
+  `fcl::api::transport`.
+- `api` is not a family. There are no "kinds of api"; there is the neutral
+  `fcl::api` core and channel bindings such as `fcl::http::api` and
+  `fcl::transport::api`.
+- Official plugins use the monotonic hierarchy
+  `fcl::plugins::<family>::<name>`, for example
+  `fcl::plugins::p2p::node`, `fcl::plugins::http::server`,
+  `fcl::plugins::crypto::signer` and `fcl::plugins::crypto::secrets`.
+  Plugin family names should mirror the owning domain library when one exists:
+  `fcl::plugins::crypto::*` mirrors `fcl::crypto`.
+- Plugin members are named by functional role. Do not create activity-named
+  crypto families with a generic `provider` leaf when the domain family is
+  `crypto`; use role leaves such as `crypto::signer` and `crypto::secrets`.
+- Intermediate grouping namespaces such as `fcl::plugins::p2p`,
+  `fcl::plugins::http` and `fcl::plugins::crypto` are empty. Public types live
+  only in leaf namespaces.
+- Rename targets/components when the `::` to `_` mapping does not match:
+  `fcl::transport::api` maps to `fcl_transport_api`,
+  `fcl::plugins::p2p::node` maps to `fcl_plugins_p2p_node`, and
+  `fcl::plugins::crypto::signer` maps to `fcl_plugins_crypto_signer`.
+
+Do not use `api` as a parent for channel bindings, put symbols into grouping
+namespaces, mix flat plugin names such as `http_server` with nested names such
+as `plugins::p2p::node`, or treat `api` as a family.
 
 ## Reflection And Serialization
 

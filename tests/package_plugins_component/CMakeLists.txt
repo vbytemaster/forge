@@ -13,5 +13,5 @@ target_link_libraries(
    fcl_package_plugins_component PRIVATE
       FCL::fcl_plugins
       FCL::fcl_plugins_p2p_node
-      FCL::fcl_plugins_secret_provider
+      FCL::fcl_plugins_crypto_secrets
 )

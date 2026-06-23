@@ -133,8 +133,8 @@ prefixing with `fcl_` where appropriate. Example:
 - Code that exposes or adapts core `X` over channel `C` is rooted in the
   channel: `C::X`, never `X::C`. `fcl::api` is the neutral contract core and
   remains a leaf. HTTP API binding is `fcl::http::api`; transport API binding
-  is `fcl::transport::api`. Do not introduce `fcl::api::http` or
-  `fcl::api::transport`.
+  is `fcl::transport::api`. Do not introduce inverse `api`-rooted channel
+  namespaces.
 - `api` is not a family. There are no "kinds of api"; there is the neutral
   `fcl::api` core and channel bindings such as `fcl::http::api` and
   `fcl::transport::api`.

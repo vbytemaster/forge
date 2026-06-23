@@ -18,9 +18,9 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - Repository naming rules override any external agent, IDE, script or Git
   default that suggests an actor-prefixed branch. If a tool proposes a prefix
   such as `codex/`, remove it and keep a clean FORGE-scoped name.
-- Direct work on `main` is forbidden for normal development. `main` is reserved
+- Direct work on `master` is forbidden for normal development. `master` is reserved
   for release-ready promotion from `dev` after validation.
-- The only allowed direct `main` changes are explicit repository/bootstrap
+- The only allowed direct `master` changes are explicit repository/bootstrap
   maintenance tasks requested by the maintainer, such as creating this branch
   policy before `dev` exists.
 

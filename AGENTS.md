@@ -144,12 +144,17 @@ prefixing with `forge_` where appropriate. Example:
   `forge::plugins::crypto::signer` and `forge::plugins::crypto::secrets`.
   Plugin family names should mirror the owning domain library when one exists:
   `forge::plugins::crypto::*` mirrors `forge::crypto`.
+- Observability plugins are grouped by signal domain, not by backend. Use
+  `forge::plugins::<signal>::<backend>` where `signal` is `log`, `trace` or
+  `metrics`, and `backend` is `otlp`, `file`, `syslog` or another exporter
+  role. For example, OTLP log export is `forge::plugins::log::otlp` with target
+  `forge_plugins_log_otlp`; do not create backend-rooted observability families.
 - Plugin members are named by functional role. Do not create activity-named
   crypto families with a generic `provider` leaf when the domain family is
   `crypto`; use role leaves such as `crypto::signer` and `crypto::secrets`.
 - Intermediate grouping namespaces such as `forge::plugins::p2p`,
-  `forge::plugins::http` and `forge::plugins::crypto` are empty. Public types live
-  only in leaf namespaces.
+  `forge::plugins::http`, `forge::plugins::crypto` and `forge::plugins::log` are
+  empty. Public types live only in leaf namespaces.
 - Rename targets/components when the `::` to `_` mapping does not match:
   `forge::transport::api` maps to `forge_transport_api`,
   `forge::plugins::p2p::node` maps to `forge_plugins_p2p_node`, and

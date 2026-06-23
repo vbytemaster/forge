@@ -5,6 +5,7 @@ add_subdirectory(p2p/resolver)
 add_subdirectory(p2p/diagnostics)
 add_subdirectory(p2p/pubsub)
 add_subdirectory(http/server)
+add_subdirectory(log/otlp)
 
 add_library(forge_plugins STATIC plugins.cpp)
 
@@ -19,4 +20,5 @@ target_link_libraries(
       forge_plugins_p2p_diagnostics
       forge_plugins_p2p_pubsub
       forge_plugins_http_server
+      forge_plugins_log_otlp
 )

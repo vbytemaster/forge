@@ -15,6 +15,7 @@ import forge.exceptions;
 import forge.log.log_message;
 import forge.log.logger;
 import forge.log.record;
+import forge.variant.value;
 
 namespace {
 
@@ -87,6 +88,24 @@ BOOST_AUTO_TEST_CASE(jsonl_sink_writes_redacted_structured_record) {
    BOOST_TEST(text.find("secret") == std::string::npos);
 
    std::filesystem::remove(path);
+}
+
+BOOST_AUTO_TEST_CASE(legacy_log_message_macros_reach_structured_sinks) {
+   auto logger = forge::logger{"test.legacy.sink"};
+   logger.set_log_level(forge::log_level::debug);
+   auto sink = std::make_shared<capture_sink>();
+   logger.add_sink(sink);
+
+   forge_ilog(logger, "peer connected ${peer}", ("peer", "node-7"));
+
+   BOOST_REQUIRE_EQUAL(sink->records.size(), 1U);
+   const auto& record = sink->records.front();
+   BOOST_TEST(record.logger == "test.legacy.sink");
+   BOOST_TEST(record.level.value == forge::log_level::info);
+   BOOST_TEST(record.message == "peer connected node-7");
+   BOOST_REQUIRE_EQUAL(record.fields.size(), 1U);
+   BOOST_TEST(record.fields.front().key == "peer");
+   BOOST_TEST(record.fields.front().value == "node-7");
 }
 
 BOOST_AUTO_TEST_CASE(exception_chain_can_be_routed_to_logger) {

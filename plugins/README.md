@@ -24,6 +24,7 @@ registry.register_plugin(forge::plugins::http::server::descriptor());
 registry.register_plugin(forge::plugins::p2p::node::descriptor());
 registry.register_plugin(forge::plugins::crypto::signer::descriptor());
 registry.register_plugin(forge::plugins::crypto::secrets::descriptor());
+registry.register_plugin(forge::plugins::log::otlp::descriptor());
 ```
 
 ```cpp
@@ -44,6 +45,7 @@ co_await http->publish<object_api>();
 | [`forge::plugins::p2p::pubsub`](p2p/pubsub/README.md) | `forge_plugins_p2p_pubsub` | `plugins.p2p.pubsub` | Exposes topic publish/subscribe over the shared P2P node. |
 | [`forge::plugins::crypto::signer`](crypto/signer/README.md) | `forge_plugins_crypto_signer` | `plugins.crypto.signer` | Signs digests with configured local keys and output profiles. |
 | [`forge::plugins::crypto::secrets`](crypto/secrets/README.md) | `forge_plugins_crypto_secrets` | `plugins.crypto.secrets` | Provides bounded secret retrieval, derivation and symmetric encryption operations. |
+| [`forge::plugins::log::otlp`](log/otlp/README.md) | `forge_plugins_log_otlp` | `plugins.log.otlp` | Exports configured FORGE logger routes to OTLP/HTTP JSON. |
 
 The aggregate target `forge_plugins` and package component `plugins` are
 convenience dependencies. Prefer focused targets/components in small consumers:
@@ -65,7 +67,8 @@ Each official plugin follows the same public module layout:
 
 Plugins that need an extra public slice, such as HTTP middleware, keep that
 slice under the same leaf namespace. Grouping namespaces like
-`forge::plugins::p2p`, `forge::plugins::http` and `forge::plugins::crypto` are empty.
+`forge::plugins::p2p`, `forge::plugins::http`, `forge::plugins::crypto` and
+`forge::plugins::otlp` are empty.
 
 ## Boundaries
 

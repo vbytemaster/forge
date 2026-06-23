@@ -276,6 +276,7 @@ add_executable(
    test_forge_plugins
    unit/main.cpp
    plugins/plugins_tests.cpp
+   plugins/log_otlp_tests.cpp
 )
 target_link_libraries(test_forge_plugins forge Boost::included_unit_test_framework)
 add_test(NAME test_forge_plugins COMMAND test_forge_plugins WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
@@ -462,6 +463,17 @@ add_custom_target(
    DEPENDS test_forge_package_install
 )
 add_custom_target(
+   test_forge_package_plugins_log_otlp
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_log_otlp
+      ${CMAKE_BINARY_DIR}/forge-package-plugins-log-otlp
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_plugins_log_otlp
+   DEPENDS test_forge_package_install
+)
+add_custom_target(
    test_forge_package_plugins_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
@@ -637,6 +649,17 @@ add_test(
       --test-command forge_package_plugins_http_server
 )
 set_tests_properties(test_forge_package_plugins_http_server PROPERTIES DEPENDS test_forge_package_install)
+add_test(
+   NAME test_forge_package_plugins_log_otlp
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_log_otlp
+      ${CMAKE_BINARY_DIR}/forge-package-plugins-log-otlp
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_plugins_log_otlp
+)
+set_tests_properties(test_forge_package_plugins_log_otlp PROPERTIES DEPENDS test_forge_package_install)
 add_test(
    NAME test_forge_package_plugins_component
    COMMAND ${CMAKE_CTEST_COMMAND}

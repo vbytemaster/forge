@@ -14,4 +14,5 @@ target_link_libraries(
       Forge::forge_plugins
       Forge::forge_plugins_p2p_node
       Forge::forge_plugins_crypto_secrets
+      Forge::forge_plugins_log_otlp
 )

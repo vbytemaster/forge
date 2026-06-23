@@ -42,6 +42,7 @@ set(
    plugins_p2p_diagnostics
    plugins_p2p_pubsub
    plugins_http_server
+   plugins_log_otlp
    plugins
    tui
 )
@@ -192,6 +193,14 @@ macro(_forge_add_component component)
          _forge_add_component(schema)
          _forge_add_component(http)
          _forge_add_component(http_api)
+      elseif("${component}" STREQUAL "plugins_log_otlp")
+         _forge_add_component(app)
+         _forge_add_component(api)
+         _forge_add_component(config)
+         _forge_add_component(schema)
+         _forge_add_component(log)
+         _forge_add_component(otlp)
+         _forge_add_component(http)
       elseif("${component}" STREQUAL "plugins")
          _forge_add_component(plugins_crypto_signer)
          _forge_add_component(plugins_crypto_secrets)
@@ -200,6 +209,7 @@ macro(_forge_add_component component)
          _forge_add_component(plugins_p2p_diagnostics)
          _forge_add_component(plugins_p2p_pubsub)
          _forge_add_component(plugins_http_server)
+         _forge_add_component(plugins_log_otlp)
       endif()
    endif()
 endmacro()

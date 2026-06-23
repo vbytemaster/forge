@@ -33,7 +33,18 @@ logger log_config::get_logger(const std::string& name) {
 }
 
 void log_config::update_logger(const std::string& name, logger& log) {
-   update_logger_with_default(name, log, default_logger_name);
+   std::lock_guard g(log_config::get().log_mutex);
+   if (log.get_name().empty()) {
+      log.set_name(name);
+   }
+   if (name != default_logger_name && log.get_parent() == nullptr &&
+       log_config::get().logger_map.find(default_logger_name) != log_config::get().logger_map.end()) {
+      log.set_parent(log_config::get().logger_map[default_logger_name]);
+   }
+   log_config::get().logger_map[name] = log;
+   if (name == default_logger_name) {
+      logger::default_logger() = log;
+   }
 }
 
 void log_config::update_logger_with_default(const std::string& name, logger& log, const std::string& default_name) {
@@ -128,6 +139,8 @@ bool log_config::configure_logging(const logging_config& cfg) {
 logging_config logging_config::default_config() {
    // slog( "default cfg" );
    logging_config cfg;
+   cfg.appenders.reserve(2);
+   cfg.loggers.reserve(1);
 
    variants c;
    c.push_back(mutable_variant_object("level", "debug")("color", "green"));

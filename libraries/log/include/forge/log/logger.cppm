@@ -67,6 +67,7 @@ class logger {
               std::source_location location = std::source_location::current());
    void add_appender(const std::shared_ptr<appender>& a);
    void add_sink(std::shared_ptr<sink> sink);
+   void remove_sink(const std::shared_ptr<sink>& sink);
 
  private:
    class impl;

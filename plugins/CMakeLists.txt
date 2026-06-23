@@ -1,5 +1,5 @@
-add_subdirectory(signing/provider)
-add_subdirectory(secret/provider)
+add_subdirectory(crypto/signer)
+add_subdirectory(crypto/secrets)
 add_subdirectory(p2p/node)
 add_subdirectory(p2p/resolver)
 add_subdirectory(p2p/diagnostics)
@@ -12,8 +12,8 @@ target_include_directories(fcl_plugins PUBLIC ${FCL_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
    fcl_plugins PUBLIC
-      fcl_plugins_signing_provider
-      fcl_plugins_secret_provider
+      fcl_plugins_crypto_signer
+      fcl_plugins_crypto_secrets
       fcl_plugins_p2p_node
       fcl_plugins_p2p_resolver
       fcl_plugins_p2p_diagnostics

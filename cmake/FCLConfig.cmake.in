@@ -35,8 +35,8 @@ set(
    websocket
    quic
    p2p
-   plugins_signing_provider
-   plugins_secret_provider
+   plugins_crypto_signer
+   plugins_crypto_secrets
    plugins_p2p_node
    plugins_p2p_resolver
    plugins_p2p_diagnostics
@@ -153,13 +153,13 @@ macro(_fcl_add_component component)
          _fcl_add_component(tcp)
          _fcl_add_component(stcp)
          _fcl_add_component(yamux)
-      elseif("${component}" STREQUAL "plugins_signing_provider")
+      elseif("${component}" STREQUAL "plugins_crypto_signer")
          _fcl_add_component(app)
          _fcl_add_component(api)
          _fcl_add_component(config)
          _fcl_add_component(schema)
          _fcl_add_component(crypto)
-      elseif("${component}" STREQUAL "plugins_secret_provider")
+      elseif("${component}" STREQUAL "plugins_crypto_secrets")
          _fcl_add_component(app)
          _fcl_add_component(api)
          _fcl_add_component(config)
@@ -193,8 +193,8 @@ macro(_fcl_add_component component)
          _fcl_add_component(http)
          _fcl_add_component(http_api)
       elseif("${component}" STREQUAL "plugins")
-         _fcl_add_component(plugins_signing_provider)
-         _fcl_add_component(plugins_secret_provider)
+         _fcl_add_component(plugins_crypto_signer)
+         _fcl_add_component(plugins_crypto_secrets)
          _fcl_add_component(plugins_p2p_node)
          _fcl_add_component(plugins_p2p_resolver)
          _fcl_add_component(plugins_p2p_diagnostics)

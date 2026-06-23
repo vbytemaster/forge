@@ -1,6 +1,6 @@
 ---
 name: create-fcl-plugin
-description: Create or refactor official FCL plugins under root plugins/. Use when adding a plugin package, plugin public modules, plugin API/config/lifecycle, or reviewing plugin boundaries. Enforces namespace-owner layout, schema-driven config, typed FCL API contracts, focused private implementation files, and no mini-plugin APIs.
+description: Use when adding or refactoring an official FCL plugin package, public plugin modules, plugin API/config/lifecycle, package component, or plugin boundary review.
 ---
 
 # Create FCL Plugin
@@ -10,15 +10,30 @@ Use this before creating or reshaping an official FCL plugin.
 ## Start
 
 1. Read repo-root `AGENTS.md`.
-2. Inspect existing `plugins/<name>` packages and follow current CMake/module patterns.
-3. Keep FCL neutral: no downstream product vocabulary, storage policy, billing, S3, Storlane-specific semantics, or business workflow.
+2. Apply the repo namespace and target naming rules exactly.
+3. Inspect existing `plugins/<family>/<name>` packages and follow current CMake/module patterns.
+4. Keep FCL neutral: no downstream product vocabulary, storage policy, billing, S3, Storlane-specific semantics, or business workflow.
 
 ## Public Shape
 
-- Put official plugins under `plugins/<name>`.
-- Use namespace owner shape: `namespace fcl::plugins::<name> { class plugin; class api; ... }`.
+- Put official plugins under `plugins/<family>/<name>`.
+- Use leaf namespace owner shape:
+  `namespace fcl::plugins::<family>::<name> { class plugin; class api; ... }`.
+- Keep grouping namespaces like `fcl::plugins::p2p`, `fcl::plugins::http` and
+  `fcl::plugins::crypto` empty.
+- Families should mirror domain libraries when one exists. For crypto service
+  plugins, use `fcl::plugins::crypto::<role>` such as `signer` or `secrets`,
+  not activity/provider names such as `signing::provider` or
+  `secret::provider`.
 - Public modules are slices, not umbrellas: `types`, `exceptions`, `api`, `plugin`.
-- Keep plugin id, config section, API id, and module name explicit and non-tautological.
+- Public module names mirror the leaf namespace, for example
+  `fcl.plugins.crypto.signer.plugin` and `fcl.plugins.http.server.api`.
+- Plugin id and main API contract id use the same nested id, for example
+  `fcl.plugins.crypto.signer`.
+- Extra plugin-owned API contracts use suffix ids, for example
+  `fcl.plugins.p2p.node.diagnostics_source`.
+- Config sections use nested config paths without `fcl.` prefix, for example
+  `plugins.crypto.signer`, `plugins.crypto.secrets`, `plugins.http.server`.
 - Do not create aggregate-only `.cppm` modules.
 - Do not leave empty public include folders.
 
@@ -44,22 +59,31 @@ Use this before creating or reshaping an official FCL plugin.
 
 - Keep `plugin.cpp` as lifecycle glue.
 - Split private code by domain, not by vague buckets.
-- Good private file names: `plugin_impl`, concrete API facades such as `publisher_api` or `signing_api`, `config`, `protocol`, `descriptor_projection`, `message_projection`, `join_flow`.
+- Good private file names: `plugin_impl`, concrete API facades such as `publisher_api` or `signer_api`, `config`, `protocol`, `descriptor_projection`, `message_projection`, `join_flow`.
 - Avoid generic names: `state`, `api_facade`, `implementation`, `helpers`, `common`.
 - Use `details/*.hxx` only for private declarations needed across plugin `.cpp` files; implementation stays in focused `.cpp` files at plugin root.
 - Do not include another plugin's private `details` headers.
 
 ## CMake And Package
 
-- Add one target: `fcl_plugin_<name>`.
-- Add package component: `plugin_<name>`.
+- Add one target following namespace mapping:
+  `fcl_plugins_<family>_<name>`.
+- Add one package component:
+  `plugins_<family>_<name>`.
 - Link only required FCL targets; do not pull P2P/HTTP/crypto dependencies unless the plugin owns that boundary.
 - Add the target to `fcl_plugins` only after focused package tests exist.
+- Do not add compatibility aliases for old flat plugin targets, components,
+  module names, namespaces, plugin ids or API ids.
 
 ## Tests And Review Gates
 
 - Add plugin tests for config descriptor/decode, lifecycle order, API behavior, late-use errors, duplicate contribution conflicts, and package component import.
-- Add static gates for removed surfaces, for example raw route APIs, manual config parsing, empty include folders, generic details files, and product vocabulary.
+- Add tests that descriptor id, main API contract id, dependency ids and config
+  section use the nested naming scheme.
+- Add package tests for `find_package(FCL COMPONENTS plugins_<family>_<name>)`
+  and `FCL::fcl_plugins_<family>_<name>`.
+- Add static gates for old flat/plugin-provider names, raw route APIs, manual
+  config parsing, empty include folders, generic details files, and product vocabulary.
 - Run targeted plugin build/tests first, then broader app/API/package tests.
 
 ## Stop Conditions

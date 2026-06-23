@@ -6,7 +6,7 @@ publishes narrow typed APIs that application plugins can use without reaching
 into low-level transports directly.
 
 Plugins are useful when an application needs one shared service, such as an
-HTTP server, a P2P node, a signing provider or a secret provider, and many
+HTTP server, a P2P node, a crypto signer or a crypto secrets service, and many
 application plugins need to contribute behavior to it.
 
 ## How Applications Use Plugins
@@ -22,8 +22,8 @@ application plugins need to contribute behavior to it.
 ```cpp
 registry.register_plugin(fcl::plugins::http::server::descriptor());
 registry.register_plugin(fcl::plugins::p2p::node::descriptor());
-registry.register_plugin(fcl::plugins::signing::provider::descriptor());
-registry.register_plugin(fcl::plugins::secret::provider::descriptor());
+registry.register_plugin(fcl::plugins::crypto::signer::descriptor());
+registry.register_plugin(fcl::plugins::crypto::secrets::descriptor());
 ```
 
 ```cpp
@@ -42,8 +42,8 @@ co_await http->publish<object_api>();
 | [`fcl::plugins::p2p::resolver`](p2p/resolver/README.md) | `fcl_plugins_p2p_resolver` | `plugins.p2p.resolver` | Publishes and resolves peer API metadata over the P2P node. |
 | [`fcl::plugins::p2p::diagnostics`](p2p/diagnostics/README.md) | `fcl_plugins_p2p_diagnostics` | `plugins.p2p.diagnostics` | Exposes read-only P2P network/resource/pubsub diagnostics. |
 | [`fcl::plugins::p2p::pubsub`](p2p/pubsub/README.md) | `fcl_plugins_p2p_pubsub` | `plugins.p2p.pubsub` | Exposes topic publish/subscribe over the shared P2P node. |
-| [`fcl::plugins::signing::provider`](signing/provider/README.md) | `fcl_plugins_signing_provider` | `plugins.signing.provider` | Signs digests with configured local keys and output profiles. |
-| [`fcl::plugins::secret::provider`](secret/provider/README.md) | `fcl_plugins_secret_provider` | `plugins.secret.provider` | Provides bounded secret retrieval, derivation and symmetric encryption operations. |
+| [`fcl::plugins::crypto::signer`](crypto/signer/README.md) | `fcl_plugins_crypto_signer` | `plugins.crypto.signer` | Signs digests with configured local keys and output profiles. |
+| [`fcl::plugins::crypto::secrets`](crypto/secrets/README.md) | `fcl_plugins_crypto_secrets` | `plugins.crypto.secrets` | Provides bounded secret retrieval, derivation and symmetric encryption operations. |
 
 The aggregate target `fcl_plugins` and package component `plugins` are
 convenience dependencies. Prefer focused targets/components in small consumers:
@@ -65,8 +65,7 @@ Each official plugin follows the same public module layout:
 
 Plugins that need an extra public slice, such as HTTP middleware, keep that
 slice under the same leaf namespace. Grouping namespaces like
-`fcl::plugins::p2p`, `fcl::plugins::http`, `fcl::plugins::signing` and
-`fcl::plugins::secret` are empty.
+`fcl::plugins::p2p`, `fcl::plugins::http` and `fcl::plugins::crypto` are empty.
 
 ## Boundaries
 

@@ -281,13 +281,13 @@ target_link_libraries(test_fcl_plugins fcl Boost::included_unit_test_framework)
 add_test(NAME test_fcl_plugins COMMAND test_fcl_plugins WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
-   test_fcl_secret_provider
+   test_fcl_crypto_secrets
    unit/main.cpp
-   plugins/secret/provider_tests.cpp
+   plugins/crypto/secrets_tests.cpp
 )
-target_link_libraries(test_fcl_secret_provider fcl Boost::included_unit_test_framework)
-target_include_directories(test_fcl_secret_provider PRIVATE ${PROJECT_SOURCE_DIR}/plugins/secret/provider)
-add_test(NAME test_fcl_secret_provider COMMAND test_fcl_secret_provider WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+target_link_libraries(test_fcl_crypto_secrets fcl Boost::included_unit_test_framework)
+target_include_directories(test_fcl_crypto_secrets PRIVATE ${PROJECT_SOURCE_DIR}/plugins/crypto/secrets)
+add_test(NAME test_fcl_crypto_secrets COMMAND test_fcl_crypto_secrets WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 if(TARGET fcl_tui)
    add_executable(
@@ -429,25 +429,25 @@ add_custom_target(
    DEPENDS test_fcl_package_install
 )
 add_custom_target(
-   test_fcl_package_plugins_signing_provider
+   test_fcl_package_plugins_crypto_signer
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
-      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_signing_provider
-      ${CMAKE_BINARY_DIR}/fcl-package-plugins-signing-provider
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_crypto_signer
+      ${CMAKE_BINARY_DIR}/fcl-package-plugins-crypto-signer
       --build-generator ${CMAKE_GENERATOR}
       --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugins_signing_provider
+      --test-command fcl_package_plugins_crypto_signer
    DEPENDS test_fcl_package_install
 )
 add_custom_target(
-   test_fcl_package_plugins_secret_provider
+   test_fcl_package_plugins_crypto_secrets
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
-      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_secret_provider
-      ${CMAKE_BINARY_DIR}/fcl-package-plugins-secret-provider
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_crypto_secrets
+      ${CMAKE_BINARY_DIR}/fcl-package-plugins-crypto-secrets
       --build-generator ${CMAKE_GENERATOR}
       --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugins_secret_provider
+      --test-command fcl_package_plugins_crypto_secrets
    DEPENDS test_fcl_package_install
 )
 add_custom_target(
@@ -605,27 +605,27 @@ add_test(
 )
 set_tests_properties(test_fcl_package_plugins_p2p_node PROPERTIES DEPENDS test_fcl_package_install)
 add_test(
-   NAME test_fcl_package_plugins_signing_provider
+   NAME test_fcl_package_plugins_crypto_signer
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
-      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_signing_provider
-      ${CMAKE_BINARY_DIR}/fcl-package-plugins-signing-provider
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_crypto_signer
+      ${CMAKE_BINARY_DIR}/fcl-package-plugins-crypto-signer
       --build-generator ${CMAKE_GENERATOR}
       --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugins_signing_provider
+      --test-command fcl_package_plugins_crypto_signer
 )
-set_tests_properties(test_fcl_package_plugins_signing_provider PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_fcl_package_plugins_crypto_signer PROPERTIES DEPENDS test_fcl_package_install)
 add_test(
-   NAME test_fcl_package_plugins_secret_provider
+   NAME test_fcl_package_plugins_crypto_secrets
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
-      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_secret_provider
-      ${CMAKE_BINARY_DIR}/fcl-package-plugins-secret-provider
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_plugins_crypto_secrets
+      ${CMAKE_BINARY_DIR}/fcl-package-plugins-crypto-secrets
       --build-generator ${CMAKE_GENERATOR}
       --build-options ${FCL_PACKAGE_CONSUMER_BUILD_OPTIONS}
-      --test-command fcl_package_plugins_secret_provider
+      --test-command fcl_package_plugins_crypto_secrets
 )
-set_tests_properties(test_fcl_package_plugins_secret_provider PROPERTIES DEPENDS test_fcl_package_install)
+set_tests_properties(test_fcl_package_plugins_crypto_secrets PROPERTIES DEPENDS test_fcl_package_install)
 add_test(
    NAME test_fcl_package_plugins_http_server
    COMMAND ${CMAKE_CTEST_COMMAND}

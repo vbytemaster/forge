@@ -27,6 +27,7 @@ import forge.app.application;
 import forge.app.events;
 import forge.app.diagnostics;
 import forge.app.signals;
+import forge.app.views;
 import forge.app.plugin_context;
 import forge.app.plugin;
 import forge.app.plugin_registry;
@@ -900,6 +901,42 @@ int run_test_daemon(std::vector<std::string> args, daemon_test_state& state, for
       std::move(options));
 }
 
+class paged_table_view_source final : public forge::app::view_source {
+ public:
+   boost::asio::awaitable<forge::app::view_snapshot> snapshot(forge::app::view_query query) override {
+      const auto offset = query.cursor.empty() ? std::size_t{0} : static_cast<std::size_t>(std::stoull(query.cursor));
+      const auto limit = static_cast<std::size_t>(query.limit == 0 ? 100 : query.limit);
+      auto page = forge::app::view_page{.total_estimate = rows.size()};
+      for (auto index = offset; index < rows.size() && page.rows.size() < limit; ++index) {
+         page.rows.push_back(forge::app::view_table_row{.cells = {rows[index]}});
+      }
+      if (offset + page.rows.size() < rows.size()) {
+         page.next_cursor = std::to_string(offset + page.rows.size());
+      }
+      co_return forge::app::view_snapshot{
+         .descriptor =
+             {
+                 .id = "test.rows",
+                 .title = "Rows",
+                 .category = "test",
+                 .kind = forge::app::view_kind::table,
+             },
+         .columns = {{.id = "value", .title = "Value"}},
+         .page = std::move(page),
+      };
+   }
+
+   std::vector<std::string> rows = {"one", "two", "three"};
+};
+
+class failing_view_source final : public forge::app::view_source {
+ public:
+   boost::asio::awaitable<forge::app::view_snapshot> snapshot(forge::app::view_query) override {
+      throw std::runtime_error{"source failed"};
+      co_return forge::app::view_snapshot{};
+   }
+};
+
 } // namespace
 
 BOOST_AUTO_TEST_CASE(event_bus_bounds_queues_and_keeps_critical_ring) {
@@ -931,6 +968,67 @@ BOOST_AUTO_TEST_CASE(event_bus_bounds_queues_and_keeps_critical_ring) {
    BOOST_REQUIRE_EQUAL(recent.size(), 3);
    BOOST_TEST(recent.front().message == "critical-a");
    BOOST_TEST(recent.back().message == "critical-c");
+}
+
+BOOST_AUTO_TEST_CASE(view_registry_registers_unregisters_and_rejects_duplicates) {
+   auto views = forge::app::view_registry{};
+   auto source = std::make_shared<paged_table_view_source>();
+   auto registration = views.register_source({.id = "test.rows", .title = "Rows"}, source);
+
+   BOOST_TEST(registration.active());
+   BOOST_REQUIRE_EQUAL(views.descriptors().size(), 1);
+   BOOST_CHECK_THROW((void)views.register_source({.id = "test.rows", .title = "Duplicate"}, source),
+                     forge::app::exceptions::invalid_state);
+
+   registration.unregister();
+   BOOST_TEST(!registration.active());
+   BOOST_TEST(views.descriptors().empty());
+}
+
+BOOST_AUTO_TEST_CASE(view_registry_returns_paged_table_snapshots) {
+   auto runtime = forge::asio::runtime{};
+   auto views = forge::app::view_registry{};
+   auto registration = views.register_source({.id = "test.rows", .title = "Rows"}, std::make_shared<paged_table_view_source>());
+
+   auto first = forge::asio::blocking::run(runtime, views.snapshot("test.rows", {.limit = 2}));
+   BOOST_REQUIRE_EQUAL(first.page.rows.size(), 2);
+   BOOST_TEST(first.page.rows[0].cells[0] == "one");
+   BOOST_REQUIRE(first.page.next_cursor.has_value());
+   BOOST_TEST(*first.page.next_cursor == "2");
+   BOOST_REQUIRE(first.page.total_estimate.has_value());
+   BOOST_TEST(*first.page.total_estimate == 3U);
+
+   auto second = forge::asio::blocking::run(runtime, views.snapshot("test.rows", {.cursor = *first.page.next_cursor, .limit = 2}));
+   BOOST_REQUIRE_EQUAL(second.page.rows.size(), 1);
+   BOOST_TEST(second.page.rows[0].cells[0] == "three");
+   BOOST_TEST(!second.page.next_cursor.has_value());
+}
+
+BOOST_AUTO_TEST_CASE(view_registry_isolates_source_errors_as_snapshots) {
+   auto runtime = forge::asio::runtime{};
+   auto views = forge::app::view_registry{};
+   auto registration = views.register_source({.id = "test.fail", .title = "Failing"}, std::make_shared<failing_view_source>());
+
+   auto snapshot = forge::asio::blocking::run(runtime, views.snapshot("test.fail"));
+   BOOST_TEST(snapshot.descriptor.id == "test.fail");
+   BOOST_TEST(snapshot.error == "source failed");
+}
+
+BOOST_AUTO_TEST_CASE(application_shell_exposes_builtin_status_and_event_views) {
+   auto shell = forge::app::application_shell{};
+   shell.events().publish(forge::app::event_severity::warning, "test.topic", "visible");
+
+   const auto descriptors = shell.views().descriptors();
+   const auto has_view = [&](std::string_view id) {
+      return std::ranges::any_of(descriptors, [&](const auto& descriptor) { return descriptor.id == id; });
+   };
+   BOOST_TEST(has_view("forge.app.status"));
+   BOOST_TEST(has_view("forge.app.events"));
+
+   auto events = forge::asio::blocking::run(shell.runtime(), shell.views().snapshot("forge.app.events", {.limit = 1}));
+   BOOST_REQUIRE_EQUAL(events.log.size(), 1);
+   BOOST_TEST(events.log[0].topic == "test.topic");
+   BOOST_TEST(events.log[0].message == "visible");
 }
 
 BOOST_AUTO_TEST_CASE(plugin_registry_orders_dependencies_and_rejects_bad_graphs) {

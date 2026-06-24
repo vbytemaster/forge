@@ -9,6 +9,7 @@ export module forge.app.plugin_context;
 import forge.app.diagnostics;
 import forge.app.events;
 import forge.app.signals;
+import forge.app.views;
 import forge.asio.task_scheduler;
 import forge.api.exceptions;
 import forge.api.types;
@@ -27,15 +28,17 @@ using config_view = std::map<std::string, std::string>;
 class plugin_context {
  public:
    plugin_context(forge::asio::task_scheduler& scheduler, forge::api::registry& apis, signal_bus& signals,
-                  event_bus& events, diagnostics_store* diagnostics = nullptr, config_view config = {});
+                  event_bus& events, diagnostics_store* diagnostics = nullptr, config_view config = {},
+                  view_registry* views = nullptr);
    plugin_context(forge::asio::task_scheduler& scheduler, signal_bus& signals, event_bus& events,
-                  diagnostics_store* diagnostics = nullptr, config_view config = {});
+                  diagnostics_store* diagnostics = nullptr, config_view config = {}, view_registry* views = nullptr);
 
    [[nodiscard]] forge::asio::task_scheduler& scheduler() noexcept;
    [[nodiscard]] forge::api::view apis() const noexcept;
    [[nodiscard]] signal_bus& signals() noexcept;
    [[nodiscard]] event_bus& events() noexcept;
    [[nodiscard]] diagnostics_store* diagnostics() noexcept;
+   [[nodiscard]] view_registry& views() noexcept;
    [[nodiscard]] const config_view& config() const noexcept;
    [[nodiscard]] std::optional<std::string> config_value(const std::string& key) const;
 
@@ -45,6 +48,7 @@ class plugin_context {
    signal_bus* signals_ = nullptr;
    event_bus* events_ = nullptr;
    diagnostics_store* diagnostics_ = nullptr;
+   view_registry* views_ = nullptr;
    config_view config_;
 };
 

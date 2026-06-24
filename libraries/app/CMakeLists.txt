@@ -3,6 +3,7 @@ add_library(
    application.cpp
    events.cpp
    diagnostics.cpp
+   views.cpp
    signals.cpp
    plugin_context.cpp
    plugin.cpp

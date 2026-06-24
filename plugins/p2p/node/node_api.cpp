@@ -16,6 +16,7 @@ module forge.plugins.p2p.node.plugin;
 import forge.api.binding;
 import forge.transport.api.connection;
 import forge.transport.api.options;
+import forge.app.views;
 import forge.asio.runtime;
 import forge.p2p.api;
 import forge.p2p.endpoint;

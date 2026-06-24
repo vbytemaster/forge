@@ -1,12 +1,18 @@
 #include <boost/test/unit_test.hpp>
 
+#include <algorithm>
 #include <string>
+#include <string_view>
 #include <vector>
 
+import forge.app.application_shell;
+import forge.app.events;
+import forge.app.tui.dashboard;
 import forge.tui.navigation;
 import forge.tui.render;
 import forge.tui.runner;
 import forge.tui.types;
+import forge.asio.blocking;
 
 BOOST_AUTO_TEST_CASE(status_badge_renders_stable_text) {
    const auto lines = forge::tui::render_status_badge(forge::tui::status_badge_model{
@@ -102,6 +108,28 @@ BOOST_AUTO_TEST_CASE(event_log_redacts_sensitive_messages) {
    BOOST_TEST(lines[0].find("started") != std::string::npos);
    BOOST_TEST(lines[1].find("<redacted>") != std::string::npos);
    BOOST_TEST(lines[1].find("abc") == std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(app_tui_dashboard_model_uses_neutral_app_views) {
+   auto shell = forge::app::application_shell{};
+   shell.events().publish(forge::app::event_severity::info, "dashboard.test", "render me");
+
+   auto model = forge::asio::blocking::run(
+      shell.runtime(),
+      forge::app::tui::build_dashboard_model(shell, {.query = {.limit = 10}, .max_events = 10}));
+
+   BOOST_TEST(model.title == "FORGE Dashboard");
+   BOOST_REQUIRE_GE(model.navigation.items.size(), 2);
+   const auto has_item = [&](std::string_view id) {
+      return std::ranges::any_of(model.navigation.items, [&](const auto& item) { return item.id == id; });
+   };
+   BOOST_TEST(has_item("forge.app.status"));
+   BOOST_TEST(has_item("forge.app.events"));
+   BOOST_TEST(std::ranges::any_of(model.content_lines, [](const auto& line) {
+      return line.find("Application Status") != std::string::npos;
+   }));
+   BOOST_REQUIRE(!model.events.events.empty());
+   BOOST_TEST(model.events.events.back().topic == "dashboard.test");
 }
 
 BOOST_AUTO_TEST_CASE(navigation_stack_push_pop_and_selection) {

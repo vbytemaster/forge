@@ -14,16 +14,22 @@ forge::api::registry& default_api_registry() {
    return registry;
 }
 
+view_registry& default_view_registry() {
+   static auto registry = view_registry{};
+   return registry;
+}
+
 } // namespace
 
 plugin_context::plugin_context(forge::asio::task_scheduler& scheduler, forge::api::registry& apis, signal_bus& signals,
-                               event_bus& events, diagnostics_store* diagnostics, config_view config)
+                               event_bus& events, diagnostics_store* diagnostics, config_view config,
+                               view_registry* views)
     : scheduler_{&scheduler}, apis_{&apis}, signals_{&signals}, events_{&events}, diagnostics_{diagnostics},
-      config_{std::move(config)} {}
+      views_{views == nullptr ? &default_view_registry() : views}, config_{std::move(config)} {}
 
 plugin_context::plugin_context(forge::asio::task_scheduler& scheduler, signal_bus& signals, event_bus& events,
-                               diagnostics_store* diagnostics, config_view config)
-    : plugin_context{scheduler, default_api_registry(), signals, events, diagnostics, std::move(config)} {}
+                               diagnostics_store* diagnostics, config_view config, view_registry* views)
+    : plugin_context{scheduler, default_api_registry(), signals, events, diagnostics, std::move(config), views} {}
 
 forge::asio::task_scheduler& plugin_context::scheduler() noexcept {
    return *scheduler_;
@@ -43,6 +49,10 @@ event_bus& plugin_context::events() noexcept {
 
 diagnostics_store* plugin_context::diagnostics() noexcept {
    return diagnostics_;
+}
+
+view_registry& plugin_context::views() noexcept {
+   return *views_;
 }
 
 const config_view& plugin_context::config() const noexcept {

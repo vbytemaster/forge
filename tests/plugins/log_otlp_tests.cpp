@@ -19,6 +19,7 @@ import forge.app.diagnostics;
 import forge.app.events;
 import forge.app.plugin_context;
 import forge.app.signals;
+import forge.app.views;
 import forge.asio.blocking;
 import forge.asio.runtime;
 import forge.asio.task_scheduler;
@@ -141,6 +142,7 @@ struct plugin_harness {
    forge::app::signal_bus signals;
    forge::app::event_bus events;
    forge::app::diagnostics_store diagnostics;
+   forge::app::view_registry views;
    log_otlp::plugin plugin;
 
    plugin_harness() : runtime{}, scheduler{runtime} {}
@@ -153,7 +155,8 @@ struct plugin_harness {
    void provide_and_start() {
       auto provider = forge::api::installer{apis};
       forge::asio::blocking::run(runtime, plugin.provide(provider));
-      auto context = forge::app::plugin_context{scheduler, apis, signals, events, &diagnostics};
+      auto context = forge::app::plugin_context{scheduler, apis, signals, events, &diagnostics,
+                                               forge::app::config_view{}, &views};
       forge::asio::blocking::run(runtime, plugin.initialize(context));
       forge::asio::blocking::run(runtime, plugin.startup());
    }
@@ -204,6 +207,7 @@ BOOST_AUTO_TEST_CASE(log_otlp_disabled_config_does_not_export_and_api_is_unavail
                      log_otlp::exceptions::exporter_unavailable);
    BOOST_CHECK_THROW(forge::asio::blocking::run(harness.runtime, api->flush()),
                      log_otlp::exceptions::exporter_unavailable);
+   BOOST_TEST(harness.views.descriptors().empty());
 
    harness.shutdown();
 }
@@ -242,7 +246,17 @@ BOOST_AUTO_TEST_CASE(log_otlp_exports_default_and_named_logger_routes) {
    BOOST_TEST(snapshot.enqueued_records >= 2U);
    BOOST_TEST(snapshot.exported_records >= 2U);
 
+   const auto descriptors = harness.views.descriptors();
+   BOOST_REQUIRE_EQUAL(descriptors.size(), 1);
+   BOOST_TEST(descriptors[0].id == "forge.plugins.log.otlp.metrics");
+   const auto view =
+      forge::asio::blocking::run(harness.runtime, harness.views.snapshot("forge.plugins.log.otlp.metrics"));
+   BOOST_CHECK(view.descriptor.kind == forge::app::view_kind::counters);
+   BOOST_TEST(view.error.empty());
+   BOOST_REQUIRE_GE(view.counters.size(), 4);
+
    harness.shutdown();
+   BOOST_TEST(harness.views.descriptors().empty());
 }
 
 BOOST_AUTO_TEST_CASE(log_otlp_rejects_invalid_config_through_schema_and_domain_validation) {

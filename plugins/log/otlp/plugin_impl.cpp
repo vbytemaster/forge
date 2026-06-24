@@ -5,6 +5,7 @@ module;
 module forge.plugins.log.otlp.plugin;
 
 import forge.log.logger;
+import forge.app.views;
 import forge.otlp.crash;
 import forge.otlp.log_exporter;
 import forge.otlp.log_sink;

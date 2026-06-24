@@ -20,6 +20,8 @@ struct plugin::impl {
    std::shared_ptr<forge::otlp::log_sink> sink;
    forge::otlp::crash_guard crash_guard;
    std::vector<attached_logger> attached_loggers;
+   forge::app::view_registry* views = nullptr;
+   forge::app::view_registration metrics_view;
    bool started = false;
    bool stopping = false;
 

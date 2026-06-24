@@ -12,6 +12,7 @@ module;
 module forge.plugins.p2p.node.plugin;
 
 import forge.transport.api.options;
+import forge.app.views;
 import forge.asio.runtime;
 import forge.exceptions;
 import forge.p2p.endpoint;

@@ -45,6 +45,7 @@ set(
    plugins_log_otlp
    plugins
    tui
+   app_tui
 )
 set(_FORGE_KNOWN_COMPONENTS ${_FORGE_ALL_COMPONENTS} all)
 set(_FORGE_REQUESTED_COMPONENTS ${Forge_FIND_COMPONENTS})
@@ -210,6 +211,9 @@ macro(_forge_add_component component)
          _forge_add_component(plugins_p2p_pubsub)
          _forge_add_component(plugins_http_server)
          _forge_add_component(plugins_log_otlp)
+      elseif("${component}" STREQUAL "app_tui")
+         _forge_add_component(app)
+         _forge_add_component(tui)
       endif()
    endif()
 endmacro()

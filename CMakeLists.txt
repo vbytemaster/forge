@@ -237,6 +237,7 @@ set(FORGE_PLUGINS_LOG_OTLP_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/log/
 
 if(FORGE_ENABLE_TUI AND FORGE_TUI_NOTCURSES_TARGET)
    list(APPEND FORGE_SOURCE_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/libraries/tui/include")
+   list(APPEND FORGE_SOURCE_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/libraries/app_tui/include")
 endif()
 
 set(FORGE_PUBLIC_INCLUDE_DIRS)
@@ -366,6 +367,7 @@ add_subdirectory(libraries/app)
 add_subdirectory(plugins)
 if(FORGE_ENABLE_TUI AND FORGE_TUI_NOTCURSES_TARGET)
    add_subdirectory(libraries/tui)
+   add_subdirectory(libraries/app_tui)
 endif()
 
 set(
@@ -411,6 +413,9 @@ set(
 
 if(TARGET forge_tui)
    list(APPEND FORGE_LEAF_TARGETS forge_tui)
+endif()
+if(TARGET forge_app_tui)
+   list(APPEND FORGE_LEAF_TARGETS forge_app_tui)
 endif()
 
 add_library(forge STATIC forge.cpp)
@@ -486,6 +491,12 @@ install(
 if(TARGET forge_tui)
    install(
       DIRECTORY libraries/tui/include/forge
+      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
+   )
+endif()
+if(TARGET forge_app_tui)
+   install(
+      DIRECTORY libraries/app_tui/include/forge
       DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
    )
 endif()

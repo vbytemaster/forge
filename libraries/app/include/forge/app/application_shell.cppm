@@ -29,6 +29,7 @@ import forge.app.diagnostics;
 import forge.app.events;
 import forge.app.plugin_registry;
 import forge.app.signals;
+import forge.app.views;
 
 export namespace forge::app {
 
@@ -42,7 +43,7 @@ class application_context {
  public:
    application_context(forge::asio::runtime& runtime, forge::asio::task_scheduler& scheduler,
                        forge::api::registry& apis, signal_bus& signals, event_bus& events,
-                       diagnostics_store& diagnostics);
+                       diagnostics_store& diagnostics, view_registry& views);
 
    [[nodiscard]] forge::asio::runtime& runtime() noexcept;
    [[nodiscard]] forge::asio::task_scheduler& scheduler() noexcept;
@@ -50,6 +51,7 @@ class application_context {
    [[nodiscard]] signal_bus& signals() noexcept;
    [[nodiscard]] event_bus& events() noexcept;
    [[nodiscard]] diagnostics_store& diagnostics() noexcept;
+   [[nodiscard]] view_registry& views() noexcept;
 
  private:
    forge::asio::runtime* runtime_ = nullptr;
@@ -58,6 +60,7 @@ class application_context {
    signal_bus* signals_ = nullptr;
    event_bus* events_ = nullptr;
    diagnostics_store* diagnostics_ = nullptr;
+   view_registry* views_ = nullptr;
 };
 
 class configure_context {
@@ -94,6 +97,7 @@ class application_shell : public application_base {
    [[nodiscard]] signal_bus& signals() noexcept;
    [[nodiscard]] event_bus& events() noexcept;
    [[nodiscard]] diagnostics_store& diagnostics() noexcept;
+   [[nodiscard]] view_registry& views() noexcept;
 
  protected:
    virtual void on_describe_config(forge::config::component_registry& registry) const;

@@ -30,6 +30,7 @@ import forge.app.plugin;
 import forge.app.plugin_context;
 import forge.app.plugin_registry;
 import forge.app.signals;
+import forge.app.views;
 
 namespace forge::app {
 namespace {
@@ -53,6 +54,128 @@ void publish_application_event(event_bus& events, event_severity severity, std::
    }
    events.publish(severity, "app." + std::move(name) + "." + std::move(transition), std::move(message));
 }
+
+[[nodiscard]] std::string lifecycle_state_name(lifecycle_state state) {
+   switch (state) {
+   case lifecycle_state::created:
+      return "created";
+   case lifecycle_state::initializing:
+      return "initializing";
+   case lifecycle_state::initialized:
+      return "initialized";
+   case lifecycle_state::starting:
+      return "starting";
+   case lifecycle_state::started:
+      return "started";
+   case lifecycle_state::stopping:
+      return "stopping";
+   case lifecycle_state::stopped:
+      return "stopped";
+   case lifecycle_state::failed:
+      return "failed";
+   }
+   return "unknown";
+}
+
+[[nodiscard]] view_severity view_severity_from(event_severity severity) {
+   switch (severity) {
+   case event_severity::debug:
+      return view_severity::debug;
+   case event_severity::info:
+      return view_severity::info;
+   case event_severity::warning:
+      return view_severity::warning;
+   case event_severity::error:
+      return view_severity::error;
+   case event_severity::critical:
+      return view_severity::critical;
+   }
+   return view_severity::info;
+}
+
+[[nodiscard]] std::size_t cursor_offset(std::string_view cursor, std::size_t size) {
+   if (cursor.empty()) {
+      return 0;
+   }
+   try {
+      const auto parsed = static_cast<std::size_t>(std::stoull(std::string{cursor}));
+      return std::min(parsed, size);
+   } catch (...) {
+      return 0;
+   }
+}
+
+class diagnostics_view_source final : public view_source {
+ public:
+   diagnostics_view_source(diagnostics_store& diagnostics, event_bus& events)
+       : diagnostics_{&diagnostics}, events_{&events} {}
+
+   boost::asio::awaitable<view_snapshot> snapshot(view_query) override {
+      const auto state = diagnostics_->snapshot(*events_);
+      co_return view_snapshot{
+         .descriptor =
+             {
+                 .id = "forge.app.status",
+                 .title = "Application Status",
+                 .category = "app",
+                 .kind = view_kind::counters,
+             },
+         .counters =
+             {
+                 {.name = "state", .value = lifecycle_state_name(state.state)},
+                 {.name = "plugins", .value = std::to_string(state.plugins.size())},
+                 {.name = "events.published", .value = std::to_string(state.events.published)},
+                 {.name = "events.dropped", .value = std::to_string(state.events.dropped),
+                  .severity = state.events.dropped == 0 ? view_severity::info : view_severity::warning},
+             },
+      };
+   }
+
+ private:
+   diagnostics_store* diagnostics_ = nullptr;
+   event_bus* events_ = nullptr;
+};
+
+class recent_events_view_source final : public view_source {
+ public:
+   explicit recent_events_view_source(event_bus& events) : events_{&events} {}
+
+   boost::asio::awaitable<view_snapshot> snapshot(view_query query) override {
+      auto events = events_->recent_events();
+      const auto begin = cursor_offset(query.cursor, events.size());
+      const auto limit = static_cast<std::size_t>(std::min<std::uint64_t>(query.limit, events.size() - begin));
+      auto logs = std::vector<view_log_item>{};
+      logs.reserve(limit);
+      for (auto index = begin; index < begin + limit; ++index) {
+         const auto& event = events[index];
+         logs.push_back(view_log_item{
+            .id = event.id,
+            .severity = view_severity_from(event.severity),
+            .topic = event.topic,
+            .message = event.message,
+         });
+      }
+      auto page = view_page{};
+      if (begin + limit < events.size()) {
+         page.next_cursor = std::to_string(begin + limit);
+      }
+      page.total_estimate = events.size();
+      co_return view_snapshot{
+         .descriptor =
+             {
+                 .id = "forge.app.events",
+                 .title = "Application Events",
+                 .category = "app",
+                 .kind = view_kind::log,
+             },
+         .page = std::move(page),
+         .log = std::move(logs),
+      };
+   }
+
+ private:
+   event_bus* events_ = nullptr;
+};
 
 [[nodiscard]] std::vector<plugin_config> enabled_config_for_all_plugins(const plugin_registry& registry) {
    auto out = std::vector<plugin_config>{};
@@ -119,9 +242,9 @@ void publish_application_event(event_bus& events, event_severity severity, std::
 
 application_context::application_context(forge::asio::runtime& runtime, forge::asio::task_scheduler& scheduler,
                                          forge::api::registry& apis, signal_bus& signals,
-                                         event_bus& events, diagnostics_store& diagnostics)
+                                         event_bus& events, diagnostics_store& diagnostics, view_registry& views)
     : runtime_{&runtime}, scheduler_{&scheduler}, apis_{&apis}, signals_{&signals},
-      events_{&events}, diagnostics_{&diagnostics} {}
+      events_{&events}, diagnostics_{&diagnostics}, views_{&views} {}
 
 forge::asio::runtime& application_context::runtime() noexcept {
    return *runtime_;
@@ -147,6 +270,10 @@ diagnostics_store& application_context::diagnostics() noexcept {
    return *diagnostics_;
 }
 
+view_registry& application_context::views() noexcept {
+   return *views_;
+}
+
 configure_context::configure_context(const forge::config::document& document) : document_{&document} {}
 
 const forge::config::document& configure_context::document() const noexcept {
@@ -160,7 +287,24 @@ forge::config::component_view configure_context::view(std::string section) const
 struct application_shell::impl {
    explicit impl(application_shell_options input)
        : options{std::move(input)}, runtime{options.runtime}, scheduler{runtime, options.scheduler},
-         context{runtime, scheduler, apis, signals, events, diagnostics} {}
+         context{runtime, scheduler, apis, signals, events, diagnostics, views} {
+      built_in_views.push_back(views.register_source(
+         {
+            .id = "forge.app.status",
+            .title = "Application Status",
+            .category = "app",
+            .kind = view_kind::counters,
+         },
+         std::make_shared<diagnostics_view_source>(diagnostics, events)));
+      built_in_views.push_back(views.register_source(
+         {
+            .id = "forge.app.events",
+            .title = "Application Events",
+            .category = "app",
+            .kind = view_kind::log,
+         },
+         std::make_shared<recent_events_view_source>(events)));
+   }
 
    void require_created(const char* operation) const {
       if (state != application_state::created) {
@@ -175,7 +319,9 @@ struct application_shell::impl {
    signal_bus signals;
    event_bus events;
    diagnostics_store diagnostics;
+   view_registry views;
    application_context context;
+   std::vector<view_registration> built_in_views;
    plugin_registry registry;
    std::unique_ptr<plugin_context> plugin_context_value;
    std::unique_ptr<application_runtime> plugin_runtime;
@@ -219,7 +365,8 @@ void application_shell::instantiate_plugins(const forge::config::document& docum
    impl_->plugin_runtime.reset();
    impl_->plugin_context_value.reset();
    impl_->plugin_context_value =
-       std::make_unique<plugin_context>(impl_->scheduler, impl_->apis, impl_->signals, impl_->events, &impl_->diagnostics);
+       std::make_unique<plugin_context>(impl_->scheduler, impl_->apis, impl_->signals, impl_->events, &impl_->diagnostics,
+                                        forge::app::config_view{}, &impl_->views);
    impl_->plugin_runtime = std::make_unique<application_runtime>(
       *impl_->plugin_context_value,
       impl_->registry.instantiate_enabled(plugin_selection_from_document(impl_->registry, document)),
@@ -235,7 +382,8 @@ forge::config::component_registry application_shell::collect_config() {
    }
 
    auto plugin_context_value =
-       plugin_context{impl_->scheduler, impl_->apis, impl_->signals, impl_->events, &impl_->diagnostics};
+       plugin_context{impl_->scheduler, impl_->apis, impl_->signals, impl_->events, &impl_->diagnostics,
+                      forge::app::config_view{}, &impl_->views};
    auto plugin_runtime = application_runtime{
       plugin_context_value,
       impl_->registry.instantiate_enabled(enabled_config_for_all_plugins(impl_->registry)),
@@ -392,6 +540,10 @@ event_bus& application_shell::events() noexcept {
 
 diagnostics_store& application_shell::diagnostics() noexcept {
    return impl_->diagnostics;
+}
+
+view_registry& application_shell::views() noexcept {
+   return impl_->views;
 }
 
 } // namespace forge::app

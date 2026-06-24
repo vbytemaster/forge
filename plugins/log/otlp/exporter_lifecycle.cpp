@@ -11,6 +11,7 @@ module;
 module forge.plugins.log.otlp.plugin;
 
 import forge.asio.runtime;
+import forge.app.views;
 import forge.log.log_message;
 import forge.log.logger;
 import forge.otlp.crash;

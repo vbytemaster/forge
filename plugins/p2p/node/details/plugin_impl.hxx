@@ -17,6 +17,8 @@ struct plugin::impl : public std::enable_shared_from_this<plugin::impl> {
    std::vector<forge::p2p::endpoint> bootstrap;
    std::vector<std::pair<forge::p2p::protocol_id, forge::p2p::node::protocol_handler>> routes;
    forge::p2p::pubsub::options pubsub_options{};
+   forge::app::view_registry* views = nullptr;
+   forge::app::view_registration peers_view;
    forge::p2p::node* raw = nullptr;
    std::unique_ptr<forge::p2p::node> node;
    forge::asio::runtime* runtime = nullptr;

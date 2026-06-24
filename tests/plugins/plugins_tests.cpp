@@ -53,6 +53,7 @@ import forge.app.application;
 import forge.app.events;
 import forge.app.diagnostics;
 import forge.app.signals;
+import forge.app.views;
 import forge.app.plugin_context;
 import forge.app.plugin;
 import forge.app.plugin_registry;
@@ -2718,6 +2719,18 @@ BOOST_AUTO_TEST_CASE(p2p_diagnostics_plugin_reports_live_p2p_node_state) {
    const auto server_record = diagnostics->peer(server_peer);
    BOOST_TEST(server_record.peer.to_string() == server_peer.to_string());
    BOOST_CHECK_THROW((void)diagnostics->peer(test_peer(93)), forge::plugins::p2p::diagnostics::exceptions::not_found);
+
+   const auto descriptors = client.views().descriptors();
+   BOOST_CHECK(std::ranges::any_of(descriptors, [](const auto& descriptor) {
+      return descriptor.id == "forge.plugins.p2p.node.peers";
+   }));
+   auto peers_view = forge::asio::blocking::run(
+      client.runtime(),
+      client.views().snapshot("forge.plugins.p2p.node.peers", forge::app::view_query{.limit = 1}));
+   BOOST_CHECK(peers_view.descriptor.kind == forge::app::view_kind::table);
+   BOOST_REQUIRE_EQUAL(peers_view.page.rows.size(), 1U);
+   BOOST_REQUIRE(!peers_view.page.rows.front().cells.empty());
+   BOOST_TEST(peers_view.page.rows.front().cells.front() == server_peer.to_string());
 
    forge::asio::blocking::run(client.runtime(), client.shutdown());
    forge::asio::blocking::run(server.runtime(), server.shutdown());

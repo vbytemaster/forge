@@ -119,50 +119,83 @@ class service_node {
 
 ## Namespace And Target Naming
 
-FORGE uses one deterministic namespace-to-target rule. Nested namespaces are
-allowed, but the CMake target must be derivable by replacing `::` with `_` and
-prefixing with `forge_` where appropriate. Example:
-`forge::plugins::crypto::signer` maps to `forge_plugins_crypto_signer`.
+FORGE uses deterministic namespace, target and module naming. Replace `::` with
+`_` for targets and with `.` for module prefixes, and prefix targets with
+`forge_` where appropriate. Example: `forge::plugins::crypto::signer` maps to
+target `forge_plugins_crypto_signer` and module prefix
+`forge.plugins.crypto.signer`.
 
-- A top-level library uses a flat `forge::<lib>` namespace, for example
-  `forge::core`, `forge::raw`, `forge::http`, `forge::p2p`, `forge::api` and
-  `forge::crypto`.
-- A nested family such as `X::a::b` is allowed only when `a` and `b` are kinds
-  of `X`. The deciding question is: "`X::child` - is child a kind of `X`?"
-  If yes, it may be a family, for example `forge::plugins::p2p::node`.
-- Code that exposes or adapts core `X` over channel `C` is rooted in the
-  channel: `C::X`, never `X::C`. `forge::api` is the neutral contract core and
-  remains a leaf. HTTP API binding is `forge::http::api`; transport API binding
-  is `forge::transport::api`. Do not introduce `forge::api::http` or
-  `forge::api::transport`.
-- `api` is not a family. There are no "kinds of api"; there is the neutral
-  `forge::api` core and channel bindings such as `forge::http::api` and
-  `forge::transport::api`.
-- Official plugins use the monotonic hierarchy
-  `forge::plugins::<family>::<name>`, for example
-  `forge::plugins::p2p::node`, `forge::plugins::http::server`,
-  `forge::plugins::crypto::signer` and `forge::plugins::crypto::secrets`.
-  Plugin family names should mirror the owning domain library when one exists:
-  `forge::plugins::crypto::*` mirrors `forge::crypto`.
-- Observability plugins are grouped by signal domain, not by backend. Use
-  `forge::plugins::<signal>::<backend>` where `signal` is `log`, `trace` or
-  `metrics`, and `backend` is `otlp`, `file`, `syslog` or another exporter
-  role. For example, OTLP log export is `forge::plugins::log::otlp` with target
-  `forge_plugins_log_otlp`; do not create backend-rooted observability families.
-- Plugin members are named by functional role. Do not create activity-named
-  crypto families with a generic `provider` leaf when the domain family is
-  `crypto`; use role leaves such as `crypto::signer` and `crypto::secrets`.
-- Intermediate grouping namespaces such as `forge::plugins::p2p`,
-  `forge::plugins::http`, `forge::plugins::crypto` and `forge::plugins::log` are
-  empty. Public types live only in leaf namespaces.
-- Rename targets/components when the `::` to `_` mapping does not match:
-  `forge::transport::api` maps to `forge_transport_api`,
-  `forge::plugins::p2p::node` maps to `forge_plugins_p2p_node`, and
-  `forge::plugins::crypto::signer` maps to `forge_plugins_crypto_signer`.
+Intermediate grouping namespaces are empty. Public types live only in leaf
+namespaces. Namespace depth may vary when the depth is rule-driven; variable
+depth is not itself a naming mismatch.
 
-Do not use `api` as a parent for channel bindings, put symbols into grouping
-namespaces, mix flat plugin names such as `http_server` with nested names such
-as `plugins::p2p::node`, or treat `api` as a family.
+The master test is is-a: for candidate `A::B`, ask whether `B` is a kind,
+representation or variant of `A`.
+
+- If yes, `A` may be a family root and `B` may be its member.
+- If no, and `B` exposes, adapts, depends on or uses `A`, do not name it as
+  `A::B`; root it in the dependent medium or artifact category instead.
+
+Group by what the artifact is, not by an implementation detail:
+
+- Library/domain artifacts use top-level `forge::<domain>`, for example
+  `forge::core`, `forge::raw`, `forge::http`, `forge::p2p`, `forge::api`,
+  `forge::app`, `forge::tui` and `forge::crypto`.
+- Plugin artifacts use `forge::plugins::<domain>::<role>`. The plugin family
+  mirrors the owning domain library when one exists, and the leaf is the
+  functional role. Examples: `forge::plugins::p2p::node`,
+  `forge::plugins::http::server`, `forge::plugins::crypto::signer`,
+  `forge::plugins::crypto::secrets`, `forge::plugins::log::otlp` and
+  `forge::plugins::tui::screen`.
+- Application host variants use `forge::app::<archetype>` when the archetype is
+  a kind of application, for example `forge::app::tui` or
+  `forge::app::daemon`. Do not put application variants under implementation
+  library namespaces such as `forge::tui::app`.
+- Bindings and adapters that expose a core over a medium are rooted in the
+  medium, not under the core, when the core fails the is-a test. Examples:
+  `forge::http::api` and `forge::transport::api`.
+
+Core or foundation namespaces may be family roots only when the is-a test passes.
+`api` remains a leaf because there are no kinds of API; HTTP and transport expose
+API over their channels, so use `forge::http::api` and `forge::transport::api`,
+never `forge::api::http` or `forge::api::transport`. `app` may be a family root
+because daemon, CLI and TUI are kinds of application hosts.
+
+When two possible family axes compete, choose the axis that will grow with real
+siblings. For log plugins, backends are the growing sibling set, so use
+`forge::plugins::log::otlp`, future `forge::plugins::log::file` and
+`forge::plugins::log::syslog`, not backend-rooted `forge::plugins::otlp::logs`.
+For crypto plugins, service roles are the growing sibling set, so use
+`forge::plugins::crypto::signer` and `forge::plugins::crypto::secrets`, not
+activity/provider names such as `signing::provider` or `secret::provider`.
+
+Family members are named by functional role: `node`, `server`, `resolver`,
+`signer`, `secrets`, `screen`, not contract-side vocabulary such as `provider`
+or `consumer`. Mixed nouns among siblings are allowed when each noun is the
+honest role.
+
+A family is justified when it has two or more is-a members, or when the project
+uses uniform nesting and a credible future sibling exists. Singleton plugin
+families such as `plugins::http::server` and `plugins::crypto::signer` are
+allowed under this policy.
+
+Apply this verification order before adding or renaming a public namespace:
+
+1. Identify what the artifact is: library, plugin, application host or binding.
+2. Apply the matching tree: `forge::<domain>`,
+   `forge::plugins::<domain>::<role>`, `forge::app::<archetype>` or
+   `forge::<medium>::<core>`.
+3. If a core/foundation namespace is involved, run the is-a test to decide
+   whether it can be a family root.
+4. If two family axes compete, choose the axis that grows with real siblings.
+5. Check the `::` to `_` to `.` mapping, empty grouping namespaces and role-based
+   leaf names.
+
+Do not treat "foundation namespaces are never parents" as an absolute rule, do
+not choose plugin families by activity/backend/contract side, do not choose a
+non-growing axis as the family, do not treat variable namespace depth as a
+problem by itself, do not put symbols into grouping namespaces, and do not put
+application variants under implementation-library namespaces.
 
 ## Reflection And Serialization
 

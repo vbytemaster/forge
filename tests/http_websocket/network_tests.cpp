@@ -5,6 +5,7 @@
 #include <forge/http_api/macros.hpp>
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <coroutine>
@@ -60,6 +61,7 @@ import forge.http.exceptions;
 import forge.http.file;
 import forge.http.api.mapping;
 import forge.http.middleware;
+import forge.http.negotiation;
 import forge.http.api.proxy;
 import forge.http.range;
 import forge.http.route_context;
@@ -91,6 +93,24 @@ using raw_mount_step = std::function<void(forge::http::router&, std::string_view
 static_assert(!std::is_constructible_v<forge::http::api::binding_plan, std::vector<raw_mount_step>>);
 static_assert(!std::is_same_v<forge::http::request, boost::beast::http::request<boost::beast::http::string_body>>);
 static_assert(!std::is_same_v<forge::http::response, boost::beast::http::response<boost::beast::http::string_body>>);
+
+BOOST_AUTO_TEST_CASE(http_negotiation_matches_media_types_suffixes_and_accept_quality) {
+   constexpr auto json = std::array{media_type_match{.type = "application/json", .structured_suffix = "+json"}};
+   constexpr auto xml = std::array{
+      media_type_match{.type = "application/xml", .structured_suffix = "+xml"},
+      media_type_match{.type = "text/xml", .structured_suffix = {}},
+   };
+
+   BOOST_TEST(media_type_matches("application/json; charset=utf-8", json));
+   BOOST_TEST(media_type_matches("application/problem+json", json));
+   BOOST_TEST(!media_type_matches("application/xml", json));
+   BOOST_TEST(media_type_matches("text/xml; charset=utf-8", xml));
+   BOOST_TEST(media_type_matches("application/custom+xml", xml));
+   BOOST_TEST(accept_allows("application/json;q=0, application/xml;q=0.9", xml));
+   BOOST_TEST(!accept_allows("application/json;q=1, application/xml;q=0, text/xml;q=0", xml));
+   BOOST_TEST(accept_allows("text/*;q=0.5", xml));
+   BOOST_TEST(accept_allows("*/*", json));
+}
 
 [[nodiscard]] method to_http_method(beast_http::verb value) noexcept {
    switch (value) {
@@ -1666,6 +1686,38 @@ response raw_http_exchange(std::uint16_t port, std::string request_text,
       std::this_thread::sleep_for(hold_after_read);
    }
    return to_http_response(beast_response);
+}
+
+struct expect_continue_exchange_result {
+   std::optional<response> interim;
+   response final;
+};
+
+expect_continue_exchange_result raw_expect_continue_exchange(std::uint16_t port,
+                                                             std::string headers,
+                                                             std::string body,
+                                                             std::chrono::milliseconds timeout =
+                                                                std::chrono::seconds{2}) {
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(timeout);
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), port});
+   asio::write(stream.socket(), asio::buffer(headers));
+
+   auto buffer = beast::flat_buffer{};
+   auto first = beast_http::response<beast_http::string_body>{};
+   stream.expires_after(timeout);
+   beast_http::read(stream, buffer, first);
+   auto first_response = to_http_response(first);
+   if (first_response.result() != status::continue_) {
+      return expect_continue_exchange_result{.interim = std::nullopt, .final = std::move(first_response)};
+   }
+
+   asio::write(stream.socket(), asio::buffer(body));
+   auto second = beast_http::response<beast_http::string_body>{};
+   stream.expires_after(timeout);
+   beast_http::read(stream, buffer, second);
+   return expect_continue_exchange_result{.interim = std::move(first_response), .final = to_http_response(second)};
 }
 
 response handle(router& target, route_context& context) {
@@ -4683,6 +4735,77 @@ BOOST_AUTO_TEST_CASE(http_stream_middleware_short_circuits_before_body_read) {
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::unauthorized));
    BOOST_TEST(response.body() == "blocked");
+   BOOST_TEST(!invoked->load());
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_expect_continue_accepted_stream_sends_interim_before_body_read) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto bytes_read = std::make_shared<std::atomic<std::size_t>>(0);
+
+   auto router = forge::http::router{};
+   router.post_stream("/upload", [bytes_read](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      const auto body = co_await request_value.body.async_read_all();
+      bytes_read->store(body.size());
+      co_return stream_response::buffered(make_text_response(request_value.context.request, status::ok, body));
+   });
+
+   auto server = forge::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   const auto body = std::string{"large-payload"};
+   const auto exchange = raw_expect_continue_exchange(
+      server.port(),
+      "POST /upload HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Expect: 100-continue\r\n"
+      "Content-Length: " +
+         std::to_string(body.size()) + "\r\n"
+         "\r\n",
+      body,
+      std::chrono::milliseconds{500});
+
+   BOOST_REQUIRE(exchange.interim.has_value());
+   BOOST_TEST(exchange.interim->result_int() == static_cast<unsigned>(status::continue_));
+   BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(exchange.final.body() == body);
+   BOOST_TEST(bytes_read->load() == body.size());
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_expect_continue_rejection_does_not_consume_body) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto invoked = std::make_shared<std::atomic<bool>>(false);
+
+   auto router = forge::http::router{};
+   router.use([](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
+      static_cast<void>(next);
+      co_return make_text_response(context.request, status::unauthorized, "blocked");
+   });
+   router.post_stream("/upload", [invoked](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      static_cast<void>(request_value);
+      invoked->store(true);
+      co_return stream_response::buffered(response{status::ok, 11});
+   });
+
+   auto server = forge::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   const auto exchange = raw_expect_continue_exchange(
+      server.port(),
+      "POST /upload HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Expect: 100-continue\r\n"
+      "Content-Length: 1048576\r\n"
+      "\r\n",
+      std::string(1024, 'x'),
+      std::chrono::milliseconds{500});
+
+   BOOST_TEST(!exchange.interim.has_value());
+   BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::unauthorized));
+   BOOST_TEST(exchange.final.body() == "blocked");
    BOOST_TEST(!invoked->load());
 
    forge::asio::blocking::run(runtime, server.async_stop());

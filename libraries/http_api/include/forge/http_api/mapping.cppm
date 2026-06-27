@@ -1,9 +1,10 @@
 module;
 
 #include <algorithm>
-#include <charconv>
+#include <array>
 #include <cctype>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -20,6 +21,7 @@ import forge.api.descriptor;
 import forge.api.types;
 import forge.http.api.parameters;
 import forge.http.exceptions;
+import forge.http.negotiation;
 import forge.http.types;
 import forge.reflect.reflect;
 import forge.schema.scalar;
@@ -143,45 +145,27 @@ using ::forge::http::detail::response_needs_stream_v;
    return verb == method::post || verb == method::put || verb == method::patch || verb == method::delete_;
 }
 
-[[nodiscard]] inline std::string trim_ascii(std::string_view value) {
-   auto begin = std::size_t{0};
-   while (begin != value.size() && std::isspace(static_cast<unsigned char>(value[begin])) != 0) {
-      ++begin;
+[[nodiscard]] inline std::span<const forge::http::media_type_match> media_types(body_codec codec) noexcept {
+   static constexpr auto json = std::array{
+      forge::http::media_type_match{.type = "application/json", .structured_suffix = {}},
+      forge::http::media_type_match{.type = {}, .structured_suffix = "+json"},
+   };
+   static constexpr auto xml = std::array{
+      forge::http::media_type_match{.type = "application/xml", .structured_suffix = {}},
+      forge::http::media_type_match{.type = "text/xml", .structured_suffix = {}},
+      forge::http::media_type_match{.type = {}, .structured_suffix = "+xml"},
+   };
+   switch (codec) {
+   case body_codec::json:
+      return json;
+   case body_codec::xml:
+      return xml;
    }
-   auto end = value.size();
-   while (end != begin && std::isspace(static_cast<unsigned char>(value[end - 1U])) != 0) {
-      --end;
-   }
-   return std::string{value.substr(begin, end - begin)};
-}
-
-[[nodiscard]] inline std::string lower_ascii(std::string_view value) {
-   auto output = std::string{};
-   output.reserve(value.size());
-   for (const auto character : value) {
-      output.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(character))));
-   }
-   return output;
-}
-
-[[nodiscard]] inline std::string media_type(std::string_view value) {
-   const auto semicolon = value.find(';');
-   return lower_ascii(trim_ascii(value.substr(0, semicolon)));
-}
-
-[[nodiscard]] inline bool has_structured_suffix(std::string_view type, std::string_view suffix) {
-   return type.size() > suffix.size() && type.ends_with(suffix);
+   return {};
 }
 
 [[nodiscard]] inline bool media_type_matches(body_codec codec, std::string_view value) {
-   const auto type = media_type(value);
-   switch (codec) {
-   case body_codec::json:
-      return type == "application/json" || has_structured_suffix(type, "+json");
-   case body_codec::xml:
-      return type == "application/xml" || type == "text/xml" || has_structured_suffix(type, "+xml");
-   }
-   return false;
+   return forge::http::media_type_matches(value, media_types(codec));
 }
 
 [[nodiscard]] inline std::string_view content_type(body_codec codec) noexcept {
@@ -204,79 +188,8 @@ using ::forge::http::detail::response_needs_stream_v;
    return "application/octet-stream";
 }
 
-[[nodiscard]] inline bool q_value_allows(std::string_view parameter) {
-   auto value = trim_ascii(parameter);
-   if (value.empty()) {
-      return true;
-   }
-   if (value.front() != '0') {
-      return true;
-   }
-   const auto decimal = value.find('.');
-   if (decimal == std::string::npos) {
-      return false;
-   }
-   for (auto index = decimal + 1U; index != value.size(); ++index) {
-      if (value[index] >= '1' && value[index] <= '9') {
-         return true;
-      }
-   }
-   return false;
-}
-
-[[nodiscard]] inline bool accept_item_allows(std::string_view item) {
-   auto offset = std::size_t{0};
-   while (offset <= item.size()) {
-      const auto separator = item.find(';', offset);
-      const auto end = separator == std::string_view::npos ? item.size() : separator;
-      const auto parameter = trim_ascii(item.substr(offset, end - offset));
-      if (offset != 0U) {
-         const auto equals = parameter.find('=');
-         if (equals != std::string::npos && lower_ascii(trim_ascii(parameter.substr(0, equals))) == "q") {
-            return q_value_allows(parameter.substr(equals + 1U));
-         }
-      }
-      if (separator == std::string_view::npos) {
-         break;
-      }
-      offset = separator + 1U;
-   }
-   return true;
-}
-
-[[nodiscard]] inline bool accept_media_matches(body_codec codec, std::string_view item) {
-   const auto semicolon = item.find(';');
-   const auto type = media_type(item.substr(0, semicolon));
-   if (type == "*/*" || type == "*") {
-      return true;
-   }
-   if (type == "application/*") {
-      return codec == body_codec::json || codec == body_codec::xml;
-   }
-   if (type == "text/*") {
-      return codec == body_codec::xml;
-   }
-   return media_type_matches(codec, type);
-}
-
 [[nodiscard]] inline bool accept_allows(body_codec codec, std::string_view value) {
-   if (trim_ascii(value).empty()) {
-      return true;
-   }
-   auto offset = std::size_t{0};
-   while (offset <= value.size()) {
-      const auto separator = value.find(',', offset);
-      const auto end = separator == std::string_view::npos ? value.size() : separator;
-      const auto item = value.substr(offset, end - offset);
-      if (accept_item_allows(item) && accept_media_matches(codec, item)) {
-         return true;
-      }
-      if (separator == std::string_view::npos) {
-         break;
-      }
-      offset = separator + 1U;
-   }
-   return false;
+   return forge::http::accept_allows(value, media_types(codec));
 }
 
 template <auto Method, typename Request>

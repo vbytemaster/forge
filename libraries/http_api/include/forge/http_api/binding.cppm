@@ -358,6 +358,17 @@ class binding_builder {
       }
    }
 
+   template <typename Response> static void require_response_accept_before_handler(const request& request_value,
+                                                                                   const route_options& options) {
+      if constexpr (!detail::is_bytes_response_v<Response> &&
+                    !detail::is_empty_response_v<Response> &&
+                    !std::is_same_v<std::remove_cvref_t<Response>, file_response> &&
+                    !detail::is_streaming_response_v<Response> &&
+                    !detail::is_stream_response_v<Response>) {
+         require_response_accept(request_value, options.response_body_codec);
+      }
+   }
+
    [[nodiscard]] static std::optional<std::string_view> route_value(const route_context& context,
                                                                     const route_options& options,
                                                                     std::string_view name) {
@@ -1486,6 +1497,7 @@ class binding_builder {
                const auto api_descriptor = interface_type::describe();
                const auto* method_descriptor = forge::api::find_method(api_descriptor, name);
                try {
+                  require_response_accept_before_handler<Response>(request_value.context.request, options);
                   if constexpr (is_positional_http_method_v<Method, Request>) {
                      if (method_descriptor == nullptr || method_descriptor->argument_names.empty()) {
                         FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request,
@@ -1564,6 +1576,7 @@ class binding_builder {
                const auto api_descriptor = interface_type::describe();
                const auto* method_descriptor = forge::api::find_method(api_descriptor, name);
                try {
+                  require_response_accept_before_handler<Response>(context.request, options);
                   if constexpr (is_positional_http_method_v<Method, Request>) {
                      if (method_descriptor == nullptr || method_descriptor->argument_names.empty()) {
                         FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request,

@@ -181,6 +181,12 @@ template <typename Member>
                                        const Member& value,
                                        std::vector<schema::diagnostic>& diagnostics);
 
+template <typename Member>
+void append_member_elements(std::vector<element>& output,
+                            std::string_view name,
+                            const Member& value,
+                            std::vector<schema::diagnostic>& diagnostics);
+
 template <typename T>
 void decode_object(const element& input,
                    T& output,
@@ -193,7 +199,9 @@ void append_input_value_elements(std::vector<element>& output, std::string name,
 
 template <typename T>
 [[nodiscard]] schema::input_value::object_type root_to_input_object(const element& input,
-                                                                    const schema::object_schema<T>& rules) {
+                                                                    const schema::object_schema<T>& rules,
+                                                                    std::vector<schema::diagnostic>& diagnostics,
+                                                                    std::string_view base_path = {}) {
    auto output = schema::input_value::object_type{};
    const auto& fields = rules.fields();
    for (const auto& field : fields) {
@@ -219,6 +227,11 @@ template <typename T>
          }
          output.emplace(field.name, schema::input_value{std::move(array)});
       } else {
+         if (matches.size() > 1U) {
+            diagnostics.push_back(
+               make_error(append_path(base_path, field.name), "xml.duplicate", "XML element is repeated for scalar field"));
+            continue;
+         }
          output.emplace(field.name, element_to_input_value(*matches.front()));
       }
    }
@@ -230,14 +243,13 @@ void append_schema_object_children(std::vector<element>& output,
                                    const T& input,
                                    std::vector<schema::diagnostic>& diagnostics) {
    const auto rules = schema::rules<T>::define();
-   for (const auto& field : rules.fields()) {
-      auto value = field.read_input(input);
-      if (std::holds_alternative<std::monostate>(value.storage)) {
-         continue;
-      }
-      append_input_value_elements(output, field.name, value);
-   }
-   (void)diagnostics;
+   const auto& fields = rules.fields();
+   auto index = std::size_t{0};
+   forge::reflect::for_each_member<T>([&](const char* member_name, auto member) {
+      const auto name = index < fields.size() ? std::string_view{fields[index].name} : std::string_view{member_name};
+      append_member_elements(output, name, input.*member, diagnostics);
+      ++index;
+   });
 }
 
 template <typename T>
@@ -319,7 +331,10 @@ template <typename Member>
       using item_type = typename optional_traits<clean>::value_type;
       return decode_member_value<item_type>(input, path, options, diagnostics);
    } else if constexpr (vector_traits<clean>::value) {
-      static_assert(sizeof(clean) == 0, "vector members are decoded by the caller");
+      diagnostics.push_back(make_error(std::string{path},
+                                       "xml.type",
+                                       "vector XML member must be decoded from repeated child elements"));
+      return {};
    } else if constexpr (described_object_v<clean>) {
       auto output = clean{};
       const auto rules = schema::rules<clean>::define();
@@ -463,7 +478,9 @@ template <typename T> [[nodiscard]] read_result<T> read(std::string_view input, 
       rules.apply_defaults(output.value);
       if (!rules.fields().empty()) {
          detail::report_unknown_children<T>(parsed.value.root, rules.fields(), options, output.diagnostics);
-         auto decoded = rules.decode_object(detail::root_to_input_object(parsed.value.root, rules), {}, output.value);
+         auto decoded = rules.decode_object(detail::root_to_input_object(parsed.value.root, rules, output.diagnostics),
+                                            {},
+                                            output.value);
          for (auto entry : std::move(decoded)) {
             if (entry.code == "config.unknown") {
                if (options.unknown_fields == unknown_field_policy::ignore) {

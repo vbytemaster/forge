@@ -37,13 +37,28 @@ struct error_body {
    std::string request_id;
 };
 
+struct ordered_child {
+   std::string b;
+   std::string a;
+};
+
+struct ordered_parent {
+   std::vector<ordered_child> children;
+};
+
 } // namespace forge_xml_tests
 
-BOOST_DESCRIBE_STRUCT(forge_xml_tests::object_entry, (), (key, size))
-BOOST_DESCRIBE_STRUCT(forge_xml_tests::list_bucket_result, (), (name, contents, next_continuation_token))
-BOOST_DESCRIBE_STRUCT(forge_xml_tests::delete_result, (), (deleted))
-BOOST_DESCRIBE_STRUCT(forge_xml_tests::complete_multipart_upload, (), (location, bucket, key, etag))
-BOOST_DESCRIBE_STRUCT(forge_xml_tests::error_body, (), (code, message, request_id))
+namespace forge_xml_tests {
+
+BOOST_DESCRIBE_STRUCT(object_entry, (), (key, size))
+BOOST_DESCRIBE_STRUCT(list_bucket_result, (), (name, contents, next_continuation_token))
+BOOST_DESCRIBE_STRUCT(delete_result, (), (deleted))
+BOOST_DESCRIBE_STRUCT(complete_multipart_upload, (), (location, bucket, key, etag))
+BOOST_DESCRIBE_STRUCT(error_body, (), (code, message, request_id))
+BOOST_DESCRIBE_STRUCT(ordered_child, (), (b, a))
+BOOST_DESCRIBE_STRUCT(ordered_parent, (), (children))
+
+} // namespace forge_xml_tests
 
 import forge.schema.object;
 import forge.schema.diagnostic;
@@ -94,6 +109,23 @@ template <> struct forge::schema::rules<forge_xml_tests::error_body> {
       schema.field<&forge_xml_tests::error_body::code>("Code").required().non_empty();
       schema.field<&forge_xml_tests::error_body::message>("Message").required().non_empty();
       schema.field<&forge_xml_tests::error_body::request_id>("RequestId").required().non_empty();
+      return schema;
+   }
+};
+
+template <> struct forge::schema::rules<forge_xml_tests::ordered_child> {
+   [[nodiscard]] static forge::schema::object_schema<forge_xml_tests::ordered_child> define() {
+      auto schema = forge::schema::object<forge_xml_tests::ordered_child>();
+      schema.field<&forge_xml_tests::ordered_child::b>("B").required().non_empty();
+      schema.field<&forge_xml_tests::ordered_child::a>("A").required().non_empty();
+      return schema;
+   }
+};
+
+template <> struct forge::schema::rules<forge_xml_tests::ordered_parent> {
+   [[nodiscard]] static forge::schema::object_schema<forge_xml_tests::ordered_parent> define() {
+      auto schema = forge::schema::object<forge_xml_tests::ordered_parent>();
+      schema.field<&forge_xml_tests::ordered_parent::children>("Child").items<forge_xml_tests::ordered_child>();
       return schema;
    }
 };
@@ -159,6 +191,26 @@ BOOST_AUTO_TEST_CASE(xml_typed_s3_list_bucket_uses_schema_names_and_repeated_chi
    BOOST_TEST(written.text.find("<Contents>") != std::string::npos);
    BOOST_TEST(written.text.find("<Key>a.jpg</Key>") != std::string::npos);
    BOOST_TEST(written.text.find("next_continuation_token") == std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(xml_schema_read_rejects_duplicate_scalar_fields) {
+   const auto parsed = forge::xml::read<forge_xml_tests::list_bucket_result>(
+       R"(<ListBucketResult><Name>photos</Name><Name>archive</Name></ListBucketResult>)");
+
+   BOOST_TEST(!parsed.ok());
+   BOOST_TEST(has_error_code(parsed.diagnostics, "xml.duplicate"));
+}
+
+BOOST_AUTO_TEST_CASE(xml_schema_write_preserves_nested_object_field_order) {
+   const auto value = forge_xml_tests::ordered_parent{.children = {{.b = "first", .a = "second"}}};
+   const auto written = forge::xml::write(value, {.root_name = "Root"});
+
+   BOOST_REQUIRE(written.ok());
+   const auto b = written.text.find("<B>first</B>");
+   const auto a = written.text.find("<A>second</A>");
+   BOOST_REQUIRE(b != std::string::npos);
+   BOOST_REQUIRE(a != std::string::npos);
+   BOOST_TEST(b < a);
 }
 
 BOOST_AUTO_TEST_CASE(xml_typed_unknown_field_policy_matches_forge_diagnostics) {

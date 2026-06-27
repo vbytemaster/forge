@@ -72,6 +72,7 @@ import forge.http.upload;
 import forge.json;
 import forge.raw.raw;
 import forge.schema.object;
+import forge.xml;
 import forge.websocket.api;
 import forge.websocket.client;
 import forge.websocket.connection;
@@ -403,6 +404,14 @@ class macro_cache : public forge::api::contract<macro_cache, forge::api::surface
    virtual boost::asio::awaitable<macro_chunk> write(macro_write_request request) = 0;
 };
 
+class xml_cache_api : public forge::api::contract<xml_cache_api, forge::api::surface::local | forge::api::surface::remote> {
+ public:
+   virtual ~xml_cache_api() = default;
+
+   virtual boost::asio::awaitable<macro_chunk> read(macro_read_request request) = 0;
+   virtual boost::asio::awaitable<macro_chunk> write(macro_write_request request) = 0;
+};
+
 class search_api : public forge::api::contract<search_api> {
  public:
    virtual ~search_api() = default;
@@ -623,6 +632,9 @@ class mixed_proxy_api : public forge::api::contract<mixed_proxy_api> {
 FORGE_API(::forge::http::test_api::macro_cache, FORGE_API_CONTRACT("cache.macro", 1, 0), FORGE_API_METHOD(read),
         FORGE_API_METHOD(write))
 
+FORGE_API(::forge::http::test_api::xml_cache_api, FORGE_API_CONTRACT("cache.xml", 1, 0), FORGE_API_METHOD(read),
+        FORGE_API_METHOD(write))
+
 FORGE_API(::forge::http::test_api::websocket_positional_api, FORGE_API_CONTRACT("websocket.positional", 1, 0),
         FORGE_API_METHOD(join, left, right))
 
@@ -784,6 +796,15 @@ FORGE_HTTP_API(::forge::http::test_api::macro_cache,
              FORGE_HTTP_GET(read, "/cache/chunks/:ref?offset={offset}&limit={limit}"),
              FORGE_HTTP_PUT(write, "/cache/chunks/:ref", created))
 
+FORGE_HTTP_API(::forge::http::test_api::xml_cache_api,
+             FORGE_HTTP_GET(read, "/xml/cache/chunks/:ref?offset={offset}&limit={limit}",
+                            FORGE_HTTP_RESPONSE_BODY(xml),
+                            FORGE_HTTP_ERROR_BODY(xml)),
+             FORGE_HTTP_PUT(write, "/xml/cache/chunks/:ref", created,
+                            FORGE_HTTP_REQUEST_BODY(xml),
+                            FORGE_HTTP_RESPONSE_BODY(xml),
+                            FORGE_HTTP_ERROR_BODY(xml)))
+
 FORGE_HTTP_API(::forge::http::test_api::search_api,
              FORGE_HTTP_GET(search, "/search/{term}?page_size={limit}"))
 
@@ -934,6 +955,7 @@ using test_api::macro_cache;
 using test_api::macro_chunk;
 using test_api::macro_read_request;
 using test_api::macro_write_request;
+using test_api::xml_cache_api;
 using test_api::search_api;
 using test_api::search_request;
 using test_api::search_response;
@@ -1016,6 +1038,21 @@ using test_api::positional_stream_api;
    return false;
 }
 
+[[nodiscard]] const forge::xml::element* find_xml_child(const forge::xml::element& parent,
+                                                        std::string_view name) noexcept {
+   const auto found = std::find_if(parent.children.begin(), parent.children.end(), [&](const forge::xml::element& child) {
+      return child.name == name;
+   });
+   return found == parent.children.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] std::string xml_child_text(const forge::xml::element& parent, std::string_view name) {
+   if (const auto* child = find_xml_child(parent, name); child != nullptr) {
+      return child->text;
+   }
+   return {};
+}
+
 template <typename T> [[nodiscard]] forge::api::bytes pack_api_payload(const T& value) {
    return forge::api::pack_body(value);
 }
@@ -1074,6 +1111,18 @@ class escaping_api_cache final : public api_cache {
 };
 
 class macro_cache_impl final : public macro_cache {
+ public:
+   boost::asio::awaitable<macro_chunk> read(macro_read_request request) override {
+      co_return macro_chunk{.bytes = request.ref + ":" + std::to_string(request.offset) + ":" +
+                                     std::to_string(request.limit)};
+   }
+
+   boost::asio::awaitable<macro_chunk> write(macro_write_request request) override {
+      co_return macro_chunk{.bytes = request.ref + ":" + request.bytes};
+   }
+};
+
+class xml_cache_api_impl final : public xml_cache_api {
  public:
    boost::asio::awaitable<macro_chunk> read(macro_read_request request) override {
       co_return macro_chunk{.bytes = request.ref + ":" + std::to_string(request.offset) + ":" +
@@ -2884,6 +2933,174 @@ BOOST_AUTO_TEST_CASE(http_api_macro_put_reports_invalid_json_as_validation_error
    BOOST_TEST(response.result_int() == 422U);
    BOOST_TEST(response[field::content_type] == "application/json");
    BOOST_TEST(response.body().find("validation_error") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(http_api_xml_request_and_response_body_roundtrip) {
+   auto runtime = forge::asio::runtime{};
+   auto apis = forge::api::registry{};
+   apis.install<xml_cache_api>(xml_cache_api::describe(), std::make_shared<xml_cache_api_impl>());
+
+   auto router = forge::http::router{};
+   auto binding = forge::http::api::binding().use(forge::api::binding().serve(apis).build()).bind<xml_cache_api>().build();
+   router.mount(binding);
+
+   auto request = make_request(method::put, "/xml/cache/chunks/abc");
+   request.set(field::content_type, "application/xml; charset=utf-8");
+   request.set("Accept", "application/xml");
+   request.body() = "<macro_write_request><ref>abc</ref><bytes>payload</bytes></macro_write_request>";
+   request.prepare_payload();
+
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+
+   const auto response = handle(router, context);
+   const auto decoded = forge::xml::read<macro_chunk>(response.body());
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::created));
+   BOOST_TEST(response[field::content_type] == "application/xml");
+   BOOST_REQUIRE(decoded.ok());
+   BOOST_TEST(decoded.value.bytes == "abc:payload");
+}
+
+BOOST_AUTO_TEST_CASE(http_api_xml_error_body_uses_route_error_codec) {
+   auto runtime = forge::asio::runtime{};
+   auto apis = forge::api::registry{};
+   apis.install<xml_cache_api>(xml_cache_api::describe(), std::make_shared<xml_cache_api_impl>());
+
+   auto router = forge::http::router{};
+   auto binding = forge::http::api::binding().use(forge::api::binding().serve(apis).build()).bind<xml_cache_api>().build();
+   router.mount(binding);
+
+   auto request = make_request(method::put, "/xml/cache/chunks/abc");
+   request.set(field::content_type, "application/json");
+   request.body() = R"({"ref":"abc","bytes":"payload"})";
+   request.prepare_payload();
+
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+
+   const auto response = handle(router, context);
+   const auto decoded = forge::xml::read_value(response.body());
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::unsupported_media_type));
+   BOOST_TEST(response[field::content_type] == "application/xml");
+   BOOST_REQUIRE(decoded.ok());
+   BOOST_TEST(xml_child_text(decoded.value.root, "error") == "unsupported_media_type");
+}
+
+BOOST_AUTO_TEST_CASE(http_api_xml_route_rejects_unacceptable_accept) {
+   auto runtime = forge::asio::runtime{};
+   auto apis = forge::api::registry{};
+   apis.install<xml_cache_api>(xml_cache_api::describe(), std::make_shared<xml_cache_api_impl>());
+
+   auto router = forge::http::router{};
+   auto binding = forge::http::api::binding().use(forge::api::binding().serve(apis).build()).bind<xml_cache_api>().build();
+   router.mount(binding);
+
+   auto request = make_request(method::get, "/xml/cache/chunks/abc?offset=1&limit=2");
+   request.set("Accept", "application/json");
+
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+
+   const auto response = handle(router, context);
+   const auto decoded = forge::xml::read_value(response.body());
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::not_acceptable));
+   BOOST_TEST(response[field::content_type] == "application/xml");
+   BOOST_REQUIRE(decoded.ok());
+   BOOST_TEST(xml_child_text(decoded.value.root, "error") == "not_acceptable");
+}
+
+BOOST_AUTO_TEST_CASE(typed_http_client_supports_xml_request_and_response_bodies) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto apis = forge::api::registry{};
+   apis.install<xml_cache_api>(xml_cache_api::describe(), std::make_shared<xml_cache_api_impl>());
+
+   auto router = forge::http::router{};
+   auto binding = forge::http::api::binding().use(forge::api::binding().serve(apis).build()).bind<xml_cache_api>().build();
+   router.mount(binding);
+
+   auto server = forge::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   const auto port = wait_for_port(server);
+   auto client = forge::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
+   auto cache = forge::asio::blocking::run(runtime, forge::http::api::remote<xml_cache_api>(client));
+
+   const auto response =
+      forge::asio::blocking::run(runtime, cache->write(macro_write_request{.ref = "abc", .bytes = "payload"}));
+
+   BOOST_TEST(response.bytes == "abc:payload");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_api_native_responses_bypass_xml_codec_options) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto files = temp_directory{};
+   std::filesystem::create_directories(files.path() / "cache");
+   files.write("cache/chunk.bin", "file-payload");
+
+   auto apis = forge::api::registry{};
+   apis.install<control_api>(control_api::describe(), std::make_shared<control_api_impl>());
+   apis.install<object_api>(object_api::describe(), std::make_shared<object_api_impl>(files.path()));
+
+   auto router = forge::http::router{};
+   auto binding = forge::http::api::binding()
+                     .use(forge::api::binding().serve(apis).build())
+                     .route<&control_api::bytes, control_request, forge::http::bytes_response>(
+                        forge::http::api::route_builder{method::get, "bytes", "/xml/native/:id/bytes", status::ok}
+                           .response_body_codec(forge::http::api::body_codec::xml)
+                           .build())
+                     .route<&control_api::accepted, control_request, forge::http::empty_response>(
+                        forge::http::api::route_builder{method::get, "accepted", "/xml/native/:id/accepted", status::ok}
+                           .response_body_codec(forge::http::api::body_codec::xml)
+                           .build())
+                     .route<&object_api::get_object, object_get_request, forge::http::file_response>(
+                        forge::http::api::route_builder{method::get,
+                                                        "get_object",
+                                                        "/xml/native/:collection/:key/file",
+                                                        status::ok}
+                           .response_file()
+                           .response_body_codec(forge::http::api::body_codec::xml)
+                           .build())
+                     .route<&object_api::stream_object, object_get_request, forge::http::streaming_response>(
+                        forge::http::api::route_builder{method::get,
+                                                        "stream_object",
+                                                        "/xml/native/:collection/:key/stream",
+                                                        status::ok}
+                           .response_stream()
+                           .response_body_codec(forge::http::api::body_codec::xml)
+                           .build())
+                     .build();
+   router.mount(binding);
+
+   auto server = forge::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto client = forge::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+
+   const auto bytes = forge::asio::blocking::run(runtime, client.async_get("/xml/native/abc/bytes"));
+   BOOST_TEST(bytes.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(bytes[field::content_type] == "application/control");
+   BOOST_TEST(bytes.body() == "bytes:abc");
+
+   const auto empty = forge::asio::blocking::run(runtime, client.async_get("/xml/native/abc/accepted"));
+   BOOST_TEST(empty.result_int() == static_cast<unsigned>(status::accepted));
+   BOOST_TEST(empty.body().empty());
+
+   const auto file = forge::asio::blocking::run(runtime, client.async_get("/xml/native/cache/chunk.bin/file"));
+   BOOST_TEST(file.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(file[field::content_type] == "application/octet-stream");
+   BOOST_TEST(file.body() == "file-payload");
+
+   const auto stream = forge::asio::blocking::run(runtime, client.async_get("/xml/native/cache/chunk.bin/stream"));
+   BOOST_TEST(stream.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(stream[field::content_type] == "application/octet-stream");
+   BOOST_TEST(stream.body() == "file-payload");
+
+   server.stop();
 }
 
 BOOST_AUTO_TEST_CASE(typed_http_client_supports_handle_methods) {

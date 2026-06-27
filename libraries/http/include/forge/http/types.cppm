@@ -13,6 +13,7 @@ export module forge.http.types;
 export namespace forge::http {
 
 enum class field {
+   accept,
    accept_ranges,
    authorization,
    connection,
@@ -55,6 +56,7 @@ enum class status : unsigned {
    forbidden = 403,
    not_found = 404,
    method_not_allowed = 405,
+   not_acceptable = 406,
    conflict = 409,
    payload_too_large = 413,
    unsupported_media_type = 415,

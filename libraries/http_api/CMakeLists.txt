@@ -8,6 +8,7 @@ target_link_libraries(
       forge_api
       forge_http
       forge_json
+      forge_xml
       forge_raw
       forge_reflect
       forge_schema

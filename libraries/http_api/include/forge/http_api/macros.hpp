@@ -21,6 +21,12 @@
    .body_stream(BOOST_PP_STRINGIZE(BOOST_PP_TUPLE_ELEM(3, 1, OPTION)))
 #define FORGE_HTTP_DETAIL_OPTION_APPLY_response_file(OPTION) .response_file()
 #define FORGE_HTTP_DETAIL_OPTION_APPLY_response_stream(OPTION) .response_stream()
+#define FORGE_HTTP_DETAIL_OPTION_APPLY_request_body(OPTION)                                                             \
+   .request_body_codec(::forge::http::api::body_codec::BOOST_PP_TUPLE_ELEM(3, 1, OPTION))
+#define FORGE_HTTP_DETAIL_OPTION_APPLY_response_body(OPTION)                                                            \
+   .response_body_codec(::forge::http::api::body_codec::BOOST_PP_TUPLE_ELEM(3, 1, OPTION))
+#define FORGE_HTTP_DETAIL_OPTION_APPLY_error_body(OPTION)                                                               \
+   .error_body_codec(::forge::http::api::error_codec::BOOST_PP_TUPLE_ELEM(3, 1, OPTION))
 #define FORGE_HTTP_DETAIL_OPTION_APPLY(r, DATA, OPTION)                                                               \
    BOOST_PP_CAT(FORGE_HTTP_DETAIL_OPTION_APPLY_, FORGE_HTTP_DETAIL_OPTION_KIND(OPTION))(OPTION)
 #define FORGE_HTTP_DETAIL_OPTIONS(...)                                                                                \
@@ -56,6 +62,9 @@
 #define FORGE_HTTP_BODY_STREAM(FIELD) (body_stream, FIELD, _)
 #define FORGE_HTTP_RESPONSE_FILE (response_file, _, _)
 #define FORGE_HTTP_RESPONSE_STREAM (response_stream, _, _)
+#define FORGE_HTTP_REQUEST_BODY(CODEC) (request_body, CODEC, _)
+#define FORGE_HTTP_RESPONSE_BODY(CODEC) (response_body, CODEC, _)
+#define FORGE_HTTP_ERROR_BODY(CODEC) (error_body, CODEC, _)
 
 #define FORGE_HTTP_DETAIL_METHOD(ROUTE) BOOST_PP_TUPLE_ELEM(2, 0, ROUTE)
 #define FORGE_HTTP_DETAIL_ROUTE_VALUE(ROUTE) BOOST_PP_TUPLE_ELEM(2, 1, ROUTE)

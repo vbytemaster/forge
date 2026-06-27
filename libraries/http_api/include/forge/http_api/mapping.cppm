@@ -26,6 +26,16 @@ import forge.schema.scalar;
 
 export namespace forge::http::api {
 
+enum class body_codec {
+   json,
+   xml,
+};
+
+enum class error_codec {
+   json,
+   xml,
+};
+
 struct field_binding {
    std::string field;
    std::string name;
@@ -41,6 +51,9 @@ struct route {
    std::optional<std::string> body_stream_field;
    bool response_file = false;
    bool response_stream = false;
+   body_codec request_body_codec = body_codec::json;
+   body_codec response_body_codec = body_codec::json;
+   error_codec error_body_codec = error_codec::json;
 };
 
 class route_builder {
@@ -73,6 +86,21 @@ class route_builder {
 
    route_builder&& response_stream() && {
       route_.response_stream = true;
+      return std::move(*this);
+   }
+
+   route_builder&& request_body_codec(body_codec value) && {
+      route_.request_body_codec = value;
+      return std::move(*this);
+   }
+
+   route_builder&& response_body_codec(body_codec value) && {
+      route_.response_body_codec = value;
+      return std::move(*this);
+   }
+
+   route_builder&& error_body_codec(error_codec value) && {
+      route_.error_body_codec = value;
       return std::move(*this);
    }
 
@@ -113,6 +141,142 @@ using ::forge::http::detail::response_needs_stream_v;
 
 [[nodiscard]] inline bool uses_request_body(method verb) noexcept {
    return verb == method::post || verb == method::put || verb == method::patch || verb == method::delete_;
+}
+
+[[nodiscard]] inline std::string trim_ascii(std::string_view value) {
+   auto begin = std::size_t{0};
+   while (begin != value.size() && std::isspace(static_cast<unsigned char>(value[begin])) != 0) {
+      ++begin;
+   }
+   auto end = value.size();
+   while (end != begin && std::isspace(static_cast<unsigned char>(value[end - 1U])) != 0) {
+      --end;
+   }
+   return std::string{value.substr(begin, end - begin)};
+}
+
+[[nodiscard]] inline std::string lower_ascii(std::string_view value) {
+   auto output = std::string{};
+   output.reserve(value.size());
+   for (const auto character : value) {
+      output.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(character))));
+   }
+   return output;
+}
+
+[[nodiscard]] inline std::string media_type(std::string_view value) {
+   const auto semicolon = value.find(';');
+   return lower_ascii(trim_ascii(value.substr(0, semicolon)));
+}
+
+[[nodiscard]] inline bool has_structured_suffix(std::string_view type, std::string_view suffix) {
+   return type.size() > suffix.size() && type.ends_with(suffix);
+}
+
+[[nodiscard]] inline bool media_type_matches(body_codec codec, std::string_view value) {
+   const auto type = media_type(value);
+   switch (codec) {
+   case body_codec::json:
+      return type == "application/json" || has_structured_suffix(type, "+json");
+   case body_codec::xml:
+      return type == "application/xml" || type == "text/xml" || has_structured_suffix(type, "+xml");
+   }
+   return false;
+}
+
+[[nodiscard]] inline std::string_view content_type(body_codec codec) noexcept {
+   switch (codec) {
+   case body_codec::json:
+      return "application/json";
+   case body_codec::xml:
+      return "application/xml";
+   }
+   return "application/octet-stream";
+}
+
+[[nodiscard]] inline std::string_view content_type(error_codec codec) noexcept {
+   switch (codec) {
+   case error_codec::json:
+      return "application/json";
+   case error_codec::xml:
+      return "application/xml";
+   }
+   return "application/octet-stream";
+}
+
+[[nodiscard]] inline bool q_value_allows(std::string_view parameter) {
+   auto value = trim_ascii(parameter);
+   if (value.empty()) {
+      return true;
+   }
+   if (value.front() != '0') {
+      return true;
+   }
+   const auto decimal = value.find('.');
+   if (decimal == std::string::npos) {
+      return false;
+   }
+   for (auto index = decimal + 1U; index != value.size(); ++index) {
+      if (value[index] >= '1' && value[index] <= '9') {
+         return true;
+      }
+   }
+   return false;
+}
+
+[[nodiscard]] inline bool accept_item_allows(std::string_view item) {
+   auto offset = std::size_t{0};
+   while (offset <= item.size()) {
+      const auto separator = item.find(';', offset);
+      const auto end = separator == std::string_view::npos ? item.size() : separator;
+      const auto parameter = trim_ascii(item.substr(offset, end - offset));
+      if (offset != 0U) {
+         const auto equals = parameter.find('=');
+         if (equals != std::string::npos && lower_ascii(trim_ascii(parameter.substr(0, equals))) == "q") {
+            return q_value_allows(parameter.substr(equals + 1U));
+         }
+      }
+      if (separator == std::string_view::npos) {
+         break;
+      }
+      offset = separator + 1U;
+   }
+   return true;
+}
+
+[[nodiscard]] inline bool accept_media_matches(body_codec codec, std::string_view item) {
+   const auto semicolon = item.find(';');
+   const auto type = media_type(item.substr(0, semicolon));
+   if (type == "*/*" || type == "*") {
+      return true;
+   }
+   if (type == "application/*") {
+      return codec == body_codec::json || codec == body_codec::xml;
+   }
+   if (type == "text/*") {
+      return codec == body_codec::xml;
+   }
+   return media_type_matches(codec, type);
+}
+
+[[nodiscard]] inline bool accept_allows(body_codec codec, std::string_view value) {
+   if (trim_ascii(value).empty()) {
+      return true;
+   }
+   auto offset = std::size_t{0};
+   while (offset <= value.size()) {
+      const auto separator = value.find(',', offset);
+      const auto end = separator == std::string_view::npos ? value.size() : separator;
+      const auto item = value.substr(offset, end - offset);
+      if (accept_item_allows(item) && accept_media_matches(codec, item)) {
+         return true;
+      }
+      if (separator == std::string_view::npos) {
+         break;
+      }
+      offset = separator + 1U;
+   }
+   return false;
 }
 
 template <auto Method, typename Request>

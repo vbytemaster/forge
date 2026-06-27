@@ -14,6 +14,7 @@ enum class code : int {
    forbidden = 403,
    not_found = 404,
    method_not_allowed = 405,
+   not_acceptable = 406,
    conflict = 409,
    payload_too_large = 413,
    unsupported_media_type = 415,
@@ -31,6 +32,7 @@ using unauthorized = forge::exceptions::coded_exception<code, code::unauthorized
 using forbidden = forge::exceptions::coded_exception<code, code::forbidden>;
 using not_found = forge::exceptions::coded_exception<code, code::not_found>;
 using method_not_allowed = forge::exceptions::coded_exception<code, code::method_not_allowed>;
+using not_acceptable = forge::exceptions::coded_exception<code, code::not_acceptable>;
 using conflict = forge::exceptions::coded_exception<code, code::conflict>;
 using payload_too_large = forge::exceptions::coded_exception<code, code::payload_too_large>;
 using unsupported_media_type = forge::exceptions::coded_exception<code, code::unsupported_media_type>;

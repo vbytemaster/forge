@@ -1,14 +1,16 @@
+get_filename_component(FORGE_XML_PUGIXML_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/../../vendor/pugixml/src" ABSOLUTE)
+
 add_library(
    forge_xml STATIC
    xml.cpp
-   "${CMAKE_SOURCE_DIR}/vendor/pugixml/src/pugixml.cpp"
+   "${FORGE_XML_PUGIXML_SOURCE_DIR}/pugixml.cpp"
 )
 forge_target_modules(forge_xml xml)
 
 target_include_directories(
    forge_xml
    PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS}
-   PRIVATE "${CMAKE_SOURCE_DIR}/vendor/pugixml/src"
+   PRIVATE "${FORGE_XML_PUGIXML_SOURCE_DIR}"
 )
 target_link_libraries(
    forge_xml PUBLIC

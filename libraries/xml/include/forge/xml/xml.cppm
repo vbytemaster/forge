@@ -244,11 +244,30 @@ void append_schema_object_children(std::vector<element>& output,
                                    std::vector<schema::diagnostic>& diagnostics) {
    const auto rules = schema::rules<T>::define();
    const auto& fields = rules.fields();
-   auto index = std::size_t{0};
+   if (!fields.empty()) {
+      for (const auto& field : fields) {
+         auto matched = false;
+         if (!field.member_name.empty()) {
+            forge::reflect::for_each_member<T>([&](const char* member_name, auto member) {
+               if (matched || field.member_name != member_name) {
+                  return;
+               }
+               append_member_elements(output, field.name, input.*member, diagnostics);
+               matched = true;
+            });
+         }
+         if (!matched) {
+            auto value = field.read_input(input);
+            if (!std::holds_alternative<std::monostate>(value.storage)) {
+               append_input_value_elements(output, field.name, value);
+            }
+         }
+      }
+      return;
+   }
+
    forge::reflect::for_each_member<T>([&](const char* member_name, auto member) {
-      const auto name = index < fields.size() ? std::string_view{fields[index].name} : std::string_view{member_name};
-      append_member_elements(output, name, input.*member, diagnostics);
-      ++index;
+      append_member_elements(output, member_name, input.*member, diagnostics);
    });
 }
 
@@ -432,13 +451,13 @@ template <typename T>
    auto output = element{.name = std::move(name)};
    const auto rules = schema::rules<T>::define();
    const auto& fields = rules.fields();
-
-   auto index = std::size_t{0};
-   forge::reflect::for_each_member<T>([&](const char* member_name, auto member) {
-      const auto field_name = index < fields.size() ? std::string_view{fields[index].name} : std::string_view{member_name};
-      append_member_elements(output.children, field_name, value.*member, diagnostics);
-      ++index;
-   });
+   if (!fields.empty()) {
+      append_schema_object_children(output.children, value, diagnostics);
+   } else {
+      forge::reflect::for_each_member<T>([&](const char* member_name, auto member) {
+         append_member_elements(output.children, member_name, value.*member, diagnostics);
+      });
+   }
    return output;
 }
 

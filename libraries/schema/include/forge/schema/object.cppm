@@ -3,6 +3,7 @@ module;
 #include <any>
 #include <algorithm>
 #include <boost/describe.hpp>
+#include <boost/mp11.hpp>
 #include <charconv>
 #include <concepts>
 #include <cstdint>
@@ -39,6 +40,24 @@ template <typename Object, typename Member> struct member_pointer_traits<Member 
    using object_type = Object;
    using member_type = Member;
 };
+
+template <typename T, auto Member> [[nodiscard]] std::string described_member_name() {
+   auto output = std::string{};
+   if constexpr (boost::describe::has_describe_members<T>::value) {
+      using members = boost::describe::describe_members<T, boost::describe::mod_any_access | boost::describe::mod_inherited>;
+      boost::mp11::mp_for_each<members>([&](auto descriptor) {
+         if (!output.empty()) {
+            return;
+         }
+         if constexpr (std::same_as<std::remove_cv_t<decltype(descriptor.pointer)>, decltype(Member)>) {
+            if (descriptor.pointer == Member) {
+               output = descriptor.name;
+            }
+         }
+      });
+   }
+   return output;
+}
 
 struct input_value {
    using array_type = std::vector<input_value>;
@@ -196,6 +215,7 @@ template <typename T>
 
 template <typename T> struct field_rule {
    std::string name;
+   std::string member_name;
    std::vector<std::string> aliases;
    value_kind kind = value_kind::string;
    std::type_index type = std::type_index{typeid(void)};
@@ -233,6 +253,7 @@ template <typename T> class object_schema {
 
       auto rule = field_rule<T>{};
       rule.name = std::move(name);
+      rule.member_name = described_member_name<T, Member>();
       rule.kind = member_kind<member_type>::value;
       rule.type = std::type_index{typeid(member_type)};
       rule.assign_any = [](T& object, const std::any& value) { object.*Member = cast_any_to<member_type>(value); };

@@ -430,6 +430,19 @@ add_custom_target(
    DEPENDS test_forge_package_install
 )
 add_custom_target(
+   test_forge_package_xml_add_subdirectory
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_xml_add_subdirectory
+      ${CMAKE_BINARY_DIR}/forge-package-xml-add-subdirectory
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options
+         ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+         -DFORGE_SOURCE_DIR=${CMAKE_SOURCE_DIR}
+      --build-target forge_xml_add_subdirectory
+      --test-command forge_xml_add_subdirectory
+)
+add_custom_target(
    test_forge_package_transport_api_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
@@ -629,6 +642,19 @@ add_test(
       --test-command forge_package_xml_component
 )
 set_tests_properties(test_forge_package_xml_component PROPERTIES DEPENDS test_forge_package_install)
+add_test(
+   NAME test_forge_package_xml_add_subdirectory
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_xml_add_subdirectory
+      ${CMAKE_BINARY_DIR}/forge-package-xml-add-subdirectory
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options
+         ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+         -DFORGE_SOURCE_DIR=${CMAKE_SOURCE_DIR}
+      --build-target forge_xml_add_subdirectory
+      --test-command forge_xml_add_subdirectory
+)
 add_test(
    NAME test_forge_package_transport_api_component
    COMMAND ${CMAKE_CTEST_COMMAND}

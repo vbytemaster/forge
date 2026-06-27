@@ -46,6 +46,16 @@ struct ordered_parent {
    std::vector<ordered_child> children;
 };
 
+struct schema_bound_child {
+   std::string a;
+   std::string omitted;
+   std::string b;
+};
+
+struct schema_bound_parent {
+   std::vector<schema_bound_child> children;
+};
+
 } // namespace forge_xml_tests
 
 namespace forge_xml_tests {
@@ -57,6 +67,8 @@ BOOST_DESCRIBE_STRUCT(complete_multipart_upload, (), (location, bucket, key, eta
 BOOST_DESCRIBE_STRUCT(error_body, (), (code, message, request_id))
 BOOST_DESCRIBE_STRUCT(ordered_child, (), (b, a))
 BOOST_DESCRIBE_STRUCT(ordered_parent, (), (children))
+BOOST_DESCRIBE_STRUCT(schema_bound_child, (), (a, omitted, b))
+BOOST_DESCRIBE_STRUCT(schema_bound_parent, (), (children))
 
 } // namespace forge_xml_tests
 
@@ -126,6 +138,23 @@ template <> struct forge::schema::rules<forge_xml_tests::ordered_parent> {
    [[nodiscard]] static forge::schema::object_schema<forge_xml_tests::ordered_parent> define() {
       auto schema = forge::schema::object<forge_xml_tests::ordered_parent>();
       schema.field<&forge_xml_tests::ordered_parent::children>("Child").items<forge_xml_tests::ordered_child>();
+      return schema;
+   }
+};
+
+template <> struct forge::schema::rules<forge_xml_tests::schema_bound_child> {
+   [[nodiscard]] static forge::schema::object_schema<forge_xml_tests::schema_bound_child> define() {
+      auto schema = forge::schema::object<forge_xml_tests::schema_bound_child>();
+      schema.field<&forge_xml_tests::schema_bound_child::b>("B").required().non_empty();
+      schema.field<&forge_xml_tests::schema_bound_child::a>("A").required().non_empty();
+      return schema;
+   }
+};
+
+template <> struct forge::schema::rules<forge_xml_tests::schema_bound_parent> {
+   [[nodiscard]] static forge::schema::object_schema<forge_xml_tests::schema_bound_parent> define() {
+      auto schema = forge::schema::object<forge_xml_tests::schema_bound_parent>();
+      schema.field<&forge_xml_tests::schema_bound_parent::children>("Child").items<forge_xml_tests::schema_bound_child>();
       return schema;
    }
 };
@@ -211,6 +240,21 @@ BOOST_AUTO_TEST_CASE(xml_schema_write_preserves_nested_object_field_order) {
    BOOST_REQUIRE(b != std::string::npos);
    BOOST_REQUIRE(a != std::string::npos);
    BOOST_TEST(b < a);
+}
+
+BOOST_AUTO_TEST_CASE(xml_schema_write_binds_schema_fields_to_declared_members) {
+   const auto value =
+      forge_xml_tests::schema_bound_parent{.children = {{.a = "alpha", .omitted = "hidden", .b = "bravo"}}};
+   const auto written = forge::xml::write(value, {.root_name = "Root"});
+
+   BOOST_REQUIRE(written.ok());
+   const auto b = written.text.find("<B>bravo</B>");
+   const auto a = written.text.find("<A>alpha</A>");
+   BOOST_REQUIRE(b != std::string::npos);
+   BOOST_REQUIRE(a != std::string::npos);
+   BOOST_TEST(b < a);
+   BOOST_TEST(written.text.find("hidden") == std::string::npos);
+   BOOST_TEST(written.text.find("omitted") == std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(xml_typed_unknown_field_policy_matches_forge_diagnostics) {

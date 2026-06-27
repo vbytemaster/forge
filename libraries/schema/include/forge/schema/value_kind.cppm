@@ -3,6 +3,7 @@ module;
 #include <boost/describe.hpp>
 
 #include <concepts>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -39,10 +40,18 @@ template <typename T> struct is_vector_enum : std::false_type {};
 template <typename T, typename Allocator>
 struct is_vector_enum<std::vector<T, Allocator>> : std::bool_constant<std::is_enum_v<T>> {};
 
+template <typename T> struct is_optional : std::false_type {};
+
+template <typename T> struct is_optional<std::optional<T>> : std::true_type {
+   using value_type = T;
+};
+
 template <typename T> struct member_kind {
    static constexpr value_kind value = [] {
       using clean_type = std::remove_cvref_t<T>;
-      if constexpr (std::same_as<clean_type, bool>) {
+      if constexpr (is_optional<clean_type>::value) {
+         return member_kind<typename is_optional<clean_type>::value_type>::value;
+      } else if constexpr (std::same_as<clean_type, bool>) {
          return value_kind::boolean;
       } else if constexpr (std::signed_integral<clean_type>) {
          return value_kind::signed_integer;

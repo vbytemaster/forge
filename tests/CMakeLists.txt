@@ -181,6 +181,14 @@ target_link_libraries(test_forge_yaml forge Boost::included_unit_test_framework)
 add_test(NAME test_forge_yaml COMMAND test_forge_yaml WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
+   test_forge_xml
+   unit/main.cpp
+   xml/xml_tests.cpp
+)
+target_link_libraries(test_forge_xml forge_xml Boost::included_unit_test_framework)
+add_test(NAME test_forge_xml COMMAND test_forge_xml WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(
    test_forge_program_options
    unit/main.cpp
    program_options/program_options_tests.cpp
@@ -314,6 +322,7 @@ set(
 add_custom_target(
    test_forge_package_install
    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${FORGE_PACKAGE_INSTALL_PREFIX} --component dev
+   DEPENDS forge
 )
 add_custom_target(
    test_forge_package_consumer
@@ -405,6 +414,19 @@ add_custom_target(
       --build-generator ${CMAKE_GENERATOR}
       --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
       --test-command forge_package_http_api_component
+   DEPENDS test_forge_package_install
+)
+add_custom_target(
+   test_forge_package_xml_component
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_xml_component
+      ${CMAKE_BINARY_DIR}/forge-package-xml-component
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options
+         ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+         -DCMAKE_DISABLE_FIND_PACKAGE_glaze=ON
+      --test-command forge_package_xml_component
    DEPENDS test_forge_package_install
 )
 add_custom_target(
@@ -594,6 +616,19 @@ add_test(
       --test-command forge_package_http_api_component
 )
 set_tests_properties(test_forge_package_http_api_component PROPERTIES DEPENDS test_forge_package_install)
+add_test(
+   NAME test_forge_package_xml_component
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_xml_component
+      ${CMAKE_BINARY_DIR}/forge-package-xml-component
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options
+         ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+         -DCMAKE_DISABLE_FIND_PACKAGE_glaze=ON
+      --test-command forge_package_xml_component
+)
+set_tests_properties(test_forge_package_xml_component PROPERTIES DEPENDS test_forge_package_install)
 add_test(
    NAME test_forge_package_transport_api_component
    COMMAND ${CMAKE_CTEST_COMMAND}

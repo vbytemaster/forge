@@ -205,6 +205,7 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/json/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/config/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/yaml/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/xml/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/program_options/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/env/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/api/include"
@@ -344,6 +345,7 @@ add_subdirectory(libraries/raw)
 add_subdirectory(libraries/config)
 add_subdirectory(libraries/json)
 add_subdirectory(libraries/yaml)
+add_subdirectory(libraries/xml)
 add_subdirectory(libraries/program_options)
 add_subdirectory(libraries/env)
 add_subdirectory(libraries/api)
@@ -379,6 +381,7 @@ set(
    forge_config
    forge_json
    forge_yaml
+   forge_xml
    forge_program_options
    forge_env
    forge_api
@@ -453,6 +456,7 @@ install(
              libraries/json/include/forge
              libraries/config/include/forge
              libraries/yaml/include/forge
+             libraries/xml/include/forge
              libraries/program_options/include/forge
              libraries/env/include/forge
              libraries/api/include/forge

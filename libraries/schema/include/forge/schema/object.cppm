@@ -187,6 +187,9 @@ template <typename T>
 [[nodiscard]] T cast_input_to(const input_value& input, std::string_view path, std::vector<diagnostic>& diagnostics);
 
 template <typename T>
+[[nodiscard]] input_value to_input_value(const T& input);
+
+template <typename T>
 [[nodiscard]] std::vector<T> decode_object_list(const input_value& input,
                                                 std::string_view path,
                                                 std::vector<diagnostic>& diagnostics);
@@ -211,6 +214,7 @@ template <typename T> struct field_rule {
    std::function<void(T&, const std::any&)> assign_any;
    std::function<void(T&, const input_value&, std::string_view, std::vector<diagnostic>&)> assign_input;
    std::function<std::any(const T&)> read_any;
+   std::function<input_value(const T&)> read_input;
    std::function<std::optional<std::size_t>(const T&)> read_size;
    std::vector<std::function<void(const T&, std::string_view, std::vector<diagnostic>&)>> validators;
 };
@@ -241,6 +245,7 @@ template <typename T> class object_schema {
          }
       };
       rule.read_any = [](const T& object) -> std::any { return object.*Member; };
+      rule.read_input = [](const T& object) -> input_value { return to_input_value(object.*Member); };
       if constexpr (is_vector<member_type>::value) {
          rule.read_size = [](const T& object) -> std::optional<std::size_t> { return (object.*Member).size(); };
       }
@@ -596,7 +601,10 @@ template <typename T> class field_builder {
 template <typename T>
 [[nodiscard]] T cast_input_to(const input_value& input, std::string_view path, std::vector<diagnostic>& diagnostics) {
    using clean_type = std::remove_cvref_t<T>;
-   if constexpr (std::same_as<clean_type, bool>) {
+   if constexpr (is_optional<clean_type>::value) {
+      using item_type = typename is_optional<clean_type>::value_type;
+      return cast_input_to<item_type>(input, path, diagnostics);
+   } else if constexpr (std::same_as<clean_type, bool>) {
       if (const auto* value = std::get_if<bool>(&input.storage)) {
          return *value;
       }
@@ -763,6 +771,75 @@ template <typename T>
       output.push_back(std::move(item));
    }
    return output;
+}
+
+template <typename T>
+[[nodiscard]] input_value to_input_value(const T& input) {
+   using clean_type = std::remove_cvref_t<T>;
+   if constexpr (is_optional<clean_type>::value) {
+      if (!input.has_value()) {
+         return input_value{};
+      }
+      return to_input_value(*input);
+   } else if constexpr (std::same_as<clean_type, bool>) {
+      return input_value{input};
+   } else if constexpr (std::signed_integral<clean_type> && !std::same_as<clean_type, bool>) {
+      return input_value{static_cast<std::int64_t>(input)};
+   } else if constexpr (std::unsigned_integral<clean_type> && !std::same_as<clean_type, bool>) {
+      return input_value{static_cast<std::uint64_t>(input)};
+   } else if constexpr (std::floating_point<clean_type>) {
+      return input_value{static_cast<double>(input)};
+   } else if constexpr (std::same_as<clean_type, std::string>) {
+      return input_value{input};
+   } else if constexpr (std::is_enum_v<clean_type>) {
+      if (auto text = enum_to_config_string(input)) {
+         return input_value{std::move(*text)};
+      }
+      using underlying_type = std::underlying_type_t<clean_type>;
+      if constexpr (std::signed_integral<underlying_type>) {
+         return input_value{static_cast<std::int64_t>(input)};
+      } else {
+         return input_value{static_cast<std::uint64_t>(input)};
+      }
+   } else if constexpr (std::same_as<clean_type, std::vector<std::string>>) {
+      auto array = input_value::array_type{};
+      array.reserve(input.size());
+      for (const auto& item : input) {
+         array.emplace_back(item);
+      }
+      return input_value{std::move(array)};
+   } else if constexpr (is_vector_enum<clean_type>::value) {
+      auto array = input_value::array_type{};
+      array.reserve(input.size());
+      for (const auto& item : input) {
+         array.push_back(to_input_value(item));
+      }
+      return input_value{std::move(array)};
+   } else if constexpr (is_vector<clean_type>::value) {
+      auto array = input_value::array_type{};
+      array.reserve(input.size());
+      for (const auto& item : input) {
+         array.push_back(to_input_value(item));
+      }
+      return input_value{std::move(array)};
+   } else {
+      auto object = input_value::object_type{};
+      const auto nested_rules = rules<clean_type>::define();
+      if (!nested_rules.fields().empty()) {
+         for (const auto& field : nested_rules.fields()) {
+            auto value = field.read_input(input);
+            if (!std::holds_alternative<std::monostate>(value.storage)) {
+               object.emplace(field.name, std::move(value));
+            }
+         }
+         return input_value{std::move(object)};
+      }
+      if constexpr (boost::describe::has_describe_members<clean_type>::value) {
+         return input_value{std::move(object)};
+      } else {
+         return input_value{};
+      }
+   }
 }
 
 template <typename T> [[nodiscard]] object_schema<T> object() {

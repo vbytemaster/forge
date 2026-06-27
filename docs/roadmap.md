@@ -34,6 +34,8 @@ plugins, telemetry and compatibility layers должны быть пригодн
 - API-over-transport, P2P plugin facade, resolver, diagnostics and PubSub
   plugin flows for typed service composition.
 - OTLP log export and crash-spool resend as opt-in observability adapters.
+- Planned XML codec API backed by a private lightweight XML backend, followed by
+  multi-codec `forge_http_api` binding for XML request/response/error bodies.
 
 ## Library Families
 
@@ -55,6 +57,8 @@ plugins, telemetry and compatibility layers должны быть пригодн
   helpers, navigation and backend isolation.
 - [Codecs](codecs/json-yaml-glaze.md): JSON/YAML namespace APIs, Glaze backend
   boundary and diagnostics.
+- [XML + HTTP API Codecs](iterations/forge-xml-http-api-codec-v1.md): planned
+  XML library first, then HTTP API multi-codec body/error binding.
 - [Config](config/schema-config-program-options.md): schema rules, neutral
   config documents, env/CLI adapters and redaction.
 - [Secret Provider](iterations/fcl-secret-provider-v1.md): neutral
@@ -101,6 +105,8 @@ Security gates:
 
 - Keep library READMEs aligned with public modules and actual targets.
 - Keep donor traceability updated when compatibility behavior changes.
+- Land XML support before downstream S3-compatible APIs, then extend
+  `forge_http_api` instead of allowing product code to bypass typed API binding.
 - Re-run package install plus external `find_package(Forge CONFIG REQUIRED)`
   consumer smoke before releases.
 - Keep review focused on architecture boundaries, dependency hygiene, security

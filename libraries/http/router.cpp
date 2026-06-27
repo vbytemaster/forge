@@ -210,6 +210,16 @@ template <typename Entry> bool path_exists(const std::vector<Entry>& entries, co
    return false;
 }
 
+template <typename Entry>
+bool method_path_exists(const std::vector<Entry>& entries, method verb, const target& parsed_target) {
+   for (const auto& entry : entries) {
+      if (entry.verb == verb && match_path(entry, parsed_target, nullptr)) {
+         return true;
+      }
+   }
+   return false;
+}
+
 bool path_prefix_matches(const std::string& prefix, const target& parsed_target) {
    if (prefix.empty() || prefix == "/") {
       return true;
@@ -388,6 +398,20 @@ boost::asio::awaitable<response> router::handle(route_context& context) const {
    } catch (...) {
       co_return make_text_response(context.request, status::internal_server_error, "internal server error");
    }
+}
+
+std::optional<response> router::preflight(route_context& context) const {
+   if (method_path_exists(routes_, context.request.method(), context.parsed_target) ||
+       method_path_exists(stream_routes_, context.request.method(), context.parsed_target)) {
+      return std::nullopt;
+   }
+   if (path_exists(routes_, context.parsed_target) || path_exists(stream_routes_, context.parsed_target)) {
+      return make_text_response(context.request, status::method_not_allowed, "method not allowed");
+   }
+   if (path_exists(websocket_routes_, context.parsed_target)) {
+      return make_text_response(context.request, status::upgrade_required, "websocket upgrade required");
+   }
+   return make_text_response(context.request, status::not_found, "not found");
 }
 
 bool router::can_handle_stream(route_context& context) const {

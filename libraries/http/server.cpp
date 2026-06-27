@@ -310,9 +310,19 @@ class server_session : public std::enable_shared_from_this<server_session> {
             }
          }
 
+         if (router_) {
+            if (auto preflight_response = router_->preflight(context)) {
+               preflight_response->version(request_value.version());
+               preflight_response->keep_alive(false);
+               co_await write_response(*preflight_response);
+               break;
+            }
+         }
+
+         const auto stream_capable = router_ && router_->can_handle_stream(context);
          auto body_source = std::make_shared<beast_body_reader_source>(
             stream_, buffer_, parser, limits_from(config_), expects_continue(request_value));
-         if (router_ && router_->can_handle_stream(context)) {
+         if (stream_capable) {
             auto stream_request_value = stream_request{.context = context, .body = body_reader{body_source}};
             stream_.expires_after(config_.idle_timeout);
             auto response_value = co_await router_->handle_stream(stream_request_value);

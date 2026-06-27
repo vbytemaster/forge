@@ -4775,6 +4775,99 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_accepted_stream_sends_interim_before_b
    forge::asio::blocking::run(runtime, server.async_stop());
 }
 
+BOOST_AUTO_TEST_CASE(http_expect_continue_missing_path_rejects_without_interim) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+
+   auto router = forge::http::router{};
+   router.post_stream("/upload", [](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      static_cast<void>(request_value);
+      co_return stream_response::buffered(response{status::ok, 11});
+   });
+
+   auto server = forge::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   const auto exchange = raw_expect_continue_exchange(
+      server.port(),
+      "POST /missing HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Expect: 100-continue\r\n"
+      "Content-Length: 1048576\r\n"
+      "\r\n",
+      std::string(1024, 'x'),
+      std::chrono::milliseconds{500});
+
+   BOOST_TEST(!exchange.interim.has_value());
+   BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::not_found));
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_expect_continue_wrong_method_on_stream_route_rejects_without_interim) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto invoked = std::make_shared<std::atomic<bool>>(false);
+
+   auto router = forge::http::router{};
+   router.post_stream("/upload", [invoked](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      static_cast<void>(request_value);
+      invoked->store(true);
+      co_return stream_response::buffered(response{status::ok, 11});
+   });
+
+   auto server = forge::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   const auto exchange = raw_expect_continue_exchange(
+      server.port(),
+      "PUT /upload HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Expect: 100-continue\r\n"
+      "Content-Length: 1048576\r\n"
+      "\r\n",
+      std::string(1024, 'x'),
+      std::chrono::milliseconds{500});
+
+   BOOST_TEST(!exchange.interim.has_value());
+   BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::method_not_allowed));
+   BOOST_TEST(!invoked->load());
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_expect_continue_accepted_buffered_route_sends_interim_before_body_read) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto bytes_read = std::make_shared<std::atomic<std::size_t>>(0);
+
+   auto router = forge::http::router{};
+   router.post("/buffered", [bytes_read](route_context& context) -> boost::asio::awaitable<response> {
+      bytes_read->store(context.request.body().size());
+      co_return make_text_response(context.request, status::ok, context.request.body());
+   });
+
+   auto server = forge::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   const auto body = std::string{"buffered-payload"};
+   const auto exchange = raw_expect_continue_exchange(
+      server.port(),
+      "POST /buffered HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Expect: 100-continue\r\n"
+      "Content-Length: " +
+         std::to_string(body.size()) + "\r\n"
+         "\r\n",
+      body,
+      std::chrono::milliseconds{500});
+
+   BOOST_REQUIRE(exchange.interim.has_value());
+   BOOST_TEST(exchange.interim->result_int() == static_cast<unsigned>(status::continue_));
+   BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(exchange.final.body() == body);
+   BOOST_TEST(bytes_read->load() == body.size());
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
 BOOST_AUTO_TEST_CASE(http_expect_continue_rejection_does_not_consume_body) {
    auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto invoked = std::make_shared<std::atomic<bool>>(false);

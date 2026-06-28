@@ -21,6 +21,12 @@ export namespace forge::http {
 
 using websocket_route_handler = std::function<void(std::shared_ptr<forge::websocket::connection>)>;
 
+class router;
+
+namespace detail {
+[[nodiscard]] std::optional<response> preflight(router& router_value, route_context& context);
+}
+
 class router {
  public:
    void use(middleware handler);
@@ -45,12 +51,13 @@ class router {
    }
 
    [[nodiscard]] boost::asio::awaitable<response> handle(route_context& context) const;
-   [[nodiscard]] std::optional<response> preflight(route_context& context) const;
    [[nodiscard]] bool can_handle_stream(route_context& context) const;
    [[nodiscard]] boost::asio::awaitable<stream_response> handle_stream(stream_request& request) const;
    [[nodiscard]] std::optional<websocket_route_handler> match_websocket(route_context& context) const;
 
  private:
+   friend std::optional<response> detail::preflight(router& router_value, route_context& context);
+
    struct route_entry {
       method verb;
       std::string path;

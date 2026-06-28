@@ -400,15 +400,16 @@ boost::asio::awaitable<response> router::handle(route_context& context) const {
    }
 }
 
-std::optional<response> router::preflight(route_context& context) const {
-   if (method_path_exists(routes_, context.request.method(), context.parsed_target) ||
-       method_path_exists(stream_routes_, context.request.method(), context.parsed_target)) {
+std::optional<response> detail::preflight(router& router_value, route_context& context) {
+   if (method_path_exists(router_value.routes_, context.request.method(), context.parsed_target) ||
+       method_path_exists(router_value.stream_routes_, context.request.method(), context.parsed_target)) {
       return std::nullopt;
    }
-   if (path_exists(routes_, context.parsed_target) || path_exists(stream_routes_, context.parsed_target)) {
+   if (path_exists(router_value.routes_, context.parsed_target) ||
+       path_exists(router_value.stream_routes_, context.parsed_target)) {
       return make_text_response(context.request, status::method_not_allowed, "method not allowed");
    }
-   if (path_exists(websocket_routes_, context.parsed_target)) {
+   if (path_exists(router_value.websocket_routes_, context.parsed_target)) {
       return make_text_response(context.request, status::upgrade_required, "websocket upgrade required");
    }
    return make_text_response(context.request, status::not_found, "not found");

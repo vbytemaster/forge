@@ -4795,27 +4795,13 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_accepted_stream_sends_interim_before_b
 
 BOOST_AUTO_TEST_CASE(http_expect_continue_body_backed_stream_sends_interim_before_final_headers) {
    auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
-   auto bytes_read = std::make_shared<std::atomic<std::size_t>>(0);
 
    auto router = forge::http::router{};
-   router.post_stream("/upload", [bytes_read](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+   router.post_stream("/upload", [](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
       auto reply = response{status::ok, request_value.context.request.version()};
       reply.set(field::content_type, "application/octet-stream");
-      auto reader = std::move(request_value.body);
-      co_return stream_response{
-          .head = std::move(reply),
-          .body =
-             [reader = std::move(reader), bytes_read, sent = false]() mutable
-             -> boost::asio::awaitable<std::optional<body_chunk>> {
-                if (sent) {
-                   co_return std::nullopt;
-                }
-                sent = true;
-                auto body = co_await reader.async_read_all();
-                bytes_read->store(body.size());
-                co_return make_body_chunk(std::move(body));
-             },
-      };
+      co_return forge::http::streaming_response::from_body(std::move(reply), std::move(request_value.body))
+         .materialize(request_value.context.request, status::ok);
    });
 
    auto server = forge::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
@@ -4837,7 +4823,50 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_body_backed_stream_sends_interim_befor
    BOOST_TEST(exchange.interim->result_int() == static_cast<unsigned>(status::continue_));
    BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::ok));
    BOOST_TEST(exchange.final.body() == body);
-   BOOST_TEST(bytes_read->load() == body.size());
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_expect_continue_stream_response_without_request_body_rejects_without_interim) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto invoked = std::make_shared<std::atomic<bool>>(false);
+
+   auto router = forge::http::router{};
+   router.post_stream("/upload", [invoked](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      static_cast<void>(request_value);
+      invoked->store(true);
+      auto reply = response{status::forbidden, 11};
+      reply.set(field::content_type, "text/plain");
+      co_return stream_response{
+         .head = std::move(reply),
+         .body =
+            [sent = false]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
+            if (sent) {
+               co_return std::nullopt;
+            }
+            sent = true;
+            co_return make_body_chunk("blocked");
+         },
+      };
+   });
+
+   auto server = forge::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   const auto exchange = raw_expect_continue_exchange(
+      server.port(),
+      "POST /upload HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Expect: 100-continue\r\n"
+      "Content-Length: 1048576\r\n"
+      "\r\n",
+      std::string(1024, 'x'),
+      std::chrono::milliseconds{500});
+
+   BOOST_TEST(!exchange.interim.has_value());
+   BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::forbidden));
+   BOOST_TEST(exchange.final.body() == "blocked");
+   BOOST_TEST(invoked->load());
 
    forge::asio::blocking::run(runtime, server.async_stop());
 }

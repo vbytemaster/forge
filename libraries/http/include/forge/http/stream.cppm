@@ -3,6 +3,7 @@ module;
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include <boost/asio/awaitable.hpp>
@@ -12,6 +13,10 @@ export module forge.http.stream;
 import forge.http.body;
 import forge.http.route_context;
 import forge.http.types;
+
+namespace forge::http::detail {
+constexpr std::string_view request_body_stream_header = "X-FORGE-Request-Body-Stream";
+}
 
 export namespace forge::http {
 
@@ -50,6 +55,7 @@ class streaming_response {
 
    [[nodiscard]] static streaming_response from_body(response head, body_reader body) {
       auto result = streaming_response{};
+      head.set(detail::request_body_stream_header, "1");
       result.head_ = std::move(head);
       result.reader_ = std::move(body);
       return result;

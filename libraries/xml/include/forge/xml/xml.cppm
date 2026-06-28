@@ -414,14 +414,33 @@ void decode_object(const element& input,
    const auto& fields = rules.fields();
    report_unknown_children<T>(input, fields, options, diagnostics);
 
-   auto index = std::size_t{0};
+   if (!fields.empty()) {
+      for (const auto& field : fields) {
+         auto matched = false;
+         if (!field.member_name.empty()) {
+            forge::reflect::for_each_member<T>([&](const char* member_name, auto member) {
+               if (matched || field.member_name != member_name) {
+                  return;
+               }
+               const auto path = append_path(base_path, field.name);
+               const auto matches = find_children(input, &field, member_name);
+               assign_member(output, member, matches, &field, path, options, diagnostics);
+               matched = true;
+            });
+         }
+         if (!matched) {
+            diagnostics.push_back(
+               make_error(append_path(base_path, field.name), "xml.schema", "schema field is not bound to a described member"));
+         }
+      }
+      return;
+   }
+
    forge::reflect::for_each_member<T>([&](const char* member_name, auto member) {
-      const auto* field = index < fields.size() ? &fields[index] : nullptr;
-      const auto name = field ? std::string_view{field->name} : std::string_view{member_name};
-      const auto path = append_path(base_path, name);
+      const schema::field_rule<T>* field = nullptr;
+      const auto path = append_path(base_path, member_name);
       const auto matches = find_children(input, field, member_name);
       assign_member(output, member, matches, field, path, options, diagnostics);
-      ++index;
    });
 }
 

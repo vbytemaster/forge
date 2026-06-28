@@ -56,6 +56,10 @@ struct schema_bound_parent {
    std::vector<schema_bound_child> children;
 };
 
+struct described_schema_bound_parent {
+   std::vector<schema_bound_child> children;
+};
+
 } // namespace forge_xml_tests
 
 namespace forge_xml_tests {
@@ -69,6 +73,7 @@ BOOST_DESCRIBE_STRUCT(ordered_child, (), (b, a))
 BOOST_DESCRIBE_STRUCT(ordered_parent, (), (children))
 BOOST_DESCRIBE_STRUCT(schema_bound_child, (), (a, omitted, b))
 BOOST_DESCRIBE_STRUCT(schema_bound_parent, (), (children))
+BOOST_DESCRIBE_STRUCT(described_schema_bound_parent, (), (children))
 
 } // namespace forge_xml_tests
 
@@ -255,6 +260,17 @@ BOOST_AUTO_TEST_CASE(xml_schema_write_binds_schema_fields_to_declared_members) {
    BOOST_TEST(b < a);
    BOOST_TEST(written.text.find("hidden") == std::string::npos);
    BOOST_TEST(written.text.find("omitted") == std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(xml_schema_read_binds_nested_schema_fields_to_declared_members) {
+   const auto parsed = forge::xml::read<forge_xml_tests::described_schema_bound_parent>(
+      R"(<Root><children><B>bravo</B><A>alpha</A></children></Root>)");
+
+   BOOST_REQUIRE(parsed.ok());
+   BOOST_REQUIRE_EQUAL(parsed.value.children.size(), 1U);
+   BOOST_TEST(parsed.value.children.front().b == "bravo");
+   BOOST_TEST(parsed.value.children.front().a == "alpha");
+   BOOST_TEST(parsed.value.children.front().omitted.empty());
 }
 
 BOOST_AUTO_TEST_CASE(xml_typed_unknown_field_policy_matches_forge_diagnostics) {

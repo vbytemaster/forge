@@ -350,9 +350,26 @@ class binding_builder {
       }
    }
 
+   [[nodiscard]] static std::optional<std::string> combined_accept_header(const request& request_value) {
+      auto combined = std::string{};
+      for (const auto& header : request_value.headers()) {
+         if (!header_name_equal(header.name, field_name(field::accept))) {
+            continue;
+         }
+         if (!combined.empty()) {
+            combined += ", ";
+         }
+         combined += header.text;
+      }
+      if (combined.empty()) {
+         return std::nullopt;
+      }
+      return combined;
+   }
+
    static void require_response_accept(const request& request_value, body_codec codec) {
-      const auto accept = request_value.find(field::accept);
-      if (accept != request_value.end() && !detail::accept_allows(codec, std::string_view{accept->value()})) {
+      const auto accept = combined_accept_header(request_value);
+      if (accept.has_value() && !detail::accept_allows(codec, *accept)) {
          FORGE_THROW_EXCEPTION(forge::http::exceptions::not_acceptable,
                              std::string{"HTTP API response body cannot satisfy Accept"});
       }

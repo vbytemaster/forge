@@ -70,6 +70,6 @@ target_link_libraries(
 if(FORGE_HAS_ROCKSDB)
    target_link_libraries(
       forge_p2p PRIVATE
-         RocksDB::rocksdb
+         forge_rocksdb
    )
 endif()

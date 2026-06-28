@@ -7,8 +7,11 @@ module;
 export module forge.plugins.db.rocksdb.exceptions;
 
 import forge.exceptions;
+import forge.rocksdb.exceptions;
 
 export namespace forge::plugins::db::rocksdb {
+
+namespace backend = forge::rocksdb;
 
 class exceptions {
  public:
@@ -25,12 +28,12 @@ class exceptions {
 
    using invalid_config = forge::exceptions::coded_exception<code, code::invalid_config>;
    using stopped = forge::exceptions::coded_exception<code, code::stopped>;
-   using invalid_argument = forge::exceptions::coded_exception<code, code::invalid_argument>;
-   using corruption = forge::exceptions::coded_exception<code, code::corruption>;
-   using io_error = forge::exceptions::coded_exception<code, code::io_error>;
-   using timed_out = forge::exceptions::coded_exception<code, code::timed_out>;
-   using busy = forge::exceptions::coded_exception<code, code::busy>;
-   using internal_error = forge::exceptions::coded_exception<code, code::internal_error>;
+   using invalid_argument = backend::exceptions::invalid_argument;
+   using corruption = backend::exceptions::corruption;
+   using io_error = backend::exceptions::io_error;
+   using timed_out = backend::exceptions::timed_out;
+   using busy = backend::exceptions::busy;
+   using internal_error = backend::exceptions::internal_error;
 };
 
 FORGE_DECLARE_EXCEPTION_CATEGORY(exceptions::code, "forge.plugins.db.rocksdb")

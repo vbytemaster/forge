@@ -17,8 +17,6 @@ module;
 #include <utility>
 #include <vector>
 
-#include <rocksdb/utilities/transaction_db.h>
-
 module forge.plugins.db.rocksdb.plugin;
 
 import forge.api.binding;
@@ -28,10 +26,10 @@ import forge.config.component;
 import forge.config.decode;
 import forge.exceptions;
 import forge.plugins.db.rocksdb.exceptions;
+import forge.rocksdb.store;
 
 #include "details/plugin_impl.hxx"
 #include "details/config.hxx"
-#include "details/native_store_impl.hxx"
 
 namespace forge::plugins::db::rocksdb {
 
@@ -56,7 +54,7 @@ void plugin::impl::open() {
       settings_copy = settings;
    }
 
-   auto opened = std::make_shared<store_core>(std::move(settings_copy));
+   auto opened = std::make_shared<forge::rocksdb::store>(std::move(settings_copy));
    {
       auto lock = std::scoped_lock{mutex};
       store = std::move(opened);
@@ -75,7 +73,7 @@ void plugin::impl::close() {
    current.store(phase::stopped);
 }
 
-std::pair<std::shared_ptr<store_core>, forge::asio::task_scheduler*> plugin::impl::require_running() const {
+std::pair<std::shared_ptr<forge::rocksdb::store>, forge::asio::task_scheduler*> plugin::impl::require_running() const {
    auto lock = std::scoped_lock{mutex};
    if (current.load() != phase::started || store == nullptr || scheduler == nullptr) {
       FORGE_THROW_EXCEPTION(exceptions::stopped, "rocksdb plugin is not started");

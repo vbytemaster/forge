@@ -211,6 +211,7 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/transport_api/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/log/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/otlp/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/rocksdb/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/crypto/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/multiformats/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/asio/include"
@@ -356,6 +357,9 @@ add_subdirectory(libraries/asio)
 add_subdirectory(libraries/http)
 add_subdirectory(libraries/http_api)
 add_subdirectory(libraries/otlp)
+if(FORGE_HAS_ROCKSDB)
+   add_subdirectory(libraries/rocksdb)
+endif()
 add_subdirectory(libraries/websocket)
 add_subdirectory(libraries/transport)
 add_subdirectory(libraries/tcp)
@@ -409,6 +413,10 @@ set(
    forge_plugins_log_otlp
    forge_plugins
 )
+
+if(TARGET forge_rocksdb)
+   list(APPEND FORGE_LEAF_TARGETS forge_rocksdb)
+endif()
 
 if(TARGET forge_plugins_db_rocksdb)
    list(APPEND FORGE_LEAF_TARGETS forge_plugins_db_rocksdb)
@@ -487,6 +495,13 @@ install(
              plugins/log/otlp/include/forge
    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
 )
+
+if(TARGET forge_rocksdb)
+   install(
+      DIRECTORY libraries/rocksdb/include/forge
+      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
+   )
+endif()
 
 if(TARGET forge_plugins_db_rocksdb)
    install(

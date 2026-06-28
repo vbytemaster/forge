@@ -16,6 +16,7 @@ import forge.app.plugin;
 import forge.app.plugin_context;
 import forge.asio.task_scheduler;
 import forge.config.component;
+import forge.rocksdb.store;
 
 #include "details/plugin_impl.hxx"
 

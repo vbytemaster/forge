@@ -1,7 +1,6 @@
 #pragma once
-namespace forge::plugins::db::rocksdb {
 
-struct store_core;
+namespace forge::plugins::db::rocksdb {
 
 enum class phase : std::uint8_t {
    registered,
@@ -15,7 +14,7 @@ enum class phase : std::uint8_t {
 struct plugin::impl {
    mutable std::mutex mutex;
    config settings;
-   std::shared_ptr<store_core> store;
+   std::shared_ptr<forge::rocksdb::store> store;
    forge::asio::task_scheduler* scheduler = nullptr;
    std::atomic<phase> current = phase::registered;
 
@@ -25,7 +24,7 @@ struct plugin::impl {
    void request_stop() noexcept;
    void close();
 
-   [[nodiscard]] std::pair<std::shared_ptr<store_core>, forge::asio::task_scheduler*> require_running() const;
+   [[nodiscard]] std::pair<std::shared_ptr<forge::rocksdb::store>, forge::asio::task_scheduler*> require_running() const;
 };
 
 class plugin::api_impl final : public api {

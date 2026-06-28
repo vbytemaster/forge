@@ -122,6 +122,34 @@ namespace forge::http::detail {
    return 1000U;
 }
 
+[[nodiscard]] inline std::string normalize_accept_media_range(std::string_view item) {
+   auto output = normalize_media_type(item);
+   auto offset = std::size_t{0};
+   auto first = true;
+   while (offset <= item.size()) {
+      const auto separator = item.find(';', offset);
+      const auto end = separator == std::string_view::npos ? item.size() : separator;
+      if (!first) {
+         const auto parameter = normalize_token(item.substr(offset, end - offset));
+         const auto equals = parameter.find('=');
+         const auto name = equals == std::string::npos ? parameter : parameter.substr(0, equals);
+         if (name == "q") {
+            break;
+         }
+         if (!parameter.empty()) {
+            output += ";";
+            output += parameter;
+         }
+      }
+      if (separator == std::string_view::npos) {
+         break;
+      }
+      offset = separator + 1U;
+      first = false;
+   }
+   return output;
+}
+
 [[nodiscard]] inline std::optional<std::uint8_t> match_specificity(std::string_view range,
                                                                    const media_type_match& candidate) {
    if (range == "*/*" || range == "*") {
@@ -200,7 +228,7 @@ export namespace forge::http {
       const auto separator = value.find(',', offset);
       const auto end = separator == std::string_view::npos ? value.size() : separator;
       const auto item = value.substr(offset, end - offset);
-      const auto range = normalize_media_type(item);
+      const auto range = detail::normalize_accept_media_range(item);
       if (const auto specificity = detail::best_specificity(range, matches); specificity.has_value()) {
          const auto quality = detail::item_quality(item);
          if (!best_specificity.has_value() || *specificity > *best_specificity) {

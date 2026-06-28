@@ -3157,6 +3157,7 @@ BOOST_AUTO_TEST_CASE(http_api_xml_route_negotiates_actual_response_media_type_be
 
    exercise("text/xml;q=1, application/xml;q=0");
    exercise("application/problem+xml");
+   exercise("application/xml;profile=foo;q=1, application/xml;q=0");
    BOOST_TEST(writes->load(std::memory_order_relaxed) == 0U);
 }
 

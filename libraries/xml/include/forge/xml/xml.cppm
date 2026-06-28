@@ -185,7 +185,8 @@ template <typename Member>
 void append_member_elements(std::vector<element>& output,
                             std::string_view name,
                             const Member& value,
-                            std::vector<schema::diagnostic>& diagnostics);
+                            std::vector<schema::diagnostic>& diagnostics,
+                            bool required = false);
 
 template <typename T>
 void decode_object(const element& input,
@@ -208,7 +209,7 @@ void append_schema_object_children(std::vector<element>& output,
                if (matched || field.member_name != member_name) {
                   return;
                }
-               append_member_elements(output, field.name, input.*member, diagnostics);
+               append_member_elements(output, field.name, input.*member, diagnostics, field.required);
                matched = true;
             });
          }
@@ -407,13 +408,20 @@ template <typename Member>
 void append_member_elements(std::vector<element>& output,
                             std::string_view name,
                             const Member& value,
-                            std::vector<schema::diagnostic>& diagnostics) {
+                            std::vector<schema::diagnostic>& diagnostics,
+                            bool required) {
    using clean = std::remove_cvref_t<Member>;
    if constexpr (optional_traits<clean>::value) {
       if (value.has_value()) {
          append_member_elements(output, name, *value, diagnostics);
+      } else if (required) {
+         diagnostics.push_back(make_error(std::string{name}, "xml.required", "required XML element is missing"));
       }
    } else if constexpr (vector_traits<clean>::value) {
+      if (value.empty() && required) {
+         diagnostics.push_back(make_error(std::string{name}, "xml.required", "required XML element is missing"));
+         return;
+      }
       for (const auto& item : value) {
          output.push_back(value_to_element(std::string{name}, item, diagnostics));
       }

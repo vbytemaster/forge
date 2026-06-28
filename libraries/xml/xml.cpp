@@ -2,7 +2,9 @@ module;
 
 #include <pugixml.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstddef>
 #include <sstream>
 #include <string>
@@ -28,6 +30,12 @@ struct tree_metrics {
    }
    const auto next = input[5];
    return next == ' ' || next == '\t' || next == '\r' || next == '\n';
+}
+
+[[nodiscard]] bool has_non_whitespace_text(std::string_view input) {
+   return std::ranges::any_of(input, [](char value) {
+      return std::isspace(static_cast<unsigned char>(value)) == 0;
+   });
 }
 
 [[nodiscard]] std::optional<schema::diagnostic> reject_unsafe_xml(std::string_view input,
@@ -67,6 +75,14 @@ struct tree_metrics {
    for (const auto& child : node.children()) {
       switch (child.type()) {
       case pugi::node_element: {
+         if (!output.text.empty()) {
+            if (has_non_whitespace_text(output.text)) {
+               return detail::make_error(output.name,
+                                         "xml.mixed_content",
+                                         "XML mixed text and child element content is not supported");
+            }
+            output.text.clear();
+         }
          ++metrics.children;
          if (metrics.children > options.max_children) {
             return detail::make_error(output.name, "xml.children", "XML input has too many child elements");
@@ -80,6 +96,14 @@ struct tree_metrics {
       }
       case pugi::node_pcdata:
       case pugi::node_cdata:
+         if (!output.children.empty()) {
+            if (has_non_whitespace_text(child.value())) {
+               return detail::make_error(output.name,
+                                         "xml.mixed_content",
+                                         "XML mixed text and child element content is not supported");
+            }
+            break;
+         }
          output.text += child.value();
          if (output.text.size() > options.max_text_bytes) {
             return detail::make_error(output.name, "xml.text", "XML text exceeds configured byte limit");

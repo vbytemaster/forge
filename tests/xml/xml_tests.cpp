@@ -348,6 +348,14 @@ BOOST_AUTO_TEST_CASE(xml_schema_read_respects_required_repeated_elements) {
    BOOST_TEST(has_error_code(parsed.diagnostics, "xml.required"));
 }
 
+BOOST_AUTO_TEST_CASE(xml_schema_write_respects_required_repeated_elements) {
+   const auto written = forge::xml::write(forge_xml_tests::required_items_result{}, {.root_name = "Root"});
+
+   BOOST_TEST(!written.ok());
+   BOOST_TEST(has_error_code(written.diagnostics, "xml.required"));
+   BOOST_TEST(written.text.empty());
+}
+
 BOOST_AUTO_TEST_CASE(xml_typed_unknown_field_policy_matches_forge_diagnostics) {
    const auto warned = forge::xml::read<forge_xml_tests::list_bucket_result>(
        R"(<ListBucketResult><Name>photos</Name><Unexpected>1</Unexpected></ListBucketResult>)");
@@ -399,6 +407,10 @@ BOOST_AUTO_TEST_CASE(xml_malformed_and_unsafe_inputs_return_forge_diagnostics_wi
    const auto comment = forge::xml::read_value("<Root><!-- hidden --></Root>");
    BOOST_TEST(!comment.ok());
    BOOST_TEST(has_error_code(comment.diagnostics, "xml.unsafe"));
+
+   const auto mixed_content = forge::xml::read_value("<Root>before<Child/>after</Root>");
+   BOOST_TEST(!mixed_content.ok());
+   BOOST_TEST(has_error_code(mixed_content.diagnostics, "xml.mixed_content"));
 }
 
 BOOST_AUTO_TEST_CASE(xml_limits_are_enforced_for_input_tree_and_output) {

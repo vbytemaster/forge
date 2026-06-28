@@ -3,14 +3,11 @@ module;
 #include <pugixml.hpp>
 
 #include <chrono>
-#include <concepts>
 #include <cstddef>
-#include <map>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
-#include <variant>
 
 module forge.xml;
 
@@ -121,56 +118,6 @@ void append_node(pugi::xml_node parent, const element& input) {
 }
 
 } // namespace
-
-schema::input_value detail::element_to_input_value(const element& input) {
-   if (input.children.empty()) {
-      return schema::input_value{input.text};
-   }
-
-   auto grouped = std::map<std::string, std::vector<schema::input_value>>{};
-   for (const auto& child : input.children) {
-      grouped[child.name].push_back(detail::element_to_input_value(child));
-   }
-
-   auto object = schema::input_value::object_type{};
-   for (auto& [name, values] : grouped) {
-      if (values.size() == 1U) {
-         object.emplace(std::move(name), std::move(values.front()));
-      } else {
-         auto array = schema::input_value::array_type{};
-         array.reserve(values.size());
-         for (auto& value : values) {
-            array.push_back(std::move(value));
-         }
-         object.emplace(std::move(name), schema::input_value{std::move(array)});
-      }
-   }
-   return schema::input_value{std::move(object)};
-}
-
-void detail::append_input_value_elements(std::vector<element>& output, std::string name, const schema::input_value& value) {
-   std::visit(
-      [&](const auto& stored) {
-         using stored_type = std::remove_cvref_t<decltype(stored)>;
-         if constexpr (std::same_as<stored_type, std::monostate>) {
-            return;
-         } else if constexpr (std::same_as<stored_type, schema::input_value::array_type>) {
-            for (const auto& item : stored) {
-               detail::append_input_value_elements(output, name, item);
-            }
-         } else if constexpr (std::same_as<stored_type, schema::input_value::object_type>) {
-            auto node = element{.name = name};
-            for (const auto& [child_name, child_value] : stored) {
-               detail::append_input_value_elements(node.children, child_name, child_value);
-            }
-            output.push_back(std::move(node));
-         } else {
-            auto text = schema::format_scalar_text(stored);
-            output.push_back(element{.name = std::move(name), .text = text ? *text : std::string{}});
-         }
-      },
-      value.storage);
-}
 
 read_result<document> read_value(std::string_view input, read_options options) {
    auto result = read_result<document>{};

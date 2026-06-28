@@ -194,50 +194,6 @@ void decode_object(const element& input,
                    const read_options& options,
                    std::vector<schema::diagnostic>& diagnostics);
 
-[[nodiscard]] schema::input_value element_to_input_value(const element& input);
-void append_input_value_elements(std::vector<element>& output, std::string name, const schema::input_value& value);
-
-template <typename T>
-[[nodiscard]] schema::input_value::object_type root_to_input_object(const element& input,
-                                                                    const schema::object_schema<T>& rules,
-                                                                    std::vector<schema::diagnostic>& diagnostics,
-                                                                    std::string_view base_path = {}) {
-   auto output = schema::input_value::object_type{};
-   const auto& fields = rules.fields();
-   for (const auto& field : fields) {
-      auto names = std::set<std::string>{field.name};
-      names.insert(field.aliases.begin(), field.aliases.end());
-
-      auto matches = std::vector<const element*>{};
-      for (const auto& child : input.children) {
-         if (names.contains(child.name)) {
-            matches.push_back(&child);
-         }
-      }
-
-      if (matches.empty()) {
-         continue;
-      }
-
-      if (field.kind == schema::value_kind::string_list || field.kind == schema::value_kind::object_list) {
-         auto array = schema::input_value::array_type{};
-         array.reserve(matches.size());
-         for (const auto* match : matches) {
-            array.push_back(element_to_input_value(*match));
-         }
-         output.emplace(field.name, schema::input_value{std::move(array)});
-      } else {
-         if (matches.size() > 1U) {
-            diagnostics.push_back(
-               make_error(append_path(base_path, field.name), "xml.duplicate", "XML element is repeated for scalar field"));
-            continue;
-         }
-         output.emplace(field.name, element_to_input_value(*matches.front()));
-      }
-   }
-   return output;
-}
-
 template <typename T>
 void append_schema_object_children(std::vector<element>& output,
                                    const T& input,
@@ -257,10 +213,8 @@ void append_schema_object_children(std::vector<element>& output,
             });
          }
          if (!matched) {
-            auto value = field.read_input(input);
-            if (!std::holds_alternative<std::monostate>(value.storage)) {
-               append_input_value_elements(output, field.name, value);
-            }
+            diagnostics.push_back(
+               make_error(field.name, "xml.schema", "schema field is not bound to a described member"));
          }
       }
       return;
@@ -515,22 +469,7 @@ template <typename T> [[nodiscard]] read_result<T> read(std::string_view input, 
       auto rules = schema::rules<T>::define();
       rules.apply_defaults(output.value);
       if (!rules.fields().empty()) {
-         detail::report_unknown_children<T>(parsed.value.root, rules.fields(), options, output.diagnostics);
-         auto decoded = rules.decode_object(detail::root_to_input_object(parsed.value.root, rules, output.diagnostics),
-                                            {},
-                                            output.value);
-         for (auto entry : std::move(decoded)) {
-            if (entry.code == "config.unknown") {
-               if (options.unknown_fields == unknown_field_policy::ignore) {
-                  continue;
-               }
-               entry.code = "xml.unknown";
-               if (options.unknown_fields == unknown_field_policy::error) {
-                  entry.level = schema::severity::error;
-               }
-            }
-            output.diagnostics.push_back(std::move(entry));
-         }
+         detail::decode_object(parsed.value.root, output.value, {}, options, output.diagnostics);
       } else if constexpr (detail::described_object_v<T>) {
          detail::decode_object(parsed.value.root, output.value, {}, options, output.diagnostics);
       } else {

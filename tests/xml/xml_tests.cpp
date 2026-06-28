@@ -60,6 +60,11 @@ struct described_schema_bound_parent {
    std::vector<schema_bound_child> children;
 };
 
+struct unbound_schema_member {
+   std::string described;
+   std::string hidden;
+};
+
 } // namespace forge_xml_tests
 
 namespace forge_xml_tests {
@@ -74,6 +79,7 @@ BOOST_DESCRIBE_STRUCT(ordered_parent, (), (children))
 BOOST_DESCRIBE_STRUCT(schema_bound_child, (), (a, omitted, b))
 BOOST_DESCRIBE_STRUCT(schema_bound_parent, (), (children))
 BOOST_DESCRIBE_STRUCT(described_schema_bound_parent, (), (children))
+BOOST_DESCRIBE_STRUCT(unbound_schema_member, (), (described))
 
 } // namespace forge_xml_tests
 
@@ -160,6 +166,15 @@ template <> struct forge::schema::rules<forge_xml_tests::schema_bound_parent> {
    [[nodiscard]] static forge::schema::object_schema<forge_xml_tests::schema_bound_parent> define() {
       auto schema = forge::schema::object<forge_xml_tests::schema_bound_parent>();
       schema.field<&forge_xml_tests::schema_bound_parent::children>("Child").items<forge_xml_tests::schema_bound_child>();
+      return schema;
+   }
+};
+
+template <> struct forge::schema::rules<forge_xml_tests::unbound_schema_member> {
+   [[nodiscard]] static forge::schema::object_schema<forge_xml_tests::unbound_schema_member> define() {
+      auto schema = forge::schema::object<forge_xml_tests::unbound_schema_member>();
+      schema.field<&forge_xml_tests::unbound_schema_member::described>("Described").required().non_empty();
+      schema.field<&forge_xml_tests::unbound_schema_member::hidden>("Hidden").required().non_empty();
       return schema;
    }
 };
@@ -271,6 +286,23 @@ BOOST_AUTO_TEST_CASE(xml_schema_read_binds_nested_schema_fields_to_declared_memb
    BOOST_TEST(parsed.value.children.front().b == "bravo");
    BOOST_TEST(parsed.value.children.front().a == "alpha");
    BOOST_TEST(parsed.value.children.front().omitted.empty());
+}
+
+BOOST_AUTO_TEST_CASE(xml_schema_read_rejects_unbound_schema_member) {
+   const auto parsed = forge::xml::read<forge_xml_tests::unbound_schema_member>(
+      R"(<Root><Described>visible</Described><Hidden>secret</Hidden></Root>)");
+
+   BOOST_TEST(!parsed.ok());
+   BOOST_TEST(has_error_code(parsed.diagnostics, "xml.schema"));
+}
+
+BOOST_AUTO_TEST_CASE(xml_schema_write_rejects_unbound_schema_member) {
+   const auto written = forge::xml::write(
+      forge_xml_tests::unbound_schema_member{.described = "visible", .hidden = "secret"}, {.root_name = "Root"});
+
+   BOOST_TEST(!written.ok());
+   BOOST_TEST(has_error_code(written.diagnostics, "xml.schema"));
+   BOOST_TEST(written.text.empty());
 }
 
 BOOST_AUTO_TEST_CASE(xml_typed_unknown_field_policy_matches_forge_diagnostics) {

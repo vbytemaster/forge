@@ -1720,6 +1720,24 @@ expect_continue_exchange_result raw_expect_continue_exchange(std::uint16_t port,
    return expect_continue_exchange_result{.interim = std::move(first_response), .final = to_http_response(second)};
 }
 
+std::pair<response, response>
+raw_two_request_exchange(std::uint16_t port, std::string first_request, std::string second_request) {
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(std::chrono::seconds{2});
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), port});
+
+   asio::write(stream.socket(), asio::buffer(first_request));
+   auto buffer = beast::flat_buffer{};
+   auto first = beast_http::response<beast_http::string_body>{};
+   beast_http::read(stream, buffer, first);
+
+   asio::write(stream.socket(), asio::buffer(second_request));
+   auto second = beast_http::response<beast_http::string_body>{};
+   beast_http::read(stream, buffer, second);
+   return {to_http_response(first), to_http_response(second)};
+}
+
 response handle(router& target, route_context& context) {
    if (context.runtime != nullptr) {
       return forge::asio::blocking::run(*context.runtime, target.handle(context));
@@ -4830,6 +4848,36 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_wrong_method_on_stream_route_rejects_w
    BOOST_TEST(!exchange.interim.has_value());
    BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::method_not_allowed));
    BOOST_TEST(!invoked->load());
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_preflight_bodyless_rejection_preserves_keep_alive) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+
+   auto router = forge::http::router{};
+   router.get("/ok", [](route_context& context) -> boost::asio::awaitable<response> {
+      co_return make_text_response(context.request, status::ok, "still-open");
+   });
+
+   auto server = forge::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   const auto [first, second] = raw_two_request_exchange(
+      server.port(),
+      "GET /missing HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Connection: keep-alive\r\n"
+      "\r\n",
+      "GET /ok HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Connection: close\r\n"
+      "\r\n");
+
+   BOOST_TEST(first.result_int() == static_cast<unsigned>(status::not_found));
+   BOOST_TEST(first.keep_alive());
+   BOOST_TEST(second.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(second.body() == "still-open");
 
    forge::asio::blocking::run(runtime, server.async_stop());
 }

@@ -313,9 +313,12 @@ class server_session : public std::enable_shared_from_this<server_session> {
          if (router_) {
             if (auto preflight_response = router_->preflight(context)) {
                preflight_response->version(request_value.version());
-               preflight_response->keep_alive(false);
+               preflight_response->keep_alive(request_value.keep_alive() && parser.is_done());
                co_await write_response(*preflight_response);
-               break;
+               if (!preflight_response->keep_alive()) {
+                  break;
+               }
+               continue;
             }
          }
 

@@ -73,6 +73,8 @@ template <typename Stream> void pack(Stream& s, const std::string&);
 template <typename Stream> void unpack(Stream& s, std::string&);
 template <typename Stream, typename T> void pack(Stream& s, const std::vector<T>& v);
 template <typename Stream, typename T> void unpack(Stream& s, std::vector<T>& v);
+template <typename Stream, typename T> void pack(Stream& s, const std::deque<T>& v);
+template <typename Stream, typename T> void unpack(Stream& s, std::deque<T>& v);
 template <typename Stream> void pack(Stream& s, const std::vector<char>& value);
 template <typename Stream> void unpack(Stream& s, std::vector<char>& value);
 template <typename Stream> void pack(Stream& s, const std::vector<std::uint8_t>& value);

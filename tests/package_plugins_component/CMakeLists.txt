@@ -16,3 +16,9 @@ target_link_libraries(
       Forge::forge_plugins_crypto_secrets
       Forge::forge_plugins_log_otlp
 )
+if(TARGET Forge::forge_plugins_db_rocksdb)
+   target_link_libraries(forge_package_plugins_component PRIVATE Forge::forge_plugins_db_rocksdb)
+   target_compile_definitions(forge_package_plugins_component PRIVATE FORGE_PACKAGE_HAS_DB_ROCKSDB=1)
+else()
+   target_compile_definitions(forge_package_plugins_component PRIVATE FORGE_PACKAGE_HAS_DB_ROCKSDB=0)
+endif()

@@ -164,6 +164,22 @@ using ::forge::http::detail::response_needs_stream_v;
    return {};
 }
 
+[[nodiscard]] inline std::span<const forge::http::media_type_match> response_media_types(body_codec codec) noexcept {
+   static constexpr auto json = std::array{
+      forge::http::media_type_match{.type = "application/json", .structured_suffix = {}},
+   };
+   static constexpr auto xml = std::array{
+      forge::http::media_type_match{.type = "application/xml", .structured_suffix = {}},
+   };
+   switch (codec) {
+   case body_codec::json:
+      return json;
+   case body_codec::xml:
+      return xml;
+   }
+   return {};
+}
+
 [[nodiscard]] inline bool media_type_matches(body_codec codec, std::string_view value) {
    return forge::http::media_type_matches(value, media_types(codec));
 }
@@ -189,7 +205,7 @@ using ::forge::http::detail::response_needs_stream_v;
 }
 
 [[nodiscard]] inline bool accept_allows(body_codec codec, std::string_view value) {
-   return forge::http::accept_allows(value, media_types(codec));
+   return forge::http::accept_allows(value, response_media_types(codec));
 }
 
 template <auto Method, typename Request>

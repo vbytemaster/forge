@@ -313,6 +313,8 @@ template <typename Member>
       const auto rules = schema::rules<clean>::define();
       rules.apply_defaults(output);
       decode_object(input, output, path, options, diagnostics);
+      auto validation = rules.validate(output, path);
+      diagnostics.insert(diagnostics.end(), validation.begin(), validation.end());
       return output;
    } else {
       return decode_scalar_element<clean>(input, path, diagnostics);
@@ -329,6 +331,9 @@ void assign_member(T& output,
                    std::vector<schema::diagnostic>& diagnostics) {
    using clean = std::remove_cvref_t<Member>;
    if constexpr (vector_traits<clean>::value) {
+      if (matches.empty() && field && field->required) {
+         diagnostics.push_back(make_error(std::string{path}, "xml.required", "required XML element is missing"));
+      }
       using item_type = typename vector_traits<clean>::value_type;
       auto values = clean{};
       values.reserve(matches.size());
@@ -424,6 +429,10 @@ template <typename T>
    auto output = element{.name = std::move(name)};
    const auto rules = schema::rules<T>::define();
    const auto& fields = rules.fields();
+   if (!fields.empty()) {
+      auto validation = rules.validate(value, name);
+      diagnostics.insert(diagnostics.end(), validation.begin(), validation.end());
+   }
    if (!fields.empty()) {
       append_schema_object_children(output.children, value, diagnostics);
    } else {

@@ -50,8 +50,6 @@ using tcp = asio::ip::tcp;
 using asio::awaitable;
 using asio::use_awaitable;
 
-constexpr std::string_view request_body_stream_header = "X-FORGE-Request-Body-Stream";
-
 bool same_header_name(std::string_view left, std::string_view right) noexcept {
    if (left.size() != right.size()) {
       return false;
@@ -134,15 +132,6 @@ beast_http::response<beast_http::string_body> to_beast_response(const response& 
 bool expects_continue(const request& value) {
    const auto found = value.find(field::expect);
    return found != value.end() && normalize_token(found->value()) == "100-continue";
-}
-
-bool consume_request_body_stream_marker(response& value) {
-   const auto found = value.find(request_body_stream_header);
-   if (found == value.end()) {
-      return false;
-   }
-   value.erase(request_body_stream_header);
-   return true;
 }
 
 beast_http::request<beast_http::string_body>
@@ -322,7 +311,7 @@ class server_session : public std::enable_shared_from_this<server_session> {
          }
 
          if (router_) {
-            if (auto preflight_response = preflight(*router_, context)) {
+            if (auto preflight_response = router_preflight(*router_, context)) {
                preflight_response->version(request_value.version());
                preflight_response->keep_alive(request_value.keep_alive() && parser.is_done());
                co_await write_response(*preflight_response);
@@ -340,9 +329,10 @@ class server_session : public std::enable_shared_from_this<server_session> {
             auto stream_request_value = stream_request{.context = context, .body = body_reader{body_source}};
             stream_.expires_after(config_.idle_timeout);
             auto response_value = co_await router_->handle_stream(stream_request_value);
+            const auto request_body_deferred_to_response = !stream_request_value.body.valid() && !parser.is_done();
             response_value.head.version(request_value.version());
             response_value.head.keep_alive(request_value.keep_alive() && parser.is_done());
-            if (consume_request_body_stream_marker(response_value.head)) {
+            if (request_body_deferred_to_response) {
                co_await body_source->send_continue_if_needed();
             }
             co_await write_stream_response(response_value);

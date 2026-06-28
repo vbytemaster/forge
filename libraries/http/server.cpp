@@ -199,9 +199,8 @@ class beast_body_reader_source final : public body_reader::source {
       return bytes_read_;
    }
 
- private:
    awaitable<void> send_continue_if_needed() {
-      if (!send_continue_) {
+      if (!send_continue_ || parser_.is_done()) {
          co_return;
       }
       send_continue_ = false;
@@ -215,6 +214,7 @@ class beast_body_reader_source final : public body_reader::source {
       }
    }
 
+ private:
    beast::tcp_stream& stream_;
    beast::flat_buffer& buffer_;
    beast_http::request_parser<beast_http::buffer_body>& parser_;
@@ -331,6 +331,9 @@ class server_session : public std::enable_shared_from_this<server_session> {
             auto response_value = co_await router_->handle_stream(stream_request_value);
             response_value.head.version(request_value.version());
             response_value.head.keep_alive(request_value.keep_alive() && parser.is_done());
+            if (response_value.body) {
+               co_await body_source->send_continue_if_needed();
+            }
             co_await write_stream_response(response_value);
             if (!response_value.head.keep_alive()) {
                break;

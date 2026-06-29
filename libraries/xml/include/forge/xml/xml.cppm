@@ -250,6 +250,7 @@ template <typename T>
 template <typename T>
 void report_unknown_children(const element& input,
                              const std::vector<schema::field_rule<T>>& fields,
+                             std::string_view base_path,
                              const read_options& options,
                              std::vector<schema::diagnostic>& diagnostics) {
    if (options.unknown_fields == unknown_field_policy::ignore) {
@@ -268,7 +269,7 @@ void report_unknown_children(const element& input,
 
    for (const auto& child : input.children) {
       if (!known.contains(child.name)) {
-         diagnostics.push_back(make_diagnostic(child.name,
+         diagnostics.push_back(make_diagnostic(append_path(base_path, child.name),
                                                "xml.unknown",
                                                options.unknown_fields == unknown_field_policy::error
                                                   ? schema::severity::error
@@ -372,7 +373,7 @@ void decode_object(const element& input,
                    std::vector<schema::diagnostic>& diagnostics) {
    const auto rules = schema::rules<T>::define();
    const auto& fields = rules.fields();
-   report_unknown_children<T>(input, fields, options, diagnostics);
+   report_unknown_children<T>(input, fields, base_path, options, diagnostics);
 
    if (!fields.empty()) {
       for (const auto& field : fields) {

@@ -371,6 +371,16 @@ BOOST_AUTO_TEST_CASE(xml_typed_unknown_field_policy_matches_forge_diagnostics) {
    BOOST_TEST(has_error_code(rejected.diagnostics, "xml.unknown"));
 }
 
+BOOST_AUTO_TEST_CASE(xml_schema_unknown_diagnostics_preserve_nested_paths) {
+   const auto warned = forge::xml::read<forge_xml_tests::list_bucket_result>(
+      R"(<ListBucketResult><Name>photos</Name><Contents><Key>a.jpg</Key><Size>12</Size><Unexpected>1</Unexpected></Contents></ListBucketResult>)");
+
+   BOOST_REQUIRE(warned.ok());
+   BOOST_REQUIRE_EQUAL(warned.diagnostics.size(), 1U);
+   BOOST_TEST(warned.diagnostics.front().path == "Contents.Unexpected");
+   BOOST_TEST(warned.diagnostics.front().code == "xml.unknown");
+}
+
 BOOST_AUTO_TEST_CASE(xml_s3_shaped_delete_complete_multipart_and_error_bodies_roundtrip) {
    const auto deleted =
        forge::xml::read<forge_xml_tests::delete_result>(R"(<DeleteResult><Deleted><Key>old.txt</Key><Size>0</Size></Deleted></DeleteResult>)");
@@ -411,6 +421,23 @@ BOOST_AUTO_TEST_CASE(xml_malformed_and_unsafe_inputs_return_forge_diagnostics_wi
    const auto mixed_content = forge::xml::read_value("<Root>before<Child/>after</Root>");
    BOOST_TEST(!mixed_content.ok());
    BOOST_TEST(has_error_code(mixed_content.diagnostics, "xml.mixed_content"));
+}
+
+BOOST_AUTO_TEST_CASE(xml_tree_write_rejects_mixed_content) {
+   auto doc = forge::xml::document{
+      .root =
+         forge::xml::element{
+            .name = "Root",
+            .text = "before",
+            .children = {forge::xml::element{.name = "Child"}},
+         },
+   };
+
+   const auto written = forge::xml::write_value(doc);
+
+   BOOST_TEST(!written.ok());
+   BOOST_TEST(has_error_code(written.diagnostics, "xml.mixed_content"));
+   BOOST_TEST(written.text.empty());
 }
 
 BOOST_AUTO_TEST_CASE(xml_limits_are_enforced_for_input_tree_and_output) {

@@ -132,6 +132,20 @@ void append_node(pugi::xml_node parent, const element& input) {
    }
 }
 
+[[nodiscard]] std::optional<schema::diagnostic> validate_tree_for_write(const element& input) {
+   if (!input.text.empty() && !input.children.empty()) {
+      return detail::make_error(input.name,
+                                "xml.mixed_content",
+                                "XML mixed text and child element content is not supported");
+   }
+   for (const auto& child : input.children) {
+      if (auto error = validate_tree_for_write(child)) {
+         return error;
+      }
+   }
+   return std::nullopt;
+}
+
 [[nodiscard]] bool has_attribute(const element& input, std::string_view name) {
    for (const auto& attribute : input.attributes) {
       if (attribute.name == name) {
@@ -205,6 +219,10 @@ write_result write_value(const document& input, write_options options) {
    }
    if (!options.default_namespace.empty() && !has_attribute(root, "xmlns")) {
       root.attributes.insert(root.attributes.begin(), {.name = "xmlns", .value = options.default_namespace});
+   }
+   if (auto error = validate_tree_for_write(root)) {
+      result.diagnostics.push_back(std::move(*error));
+      return result;
    }
 
    auto doc = pugi::xml_document{};

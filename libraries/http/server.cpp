@@ -202,6 +202,10 @@ class beast_body_reader_source final : public body_reader::source {
       return bytes_read_;
    }
 
+   [[nodiscard]] bool requires_continue_before_response() const noexcept override {
+      return send_continue_ && !parser_.is_done();
+   }
+
    awaitable<void> send_continue_if_needed() {
       if (!send_continue_ || parser_.is_done()) {
          co_return;

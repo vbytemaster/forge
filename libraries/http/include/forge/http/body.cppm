@@ -34,6 +34,9 @@ class body_reader {
 
       virtual boost::asio::awaitable<std::optional<body_chunk>> async_read() = 0;
       [[nodiscard]] virtual std::uint64_t bytes_read() const noexcept = 0;
+      [[nodiscard]] virtual bool requires_continue_before_response() const noexcept {
+         return false;
+      }
    };
 
    body_reader() = default;
@@ -60,6 +63,10 @@ class body_reader {
 
    [[nodiscard]] std::uint64_t bytes_read() const noexcept {
       return source_ ? source_->bytes_read() : 0;
+   }
+
+   [[nodiscard]] bool requires_continue_before_response() const noexcept {
+      return source_ != nullptr && source_->requires_continue_before_response();
    }
 
  private:

@@ -150,13 +150,15 @@ class streaming_response {
          head_.version(request_value.version());
          head_.keep_alive(request_value.keep_alive());
          auto reader = std::move(reader_);
+         const auto requires_continue_before_response = reader.requires_continue_before_response();
          auto callback =
             stream_response::body_source::callback_type{[reader = std::move(reader)]() mutable
                                                            -> boost::asio::awaitable<std::optional<body_chunk>> {
                co_return co_await reader.async_read();
             }};
-         auto body = stream_request_value != nullptr ? stream_request_value->response_body(std::move(callback))
-                                                     : stream_response::body_source{std::move(callback)};
+         auto body = stream_request_value != nullptr && requires_continue_before_response
+                        ? stream_request_value->response_body(std::move(callback))
+                        : stream_response::body_source{std::move(callback)};
          return stream_response{.head = std::move(head_),
                                 .body = std::move(body)};
       }

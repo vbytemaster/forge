@@ -649,6 +649,7 @@ class stream_body_echo_api : public forge::api::contract<stream_body_echo_api> {
    virtual ~stream_body_echo_api() = default;
 
    virtual boost::asio::awaitable<forge::http::streaming_response> write(stream_body_echo_request request) = 0;
+   virtual boost::asio::awaitable<forge::http::streaming_response> independent(stream_body_echo_request request) = 0;
 };
 
 class mixed_proxy_api : public forge::api::contract<mixed_proxy_api> {
@@ -787,7 +788,9 @@ FORGE_API(::forge::http::test_api::stream_buffered_api, FORGE_API_CONTRACT("stre
 
 FORGE_API(::forge::http::test_api::stream_body_echo_api, FORGE_API_CONTRACT("stream-body-echo", 1, 0),
         FORGE_API_METHOD_TYPED(write, ::forge::http::test_api::stream_body_echo_request,
-                             ::forge::http::streaming_response))
+                              ::forge::http::streaming_response),
+        FORGE_API_METHOD_TYPED(independent, ::forge::http::test_api::stream_body_echo_request,
+                              ::forge::http::streaming_response))
 
 FORGE_API(::forge::http::test_api::mixed_proxy_api, FORGE_API_CONTRACT("mixed-proxy", 1, 0),
         FORGE_API_METHOD(read, collection, key),
@@ -940,6 +943,8 @@ FORGE_HTTP_API(::forge::http::test_api::stream_buffered_api,
 
 FORGE_HTTP_API(::forge::http::test_api::stream_body_echo_api,
              FORGE_HTTP_PUT(write, "/stream-body-echo/:id", ok, FORGE_HTTP_BODY_STREAM(body),
+                             FORGE_HTTP_RESPONSE_STREAM),
+             FORGE_HTTP_PUT(independent, "/stream-body-independent/:id", ok, FORGE_HTTP_BODY_STREAM(body),
                             FORGE_HTTP_RESPONSE_STREAM))
 
 FORGE_HTTP_API(::forge::http::test_api::mixed_proxy_api,
@@ -1123,6 +1128,8 @@ concept has_public_request_marker_stream_request =
    requires(route_context& context, body_reader body, std::shared_ptr<const void> marker) {
       T{context, std::move(body), marker};
    };
+
+body_reader make_body_reader(std::vector<std::string> chunks);
 
 [[nodiscard]] const forge::xml::element* find_xml_child(const forge::xml::element& parent,
                                                         std::string_view name) noexcept {
@@ -1569,6 +1576,12 @@ class stream_body_echo_api_impl final : public stream_body_echo_api {
       auto reply = response{status::ok, request.request().version()};
       reply.set(field::content_type, "application/octet-stream");
       co_return forge::http::streaming_response::from_body(std::move(reply), request.body.release_reader());
+   }
+
+   boost::asio::awaitable<forge::http::streaming_response> independent(stream_body_echo_request request) override {
+      auto reply = response{status::ok, request.request().version()};
+      reply.set(field::content_type, "application/octet-stream");
+      co_return forge::http::streaming_response::from_body(std::move(reply), make_body_reader({"independent"}));
    }
 };
 
@@ -4980,6 +4993,38 @@ BOOST_AUTO_TEST_CASE(http_api_body_stream_from_body_sends_interim_before_final_h
    BOOST_TEST(exchange.interim->result_int() == static_cast<unsigned>(status::continue_));
    BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::ok));
    BOOST_TEST(exchange.final.body() == body);
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_api_independent_stream_body_does_not_send_interim_continue) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto apis = forge::api::registry{};
+   apis.install<stream_body_echo_api>(stream_body_echo_api::describe(), std::make_shared<stream_body_echo_api_impl>());
+
+   auto router = forge::http::router{};
+   auto binding =
+      forge::http::api::binding().use(forge::api::binding().serve(apis).build()).bind<stream_body_echo_api>().build();
+   router.mount(binding);
+
+   auto server = forge::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   const auto body = std::string{"body-that-should-not-be-requested"};
+   const auto exchange = raw_expect_continue_exchange(
+      server.port(),
+      "PUT /stream-body-independent/abc HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Expect: 100-continue\r\n"
+      "Content-Length: " +
+         std::to_string(body.size()) + "\r\n"
+         "\r\n",
+      body,
+      std::chrono::milliseconds{500});
+
+   BOOST_TEST(!exchange.interim.has_value());
+   BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(exchange.final.body() == "independent");
 
    forge::asio::blocking::run(runtime, server.async_stop());
 }

@@ -46,6 +46,9 @@ The repository must stay neutral. Public APIs must not contain downstream produc
 - Public `.hpp` / `.h` files under `include/forge` are forbidden except macro-only headers. Macro-only headers must not declare public types, functions, templates or old header-wrapper APIs.
 - Do not create nested public include directories under `include/forge/<lib>`.
 - Do not use `import std;` until the supported toolchain and CI explicitly prove it is stable.
+- Local validation builds should use `cmake --build ... -j 4` or higher by
+  default. Use lower parallelism only for a specific target when it is proven
+  flaky or resource-constrained, and state that exception in the report.
 
 ## Public API Declaration Shape
 

@@ -5,6 +5,10 @@ add_subdirectory(p2p/resolver)
 add_subdirectory(p2p/diagnostics)
 add_subdirectory(p2p/pubsub)
 add_subdirectory(http/server)
+add_subdirectory(log/otlp)
+if(FORGE_HAS_ROCKSDB)
+   add_subdirectory(db/rocksdb)
+endif()
 
 add_library(forge_plugins STATIC plugins.cpp)
 
@@ -19,4 +23,9 @@ target_link_libraries(
       forge_plugins_p2p_diagnostics
       forge_plugins_p2p_pubsub
       forge_plugins_http_server
+      forge_plugins_log_otlp
 )
+
+if(TARGET forge_plugins_db_rocksdb)
+   target_link_libraries(forge_plugins PUBLIC forge_plugins_db_rocksdb)
+endif()

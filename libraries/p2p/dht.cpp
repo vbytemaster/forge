@@ -24,7 +24,7 @@ import forge.multiformats.types;
 import forge.multiformats.varint;
 import forge.p2p.exceptions;
 
-#include "protobuf.hpp"
+#include "details/protobuf.hxx"
 
 namespace forge::p2p {
 namespace {

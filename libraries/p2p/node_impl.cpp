@@ -69,10 +69,10 @@ import forge.transport.stream;
 import forge.yamux.exceptions;
 import forge.yamux.session;
 
-#include "node_impl.hpp"
-#include "protocol_capabilities.hpp"
-#include "relay_accounting.hpp"
-#include "session_lifecycle.hpp"
+#include "details/node_impl.hxx"
+#include "details/protocol_capabilities.hxx"
+#include "details/relay_accounting.hxx"
+#include "details/session_lifecycle.hxx"
 
 namespace forge::p2p {
 

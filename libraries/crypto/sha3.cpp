@@ -23,7 +23,7 @@ import forge.variant.multiprecision;
 import forge.variant.format;
 import forge.variant.described;
 
-#include "_digest_common.hpp"
+#include "details/digest_common.hxx"
 namespace forge::crypto {
 
 template <class... Ts> struct overloaded : Ts... {

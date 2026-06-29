@@ -54,7 +54,7 @@ import forge.multiformats.types;
 import forge.multiformats.varint;
 import forge.multiformats.exceptions;
 
-#include "peer_exchange_codec.hpp"
+#include "details/peer_exchange_codec.hxx"
 
 namespace forge::p2p {
 

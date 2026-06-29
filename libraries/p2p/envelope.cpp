@@ -23,8 +23,8 @@ import forge.multiformats.multiaddr;
 import forge.p2p.exceptions;
 import forge.p2p.identity;
 
-#include "identity_signature.hpp"
-#include "protobuf.hpp"
+#include "details/identity_signature.hxx"
+#include "details/protobuf.hxx"
 
 namespace forge::p2p {
 

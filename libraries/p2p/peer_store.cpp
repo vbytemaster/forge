@@ -15,11 +15,6 @@ module;
 #include <utility>
 #include <vector>
 
-#if FORGE_HAS_ROCKSDB
-#include <rocksdb/db.h>
-#include <rocksdb/options.h>
-#endif
-
 module forge.p2p.peer_store;
 
 import forge.p2p.dht;
@@ -27,6 +22,9 @@ import forge.p2p.discovery;
 import forge.p2p.endpoint;
 import forge.p2p.exceptions;
 import forge.p2p.rendezvous;
+#if FORGE_HAS_ROCKSDB
+import forge.rocksdb.store;
+#endif
 
 namespace forge::p2p {
 namespace {
@@ -74,6 +72,25 @@ void normalize_for_storage(peer_store::record& value) {
 }
 
 #if FORGE_HAS_ROCKSDB
+namespace rocks_backend = forge::rocksdb;
+
+[[nodiscard]] bool is_rocksdb_error(const forge::exceptions::base& error) noexcept {
+   const auto& code = error.code();
+   return code && std::string_view{code.category().name()} == "forge.rocksdb";
+}
+
+template <typename Callback>
+decltype(auto) translate_rocksdb_error(std::string_view operation, Callback&& callback) {
+   try {
+      return std::forward<Callback>(callback)();
+   } catch (const forge::exceptions::base& error) {
+      if (!is_rocksdb_error(error)) {
+         throw;
+      }
+      FORGE_THROW_EXCEPTION(exceptions::internal, std::string{operation} + ": " + error.message());
+   }
+}
+
 constexpr auto peer_store_magic = std::string_view{"FORGEP2PPS"};
 constexpr auto provider_store_magic = std::string_view{"FORGEP2PPV"};
 constexpr auto rendezvous_store_magic = std::string_view{"FORGEP2PRV"};
@@ -765,14 +782,12 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
          FORGE_THROW_EXCEPTION(exceptions::invalid_options, "RocksDB peer store key prefix is required");
       }
 
-      auto rocksdb_options = rocksdb::Options{};
-      rocksdb_options.create_if_missing = options_.create_if_missing;
-      auto db = std::unique_ptr<rocksdb::DB>{};
-      const auto status = rocksdb::DB::Open(rocksdb_options, options_.path.string(), &db);
-      if (!status.ok()) {
-         FORGE_THROW_EXCEPTION(exceptions::internal, "failed to open RocksDB peer store: " + status.ToString());
-      }
-      db_ = std::move(db);
+      db_ = translate_rocksdb_error("failed to open RocksDB peer store", [&] {
+         return std::make_unique<rocks_backend::store>(rocks_backend::config{
+            .path = options_.path.string(),
+            .create_if_missing = options_.create_if_missing,
+         });
+      });
    }
 
    void upsert(peer_store::record value) override {
@@ -867,31 +882,26 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
 
    void upsert_provider(peer_store::provider_record value) override {
       auto lock = std::scoped_lock{mutex_};
-      const auto status = db_->Put(rocksdb::WriteOptions{}, provider_key_for(value.key, value.provider.id),
-                                   encode_provider_record(value));
-      if (!status.ok()) {
-         FORGE_THROW_EXCEPTION(exceptions::internal, "failed to write RocksDB DHT provider record: " + status.ToString());
-      }
+      translate_rocksdb_error("failed to store p2p provider record", [&] {
+         db_->put(rocks_backend::family{}, rocks_backend::to_bytes(provider_key_for(value.key, value.provider.id)),
+                  rocks_backend::to_bytes(encode_provider_record(value)));
+      });
    }
 
    void upsert_rendezvous(rendezvous::registration value) override {
       auto lock = std::scoped_lock{mutex_};
       value.sequence = next_rendezvous_sequence_locked();
-      const auto status = db_->Put(rocksdb::WriteOptions{}, rendezvous_key_for(value.namespace_name, value.peer),
-                                   encode_rendezvous_registration(value));
-      if (!status.ok()) {
-         FORGE_THROW_EXCEPTION(exceptions::internal,
-                           "failed to write RocksDB rendezvous registration: " + status.ToString());
-      }
+      translate_rocksdb_error("failed to store p2p rendezvous registration", [&] {
+         db_->put(rocks_backend::family{}, rocks_backend::to_bytes(rendezvous_key_for(value.namespace_name, value.peer)),
+                  rocks_backend::to_bytes(encode_rendezvous_registration(value)));
+      });
    }
 
    void remove_rendezvous(peer_id peer, std::string namespace_name) override {
       auto lock = std::scoped_lock{mutex_};
-      const auto status = db_->Delete(rocksdb::WriteOptions{}, rendezvous_key_for(namespace_name, peer));
-      if (!status.ok()) {
-         FORGE_THROW_EXCEPTION(exceptions::internal,
-                           "failed to delete RocksDB rendezvous registration: " + status.ToString());
-      }
+      translate_rocksdb_error("failed to remove p2p rendezvous registration", [&] {
+         db_->erase(rocks_backend::family{}, rocks_backend::to_bytes(rendezvous_key_for(namespace_name, peer)));
+      });
    }
 
    std::optional<peer_store::record> find(const peer_id& peer) const override {
@@ -902,17 +912,15 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
    std::vector<peer_store::record> snapshot() const override {
       auto lock = std::scoped_lock{mutex_};
       auto out = std::vector<peer_store::record>{};
-      std::unique_ptr<rocksdb::Iterator> iterator{db_->NewIterator(rocksdb::ReadOptions{})};
       const auto prefix = key_prefix();
       const auto now = std::chrono::system_clock::now();
-      for (iterator->Seek(prefix); iterator->Valid() && iterator->key().starts_with(prefix); iterator->Next()) {
-         auto record = decode_record(iterator->value().ToString());
+      const auto scanned = translate_rocksdb_error("failed to scan p2p peer records", [&] {
+         return db_->scan(rocks_backend::family{}, rocks_backend::to_bytes(prefix));
+      });
+      for (const auto& entry : scanned) {
+         auto record = decode_record(rocks_backend::to_string(entry.value));
          expire_reachability(record, now);
          out.push_back(std::move(record));
-      }
-      const auto status = iterator->status();
-      if (!status.ok()) {
-         FORGE_THROW_EXCEPTION(exceptions::internal, "failed to scan RocksDB peer store: " + status.ToString());
       }
       return out;
    }
@@ -920,11 +928,13 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
    std::vector<dht::peer> closest_routing_peers(const dht::key& key, std::size_t limit) const override {
       auto lock = std::scoped_lock{mutex_};
       auto entries = std::vector<std::pair<dht::distance, dht::peer>>{};
-      std::unique_ptr<rocksdb::Iterator> iterator{db_->NewIterator(rocksdb::ReadOptions{})};
       const auto prefix = key_prefix();
       const auto now = std::chrono::system_clock::now();
-      for (iterator->Seek(prefix); iterator->Valid() && iterator->key().starts_with(prefix); iterator->Next()) {
-         auto record = decode_record(iterator->value().ToString());
+      const auto scanned = translate_rocksdb_error("failed to scan p2p routing peers", [&] {
+         return db_->scan(rocks_backend::family{}, rocks_backend::to_bytes(prefix));
+      });
+      for (const auto& entry : scanned) {
+         auto record = decode_record(rocks_backend::to_string(entry.value));
          if (!record.capabilities.has(capabilities::dht)) {
             continue;
          }
@@ -941,10 +951,6 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
          entries.push_back({distance_between(record.peer.to_bytes(), key.bytes),
                             dht::peer{.id = record.peer, .endpoints = std::move(endpoints)}});
       }
-      const auto status = iterator->status();
-      if (!status.ok()) {
-         FORGE_THROW_EXCEPTION(exceptions::internal, "failed to scan RocksDB routing peers: " + status.ToString());
-      }
       std::ranges::sort(entries, [](const auto& left, const auto& right) {
          return left.first < right.first;
       });
@@ -960,18 +966,16 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
    std::vector<peer_store::provider_record> find_providers(const dht::key& key) const override {
       auto lock = std::scoped_lock{mutex_};
       auto out = std::vector<peer_store::provider_record>{};
-      std::unique_ptr<rocksdb::Iterator> iterator{db_->NewIterator(rocksdb::ReadOptions{})};
       const auto prefix = provider_key_prefix(key);
       const auto now = std::chrono::system_clock::now();
-      for (iterator->Seek(prefix); iterator->Valid() && iterator->key().starts_with(prefix); iterator->Next()) {
-         auto record = decode_provider_record(iterator->value().ToString());
+      const auto scanned = translate_rocksdb_error("failed to scan p2p provider records", [&] {
+         return db_->scan(rocks_backend::family{}, rocks_backend::to_bytes(prefix));
+      });
+      for (const auto& entry : scanned) {
+         auto record = decode_provider_record(rocks_backend::to_string(entry.value));
          if (record.expires_at == std::chrono::system_clock::time_point{} || record.expires_at > now) {
             out.push_back(std::move(record));
          }
-      }
-      const auto status = iterator->status();
-      if (!status.ok()) {
-         FORGE_THROW_EXCEPTION(exceptions::internal, "failed to scan RocksDB DHT providers: " + status.ToString());
       }
       return out;
    }
@@ -980,11 +984,13 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
    discover_rendezvous(std::string_view namespace_name, std::uint64_t after_sequence, std::size_t limit) const override {
       auto lock = std::scoped_lock{mutex_};
       auto out = std::vector<rendezvous::registration>{};
-      std::unique_ptr<rocksdb::Iterator> iterator{db_->NewIterator(rocksdb::ReadOptions{})};
       const auto prefix = rendezvous_key_prefix();
       const auto now = std::chrono::system_clock::now();
-      for (iterator->Seek(prefix); iterator->Valid() && iterator->key().starts_with(prefix); iterator->Next()) {
-         auto registration = decode_rendezvous_registration(iterator->value().ToString());
+      const auto scanned = translate_rocksdb_error("failed to scan p2p rendezvous registrations", [&] {
+         return db_->scan(rocks_backend::family{}, rocks_backend::to_bytes(prefix));
+      });
+      for (const auto& entry : scanned) {
+         auto registration = decode_rendezvous_registration(rocks_backend::to_string(entry.value));
          if (!namespace_name.empty() && registration.namespace_name != namespace_name) {
             continue;
          }
@@ -992,10 +998,6 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
             continue;
          }
          out.push_back(std::move(registration));
-      }
-      const auto status = iterator->status();
-      if (!status.ok()) {
-         FORGE_THROW_EXCEPTION(exceptions::internal, "failed to scan RocksDB rendezvous records: " + status.ToString());
       }
       std::ranges::sort(out, [](const auto& left, const auto& right) {
          return left.sequence < right.sequence;
@@ -1042,34 +1044,30 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
    [[nodiscard]] std::uint64_t next_rendezvous_sequence_locked() {
       auto value = std::string{};
       auto sequence = std::uint64_t{};
-      const auto read_status = db_->Get(rocksdb::ReadOptions{}, sequence_key(), &value);
-      if (read_status.ok() && value.size() == sizeof(sequence)) {
-         std::memcpy(&sequence, value.data(), sizeof(sequence));
-      } else if (!read_status.ok() && !read_status.IsNotFound()) {
-         FORGE_THROW_EXCEPTION(exceptions::internal,
-                           "failed to read RocksDB rendezvous sequence: " + read_status.ToString());
+      const auto read_value = translate_rocksdb_error("failed to read p2p rendezvous sequence", [&] {
+         return db_->get(rocks_backend::family{}, rocks_backend::to_bytes(sequence_key()));
+      });
+      if (read_value.has_value() && read_value->size() == sizeof(sequence)) {
+         std::memcpy(&sequence, read_value->data(), sizeof(sequence));
       }
       ++sequence;
       auto encoded = std::string(sizeof(sequence), '\0');
       std::memcpy(encoded.data(), &sequence, sizeof(sequence));
-      const auto write_status = db_->Put(rocksdb::WriteOptions{}, sequence_key(), encoded);
-      if (!write_status.ok()) {
-         FORGE_THROW_EXCEPTION(exceptions::internal,
-                           "failed to write RocksDB rendezvous sequence: " + write_status.ToString());
-      }
+      translate_rocksdb_error("failed to store p2p rendezvous sequence", [&] {
+         db_->put(rocks_backend::family{}, rocks_backend::to_bytes(sequence_key()), rocks_backend::to_bytes(encoded));
+      });
       return sequence;
    }
 
    [[nodiscard]] std::optional<peer_store::record> read_locked(const peer_id& peer, bool expire_copy) const {
       auto value = std::string{};
-      const auto status = db_->Get(rocksdb::ReadOptions{}, key_for(peer), &value);
-      if (status.IsNotFound()) {
+      const auto stored = translate_rocksdb_error("failed to read p2p peer record", [&] {
+         return db_->get(rocks_backend::family{}, rocks_backend::to_bytes(key_for(peer)));
+      });
+      if (!stored.has_value()) {
          return std::nullopt;
       }
-      if (!status.ok()) {
-         FORGE_THROW_EXCEPTION(exceptions::internal, "failed to read RocksDB peer store: " + status.ToString());
-      }
-      auto record = decode_record(value);
+      auto record = decode_record(rocks_backend::to_string(*stored));
       if (expire_copy) {
          expire_reachability(record, std::chrono::system_clock::now());
       }
@@ -1082,10 +1080,10 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
    }
 
    void put_locked(const peer_store::record& value) {
-      const auto status = db_->Put(rocksdb::WriteOptions{}, key_for(value.peer), encode_record(value));
-      if (!status.ok()) {
-         FORGE_THROW_EXCEPTION(exceptions::internal, "failed to write RocksDB peer store: " + status.ToString());
-      }
+      translate_rocksdb_error("failed to store p2p peer record", [&] {
+         db_->put(rocks_backend::family{}, rocks_backend::to_bytes(key_for(value.peer)),
+                  rocks_backend::to_bytes(encode_record(value)));
+      });
    }
 
    void mutate(peer_id peer, auto&& callback) {
@@ -1099,7 +1097,7 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
 
    peer_store::rocksdb_options options_;
    mutable std::mutex mutex_;
-   std::unique_ptr<rocksdb::DB> db_;
+   std::unique_ptr<rocks_backend::store> db_;
 };
 #endif
 

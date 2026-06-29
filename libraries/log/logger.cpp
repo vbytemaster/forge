@@ -1,6 +1,7 @@
 module;
 #include <memory>
 #include <iostream>
+#include <algorithm>
 #include <mutex>
 #include <source_location>
 #include <string>
@@ -26,6 +27,34 @@ std::string current_thread_id() {
    auto out = std::ostringstream{};
    out << std::this_thread::get_id();
    return out.str();
+}
+
+log_record make_record_from_message(const log_message& message, const std::string& logger_name) {
+   auto context = message.get_context();
+   auto fields = log_fields{};
+   auto data = message.get_data();
+   fields.reserve(data.size());
+   for (const auto& entry : data) {
+      try {
+         fields.push_back(log_ctx(entry.key(), entry.value().as_string()));
+      } catch (...) {
+         fields.push_back(log_ctx(entry.key(), std::string{"<unprintable>"}));
+      }
+   }
+
+   auto record = log_record{
+       .level = context.get_log_level(),
+       .logger = logger_name,
+       .message = message.get_limited_message(),
+       .fields = std::move(fields),
+       .timestamp = context.get_timestamp(),
+       .thread_id = current_thread_id(),
+       .thread_name = context.get_thread_name(),
+   };
+   if (static_cast<int>(record.level) >= static_cast<int>(log_level::error)) {
+      record.stacktrace = capture_stacktrace(1);
+   }
+   return record;
 }
 
 } // namespace
@@ -90,8 +119,10 @@ bool logger::is_enabled(log_level e) const {
 void logger::log(log_message m) {
    std::unique_lock g(log_config::get().log_mutex);
    m.get_context().append_context(my->_name);
+   const auto has_local_appenders = !my->_appenders.empty();
+   const auto has_local_sinks = !my->_sinks.empty();
 
-   if (!my->_appenders.empty()) {
+   if (has_local_appenders) {
       for (auto itr = my->_appenders.begin(); itr != my->_appenders.end(); ++itr) {
          try {
             (*itr)->log(m);
@@ -101,7 +132,22 @@ void logger::log(log_message m) {
             std::cerr << "ERROR: logger::log unknown exception: " << std::endl;
          }
       }
-   } else if (my->_parent != nullptr) {
+   }
+
+   if (has_local_sinks) {
+      auto record = make_record_from_message(m, my->_name);
+      const auto sinks = my->_sinks;
+      g.unlock();
+      for (const auto& current_sink : sinks) {
+         try {
+            current_sink->log(record);
+         } catch (const std::exception& e) {
+            std::cerr << "ERROR: logger::log sink std::exception: " << e.what() << std::endl;
+         } catch (...) {
+            std::cerr << "ERROR: logger::log sink unknown exception" << std::endl;
+         }
+      }
+   } else if (!has_local_appenders && my->_parent != nullptr) {
       logger parent = my->_parent;
       g.unlock();
       parent.log(m);
@@ -212,7 +258,16 @@ void logger::add_sink(std::shared_ptr<sink> sink) {
    if (!sink) {
       throw std::invalid_argument{"cannot add null log sink"};
    }
+   std::lock_guard g(log_config::get().log_mutex);
    my->_sinks.push_back(std::move(sink));
+}
+
+void logger::remove_sink(const std::shared_ptr<sink>& sink) {
+   if (!sink) {
+      return;
+   }
+   std::lock_guard g(log_config::get().log_mutex);
+   my->_sinks.erase(std::remove(my->_sinks.begin(), my->_sinks.end(), sink), my->_sinks.end());
 }
 
 } // namespace forge

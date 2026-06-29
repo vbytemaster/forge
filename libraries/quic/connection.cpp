@@ -2,7 +2,7 @@ module;
 
 #include <forge/exceptions/macros.hpp>
 
-#include "wrapper_handles.hpp"
+#include "details/wrapper_handles.hxx"
 
 #include <memory>
 #include <optional>

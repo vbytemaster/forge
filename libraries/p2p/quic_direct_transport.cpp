@@ -38,7 +38,7 @@ import forge.quic.transport;
 import forge.transport.limits;
 import forge.transport.session;
 
-#include "direct_transport.hpp"
+#include "details/direct_transport.hxx"
 
 namespace forge::p2p::direct {
 namespace {

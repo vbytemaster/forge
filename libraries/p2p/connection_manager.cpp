@@ -17,7 +17,7 @@ module forge.p2p.node;
 import forge.p2p.identity;
 import forge.p2p.resource_manager;
 
-#include "connection_manager.hpp"
+#include "details/connection_manager.hxx"
 
 namespace forge::p2p {
 

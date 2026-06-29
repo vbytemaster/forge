@@ -211,6 +211,7 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/transport_api/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/log/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/otlp/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/rocksdb/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/crypto/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/multiformats/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/asio/include"
@@ -233,6 +234,8 @@ set(FORGE_PLUGINS_P2P_RESOLVER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/
 set(FORGE_PLUGINS_P2P_DIAGNOSTICS_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/diagnostics/include")
 set(FORGE_PLUGINS_P2P_PUBSUB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/p2p/pubsub/include")
 set(FORGE_PLUGINS_HTTP_SERVER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/http/server/include")
+set(FORGE_PLUGINS_LOG_OTLP_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/log/otlp/include")
+set(FORGE_PLUGINS_DB_ROCKSDB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/plugins/db/rocksdb/include")
 
 if(FORGE_ENABLE_TUI AND FORGE_TUI_NOTCURSES_TARGET)
    list(APPEND FORGE_SOURCE_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/libraries/tui/include")
@@ -354,6 +357,9 @@ add_subdirectory(libraries/asio)
 add_subdirectory(libraries/http)
 add_subdirectory(libraries/http_api)
 add_subdirectory(libraries/otlp)
+if(FORGE_HAS_ROCKSDB)
+   add_subdirectory(libraries/rocksdb)
+endif()
 add_subdirectory(libraries/websocket)
 add_subdirectory(libraries/transport)
 add_subdirectory(libraries/tcp)
@@ -404,8 +410,17 @@ set(
    forge_plugins_p2p_diagnostics
    forge_plugins_p2p_pubsub
    forge_plugins_http_server
+   forge_plugins_log_otlp
    forge_plugins
 )
+
+if(TARGET forge_rocksdb)
+   list(APPEND FORGE_LEAF_TARGETS forge_rocksdb)
+endif()
+
+if(TARGET forge_plugins_db_rocksdb)
+   list(APPEND FORGE_LEAF_TARGETS forge_plugins_db_rocksdb)
+endif()
 
 if(TARGET forge_tui)
    list(APPEND FORGE_LEAF_TARGETS forge_tui)
@@ -477,8 +492,23 @@ install(
              plugins/p2p/diagnostics/include/forge
              plugins/p2p/pubsub/include/forge
              plugins/http/server/include/forge
+             plugins/log/otlp/include/forge
    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
 )
+
+if(TARGET forge_rocksdb)
+   install(
+      DIRECTORY libraries/rocksdb/include/forge
+      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
+   )
+endif()
+
+if(TARGET forge_plugins_db_rocksdb)
+   install(
+      DIRECTORY plugins/db/rocksdb/include/forge
+      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
+   )
+endif()
 
 if(TARGET forge_tui)
    install(

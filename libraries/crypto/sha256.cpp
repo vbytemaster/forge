@@ -23,8 +23,8 @@ import forge.variant.multiprecision;
 import forge.variant.format;
 import forge.variant.described;
 
-#include "_digest_common.hpp"
-#include "_evp_digest.hpp"
+#include "details/digest_common.hxx"
+#include "details/evp_digest_context.hxx"
 namespace forge::crypto {
 
 sha256::sha256() {

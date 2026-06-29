@@ -1,6 +1,6 @@
 module;
 #include <forge/exceptions/macros.hpp>
-#include "openssl_backend.hpp"
+#include "details/openssl_backend.hxx"
 #include <array>
 #include <exception>
 #include <memory>
@@ -24,7 +24,7 @@ import forge.crypto.sha256;
 import forge.crypto.sha512;
 import forge.exceptions;
 
-#include "secp256k1_backend.hpp"
+#include "details/private_key_impl.hxx"
 
 namespace forge::crypto::secp256k1 {
 namespace detail {

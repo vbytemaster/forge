@@ -2,7 +2,7 @@ add_library(
    forge_p2p STATIC
    identity.cpp
    identity_signature.cpp
-   identity_signature.hpp
+   details/identity_signature.hxx
    endpoint.cpp
    envelope.cpp
    identify.cpp
@@ -14,36 +14,39 @@ add_library(
    relay.cpp
    hole_punch.cpp
    connection_manager.cpp
-   connection_manager.hpp
+   details/connection_manager.hxx
    resource_manager.cpp
    stream.cpp
    negotiation.cpp
    peer_store.cpp
    direct_transport.cpp
-   direct_transport.hpp
+   details/direct_transport.hxx
    host_addresses.cpp
-   host_addresses.hpp
+   details/host_addresses.hxx
    quic_direct_transport.cpp
    tcp_direct_transport.cpp
    libp2p_tls.cpp
-   libp2p_tls.hpp
+   details/libp2p_tls.hxx
    node.cpp
    node_impl.cpp
-   node_impl.hpp
+   details/node_impl.hxx
    operation_deadline.cpp
-   operation_deadline.hpp
+   details/operation_deadline.hxx
    path_selector.cpp
-   path_selector.hpp
+   details/path_selector.hxx
    peer_exchange_codec.cpp
-   peer_exchange_codec.hpp
+   details/peer_exchange_codec.hxx
    relay_discovery.cpp
-   relay_discovery.hpp
+   details/relay_discovery.hxx
    relay_transport.cpp
-   relay_transport.hpp
-   session_lifecycle.hpp
+   details/relay_transport.hxx
+   details/dht_query.hxx
+   details/protobuf.hxx
+   details/protocol_capabilities.hxx
+   details/relay_accounting.hxx
+   details/session_lifecycle.hxx
    stream_upgrade.cpp
-   stream_upgrade.hpp
-   tcp_stream_upgrade.hpp
+   details/stream_upgrade.hxx
 )
 forge_target_modules(forge_p2p p2p)
 
@@ -70,6 +73,6 @@ target_link_libraries(
 if(FORGE_HAS_ROCKSDB)
    target_link_libraries(
       forge_p2p PRIVATE
-         RocksDB::rocksdb
+         forge_rocksdb
    )
 endif()

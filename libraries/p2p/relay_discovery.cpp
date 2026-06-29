@@ -14,7 +14,7 @@ import forge.p2p.peer_store;
 import forge.p2p.protocol;
 import forge.p2p.relay;
 
-#include "relay_discovery.hpp"
+#include "details/relay_discovery.hxx"
 
 namespace forge::p2p::relay_discovery {
 namespace {

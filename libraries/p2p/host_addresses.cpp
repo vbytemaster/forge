@@ -15,7 +15,7 @@ module forge.p2p.node;
 import forge.p2p.endpoint;
 import forge.p2p.identity;
 
-#include "host_addresses.hpp"
+#include "details/host_addresses.hxx"
 
 namespace forge::p2p::host_addresses {
 namespace {

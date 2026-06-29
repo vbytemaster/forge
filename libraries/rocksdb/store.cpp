@@ -319,12 +319,11 @@ scan_result transaction::scan_page(family column_family, scan_request request) {
 
 void transaction::lock(family column_family, std::vector<std::byte> key, read_options options) {
    ensure_active("failed to lock RocksDB transaction key");
-   std::string value;
    const auto status = impl_->transaction->GetForUpdate(
       detail::to_native_options(options),
       impl_->store->require_handle(column_family),
       detail::to_slice(key),
-      &value);
+      static_cast<std::string*>(nullptr));
    if (status.IsNotFound()) {
       return;
    }

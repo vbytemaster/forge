@@ -156,6 +156,24 @@ BOOST_AUTO_TEST_CASE(rocksdb_transaction_move_assignment_rolls_back_replaced_tra
    BOOST_TEST(to_string(*value) == "committed");
 }
 
+BOOST_AUTO_TEST_CASE(rocksdb_transaction_lock_handles_large_existing_values) {
+   const auto root = root_guard{};
+   auto db = store{config_for(root.root / "store")};
+   const auto data = family{"data"};
+   auto key = make_key("large");
+   auto large_value = std::vector<std::byte>(4U * 1024U * 1024U, std::byte{0x5a});
+
+   db.put(data, key, large_value, write_options{.sync = true});
+
+   auto transaction = db.begin(write_options{.sync = true});
+   transaction.lock(data, key);
+   transaction.rollback();
+
+   const auto persisted = db.get(data, make_key("large"));
+   BOOST_REQUIRE(persisted.has_value());
+   BOOST_REQUIRE_EQUAL(persisted->size(), large_value.size());
+}
+
 BOOST_AUTO_TEST_CASE(rocksdb_transaction_scans_prefix_with_local_changes_and_auto_rollback) {
    const auto root = root_guard{};
    auto db = store{config_for(root.root / "store")};

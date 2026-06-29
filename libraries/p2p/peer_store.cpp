@@ -74,6 +74,23 @@ void normalize_for_storage(peer_store::record& value) {
 #if FORGE_HAS_ROCKSDB
 namespace rocks_backend = forge::rocksdb;
 
+[[nodiscard]] bool is_rocksdb_error(const forge::exceptions::base& error) noexcept {
+   const auto& code = error.code();
+   return code && std::string_view{code.category().name()} == "forge.rocksdb";
+}
+
+template <typename Callback>
+decltype(auto) translate_rocksdb_error(std::string_view operation, Callback&& callback) {
+   try {
+      return std::forward<Callback>(callback)();
+   } catch (const forge::exceptions::base& error) {
+      if (!is_rocksdb_error(error)) {
+         throw;
+      }
+      FORGE_THROW_EXCEPTION(exceptions::internal, std::string{operation} + ": " + error.message());
+   }
+}
+
 constexpr auto peer_store_magic = std::string_view{"FORGEP2PPS"};
 constexpr auto provider_store_magic = std::string_view{"FORGEP2PPV"};
 constexpr auto rendezvous_store_magic = std::string_view{"FORGEP2PRV"};
@@ -765,9 +782,11 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
          FORGE_THROW_EXCEPTION(exceptions::invalid_options, "RocksDB peer store key prefix is required");
       }
 
-      db_ = std::make_unique<rocks_backend::store>(rocks_backend::config{
-         .path = options_.path.string(),
-         .create_if_missing = options_.create_if_missing,
+      db_ = translate_rocksdb_error("failed to open RocksDB peer store", [&] {
+         return std::make_unique<rocks_backend::store>(rocks_backend::config{
+            .path = options_.path.string(),
+            .create_if_missing = options_.create_if_missing,
+         });
       });
    }
 
@@ -863,20 +882,26 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
 
    void upsert_provider(peer_store::provider_record value) override {
       auto lock = std::scoped_lock{mutex_};
-      db_->put(rocks_backend::family{}, rocks_backend::to_bytes(provider_key_for(value.key, value.provider.id)),
-               rocks_backend::to_bytes(encode_provider_record(value)));
+      translate_rocksdb_error("failed to store p2p provider record", [&] {
+         db_->put(rocks_backend::family{}, rocks_backend::to_bytes(provider_key_for(value.key, value.provider.id)),
+                  rocks_backend::to_bytes(encode_provider_record(value)));
+      });
    }
 
    void upsert_rendezvous(rendezvous::registration value) override {
       auto lock = std::scoped_lock{mutex_};
       value.sequence = next_rendezvous_sequence_locked();
-      db_->put(rocks_backend::family{}, rocks_backend::to_bytes(rendezvous_key_for(value.namespace_name, value.peer)),
-               rocks_backend::to_bytes(encode_rendezvous_registration(value)));
+      translate_rocksdb_error("failed to store p2p rendezvous registration", [&] {
+         db_->put(rocks_backend::family{}, rocks_backend::to_bytes(rendezvous_key_for(value.namespace_name, value.peer)),
+                  rocks_backend::to_bytes(encode_rendezvous_registration(value)));
+      });
    }
 
    void remove_rendezvous(peer_id peer, std::string namespace_name) override {
       auto lock = std::scoped_lock{mutex_};
-      db_->erase(rocks_backend::family{}, rocks_backend::to_bytes(rendezvous_key_for(namespace_name, peer)));
+      translate_rocksdb_error("failed to remove p2p rendezvous registration", [&] {
+         db_->erase(rocks_backend::family{}, rocks_backend::to_bytes(rendezvous_key_for(namespace_name, peer)));
+      });
    }
 
    std::optional<peer_store::record> find(const peer_id& peer) const override {
@@ -889,7 +914,9 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       auto out = std::vector<peer_store::record>{};
       const auto prefix = key_prefix();
       const auto now = std::chrono::system_clock::now();
-      const auto scanned = db_->scan(rocks_backend::family{}, rocks_backend::to_bytes(prefix));
+      const auto scanned = translate_rocksdb_error("failed to scan p2p peer records", [&] {
+         return db_->scan(rocks_backend::family{}, rocks_backend::to_bytes(prefix));
+      });
       for (const auto& entry : scanned) {
          auto record = decode_record(rocks_backend::to_string(entry.value));
          expire_reachability(record, now);
@@ -903,7 +930,9 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       auto entries = std::vector<std::pair<dht::distance, dht::peer>>{};
       const auto prefix = key_prefix();
       const auto now = std::chrono::system_clock::now();
-      const auto scanned = db_->scan(rocks_backend::family{}, rocks_backend::to_bytes(prefix));
+      const auto scanned = translate_rocksdb_error("failed to scan p2p routing peers", [&] {
+         return db_->scan(rocks_backend::family{}, rocks_backend::to_bytes(prefix));
+      });
       for (const auto& entry : scanned) {
          auto record = decode_record(rocks_backend::to_string(entry.value));
          if (!record.capabilities.has(capabilities::dht)) {
@@ -939,7 +968,9 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       auto out = std::vector<peer_store::provider_record>{};
       const auto prefix = provider_key_prefix(key);
       const auto now = std::chrono::system_clock::now();
-      const auto scanned = db_->scan(rocks_backend::family{}, rocks_backend::to_bytes(prefix));
+      const auto scanned = translate_rocksdb_error("failed to scan p2p provider records", [&] {
+         return db_->scan(rocks_backend::family{}, rocks_backend::to_bytes(prefix));
+      });
       for (const auto& entry : scanned) {
          auto record = decode_provider_record(rocks_backend::to_string(entry.value));
          if (record.expires_at == std::chrono::system_clock::time_point{} || record.expires_at > now) {
@@ -955,7 +986,9 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
       auto out = std::vector<rendezvous::registration>{};
       const auto prefix = rendezvous_key_prefix();
       const auto now = std::chrono::system_clock::now();
-      const auto scanned = db_->scan(rocks_backend::family{}, rocks_backend::to_bytes(prefix));
+      const auto scanned = translate_rocksdb_error("failed to scan p2p rendezvous registrations", [&] {
+         return db_->scan(rocks_backend::family{}, rocks_backend::to_bytes(prefix));
+      });
       for (const auto& entry : scanned) {
          auto registration = decode_rendezvous_registration(rocks_backend::to_string(entry.value));
          if (!namespace_name.empty() && registration.namespace_name != namespace_name) {
@@ -1011,20 +1044,26 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
    [[nodiscard]] std::uint64_t next_rendezvous_sequence_locked() {
       auto value = std::string{};
       auto sequence = std::uint64_t{};
-      const auto read_value = db_->get(rocks_backend::family{}, rocks_backend::to_bytes(sequence_key()));
+      const auto read_value = translate_rocksdb_error("failed to read p2p rendezvous sequence", [&] {
+         return db_->get(rocks_backend::family{}, rocks_backend::to_bytes(sequence_key()));
+      });
       if (read_value.has_value() && read_value->size() == sizeof(sequence)) {
          std::memcpy(&sequence, read_value->data(), sizeof(sequence));
       }
       ++sequence;
       auto encoded = std::string(sizeof(sequence), '\0');
       std::memcpy(encoded.data(), &sequence, sizeof(sequence));
-      db_->put(rocks_backend::family{}, rocks_backend::to_bytes(sequence_key()), rocks_backend::to_bytes(encoded));
+      translate_rocksdb_error("failed to store p2p rendezvous sequence", [&] {
+         db_->put(rocks_backend::family{}, rocks_backend::to_bytes(sequence_key()), rocks_backend::to_bytes(encoded));
+      });
       return sequence;
    }
 
    [[nodiscard]] std::optional<peer_store::record> read_locked(const peer_id& peer, bool expire_copy) const {
       auto value = std::string{};
-      const auto stored = db_->get(rocks_backend::family{}, rocks_backend::to_bytes(key_for(peer)));
+      const auto stored = translate_rocksdb_error("failed to read p2p peer record", [&] {
+         return db_->get(rocks_backend::family{}, rocks_backend::to_bytes(key_for(peer)));
+      });
       if (!stored.has_value()) {
          return std::nullopt;
       }
@@ -1041,8 +1080,10 @@ class rocksdb_peer_store_backend final : public peer_store::backend {
    }
 
    void put_locked(const peer_store::record& value) {
-      db_->put(rocks_backend::family{}, rocks_backend::to_bytes(key_for(value.peer)),
-               rocks_backend::to_bytes(encode_record(value)));
+      translate_rocksdb_error("failed to store p2p peer record", [&] {
+         db_->put(rocks_backend::family{}, rocks_backend::to_bytes(key_for(value.peer)),
+                  rocks_backend::to_bytes(encode_record(value)));
+      });
    }
 
    void mutate(peer_id peer, auto&& callback) {

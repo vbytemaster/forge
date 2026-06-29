@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <map>
 #include <memory>
@@ -5029,6 +5030,23 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_persists_discovery_dht_and_rendezvou
    BOOST_REQUIRE_EQUAL(registrations.front().endpoints.size(), 1U);
    BOOST_TEST(registrations.front().endpoints.front().to_string() == rendezvous_endpoint.to_string());
    BOOST_TEST(reopened.discover_rendezvous("forge.discovery", registrations.front().sequence, 10).empty());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_backend_translates_open_failures) {
+   auto temp = temp_store_dir{"rocksdb-open-failure"};
+   {
+      auto file = std::ofstream{temp.path()};
+      file << "not a RocksDB directory";
+   }
+
+   try {
+      (void)peer_store::make_rocksdb_backend(peer_store::rocksdb_options{.path = temp.path()});
+      BOOST_FAIL("expected p2p internal exception");
+   } catch (const forge::exceptions::base& error) {
+      const auto code = exceptions::code_of(error);
+      BOOST_REQUIRE(code.has_value());
+      BOOST_TEST(static_cast<int>(*code) == static_cast<int>(exceptions::code::internal));
+   }
 }
 #else
 BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_backend_reports_disabled_when_not_built) {

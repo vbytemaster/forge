@@ -1,6 +1,7 @@
 module;
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -8,6 +9,10 @@ module;
 #include <utility>
 
 #include <boost/asio/awaitable.hpp>
+
+namespace forge::http::detail {
+struct stream_server_access;
+}
 
 export module forge.http.stream;
 
@@ -17,11 +22,6 @@ import forge.http.types;
 
 export namespace forge::http {
 
-struct stream_request {
-   route_context& context;
-   body_reader body;
-};
-
 struct stream_response {
    class body_source {
     public:
@@ -29,8 +29,6 @@ struct stream_response {
 
       body_source() = default;
       body_source(callback_type callback) : callback_(std::move(callback)) {}
-      body_source(const body_reader& request_body, callback_type callback)
-          : callback_(std::move(callback)), source_identity_(request_body.source_identity()) {}
 
       template <typename Callback>
          requires(!std::same_as<std::remove_cvref_t<Callback>, body_source>)
@@ -47,18 +45,16 @@ struct stream_response {
          co_return co_await callback_();
       }
 
-      [[nodiscard]] bool backed_by(const body_reader::source* source) const noexcept {
-         return source != nullptr && source_identity_ == source;
-      }
-
     private:
       friend class streaming_response;
+      friend struct stream_request;
+      friend struct detail::stream_server_access;
 
-      body_source(callback_type callback, const body_reader::source* source)
-          : callback_(std::move(callback)), source_identity_(source) {}
+      body_source(callback_type callback, std::shared_ptr<const void> request_body_marker)
+          : callback_(std::move(callback)), request_body_marker_(std::move(request_body_marker)) {}
 
       callback_type callback_;
-      const body_reader::source* source_identity_ = nullptr;
+      std::shared_ptr<const void> request_body_marker_;
    };
 
    response head;
@@ -67,6 +63,27 @@ struct stream_response {
    [[nodiscard]] static stream_response buffered(response response_value) {
       return stream_response{.head = std::move(response_value), .body = {}};
    }
+};
+
+struct stream_request {
+   route_context& context;
+   body_reader body;
+
+   stream_request(route_context& context_value, body_reader body_value)
+       : context(context_value), body(std::move(body_value)) {}
+
+   [[nodiscard]] stream_response::body_source
+   response_body(stream_response::body_source::callback_type callback) const {
+      return stream_response::body_source{std::move(callback), request_body_marker_};
+   }
+
+ private:
+   friend struct detail::stream_server_access;
+
+   stream_request(route_context& context_value, body_reader body_value, std::shared_ptr<const void> request_body_marker)
+       : context(context_value), body(std::move(body_value)), request_body_marker_(std::move(request_body_marker)) {}
+
+   std::shared_ptr<const void> request_body_marker_;
 };
 
 struct streaming_response_options {
@@ -113,6 +130,16 @@ class streaming_response {
    }
 
    [[nodiscard]] stream_response materialize(const request& request_value, status success_status) && {
+      return std::move(*this).materialize_impl(request_value, success_status, nullptr);
+   }
+
+   [[nodiscard]] stream_response materialize(const stream_request& request_value, status success_status) && {
+      return std::move(*this).materialize_impl(request_value.context.request, success_status, &request_value);
+   }
+
+ private:
+   [[nodiscard]] stream_response
+   materialize_impl(const request& request_value, status success_status, const stream_request* stream_request_value) && {
       if (source_) {
          head_.result(success_status);
          head_.version(request_value.version());
@@ -123,21 +150,19 @@ class streaming_response {
          head_.version(request_value.version());
          head_.keep_alive(request_value.keep_alive());
          auto reader = std::move(reader_);
-         const auto* source_identity = reader.source_identity();
+         auto callback =
+            stream_response::body_source::callback_type{[reader = std::move(reader)]() mutable
+                                                           -> boost::asio::awaitable<std::optional<body_chunk>> {
+               co_return co_await reader.async_read();
+            }};
+         auto body = stream_request_value != nullptr ? stream_request_value->response_body(std::move(callback))
+                                                     : stream_response::body_source{std::move(callback)};
          return stream_response{.head = std::move(head_),
-                                .body =
-                                   stream_response::body_source{
-                                      [reader = std::move(reader)]() mutable
-                                         -> boost::asio::awaitable<std::optional<body_chunk>> {
-                                         co_return co_await reader.async_read();
-                                      },
-                                      source_identity,
-                                   }};
+                                .body = std::move(body)};
       }
       return stream_response::buffered(std::move(head_));
    }
 
- private:
    response head_{status::ok, 11};
    stream_response::body_source source_;
    body_reader reader_;

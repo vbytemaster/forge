@@ -11,6 +11,7 @@ add_library(
    client.cpp
    router.cpp
    router_server_access.cpp
+   stream_server_access.cpp
    file.cpp
    server.cpp
 )

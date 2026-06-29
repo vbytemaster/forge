@@ -17,6 +17,7 @@ module;
 #include <vector>
 
 #include "details/router_server_access.hxx"
+#include "details/stream_server_access.hxx"
 
 #include <forge/exceptions/macros.hpp>
 
@@ -328,13 +329,15 @@ class server_session : public std::enable_shared_from_this<server_session> {
          const auto stream_capable = router_ && router_->can_handle_stream(context);
          auto body_source = std::make_shared<beast_body_reader_source>(
             stream_, buffer_, parser, limits_from(config_), expects_continue(request_value));
-         const auto* request_body_identity = body_source.get();
+         auto request_body_marker = std::make_shared<int>(0);
          if (stream_capable) {
-            auto stream_request_value = stream_request{.context = context, .body = body_reader{body_source}};
+            auto stream_request_value =
+               detail::stream_server_access::make_request(context, body_reader{body_source}, request_body_marker);
             stream_.expires_after(config_.idle_timeout);
             auto response_value = co_await router_->handle_stream(stream_request_value);
             const auto request_body_deferred_to_response =
-               response_value.body.backed_by(request_body_identity) && !parser.is_done();
+               detail::stream_server_access::response_body_uses_request(response_value, request_body_marker) &&
+               !parser.is_done();
             response_value.head.version(request_value.version());
             response_value.head.keep_alive(request_value.keep_alive() && parser.is_done());
             if (request_body_deferred_to_response) {

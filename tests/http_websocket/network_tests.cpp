@@ -1073,6 +1073,28 @@ concept has_public_header_only_rejection_response = requires(T& router_value, ro
    router_value.header_only_rejection_response(context);
 };
 
+template <typename T>
+concept has_public_source_identity = requires(const T& body) {
+   body.source_identity();
+};
+
+template <typename T>
+concept has_public_body_backed_by = requires(T& body, const body_reader::source* source) {
+   body.backed_by(source);
+};
+
+template <typename T>
+concept has_public_request_marking_body_source =
+   requires(body_reader& body, stream_response::body_source::callback_type callback) {
+      T{body, std::move(callback)};
+   };
+
+template <typename T>
+concept has_public_request_marker_stream_request =
+   requires(route_context& context, body_reader body, std::shared_ptr<const void> marker) {
+      T{context, std::move(body), marker};
+   };
+
 [[nodiscard]] const forge::xml::element* find_xml_child(const forge::xml::element& parent,
                                                         std::string_view name) noexcept {
    const auto found = std::find_if(parent.children.begin(), parent.children.end(), [&](const forge::xml::element& child) {
@@ -1981,6 +2003,13 @@ BOOST_AUTO_TEST_CASE(router_does_not_expose_header_preflight_probe_api) {
    BOOST_TEST(!has_public_can_handle<router>);
    BOOST_TEST(!has_public_header_preflight_classifier<router>);
    BOOST_TEST(!has_public_header_only_rejection_response<router>);
+}
+
+BOOST_AUTO_TEST_CASE(http_stream_api_does_not_expose_request_body_identity) {
+   BOOST_TEST(!has_public_source_identity<body_reader>);
+   BOOST_TEST(!has_public_body_backed_by<stream_response::body_source>);
+   BOOST_TEST(!has_public_request_marking_body_source<stream_response::body_source>);
+   BOOST_TEST(!has_public_request_marker_stream_request<stream_request>);
 }
 
 BOOST_AUTO_TEST_CASE(router_matches_static_and_parameter_routes) {
@@ -4822,7 +4851,7 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_body_backed_stream_sends_interim_befor
       auto reply = response{status::ok, request_value.context.request.version()};
       reply.set(field::content_type, "application/octet-stream");
       co_return forge::http::streaming_response::from_body(std::move(reply), std::move(request_value.body))
-         .materialize(request_value.context.request, status::ok);
+         .materialize(request_value, status::ok);
    });
 
    auto server = forge::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
@@ -4857,7 +4886,7 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_copied_body_backed_stream_sends_interi
       reply.set(field::content_type, "application/octet-stream");
       auto copied_body = request_value.body;
       co_return forge::http::streaming_response::from_body(std::move(reply), std::move(copied_body))
-         .materialize(request_value.context.request, status::ok);
+         .materialize(request_value, status::ok);
    });
 
    auto server = forge::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
@@ -4894,12 +4923,10 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_custom_body_callback_reading_request_b
       auto callback_body = copied_body;
       co_return stream_response{
          .head = std::move(reply),
-         .body = stream_response::body_source{
-            copied_body,
+         .body = request_value.response_body(
             [body = std::move(callback_body)]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
                co_return co_await body.async_read();
-            },
-         },
+            }),
       };
    });
 
@@ -5468,7 +5495,7 @@ BOOST_AUTO_TEST_CASE(http_static_file_root_rejects_traversal_and_symlink) {
    auto root = static_file_root{files.path()};
    auto request_value = make_request(method::get, "/files/link.bin");
    auto context = make_route_context(request_value);
-   auto stream_request_value = stream_request{.context = context, .body = body_reader{}};
+   auto stream_request_value = stream_request{context, body_reader{}};
 
    const auto traversal = forge::asio::blocking::run(runtime, root.serve(stream_request_value, "../secret.bin"));
    BOOST_TEST(traversal.head.result_int() == static_cast<unsigned>(status::forbidden));
@@ -5498,7 +5525,7 @@ BOOST_AUTO_TEST_CASE(http_static_file_root_rejects_backslash_and_symlink_escape_
    auto root = static_file_root{files.path(), file_options{.symlinks = symlink_policy::follow}};
    auto request_value = make_request(method::get, "/files/follow.bin");
    auto context = make_route_context(request_value);
-   auto stream_request_value = stream_request{.context = context, .body = body_reader{}};
+   auto stream_request_value = stream_request{context, body_reader{}};
 
    const auto backslash = forge::asio::blocking::run(runtime, root.serve(stream_request_value, "..\\secret.bin"));
    BOOST_TEST(backslash.head.result_int() == static_cast<unsigned>(status::forbidden));

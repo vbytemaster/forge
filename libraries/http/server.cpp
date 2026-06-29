@@ -310,16 +310,15 @@ class server_session : public std::enable_shared_from_this<server_session> {
             }
          }
 
-         if (router_) {
-            if (auto preflight_response = router_preflight(*router_, context)) {
-               preflight_response->version(request_value.version());
-               preflight_response->keep_alive(request_value.keep_alive() && parser.is_done());
-               co_await write_response(*preflight_response);
-               if (!preflight_response->keep_alive()) {
-                  break;
-               }
-               continue;
+         if (router_ && !router_->can_handle(context) && !router_->can_handle_stream(context)) {
+            auto preflight_response = co_await router_->handle(context);
+            preflight_response.version(request_value.version());
+            preflight_response.keep_alive(request_value.keep_alive() && parser.is_done());
+            co_await write_response(preflight_response);
+            if (!preflight_response.keep_alive()) {
+               break;
             }
+            continue;
          }
 
          const auto stream_capable = router_ && router_->can_handle_stream(context);
@@ -329,7 +328,8 @@ class server_session : public std::enable_shared_from_this<server_session> {
             auto stream_request_value = stream_request{.context = context, .body = body_reader{body_source}};
             stream_.expires_after(config_.idle_timeout);
             auto response_value = co_await router_->handle_stream(stream_request_value);
-            const auto request_body_deferred_to_response = !stream_request_value.body.valid() && !parser.is_done();
+            const auto request_body_deferred_to_response =
+               (!stream_request_value.body.valid() || body_source.use_count() > 2) && !parser.is_done();
             response_value.head.version(request_value.version());
             response_value.head.keep_alive(request_value.keep_alive() && parser.is_done());
             if (request_body_deferred_to_response) {

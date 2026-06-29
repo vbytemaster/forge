@@ -400,6 +400,15 @@ boost::asio::awaitable<response> router::handle(route_context& context) const {
    }
 }
 
+bool router::can_handle(route_context& context) const {
+   for (const auto& route : routes_) {
+      if (route.verb == context.request.method() && match_path(route, context.parsed_target, nullptr)) {
+         return true;
+      }
+   }
+   return false;
+}
+
 bool router::can_handle_stream(route_context& context) const {
    for (const auto& route : stream_routes_) {
       if (route.verb == context.request.method() && match_path(route, context.parsed_target, nullptr)) {

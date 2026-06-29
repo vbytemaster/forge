@@ -49,60 +49,12 @@ class router {
    }
 
    [[nodiscard]] boost::asio::awaitable<response> handle(route_context& context) const;
+   [[nodiscard]] bool can_handle(route_context& context) const;
    [[nodiscard]] bool can_handle_stream(route_context& context) const;
    [[nodiscard]] boost::asio::awaitable<stream_response> handle_stream(stream_request& request) const;
    [[nodiscard]] std::optional<websocket_route_handler> match_websocket(route_context& context) const;
 
  private:
-   friend std::optional<response> router_preflight(const router& router_value, route_context& context) {
-      const auto parameter_segment = [](const std::string& segment) {
-         return segment.size() > 1U && segment.front() == ':';
-      };
-      const auto match_path = [&parameter_segment](const auto& entry, const target& parsed_target) {
-         if (entry.segments.size() != parsed_target.segments.size()) {
-            return false;
-         }
-         for (auto index = std::size_t{0}; index != entry.segments.size(); ++index) {
-            const auto& pattern = entry.segments[index];
-            const auto& value = parsed_target.segments[index];
-            if (parameter_segment(pattern)) {
-               continue;
-            }
-            if (pattern != value) {
-               return false;
-            }
-         }
-         return true;
-      };
-      const auto path_exists = [&match_path, &context](const auto& entries) {
-         for (const auto& entry : entries) {
-            if (match_path(entry, context.parsed_target)) {
-               return true;
-            }
-         }
-         return false;
-      };
-      const auto method_path_exists = [&match_path, &context](const auto& entries) {
-         for (const auto& entry : entries) {
-            if (entry.verb == context.request.method() && match_path(entry, context.parsed_target)) {
-               return true;
-            }
-         }
-         return false;
-      };
-
-      if (method_path_exists(router_value.routes_) || method_path_exists(router_value.stream_routes_)) {
-         return std::nullopt;
-      }
-      if (path_exists(router_value.routes_) || path_exists(router_value.stream_routes_)) {
-         return make_text_response(context.request, status::method_not_allowed, "method not allowed");
-      }
-      if (path_exists(router_value.websocket_routes_)) {
-         return make_text_response(context.request, status::upgrade_required, "websocket upgrade required");
-      }
-      return make_text_response(context.request, status::not_found, "not found");
-   }
-
    struct route_entry {
       method verb;
       std::string path;

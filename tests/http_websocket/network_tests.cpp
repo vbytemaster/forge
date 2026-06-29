@@ -4827,6 +4827,41 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_body_backed_stream_sends_interim_befor
    forge::asio::blocking::run(runtime, server.async_stop());
 }
 
+BOOST_AUTO_TEST_CASE(http_expect_continue_copied_body_backed_stream_sends_interim_before_final_headers) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+
+   auto router = forge::http::router{};
+   router.post_stream("/upload", [](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      auto reply = response{status::ok, request_value.context.request.version()};
+      reply.set(field::content_type, "application/octet-stream");
+      auto copied_body = request_value.body;
+      co_return forge::http::streaming_response::from_body(std::move(reply), std::move(copied_body))
+         .materialize(request_value.context.request, status::ok);
+   });
+
+   auto server = forge::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   const auto body = std::string{"copied-body-backed-payload"};
+   const auto exchange = raw_expect_continue_exchange(
+      server.port(),
+      "POST /upload HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Expect: 100-continue\r\n"
+      "Content-Length: " +
+         std::to_string(body.size()) + "\r\n"
+         "\r\n",
+      body,
+      std::chrono::milliseconds{500});
+
+   BOOST_REQUIRE(exchange.interim.has_value());
+   BOOST_TEST(exchange.interim->result_int() == static_cast<unsigned>(status::continue_));
+   BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(exchange.final.body() == body);
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
 BOOST_AUTO_TEST_CASE(http_streaming_response_from_body_does_not_expose_internal_headers) {
    auto reply = response{status::ok, 11};
    reply.set(field::content_type, "application/octet-stream");

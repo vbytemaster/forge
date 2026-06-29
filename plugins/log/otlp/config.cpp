@@ -6,6 +6,7 @@ module;
 #include <exception>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <utility>
 
 module forge.plugins.log.otlp.plugin;
@@ -71,6 +72,67 @@ void validate_logger_name(const std::string& value) {
    }
 }
 
+bool is_http_token_char(unsigned char value) noexcept {
+   if (value >= '0' && value <= '9') {
+      return true;
+   }
+   if (value >= 'A' && value <= 'Z') {
+      return true;
+   }
+   if (value >= 'a' && value <= 'z') {
+      return true;
+   }
+   switch (value) {
+      case '!':
+      case '#':
+      case '$':
+      case '%':
+      case '&':
+      case '\'':
+      case '*':
+      case '+':
+      case '-':
+      case '.':
+      case '^':
+      case '_':
+      case '`':
+      case '|':
+      case '~':
+         return true;
+      default:
+         return false;
+   }
+}
+
+void validate_header_name(std::string_view value) {
+   if (value.empty()) {
+      FORGE_THROW_EXCEPTION(exceptions::invalid_config, "OTLP logs headers.name must not be empty");
+   }
+   for (const auto ch : value) {
+      if (!is_http_token_char(static_cast<unsigned char>(ch))) {
+         FORGE_THROW_EXCEPTION(exceptions::invalid_config,
+                               "OTLP logs headers.name contains an unsafe byte",
+                               forge::exceptions::ctx("headers.name", value));
+      }
+   }
+}
+
+void validate_header_value(const header& value) {
+   for (const auto ch : value.value) {
+      const auto byte = static_cast<unsigned char>(ch);
+      if (byte < 0x20U || byte == 0x7fU) {
+         FORGE_THROW_EXCEPTION(exceptions::invalid_config,
+                               "OTLP logs headers.value contains an unsafe control byte",
+                               forge::exceptions::ctx("headers.name", value.name));
+      }
+   }
+}
+
+void validate_header(const header& value) {
+   validate_header_name(value.name);
+   validate_header_value(value);
+}
+
 } // namespace
 
 forge::log_level parse_log_level(std::string_view value) {
@@ -94,6 +156,9 @@ config decode_config(const forge::config::component_view& view) {
    for (const auto& route : decoded.value.loggers) {
       validate_logger_name(route.name);
       (void)parse_log_level(route.level);
+   }
+   for (const auto& header : decoded.value.headers) {
+      validate_header(header);
    }
    return std::move(decoded.value);
 }

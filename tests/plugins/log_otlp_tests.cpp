@@ -44,6 +44,7 @@ namespace log_otlp = forge::plugins::log::otlp;
 struct collected_request {
    std::string target;
    std::string content_type;
+   std::string custom_header;
    std::string body;
 };
 
@@ -91,6 +92,10 @@ class fake_collector {
           header != context.request.end()) {
          request.content_type = std::string{header->value()};
       }
+      if (const auto header = context.request.find("X-Forge-Test");
+          header != context.request.end()) {
+         request.custom_header = std::string{header->value()};
+      }
       {
          const auto lock = std::scoped_lock{mutex_};
          requests_.push_back(std::move(request));
@@ -119,6 +124,13 @@ class fake_collector {
    object.emplace("level", forge::config::value{std::move(level)});
    object.emplace("enabled", forge::config::value{enabled});
    object.emplace("export", forge::config::value{export_logs});
+   return forge::config::value{std::move(object)};
+}
+
+[[nodiscard]] forge::config::value header_value(std::string name, std::string value) {
+   auto object = forge::config::value::object_type{};
+   object.emplace("name", forge::config::value{std::move(name)});
+   object.emplace("value", forge::config::value{std::move(value)});
    return forge::config::value{std::move(object)};
 }
 
@@ -245,6 +257,32 @@ BOOST_AUTO_TEST_CASE(log_otlp_exports_default_and_named_logger_routes) {
    harness.shutdown();
 }
 
+BOOST_AUTO_TEST_CASE(log_otlp_exports_configured_http_headers) {
+   forge::configure_logging(forge::logging_config{});
+
+   auto harness = plugin_harness{};
+   auto collector = fake_collector{harness.runtime};
+   auto document = plugin_config(collector.endpoint(), {logger_route("default")});
+   document.set("plugins.log.otlp.headers",
+                forge::config::value{forge::config::value::array_type{
+                   header_value("X-Forge-Test", "header-value"),
+                }});
+   harness.configure(document);
+   harness.provide_and_start();
+
+   ilog("header route exported");
+
+   auto api = harness.apis.get<log_otlp::api>(log_otlp::api::ref());
+   forge::asio::blocking::run(harness.runtime, api->flush());
+
+   BOOST_REQUIRE(collector.wait_for_requests(1));
+   const auto requests = collector.requests();
+   BOOST_REQUIRE(!requests.empty());
+   BOOST_TEST(requests.front().custom_header == "header-value");
+
+   harness.shutdown();
+}
+
 BOOST_AUTO_TEST_CASE(log_otlp_rejects_invalid_config_through_schema_and_domain_validation) {
    {
       auto harness = plugin_harness{};
@@ -270,6 +308,53 @@ BOOST_AUTO_TEST_CASE(log_otlp_rejects_invalid_config_through_schema_and_domain_v
       auto harness = plugin_harness{};
       auto document = plugin_config("http://localhost:4318", {logger_route("bad\nname")});
       BOOST_CHECK_THROW(harness.configure(document), log_otlp::exceptions::invalid_config);
+   }
+
+   {
+      auto harness = plugin_harness{};
+      auto document = plugin_config("http://localhost:4318", {logger_route("default")});
+      document.set("plugins.log.otlp.headers",
+                   forge::config::value{forge::config::value::array_type{
+                      header_value("", "value"),
+                   }});
+      BOOST_CHECK_THROW(harness.configure(document), log_otlp::exceptions::invalid_config);
+   }
+
+   {
+      auto harness = plugin_harness{};
+      auto document = plugin_config("http://localhost:4318", {logger_route("default")});
+      document.set("plugins.log.otlp.headers",
+                   forge::config::value{forge::config::value::array_type{
+                      header_value("Bad Header", "value"),
+                   }});
+      BOOST_CHECK_THROW(harness.configure(document), log_otlp::exceptions::invalid_config);
+   }
+
+   {
+      auto harness = plugin_harness{};
+      auto document = plugin_config("http://localhost:4318", {logger_route("default")});
+      document.set("plugins.log.otlp.headers",
+                   forge::config::value{forge::config::value::array_type{
+                      header_value("Bad:Header", "value"),
+                   }});
+      BOOST_CHECK_THROW(harness.configure(document), log_otlp::exceptions::invalid_config);
+   }
+
+   {
+      auto harness = plugin_harness{};
+      auto document = plugin_config("http://localhost:4318", {logger_route("default")});
+      document.set("plugins.log.otlp.headers",
+                   forge::config::value{forge::config::value::array_type{
+                      header_value("X-Forge-Test", "secret-token\r\nInjected: yes"),
+                   }});
+      try {
+         harness.configure(document);
+         BOOST_FAIL("invalid OTLP header value was accepted");
+      } catch (const log_otlp::exceptions::invalid_config& error) {
+         const auto message = std::string{error.what()};
+         BOOST_TEST(message.find("headers.value") != std::string::npos);
+         BOOST_TEST(message.find("secret-token") == std::string::npos);
+      }
    }
 }
 

@@ -62,6 +62,10 @@ class body_reader {
       return source_ ? source_->bytes_read() : 0;
    }
 
+   [[nodiscard]] const source* source_identity() const noexcept {
+      return source_.get();
+   }
+
  private:
    std::shared_ptr<source> source_;
 };

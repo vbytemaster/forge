@@ -4,6 +4,7 @@ module;
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
 #include <boost/asio/awaitable.hpp>
@@ -22,7 +23,41 @@ struct stream_request {
 };
 
 struct stream_response {
-   using body_source = std::function<boost::asio::awaitable<std::optional<body_chunk>>()>;
+   class body_source {
+    public:
+      using callback_type = std::function<boost::asio::awaitable<std::optional<body_chunk>>()>;
+
+      body_source() = default;
+      body_source(callback_type callback) : callback_(std::move(callback)) {}
+
+      template <typename Callback>
+         requires(!std::same_as<std::remove_cvref_t<Callback>, body_source>)
+      body_source(Callback&& callback) : callback_(std::forward<Callback>(callback)) {}
+
+      [[nodiscard]] explicit operator bool() const noexcept {
+         return static_cast<bool>(callback_);
+      }
+
+      boost::asio::awaitable<std::optional<body_chunk>> operator()() {
+         if (!callback_) {
+            co_return std::nullopt;
+         }
+         co_return co_await callback_();
+      }
+
+      [[nodiscard]] bool backed_by(const body_reader::source* source) const noexcept {
+         return source != nullptr && source_identity_ == source;
+      }
+
+    private:
+      friend class streaming_response;
+
+      body_source(callback_type callback, const body_reader::source* source)
+          : callback_(std::move(callback)), source_identity_(source) {}
+
+      callback_type callback_;
+      const body_reader::source* source_identity_ = nullptr;
+   };
 
    response head;
    body_source body;
@@ -86,11 +121,15 @@ class streaming_response {
          head_.version(request_value.version());
          head_.keep_alive(request_value.keep_alive());
          auto reader = std::move(reader_);
+         const auto* source_identity = reader.source_identity();
          return stream_response{.head = std::move(head_),
                                 .body =
-                                   [reader = std::move(reader)]() mutable
-                                      -> boost::asio::awaitable<std::optional<body_chunk>> {
-                                      co_return co_await reader.async_read();
+                                   stream_response::body_source{
+                                      [reader = std::move(reader)]() mutable
+                                         -> boost::asio::awaitable<std::optional<body_chunk>> {
+                                         co_return co_await reader.async_read();
+                                      },
+                                      source_identity,
                                    }};
       }
       return stream_response::buffered(std::move(head_));

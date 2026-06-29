@@ -49,8 +49,8 @@ class router {
    }
 
    [[nodiscard]] boost::asio::awaitable<response> handle(route_context& context) const;
-   [[nodiscard]] bool can_handle(route_context& context) const;
    [[nodiscard]] bool can_handle_stream(route_context& context) const;
+   [[nodiscard]] std::optional<response> classify_header_only_rejection(route_context& context) const;
    [[nodiscard]] boost::asio::awaitable<stream_response> handle_stream(stream_request& request) const;
    [[nodiscard]] std::optional<websocket_route_handler> match_websocket(route_context& context) const;
 

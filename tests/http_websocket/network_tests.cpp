@@ -1058,6 +1058,11 @@ using test_api::positional_stream_api;
    return false;
 }
 
+template <typename T>
+concept has_public_can_handle = requires(T& router_value, route_context& context) {
+   router_value.can_handle(context);
+};
+
 [[nodiscard]] const forge::xml::element* find_xml_child(const forge::xml::element& parent,
                                                         std::string_view name) noexcept {
    const auto found = std::find_if(parent.children.begin(), parent.children.end(), [&](const forge::xml::element& child) {
@@ -1960,6 +1965,10 @@ BOOST_AUTO_TEST_CASE(target_parses_path_segments_and_query_params) {
    BOOST_TEST(parsed.query_params[0].has_value);
    BOOST_TEST(parsed.query_params[1].key == "empty");
    BOOST_TEST(!parsed.query_params[1].has_value);
+}
+
+BOOST_AUTO_TEST_CASE(router_does_not_expose_header_preflight_probe_api) {
+   BOOST_TEST(!has_public_can_handle<router>);
 }
 
 BOOST_AUTO_TEST_CASE(router_matches_static_and_parameter_routes) {
@@ -4858,6 +4867,39 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_copied_body_backed_stream_sends_interi
    BOOST_TEST(exchange.interim->result_int() == static_cast<unsigned>(status::continue_));
    BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::ok));
    BOOST_TEST(exchange.final.body() == body);
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_expect_continue_moved_body_buffered_rejection_does_not_send_interim) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto invoked = std::make_shared<std::atomic<bool>>(false);
+
+   auto router = forge::http::router{};
+   router.post_stream("/upload", [invoked](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      invoked->store(true);
+      auto moved_body = std::move(request_value.body);
+      static_cast<void>(moved_body);
+      co_return stream_response::buffered(make_text_response(request_value.context.request, status::forbidden, "blocked"));
+   });
+
+   auto server = forge::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   const auto exchange = raw_expect_continue_exchange(
+      server.port(),
+      "POST /upload HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Expect: 100-continue\r\n"
+      "Content-Length: 1048576\r\n"
+      "\r\n",
+      std::string(1024, 'x'),
+      std::chrono::milliseconds{500});
+
+   BOOST_TEST(!exchange.interim.has_value());
+   BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::forbidden));
+   BOOST_TEST(exchange.final.body() == "blocked");
+   BOOST_TEST(invoked->load());
 
    forge::asio::blocking::run(runtime, server.async_stop());
 }

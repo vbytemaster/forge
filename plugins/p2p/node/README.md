@@ -3,6 +3,22 @@
 `forge::plugins::p2p::node` owns one shared `forge_p2p` node and exposes typed
 contribution APIs for protocol handlers and API-over-P2P publication.
 
+## When To Use
+
+- A Forge application needs one shared P2P node managed by `forge_app`.
+- Product plugins need to publish protocol handlers or typed APIs over the same
+  peer/session substrate.
+- Diagnostics, resolver and pubsub plugins should compose over one node instead
+  of creating parallel network stacks.
+
+## When Not To Use
+
+- Do not create product routing, durable queue or authorization policy in this
+  plugin.
+- Do not instantiate raw `forge::p2p::node` separately inside application
+  plugins.
+- Do not enable insecure test mode outside local tests.
+
 ## Identity
 
 - Target: `forge_plugins_p2p_node`
@@ -65,7 +81,18 @@ plugins:
 `allow-insecure-test-mode` is for local tests only. Deployed applications should
 provide real identity material or an explicitly configured peer identity.
 
-## Example
+## Dependencies
+
+- `forge_app`
+- `forge_api`
+- `forge_p2p`
+- `forge_transport_api`
+- `forge_config`
+- `forge_schema`
+
+## Examples
+
+### Publish A Typed API
 
 ```cpp
 import forge.api.binding;
@@ -92,3 +119,23 @@ class catalog_p2p_plugin final : public forge::app::plugin {
 ```cpp
 registry.register_plugin(forge::plugins::p2p::node::descriptor());
 ```
+
+## Security And Boundaries
+
+- The plugin owns network lifecycle and contribution mounting, not product
+  authorization decisions.
+- Peer identity, protocol negotiation and session mechanics stay in
+  `forge_p2p`; application plugins use typed contribution APIs.
+- Insecure test mode and generated identity material are local-test-only.
+
+## Common Mistakes
+
+- Creating a second node in a product plugin instead of requesting the shared
+  node API.
+- Treating P2P reachability as authorization.
+- Publishing unbounded handlers without deadline/frame limits.
+
+## Tests
+
+- `test_forge_quic_p2p`
+- `test_forge_package_plugins_p2p_node`

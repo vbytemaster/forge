@@ -5,7 +5,23 @@
 continues to use `ilog`, `wlog`, `elog`, `dlog` for the default logger and
 `forge_ilog(logger, ...)` style macros for named logger routes.
 
-## Package
+## When To Use
+
+- A `forge_app` daemon needs configurable OTLP log export through the plugin
+  lifecycle.
+- Operators should control logger routes, queue sizes, retry windows and
+  crash-spool resend through config.
+- Product code should keep using `forge_log` APIs while export is wired once by
+  infrastructure.
+
+## When Not To Use
+
+- Do not use this plugin for metrics or traces. It is log-export wiring only.
+- Do not use it to define product logger names or alert policy.
+- Do not parse environment variables or discover collectors here; config
+  sources are application-shell-owned.
+
+## Identity And Package
 
 ```cmake
 find_package(Forge REQUIRED COMPONENTS plugins_log_otlp)
@@ -24,6 +40,20 @@ Runtime identity:
 - Main API id: `forge.plugins.log.otlp`
 - Config section: `plugins.log.otlp`
 - Target/component: `forge_plugins_log_otlp` / `plugins_log_otlp`
+- Public modules:
+  - `forge.plugins.log.otlp.plugin`
+  - `forge.plugins.log.otlp.api`
+  - `forge.plugins.log.otlp.types`
+  - `forge.plugins.log.otlp.exceptions`
+
+## Dependencies
+
+- `forge_app`
+- `forge_api`
+- `forge_log`
+- `forge_otlp`
+- `forge_config`
+- `forge_schema`
 
 ## Configuration
 
@@ -81,7 +111,9 @@ plugins:
 `enabled: false` is a no-op: no exporter is created, no sink is attached and no
 network work is started.
 
-## Logging
+## Examples
+
+### Logging
 
 Default logger:
 
@@ -101,7 +133,7 @@ The plugin attaches one shared OTLP sink to every configured `loggers[]` route
 with `export: true`. Logger names are user-defined; the plugin does not hardcode
 product domains.
 
-## Management API
+### Management API
 
 The plugin exposes a local-only management API:
 
@@ -124,3 +156,18 @@ queue/export counters from the underlying `forge_otlp` exporter.
 - The plugin owns only config/lifecycle wiring.
 - No OpenTelemetry SDK globals, environment auto-discovery, new logging macros,
   direct `send(record)` API, auth policy or product logger names are introduced.
+
+## Security And Common Mistakes
+
+- Do not log secrets in logger names, resource attributes, custom headers or
+  structured fields.
+- Invalid configured OTLP headers fail config validation before HTTP requests
+  are built.
+- `enabled: false` creates no exporter and starts no network work.
+- Flush during shutdown when callers require best-effort delivery of queued
+  records.
+
+## Tests
+
+- `test_forge_plugins_log_otlp`
+- `test_forge_package_plugins_log_otlp`

@@ -3,6 +3,19 @@
 `forge::plugins::p2p::pubsub` exposes a typed application facade for topic
 publish/subscribe over the shared P2P node.
 
+## When To Use
+
+- Application plugins need topic publish/subscribe over the shared P2P node.
+- Handlers need async validation and bounded active handler limits.
+- Pubsub state should be exposed through a local typed API rather than direct
+  network internals.
+
+## When Not To Use
+
+- Do not use this plugin as a durable queue, replay log or product event store.
+- Do not put business fan-out, settlement or authorization policy here.
+- Do not use arbitrary unbounded topic names or message sizes.
+
 ## Identity
 
 - Target: `forge_plugins_p2p_pubsub`
@@ -43,7 +56,18 @@ plugins:
          sign-publishes: true
 ```
 
-## Example
+## Dependencies
+
+- `forge_app`
+- `forge_api`
+- `forge_p2p`
+- `forge_plugins_p2p_node`
+- `forge_config`
+- `forge_schema`
+
+## Examples
+
+### Subscribe And Publish
 
 ```cpp
 import forge.plugins.p2p.pubsub.api;
@@ -69,3 +93,23 @@ co_await pubsub->publish(
 registry.register_plugin(forge::plugins::p2p::node::descriptor());
 registry.register_plugin(forge::plugins::p2p::pubsub::descriptor());
 ```
+
+## Security And Boundaries
+
+- Topic allow/deny lists and max message size are config controls.
+- Message validation callbacks decide accept/reject at the pubsub boundary; they
+  are not product authorization by themselves.
+- Signing publish messages is transport/pubsub integrity support, not business
+  trust policy.
+
+## Common Mistakes
+
+- Treating pubsub delivery as durable or exactly-once.
+- Running expensive validation handlers without deadlines or active handler
+  limits.
+- Encoding product authority in topic names alone.
+
+## Tests
+
+- `test_forge_quic_p2p`
+- `test_forge_plugins`

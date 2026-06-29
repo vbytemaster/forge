@@ -92,7 +92,7 @@ auto body = forge::xml::write(resource_list{.name = "primary"},
                               {.root_name = "ResourceList"});
 ```
 
-## Boundaries And Safety
+## Security And Boundaries
 
 - `forge_xml` rejects DTD, entity declarations, processing instructions,
   comments and mixed content in the v1 public tree model.

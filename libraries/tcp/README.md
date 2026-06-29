@@ -6,6 +6,22 @@ stream contract. Use it when code needs a raw bidirectional TCP byte stream.
 Do not use `forge_tcp` for TLS, Yamux, P2P identity, API frame dispatch or
 multiaddr parsing. Those layers sit above raw TCP.
 
+## When To Use
+
+- Open or accept raw TCP streams and adapt them into `forge_transport`.
+- Build a higher transport that needs access to the native socket before
+  wrapping it.
+- Test transport behavior without TLS or multiplexing.
+
+## When Not To Use
+
+- Do not use raw TCP when the caller requires TLS, ALPN or certificate
+  verification. Use `forge_stcp`.
+- Do not implement API frames directly on top of TCP. Use `forge_transport_api`
+  after a stream is established.
+- Do not put DNS policy, peer identity, relay logic or product admission policy
+  in this library.
+
 ## Public Modules
 
 - `forge.tcp.connector`
@@ -16,7 +32,15 @@ multiaddr parsing. Those layers sit above raw TCP.
 - `forge.tcp.transport`
 - `forge.tcp`
 
-## Direct Stream Example
+## Dependencies
+
+- `forge_transport`
+- `forge_exceptions`
+- Boost.Asio
+
+## Examples
+
+### Direct Stream
 
 ```cpp
 import forge.tcp.connector;
@@ -42,7 +66,7 @@ TCP is a byte-stream transport. Use `connection.stream.async_write(...)` and
 `connection.stream.async_read_frame()` when the caller needs FORGE length-prefixed
 message boundaries over the TCP stream.
 
-## Upgrade Surface
+### Upgrade Surface
 
 Use `tcp::connection` when another layer needs the native socket before TCP is
 converted into a generic `transport::stream`. This is the path used by
@@ -65,7 +89,7 @@ auto socket = std::move(tcp).release_socket();
 If no upgrade is needed, call `std::move(tcp).into_transport_stream()` or use
 `connector.async_connect(...)` directly.
 
-## Registry Example
+### Registry
 
 ```cpp
 import forge.tcp.transport;
@@ -86,3 +110,16 @@ co_await outbound.stream.async_write_frame(payload);
 - `dns`, `dns4` and `dns6` are connect-only host kinds.
 - Listen accepts only concrete `ip4` and `ip6` endpoints.
 - TLS-over-TCP belongs to `forge_stcp`.
+
+## Security And Common Mistakes
+
+- TCP is not encrypted or authenticated. Do not send credentials or trusted
+  control data over raw TCP unless a higher layer provides protection.
+- Do not keep detached async operations alive after the owning connector,
+  listener or runtime is shutting down.
+- Do not assume a byte stream preserves message boundaries. Use transport
+  frames when the caller needs messages.
+
+## Tests
+
+- `test_forge_tcp`

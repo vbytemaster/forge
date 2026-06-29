@@ -93,7 +93,7 @@ request codec for compatibility with existing JSON routes. Explicit mismatches
 still fail with `415 Unsupported Media Type`. Typed DTO responses check `Accept`
 before invoking the handler when the emitted codec is not acceptable.
 
-## Boundaries And Safety
+## Security And Boundaries
 
 - JSON/XML DTO codecs apply only to typed DTO bodies. `file_response`,
   `streaming_response`, `stream_response`, `bytes_response`, `empty_response`,

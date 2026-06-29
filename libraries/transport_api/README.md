@@ -4,6 +4,36 @@
 streams and sessions. It does not own sockets, QUIC, P2P, WebSocket, HTTP,
 plugins or application policy.
 
+## When To Use
+
+- Run a typed `forge_api` contract over an already established
+  `forge_transport::stream` or session.
+- Need request/response correlation, max-inflight limits and deadlines over a
+  byte-stream transport.
+- Build channel-specific API adapters such as QUIC or P2P bindings without
+  duplicating frame dispatch.
+
+## When Not To Use
+
+- Do not use this library to open sockets, resolve peers or publish plugin
+  lifecycle services. Establish the stream first.
+- Do not use it for HTTP route/path/status semantics; use `forge_http_api`.
+- Do not put application authorization, retry policy or large data-plane policy
+  in the frame binding.
+
+## Public Modules
+
+- `forge.transport.api.connection`
+- `forge.transport.api.options`
+- `forge.transport.api.server`
+
+## Dependencies
+
+- `forge_api`
+- `forge_raw`
+- `forge_transport`
+- Boost.Asio
+
 ## Responsibility
 
 - `forge_api` owns contract descriptors, method dispatch, frame vocabulary and
@@ -16,7 +46,9 @@ plugins or application policy.
 - `forge_websocket.api` shares `forge::api::frame_dispatcher`, but not this layer,
   because WebSocket is message-oriented rather than a `transport::stream`.
 
-## Server Example
+## Examples
+
+### Server
 
 ```cpp
 import forge.api.types;
@@ -74,7 +106,7 @@ serve_cache(forge::transport::stream stream, cache_store& store) {
 }
 ```
 
-## Client Example
+### Client
 
 ```cpp
 import forge.api.types;
@@ -113,3 +145,16 @@ read_remote(forge::transport::stream stream, std::string ref) {
   full thread safety model is documented in
   [docs/runtime/thread-safety.md](../../docs/runtime/thread-safety.md).
 - Do not add Peer ID, relay, discovery, HTTP routing or plugin lifecycle here.
+
+## Security And Common Mistakes
+
+- Enforce `max_frame_size`, `max_inflight` and deadlines. Do not leave remote
+  peers with unbounded request bodies or pending calls.
+- Do not reuse one connection object after the underlying stream has failed.
+- Do not treat transport identity as application authorization. A caller above
+  this layer must decide who may invoke an API.
+- Do not add product-specific error DTOs. Use shared `forge::api::error_payload`.
+
+## Tests
+
+- `test_forge_transport_api`

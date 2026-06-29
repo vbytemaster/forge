@@ -25,6 +25,30 @@ Public modules:
 - `forge.plugins.crypto.secrets.types`
 - `forge.plugins.crypto.secrets.exceptions`
 
+## When To Use
+
+- Product plugins need local secret retrieval, derivation or AES-GCM operations
+  through a typed API.
+- Secret sources should be decoded and redacted through Forge config/schema.
+- Callers should address secrets by `secret_id` and operation `purpose`, not by
+  raw key material.
+
+## When Not To Use
+
+- Do not use this plugin as a remote vault, hardware KMS or product
+  authorization system.
+- Do not store raw secrets in generated examples, logs or diagnostics.
+- Do not bypass purpose/operation allow-lists by exporting raw secrets unless a
+  local config explicitly permits it.
+
+## Dependencies
+
+- `forge_app`
+- `forge_api`
+- `forge_crypto`
+- `forge_config`
+- `forge_schema`
+
 ## Configuration
 
 Config is decoded through `BOOST_DESCRIBE_STRUCT`, `forge_schema` rules and
@@ -54,7 +78,7 @@ Supported source types are `value`, `file` and `encrypted_file`. The
 `encrypted_file` source uses the plugin's encrypted secret file container helper
 and configurable scrypt ceilings.
 
-## Usage
+## Examples
 
 Register the descriptor with the application shell and acquire the typed API
 from the plugin context:
@@ -77,7 +101,7 @@ auto derived = co_await secrets->derive_hkdf_sha256(
    });
 ```
 
-## Boundaries
+## Security And Boundaries
 
 - The plugin owns local secret loading, byte limits and operation gating.
 - Products own policy: who may call the API, what a purpose means and where
@@ -85,3 +109,15 @@ auto derived = co_await secrets->derive_hkdf_sha256(
 - Do not expose raw secrets unless the config explicitly sets
   `allow-raw-export: true` and the requested operation is allowed.
 - Do not use this plugin as a remote vault or product authorization layer.
+
+## Common Mistakes
+
+- Treating `purpose` as decorative metadata. It is part of the operation gate.
+- Logging secret ids together with sensitive operational context.
+- Using `get_secret` for data-plane encryption when `encrypt_aes_gcm` or
+  `derive_hkdf_sha256` would keep raw material inside the plugin boundary.
+
+## Tests
+
+- `test_forge_plugins`
+- `test_forge_package_plugins_crypto_secrets`

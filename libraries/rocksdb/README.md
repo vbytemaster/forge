@@ -19,6 +19,17 @@ below the plugin boundary.
 Use `forge::plugins::db::rocksdb` instead when the database should be configured
 from an application config section and exposed as a local Forge API.
 
+## When Not To Use
+
+- Do not use `forge_rocksdb` as a generic database abstraction. It is the
+  concrete RocksDB backend.
+- Do not call it directly from application plugins that should depend on a
+  configured database service. Use `forge::plugins::db::rocksdb`.
+- Do not put product schema, replication, authorization or retention policy in
+  this library.
+- Do not use it for async scheduling. Offload blocking work in the caller or in
+  the plugin layer.
+
 ## Public Modules
 
 - `forge.rocksdb.types` - config, column-family, key/value, operation and scan
@@ -107,6 +118,29 @@ unchanged.
   `Forge::forge_rocksdb`.
 - `test_forge_plugins_db_rocksdb` and `test_forge_quic_p2p` cover plugin and P2P
   consumers over this backend.
+
+## Security And Durability Notes
+
+- Native RocksDB status and filesystem failures are mapped to typed
+  `forge.rocksdb` exceptions before crossing the public boundary.
+- Transactions must be committed, rolled back or allowed to perform best-effort
+  rollback on destruction. Do not keep transaction objects alive past their
+  owner store/plugin lifetime.
+- Prefix scans must use `scan_page(...)` with a caller-owned limit. Avoid
+  materializing an unbounded prefix into memory.
+- Paths are operator-controlled local configuration. Do not accept remote input
+  as a database path.
+
+## Common Mistakes
+
+- Treating cursors as user-facing tokens. They are opaque key boundaries for the
+  same store and prefix.
+- Mixing product key semantics into this wrapper. Keep key layout ownership in
+  the consuming library or plugin.
+- Catching `std::filesystem::filesystem_error` or native RocksDB status at
+  higher layers. The public boundary should see typed Forge exceptions.
+- Assuming `write_options{.sync = true}` replaces product-level checkpoints or
+  journal semantics. It only controls RocksDB write durability.
 
 ## Boundaries
 

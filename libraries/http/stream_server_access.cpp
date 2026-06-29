@@ -6,6 +6,16 @@ import forge.http.stream;
 
 namespace forge::http {
 
+body_reader detail::stream_server_access::mark_request_body(body_reader body,
+                                                            std::shared_ptr<const void> request_body_marker) {
+   return body_reader{std::move(body.source_), std::move(request_body_marker)};
+}
+
+std::shared_ptr<const void> detail::stream_server_access::continue_before_response_marker(
+   const body_reader& body) noexcept {
+   return body.continue_before_response_marker();
+}
+
 stream_request detail::stream_server_access::make_request(route_context& context,
                                                           body_reader body,
                                                           std::shared_ptr<const void> request_body_marker) {

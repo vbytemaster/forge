@@ -95,75 +95,19 @@ class streaming_response {
  public:
    streaming_response() = default;
 
-   [[nodiscard]] static streaming_response from_source(streaming_response_options options) {
-      auto result = streaming_response{};
-      result.head_.version(11);
-      result.head_.set(field::content_type, options.content_type);
-      result.source_ = std::move(options.body);
-      return result;
-   }
+   [[nodiscard]] static streaming_response from_source(streaming_response_options options);
+   [[nodiscard]] static streaming_response from_body(response head, body_reader body);
 
-   [[nodiscard]] static streaming_response from_body(response head, body_reader body) {
-      auto result = streaming_response{};
-      result.head_ = std::move(head);
-      result.reader_ = std::move(body);
-      return result;
-   }
+   [[nodiscard]] status status_code() const noexcept;
+   [[nodiscard]] const response& head() const noexcept;
+   [[nodiscard]] std::string content_type() const;
+   [[nodiscard]] body_reader& body() noexcept;
 
-   [[nodiscard]] status status_code() const noexcept {
-      return head_.result();
-   }
-
-   [[nodiscard]] const response& head() const noexcept {
-      return head_;
-   }
-
-   [[nodiscard]] std::string content_type() const {
-      if (auto found = head_.find(field::content_type); found != head_.end()) {
-         return std::string{found->value()};
-      }
-      return {};
-   }
-
-   [[nodiscard]] body_reader& body() noexcept {
-      return reader_;
-   }
-
-   [[nodiscard]] stream_response materialize(const request& request_value, status success_status) && {
-      return std::move(*this).materialize_impl(request_value, success_status, nullptr);
-   }
-
-   [[nodiscard]] stream_response materialize(const stream_request& request_value, status success_status) && {
-      return std::move(*this).materialize_impl(request_value.context.request, success_status, &request_value);
-   }
+   [[nodiscard]] stream_response materialize(const request& request_value, status success_status) &&;
+   [[nodiscard]] stream_response materialize(const stream_request& request_value, status success_status) &&;
 
  private:
-   [[nodiscard]] stream_response
-   materialize_impl(const request& request_value, status success_status, const stream_request* stream_request_value) && {
-      if (source_) {
-         head_.result(success_status);
-         head_.version(request_value.version());
-         head_.keep_alive(request_value.keep_alive());
-         return stream_response{.head = std::move(head_), .body = std::move(source_)};
-      }
-      if (reader_.valid()) {
-         head_.version(request_value.version());
-         head_.keep_alive(request_value.keep_alive());
-         auto reader = std::move(reader_);
-         const auto requires_continue_before_response = reader.requires_continue_before_response();
-         auto callback =
-            stream_response::body_source::callback_type{[reader = std::move(reader)]() mutable
-                                                           -> boost::asio::awaitable<std::optional<body_chunk>> {
-               co_return co_await reader.async_read();
-            }};
-         auto body = stream_request_value != nullptr && requires_continue_before_response
-                        ? stream_request_value->response_body(std::move(callback))
-                        : stream_response::body_source{std::move(callback)};
-         return stream_response{.head = std::move(head_),
-                                .body = std::move(body)};
-      }
-      return stream_response::buffered(std::move(head_));
-   }
+   [[nodiscard]] stream_response materialize_impl(const request& request_value, status success_status) &&;
 
    response head_{status::ok, 11};
    stream_response::body_source source_;

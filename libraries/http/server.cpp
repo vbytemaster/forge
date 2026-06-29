@@ -334,9 +334,11 @@ class server_session : public std::enable_shared_from_this<server_session> {
          auto body_source = std::make_shared<beast_body_reader_source>(
             stream_, buffer_, parser, limits_from(config_), expects_continue(request_value));
          auto request_body_marker = std::make_shared<int>(0);
+         auto request_body =
+            detail::stream_server_access::mark_request_body(body_reader{body_source}, request_body_marker);
          if (stream_capable) {
             auto stream_request_value =
-               detail::stream_server_access::make_request(context, body_reader{body_source}, request_body_marker);
+               detail::stream_server_access::make_request(context, std::move(request_body), request_body_marker);
             stream_.expires_after(config_.idle_timeout);
             auto response_value = co_await router_->handle_stream(stream_request_value);
             const auto request_body_deferred_to_response =
@@ -356,7 +358,7 @@ class server_session : public std::enable_shared_from_this<server_session> {
 
          auto body_error_response = std::optional<response>{};
          try {
-            request_value.body() = co_await body_reader{body_source}.async_read_all();
+            request_value.body() = co_await request_body.async_read_all();
          } catch (const exceptions::payload_too_large&) {
             auto response_value = make_text_response(request_value, status::payload_too_large, "payload too large");
             response_value.version(request_value.version());

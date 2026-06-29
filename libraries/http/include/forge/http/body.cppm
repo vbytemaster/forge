@@ -11,6 +11,12 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
+namespace forge::http {
+namespace detail {
+struct stream_server_access;
+}
+} // namespace forge::http
+
 export module forge.http.body;
 
 export namespace forge::http {
@@ -70,7 +76,17 @@ class body_reader {
    }
 
  private:
+   friend struct detail::stream_server_access;
+
+   body_reader(std::shared_ptr<source> source_value, std::shared_ptr<const void> request_body_marker)
+       : source_(std::move(source_value)), request_body_marker_(std::move(request_body_marker)) {}
+
+   [[nodiscard]] std::shared_ptr<const void> continue_before_response_marker() const noexcept {
+      return request_body_marker_;
+   }
+
    std::shared_ptr<source> source_;
+   std::shared_ptr<const void> request_body_marker_;
 };
 
 class body_writer {

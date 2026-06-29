@@ -6,6 +6,17 @@ This repository is evolving into FORGE: Foundation Core Libraries for modern C++
 
 The repository must stay neutral. Public APIs must not contain downstream product vocabulary or assumptions.
 
+## Repo Skills
+
+- Before creating, extending, moving, renaming or reviewing a library under
+  `libraries/`, load and apply `create-library`.
+- Before creating, renaming, moving, refactoring or reviewing an official plugin
+  under `plugins/`, load and apply `create-plugin`; it extends
+  `create-library`.
+- Do not author library/plugin structure, namespace, target, component, module
+  prefix or contract id layout from memory. Use the skill first, then inspect
+  existing packages for current CMake/module patterns.
+
 ## Branching
 
 - `dev` is the default development and integration branch.
@@ -81,6 +92,9 @@ class service_node {
 
 ## Library Shape
 
+- Detailed library file placement, extension semantics, `details/`, `_impl`
+  file naming and `.cpp` pairing are owned by `create-library`; do not duplicate
+  or apply those rules from memory.
 - Prefer many small targets over one monolithic target.
 - Each major layer must become its own target, for example:
   - `forge_core`
@@ -102,28 +116,16 @@ class service_node {
   - `forge_p2p`
 - `forge_plugins`
 - `forge_tui`
-- Official infrastructure plugin packages live under
-  `plugins/<family>/<name>/include/forge/plugins/<family>/<name>/...`. They are
-  the framework plugin layer and may expose module slices such as `types.cppm`,
-  `api.cppm`, `exceptions.cppm` and `plugin.cppm`; normal low-level libraries
-  still live under `libraries/<lib>/include/forge/<lib>/...`.
 - Heavy classes that own sockets, event loops, crypto contexts, terminal state, or other external resources should use pimpl.
 - Value types, protocol records, and simple POD-like structs should not use pimpl.
-- `_impl` in a file name is allowed only for a large pimpl owner implementation,
-  for example `node.cpp` for `node` and `node_impl.cpp` for `node::impl`.
-- Small pimpl implementations should stay in the owner `.cpp`; do not create a
-  separate `_impl.cpp` unless it materially improves readability.
-- Ordinary private `struct`/`class` helpers should use a semantic or type-based
-  file name such as `operation_deadline.cpp`, `relay_transport.cpp` or
-  `node_state.cpp`, not `_impl`.
+- Split libraries when dependencies, ownership or public surfaces diverge.
+  Do not hide reverse imports or target cycles behind umbrella targets.
 
 ## Namespace And Target Naming
 
 FORGE uses deterministic namespace, target and module naming. Replace `::` with
 `_` for targets and with `.` for module prefixes, and prefix targets with
-`forge_` where appropriate. Example: `forge::plugins::crypto::signer` maps to
-target `forge_plugins_crypto_signer` and module prefix
-`forge.plugins.crypto.signer`.
+`forge_` where appropriate.
 
 Intermediate grouping namespaces are empty. Public types live only in leaf
 namespaces. Namespace depth may vary when the depth is rule-driven; variable
@@ -141,12 +143,9 @@ Group by what the artifact is, not by an implementation detail:
 - Library/domain artifacts use top-level `forge::<domain>`, for example
   `forge::core`, `forge::raw`, `forge::http`, `forge::p2p`, `forge::api`,
   `forge::app`, `forge::tui` and `forge::crypto`.
-- Plugin artifacts use `forge::plugins::<domain>::<role>`. The plugin family
-  mirrors the owning domain library when one exists, and the leaf is the
-  functional role. Examples: `forge::plugins::p2p::node`,
-  `forge::plugins::http::server`, `forge::plugins::crypto::signer`,
-  `forge::plugins::crypto::secrets`, `forge::plugins::log::otlp` and
-  `forge::plugins::tui::screen`.
+- Plugin artifact family/role, namespace, target, component, module prefix and
+  contract id mapping are owned by `create-plugin`; apply that skill instead of
+  re-deriving plugin layout here.
 - Application host variants use `forge::app::<archetype>` when the archetype is
   a kind of application, for example `forge::app::tui` or
   `forge::app::daemon`. Do not put application variants under implementation
@@ -161,41 +160,22 @@ API over their channels, so use `forge::http::api` and `forge::transport::api`,
 never `forge::api::http` or `forge::api::transport`. `app` may be a family root
 because daemon, CLI and TUI are kinds of application hosts.
 
-When two possible family axes compete, choose the axis that will grow with real
-siblings. For log plugins, backends are the growing sibling set, so use
-`forge::plugins::log::otlp`, future `forge::plugins::log::file` and
-`forge::plugins::log::syslog`, not backend-rooted `forge::plugins::otlp::logs`.
-For crypto plugins, service roles are the growing sibling set, so use
-`forge::plugins::crypto::signer` and `forge::plugins::crypto::secrets`, not
-activity/provider names such as `signing::provider` or `secret::provider`.
-
-Family members are named by functional role: `node`, `server`, `resolver`,
-`signer`, `secrets`, `screen`, not contract-side vocabulary such as `provider`
-or `consumer`. Mixed nouns among siblings are allowed when each noun is the
-honest role.
-
-A family is justified when it has two or more is-a members, or when the project
-uses uniform nesting and a credible future sibling exists. Singleton plugin
-families such as `plugins::http::server` and `plugins::crypto::signer` are
-allowed under this policy.
-
 Apply this verification order before adding or renaming a public namespace:
 
 1. Identify what the artifact is: library, plugin, application host or binding.
-2. Apply the matching tree: `forge::<domain>`,
-   `forge::plugins::<domain>::<role>`, `forge::app::<archetype>` or
-   `forge::<medium>::<core>`.
-3. If a core/foundation namespace is involved, run the is-a test to decide
+2. For plugins, apply `create-plugin` and do not duplicate plugin family rules
+   here.
+3. For non-plugin artifacts, apply the matching tree: `forge::<domain>`,
+   `forge::app::<archetype>` or `forge::<medium>::<core>`.
+4. If a core/foundation namespace is involved, run the is-a test to decide
    whether it can be a family root.
-4. If two family axes compete, choose the axis that grows with real siblings.
-5. Check the `::` to `_` to `.` mapping, empty grouping namespaces and role-based
-   leaf names.
+5. Check the `::` to `_` to `.` mapping and empty grouping namespaces.
 
 Do not treat "foundation namespaces are never parents" as an absolute rule, do
-not choose plugin families by activity/backend/contract side, do not choose a
-non-growing axis as the family, do not treat variable namespace depth as a
-problem by itself, do not put symbols into grouping namespaces, and do not put
-application variants under implementation-library namespaces.
+not treat variable namespace depth as a problem by itself, do not put symbols
+into grouping namespaces, and do not put application variants under
+implementation-library namespaces. For plugin family/role decisions, follow
+`create-plugin`.
 
 ## Reflection And Serialization
 
@@ -311,6 +291,13 @@ application variants under implementation-library namespaces.
 - Runtime workers must have explicit cancellation, bounded queues where needed, and deterministic shutdown.
 - Do not introduce `std::async`, ad hoc polling loops, or unmanaged background threads as core runtime behavior.
 
+## Plugins
+
+Структура и нейминг плагинов заданы скиллом `create-plugin` (который расширяет
+`create-library`). Перед созданием, переименованием ИЛИ правкой плагина — загрузи
+и применяй `create-plugin`. Не авторь структуру/namespace/target плагина по памяти.
+Правила здесь не дублируются.
+
 ## App And Plugins
 
 - `forge_app` provides an opinionated `application_shell` for production
@@ -323,13 +310,12 @@ application variants under implementation-library namespaces.
   reverse shutdown.
 - Plugins own behavior and lifecycle. APIs expose typed contracts; they
   must not become fake lifecycle modules.
-- Ready-made infrastructure plugins live under root `plugins/` and are exposed
-  through focused `forge_plugins_<family>_<name>` targets plus the `forge_plugins` aggregate. They
-  may own transport/runtime lifecycle and publish narrow `forge_api` capabilities
-  for product plugins, but they must not own product business logic.
+- Ready-made infrastructure plugins may own transport/runtime lifecycle and
+  publish narrow `forge_api` capabilities for product plugins, but they must not
+  own product business logic.
 - Plugin-specific exception families live with the owning plugin module, not in
-  a shared catch-all plugin exceptions module. For example,
-  `forge::plugins::p2p::node::exceptions::*` belongs to `forge.plugins.p2p.node`.
+  a shared catch-all plugin exceptions module. Concrete module/namespace layout
+  is governed by `create-plugin`.
 - `forge::plugins::p2p::node` is the production owner for a shared P2P node inside
   an application. It owns bootstrap, route/API contribution mounting, local
   endpoint reporting and typed remote API access; product plugins must not

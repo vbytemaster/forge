@@ -1,6 +1,7 @@
 module;
 
 #include <boost/asio/awaitable.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -18,11 +19,28 @@ import forge.rocksdb.store;
 
 #include "details/plugin_impl.hxx"
 #include "details/transaction_impl.hxx"
+#include "details/transaction_owner.hxx"
 
 namespace forge::plugins::db::rocksdb {
 } // namespace forge::plugins::db::rocksdb
 
 namespace forge::plugins::db::rocksdb {
+
+class plugin::transaction_owner_impl final : public native_transaction_owner {
+ public:
+   explicit transaction_owner_impl(std::shared_ptr<impl> owner) : owner_{std::move(owner)} {}
+
+   [[nodiscard]] std::pair<std::shared_ptr<forge::rocksdb::store>, forge::asio::task_scheduler*>
+   require_running() const override {
+      if (owner_ == nullptr) {
+         FORGE_THROW_EXCEPTION(exceptions::stopped, "rocksdb plugin is not started");
+      }
+      return owner_->require_running();
+   }
+
+ private:
+   std::shared_ptr<impl> owner_;
+};
 
 plugin::api_impl::api_impl(std::shared_ptr<impl> owner) : owner_{std::move(owner)} {}
 
@@ -92,13 +110,17 @@ boost::asio::awaitable<scan_result> plugin::api_impl::scan_page(family column_fa
 }
 
 boost::asio::awaitable<std::shared_ptr<transaction>> plugin::api_impl::begin(write_options options) {
-   auto [store, scheduler] = owner_->require_running();
+   auto running = owner_->require_running();
+   auto* scheduler = running.second;
+   auto owner = std::make_shared<plugin::transaction_owner_impl>(owner_);
    co_return co_await detail::run_scheduled(
       *scheduler,
       "rocksdb.begin",
-      [store = std::move(store), scheduler, options] {
+      [owner = std::move(owner), options] {
+         auto [live_store, live_scheduler] = owner->require_running();
+         static_cast<void>(live_scheduler);
          return std::shared_ptr<transaction>{
-            std::make_shared<native_transaction>(store->begin(options), *scheduler),
+            std::make_shared<native_transaction>(live_store->begin(options), std::move(owner)),
          };
       });
 }

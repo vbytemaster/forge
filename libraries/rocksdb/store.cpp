@@ -177,7 +177,21 @@ store::impl::impl(config value) : settings{std::move(value)} {
 
    const auto path = std::filesystem::path{settings.path};
    if (const auto parent = path.parent_path(); !parent.empty()) {
-      std::filesystem::create_directories(parent);
+      try {
+         std::filesystem::create_directories(parent);
+      } catch (const std::filesystem::filesystem_error& error) {
+         FORGE_THROW_EXCEPTION(exceptions::io_error,
+                               "failed to create RocksDB parent directory",
+                               forge::exceptions::ctx("path", path.string()),
+                               forge::exceptions::ctx("parent", parent.string()),
+                               forge::exceptions::ctx("reason", error.what()));
+      } catch (const std::exception& error) {
+         FORGE_THROW_EXCEPTION(exceptions::internal_error,
+                               "failed to create RocksDB parent directory",
+                               forge::exceptions::ctx("path", path.string()),
+                               forge::exceptions::ctx("parent", parent.string()),
+                               forge::exceptions::ctx("reason", error.what()));
+      }
    }
 
    auto db_options = ::rocksdb::DBOptions{};

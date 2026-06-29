@@ -46,6 +46,7 @@ class plugin final : public forge::app::plugin {
    friend struct detail::lifecycle;
    struct impl;
    class api_impl;
+   class transaction_owner_impl;
    std::shared_ptr<impl> impl_;
 };
 

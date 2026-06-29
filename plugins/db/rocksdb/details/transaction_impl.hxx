@@ -2,9 +2,12 @@
 
 namespace forge::plugins::db::rocksdb {
 
+struct native_transaction_state;
+struct native_transaction_owner;
+
 class native_transaction final : public transaction {
  public:
-   native_transaction(forge::rocksdb::transaction transaction, forge::asio::task_scheduler& scheduler);
+   native_transaction(forge::rocksdb::transaction transaction, std::shared_ptr<native_transaction_owner> owner);
    ~native_transaction() override;
 
    boost::asio::awaitable<std::optional<std::vector<std::byte>>>
@@ -20,10 +23,7 @@ class native_transaction final : public transaction {
    boost::asio::awaitable<void> rollback() override;
 
  private:
-   forge::asio::task_scheduler* scheduler_ = nullptr;
-   forge::rocksdb::transaction transaction_;
-   std::mutex mutex_;
-   bool completed_ = false;
+   std::shared_ptr<native_transaction_state> state_;
 };
 
 } // namespace forge::plugins::db::rocksdb

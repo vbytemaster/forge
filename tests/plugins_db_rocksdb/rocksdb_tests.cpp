@@ -370,6 +370,30 @@ BOOST_AUTO_TEST_CASE(rocksdb_operations_after_shutdown_fail_with_stopped) {
       exceptions::stopped);
 }
 
+BOOST_AUTO_TEST_CASE(rocksdb_transaction_operations_after_shutdown_fail_with_stopped) {
+   const auto root = root_guard{};
+   auto app = make_app(root.root / "store");
+   auto db = app->apis().get<api>(api::ref());
+   const auto meta = family{"meta"};
+   auto transaction = forge::asio::blocking::run(app->runtime(), db->begin(write_options{.sync = true}));
+
+   forge::asio::blocking::run(app->runtime(), transaction->put(meta, make_key("schema"), to_bytes("pending")));
+   forge::asio::blocking::run(app->runtime(), app->shutdown());
+
+   BOOST_CHECK_THROW(
+      forge::asio::blocking::run(app->runtime(), transaction->get(meta, make_key("schema"))),
+      exceptions::stopped);
+   BOOST_CHECK_THROW(
+      forge::asio::blocking::run(app->runtime(), transaction->put(meta, make_key("schema"), to_bytes("late"))),
+      exceptions::stopped);
+   BOOST_CHECK_THROW(
+      forge::asio::blocking::run(app->runtime(), transaction->commit()),
+      exceptions::stopped);
+   BOOST_CHECK_THROW(
+      forge::asio::blocking::run(app->runtime(), transaction->rollback()),
+      exceptions::stopped);
+}
+
 BOOST_AUTO_TEST_CASE(rocksdb_scheduler_backpressure_rejects_saturated_work) {
    const auto root = root_guard{};
    auto app = make_app(

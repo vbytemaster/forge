@@ -5040,7 +5040,7 @@ BOOST_AUTO_TEST_CASE(p2p_peer_store_rocksdb_backend_translates_open_failures) {
    }
 
    try {
-      (void)peer_store::make_rocksdb_backend(peer_store::rocksdb_options{.path = temp.path()});
+      (void)peer_store::make_rocksdb_backend(peer_store::rocksdb_options{.path = temp.path() / "store"});
       BOOST_FAIL("expected p2p internal exception");
    } catch (const forge::exceptions::base& error) {
       const auto code = exceptions::code_of(error);

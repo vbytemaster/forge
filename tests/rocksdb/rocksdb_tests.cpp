@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
 #include <span>
 #include <string>
 
@@ -50,6 +51,25 @@ struct root_guard {
 
 BOOST_AUTO_TEST_CASE(rocksdb_store_rejects_empty_path) {
    BOOST_CHECK_THROW((void)store{config{}}, exceptions::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(rocksdb_store_maps_parent_directory_failures_to_typed_errors) {
+   const auto root = root_guard{};
+   std::filesystem::create_directories(root.root);
+   const auto blocker = root.root / "not-a-directory";
+   {
+      auto file = std::ofstream{blocker};
+      BOOST_REQUIRE(file);
+      file << "blocks create_directories";
+   }
+
+   try {
+      (void)store{config_for(blocker / "store")};
+      BOOST_FAIL("expected typed RocksDB exception");
+   } catch (const exceptions::io_error&) {
+   } catch (const std::filesystem::filesystem_error& error) {
+      BOOST_FAIL(std::string{"filesystem_error leaked from forge.rocksdb: "} + error.what());
+   }
 }
 
 BOOST_AUTO_TEST_CASE(rocksdb_store_put_get_delete_and_reopen) {

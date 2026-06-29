@@ -108,6 +108,8 @@ header_iterator::header_iterator(std::optional<header_entry> value) : value_(std
 
 std::string_view field_name(field value) noexcept {
    switch (value) {
+   case field::accept:
+      return "Accept";
    case field::accept_ranges:
       return "Accept-Ranges";
    case field::authorization:

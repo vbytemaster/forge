@@ -43,6 +43,8 @@ std::string http_error_name(int code) {
       return "not_found";
    case 405:
       return "method_not_allowed";
+   case 406:
+      return "not_acceptable";
    case 409:
       return "conflict";
    case 413:

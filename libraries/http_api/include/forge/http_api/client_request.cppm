@@ -36,6 +36,7 @@ import forge.http.types;
 import forge.http.upload;
 import forge.json;
 import forge.reflect.reflect;
+import forge.xml;
 
 export namespace forge::http::api {
 
@@ -372,9 +373,30 @@ void apply_route_cookies(request& target,
    }
 }
 
+[[nodiscard]] std::string encode_body_value(const auto& value, body_codec codec) {
+   switch (codec) {
+   case body_codec::json: {
+      auto encoded = forge::json::write(value);
+      if (!encoded.ok()) {
+         FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request, "HTTP API request body cannot be encoded as JSON");
+      }
+      return std::move(encoded.text);
+   }
+   case body_codec::xml: {
+      auto encoded = forge::xml::write(value);
+      if (!encoded.ok()) {
+         FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request, "HTTP API request body cannot be encoded as XML");
+      }
+      return std::move(encoded.text);
+   }
+   }
+   return {};
+}
+
 template <typename Tuple>
-std::optional<std::string> positional_json_body(const Tuple& arguments,
-                                                const std::array<bool, std::tuple_size_v<Tuple>>& consumed) {
+std::optional<std::string> positional_codec_body(const Tuple& arguments,
+                                                 const std::array<bool, std::tuple_size_v<Tuple>>& consumed,
+                                                 body_codec codec) {
    auto result = std::optional<std::string>{};
    [&]<std::size_t... Index>(std::index_sequence<Index...>) {
       (([&] {
@@ -388,12 +410,7 @@ std::optional<std::string> positional_json_body(const Tuple& arguments,
                 FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request,
                                     "HTTP API request has multiple body parameters");
              }
-             auto encoded = forge::json::write(argument.value);
-             if (!encoded.ok()) {
-                FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request,
-                                    "HTTP API request body cannot be encoded as JSON");
-             }
-             result = std::move(encoded.text);
+             result = encode_body_value(argument.value, codec);
           } else if constexpr (forge::reflect::is_described_object_v<argument_type> &&
                                !detail::request_needs_stream_v<argument_type> &&
                                !is_http_parameter_v<argument_type>) {
@@ -404,12 +421,7 @@ std::optional<std::string> positional_json_body(const Tuple& arguments,
                 FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request,
                                     "HTTP API request has multiple positional body candidates");
              }
-             auto encoded = forge::json::write(argument);
-             if (!encoded.ok()) {
-                FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request,
-                                    "HTTP API request body cannot be encoded as JSON");
-             }
-             result = std::move(encoded.text);
+             result = encode_body_value(argument, codec);
           }
        }()),
        ...);
@@ -418,7 +430,7 @@ std::optional<std::string> positional_json_body(const Tuple& arguments,
 }
 
 template <typename Tuple>
-std::size_t positional_plain_json_body_candidate_count(const std::array<bool, std::tuple_size_v<Tuple>>& consumed) {
+std::size_t positional_plain_codec_body_candidate_count(const std::array<bool, std::tuple_size_v<Tuple>>& consumed) {
    auto count = std::size_t{0};
    [&]<std::size_t... Index>(std::index_sequence<Index...>) {
       (([&] {
@@ -543,7 +555,7 @@ std::optional<body_reader> bind_positional_request_body(request& target,
    if constexpr (explicit_body_sources > 1U) {
       FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request, "HTTP API request has multiple body parameters");
    }
-   const auto plain_body_candidates = positional_plain_json_body_candidate_count<Tuple>(consumed);
+   const auto plain_body_candidates = positional_plain_codec_body_candidate_count<Tuple>(consumed);
    if constexpr (explicit_body_sources > 0U) {
       if (plain_body_candidates > 0U) {
          FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request,
@@ -560,10 +572,10 @@ std::optional<body_reader> bind_positional_request_body(request& target,
       target.prepare_payload();
       return std::nullopt;
    }
-   auto json_body = positional_json_body(arguments, consumed);
-   if (json_body.has_value()) {
-      target.body() = std::move(*json_body);
-      target.set(field::content_type, "application/json");
+   auto codec_body = positional_codec_body(arguments, consumed, route.request_body_codec);
+   if (codec_body.has_value()) {
+      target.body() = std::move(*codec_body);
+      target.set(field::content_type, std::string{detail::content_type(route.request_body_codec)});
       target.prepare_payload();
    }
    return std::nullopt;
@@ -609,7 +621,7 @@ std::optional<std::string> dto_body_bytes(Request& value) {
 }
 
 template <typename Request>
-std::optional<std::string> dto_json_body(Request& value, bool allow_whole_request_body) {
+std::optional<std::string> dto_codec_body(Request& value, bool allow_whole_request_body, body_codec codec) {
    auto result = std::optional<std::string>{};
    if constexpr (forge::reflect::is_described_object_v<Request>) {
       forge::reflect::for_each_member<Request>([&](const char*, auto member) {
@@ -620,23 +632,14 @@ std::optional<std::string> dto_json_body(Request& value, bool allow_whole_reques
          if constexpr (detail::is_body<member_type>::value) {
             const auto& body = value.*member;
             if (body.present) {
-               auto encoded = forge::json::write(body.value);
-               if (!encoded.ok()) {
-                  FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request,
-                                      "HTTP API request body cannot be encoded as JSON");
-               }
-               result = std::move(encoded.text);
+               result = encode_body_value(body.value, codec);
             }
          }
       });
    }
    if constexpr (!detail::request_has_http_parameter_v<Request>) {
       if (!result.has_value() && allow_whole_request_body) {
-         auto encoded = forge::json::write(value);
-         if (!encoded.ok()) {
-            FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request, "HTTP API request cannot be encoded as JSON");
-         }
-         result = std::move(encoded.text);
+         result = encode_body_value(value, codec);
       }
    }
    return result;
@@ -718,8 +721,8 @@ std::optional<body_reader> bind_dto_request_body(request& target, const route& r
       ++body_count;
    }
    const auto allow_whole_request_body = route.verb != method::delete_;
-   auto json_body = dto_json_body(value, allow_whole_request_body);
-   if (json_body.has_value()) {
+   auto codec_body = dto_codec_body(value, allow_whole_request_body, route.request_body_codec);
+   if (codec_body.has_value()) {
       ++body_count;
    }
    if (body_count > 1U) {
@@ -734,9 +737,9 @@ std::optional<body_reader> bind_dto_request_body(request& target, const route& r
    } else if (multipart_body.has_value()) {
       target.body() = std::move(*multipart_body);
       target.prepare_payload();
-   } else if (json_body.has_value()) {
-      target.body() = std::move(*json_body);
-      target.set(field::content_type, "application/json");
+   } else if (codec_body.has_value()) {
+      target.body() = std::move(*codec_body);
+      target.set(field::content_type, std::string{detail::content_type(route.request_body_codec)});
       target.prepare_payload();
    }
    return std::nullopt;

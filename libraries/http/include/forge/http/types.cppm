@@ -13,6 +13,7 @@ export module forge.http.types;
 export namespace forge::http {
 
 enum class field {
+   accept,
    accept_ranges,
    authorization,
    connection,
@@ -21,6 +22,7 @@ enum class field {
    content_type,
    cookie,
    etag,
+   expect,
    host,
    if_modified_since,
    if_none_match,
@@ -44,6 +46,7 @@ enum class method {
 };
 
 enum class status : unsigned {
+   continue_ = 100,
    ok = 200,
    created = 201,
    accepted = 202,
@@ -55,6 +58,7 @@ enum class status : unsigned {
    forbidden = 403,
    not_found = 404,
    method_not_allowed = 405,
+   not_acceptable = 406,
    conflict = 409,
    payload_too_large = 413,
    unsupported_media_type = 415,

@@ -32,6 +32,8 @@ still owns HTTP mechanics; the plugin owns app lifecycle/config composition.
   stream route types.
 - `forge.http.file`, `forge.http.range` — file responses, static roots and byte
   range parsing.
+- `forge.http.negotiation` — generic media type and `Accept` header helpers for
+  libraries that choose their own codecs above `forge_http`.
 - `forge.http.upload` — upload reader, spill-to-disk spool and multipart form-data
   parsing.
 - `forge.http.base_url`, `forge.http.target`.
@@ -115,7 +117,10 @@ cache_impl::read(read_request request) {
 
 Use stream routes for upload/download mechanics that should be visible as HTTP
 body flow, not as `FORGE_API` DTO calls. The server routes after headers are read;
-middleware can reject before the body is consumed.
+middleware can reject before the body is consumed. For requests with
+`Expect: 100-continue`, `forge_http` sends the interim `100 Continue` response
+only when the route actually starts reading the body, so header-only rejection
+does not force a large upload.
 
 ```cpp
 import forge.http.body;
@@ -154,6 +159,25 @@ Stream routes provide FORGE-owned body readers and response body sources. Use
 `forge.http.upload` when the request body should be bounded, optionally spooled to
 disk, or parsed as browser-style `multipart/form-data`.
 
+### Negotiate Content Types
+
+`forge.http.negotiation` parses media types and `Accept` headers generically.
+It understands parameters, structured suffixes such as `+json`, wildcard media
+ranges and `q=0` exclusion. Codec ownership stays outside `forge_http`; callers
+provide the media types they support.
+
+```cpp
+import forge.http.negotiation;
+
+constexpr auto xml = std::array{
+   forge::http::media_type_match{.type = "application/xml", .structured_suffix = "+xml"},
+   forge::http::media_type_match{.type = "text/xml"},
+};
+
+auto content_ok = forge::http::media_type_matches("application/custom+xml", xml);
+auto accept_ok = forge::http::accept_allows("application/json;q=0, application/xml;q=1", xml);
+```
+
 ### Read Uploads
 
 `upload_reader` consumes a `body_reader` incrementally. Small payloads stay in
@@ -185,8 +209,8 @@ router.post_stream("/upload", [](forge::http::stream_request& req)
 ```
 
 `async_read_multipart(content_type)` parses browser-style form uploads into
-fields and file parts. It is not an object-storage multipart workflow; object
-storage state machines belong above `forge_http`.
+fields and file parts. It is not a domain-specific multi-step transfer workflow;
+application state machines belong above `forge_http`.
 
 Multipart limits are separate: `max_total_bytes` bounds the whole envelope,
 `max_file_bytes` bounds each file part, and `max_field_bytes` bounds each
@@ -314,48 +338,48 @@ struct write_receipt {
 BOOST_DESCRIBE_STRUCT(write_payload, (), (bytes))
 BOOST_DESCRIBE_STRUCT(write_receipt, (), (id))
 
-struct put_object_request {
-   std::string bucket;
-   std::string key;
+struct update_item_request {
+   std::string collection;
+   std::string item;
    forge::http::query<std::uint32_t> ttl;
    forge::http::header<std::string> request_id;
    forge::http::body<write_payload> body;
 };
 
-BOOST_DESCRIBE_STRUCT(put_object_request, (), (bucket, key, ttl, request_id, body))
+BOOST_DESCRIBE_STRUCT(update_item_request, (), (collection, item, ttl, request_id, body))
 
-class object_api : public forge::api::contract<object_api> {
+class catalog_api : public forge::api::contract<catalog_api> {
  public:
-   virtual ~object_api() = default;
+   virtual ~catalog_api() = default;
 
    virtual boost::asio::awaitable<write_receipt>
-   put_object(put_object_request request) = 0;
+   update_item(update_item_request request) = 0;
 };
 
 FORGE_API(
-   object_api,
-   FORGE_API_CONTRACT("object", 1, 0),
-   FORGE_API_METHOD(put_object))
+   catalog_api,
+   FORGE_API_CONTRACT("catalog", 1, 0),
+   FORGE_API_METHOD(update_item))
 
 FORGE_HTTP_API(
-   object_api,
-   FORGE_HTTP_PUT(put_object, "/objects/:bucket/:key?ttl={ttl}", created,
+   catalog_api,
+   FORGE_HTTP_PUT(update_item, "/collections/:collection/items/:item?ttl={ttl}", created,
       FORGE_HTTP_HEADER(request_id, "X-Request-Id")))
 ```
 
-Server binding fills `bucket` and `key` from path placeholders, `ttl` from the
-query string, `request_id` from `X-Request-Id`, and `body` from a JSON request
-body. If a wire header or form name must differ from the DTO field name, use
-the existing route options such as `FORGE_HTTP_HEADER(field, "Wire-Name")` or
-`FORGE_HTTP_FORM(field, "wire-name")`.
+Server binding fills `collection` and `item` from path placeholders, `ttl` from
+the query string, `request_id` from `X-Request-Id`, and `body` from a JSON
+request body. If a wire header or form name must differ from the DTO field name,
+use the existing route options such as `FORGE_HTTP_HEADER(field, "Wire-Name")`
+or `FORGE_HTTP_FORM(field, "wire-name")`.
 
 The same typed client call builds the HTTP request:
 
 ```cpp
-auto objects = co_await forge::http::api::remote<object_api>(client);
-auto receipt = co_await objects->put_object({
-   .bucket = "cache",
-   .key = "chunk-1",
+auto catalog = co_await forge::http::api::remote<catalog_api>(client);
+auto receipt = co_await catalog->update_item({
+   .collection = "cache",
+   .item = "entry-1",
    .ttl = {.value = 3600, .present = true},
    .request_id = {.value = "trace-123", .present = true},
    .body = {.value = {.bytes = "payload"}, .present = true},

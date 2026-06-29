@@ -4,6 +4,19 @@
 P2P node. It is intended for operators, tests and application plugins that need
 bounded snapshots of network state without depending on private node internals.
 
+## When To Use
+
+- Operators or tests need bounded P2P snapshots through a typed local API.
+- A product plugin needs read-only peer/session/resource/pubsub visibility.
+- Diagnostics should compose over the shared node without importing private
+  `forge_p2p` internals.
+
+## When Not To Use
+
+- Do not use diagnostics as a health policy engine or alert router.
+- Do not mutate P2P state through this plugin.
+- Do not expose unbounded peer/session lists to remote callers.
+
 ## Identity
 
 - Target: `forge_plugins_p2p_diagnostics`
@@ -41,7 +54,17 @@ plugins:
          max-relay-reservations-per-peer: 64
 ```
 
-## Example
+## Dependencies
+
+- `forge_app`
+- `forge_api`
+- `forge_plugins_p2p_node`
+- `forge_config`
+- `forge_schema`
+
+## Examples
+
+### Read Local Diagnostics
 
 ```cpp
 import forge.plugins.p2p.diagnostics.api;
@@ -59,3 +82,21 @@ auto peers = diagnostics->peers({.only_connected = true, .limit = 100});
 registry.register_plugin(forge::plugins::p2p::node::descriptor());
 registry.register_plugin(forge::plugins::p2p::diagnostics::descriptor());
 ```
+
+## Security And Boundaries
+
+- Diagnostics are local-only API reads. Publishing them remotely is a product
+  decision and should apply authorization.
+- Config limits bound peer, session, endpoint, protocol and relay snapshots.
+- Snapshot output should not include private key material or raw secrets.
+
+## Common Mistakes
+
+- Treating diagnostics as authoritative product readiness.
+- Returning full network state without limits.
+- Adding mutation helpers here instead of extending the owning P2P node API.
+
+## Tests
+
+- `test_forge_quic_p2p`
+- `test_forge_plugins`

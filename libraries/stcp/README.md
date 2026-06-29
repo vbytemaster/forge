@@ -5,6 +5,21 @@
 P2P identity, higher-level protocol negotiation, API dispatch or multiaddr
 parsing.
 
+## When To Use
+
+- Connect or listen for TLS-protected byte streams over TCP.
+- Upgrade an established `forge_tcp` connection after a cleartext prelude.
+- Require mTLS, ALPN, configured trust anchors or fingerprint checks below a
+  higher protocol.
+
+## When Not To Use
+
+- Do not use `forge_stcp` for QUIC, WebSocket, P2P path selection or API
+  dispatch.
+- Do not use it as a certificate authority, secret store or application
+  authorization layer.
+- Do not bypass verifier failures by falling back to raw TCP in production.
+
 ## Public Modules
 
 - `forge.stcp.connection`
@@ -14,7 +29,18 @@ parsing.
 - `forge.stcp.exceptions`
 - `forge.stcp`
 
-## Direct TLS Stream
+## Dependencies
+
+- `forge_tcp`
+- `forge_transport`
+- `forge_crypto`
+- `forge_exceptions`
+- Boost.Asio SSL
+- OpenSSL
+
+## Examples
+
+### Direct TLS Stream
 
 ```cpp
 import forge.stcp.connector;
@@ -34,7 +60,7 @@ TCP is still a byte-stream transport after TLS. Use
 `connection.stream.async_write_frame(...)` and
 `connection.stream.async_read_frame()` when the caller needs message boundaries.
 
-## Upgrade Existing TCP
+### Upgrade Existing TCP
 
 ```cpp
 import forge.stcp.connection;
@@ -56,3 +82,16 @@ auto stream = std::move(tls).into_transport_stream();
   checks, optional verifier callbacks, mTLS and ALPN.
 - Does not own P2P identity, security protocol selection, higher-level negotiation,
   Yamux, API frame dispatch or multiaddr mapping.
+
+## Security And Common Mistakes
+
+- Set `server_name` for client verification when using DNS-like endpoints.
+- Keep private keys and CA material in protected config sources; do not log PEM
+  values or verifier diagnostics with raw secrets.
+- Treat disabled verification and test certificates as local-test-only
+  behavior.
+- Do not assume TLS gives message boundaries. Use transport framing when needed.
+
+## Tests
+
+- `test_forge_stcp`

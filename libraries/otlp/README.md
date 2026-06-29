@@ -16,6 +16,24 @@ minimal crash-spool records on the next start.
 Telemetry export is opt-in. Installing `forge_log` does not automatically create
 an exporter or contact a collector.
 
+## When To Use
+
+- Export `forge_log` records to an OTLP/HTTP JSON collector.
+- Add a bounded asynchronous log sink with flush and shutdown semantics.
+- Persist minimal crash evidence for next-start resend.
+- Keep telemetry mapping in Forge while application alerting and retention
+  policy remain above Forge.
+
+## When Not To Use
+
+- Do not use `forge_otlp` as a metrics or tracing SDK. This library currently
+  exports logs and crash-spool records.
+- Do not use it to define application logger names, privacy policy or routing
+  policy.
+- Do not import OpenTelemetry SDK globals or protobuf/gRPC dependencies through
+  this adapter.
+- Do not use it for unbounded fire-and-forget background export.
+
 ## Public Modules
 
 - `forge.otlp.log_exporter` - OTLP/HTTP JSON log exporter and export metrics.
@@ -79,6 +97,24 @@ Human-readable JSON, HTTP export, symbolication and redaction run later during
 normal process startup. By default `chain_after_capture` remains enabled, so
 FORGE records evidence and then returns to the platform/default crash handling;
 tests or supervised helpers may disable it to exit cleanly after capture.
+
+## Security And Redaction
+
+- Secret-like structured fields must be redacted before they enter OTLP payloads.
+- Crash-spool records are intentionally minimal and bounded; do not write
+  arbitrary log messages from signal handlers.
+- Custom headers and endpoints are operator-controlled config and should not be
+  copied from untrusted remote input.
+- Queue overflow policy is explicit. Prefer dropping or blocking according to
+  the application risk profile rather than growing queues without bounds.
+
+## Common Mistakes
+
+- Adding the exporter and forgetting `async_flush()` during graceful shutdown.
+- Treating `enabled: false` as a partially configured exporter. It is a no-op.
+- Logging tokens in resource attributes, logger names or custom headers.
+- Adding metrics/traces to this log adapter instead of a focused future
+  exporter.
 
 ## Tests
 

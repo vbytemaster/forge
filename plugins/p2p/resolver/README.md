@@ -4,6 +4,21 @@
 the shared P2P node. It lets consumers ask a peer which API versions and method
 contracts it exposes before opening a typed API connection.
 
+## When To Use
+
+- Peers need to discover which typed Forge APIs another peer exposes.
+- A product plugin wants `remote<T>()` handles without hardcoding peer-side API
+  descriptors.
+- API compatibility should be checked before opening a remote typed connection.
+
+## When Not To Use
+
+- Do not use the resolver for peer discovery, routing, relay selection or
+  durable service registry policy.
+- Do not use it as an authorization check. It reports capabilities, not trust.
+- Do not bypass `forge.plugins.p2p.node`; this plugin depends on the shared
+  node.
+
 ## Identity
 
 - Target: `forge_plugins_p2p_resolver`
@@ -45,7 +60,18 @@ plugins:
          max-errors-per-method: 64
 ```
 
-## Example
+## Dependencies
+
+- `forge_app`
+- `forge_api`
+- `forge_p2p`
+- `forge_plugins_p2p_node`
+- `forge_config`
+- `forge_schema`
+
+## Examples
+
+### Publish And Resolve A Typed API
 
 ```cpp
 import forge.plugins.p2p.resolver.api;
@@ -72,3 +98,23 @@ class catalog_resolver_plugin final : public forge::app::plugin {
 auto catalog = co_await resolver->remote<catalog_api>(peer);
 auto value = co_await catalog->read(request);
 ```
+
+## Security And Boundaries
+
+- Descriptor data is bounded by config limits before it is accepted.
+- The resolver projects API compatibility. Caller trust, admission and
+  authorization remain product policy.
+- Remote errors should be surfaced as typed API errors, not as raw transport
+  messages.
+
+## Common Mistakes
+
+- Treating a successful descriptor query as proof that the peer is trusted.
+- Publishing every local API by default. Export only the intended remote
+  contract.
+- Making cache TTLs unbounded and hiding stale descriptors.
+
+## Tests
+
+- `test_forge_quic_p2p`
+- `test_forge_plugins`

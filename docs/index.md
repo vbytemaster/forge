@@ -18,6 +18,7 @@ Documents below explain cross-library architecture decisions.
 | [web/http-websocket.md](web/http-websocket.md) | HTTP/WebSocket layering, routing, upgrade, retry and backpressure rules. |
 | [web/http-fastapi-style-parameters.md](web/http-fastapi-style-parameters.md) | FastAPI-style HTTP parameter binding for multi-argument FORGE API methods. |
 | [web/http-files-and-s3.md](web/http-files-and-s3.md) | HTTP file upload/download gaps, Beast capabilities and S3-ready substrate plan. |
+| [iterations/forge-xml-http-api-codec-v1.md](iterations/forge-xml-http-api-codec-v1.md) | XML codec and HTTP API multi-codec implementation order for S3-ready typed APIs. |
 | [network/quic-p2p.md](network/quic-p2p.md) | QUIC transport, P2P peer identity, protocol streams and failure model. |
 | [tui/notcurses-component-library.md](tui/notcurses-component-library.md) | TUI value models, deterministic rendering, navigation and Notcurses boundary. |
 | [codecs/json-yaml-glaze.md](codecs/json-yaml-glaze.md) | JSON/YAML API shape, Glaze backend isolation and diagnostics. |
@@ -45,6 +46,7 @@ Each library guide must be useful without reading source first:
 - [raw](../libraries/raw/README.md)
 - [json](../libraries/json/README.md)
 - [yaml](../libraries/yaml/README.md)
+- [xml](../libraries/xml/README.md)
 - [schema](../libraries/schema/README.md)
 - [config](../libraries/config/README.md)
 - [program_options](../libraries/program_options/README.md)

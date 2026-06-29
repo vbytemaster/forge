@@ -84,8 +84,8 @@ import forge.multiformats.multihash;
 import forge.multiformats.multibase;
 import forge.multiformats.multiaddr;
 
-#include "../../libraries/p2p/session_lifecycle.hpp"
-#include "../../libraries/p2p/relay_accounting.hpp"
+#include "../../libraries/p2p/details/session_lifecycle.hxx"
+#include "../../libraries/p2p/details/relay_accounting.hxx"
 
 namespace forge::p2p {
 namespace {

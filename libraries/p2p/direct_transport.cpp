@@ -18,7 +18,7 @@ import forge.p2p.endpoint;
 import forge.p2p.exceptions;
 import forge.transport.session;
 
-#include "direct_transport.hpp"
+#include "details/direct_transport.hxx"
 
 namespace forge::p2p::direct {
 namespace {

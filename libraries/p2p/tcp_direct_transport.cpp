@@ -35,10 +35,9 @@ import forge.transport.session;
 import forge.transport.stream;
 import forge.yamux.session;
 
-#include "direct_transport.hpp"
-#include "operation_deadline.hpp"
-#include "stream_upgrade.hpp"
-#include "tcp_stream_upgrade.hpp"
+#include "details/direct_transport.hxx"
+#include "details/operation_deadline.hxx"
+#include "details/stream_upgrade.hxx"
 
 namespace forge::p2p::direct {
 namespace {

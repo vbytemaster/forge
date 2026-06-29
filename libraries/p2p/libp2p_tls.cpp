@@ -29,9 +29,9 @@ import forge.p2p.identity;
 import forge.stcp.connection;
 import forge.stcp.options;
 
-#include "identity_signature.hpp"
+#include "details/identity_signature.hxx"
 
-#include "libp2p_tls.hpp"
+#include "details/libp2p_tls.hxx"
 
 namespace forge::p2p {
 namespace {

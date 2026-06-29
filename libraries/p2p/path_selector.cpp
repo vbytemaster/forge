@@ -10,7 +10,7 @@ import forge.p2p.endpoint;
 import forge.p2p.peer_store;
 import forge.p2p.scoring;
 
-#include "path_selector.hpp"
+#include "details/path_selector.hxx"
 
 namespace forge::p2p::path_selector {
 namespace {

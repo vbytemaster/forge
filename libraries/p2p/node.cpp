@@ -68,9 +68,9 @@ import forge.transport.session;
 import forge.transport.stream;
 import forge.yamux.session;
 
-#include "node_impl.hpp"
-#include "dht_query.hpp"
-#include "protocol_capabilities.hpp"
+#include "details/node_impl.hxx"
+#include "details/dht_query.hxx"
+#include "details/protocol_capabilities.hxx"
 
 namespace forge::p2p {
 

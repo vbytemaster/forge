@@ -1,6 +1,6 @@
 module;
 #include <forge/exceptions/macros.hpp>
-#include "openssl_backend.hpp"
+#include "details/openssl_backend.hxx"
 #include <openssl/core_names.h>
 #include <openssl/bn.h>
 #include <openssl/ec.h>

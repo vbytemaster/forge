@@ -9,6 +9,7 @@ module;
 #include <utility>
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
 
 module forge.p2p.node;
 
@@ -17,10 +18,11 @@ import forge.crypto.asymmetric;
 import forge.p2p.exceptions;
 import forge.p2p.identity;
 import forge.p2p.stream;
+import forge.tcp.connection;
 import forge.yamux.session;
 
-#include "relay_transport.hpp"
-#include "stream_upgrade.hpp"
+#include "details/relay_transport.hxx"
+#include "details/stream_upgrade.hxx"
 
 namespace forge::p2p {
 

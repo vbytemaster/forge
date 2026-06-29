@@ -11,7 +11,7 @@ module forge.crypto.secp256k1;
 
 import forge.crypto.sha256;
 import forge.exceptions;
-#include "secp256k1_backend.hpp"
+#include "details/private_key_impl.hxx"
 
 /* used by mixed + secp256k1 */
 

@@ -21,7 +21,7 @@ import forge.crypto.secp256k1;
 import forge.exceptions;
 import forge.p2p.exceptions;
 
-#include "identity_signature.hpp"
+#include "details/identity_signature.hxx"
 
 namespace forge::p2p {
 namespace {

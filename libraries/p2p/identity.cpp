@@ -22,7 +22,7 @@ import forge.multiformats.multihash;
 import forge.multiformats.multibase;
 import forge.multiformats.multiaddr;
 
-#include "identity_signature.hpp"
+#include "details/identity_signature.hxx"
 
 namespace forge::p2p {
 

@@ -1,4 +1,4 @@
-add_library(forge_http_api STATIC http_api.cpp)
+add_library(forge_http_api STATIC)
 forge_target_modules(forge_http_api http_api)
 
 target_include_directories(forge_http_api PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})

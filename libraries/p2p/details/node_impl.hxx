@@ -1,13 +1,13 @@
 #pragma once
 
-#include "connection_manager.hpp"
-#include "direct_transport.hpp"
-#include "host_addresses.hpp"
-#include "operation_deadline.hpp"
-#include "path_selector.hpp"
-#include "peer_exchange_codec.hpp"
-#include "relay_discovery.hpp"
-#include "relay_transport.hpp"
+#include "connection_manager.hxx"
+#include "direct_transport.hxx"
+#include "host_addresses.hxx"
+#include "operation_deadline.hxx"
+#include "path_selector.hxx"
+#include "peer_exchange_codec.hxx"
+#include "relay_discovery.hxx"
+#include "relay_transport.hxx"
 
 namespace forge::p2p {
 

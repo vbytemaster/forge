@@ -41,11 +41,10 @@ import forge.transport.stream;
 import forge.tcp.connection;
 import forge.yamux.session;
 
-#include "identity_signature.hpp"
-#include "libp2p_tls.hpp"
-#include "protobuf.hpp"
-#include "stream_upgrade.hpp"
-#include "tcp_stream_upgrade.hpp"
+#include "details/identity_signature.hxx"
+#include "details/libp2p_tls.hxx"
+#include "details/protobuf.hxx"
+#include "details/stream_upgrade.hxx"
 
 namespace forge::p2p {
 namespace {

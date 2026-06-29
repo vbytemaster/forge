@@ -5,7 +5,6 @@ add_library(
    component.cpp
    decode.cpp
    migration.cpp
-   config.cpp
 )
 forge_target_modules(forge_config config)
 

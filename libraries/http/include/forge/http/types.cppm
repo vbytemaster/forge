@@ -22,6 +22,7 @@ enum class field {
    content_type,
    cookie,
    etag,
+   expect,
    host,
    if_modified_since,
    if_none_match,
@@ -45,6 +46,7 @@ enum class method {
 };
 
 enum class status : unsigned {
+   continue_ = 100,
    ok = 200,
    created = 201,
    accepted = 202,

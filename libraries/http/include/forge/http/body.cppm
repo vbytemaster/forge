@@ -11,6 +11,12 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
+namespace forge::http {
+namespace detail {
+struct stream_server_access;
+}
+} // namespace forge::http
+
 export module forge.http.body;
 
 export namespace forge::http {
@@ -34,6 +40,9 @@ class body_reader {
 
       virtual boost::asio::awaitable<std::optional<body_chunk>> async_read() = 0;
       [[nodiscard]] virtual std::uint64_t bytes_read() const noexcept = 0;
+      [[nodiscard]] virtual bool requires_continue_before_response() const noexcept {
+         return false;
+      }
    };
 
    body_reader() = default;
@@ -62,8 +71,22 @@ class body_reader {
       return source_ ? source_->bytes_read() : 0;
    }
 
+   [[nodiscard]] bool requires_continue_before_response() const noexcept {
+      return source_ != nullptr && source_->requires_continue_before_response();
+   }
+
  private:
+   friend struct detail::stream_server_access;
+
+   body_reader(std::shared_ptr<source> source_value, std::shared_ptr<const void> request_body_marker)
+       : source_(std::move(source_value)), request_body_marker_(std::move(request_body_marker)) {}
+
+   [[nodiscard]] std::shared_ptr<const void> continue_before_response_marker() const noexcept {
+      return request_body_marker_;
+   }
+
    std::shared_ptr<source> source_;
+   std::shared_ptr<const void> request_body_marker_;
 };
 
 class body_writer {

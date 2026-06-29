@@ -126,6 +126,8 @@ std::string_view field_name(field value) noexcept {
       return "Cookie";
    case field::etag:
       return "ETag";
+   case field::expect:
+      return "Expect";
    case field::host:
       return "Host";
    case field::if_modified_since:

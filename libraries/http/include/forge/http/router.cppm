@@ -1,6 +1,7 @@
 module;
 
 #include <functional>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -9,17 +10,24 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
+namespace forge::http::detail {
+struct router_server_access;
+}
+
 export module forge.http.router;
 
 import forge.http.middleware;
 import forge.http.route_context;
 import forge.http.stream;
+import forge.http.target;
 import forge.http.types;
 import forge.websocket.connection;
 
 export namespace forge::http {
 
 using websocket_route_handler = std::function<void(std::shared_ptr<forge::websocket::connection>)>;
+
+class router;
 
 class router {
  public:
@@ -50,6 +58,8 @@ class router {
    [[nodiscard]] std::optional<websocket_route_handler> match_websocket(route_context& context) const;
 
  private:
+   friend struct detail::router_server_access;
+
    struct route_entry {
       method verb;
       std::string path;

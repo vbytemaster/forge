@@ -16,6 +16,9 @@ module;
 #include <utility>
 #include <vector>
 
+#include "details/router_server_access.hxx"
+#include "details/stream_server_access.hxx"
+
 #include <forge/exceptions/macros.hpp>
 
 #include <boost/asio/as_tuple.hpp>
@@ -34,6 +37,7 @@ module forge.http.server;
 import forge.asio.runtime;
 import forge.http.body;
 import forge.http.exceptions;
+import forge.http.negotiation;
 import forge.http.route_context;
 import forge.http.stream;
 import forge.websocket.connection;
@@ -128,6 +132,11 @@ beast_http::response<beast_http::string_body> to_beast_response(const response& 
    return target;
 }
 
+bool expects_continue(const request& value) {
+   const auto found = value.find(field::expect);
+   return found != value.end() && normalize_token(found->value()) == "100-continue";
+}
+
 beast_http::request<beast_http::string_body>
 to_websocket_request(const beast_http::request<beast_http::buffer_body>& source) {
    auto target = beast_http::request<beast_http::string_body>{source.method(), source.target(), source.version()};
@@ -141,13 +150,15 @@ to_websocket_request(const beast_http::request<beast_http::buffer_body>& source)
 class beast_body_reader_source final : public body_reader::source {
  public:
    beast_body_reader_source(beast::tcp_stream& stream, beast::flat_buffer& buffer,
-                            beast_http::request_parser<beast_http::buffer_body>& parser, stream_limits limits)
-       : stream_(stream), buffer_(buffer), parser_(parser), limits_(limits) {}
+                            beast_http::request_parser<beast_http::buffer_body>& parser, stream_limits limits,
+                            bool send_continue)
+       : stream_(stream), buffer_(buffer), parser_(parser), limits_(limits), send_continue_(send_continue) {}
 
    awaitable<std::optional<body_chunk>> async_read() override {
       if (parser_.is_done()) {
          co_return std::nullopt;
       }
+      co_await send_continue_if_needed();
 
       const auto chunk_size = std::max<std::uint64_t>(1, limits_.max_chunk_bytes);
       for (;;) {
@@ -191,11 +202,31 @@ class beast_body_reader_source final : public body_reader::source {
       return bytes_read_;
    }
 
+   [[nodiscard]] bool requires_continue_before_response() const noexcept override {
+      return send_continue_ && !parser_.is_done();
+   }
+
+   awaitable<void> send_continue_if_needed() {
+      if (!send_continue_ || parser_.is_done()) {
+         co_return;
+      }
+      send_continue_ = false;
+      auto reply = beast_http::response<beast_http::empty_body>{beast_http::status::continue_, parser_.get().version()};
+      reply.keep_alive(true);
+      stream_.expires_after(limits_.write_timeout);
+      auto [write_error, written] = co_await beast_http::async_write(stream_, reply, asio::as_tuple(use_awaitable));
+      static_cast<void>(written);
+      if (write_error) {
+         throw boost::system::system_error{write_error};
+      }
+   }
+
  private:
    beast::tcp_stream& stream_;
    beast::flat_buffer& buffer_;
    beast_http::request_parser<beast_http::buffer_body>& parser_;
    stream_limits limits_;
+   bool send_continue_ = false;
    std::uint64_t bytes_read_ = 0;
 };
 
@@ -286,13 +317,38 @@ class server_session : public std::enable_shared_from_this<server_session> {
             }
          }
 
-         auto body_source = std::make_shared<beast_body_reader_source>(stream_, buffer_, parser, limits_from(config_));
-         if (router_ && router_->can_handle_stream(context)) {
-            auto stream_request_value = stream_request{.context = context, .body = body_reader{body_source}};
+         if (router_) {
+            auto preflight_response = response{};
+            if (detail::router_server_access::reject_without_body(*router_, context, preflight_response)) {
+               preflight_response.version(request_value.version());
+               preflight_response.keep_alive(request_value.keep_alive() && parser.is_done());
+               co_await write_response(preflight_response);
+               if (!preflight_response.keep_alive()) {
+                  break;
+               }
+               continue;
+            }
+         }
+
+         const auto stream_capable = router_ && router_->can_handle_stream(context);
+         auto body_source = std::make_shared<beast_body_reader_source>(
+            stream_, buffer_, parser, limits_from(config_), expects_continue(request_value));
+         auto request_body_marker = std::make_shared<int>(0);
+         auto request_body =
+            detail::stream_server_access::mark_request_body(body_reader{body_source}, request_body_marker);
+         if (stream_capable) {
+            auto stream_request_value =
+               detail::stream_server_access::make_request(context, std::move(request_body), request_body_marker);
             stream_.expires_after(config_.idle_timeout);
             auto response_value = co_await router_->handle_stream(stream_request_value);
+            const auto request_body_deferred_to_response =
+               detail::stream_server_access::response_body_uses_request(response_value, request_body_marker) &&
+               !parser.is_done();
             response_value.head.version(request_value.version());
             response_value.head.keep_alive(request_value.keep_alive() && parser.is_done());
+            if (request_body_deferred_to_response) {
+               co_await body_source->send_continue_if_needed();
+            }
             co_await write_stream_response(response_value);
             if (!response_value.head.keep_alive()) {
                break;
@@ -302,7 +358,7 @@ class server_session : public std::enable_shared_from_this<server_session> {
 
          auto body_error_response = std::optional<response>{};
          try {
-            request_value.body() = co_await body_reader{body_source}.async_read_all();
+            request_value.body() = co_await request_body.async_read_all();
          } catch (const exceptions::payload_too_large&) {
             auto response_value = make_text_response(request_value, status::payload_too_large, "payload too large");
             response_value.version(request_value.version());

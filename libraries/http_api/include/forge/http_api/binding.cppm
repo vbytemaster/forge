@@ -1419,13 +1419,15 @@ class binding_builder {
                                                                                status success_status,
                                                                                Response value,
                                                                                const route_options& options,
-                                                                               const std::shared_ptr<endpoint_state>& endpoint = {}) {
+                                                                               const std::shared_ptr<endpoint_state>& endpoint = {},
+                                                                               const stream_request* stream_request_value = nullptr) {
       auto output = stream_response{};
       auto endpoint_headers_merged = false;
       if constexpr (std::is_same_v<std::remove_cvref_t<Response>, file_response>) {
          output = co_await std::move(value).materialize(request_value);
       } else if constexpr (detail::is_streaming_response_v<Response>) {
-         output = std::move(value).materialize(request_value, success_status);
+         output = stream_request_value != nullptr ? std::move(value).materialize(*stream_request_value, success_status)
+                                                  : std::move(value).materialize(request_value, success_status);
       } else if constexpr (detail::is_stream_response_v<Response>) {
          output = std::move(value);
       } else {
@@ -1530,7 +1532,9 @@ class binding_builder {
                      co_return co_await make_success_stream_response(request_value.context.request,
                                                                      options.success_status,
                                                                      std::move(value),
-                                                                     options);
+                                                                     options,
+                                                                     {},
+                                                                     &request_value);
                   } else {
                      auto request = co_await make_request_from_stream<Request>(request_value, options);
                      auto endpoint = make_endpoint_state<Request>(request_value.context.request, options.success_status);
@@ -1541,7 +1545,8 @@ class binding_builder {
                                                                      options.success_status,
                                                                      std::move(value),
                                                                      options,
-                                                                     endpoint);
+                                                                     endpoint,
+                                                                     &request_value);
                   }
                } catch (const forge::http::exceptions::unsupported_media_type& error) {
                   co_return buffered(make_error_response(

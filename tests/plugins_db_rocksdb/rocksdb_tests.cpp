@@ -394,6 +394,34 @@ BOOST_AUTO_TEST_CASE(rocksdb_transaction_operations_after_shutdown_fail_with_sto
       exceptions::stopped);
 }
 
+BOOST_AUTO_TEST_CASE(rocksdb_shutdown_releases_stale_transaction_native_state) {
+   const auto root = root_guard{};
+   const auto path = root.root / "store";
+   const auto meta = family{"meta"};
+   const auto key = make_key("schema");
+
+   auto app = make_app(path);
+   auto db = app->apis().get<api>(api::ref());
+   auto transaction = forge::asio::blocking::run(app->runtime(), db->begin(write_options{.sync = true}));
+   forge::asio::blocking::run(app->runtime(), transaction->put(meta, key, to_bytes("pending")));
+   forge::asio::blocking::run(app->runtime(), app->shutdown());
+
+   auto restarted = std::unique_ptr<forge::app::application_shell>{};
+   BOOST_REQUIRE_NO_THROW(restarted = make_app(path));
+   auto restarted_db = restarted->apis().get<api>(api::ref());
+   const auto value = forge::asio::blocking::run(restarted->runtime(), restarted_db->get(meta, key));
+   BOOST_TEST(!value.has_value());
+   forge::asio::blocking::run(restarted->runtime(), restarted_db->put(meta, key, to_bytes("restarted"), write_options{.sync = true}));
+   const auto restarted_value = forge::asio::blocking::run(restarted->runtime(), restarted_db->get(meta, key));
+   BOOST_REQUIRE(restarted_value.has_value());
+   BOOST_TEST(to_string(*restarted_value) == "restarted");
+   forge::asio::blocking::run(restarted->runtime(), restarted->shutdown());
+
+   BOOST_CHECK_THROW(
+      forge::asio::blocking::run(app->runtime(), transaction->rollback()),
+      exceptions::stopped);
+}
+
 BOOST_AUTO_TEST_CASE(rocksdb_scheduler_backpressure_rejects_saturated_work) {
    const auto root = root_guard{};
    auto app = make_app(

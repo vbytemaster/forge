@@ -11,11 +11,14 @@ enum class phase : std::uint8_t {
    stopped,
 };
 
+struct native_transaction_control;
+
 struct plugin::impl {
    mutable std::mutex mutex;
    config settings;
    std::shared_ptr<forge::rocksdb::store> store;
    forge::asio::task_scheduler* scheduler = nullptr;
+   std::vector<std::weak_ptr<native_transaction_control>> transactions;
    std::atomic<phase> current = phase::registered;
 
    void configure(config value);
@@ -23,6 +26,8 @@ struct plugin::impl {
    void open();
    void request_stop() noexcept;
    void close();
+   void track_transaction(std::shared_ptr<native_transaction_control> transaction);
+   void release_transactions() noexcept;
 
    [[nodiscard]] std::pair<std::shared_ptr<forge::rocksdb::store>, forge::asio::task_scheduler*> require_running() const;
 };

@@ -30,11 +30,13 @@ import forge.rocksdb.store;
 
 #include "details/plugin_impl.hxx"
 #include "details/config.hxx"
+#include "details/transaction_owner.hxx"
 
 namespace forge::plugins::db::rocksdb {
 
 void plugin::impl::configure(config value) {
    detail::validate_config(value);
+   release_transactions();
    auto lock = std::scoped_lock{mutex};
    settings = std::move(value);
    store.reset();
@@ -67,10 +69,45 @@ void plugin::impl::request_stop() noexcept {
 }
 
 void plugin::impl::close() {
+   current.store(phase::stopping);
+   release_transactions();
    auto lock = std::scoped_lock{mutex};
    store.reset();
    scheduler = nullptr;
    current.store(phase::stopped);
+}
+
+void plugin::impl::track_transaction(std::shared_ptr<native_transaction_control> transaction) {
+   if (transaction == nullptr) {
+      FORGE_THROW_EXCEPTION(exceptions::invalid_argument, "invalid RocksDB transaction construction");
+   }
+
+   auto lock = std::scoped_lock{mutex};
+   if (current.load() != phase::started || store == nullptr || scheduler == nullptr) {
+      FORGE_THROW_EXCEPTION(exceptions::stopped, "rocksdb plugin is not started");
+   }
+   std::erase_if(transactions, [](const auto& existing) {
+      return existing.expired();
+   });
+   transactions.push_back(std::move(transaction));
+}
+
+void plugin::impl::release_transactions() noexcept {
+   auto active = std::vector<std::shared_ptr<native_transaction_control>>{};
+   {
+      auto lock = std::scoped_lock{mutex};
+      active.reserve(transactions.size());
+      for (auto& transaction : transactions) {
+         if (auto state = transaction.lock()) {
+            active.push_back(std::move(state));
+         }
+      }
+      transactions.clear();
+   }
+
+   for (auto& state : active) {
+      state->release_native();
+   }
 }
 
 std::pair<std::shared_ptr<forge::rocksdb::store>, forge::asio::task_scheduler*> plugin::impl::require_running() const {

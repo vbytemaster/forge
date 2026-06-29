@@ -1,14 +1,17 @@
 #pragma once
 
+#include "transaction_owner.hxx"
+
 namespace forge::plugins::db::rocksdb {
 
 struct native_transaction_state;
-struct native_transaction_owner;
 
-class native_transaction final : public transaction {
+class native_transaction final : public transaction, public native_transaction_control {
  public:
    native_transaction(forge::rocksdb::transaction transaction, std::shared_ptr<native_transaction_owner> owner);
    ~native_transaction() override;
+
+   void release_native() noexcept override;
 
    boost::asio::awaitable<std::optional<std::vector<std::byte>>>
    get(family column_family, std::vector<std::byte> key, read_options options) override;

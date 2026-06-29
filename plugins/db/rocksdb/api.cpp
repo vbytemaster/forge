@@ -38,6 +38,13 @@ class plugin::transaction_owner_impl final : public native_transaction_owner {
       return owner_->require_running();
    }
 
+   void track_transaction(std::shared_ptr<native_transaction_control> transaction) override {
+      if (owner_ == nullptr) {
+         FORGE_THROW_EXCEPTION(exceptions::stopped, "rocksdb plugin is not started");
+      }
+      owner_->track_transaction(std::move(transaction));
+   }
+
  private:
    std::shared_ptr<impl> owner_;
 };
@@ -119,9 +126,9 @@ boost::asio::awaitable<std::shared_ptr<transaction>> plugin::api_impl::begin(wri
       [owner = std::move(owner), options] {
          auto [live_store, live_scheduler] = owner->require_running();
          static_cast<void>(live_scheduler);
-         return std::shared_ptr<transaction>{
-            std::make_shared<native_transaction>(live_store->begin(options), std::move(owner)),
-         };
+         auto transaction = std::make_shared<native_transaction>(live_store->begin(options), owner);
+         owner->track_transaction(transaction);
+         return std::static_pointer_cast<forge::plugins::db::rocksdb::transaction>(transaction);
       });
 }
 

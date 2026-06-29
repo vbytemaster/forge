@@ -31,8 +31,9 @@ struct native_transaction_state {
       , transaction{std::move(transaction_value)} {}
 
    std::shared_ptr<native_transaction_owner> owner;
-   forge::rocksdb::transaction transaction;
+   std::optional<forge::rocksdb::transaction> transaction;
    std::mutex mutex;
+   bool closed_by_owner = false;
 };
 
 namespace {
@@ -42,12 +43,27 @@ require_transaction_owner(const std::shared_ptr<native_transaction_state>& state
    if (state == nullptr || state->owner == nullptr) {
       FORGE_THROW_EXCEPTION(exceptions::invalid_argument, "invalid RocksDB transaction construction");
    }
-   return state->owner->require_running();
+   auto owner = std::shared_ptr<native_transaction_owner>{};
+   {
+      const auto lock = std::scoped_lock{state->mutex};
+      if (state->closed_by_owner) {
+         FORGE_THROW_EXCEPTION(exceptions::stopped, "rocksdb plugin is not started");
+      }
+      owner = state->owner;
+   }
+   return owner->require_running();
 }
 
 forge::asio::task_scheduler& require_transaction_scheduler(const std::shared_ptr<native_transaction_state>& state) {
    auto running = require_transaction_owner(state);
    return *running.second;
+}
+
+forge::rocksdb::transaction& require_native_transaction(native_transaction_state& state) {
+   if (state.closed_by_owner || !state.transaction.has_value()) {
+      FORGE_THROW_EXCEPTION(exceptions::stopped, "rocksdb plugin is not started");
+   }
+   return *state.transaction;
 }
 
 } // namespace
@@ -59,7 +75,27 @@ native_transaction::native_transaction(forge::rocksdb::transaction transaction, 
    }
 }
 
-native_transaction::~native_transaction() = default;
+native_transaction::~native_transaction() {
+   release_native();
+}
+
+void native_transaction::release_native() noexcept {
+   if (state_ == nullptr) {
+      return;
+   }
+
+   const auto lock = std::scoped_lock{state_->mutex};
+   state_->closed_by_owner = true;
+   if (!state_->transaction.has_value()) {
+      return;
+   }
+
+   try {
+      state_->transaction->rollback();
+   } catch (...) {
+   }
+   state_->transaction.reset();
+}
 
 boost::asio::awaitable<std::optional<std::vector<std::byte>>>
 native_transaction::get(family column_family, std::vector<std::byte> key, read_options options) {
@@ -71,7 +107,7 @@ native_transaction::get(family column_family, std::vector<std::byte> key, read_o
       [state = std::move(state), column_family = std::move(column_family), key = std::move(key), options] {
          static_cast<void>(require_transaction_owner(state));
          const auto lock = std::scoped_lock{state->mutex};
-         return state->transaction.get(std::move(column_family), std::move(key), options);
+         return require_native_transaction(*state).get(std::move(column_family), std::move(key), options);
       });
 }
 
@@ -85,7 +121,7 @@ native_transaction::scan(family column_family, std::vector<std::byte> prefix, re
       [state = std::move(state), column_family = std::move(column_family), prefix = std::move(prefix), options] {
          static_cast<void>(require_transaction_owner(state));
          const auto lock = std::scoped_lock{state->mutex};
-         return state->transaction.scan(std::move(column_family), std::move(prefix), options);
+         return require_native_transaction(*state).scan(std::move(column_family), std::move(prefix), options);
       });
 }
 
@@ -98,7 +134,7 @@ boost::asio::awaitable<scan_result> native_transaction::scan_page(family column_
       [state = std::move(state), column_family = std::move(column_family), request = std::move(request)] {
          static_cast<void>(require_transaction_owner(state));
          const auto lock = std::scoped_lock{state->mutex};
-         return state->transaction.scan_page(std::move(column_family), std::move(request));
+         return require_native_transaction(*state).scan_page(std::move(column_family), std::move(request));
       });
 }
 
@@ -112,7 +148,7 @@ native_transaction::lock(family column_family, std::vector<std::byte> key, read_
       [state = std::move(state), column_family = std::move(column_family), key = std::move(key), options] {
          static_cast<void>(require_transaction_owner(state));
          const auto lock = std::scoped_lock{state->mutex};
-         state->transaction.lock(std::move(column_family), std::move(key), options);
+         require_native_transaction(*state).lock(std::move(column_family), std::move(key), options);
       });
 }
 
@@ -127,7 +163,7 @@ native_transaction::put(family column_family, std::vector<std::byte> key, std::v
        value = std::move(value)] {
          static_cast<void>(require_transaction_owner(state));
          const auto lock = std::scoped_lock{state->mutex};
-         state->transaction.put(std::move(column_family), std::move(key), std::move(value));
+         require_native_transaction(*state).put(std::move(column_family), std::move(key), std::move(value));
       });
 }
 
@@ -140,7 +176,7 @@ boost::asio::awaitable<void> native_transaction::erase(family column_family, std
       [state = std::move(state), column_family = std::move(column_family), key = std::move(key)] {
          static_cast<void>(require_transaction_owner(state));
          const auto lock = std::scoped_lock{state->mutex};
-         state->transaction.erase(std::move(column_family), std::move(key));
+         require_native_transaction(*state).erase(std::move(column_family), std::move(key));
       });
 }
 
@@ -153,7 +189,8 @@ boost::asio::awaitable<void> native_transaction::commit() {
       [state = std::move(state)] {
          static_cast<void>(require_transaction_owner(state));
          const auto lock = std::scoped_lock{state->mutex};
-         state->transaction.commit();
+         require_native_transaction(*state).commit();
+         state->transaction.reset();
       });
 }
 
@@ -166,7 +203,8 @@ boost::asio::awaitable<void> native_transaction::rollback() {
       [state = std::move(state)] {
          static_cast<void>(require_transaction_owner(state));
          const auto lock = std::scoped_lock{state->mutex};
-         state->transaction.rollback();
+         require_native_transaction(*state).rollback();
+         state->transaction.reset();
       });
 }
 

@@ -2,7 +2,10 @@
 
 `forge_json` and `forge_yaml` expose a symmetric typed codec API over a Glaze
 backend. FORGE owns the public API, value/document model, schema diagnostics and
-redaction boundary.
+redaction boundary. Planned XML support follows the same ownership model in
+[Forge XML And HTTP API Codec Plan](../iterations/forge-xml-http-api-codec-v1.md):
+the XML backend stays private, while `forge_xml` exposes Forge-owned typed codec
+functions over Boost.Describe and `forge_schema`.
 
 Local guides:
 
@@ -60,6 +63,8 @@ This policy only has meaning when schema rules can provide known field names.
 - Backend parser types do not appear in public `.cppm`.
 - YAML parser nodes are not used or exposed by FORGE YAML after the codec
   migration.
+- XML must follow the same rule: no backend XML node/document types in public
+  modules.
 - Large integer behavior is tested to prevent silent double conversion.
 - Pretty/flow-style output options are codec concerns; schema and config stay
   parser-neutral.

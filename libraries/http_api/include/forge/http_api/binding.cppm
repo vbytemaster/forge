@@ -50,12 +50,9 @@ import forge.reflect.reflect;
 import forge.schema.diagnostic;
 import forge.schema.object;
 import forge.schema.scalar;
+import forge.xml;
 
 export namespace forge::http::api {
-
-enum class error_profile {
-   json,
-};
 
 struct route_options {
    std::vector<field_binding> query;
@@ -65,7 +62,9 @@ struct route_options {
    bool response_file = false;
    bool response_stream = false;
    status success_status = status::ok;
-   error_profile error_profile = error_profile::json;
+   body_codec request_body_codec = body_codec::json;
+   body_codec response_body_codec = body_codec::json;
+   error_codec error_body_codec = error_codec::json;
 };
 
 class binding_plan {
@@ -132,6 +131,9 @@ class binding_builder {
             .response_file = value.response_file,
             .response_stream = value.response_stream,
             .success_status = value.success_status,
+            .request_body_codec = value.request_body_codec,
+            .response_body_codec = value.response_body_codec,
+            .error_body_codec = value.error_body_codec,
          },
          value.method_name));
       return *this;
@@ -281,12 +283,50 @@ class binding_builder {
       return *result;
    }
 
-   [[nodiscard]] static std::string encode_error_payload(const forge::api::error_payload& error) {
-      auto encoded = forge::json::write(error);
-      if (encoded.ok()) {
-         return std::move(encoded.text);
+   [[nodiscard]] static std::string encode_error_payload(const forge::api::error_payload& error, error_codec codec) {
+      switch (codec) {
+      case error_codec::json: {
+         auto encoded = forge::json::write(error);
+         if (encoded.ok()) {
+            return std::move(encoded.text);
+         }
+         return forge::json::write(forge::api::make_internal_error_payload()).text;
       }
-      return forge::json::write(forge::api::make_internal_error_payload()).text;
+      case error_codec::xml: {
+         auto doc = forge::xml::document{
+            .root =
+               forge::xml::element{
+                  .name = "ErrorPayload",
+                  .children =
+                     {
+                        forge::xml::element{.name = "error", .text = error.error},
+                        forge::xml::element{.name = "message", .text = error.message},
+                        forge::xml::element{.name = "retryable", .text = error.retryable ? "true" : "false"},
+                        forge::xml::element{
+                           .name = "status_code",
+                           .text = std::to_string(static_cast<unsigned>(error.status_code)),
+                        },
+                        forge::xml::element{
+                           .name = "identity",
+                           .children =
+                              {
+                                 forge::xml::element{.name = "category", .text = error.identity.category},
+                                 forge::xml::element{.name = "code", .text = std::to_string(error.identity.code)},
+                              },
+                        },
+                     },
+               },
+         };
+         auto encoded = forge::xml::write_value(doc);
+         if (encoded.ok()) {
+            return std::move(encoded.text);
+         }
+         return "<ErrorPayload><error>internal</error><message>internal</message><retryable>false</retryable>"
+                "<status_code>500</status_code><identity><category>forge.api</category><code>500</code></identity>"
+                "</ErrorPayload>";
+      }
+      }
+      return {};
    }
 
    [[nodiscard]] static status http_status(forge::api::status value) noexcept {
@@ -297,17 +337,55 @@ class binding_builder {
       return verb == method::post || verb == method::put || verb == method::patch || verb == method::delete_;
    }
 
-   [[nodiscard]] static bool is_json_content_type(std::string_view value) {
-      if (value.empty()) {
+   [[nodiscard]] static bool request_content_type_matches(const request& request_value, body_codec codec) {
+      const auto content_type_header = request_value.find(field::content_type);
+      if (content_type_header == request_value.end() || content_type_header->value().empty()) {
          return true;
       }
-      auto lower = std::string{};
-      lower.reserve(value.size());
-      for (const auto character : value) {
-         lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(character))));
+      return detail::media_type_matches(codec, std::string_view{content_type_header->value()});
+   }
+
+   static void require_request_content_type(const request& request_value, body_codec codec) {
+      if (!request_content_type_matches(request_value, codec)) {
+         FORGE_THROW_EXCEPTION(forge::http::exceptions::unsupported_media_type,
+                             std::string{"HTTP API request body must be "} + std::string{detail::content_type(codec)});
       }
-      return lower == "application/json" || lower.starts_with("application/json;") ||
-             lower.find("+json") != std::string::npos;
+   }
+
+   [[nodiscard]] static std::optional<std::string> combined_accept_header(const request& request_value) {
+      auto combined = std::string{};
+      for (const auto& header : request_value.headers()) {
+         if (!header_name_equal(header.name, field_name(field::accept))) {
+            continue;
+         }
+         if (!combined.empty()) {
+            combined += ", ";
+         }
+         combined += header.text;
+      }
+      if (combined.empty()) {
+         return std::nullopt;
+      }
+      return combined;
+   }
+
+   static void require_response_accept(const request& request_value, body_codec codec) {
+      const auto accept = combined_accept_header(request_value);
+      if (accept.has_value() && !detail::accept_allows(codec, *accept)) {
+         FORGE_THROW_EXCEPTION(forge::http::exceptions::not_acceptable,
+                             std::string{"HTTP API response body cannot satisfy Accept"});
+      }
+   }
+
+   template <typename Response> static void require_response_accept_before_handler(const request& request_value,
+                                                                                   const route_options& options) {
+      if constexpr (!detail::is_bytes_response_v<Response> &&
+                    !detail::is_empty_response_v<Response> &&
+                    !std::is_same_v<std::remove_cvref_t<Response>, file_response> &&
+                    !detail::is_streaming_response_v<Response> &&
+                    !detail::is_stream_response_v<Response>) {
+         require_response_accept(request_value, options.response_body_codec);
+      }
    }
 
    [[nodiscard]] static std::optional<std::string_view> route_value(const route_context& context,
@@ -514,13 +592,13 @@ class binding_builder {
    }
 
    template <typename Request>
-   static void bind_body_value(Request& request, std::string_view body) {
+   static void bind_body_value(Request& request, std::string_view body, body_codec codec) {
       if constexpr (forge::reflect::is_described_object_v<Request>) {
          forge::reflect::for_each_member<Request>([&](const char* name, auto member) {
             using member_type = std::remove_cvref_t<decltype(request.*member)>;
             if constexpr (detail::is_body<member_type>::value) {
                using value_type = typename detail::is_body<member_type>::value_type;
-               auto value = decode_json_value<value_type>(body, "http.request.body");
+               auto value = decode_value<value_type>(body, "http.request.body", codec);
                validate_bound_value_schema(value, "http.request.body");
                (request.*member).value = std::move(value);
                (request.*member).present = true;
@@ -630,7 +708,7 @@ class binding_builder {
       tuple_needs_stream<Tuple>(std::make_index_sequence<std::tuple_size_v<Tuple>>{});
 
    template <typename T>
-   static constexpr auto is_plain_json_body_argument_v =
+   static constexpr auto is_plain_codec_body_argument_v =
       forge::reflect::is_described_object_v<std::remove_cvref_t<T>> &&
       !detail::request_needs_stream_v<std::remove_cvref_t<T>> &&
       !detail::is_header<std::remove_cvref_t<T>>::value &&
@@ -678,7 +756,7 @@ class binding_builder {
 
    template <typename Argument>
    static constexpr auto is_allowed_positional_body_argument_v =
-      is_plain_json_body_argument_v<Argument>;
+      is_plain_codec_body_argument_v<Argument>;
 
    template <typename Tuple, std::size_t... Index>
    static void validate_positional_http_arguments(method verb,
@@ -748,23 +826,39 @@ class binding_builder {
    }
 
    template <typename T>
-   [[nodiscard]] static T decode_json_value(std::string_view body, std::string_view source_name) {
-      auto decoded = forge::json::read<T>(body,
-                                        forge::json::read_options{.source_name = std::string{source_name},
-                                                                .unknown_fields =
-                                                                   forge::json::unknown_field_policy::error});
-      if (!decoded.ok()) {
-         FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request,
-                             diagnostic_message(decoded.diagnostics, "HTTP API JSON request body is invalid"));
+   [[nodiscard]] static T decode_value(std::string_view body, std::string_view source_name, body_codec codec) {
+      switch (codec) {
+      case body_codec::json: {
+         auto decoded = forge::json::read<T>(body,
+                                           forge::json::read_options{.source_name = std::string{source_name},
+                                                                   .unknown_fields =
+                                                                      forge::json::unknown_field_policy::error});
+         if (!decoded.ok()) {
+            FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request,
+                                diagnostic_message(decoded.diagnostics, "HTTP API JSON request body is invalid"));
+         }
+         return std::move(decoded.value);
       }
-      return std::move(decoded.value);
+      case body_codec::xml: {
+         auto decoded = forge::xml::read<T>(body,
+                                          forge::xml::read_options{.source_name = std::string{source_name},
+                                                                 .unknown_fields =
+                                                                    forge::xml::unknown_field_policy::error});
+         if (!decoded.ok()) {
+            FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request,
+                                diagnostic_message(decoded.diagnostics, "HTTP API XML request body is invalid"));
+         }
+         return std::move(decoded.value);
+      }
+      }
+      return T{};
    }
 
    template <typename Argument>
-   [[nodiscard]] static bool positional_plain_json_body_candidate(const route_context& context,
-                                                                  const route_options& options,
-                                                                  std::string_view name) {
-      if constexpr (is_plain_json_body_argument_v<Argument>) {
+   [[nodiscard]] static bool positional_plain_codec_body_candidate(const route_context& context,
+                                                                   const route_options& options,
+                                                                   std::string_view name) {
+      if constexpr (is_plain_codec_body_argument_v<Argument>) {
          return uses_request_body(context.request.method()) && !context.request.body().empty() &&
                 !route_value(context, options, name).has_value();
       } else {
@@ -776,10 +870,10 @@ class binding_builder {
    }
 
    template <typename Argument>
-   [[nodiscard]] static bool positional_stream_plain_json_body_candidate(const route_context& context,
-                                                                         const route_options& options,
-                                                                         std::string_view name) {
-      if constexpr (is_plain_json_body_argument_v<Argument>) {
+   [[nodiscard]] static bool positional_stream_plain_codec_body_candidate(const route_context& context,
+                                                                          const route_options& options,
+                                                                          std::string_view name) {
+      if constexpr (is_plain_codec_body_argument_v<Argument>) {
          return uses_request_body(context.request.method()) && !route_value(context, options, name).has_value();
       } else {
          static_cast<void>(context);
@@ -790,13 +884,13 @@ class binding_builder {
    }
 
    template <typename Tuple, std::size_t... Index>
-   [[nodiscard]] static std::size_t positional_plain_json_body_candidate_count(
+   [[nodiscard]] static std::size_t positional_plain_codec_body_candidate_count(
       const route_context& context,
       const route_options& options,
       const forge::api::method_descriptor& method_descriptor,
       std::index_sequence<Index...>) {
       auto count = std::size_t{0};
-      ((count += positional_plain_json_body_candidate<std::tuple_element_t<Index, Tuple>>(
+      ((count += positional_plain_codec_body_candidate<std::tuple_element_t<Index, Tuple>>(
            context, options, argument_name(method_descriptor, Index))
             ? 1U
             : 0U),
@@ -805,22 +899,22 @@ class binding_builder {
    }
 
    template <typename Tuple>
-   [[nodiscard]] static std::size_t positional_plain_json_body_candidate_count(
+   [[nodiscard]] static std::size_t positional_plain_codec_body_candidate_count(
       const route_context& context,
       const route_options& options,
       const forge::api::method_descriptor& method_descriptor) {
-      return positional_plain_json_body_candidate_count<Tuple>(
+      return positional_plain_codec_body_candidate_count<Tuple>(
          context, options, method_descriptor, std::make_index_sequence<std::tuple_size_v<Tuple>>{});
    }
 
    template <typename Tuple, std::size_t... Index>
-   [[nodiscard]] static std::size_t positional_stream_plain_json_body_candidate_count(
+   [[nodiscard]] static std::size_t positional_stream_plain_codec_body_candidate_count(
       const route_context& context,
       const route_options& options,
       const forge::api::method_descriptor& method_descriptor,
       std::index_sequence<Index...>) {
       auto count = std::size_t{0};
-      ((count += positional_stream_plain_json_body_candidate<std::tuple_element_t<Index, Tuple>>(
+      ((count += positional_stream_plain_codec_body_candidate<std::tuple_element_t<Index, Tuple>>(
            context, options, argument_name(method_descriptor, Index))
             ? 1U
             : 0U),
@@ -829,11 +923,11 @@ class binding_builder {
    }
 
    template <typename Tuple>
-   [[nodiscard]] static std::size_t positional_stream_plain_json_body_candidate_count(
+   [[nodiscard]] static std::size_t positional_stream_plain_codec_body_candidate_count(
       const route_context& context,
       const route_options& options,
       const forge::api::method_descriptor& method_descriptor) {
-      return positional_stream_plain_json_body_candidate_count<Tuple>(
+      return positional_stream_plain_codec_body_candidate_count<Tuple>(
          context, options, method_descriptor, std::make_index_sequence<std::tuple_size_v<Tuple>>{});
    }
 
@@ -860,7 +954,7 @@ class binding_builder {
    [[nodiscard]] static Argument make_positional_argument_from_http(const route_context& context,
                                                                    const route_options& options,
                                                                    std::string_view name,
-                                                                   bool decode_plain_json_body = false) {
+                                                                   bool decode_plain_codec_body = false) {
       using clean = std::remove_cvref_t<Argument>;
       auto result = clean{};
       if constexpr (detail::is_header<clean>::value) {
@@ -878,13 +972,9 @@ class binding_builder {
          }
       } else if constexpr (detail::is_body<clean>::value) {
          if (!context.request.body().empty()) {
-            const auto content_type = context.request.find(field::content_type);
-            if (content_type == context.request.end() || !is_json_content_type(std::string_view{content_type->value()})) {
-               FORGE_THROW_EXCEPTION(forge::http::exceptions::unsupported_media_type,
-                                   "HTTP API request body must be application/json");
-            }
+            require_request_content_type(context.request, options.request_body_codec);
             using value_type = typename detail::is_body<clean>::value_type;
-            result.value = decode_json_value<value_type>(context.request.body(), "http.request.body");
+            result.value = decode_value<value_type>(context.request.body(), "http.request.body", options.request_body_codec);
             validate_bound_value_schema(result.value, "http.request.body");
             result.present = true;
          }
@@ -895,15 +985,10 @@ class binding_builder {
          static_cast<void>(options);
       } else if (auto value = route_value(context, options, name); value.has_value()) {
          parse_http_field(result, *value, name);
-      } else if constexpr (is_plain_json_body_argument_v<clean>) {
-         if (decode_plain_json_body) {
-            const auto content_type = context.request.find(field::content_type);
-            if (content_type == context.request.end() ||
-                !is_json_content_type(std::string_view{content_type->value()})) {
-               FORGE_THROW_EXCEPTION(forge::http::exceptions::unsupported_media_type,
-                                   "HTTP API request body must be application/json");
-            }
-            result = decode_json_value<clean>(context.request.body(), "http.request.body");
+      } else if constexpr (is_plain_codec_body_argument_v<clean>) {
+         if (decode_plain_codec_body) {
+            require_request_content_type(context.request, options.request_body_codec);
+            result = decode_value<clean>(context.request.body(), "http.request.body", options.request_body_codec);
             validate_bound_value_schema(result, "http.request.body");
             require_body_route_consistency(result, context, options);
          }
@@ -917,7 +1002,7 @@ class binding_builder {
                                                                  const forge::api::method_descriptor& method_descriptor,
                                                                  std::index_sequence<Index...>) {
       const auto body_candidates =
-         positional_plain_json_body_candidate_count<Tuple>(context, options, method_descriptor);
+         positional_plain_codec_body_candidate_count<Tuple>(context, options, method_descriptor);
       if (body_candidates > 1U) {
          FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request,
                              "HTTP API request has multiple positional body candidates");
@@ -926,7 +1011,7 @@ class binding_builder {
          context,
          options,
          argument_name(method_descriptor, Index),
-         positional_plain_json_body_candidate<std::tuple_element_t<Index, Tuple>>(
+         positional_plain_codec_body_candidate<std::tuple_element_t<Index, Tuple>>(
             context, options, argument_name(method_descriptor, Index)))...};
    }
 
@@ -942,9 +1027,9 @@ class binding_builder {
    static boost::asio::awaitable<Argument> make_positional_argument_from_stream(stream_request& stream,
                                                                                const route_options& options,
                                                                                const multipart_form* form,
-                                                                               const std::optional<std::string>* plain_json_body,
+                                                                               const std::optional<std::string>* plain_codec_body,
                                                                                std::string_view name,
-                                                                               bool decode_plain_json_body = false) {
+                                                                               bool decode_plain_codec_body = false) {
       using clean = std::remove_cvref_t<Argument>;
       if constexpr (detail::is_body_stream_v<clean>) {
          co_return body_stream{std::move(stream.body)};
@@ -976,29 +1061,19 @@ class binding_builder {
          auto result = clean{};
          auto text = co_await stream.body.async_read_all();
          if (!text.empty()) {
-            const auto content_type = stream.context.request.find(field::content_type);
-            if (content_type == stream.context.request.end() ||
-                !is_json_content_type(std::string_view{content_type->value()})) {
-               FORGE_THROW_EXCEPTION(forge::http::exceptions::unsupported_media_type,
-                                   "HTTP API request body must be application/json");
-            }
+            require_request_content_type(stream.context.request, options.request_body_codec);
             using value_type = typename detail::is_body<clean>::value_type;
-            result.value = decode_json_value<value_type>(text, "http.request.body");
+            result.value = decode_value<value_type>(text, "http.request.body", options.request_body_codec);
             validate_bound_value_schema(result.value, "http.request.body");
             result.present = true;
          }
          co_return result;
       } else {
-         if constexpr (is_plain_json_body_argument_v<clean>) {
-            if (decode_plain_json_body && plain_json_body != nullptr && plain_json_body->has_value() &&
-                !plain_json_body->value().empty()) {
-               const auto content_type = stream.context.request.find(field::content_type);
-               if (content_type == stream.context.request.end() ||
-                   !is_json_content_type(std::string_view{content_type->value()})) {
-                  FORGE_THROW_EXCEPTION(forge::http::exceptions::unsupported_media_type,
-                                      "HTTP API request body must be application/json");
-               }
-               auto result = decode_json_value<clean>(plain_json_body->value(), "http.request.body");
+         if constexpr (is_plain_codec_body_argument_v<clean>) {
+            if (decode_plain_codec_body && plain_codec_body != nullptr && plain_codec_body->has_value() &&
+                !plain_codec_body->value().empty()) {
+               require_request_content_type(stream.context.request, options.request_body_codec);
+               auto result = decode_value<clean>(plain_codec_body->value(), "http.request.body", options.request_body_codec);
                validate_bound_value_schema(result, "http.request.body");
                require_body_route_consistency(result, stream.context, options);
                co_return result;
@@ -1014,15 +1089,15 @@ class binding_builder {
       const route_options& options,
       const forge::api::method_descriptor& method_descriptor,
       const multipart_form* form,
-      const std::optional<std::string>* plain_json_body,
+      const std::optional<std::string>* plain_codec_body,
       std::index_sequence<Index...>) {
       co_return Tuple{co_await make_positional_argument_from_stream<std::tuple_element_t<Index, Tuple>>(
          stream,
          options,
          form,
-         plain_json_body,
+         plain_codec_body,
          argument_name(method_descriptor, Index),
-         positional_stream_plain_json_body_candidate<std::tuple_element_t<Index, Tuple>>(
+         positional_stream_plain_codec_body_candidate<std::tuple_element_t<Index, Tuple>>(
             stream.context, options, argument_name(method_descriptor, Index)))...};
    }
 
@@ -1032,9 +1107,9 @@ class binding_builder {
       const route_options& options,
       const forge::api::method_descriptor& method_descriptor) {
       auto form = std::optional<multipart_form>{};
-      auto plain_json_body = std::optional<std::string>{};
+      auto plain_codec_body = std::optional<std::string>{};
       const auto body_candidates =
-         positional_stream_plain_json_body_candidate_count<Tuple>(stream.context, options, method_descriptor);
+         positional_stream_plain_codec_body_candidate_count<Tuple>(stream.context, options, method_descriptor);
       if (body_candidates > 1U) {
          FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request,
                              "HTTP API request has multiple positional body candidates");
@@ -1053,24 +1128,16 @@ class binding_builder {
          }
       }
       if (body_candidates == 1U) {
-         plain_json_body = co_await stream.body.async_read_all();
+         plain_codec_body = co_await stream.body.async_read_all();
       }
       co_return co_await make_positional_arguments_from_stream_impl<Tuple>(
-         stream, options, method_descriptor, form.has_value() ? &*form : nullptr, &plain_json_body,
+         stream, options, method_descriptor, form.has_value() ? &*form : nullptr, &plain_codec_body,
          std::make_index_sequence<std::tuple_size_v<Tuple>>{});
    }
 
    template <typename Request>
-   [[nodiscard]] static Request decode_json_request_body(std::string_view body) {
-      auto decoded = forge::json::read<Request>(body,
-                                              forge::json::read_options{.source_name = "http.request",
-                                                                      .unknown_fields =
-                                                                         forge::json::unknown_field_policy::error});
-      if (!decoded.ok()) {
-         FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request,
-                             diagnostic_message(decoded.diagnostics, "HTTP API JSON request body is invalid"));
-      }
-      return std::move(decoded.value);
+   [[nodiscard]] static Request decode_request_body(std::string_view body, body_codec codec) {
+      return decode_value<Request>(body, "http.request", codec);
    }
 
    template <typename Request>
@@ -1128,21 +1195,13 @@ class binding_builder {
                              "HTTP API request DTO has multiple body sources");
       } else if constexpr (request_has_body_v<Request>) {
          if (has_body) {
-            const auto content_type = context.request.find(field::content_type);
-            if (content_type == context.request.end() || !is_json_content_type(std::string_view{content_type->value()})) {
-               FORGE_THROW_EXCEPTION(forge::http::exceptions::unsupported_media_type,
-                                   "HTTP API request body must be application/json");
-            }
-            bind_body_value(request, context.request.body());
+            require_request_content_type(context.request, options.request_body_codec);
+            bind_body_value(request, context.request.body(), options.request_body_codec);
          }
       } else if constexpr (!detail::request_needs_stream_v<Request>) {
          if (has_body) {
-            const auto content_type = context.request.find(field::content_type);
-            if (content_type == context.request.end() || !is_json_content_type(std::string_view{content_type->value()})) {
-               FORGE_THROW_EXCEPTION(forge::http::exceptions::unsupported_media_type,
-                                   "HTTP API request body must be application/json");
-            }
-            request = decode_json_request_body<Request>(context.request.body());
+            require_request_content_type(context.request, options.request_body_codec);
+            request = decode_request_body<Request>(context.request.body(), options.request_body_codec);
             whole_request_body_was_decoded = true;
          }
       }
@@ -1177,24 +1236,14 @@ class binding_builder {
          } else if constexpr (request_has_body_v<Request>) {
             auto text = co_await stream.body.async_read_all();
             if (!text.empty()) {
-               const auto content_type = stream.context.request.find(field::content_type);
-               if (content_type == stream.context.request.end() ||
-                   !is_json_content_type(std::string_view{content_type->value()})) {
-                  FORGE_THROW_EXCEPTION(forge::http::exceptions::unsupported_media_type,
-                                      "HTTP API request body must be application/json");
-               }
-               bind_body_value(request, text);
+               require_request_content_type(stream.context.request, options.request_body_codec);
+               bind_body_value(request, text, options.request_body_codec);
             }
          } else if (uses_request_body(stream.context.request.method())) {
             auto text = co_await stream.body.async_read_all();
             if (!text.empty()) {
-               const auto content_type = stream.context.request.find(field::content_type);
-               if (content_type == stream.context.request.end() ||
-                   !is_json_content_type(std::string_view{content_type->value()})) {
-                  FORGE_THROW_EXCEPTION(forge::http::exceptions::unsupported_media_type,
-                                      "HTTP API request body must be application/json");
-               }
-               request = decode_json_request_body<Request>(text);
+               require_request_content_type(stream.context.request, options.request_body_codec);
+               request = decode_request_body<Request>(text, options.request_body_codec);
                bind_route_query_headers(request, stream.context, options, true);
             }
          }
@@ -1216,7 +1265,34 @@ class binding_builder {
       }
    }
 
-   [[nodiscard]] static response make_validation_response(const request& request_value, std::string_view message) {
+   [[nodiscard]] static forge::api::error_payload make_http_error_payload(std::string error,
+                                                                          std::string message,
+                                                                          status status_code) {
+      return forge::api::error_payload{
+         .error = std::move(error),
+         .message = std::move(message),
+         .retryable = false,
+         .status_code = static_cast<forge::api::status>(status_code),
+         .identity =
+            {
+               .category = "forge.http",
+               .code = static_cast<std::uint32_t>(status_code),
+            },
+      };
+   }
+
+   [[nodiscard]] static response make_error_response(const request& request_value,
+                                                     const forge::api::error_payload& payload,
+                                                     const route_options& options) {
+      return make_text_response(request_value,
+                                http_status(payload.status_code),
+                                encode_error_payload(payload, options.error_body_codec),
+                                std::string{detail::content_type(options.error_body_codec)});
+   }
+
+   [[nodiscard]] static response make_validation_response(const request& request_value,
+                                                          std::string_view message,
+                                                          const route_options& options) {
       return make_text_response(request_value, static_cast<status>(422),
                                 encode_error_payload(forge::api::error_payload{
                                    .error = "validation_error",
@@ -1228,8 +1304,9 @@ class binding_builder {
                                          .category = "forge.http",
                                          .code = 422,
                                       },
-                                }),
-                                "application/json");
+                                },
+                                options.error_body_codec),
+                                std::string{detail::content_type(options.error_body_codec)});
    }
 
    [[nodiscard]] static bool same_header_name(std::string_view left, std::string_view right) noexcept {
@@ -1288,9 +1365,31 @@ class binding_builder {
    }
 
    template <typename Response>
+   [[nodiscard]] static std::string encode_response_body(const Response& value, body_codec codec) {
+      switch (codec) {
+      case body_codec::json: {
+         auto encoded = forge::json::write(value);
+         if (!encoded.ok()) {
+            FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request, "HTTP API response cannot be encoded as JSON");
+         }
+         return std::move(encoded.text);
+      }
+      case body_codec::xml: {
+         auto encoded = forge::xml::write(value);
+         if (!encoded.ok()) {
+            FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request, "HTTP API response cannot be encoded as XML");
+         }
+         return std::move(encoded.text);
+      }
+      }
+      return {};
+   }
+
+   template <typename Response>
    [[nodiscard]] static response make_success_response(const request& request_value,
                                                        status success_status,
                                                        const Response& value,
+                                                       const route_options& options,
                                                        const std::shared_ptr<endpoint_state>& endpoint = {}) {
       auto output = response{};
       if constexpr (detail::is_bytes_response_v<Response>) {
@@ -1301,11 +1400,12 @@ class binding_builder {
          output.prepare_payload();
          output.keep_alive(request_value.keep_alive());
       } else {
-         auto encoded = forge::json::write(value);
-         if (!encoded.ok()) {
-            FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request, "HTTP API response cannot be encoded as JSON");
-         }
-         output = make_text_response(request_value, success_status, std::move(encoded.text), "application/json");
+         require_response_accept(request_value, options.response_body_codec);
+         auto encoded = encode_response_body(value, options.response_body_codec);
+         output = make_text_response(request_value,
+                                     success_status,
+                                     std::move(encoded),
+                                     std::string{detail::content_type(options.response_body_codec)});
          if (endpoint) {
             output.result(endpoint_state_access::response(endpoint).result());
          }
@@ -1318,17 +1418,20 @@ class binding_builder {
    static boost::asio::awaitable<stream_response> make_success_stream_response(const request& request_value,
                                                                                status success_status,
                                                                                Response value,
-                                                                               const std::shared_ptr<endpoint_state>& endpoint = {}) {
+                                                                               const route_options& options,
+                                                                               const std::shared_ptr<endpoint_state>& endpoint = {},
+                                                                               const stream_request* stream_request_value = nullptr) {
       auto output = stream_response{};
       auto endpoint_headers_merged = false;
       if constexpr (std::is_same_v<std::remove_cvref_t<Response>, file_response>) {
          output = co_await std::move(value).materialize(request_value);
       } else if constexpr (detail::is_streaming_response_v<Response>) {
-         output = std::move(value).materialize(request_value, success_status);
+         output = stream_request_value != nullptr ? std::move(value).materialize(*stream_request_value, success_status)
+                                                  : std::move(value).materialize(request_value, success_status);
       } else if constexpr (detail::is_stream_response_v<Response>) {
          output = std::move(value);
       } else {
-         output = stream_response::buffered(make_success_response(request_value, success_status, value, endpoint));
+         output = stream_response::buffered(make_success_response(request_value, success_status, value, options, endpoint));
          endpoint_headers_merged = true;
       }
       if (!endpoint_headers_merged) {
@@ -1415,6 +1518,7 @@ class binding_builder {
                const auto api_descriptor = interface_type::describe();
                const auto* method_descriptor = forge::api::find_method(api_descriptor, name);
                try {
+                  require_response_accept_before_handler<Response>(request_value.context.request, options);
                   if constexpr (is_positional_http_method_v<Method, Request>) {
                      if (method_descriptor == nullptr || method_descriptor->argument_names.empty()) {
                         FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request,
@@ -1425,8 +1529,12 @@ class binding_builder {
                                                                                        *method_descriptor);
                      auto value = co_await invoke_local_arguments<Method, interface_type, argument_tuple, Response>(
                         plan, std::move(arguments));
-                     co_return co_await make_success_stream_response(request_value.context.request, options.success_status,
-                                                                     std::move(value));
+                     co_return co_await make_success_stream_response(request_value.context.request,
+                                                                     options.success_status,
+                                                                     std::move(value),
+                                                                     options,
+                                                                     {},
+                                                                     &request_value);
                   } else {
                      auto request = co_await make_request_from_stream<Request>(request_value, options);
                      auto endpoint = make_endpoint_state<Request>(request_value.context.request, options.success_status);
@@ -1434,35 +1542,31 @@ class binding_builder {
                      auto value =
                         co_await invoke_local<Method, interface_type, Request, Response>(plan, std::move(request));
                      co_return co_await make_success_stream_response(request_value.context.request,
-                                                                     options.success_status, std::move(value), endpoint);
+                                                                     options.success_status,
+                                                                     std::move(value),
+                                                                     options,
+                                                                     endpoint,
+                                                                     &request_value);
                   }
                } catch (const forge::http::exceptions::unsupported_media_type& error) {
-                  co_return buffered(make_text_response(request_value.context.request, status::unsupported_media_type,
-                                                        encode_error_payload(forge::api::error_payload{
-                                                           .error = "unsupported_media_type",
-                                                           .message = error.message(),
-                                                           .retryable = false,
-                                                           .status_code = static_cast<forge::api::status>(
-                                                              status::unsupported_media_type),
-                                                           .identity =
-                                                              {
-                                                                 .category = "forge.http",
-                                                                 .code = static_cast<std::uint32_t>(
-                                                                    status::unsupported_media_type),
-                                                              },
-                                                        }),
-                                                        "application/json"));
+                  co_return buffered(make_error_response(
+                     request_value.context.request,
+                     make_http_error_payload("unsupported_media_type", error.message(), status::unsupported_media_type),
+                     options));
+               } catch (const forge::http::exceptions::not_acceptable& error) {
+                  co_return buffered(make_error_response(
+                     request_value.context.request,
+                     make_http_error_payload("not_acceptable", error.message(), status::not_acceptable),
+                     options));
                } catch (const forge::http::exceptions::bad_request& error) {
-                  co_return buffered(make_validation_response(request_value.context.request, error.message()));
+                  co_return buffered(make_validation_response(request_value.context.request, error.message(), options));
                } catch (const forge::exceptions::base& error) {
                   if (method_descriptor != nullptr) {
                      const auto payload = forge::api::project_error(*method_descriptor, error);
-                     co_return buffered(make_text_response(request_value.context.request, http_status(payload.status_code),
-                                                           encode_error_payload(payload), "application/json"));
+                     co_return buffered(make_error_response(request_value.context.request, payload, options));
                   }
                   const auto payload = forge::api::make_internal_error_payload();
-                  co_return buffered(make_text_response(request_value.context.request, http_status(payload.status_code),
-                                                        encode_error_payload(payload), "application/json"));
+                  co_return buffered(make_error_response(request_value.context.request, payload, options));
                }
             };
             switch (verb) {
@@ -1496,6 +1600,7 @@ class binding_builder {
                const auto api_descriptor = interface_type::describe();
                const auto* method_descriptor = forge::api::find_method(api_descriptor, name);
                try {
+                  require_response_accept_before_handler<Response>(context.request, options);
                   if constexpr (is_positional_http_method_v<Method, Request>) {
                      if (method_descriptor == nullptr || method_descriptor->argument_names.empty()) {
                         FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request,
@@ -1505,42 +1610,34 @@ class binding_builder {
                                                                                          *method_descriptor);
                      auto value = co_await invoke_local_arguments<Method, interface_type, argument_tuple, Response>(
                         plan, std::move(arguments));
-                     co_return make_success_response(context.request, options.success_status, value);
+                     co_return make_success_response(context.request, options.success_status, value, options);
                   } else {
                      auto request = make_request_from_http<Request>(context, options);
                      auto endpoint = make_endpoint_state<Request>(context.request, options.success_status);
                      attach_endpoint_state(request, endpoint);
                      auto value =
                         co_await invoke_local<Method, interface_type, Request, Response>(plan, std::move(request));
-                     co_return make_success_response(context.request, options.success_status, value, endpoint);
+                     co_return make_success_response(context.request, options.success_status, value, options, endpoint);
                   }
                } catch (const forge::http::exceptions::unsupported_media_type& error) {
-                  co_return make_text_response(context.request, status::unsupported_media_type,
-                                               encode_error_payload(forge::api::error_payload{
-                                                  .error = "unsupported_media_type",
-                                                  .message = error.message(),
-                                                  .retryable = false,
-                                                  .status_code = static_cast<forge::api::status>(
-                                                     status::unsupported_media_type),
-                                                  .identity =
-                                                     {
-                                                        .category = "forge.http",
-                                                        .code = static_cast<std::uint32_t>(
-                                                           status::unsupported_media_type),
-                                                     },
-                                               }),
-                                               "application/json");
+                  co_return make_error_response(
+                     context.request,
+                     make_http_error_payload("unsupported_media_type", error.message(), status::unsupported_media_type),
+                     options);
+               } catch (const forge::http::exceptions::not_acceptable& error) {
+                  co_return make_error_response(
+                     context.request,
+                     make_http_error_payload("not_acceptable", error.message(), status::not_acceptable),
+                     options);
                } catch (const forge::http::exceptions::bad_request& error) {
-                  co_return make_validation_response(context.request, error.message());
+                  co_return make_validation_response(context.request, error.message(), options);
                } catch (const forge::exceptions::base& error) {
                   if (method_descriptor != nullptr) {
                      const auto payload = forge::api::project_error(*method_descriptor, error);
-                     co_return make_text_response(context.request, http_status(payload.status_code),
-                                                  encode_error_payload(payload), "application/json");
+                     co_return make_error_response(context.request, payload, options);
                   }
                   const auto payload = forge::api::make_internal_error_payload();
-                  co_return make_text_response(context.request, http_status(payload.status_code),
-                                               encode_error_payload(payload), "application/json");
+                  co_return make_error_response(context.request, payload, options);
                }
             };
          switch (verb) {

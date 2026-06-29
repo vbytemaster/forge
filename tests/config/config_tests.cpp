@@ -35,6 +35,11 @@ struct flat_config {
    std::string log_level;
 };
 
+struct optional_default_config {
+   std::optional<std::uint16_t> wrapped_port;
+   std::optional<std::uint16_t> raw_port;
+};
+
 struct nested_key_config {
    std::string id;
    std::string private_key;
@@ -57,6 +62,7 @@ BOOST_DESCRIBE_ENUM(scalar_test_mode, fast_mode, safe_mode)
 
 BOOST_DESCRIBE_STRUCT(http_config, (), (bind_port, bind_host, tls_enabled, tags, token))
 BOOST_DESCRIBE_STRUCT(flat_config, (), (log_level))
+BOOST_DESCRIBE_STRUCT(optional_default_config, (), (wrapped_port, raw_port))
 BOOST_DESCRIBE_STRUCT(nested_key_config, (), (id, private_key, input_profile, purposes))
 BOOST_DESCRIBE_STRUCT(nested_signer_config, (), (keys, default_output_profile))
 
@@ -76,6 +82,19 @@ template <> struct forge::schema::rules<flat_config> {
    [[nodiscard]] static forge::schema::object_schema<flat_config> define() {
       auto schema = forge::schema::object<flat_config>();
       schema.field<&flat_config::log_level>("log-level").default_value("info");
+      return schema;
+   }
+};
+
+template <> struct forge::schema::rules<optional_default_config> {
+   [[nodiscard]] static forge::schema::object_schema<optional_default_config> define() {
+      auto schema = forge::schema::object<optional_default_config>();
+      schema.field<&optional_default_config::wrapped_port>("wrapped-port")
+          .default_value(std::optional<std::uint16_t>{443})
+          .range(1, 65535);
+      schema.field<&optional_default_config::raw_port>("raw-port")
+          .default_value(8443)
+          .range(1, 65535);
       return schema;
    }
 };
@@ -141,6 +160,28 @@ BOOST_AUTO_TEST_CASE(config_document_paths_merge_and_decode) {
    BOOST_TEST(!decoded.value.tls_enabled);
    BOOST_REQUIRE_EQUAL(decoded.value.tags.size(), 2U);
    BOOST_TEST(decoded.value.tags[1] == "beta");
+}
+
+BOOST_AUTO_TEST_CASE(config_optional_defaults_export_and_decode_consistently) {
+   const auto descriptor = forge::config::describe_component<optional_default_config>("http");
+   BOOST_REQUIRE_EQUAL(descriptor.fields.size(), 2U);
+   BOOST_TEST(std::get<std::uint64_t>(descriptor.fields[0].default_value.storage) == 443U);
+   BOOST_TEST(std::get<std::uint64_t>(descriptor.fields[1].default_value.storage) == 8443U);
+
+   const auto defaults = forge::config::defaults_for<optional_default_config>("http");
+   const auto* wrapped = defaults.try_get("http.wrapped-port");
+   const auto* raw = defaults.try_get("http.raw-port");
+   BOOST_REQUIRE(wrapped != nullptr);
+   BOOST_REQUIRE(raw != nullptr);
+   BOOST_TEST(std::get<std::uint64_t>(wrapped->storage) == 443U);
+   BOOST_TEST(std::get<std::uint64_t>(raw->storage) == 8443U);
+
+   const auto decoded = forge::config::decode<optional_default_config>(defaults, "http");
+   BOOST_REQUIRE(decoded.ok());
+   BOOST_REQUIRE(decoded.value.wrapped_port.has_value());
+   BOOST_TEST(*decoded.value.wrapped_port == 443U);
+   BOOST_REQUIRE(decoded.value.raw_port.has_value());
+   BOOST_TEST(*decoded.value.raw_port == 8443U);
 }
 
 BOOST_AUTO_TEST_CASE(config_decode_rejects_integer_overflow_before_range_validation) {

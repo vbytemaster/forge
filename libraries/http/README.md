@@ -32,6 +32,8 @@ still owns HTTP mechanics; the plugin owns app lifecycle/config composition.
   stream route types.
 - `forge.http.file`, `forge.http.range` — file responses, static roots and byte
   range parsing.
+- `forge.http.negotiation` — generic media type and `Accept` header helpers for
+  libraries that choose their own codecs above `forge_http`.
 - `forge.http.upload` — upload reader, spill-to-disk spool and multipart form-data
   parsing.
 - `forge.http.base_url`, `forge.http.target`.
@@ -115,7 +117,10 @@ cache_impl::read(read_request request) {
 
 Use stream routes for upload/download mechanics that should be visible as HTTP
 body flow, not as `FORGE_API` DTO calls. The server routes after headers are read;
-middleware can reject before the body is consumed.
+middleware can reject before the body is consumed. For requests with
+`Expect: 100-continue`, `forge_http` sends the interim `100 Continue` response
+only when the route actually starts reading the body, so header-only rejection
+does not force a large upload.
 
 ```cpp
 import forge.http.body;
@@ -153,6 +158,25 @@ router.get_stream("/download", [](forge::http::stream_request& req)
 Stream routes provide FORGE-owned body readers and response body sources. Use
 `forge.http.upload` when the request body should be bounded, optionally spooled to
 disk, or parsed as browser-style `multipart/form-data`.
+
+### Negotiate Content Types
+
+`forge.http.negotiation` parses media types and `Accept` headers generically.
+It understands parameters, structured suffixes such as `+json`, wildcard media
+ranges and `q=0` exclusion. Codec ownership stays outside `forge_http`; callers
+provide the media types they support.
+
+```cpp
+import forge.http.negotiation;
+
+constexpr auto xml = std::array{
+   forge::http::media_type_match{.type = "application/xml", .structured_suffix = "+xml"},
+   forge::http::media_type_match{.type = "text/xml"},
+};
+
+auto content_ok = forge::http::media_type_matches("application/custom+xml", xml);
+auto accept_ok = forge::http::accept_allows("application/json;q=0, application/xml;q=1", xml);
+```
 
 ### Read Uploads
 

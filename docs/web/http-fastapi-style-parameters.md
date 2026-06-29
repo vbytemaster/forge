@@ -142,6 +142,10 @@ are supported as described request DTO fields:
 The typed HTTP client supports DTO fields for ordinary JSON, `query<T>`,
 `header<T>`, `cookie<T>`, `body<T>`, `body_bytes`, `body_stream`, `form<T>`,
 `form_field<T>` and `upload_file` without falling back to `forge.raw`.
+XML body and error codecs are planned in
+[Forge XML And HTTP API Codec Plan](../iterations/forge-xml-http-api-codec-v1.md).
+JSON remains the default; XML is route-selected presentation, not a separate
+manual router path.
 
 FastAPI-style background task injection is intentionally not part of this surface.
 Background execution policy belongs to the application runtime, scheduler,
@@ -166,8 +170,8 @@ DTO binding is deterministic and fail closed:
    explicit alias is provided.
 5. Bind `body<T>`, `body_bytes`, `body_stream`, `form<T>`, `form_field<T>` and
    `upload_file` by field type.
-6. If no explicit body field exists, preserve legacy whole-request JSON DTO
-   behavior and verify consistency for duplicate route/body fields.
+6. If no explicit body field exists, preserve legacy whole-request body DTO
+   behavior using the route-selected codec. JSON remains the default.
 7. Run final `forge_schema` validation after all HTTP sources are assembled.
 8. Reject ambiguous mappings at compile time when the type information is
    enough, otherwise at mount time before the server starts.
@@ -198,8 +202,8 @@ Rules:
 
 - ordinary scalar, string, enum and optional positional arguments may bind only
   to route path placeholders or route query placeholders;
-- exactly one remaining described DTO argument may become the JSON body for
-  `POST`, `PUT`, `PATCH` and body-capable `DELETE`;
+- exactly one remaining described DTO argument may become the route-selected
+  body codec payload for `POST`, `PUT`, `PATCH` and body-capable `DELETE`;
 - remaining scalar/string/enum/optional arguments are errors if not consumed by
   path/query;
 - `forge::http::query<T>`, `header<T>`, `cookie<T>`, `body<T>`, `form<T>`,
@@ -236,7 +240,8 @@ values.
 ## Boundaries
 
 - This is an HTTP presentation layer over `FORGE_API(...)`, not a new product API
-  framework.
+  framework. S3-style gateways must use this API binding model rather than
+  manual router bypass for normal endpoints.
 - FORGE does not add S3, SigV4, bucket, object-policy, billing or tenant-auth
   semantics.
 - `forge_api` must not import `forge_http`.

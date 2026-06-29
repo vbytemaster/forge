@@ -37,7 +37,24 @@ Macro header: `<forge/http_api/macros.hpp>`.
 
 Target/component: `forge_http_api` / `http_api`.
 
-Dependencies: `forge_http`, `forge_api`, `forge_json`, `forge_schema`.
+Dependencies: `forge_http`, `forge_api`, `forge_json`, `forge_xml`, `forge_schema`.
+
+Routes use JSON request, response and error bodies by default. Per-route codec
+options can opt into XML for typed DTO bodies while preserving native HTTP escape
+hatches such as file, stream, bytes, empty, body-stream, body-bytes and multipart
+routes:
+
+```cpp
+FORGE_HTTP_API(my_api,
+   FORGE_HTTP_PUT(update, "/items/:id", ok,
+      FORGE_HTTP_REQUEST_BODY(xml),
+      FORGE_HTTP_RESPONSE_BODY(xml),
+      FORGE_HTTP_ERROR_BODY(xml)))
+```
+
+`forge_http_api` performs media-type checks for typed DTO bodies and negotiates
+`Accept` for typed DTO responses. Lower-level streaming/file/bytes mechanics
+remain owned by `forge_http`.
 
 `forge_http_api` may depend on `forge_http`; `forge_http` must not depend on
 `forge_http_api`. WebSocket, QUIC and P2P API builders are intentionally unchanged

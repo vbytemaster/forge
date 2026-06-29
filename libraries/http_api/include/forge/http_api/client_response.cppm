@@ -5,6 +5,7 @@ module;
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cctype>
 #include <cstddef>
 #include <cstring>
@@ -38,19 +39,82 @@ import forge.http.types;
 import forge.http.upload;
 import forge.json;
 import forge.reflect.reflect;
+import forge.xml;
 
 export namespace forge::http::api {
 
 namespace detail {
 
-[[nodiscard]] inline forge::api::error_payload decode_error_payload(const response& value) {
-   auto decoded = forge::json::read<forge::api::error_payload>(
-      value.body(), forge::json::read_options{.source_name = "http.error",
-                                            .unknown_fields = forge::json::unknown_field_policy::ignore});
-   if (decoded.ok()) {
-      auto payload = std::move(decoded.value);
-      payload.status_code = static_cast<forge::api::status>(value.result_int());
-      return payload;
+[[nodiscard]] inline const forge::xml::element* find_xml_child(const forge::xml::element& parent,
+                                                              std::string_view name) noexcept {
+   const auto found = std::find_if(parent.children.begin(), parent.children.end(), [&](const forge::xml::element& child) {
+      return child.name == name;
+   });
+   return found == parent.children.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] inline std::string xml_child_text(const forge::xml::element& parent, std::string_view name) {
+   if (const auto* child = find_xml_child(parent, name); child != nullptr) {
+      return child->text;
+   }
+   return {};
+}
+
+[[nodiscard]] inline std::uint32_t parse_u32(std::string_view value, std::uint32_t fallback) {
+   auto output = std::uint32_t{};
+   const auto* begin = value.data();
+   const auto* end = value.data() + value.size();
+   const auto [position, error] = std::from_chars(begin, end, output);
+   if (error == std::errc{} && position == end) {
+      return output;
+   }
+   return fallback;
+}
+
+[[nodiscard]] inline forge::api::error_payload decode_xml_error_payload(const response& value) {
+   auto decoded = forge::xml::read_value(value.body(), forge::xml::read_options{.source_name = "http.error"});
+   if (!decoded.ok()) {
+      return {};
+   }
+   const auto& root = decoded.value.root;
+   const auto status_code = parse_u32(xml_child_text(root, "status_code"), value.result_int());
+   auto identity = forge::api::error_identity{};
+   if (const auto* identity_node = find_xml_child(root, "identity"); identity_node != nullptr) {
+      identity.category = xml_child_text(*identity_node, "category");
+      identity.code = parse_u32(xml_child_text(*identity_node, "code"), 0);
+   }
+   return forge::api::error_payload{
+      .error = xml_child_text(root, "error"),
+      .message = xml_child_text(root, "message"),
+      .retryable = xml_child_text(root, "retryable") == "true" || xml_child_text(root, "retryable") == "1",
+      .status_code = static_cast<forge::api::status>(status_code),
+      .identity = std::move(identity),
+   };
+}
+
+[[nodiscard]] inline forge::api::error_payload decode_error_payload(const response& value, error_codec codec) {
+   switch (codec) {
+   case error_codec::json: {
+      auto decoded = forge::json::read<forge::api::error_payload>(
+         value.body(), forge::json::read_options{.source_name = "http.error",
+                                               .unknown_fields = forge::json::unknown_field_policy::ignore});
+      if (decoded.ok()) {
+         auto payload = std::move(decoded.value);
+         payload.status_code = static_cast<forge::api::status>(value.result_int());
+         return payload;
+      }
+      break;
+   }
+   case error_codec::xml: {
+      auto payload = decode_xml_error_payload(value);
+      if (!payload.error.empty()) {
+         if (payload.status_code == forge::api::status::internal) {
+            payload.status_code = static_cast<forge::api::status>(value.result_int());
+         }
+         return payload;
+      }
+      break;
+   }
    }
    return forge::api::error_payload{
       .error = "http_error",
@@ -63,6 +127,33 @@ namespace detail {
             .code = static_cast<std::uint32_t>(forge::api::exceptions::code::remote_internal),
          },
    };
+}
+
+template <typename Response> [[nodiscard]] Response decode_response_body(const response& response_value,
+                                                                         body_codec codec) {
+   switch (codec) {
+   case body_codec::json: {
+      auto decoded = forge::json::read<Response>(
+         response_value.body(),
+         forge::json::read_options{.source_name = "http.response",
+                                 .unknown_fields = forge::json::unknown_field_policy::error});
+      if (!decoded.ok()) {
+         FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request, "HTTP API response JSON is invalid");
+      }
+      return std::move(decoded.value);
+   }
+   case body_codec::xml: {
+      auto decoded = forge::xml::read<Response>(
+         response_value.body(),
+         forge::xml::read_options{.source_name = "http.response",
+                                .unknown_fields = forge::xml::unknown_field_policy::error});
+      if (!decoded.ok()) {
+         FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request, "HTTP API response XML is invalid");
+      }
+      return std::move(decoded.value);
+   }
+   }
+   return Response{};
 }
 
 inline constexpr auto max_stream_error_body_bytes = std::uint64_t{64U * 1024U};
@@ -91,7 +182,7 @@ boost::asio::awaitable<Response> call(client& target, const forge::api::descript
          : co_await target.async_stream_request(std::move(request_value));
       if (response_value.head.result_int() < 200U || response_value.head.result_int() >= 300U) {
          response_value.head.body() = co_await read_bounded_error_body(response_value.body);
-         auto error = decode_error_payload(response_value.head);
+         auto error = decode_error_payload(response_value.head, route.error_body_codec);
          forge::api::raise_remote_error(error, forge::api::find_method(descriptor, route.method_name));
       }
       if constexpr (std::is_same_v<std::remove_cvref_t<Response>, file_response>) {
@@ -106,7 +197,7 @@ boost::asio::awaitable<Response> call(client& target, const forge::api::descript
          ? co_await target.async_streaming_request(std::move(request_value), std::move(*body))
          : co_await target.async_request(std::move(request_value));
       if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
-         auto error = decode_error_payload(response_value);
+         auto error = decode_error_payload(response_value, route.error_body_codec);
          forge::api::raise_remote_error(error, forge::api::find_method(descriptor, route.method_name));
       }
       auto bytes = std::vector<std::byte>(response_value.body().size());
@@ -129,7 +220,7 @@ boost::asio::awaitable<Response> call(client& target, const forge::api::descript
          ? co_await target.async_streaming_request(std::move(request_value), std::move(*body))
          : co_await target.async_request(std::move(request_value));
       if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
-         auto error = decode_error_payload(response_value);
+         auto error = decode_error_payload(response_value, route.error_body_codec);
          forge::api::raise_remote_error(error, forge::api::find_method(descriptor, route.method_name));
       }
       co_return Response{.status_code = response_value.result()};
@@ -140,17 +231,10 @@ boost::asio::awaitable<Response> call(client& target, const forge::api::descript
          ? co_await target.async_streaming_request(std::move(request_value), std::move(*body))
          : co_await target.async_request(std::move(request_value));
       if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
-         auto error = decode_error_payload(response_value);
+         auto error = decode_error_payload(response_value, route.error_body_codec);
          forge::api::raise_remote_error(error, forge::api::find_method(descriptor, route.method_name));
       }
-      auto decoded = forge::json::read<Response>(response_value.body(),
-                                               forge::json::read_options{.source_name = "http.response",
-                                                                       .unknown_fields =
-                                                                          forge::json::unknown_field_policy::error});
-      if (!decoded.ok()) {
-         FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request, "HTTP API response JSON is invalid");
-      }
-      co_return std::move(decoded.value);
+      co_return decode_response_body<Response>(response_value, route.response_body_codec);
    }
 }
 
@@ -169,7 +253,7 @@ boost::asio::awaitable<Response> call_arguments(client& target,
          : co_await target.async_stream_request(std::move(request_parts.value));
       if (response_value.head.result_int() < 200U || response_value.head.result_int() >= 300U) {
          response_value.head.body() = co_await read_bounded_error_body(response_value.body);
-         auto error = decode_error_payload(response_value.head);
+         auto error = decode_error_payload(response_value.head, route.error_body_codec);
          forge::api::raise_remote_error(error, forge::api::find_method(descriptor, route.method_name));
       }
       if constexpr (std::is_same_v<std::remove_cvref_t<Response>, file_response>) {
@@ -182,7 +266,7 @@ boost::asio::awaitable<Response> call_arguments(client& target,
          ? co_await target.async_streaming_request(std::move(request_parts.value), std::move(*request_body))
          : co_await target.async_request(std::move(request_parts.value));
       if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
-         auto error = decode_error_payload(response_value);
+         auto error = decode_error_payload(response_value, route.error_body_codec);
          forge::api::raise_remote_error(error, forge::api::find_method(descriptor, route.method_name));
       }
       if constexpr (detail::is_bytes_response_v<Response>) {
@@ -202,14 +286,7 @@ boost::asio::awaitable<Response> call_arguments(client& target,
       } else if constexpr (detail::is_empty_response_v<Response>) {
          co_return Response{.status_code = response_value.result()};
       } else {
-         auto decoded = forge::json::read<Response>(
-            response_value.body(),
-            forge::json::read_options{.source_name = "http.response",
-                                    .unknown_fields = forge::json::unknown_field_policy::error});
-         if (!decoded.ok()) {
-            FORGE_THROW_EXCEPTION(forge::http::exceptions::bad_request, "HTTP API response JSON is invalid");
-         }
-         co_return std::move(decoded.value);
+         co_return decode_response_body<Response>(response_value, route.response_body_codec);
       }
    }
 }

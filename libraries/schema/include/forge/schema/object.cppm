@@ -3,6 +3,7 @@ module;
 #include <any>
 #include <algorithm>
 #include <boost/describe.hpp>
+#include <boost/mp11.hpp>
 #include <charconv>
 #include <concepts>
 #include <cstdint>
@@ -39,6 +40,24 @@ template <typename Object, typename Member> struct member_pointer_traits<Member 
    using object_type = Object;
    using member_type = Member;
 };
+
+template <typename T, auto Member> [[nodiscard]] std::string described_member_name() {
+   auto output = std::string{};
+   if constexpr (boost::describe::has_describe_members<T>::value) {
+      using members = boost::describe::describe_members<T, boost::describe::mod_any_access | boost::describe::mod_inherited>;
+      boost::mp11::mp_for_each<members>([&](auto descriptor) {
+         if (!output.empty()) {
+            return;
+         }
+         if constexpr (std::same_as<std::remove_cv_t<decltype(descriptor.pointer)>, decltype(Member)>) {
+            if (descriptor.pointer == Member) {
+               output = descriptor.name;
+            }
+         }
+      });
+   }
+   return output;
+}
 
 struct input_value {
    using array_type = std::vector<input_value>;
@@ -187,12 +206,43 @@ template <typename T>
 [[nodiscard]] T cast_input_to(const input_value& input, std::string_view path, std::vector<diagnostic>& diagnostics);
 
 template <typename T>
+[[nodiscard]] input_value to_input_value(const T& input);
+
+template <typename T> [[nodiscard]] std::any to_default_any(const T& input) {
+   using clean_type = std::remove_cvref_t<T>;
+   if constexpr (std::same_as<clean_type, bool>) {
+      return std::any{input};
+   } else if constexpr (std::signed_integral<clean_type> && !std::same_as<clean_type, bool>) {
+      return std::any{static_cast<std::int64_t>(input)};
+   } else if constexpr (std::unsigned_integral<clean_type> && !std::same_as<clean_type, bool>) {
+      return std::any{static_cast<std::uint64_t>(input)};
+   } else if constexpr (std::floating_point<clean_type>) {
+      return std::any{static_cast<double>(input)};
+   } else if constexpr (std::same_as<clean_type, std::string>) {
+      return std::any{input};
+   } else if constexpr (std::is_enum_v<clean_type>) {
+      if (auto text = enum_to_config_string(input)) {
+         return std::any{std::move(*text)};
+      }
+      using underlying_type = std::underlying_type_t<clean_type>;
+      if constexpr (std::signed_integral<underlying_type>) {
+         return std::any{static_cast<std::int64_t>(input)};
+      } else {
+         return std::any{static_cast<std::uint64_t>(input)};
+      }
+   } else {
+      return std::any{input};
+   }
+}
+
+template <typename T>
 [[nodiscard]] std::vector<T> decode_object_list(const input_value& input,
                                                 std::string_view path,
                                                 std::vector<diagnostic>& diagnostics);
 
 template <typename T> struct field_rule {
    std::string name;
+   std::string member_name;
    std::vector<std::string> aliases;
    value_kind kind = value_kind::string;
    std::type_index type = std::type_index{typeid(void)};
@@ -209,8 +259,11 @@ template <typename T> struct field_rule {
    std::type_index item_type = std::type_index{typeid(void)};
    std::function<void(T&)> apply_default;
    std::function<void(T&, const std::any&)> assign_any;
+   std::function<std::any(const std::any&)> normalize_default;
    std::function<void(T&, const input_value&, std::string_view, std::vector<diagnostic>&)> assign_input;
    std::function<std::any(const T&)> read_any;
+   std::function<std::optional<std::any>(const T&)> read_validation_any;
+   std::function<input_value(const T&)> read_input;
    std::function<std::optional<std::size_t>(const T&)> read_size;
    std::vector<std::function<void(const T&, std::string_view, std::vector<diagnostic>&)>> validators;
 };
@@ -229,9 +282,36 @@ template <typename T> class object_schema {
 
       auto rule = field_rule<T>{};
       rule.name = std::move(name);
+      rule.member_name = described_member_name<T, Member>();
       rule.kind = member_kind<member_type>::value;
       rule.type = std::type_index{typeid(member_type)};
-      rule.assign_any = [](T& object, const std::any& value) { object.*Member = cast_any_to<member_type>(value); };
+      rule.assign_any = [](T& object, const std::any& value) {
+         if constexpr (is_optional<member_type>::value) {
+            using item_type = typename is_optional<member_type>::value_type;
+            if (value.type() == typeid(member_type)) {
+               object.*Member = std::any_cast<member_type>(value);
+            } else {
+               object.*Member = cast_any_to<item_type>(value);
+            }
+         } else {
+            object.*Member = cast_any_to<member_type>(value);
+         }
+      };
+      rule.normalize_default = [](const std::any& value) -> std::any {
+         if constexpr (is_optional<member_type>::value) {
+            using item_type = typename is_optional<member_type>::value_type;
+            if (value.type() == typeid(member_type)) {
+               const auto optional_value = std::any_cast<member_type>(value);
+               if (!optional_value) {
+                  return {};
+               }
+               return to_default_any(*optional_value);
+            }
+            return to_default_any(cast_any_to<item_type>(value));
+         } else {
+            return to_default_any(cast_any_to<member_type>(value));
+         }
+      };
       rule.assign_input = [](T& object, const input_value& value, std::string_view path,
                              std::vector<diagnostic>& diagnostics) {
          try {
@@ -241,8 +321,29 @@ template <typename T> class object_schema {
          }
       };
       rule.read_any = [](const T& object) -> std::any { return object.*Member; };
+      rule.read_validation_any = [](const T& object) -> std::optional<std::any> {
+         const auto& value = object.*Member;
+         if constexpr (is_optional<member_type>::value) {
+            if (!value) {
+               return std::nullopt;
+            }
+            return std::any{*value};
+         } else {
+            return std::any{value};
+         }
+      };
+      rule.read_input = [](const T& object) -> input_value { return to_input_value(object.*Member); };
       if constexpr (is_vector<member_type>::value) {
          rule.read_size = [](const T& object) -> std::optional<std::size_t> { return (object.*Member).size(); };
+      } else if constexpr (is_optional<member_type>::value &&
+                            is_vector<typename is_optional<member_type>::value_type>::value) {
+         rule.read_size = [](const T& object) -> std::optional<std::size_t> {
+            const auto& value = object.*Member;
+            if (!value) {
+               return std::nullopt;
+            }
+            return value->size();
+         };
       }
       rule.apply_default = [state = fields_, index = fields_->size()](T& object) {
          const auto& self = (*state)[index];
@@ -325,17 +426,21 @@ template <typename T> class object_schema {
          if (field.minimum || field.maximum) {
             auto numeric = std::optional<long double>{};
             try {
+               const auto any_value = field.read_validation_any
+                                         ? field.read_validation_any(object)
+                                         : std::optional<std::any>{field.read_any(object)};
+               if (!any_value) {
+                  continue;
+               }
                switch (field.kind) {
                case value_kind::signed_integer:
-                  numeric =
-                      static_cast<long double>(std::any_cast<std::int64_t>(coerce_signed(field.read_any(object))));
+                  numeric = static_cast<long double>(std::any_cast<std::int64_t>(coerce_signed(*any_value)));
                   break;
                case value_kind::unsigned_integer:
-                  numeric =
-                      static_cast<long double>(std::any_cast<std::uint64_t>(coerce_unsigned(field.read_any(object))));
+                  numeric = static_cast<long double>(std::any_cast<std::uint64_t>(coerce_unsigned(*any_value)));
                   break;
                case value_kind::floating:
-                  numeric = std::any_cast<long double>(coerce_floating(field.read_any(object)));
+                  numeric = std::any_cast<long double>(coerce_floating(*any_value));
                   break;
                default:
                   break;
@@ -441,8 +546,9 @@ template <typename T> class field_builder {
    }
 
    template <typename Value> field_builder& default_value(Value&& value) {
-      current().has_default = true;
-      current().default_value = std::forward<Value>(value);
+      const auto input = std::any{std::forward<Value>(value)};
+      current().default_value = current().normalize_default ? current().normalize_default(input) : input;
+      current().has_default = current().default_value.has_value();
       return *this;
    }
 
@@ -487,8 +593,12 @@ template <typename T> class field_builder {
          if (field.kind != value_kind::string) {
             return;
          }
-         const auto any_value = field.read_any(object);
-         const auto& value = std::any_cast<const std::string&>(any_value);
+         const auto any_value = field.read_validation_any ? field.read_validation_any(object)
+                                                          : std::optional<std::any>{field.read_any(object)};
+         if (!any_value) {
+            return;
+         }
+         const auto& value = std::any_cast<const std::string&>(*any_value);
          if (value.empty()) {
             diagnostics.push_back(
                make_path_error(append_path(base_path, field.name), "schema.non_empty", "value must not be empty"));
@@ -541,8 +651,12 @@ template <typename T> class field_builder {
          if (field.kind != value_kind::string_list) {
             return;
          }
-         const auto any_value = field.read_any(object);
-         const auto& values = std::any_cast<const std::vector<std::string>&>(any_value);
+         const auto any_value = field.read_validation_any ? field.read_validation_any(object)
+                                                          : std::optional<std::any>{field.read_any(object)};
+         if (!any_value) {
+            return;
+         }
+         const auto& values = std::any_cast<const std::vector<std::string>&>(*any_value);
          for (std::size_t i = 0; i < values.size(); ++i) {
             if (values[i].empty()) {
                diagnostics.push_back(make_path_error(append_index(append_path(base_path, field.name), i),
@@ -561,8 +675,12 @@ template <typename T> class field_builder {
                                         const T& object, std::string_view base_path,
                                         std::vector<diagnostic>& diagnostics) {
          const auto& field = (*state)[index];
-         const auto any_value = field.read_any(object);
-         const auto& values = std::any_cast<const std::vector<item_type>&>(any_value);
+         const auto any_value = field.read_validation_any ? field.read_validation_any(object)
+                                                          : std::optional<std::any>{field.read_any(object)};
+         if (!any_value) {
+            return;
+         }
+         const auto& values = std::any_cast<const std::vector<item_type>&>(*any_value);
          auto seen = std::set<member_type>{};
          for (const auto& item : values) {
             if (!seen.insert(item.*Member).second) {
@@ -596,7 +714,13 @@ template <typename T> class field_builder {
 template <typename T>
 [[nodiscard]] T cast_input_to(const input_value& input, std::string_view path, std::vector<diagnostic>& diagnostics) {
    using clean_type = std::remove_cvref_t<T>;
-   if constexpr (std::same_as<clean_type, bool>) {
+   if constexpr (is_optional<clean_type>::value) {
+      using item_type = typename is_optional<clean_type>::value_type;
+      if (std::holds_alternative<std::monostate>(input.storage)) {
+         return clean_type{};
+      }
+      return cast_input_to<item_type>(input, path, diagnostics);
+   } else if constexpr (std::same_as<clean_type, bool>) {
       if (const auto* value = std::get_if<bool>(&input.storage)) {
          return *value;
       }
@@ -763,6 +887,75 @@ template <typename T>
       output.push_back(std::move(item));
    }
    return output;
+}
+
+template <typename T>
+[[nodiscard]] input_value to_input_value(const T& input) {
+   using clean_type = std::remove_cvref_t<T>;
+   if constexpr (is_optional<clean_type>::value) {
+      if (!input.has_value()) {
+         return input_value{};
+      }
+      return to_input_value(*input);
+   } else if constexpr (std::same_as<clean_type, bool>) {
+      return input_value{input};
+   } else if constexpr (std::signed_integral<clean_type> && !std::same_as<clean_type, bool>) {
+      return input_value{static_cast<std::int64_t>(input)};
+   } else if constexpr (std::unsigned_integral<clean_type> && !std::same_as<clean_type, bool>) {
+      return input_value{static_cast<std::uint64_t>(input)};
+   } else if constexpr (std::floating_point<clean_type>) {
+      return input_value{static_cast<double>(input)};
+   } else if constexpr (std::same_as<clean_type, std::string>) {
+      return input_value{input};
+   } else if constexpr (std::is_enum_v<clean_type>) {
+      if (auto text = enum_to_config_string(input)) {
+         return input_value{std::move(*text)};
+      }
+      using underlying_type = std::underlying_type_t<clean_type>;
+      if constexpr (std::signed_integral<underlying_type>) {
+         return input_value{static_cast<std::int64_t>(input)};
+      } else {
+         return input_value{static_cast<std::uint64_t>(input)};
+      }
+   } else if constexpr (std::same_as<clean_type, std::vector<std::string>>) {
+      auto array = input_value::array_type{};
+      array.reserve(input.size());
+      for (const auto& item : input) {
+         array.emplace_back(item);
+      }
+      return input_value{std::move(array)};
+   } else if constexpr (is_vector_enum<clean_type>::value) {
+      auto array = input_value::array_type{};
+      array.reserve(input.size());
+      for (const auto& item : input) {
+         array.push_back(to_input_value(item));
+      }
+      return input_value{std::move(array)};
+   } else if constexpr (is_vector<clean_type>::value) {
+      auto array = input_value::array_type{};
+      array.reserve(input.size());
+      for (const auto& item : input) {
+         array.push_back(to_input_value(item));
+      }
+      return input_value{std::move(array)};
+   } else {
+      auto object = input_value::object_type{};
+      const auto nested_rules = rules<clean_type>::define();
+      if (!nested_rules.fields().empty()) {
+         for (const auto& field : nested_rules.fields()) {
+            auto value = field.read_input(input);
+            if (!std::holds_alternative<std::monostate>(value.storage)) {
+               object.emplace(field.name, std::move(value));
+            }
+         }
+         return input_value{std::move(object)};
+      }
+      if constexpr (boost::describe::has_describe_members<clean_type>::value) {
+         return input_value{std::move(object)};
+      } else {
+         return input_value{};
+      }
+   }
 }
 
 template <typename T> [[nodiscard]] object_schema<T> object() {

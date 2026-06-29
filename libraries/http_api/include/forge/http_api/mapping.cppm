@@ -1,9 +1,10 @@
 module;
 
 #include <algorithm>
-#include <charconv>
+#include <array>
 #include <cctype>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -20,11 +21,22 @@ import forge.api.descriptor;
 import forge.api.types;
 import forge.http.api.parameters;
 import forge.http.exceptions;
+import forge.http.negotiation;
 import forge.http.types;
 import forge.reflect.reflect;
 import forge.schema.scalar;
 
 export namespace forge::http::api {
+
+enum class body_codec {
+   json,
+   xml,
+};
+
+enum class error_codec {
+   json,
+   xml,
+};
 
 struct field_binding {
    std::string field;
@@ -41,6 +53,9 @@ struct route {
    std::optional<std::string> body_stream_field;
    bool response_file = false;
    bool response_stream = false;
+   body_codec request_body_codec = body_codec::json;
+   body_codec response_body_codec = body_codec::json;
+   error_codec error_body_codec = error_codec::json;
 };
 
 class route_builder {
@@ -73,6 +88,21 @@ class route_builder {
 
    route_builder&& response_stream() && {
       route_.response_stream = true;
+      return std::move(*this);
+   }
+
+   route_builder&& request_body_codec(body_codec value) && {
+      route_.request_body_codec = value;
+      return std::move(*this);
+   }
+
+   route_builder&& response_body_codec(body_codec value) && {
+      route_.response_body_codec = value;
+      return std::move(*this);
+   }
+
+   route_builder&& error_body_codec(error_codec value) && {
+      route_.error_body_codec = value;
       return std::move(*this);
    }
 
@@ -113,6 +143,69 @@ using ::forge::http::detail::response_needs_stream_v;
 
 [[nodiscard]] inline bool uses_request_body(method verb) noexcept {
    return verb == method::post || verb == method::put || verb == method::patch || verb == method::delete_;
+}
+
+[[nodiscard]] inline std::span<const forge::http::media_type_match> media_types(body_codec codec) noexcept {
+   static constexpr auto json = std::array{
+      forge::http::media_type_match{.type = "application/json", .structured_suffix = {}},
+      forge::http::media_type_match{.type = {}, .structured_suffix = "+json"},
+   };
+   static constexpr auto xml = std::array{
+      forge::http::media_type_match{.type = "application/xml", .structured_suffix = {}},
+      forge::http::media_type_match{.type = "text/xml", .structured_suffix = {}},
+      forge::http::media_type_match{.type = {}, .structured_suffix = "+xml"},
+   };
+   switch (codec) {
+   case body_codec::json:
+      return json;
+   case body_codec::xml:
+      return xml;
+   }
+   return {};
+}
+
+[[nodiscard]] inline std::span<const forge::http::media_type_match> response_media_types(body_codec codec) noexcept {
+   static constexpr auto json = std::array{
+      forge::http::media_type_match{.type = "application/json", .structured_suffix = {}},
+   };
+   static constexpr auto xml = std::array{
+      forge::http::media_type_match{.type = "application/xml", .structured_suffix = {}},
+   };
+   switch (codec) {
+   case body_codec::json:
+      return json;
+   case body_codec::xml:
+      return xml;
+   }
+   return {};
+}
+
+[[nodiscard]] inline bool media_type_matches(body_codec codec, std::string_view value) {
+   return forge::http::media_type_matches(value, media_types(codec));
+}
+
+[[nodiscard]] inline std::string_view content_type(body_codec codec) noexcept {
+   switch (codec) {
+   case body_codec::json:
+      return "application/json";
+   case body_codec::xml:
+      return "application/xml";
+   }
+   return "application/octet-stream";
+}
+
+[[nodiscard]] inline std::string_view content_type(error_codec codec) noexcept {
+   switch (codec) {
+   case error_codec::json:
+      return "application/json";
+   case error_codec::xml:
+      return "application/xml";
+   }
+   return "application/octet-stream";
+}
+
+[[nodiscard]] inline bool accept_allows(body_codec codec, std::string_view value) {
+   return forge::http::accept_allows(value, response_media_types(codec));
 }
 
 template <auto Method, typename Request>

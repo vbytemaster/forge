@@ -113,6 +113,9 @@ items include:
 - `libraries/crypto/include/forge/crypto/base64.cppm`: Rene Nyffenegger base64
   implementation with Kevin Heifner modification notice.
 - `libraries/core/uint128.cpp`: portions adapted from Evan Teran.
+- `vendor/pugixml`: Arseny Kapoulkine pugixml, MIT. FORGE compiles
+  `vendor/pugixml/src/pugixml.cpp` directly into `forge_xml` as a private XML
+  backend; `pugi::*` types are not part of the public API.
 
 Submodules may contain their own third-party dependency notices, such as
 Catch2 under `vendor/bn256/third-party`. Those notices remain with the vendored

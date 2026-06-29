@@ -15,7 +15,8 @@ error shapes.
 - request target parsing and base URL rendering;
 - WebSocket upgrade routing;
 - `FORGE_HTTP_API(...)` presentation metadata on top of `FORGE_API(...)`;
-- JSON request/response DTOs for ordinary typed HTTP methods;
+- JSON request/response DTOs for ordinary typed HTTP methods, with planned XML
+  request/response/error codecs in `forge_http_api` after `forge_xml` lands;
 - path, query and header binding into described request DTOs;
 - HTTP-only typed fields such as `header<T>`, `form_field<T>`,
   `body_stream`, `body_bytes` and `upload_file`;
@@ -60,9 +61,11 @@ FORGE_HTTP_API(
 `FORGE_API(...)` remains the contract metadata source. `FORGE_HTTP_API(...)` is only
 the HTTP presentation: method, path, status and HTTP field mapping.
 
-Ordinary DTO request/response bodies use JSON. HTTP-specific transfer mechanics
-use explicit FORGE-owned special types rather than leaking Boost.Beast parser,
-serializer or body templates through public modules.
+Ordinary DTO request/response bodies use JSON by default. S3-compatible APIs
+need XML bodies, so the planned path is `forge_xml` first, then multi-codec
+`forge_http_api` binding. Downstream object gateways should still declare typed
+API contracts and HTTP presentation metadata; manual `router` bypass is not the
+normal endpoint pattern.
 
 ## Object-Gateway Readiness
 
@@ -84,7 +87,8 @@ FORGE does not own:
 - multipart object workflow;
 - credential lookup, request signing policy or authorization;
 - object metadata/versioning semantics;
-- gateway-specific XML error payloads;
+- gateway-specific XML error payloads, although Forge will provide generic XML
+  error/body codec hooks;
 - mapping to any product storage or control-plane state.
 
 FORGE may add generic HTTP canonicalization helpers if they are useful outside a
@@ -97,6 +101,8 @@ The current slice proves the server-side typed binding model for JSON DTOs,
 streaming request bodies and file responses. Remaining HTTP-library work should
 stay generic:
 
+- XML codec support through a new `forge_xml` leaf library;
+- multi-codec request, response and error profiles in `forge_http_api`;
 - complete route option metadata instead of macro placeholders for custom
   header/form names;
 - typed HTTP client streaming request writer and response reader;

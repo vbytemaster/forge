@@ -38,6 +38,14 @@ template <typename T> struct optional_traits<std::optional<T>> : std::true_type 
    using value_type = T;
 };
 
+template <typename T> struct optional_value {
+   using type = T;
+};
+template <typename T> struct optional_value<std::optional<T>> {
+   using type = T;
+};
+template <typename T> using optional_value_t = typename optional_value<T>::type;
+
 template <typename T> struct vector_traits : std::false_type {};
 template <typename T, typename Allocator> struct vector_traits<std::vector<T, Allocator>> : std::true_type {
    using value_type = T;
@@ -174,7 +182,9 @@ struct document {
 [[nodiscard]] read_result<document> read_value(std::string_view input, read_options options = {});
 [[nodiscard]] write_result write_value(const document& input, write_options options = {});
 
-namespace detail {
+} // namespace forge::xml
+
+namespace forge::xml::detail {
 
 template <typename Member>
 [[nodiscard]] element value_to_element(std::string name,
@@ -338,7 +348,8 @@ void assign_member(T& output,
                    const read_options& options,
                    std::vector<schema::diagnostic>& diagnostics) {
    using clean = std::remove_cvref_t<Member>;
-   if constexpr (vector_traits<clean>::value) {
+   using field_value = optional_value_t<clean>;
+   if constexpr (vector_traits<field_value>::value) {
       if (matches.empty()) {
          if (field && field->required) {
             diagnostics.push_back(make_error(append_path(base_path, missing_path_name),
@@ -347,8 +358,8 @@ void assign_member(T& output,
          }
          return;
       }
-      using item_type = typename vector_traits<clean>::value_type;
-      auto values = clean{};
+      using item_type = typename vector_traits<field_value>::value_type;
+      auto values = field_value{};
       values.reserve(matches.size());
       for (const auto& child : matches) {
          values.push_back(
@@ -429,7 +440,7 @@ void append_member_elements(std::vector<element>& output,
    using clean = std::remove_cvref_t<Member>;
    if constexpr (optional_traits<clean>::value) {
       if (value.has_value()) {
-         append_member_elements(output, name, *value, diagnostics);
+         append_member_elements(output, name, *value, diagnostics, required);
       } else if (required) {
          diagnostics.push_back(make_error(std::string{name}, "xml.required", "required XML element is missing"));
       }
@@ -486,7 +497,9 @@ template <typename Member>
    }
 }
 
-} // namespace detail
+} // namespace forge::xml::detail
+
+export namespace forge::xml {
 
 template <typename T> [[nodiscard]] read_result<T> read(std::string_view input, read_options options = {}) {
    auto output = read_result<T>{};

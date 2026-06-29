@@ -78,6 +78,10 @@ struct aliased_contents_result {
    std::vector<object_entry> current;
 };
 
+struct optional_tags_result {
+   std::optional<std::vector<std::string>> tags;
+};
+
 } // namespace forge_xml_tests
 
 namespace forge_xml_tests {
@@ -96,6 +100,7 @@ BOOST_DESCRIBE_STRUCT(unbound_schema_member, (), (described))
 BOOST_DESCRIBE_STRUCT(required_items_result, (), (items))
 BOOST_DESCRIBE_STRUCT(default_contents_result, (), (name, contents))
 BOOST_DESCRIBE_STRUCT(aliased_contents_result, (), (current))
+BOOST_DESCRIBE_STRUCT(optional_tags_result, (), (tags))
 
 } // namespace forge_xml_tests
 
@@ -222,6 +227,14 @@ template <> struct forge::schema::rules<forge_xml_tests::aliased_contents_result
       schema.field<&forge_xml_tests::aliased_contents_result::current>("Current")
           .alias("Legacy")
           .items<forge_xml_tests::object_entry>();
+      return schema;
+   }
+};
+
+template <> struct forge::schema::rules<forge_xml_tests::optional_tags_result> {
+   [[nodiscard]] static forge::schema::object_schema<forge_xml_tests::optional_tags_result> define() {
+      auto schema = forge::schema::object<forge_xml_tests::optional_tags_result>();
+      schema.field<&forge_xml_tests::optional_tags_result::tags>("Tag").each_non_empty();
       return schema;
    }
 };
@@ -441,6 +454,23 @@ BOOST_AUTO_TEST_CASE(xml_schema_repeated_alias_diagnostics_preserve_each_element
    BOOST_REQUIRE_EQUAL(warned.diagnostics.size(), 1U);
    BOOST_TEST(warned.diagnostics.front().path == "Legacy.Unexpected");
    BOOST_TEST(warned.diagnostics.front().code == "xml.unknown");
+}
+
+BOOST_AUTO_TEST_CASE(xml_schema_optional_repeated_fields_roundtrip_as_vectors) {
+   const auto value = forge_xml_tests::optional_tags_result{.tags = std::vector<std::string>{"alpha", "bravo"}};
+   const auto written = forge::xml::write(value, {.root_name = "Root"});
+
+   BOOST_REQUIRE(written.ok());
+   BOOST_TEST(written.text.find("<Tag>alpha</Tag>") != std::string::npos);
+   BOOST_TEST(written.text.find("<Tag>bravo</Tag>") != std::string::npos);
+
+   const auto parsed = forge::xml::read<forge_xml_tests::optional_tags_result>(written.text);
+
+   BOOST_REQUIRE(parsed.ok());
+   BOOST_REQUIRE(parsed.value.tags.has_value());
+   BOOST_REQUIRE_EQUAL(parsed.value.tags->size(), 2U);
+   BOOST_TEST((*parsed.value.tags)[0] == "alpha");
+   BOOST_TEST((*parsed.value.tags)[1] == "bravo");
 }
 
 BOOST_AUTO_TEST_CASE(xml_s3_shaped_delete_complete_multipart_and_error_bodies_roundtrip) {

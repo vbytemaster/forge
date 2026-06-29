@@ -335,6 +335,15 @@ template <typename T> class object_schema {
       rule.read_input = [](const T& object) -> input_value { return to_input_value(object.*Member); };
       if constexpr (is_vector<member_type>::value) {
          rule.read_size = [](const T& object) -> std::optional<std::size_t> { return (object.*Member).size(); };
+      } else if constexpr (is_optional<member_type>::value &&
+                            is_vector<typename is_optional<member_type>::value_type>::value) {
+         rule.read_size = [](const T& object) -> std::optional<std::size_t> {
+            const auto& value = object.*Member;
+            if (!value) {
+               return std::nullopt;
+            }
+            return value->size();
+         };
       }
       rule.apply_default = [state = fields_, index = fields_->size()](T& object) {
          const auto& self = (*state)[index];
@@ -642,8 +651,12 @@ template <typename T> class field_builder {
          if (field.kind != value_kind::string_list) {
             return;
          }
-         const auto any_value = field.read_any(object);
-         const auto& values = std::any_cast<const std::vector<std::string>&>(any_value);
+         const auto any_value = field.read_validation_any ? field.read_validation_any(object)
+                                                          : std::optional<std::any>{field.read_any(object)};
+         if (!any_value) {
+            return;
+         }
+         const auto& values = std::any_cast<const std::vector<std::string>&>(*any_value);
          for (std::size_t i = 0; i < values.size(); ++i) {
             if (values[i].empty()) {
                diagnostics.push_back(make_path_error(append_index(append_path(base_path, field.name), i),
@@ -662,8 +675,12 @@ template <typename T> class field_builder {
                                         const T& object, std::string_view base_path,
                                         std::vector<diagnostic>& diagnostics) {
          const auto& field = (*state)[index];
-         const auto any_value = field.read_any(object);
-         const auto& values = std::any_cast<const std::vector<item_type>&>(any_value);
+         const auto any_value = field.read_validation_any ? field.read_validation_any(object)
+                                                          : std::optional<std::any>{field.read_any(object)};
+         if (!any_value) {
+            return;
+         }
+         const auto& values = std::any_cast<const std::vector<item_type>&>(*any_value);
          auto seen = std::set<member_type>{};
          for (const auto& item : values) {
             if (!seen.insert(item.*Member).second) {

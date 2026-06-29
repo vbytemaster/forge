@@ -2,6 +2,7 @@
 #include <boost/test/unit_test.hpp>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,9 +16,15 @@ struct http_config {
    std::string token;
 };
 
+struct optional_config {
+   std::optional<std::string> token;
+   std::optional<std::uint16_t> port;
+};
+
 } // namespace forge_schema_tests
 
 BOOST_DESCRIBE_STRUCT(forge_schema_tests::http_config, (), (bind_port, bind_host, tls_enabled, tags, token))
+BOOST_DESCRIBE_STRUCT(forge_schema_tests::optional_config, (), (token, port))
 
 import forge.schema.diagnostic;
 import forge.schema.value_kind;
@@ -41,6 +48,15 @@ template <> struct forge::schema::rules<forge_schema_tests::http_config> {
    }
 };
 
+template <> struct forge::schema::rules<forge_schema_tests::optional_config> {
+   [[nodiscard]] static forge::schema::object_schema<forge_schema_tests::optional_config> define() {
+      auto schema = forge::schema::object<forge_schema_tests::optional_config>();
+      schema.field<&forge_schema_tests::optional_config::token>("token").non_empty();
+      schema.field<&forge_schema_tests::optional_config::port>("port").range(1, 65535);
+      return schema;
+   }
+};
+
 BOOST_AUTO_TEST_CASE(schema_describes_fields_defaults_and_validation) {
    const auto schema = forge::schema::rules<forge_schema_tests::http_config>::define();
    BOOST_REQUIRE_EQUAL(schema.fields().size(), 5U);
@@ -60,6 +76,24 @@ BOOST_AUTO_TEST_CASE(schema_describes_fields_defaults_and_validation) {
    BOOST_REQUIRE_EQUAL(diagnostics.size(), 1U);
    BOOST_TEST(diagnostics.front().path == "http.bind-port");
    BOOST_TEST(diagnostics.front().code == "schema.range");
+}
+
+BOOST_AUTO_TEST_CASE(schema_optional_scalar_validators_unwrap_present_values_and_skip_absent) {
+   const auto schema = forge::schema::rules<forge_schema_tests::optional_config>::define();
+
+   auto absent = forge_schema_tests::optional_config{};
+   BOOST_TEST(schema.validate(absent, "config").empty());
+
+   auto valid = forge_schema_tests::optional_config{.token = "secret", .port = 443};
+   BOOST_TEST(schema.validate(valid, "config").empty());
+
+   auto invalid = forge_schema_tests::optional_config{.token = "", .port = 0};
+   const auto diagnostics = schema.validate(invalid, "config");
+   BOOST_REQUIRE_EQUAL(diagnostics.size(), 2U);
+   BOOST_TEST(diagnostics[0].path == "config.token");
+   BOOST_TEST(diagnostics[0].code == "schema.non_empty");
+   BOOST_TEST(diagnostics[1].path == "config.port");
+   BOOST_TEST(diagnostics[1].code == "schema.range");
 }
 
 BOOST_AUTO_TEST_CASE(schema_converts_described_enums) {

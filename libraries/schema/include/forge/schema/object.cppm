@@ -234,6 +234,7 @@ template <typename T> struct field_rule {
    std::function<void(T&, const std::any&)> assign_any;
    std::function<void(T&, const input_value&, std::string_view, std::vector<diagnostic>&)> assign_input;
    std::function<std::any(const T&)> read_any;
+   std::function<std::optional<std::any>(const T&)> read_validation_any;
    std::function<input_value(const T&)> read_input;
    std::function<std::optional<std::size_t>(const T&)> read_size;
    std::vector<std::function<void(const T&, std::string_view, std::vector<diagnostic>&)>> validators;
@@ -266,6 +267,17 @@ template <typename T> class object_schema {
          }
       };
       rule.read_any = [](const T& object) -> std::any { return object.*Member; };
+      rule.read_validation_any = [](const T& object) -> std::optional<std::any> {
+         const auto& value = object.*Member;
+         if constexpr (is_optional<member_type>::value) {
+            if (!value) {
+               return std::nullopt;
+            }
+            return std::any{*value};
+         } else {
+            return std::any{value};
+         }
+      };
       rule.read_input = [](const T& object) -> input_value { return to_input_value(object.*Member); };
       if constexpr (is_vector<member_type>::value) {
          rule.read_size = [](const T& object) -> std::optional<std::size_t> { return (object.*Member).size(); };
@@ -351,17 +363,21 @@ template <typename T> class object_schema {
          if (field.minimum || field.maximum) {
             auto numeric = std::optional<long double>{};
             try {
+               const auto any_value = field.read_validation_any
+                                         ? field.read_validation_any(object)
+                                         : std::optional<std::any>{field.read_any(object)};
+               if (!any_value) {
+                  continue;
+               }
                switch (field.kind) {
                case value_kind::signed_integer:
-                  numeric =
-                      static_cast<long double>(std::any_cast<std::int64_t>(coerce_signed(field.read_any(object))));
+                  numeric = static_cast<long double>(std::any_cast<std::int64_t>(coerce_signed(*any_value)));
                   break;
                case value_kind::unsigned_integer:
-                  numeric =
-                      static_cast<long double>(std::any_cast<std::uint64_t>(coerce_unsigned(field.read_any(object))));
+                  numeric = static_cast<long double>(std::any_cast<std::uint64_t>(coerce_unsigned(*any_value)));
                   break;
                case value_kind::floating:
-                  numeric = std::any_cast<long double>(coerce_floating(field.read_any(object)));
+                  numeric = std::any_cast<long double>(coerce_floating(*any_value));
                   break;
                default:
                   break;
@@ -513,8 +529,12 @@ template <typename T> class field_builder {
          if (field.kind != value_kind::string) {
             return;
          }
-         const auto any_value = field.read_any(object);
-         const auto& value = std::any_cast<const std::string&>(any_value);
+         const auto any_value = field.read_validation_any ? field.read_validation_any(object)
+                                                          : std::optional<std::any>{field.read_any(object)};
+         if (!any_value) {
+            return;
+         }
+         const auto& value = std::any_cast<const std::string&>(*any_value);
          if (value.empty()) {
             diagnostics.push_back(
                make_path_error(append_path(base_path, field.name), "schema.non_empty", "value must not be empty"));

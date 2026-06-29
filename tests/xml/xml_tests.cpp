@@ -69,6 +69,15 @@ struct required_items_result {
    std::vector<object_entry> items;
 };
 
+struct default_contents_result {
+   std::string name;
+   std::vector<object_entry> contents;
+};
+
+struct aliased_contents_result {
+   std::vector<object_entry> current;
+};
+
 } // namespace forge_xml_tests
 
 namespace forge_xml_tests {
@@ -85,6 +94,8 @@ BOOST_DESCRIBE_STRUCT(schema_bound_parent, (), (children))
 BOOST_DESCRIBE_STRUCT(described_schema_bound_parent, (), (children))
 BOOST_DESCRIBE_STRUCT(unbound_schema_member, (), (described))
 BOOST_DESCRIBE_STRUCT(required_items_result, (), (items))
+BOOST_DESCRIBE_STRUCT(default_contents_result, (), (name, contents))
+BOOST_DESCRIBE_STRUCT(aliased_contents_result, (), (current))
 
 } // namespace forge_xml_tests
 
@@ -189,6 +200,27 @@ template <> struct forge::schema::rules<forge_xml_tests::required_items_result> 
       auto schema = forge::schema::object<forge_xml_tests::required_items_result>();
       schema.field<&forge_xml_tests::required_items_result::items>("Item")
           .required()
+          .items<forge_xml_tests::object_entry>();
+      return schema;
+   }
+};
+
+template <> struct forge::schema::rules<forge_xml_tests::default_contents_result> {
+   [[nodiscard]] static forge::schema::object_schema<forge_xml_tests::default_contents_result> define() {
+      auto schema = forge::schema::object<forge_xml_tests::default_contents_result>();
+      schema.field<&forge_xml_tests::default_contents_result::name>("Name").required().non_empty();
+      schema.field<&forge_xml_tests::default_contents_result::contents>("Contents")
+          .default_value(std::vector<forge_xml_tests::object_entry>{{.key = "default.txt", .size = 7}})
+          .items<forge_xml_tests::object_entry>();
+      return schema;
+   }
+};
+
+template <> struct forge::schema::rules<forge_xml_tests::aliased_contents_result> {
+   [[nodiscard]] static forge::schema::object_schema<forge_xml_tests::aliased_contents_result> define() {
+      auto schema = forge::schema::object<forge_xml_tests::aliased_contents_result>();
+      schema.field<&forge_xml_tests::aliased_contents_result::current>("Current")
+          .alias("Legacy")
           .items<forge_xml_tests::object_entry>();
       return schema;
    }
@@ -348,6 +380,16 @@ BOOST_AUTO_TEST_CASE(xml_schema_read_respects_required_repeated_elements) {
    BOOST_TEST(has_error_code(parsed.diagnostics, "xml.required"));
 }
 
+BOOST_AUTO_TEST_CASE(xml_schema_read_preserves_default_repeated_elements_when_omitted) {
+   const auto parsed =
+      forge::xml::read<forge_xml_tests::default_contents_result>(R"(<Root><Name>photos</Name></Root>)");
+
+   BOOST_REQUIRE(parsed.ok());
+   BOOST_REQUIRE_EQUAL(parsed.value.contents.size(), 1U);
+   BOOST_TEST(parsed.value.contents.front().key == "default.txt");
+   BOOST_TEST(parsed.value.contents.front().size == 7U);
+}
+
 BOOST_AUTO_TEST_CASE(xml_schema_write_respects_required_repeated_elements) {
    const auto written = forge::xml::write(forge_xml_tests::required_items_result{}, {.root_name = "Root"});
 
@@ -378,6 +420,16 @@ BOOST_AUTO_TEST_CASE(xml_schema_unknown_diagnostics_preserve_nested_paths) {
    BOOST_REQUIRE(warned.ok());
    BOOST_REQUIRE_EQUAL(warned.diagnostics.size(), 1U);
    BOOST_TEST(warned.diagnostics.front().path == "Contents.Unexpected");
+   BOOST_TEST(warned.diagnostics.front().code == "xml.unknown");
+}
+
+BOOST_AUTO_TEST_CASE(xml_schema_unknown_diagnostics_use_alias_element_path) {
+   const auto warned = forge::xml::read<forge_xml_tests::aliased_contents_result>(
+      R"(<Root><Legacy><Key>a.jpg</Key><Size>12</Size><Unexpected>1</Unexpected></Legacy></Root>)");
+
+   BOOST_REQUIRE(warned.ok());
+   BOOST_REQUIRE_EQUAL(warned.diagnostics.size(), 1U);
+   BOOST_TEST(warned.diagnostics.front().path == "Legacy.Unexpected");
    BOOST_TEST(warned.diagnostics.front().code == "xml.unknown");
 }
 

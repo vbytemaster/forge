@@ -226,22 +226,30 @@ void append_schema_object_children(std::vector<element>& output,
    });
 }
 
+struct child_matches {
+   std::string path_name;
+   std::vector<const element*> values;
+};
+
 template <typename T>
-[[nodiscard]] std::vector<const element*> find_children(const element& input,
-                                                        const schema::field_rule<T>* field,
-                                                        std::string_view fallback_name) {
-   auto names = std::set<std::string>{};
+[[nodiscard]] child_matches find_children(const element& input,
+                                          const schema::field_rule<T>* field,
+                                          std::string_view fallback_name) {
+   auto names = std::vector<std::string>{};
    if (field) {
-      names.insert(field->name);
-      names.insert(field->aliases.begin(), field->aliases.end());
+      names.push_back(field->name);
+      names.insert(names.end(), field->aliases.begin(), field->aliases.end());
    } else {
-      names.insert(std::string{fallback_name});
+      names.push_back(std::string{fallback_name});
    }
 
-   auto output = std::vector<const element*>{};
+   auto output = child_matches{.path_name = names.empty() ? std::string{fallback_name} : names.front()};
    for (const auto& child : input.children) {
-      if (names.contains(child.name)) {
-         output.push_back(&child);
+      if (std::ranges::find(names, child.name) != names.end()) {
+         if (output.values.empty()) {
+            output.path_name = child.name;
+         }
+         output.values.push_back(&child);
       }
    }
    return output;
@@ -333,8 +341,11 @@ void assign_member(T& output,
                    std::vector<schema::diagnostic>& diagnostics) {
    using clean = std::remove_cvref_t<Member>;
    if constexpr (vector_traits<clean>::value) {
-      if (matches.empty() && field && field->required) {
-         diagnostics.push_back(make_error(std::string{path}, "xml.required", "required XML element is missing"));
+      if (matches.empty()) {
+         if (field && field->required) {
+            diagnostics.push_back(make_error(std::string{path}, "xml.required", "required XML element is missing"));
+         }
+         return;
       }
       using item_type = typename vector_traits<clean>::value_type;
       auto values = clean{};
@@ -383,9 +394,9 @@ void decode_object(const element& input,
                if (matched || field.member_name != member_name) {
                   return;
                }
-               const auto path = append_path(base_path, field.name);
                const auto matches = find_children(input, &field, member_name);
-               assign_member(output, member, matches, &field, path, options, diagnostics);
+               const auto path = append_path(base_path, matches.path_name);
+               assign_member(output, member, matches.values, &field, path, options, diagnostics);
                matched = true;
             });
          }
@@ -399,9 +410,9 @@ void decode_object(const element& input,
 
    forge::reflect::for_each_member<T>([&](const char* member_name, auto member) {
       const schema::field_rule<T>* field = nullptr;
-      const auto path = append_path(base_path, member_name);
       const auto matches = find_children(input, field, member_name);
-      assign_member(output, member, matches, field, path, options, diagnostics);
+      const auto path = append_path(base_path, matches.path_name);
+      assign_member(output, member, matches.values, field, path, options, diagnostics);
    });
 }
 

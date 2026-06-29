@@ -10,6 +10,10 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 
+namespace forge::http::detail {
+struct router_server_access;
+}
+
 export module forge.http.router;
 
 import forge.http.middleware;
@@ -50,11 +54,12 @@ class router {
 
    [[nodiscard]] boost::asio::awaitable<response> handle(route_context& context) const;
    [[nodiscard]] bool can_handle_stream(route_context& context) const;
-   [[nodiscard]] std::optional<response> header_only_rejection_response(route_context& context) const;
    [[nodiscard]] boost::asio::awaitable<stream_response> handle_stream(stream_request& request) const;
    [[nodiscard]] std::optional<websocket_route_handler> match_websocket(route_context& context) const;
 
  private:
+   friend struct detail::router_server_access;
+
    struct route_entry {
       method verb;
       std::string path;

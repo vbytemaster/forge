@@ -1068,6 +1068,11 @@ concept has_public_header_preflight_classifier = requires(T& router_value, route
    router_value.classify_header_only_rejection(context);
 };
 
+template <typename T>
+concept has_public_header_only_rejection_response = requires(T& router_value, route_context& context) {
+   router_value.header_only_rejection_response(context);
+};
+
 [[nodiscard]] const forge::xml::element* find_xml_child(const forge::xml::element& parent,
                                                         std::string_view name) noexcept {
    const auto found = std::find_if(parent.children.begin(), parent.children.end(), [&](const forge::xml::element& child) {
@@ -1975,6 +1980,7 @@ BOOST_AUTO_TEST_CASE(target_parses_path_segments_and_query_params) {
 BOOST_AUTO_TEST_CASE(router_does_not_expose_header_preflight_probe_api) {
    BOOST_TEST(!has_public_can_handle<router>);
    BOOST_TEST(!has_public_header_preflight_classifier<router>);
+   BOOST_TEST(!has_public_header_only_rejection_response<router>);
 }
 
 BOOST_AUTO_TEST_CASE(router_matches_static_and_parameter_routes) {

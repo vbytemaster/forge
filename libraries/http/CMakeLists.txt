@@ -10,6 +10,7 @@ add_library(
    connection.cpp
    client.cpp
    router.cpp
+   router_server_access.cpp
    file.cpp
    server.cpp
 )

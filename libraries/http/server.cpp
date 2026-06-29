@@ -16,6 +16,8 @@ module;
 #include <utility>
 #include <vector>
 
+#include "details/router_server_access.hxx"
+
 #include <forge/exceptions/macros.hpp>
 
 #include <boost/asio/as_tuple.hpp>
@@ -311,12 +313,12 @@ class server_session : public std::enable_shared_from_this<server_session> {
          }
 
          if (router_) {
-            auto preflight_response = router_->header_only_rejection_response(context);
-            if (preflight_response.has_value()) {
-               preflight_response->version(request_value.version());
-               preflight_response->keep_alive(request_value.keep_alive() && parser.is_done());
-               co_await write_response(*preflight_response);
-               if (!preflight_response->keep_alive()) {
+            auto preflight_response = response{};
+            if (detail::router_server_access::reject_without_body(*router_, context, preflight_response)) {
+               preflight_response.version(request_value.version());
+               preflight_response.keep_alive(request_value.keep_alive() && parser.is_done());
+               co_await write_response(preflight_response);
+               if (!preflight_response.keep_alive()) {
                   break;
                }
                continue;

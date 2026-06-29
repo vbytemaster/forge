@@ -311,7 +311,7 @@ class server_session : public std::enable_shared_from_this<server_session> {
          }
 
          if (router_) {
-            auto preflight_response = router_->classify_header_only_rejection(context);
+            auto preflight_response = router_->header_only_rejection_response(context);
             if (preflight_response.has_value()) {
                preflight_response->version(request_value.version());
                preflight_response->keep_alive(request_value.keep_alive() && parser.is_done());

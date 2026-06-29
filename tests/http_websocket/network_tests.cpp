@@ -1063,6 +1063,11 @@ concept has_public_can_handle = requires(T& router_value, route_context& context
    router_value.can_handle(context);
 };
 
+template <typename T>
+concept has_public_header_preflight_classifier = requires(T& router_value, route_context& context) {
+   router_value.classify_header_only_rejection(context);
+};
+
 [[nodiscard]] const forge::xml::element* find_xml_child(const forge::xml::element& parent,
                                                         std::string_view name) noexcept {
    const auto found = std::find_if(parent.children.begin(), parent.children.end(), [&](const forge::xml::element& child) {
@@ -1969,6 +1974,7 @@ BOOST_AUTO_TEST_CASE(target_parses_path_segments_and_query_params) {
 
 BOOST_AUTO_TEST_CASE(router_does_not_expose_header_preflight_probe_api) {
    BOOST_TEST(!has_public_can_handle<router>);
+   BOOST_TEST(!has_public_header_preflight_classifier<router>);
 }
 
 BOOST_AUTO_TEST_CASE(router_matches_static_and_parameter_routes) {
@@ -4852,6 +4858,49 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_copied_body_backed_stream_sends_interi
    forge::asio::blocking::run(runtime, server.async_start());
 
    const auto body = std::string{"copied-body-backed-payload"};
+   const auto exchange = raw_expect_continue_exchange(
+      server.port(),
+      "POST /upload HTTP/1.1\r\n"
+      "Host: 127.0.0.1\r\n"
+      "Expect: 100-continue\r\n"
+      "Content-Length: " +
+         std::to_string(body.size()) + "\r\n"
+         "\r\n",
+      body,
+      std::chrono::milliseconds{500});
+
+   BOOST_REQUIRE(exchange.interim.has_value());
+   BOOST_TEST(exchange.interim->result_int() == static_cast<unsigned>(status::continue_));
+   BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(exchange.final.body() == body);
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_expect_continue_custom_body_callback_reading_request_body_sends_interim_before_final_headers) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+
+   auto router = forge::http::router{};
+   router.post_stream("/upload", [](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      auto reply = response{status::ok, request_value.context.request.version()};
+      reply.set(field::content_type, "application/octet-stream");
+      auto copied_body = request_value.body;
+      auto callback_body = copied_body;
+      co_return stream_response{
+         .head = std::move(reply),
+         .body = stream_response::body_source{
+            copied_body,
+            [body = std::move(callback_body)]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
+               co_return co_await body.async_read();
+            },
+         },
+      };
+   });
+
+   auto server = forge::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   const auto body = std::string{"custom-callback-body-backed-payload"};
    const auto exchange = raw_expect_continue_exchange(
       server.port(),
       "POST /upload HTTP/1.1\r\n"

@@ -29,6 +29,8 @@ struct stream_response {
 
       body_source() = default;
       body_source(callback_type callback) : callback_(std::move(callback)) {}
+      body_source(const body_reader& request_body, callback_type callback)
+          : callback_(std::move(callback)), source_identity_(request_body.source_identity()) {}
 
       template <typename Callback>
          requires(!std::same_as<std::remove_cvref_t<Callback>, body_source>)

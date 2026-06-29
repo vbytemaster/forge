@@ -400,7 +400,16 @@ boost::asio::awaitable<response> router::handle(route_context& context) const {
    }
 }
 
-std::optional<response> router::classify_header_only_rejection(route_context& context) const {
+bool router::can_handle_stream(route_context& context) const {
+   for (const auto& route : stream_routes_) {
+      if (route.verb == context.request.method() && match_path(route, context.parsed_target, nullptr)) {
+         return true;
+      }
+   }
+   return false;
+}
+
+std::optional<response> router::header_only_rejection_response(route_context& context) const {
    for (const auto& route : routes_) {
       if (route.verb == context.request.method() && match_path(route, context.parsed_target, nullptr)) {
          return std::nullopt;
@@ -419,15 +428,6 @@ std::optional<response> router::classify_header_only_rejection(route_context& co
       return make_text_response(context.request, status::upgrade_required, "websocket upgrade required");
    }
    return make_text_response(context.request, status::not_found, "not found");
-}
-
-bool router::can_handle_stream(route_context& context) const {
-   for (const auto& route : stream_routes_) {
-      if (route.verb == context.request.method() && match_path(route, context.parsed_target, nullptr)) {
-         return true;
-      }
-   }
-   return false;
 }
 
 boost::asio::awaitable<stream_response> router::handle_stream(stream_request& request) const {

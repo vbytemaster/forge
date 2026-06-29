@@ -14,7 +14,6 @@ target_include_directories(
 )
 target_link_libraries(
    forge_xml PUBLIC
-      forge_config
       forge_core
       forge_reflect
       forge_schema

@@ -209,8 +209,8 @@ router.post_stream("/upload", [](forge::http::stream_request& req)
 ```
 
 `async_read_multipart(content_type)` parses browser-style form uploads into
-fields and file parts. It is not an object-storage multipart workflow; object
-storage state machines belong above `forge_http`.
+fields and file parts. It is not a domain-specific multi-step transfer workflow;
+application state machines belong above `forge_http`.
 
 Multipart limits are separate: `max_total_bytes` bounds the whole envelope,
 `max_file_bytes` bounds each file part, and `max_field_bytes` bounds each
@@ -338,48 +338,48 @@ struct write_receipt {
 BOOST_DESCRIBE_STRUCT(write_payload, (), (bytes))
 BOOST_DESCRIBE_STRUCT(write_receipt, (), (id))
 
-struct put_object_request {
-   std::string bucket;
-   std::string key;
+struct update_item_request {
+   std::string collection;
+   std::string item;
    forge::http::query<std::uint32_t> ttl;
    forge::http::header<std::string> request_id;
    forge::http::body<write_payload> body;
 };
 
-BOOST_DESCRIBE_STRUCT(put_object_request, (), (bucket, key, ttl, request_id, body))
+BOOST_DESCRIBE_STRUCT(update_item_request, (), (collection, item, ttl, request_id, body))
 
-class object_api : public forge::api::contract<object_api> {
+class catalog_api : public forge::api::contract<catalog_api> {
  public:
-   virtual ~object_api() = default;
+   virtual ~catalog_api() = default;
 
    virtual boost::asio::awaitable<write_receipt>
-   put_object(put_object_request request) = 0;
+   update_item(update_item_request request) = 0;
 };
 
 FORGE_API(
-   object_api,
-   FORGE_API_CONTRACT("object", 1, 0),
-   FORGE_API_METHOD(put_object))
+   catalog_api,
+   FORGE_API_CONTRACT("catalog", 1, 0),
+   FORGE_API_METHOD(update_item))
 
 FORGE_HTTP_API(
-   object_api,
-   FORGE_HTTP_PUT(put_object, "/objects/:bucket/:key?ttl={ttl}", created,
+   catalog_api,
+   FORGE_HTTP_PUT(update_item, "/collections/:collection/items/:item?ttl={ttl}", created,
       FORGE_HTTP_HEADER(request_id, "X-Request-Id")))
 ```
 
-Server binding fills `bucket` and `key` from path placeholders, `ttl` from the
-query string, `request_id` from `X-Request-Id`, and `body` from a JSON request
-body. If a wire header or form name must differ from the DTO field name, use
-the existing route options such as `FORGE_HTTP_HEADER(field, "Wire-Name")` or
-`FORGE_HTTP_FORM(field, "wire-name")`.
+Server binding fills `collection` and `item` from path placeholders, `ttl` from
+the query string, `request_id` from `X-Request-Id`, and `body` from a JSON
+request body. If a wire header or form name must differ from the DTO field name,
+use the existing route options such as `FORGE_HTTP_HEADER(field, "Wire-Name")`
+or `FORGE_HTTP_FORM(field, "wire-name")`.
 
 The same typed client call builds the HTTP request:
 
 ```cpp
-auto objects = co_await forge::http::api::remote<object_api>(client);
-auto receipt = co_await objects->put_object({
-   .bucket = "cache",
-   .key = "chunk-1",
+auto catalog = co_await forge::http::api::remote<catalog_api>(client);
+auto receipt = co_await catalog->update_item({
+   .collection = "cache",
+   .item = "entry-1",
    .ttl = {.value = 3600, .present = true},
    .request_id = {.value = "trace-123", .present = true},
    .body = {.value = {.bytes = "payload"}, .present = true},

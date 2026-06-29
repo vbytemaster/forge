@@ -22,8 +22,6 @@ module;
 
 export module forge.xml;
 
-import forge.config.document;
-import forge.config.value;
 import forge.core.type_name;
 import forge.reflect.reflect;
 import forge.schema.diagnostic;

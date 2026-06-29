@@ -716,6 +716,9 @@ template <typename T>
    using clean_type = std::remove_cvref_t<T>;
    if constexpr (is_optional<clean_type>::value) {
       using item_type = typename is_optional<clean_type>::value_type;
+      if (std::holds_alternative<std::monostate>(input.storage)) {
+         return clean_type{};
+      }
       return cast_input_to<item_type>(input, path, diagnostics);
    } else if constexpr (std::same_as<clean_type, bool>) {
       if (const auto* value = std::get_if<bool>(&input.storage)) {

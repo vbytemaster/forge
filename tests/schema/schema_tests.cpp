@@ -189,6 +189,41 @@ BOOST_AUTO_TEST_CASE(schema_optional_list_validators_unwrap_present_values_and_s
    BOOST_TEST(has_error_code(duplicate_item_diagnostics, "schema.unique"));
 }
 
+BOOST_AUTO_TEST_CASE(schema_decode_explicit_null_optionals_as_absent_values) {
+   const auto scalar_schema = forge::schema::rules<forge_schema_tests::optional_config>::define();
+   auto scalar_config = forge_schema_tests::optional_config{.token = "secret", .port = 443};
+
+   const auto scalar_diagnostics = scalar_schema.decode_object(
+      forge::schema::input_value::object_type{
+         {"token", forge::schema::input_value{}},
+         {"port", forge::schema::input_value{}},
+      },
+      "config",
+      scalar_config);
+
+   BOOST_TEST(scalar_diagnostics.empty());
+   BOOST_TEST(!scalar_config.token.has_value());
+   BOOST_TEST(!scalar_config.port.has_value());
+
+   const auto list_schema = forge::schema::rules<forge_schema_tests::optional_list_config>::define();
+   auto list_config = forge_schema_tests::optional_list_config{
+      .tags = std::vector<std::string>{"alpha"},
+      .items = std::vector<forge_schema_tests::optional_list_item>{{.id = "a"}, {.id = "b"}},
+   };
+
+   const auto list_diagnostics = list_schema.decode_object(
+      forge::schema::input_value::object_type{
+         {"tags", forge::schema::input_value{}},
+         {"items", forge::schema::input_value{}},
+      },
+      "config",
+      list_config);
+
+   BOOST_TEST(list_diagnostics.empty());
+   BOOST_TEST(!list_config.tags.has_value());
+   BOOST_TEST(!list_config.items.has_value());
+}
+
 BOOST_AUTO_TEST_CASE(schema_converts_described_enums) {
    auto level = forge::schema::severity::info;
    BOOST_TEST(forge::schema::enum_from_string("warning", level));

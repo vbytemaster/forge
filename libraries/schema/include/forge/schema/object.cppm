@@ -208,6 +208,33 @@ template <typename T>
 template <typename T>
 [[nodiscard]] input_value to_input_value(const T& input);
 
+template <typename T> [[nodiscard]] std::any to_default_any(const T& input) {
+   using clean_type = std::remove_cvref_t<T>;
+   if constexpr (std::same_as<clean_type, bool>) {
+      return std::any{input};
+   } else if constexpr (std::signed_integral<clean_type> && !std::same_as<clean_type, bool>) {
+      return std::any{static_cast<std::int64_t>(input)};
+   } else if constexpr (std::unsigned_integral<clean_type> && !std::same_as<clean_type, bool>) {
+      return std::any{static_cast<std::uint64_t>(input)};
+   } else if constexpr (std::floating_point<clean_type>) {
+      return std::any{static_cast<double>(input)};
+   } else if constexpr (std::same_as<clean_type, std::string>) {
+      return std::any{input};
+   } else if constexpr (std::is_enum_v<clean_type>) {
+      if (auto text = enum_to_config_string(input)) {
+         return std::any{std::move(*text)};
+      }
+      using underlying_type = std::underlying_type_t<clean_type>;
+      if constexpr (std::signed_integral<underlying_type>) {
+         return std::any{static_cast<std::int64_t>(input)};
+      } else {
+         return std::any{static_cast<std::uint64_t>(input)};
+      }
+   } else {
+      return std::any{input};
+   }
+}
+
 template <typename T>
 [[nodiscard]] std::vector<T> decode_object_list(const input_value& input,
                                                 std::string_view path,
@@ -232,6 +259,7 @@ template <typename T> struct field_rule {
    std::type_index item_type = std::type_index{typeid(void)};
    std::function<void(T&)> apply_default;
    std::function<void(T&, const std::any&)> assign_any;
+   std::function<std::any(const std::any&)> normalize_default;
    std::function<void(T&, const input_value&, std::string_view, std::vector<diagnostic>&)> assign_input;
    std::function<std::any(const T&)> read_any;
    std::function<std::optional<std::any>(const T&)> read_validation_any;
@@ -257,7 +285,33 @@ template <typename T> class object_schema {
       rule.member_name = described_member_name<T, Member>();
       rule.kind = member_kind<member_type>::value;
       rule.type = std::type_index{typeid(member_type)};
-      rule.assign_any = [](T& object, const std::any& value) { object.*Member = cast_any_to<member_type>(value); };
+      rule.assign_any = [](T& object, const std::any& value) {
+         if constexpr (is_optional<member_type>::value) {
+            using item_type = typename is_optional<member_type>::value_type;
+            if (value.type() == typeid(member_type)) {
+               object.*Member = std::any_cast<member_type>(value);
+            } else {
+               object.*Member = cast_any_to<item_type>(value);
+            }
+         } else {
+            object.*Member = cast_any_to<member_type>(value);
+         }
+      };
+      rule.normalize_default = [](const std::any& value) -> std::any {
+         if constexpr (is_optional<member_type>::value) {
+            using item_type = typename is_optional<member_type>::value_type;
+            if (value.type() == typeid(member_type)) {
+               const auto optional_value = std::any_cast<member_type>(value);
+               if (!optional_value) {
+                  return {};
+               }
+               return to_default_any(*optional_value);
+            }
+            return to_default_any(cast_any_to<item_type>(value));
+         } else {
+            return to_default_any(cast_any_to<member_type>(value));
+         }
+      };
       rule.assign_input = [](T& object, const input_value& value, std::string_view path,
                              std::vector<diagnostic>& diagnostics) {
          try {
@@ -483,8 +537,9 @@ template <typename T> class field_builder {
    }
 
    template <typename Value> field_builder& default_value(Value&& value) {
-      current().has_default = true;
-      current().default_value = std::forward<Value>(value);
+      const auto input = std::any{std::forward<Value>(value)};
+      current().default_value = current().normalize_default ? current().normalize_default(input) : input;
+      current().has_default = current().default_value.has_value();
       return *this;
    }
 

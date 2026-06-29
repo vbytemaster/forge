@@ -433,6 +433,16 @@ BOOST_AUTO_TEST_CASE(xml_schema_unknown_diagnostics_use_alias_element_path) {
    BOOST_TEST(warned.diagnostics.front().code == "xml.unknown");
 }
 
+BOOST_AUTO_TEST_CASE(xml_schema_repeated_alias_diagnostics_preserve_each_element_path) {
+   const auto warned = forge::xml::read<forge_xml_tests::aliased_contents_result>(
+      R"(<Root><Current><Key>a.jpg</Key><Size>12</Size></Current><Legacy><Key>b.jpg</Key><Size>34</Size><Unexpected>1</Unexpected></Legacy></Root>)");
+
+   BOOST_REQUIRE(warned.ok());
+   BOOST_REQUIRE_EQUAL(warned.diagnostics.size(), 1U);
+   BOOST_TEST(warned.diagnostics.front().path == "Legacy.Unexpected");
+   BOOST_TEST(warned.diagnostics.front().code == "xml.unknown");
+}
+
 BOOST_AUTO_TEST_CASE(xml_s3_shaped_delete_complete_multipart_and_error_bodies_roundtrip) {
    const auto deleted =
        forge::xml::read<forge_xml_tests::delete_result>(R"(<DeleteResult><Deleted><Key>old.txt</Key><Size>0</Size></Deleted></DeleteResult>)");

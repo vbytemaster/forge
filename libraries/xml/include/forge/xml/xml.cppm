@@ -226,15 +226,15 @@ void append_schema_object_children(std::vector<element>& output,
    });
 }
 
-struct child_matches {
+struct child_match {
+   const element* value = nullptr;
    std::string path_name;
-   std::vector<const element*> values;
 };
 
 template <typename T>
-[[nodiscard]] child_matches find_children(const element& input,
-                                          const schema::field_rule<T>* field,
-                                          std::string_view fallback_name) {
+[[nodiscard]] std::vector<child_match> find_children(const element& input,
+                                                     const schema::field_rule<T>* field,
+                                                     std::string_view fallback_name) {
    auto names = std::vector<std::string>{};
    if (field) {
       names.push_back(field->name);
@@ -243,13 +243,10 @@ template <typename T>
       names.push_back(std::string{fallback_name});
    }
 
-   auto output = child_matches{.path_name = names.empty() ? std::string{fallback_name} : names.front()};
+   auto output = std::vector<child_match>{};
    for (const auto& child : input.children) {
       if (std::ranges::find(names, child.name) != names.end()) {
-         if (output.values.empty()) {
-            output.path_name = child.name;
-         }
-         output.values.push_back(&child);
+         output.push_back(child_match{.value = &child, .path_name = child.name});
       }
    }
    return output;
@@ -334,24 +331,28 @@ template <typename Member>
 template <typename Member, typename T>
 void assign_member(T& output,
                    Member T::*member,
-                   const std::vector<const element*>& matches,
+                   const std::vector<child_match>& matches,
                    const schema::field_rule<T>* field,
-                   std::string_view path,
+                   std::string_view base_path,
+                   std::string_view missing_path_name,
                    const read_options& options,
                    std::vector<schema::diagnostic>& diagnostics) {
    using clean = std::remove_cvref_t<Member>;
    if constexpr (vector_traits<clean>::value) {
       if (matches.empty()) {
          if (field && field->required) {
-            diagnostics.push_back(make_error(std::string{path}, "xml.required", "required XML element is missing"));
+            diagnostics.push_back(make_error(append_path(base_path, missing_path_name),
+                                             "xml.required",
+                                             "required XML element is missing"));
          }
          return;
       }
       using item_type = typename vector_traits<clean>::value_type;
       auto values = clean{};
       values.reserve(matches.size());
-      for (const auto* child : matches) {
-         values.push_back(decode_member_value<item_type>(*child, path, options, diagnostics));
+      for (const auto& child : matches) {
+         values.push_back(
+            decode_member_value<item_type>(*child.value, append_path(base_path, child.path_name), options, diagnostics));
       }
       output.*member = std::move(values);
       return;
@@ -359,20 +360,25 @@ void assign_member(T& output,
 
    if (matches.empty()) {
       if (field && field->required) {
-         diagnostics.push_back(make_error(std::string{path}, "xml.required", "required XML element is missing"));
+         diagnostics.push_back(make_error(append_path(base_path, missing_path_name),
+                                          "xml.required",
+                                          "required XML element is missing"));
       }
       return;
    }
    if (matches.size() > 1) {
-      diagnostics.push_back(make_error(std::string{path}, "xml.duplicate", "XML element is repeated for scalar field"));
+      diagnostics.push_back(make_error(append_path(base_path, matches.front().path_name),
+                                       "xml.duplicate",
+                                       "XML element is repeated for scalar field"));
       return;
    }
 
+   const auto path = append_path(base_path, matches.front().path_name);
    if constexpr (optional_traits<clean>::value) {
       using item_type = typename optional_traits<clean>::value_type;
-      output.*member = decode_member_value<item_type>(*matches.front(), path, options, diagnostics);
+      output.*member = decode_member_value<item_type>(*matches.front().value, path, options, diagnostics);
    } else {
-      output.*member = decode_member_value<clean>(*matches.front(), path, options, diagnostics);
+      output.*member = decode_member_value<clean>(*matches.front().value, path, options, diagnostics);
    }
 }
 
@@ -395,8 +401,7 @@ void decode_object(const element& input,
                   return;
                }
                const auto matches = find_children(input, &field, member_name);
-               const auto path = append_path(base_path, matches.path_name);
-               assign_member(output, member, matches.values, &field, path, options, diagnostics);
+               assign_member(output, member, matches, &field, base_path, field.name, options, diagnostics);
                matched = true;
             });
          }
@@ -411,8 +416,7 @@ void decode_object(const element& input,
    forge::reflect::for_each_member<T>([&](const char* member_name, auto member) {
       const schema::field_rule<T>* field = nullptr;
       const auto matches = find_children(input, field, member_name);
-      const auto path = append_path(base_path, matches.path_name);
-      assign_member(output, member, matches.values, field, path, options, diagnostics);
+      assign_member(output, member, matches, field, base_path, member_name, options, diagnostics);
    });
 }
 

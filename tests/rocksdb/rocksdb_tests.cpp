@@ -139,6 +139,23 @@ BOOST_AUTO_TEST_CASE(rocksdb_store_batch_and_transactions_are_atomic) {
    BOOST_TEST(to_string(*db.get(data, make_u64_key(8))) == "commit");
 }
 
+BOOST_AUTO_TEST_CASE(rocksdb_transaction_move_assignment_rolls_back_replaced_transaction) {
+   const auto root = root_guard{};
+   auto db = store{config_for(root.root / "store")};
+   const auto meta = family{"meta"};
+
+   auto transaction = db.begin(write_options{.sync = true});
+   transaction.put(meta, make_key("schema"), to_bytes("uncommitted"));
+
+   transaction = db.begin(write_options{.sync = true});
+   transaction.put(meta, make_key("schema"), to_bytes("committed"));
+   transaction.commit();
+
+   const auto value = db.get(meta, make_key("schema"));
+   BOOST_REQUIRE(value.has_value());
+   BOOST_TEST(to_string(*value) == "committed");
+}
+
 BOOST_AUTO_TEST_CASE(rocksdb_transaction_scans_prefix_with_local_changes_and_auto_rollback) {
    const auto root = root_guard{};
    auto db = store{config_for(root.root / "store")};

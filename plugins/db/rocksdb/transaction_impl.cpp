@@ -17,7 +17,7 @@ module forge.plugins.db.rocksdb.plugin;
 import forge.asio.task_scheduler;
 import forge.exceptions;
 import forge.plugins.db.rocksdb.exceptions;
-import forge.rocksdb.transaction;
+import forge.rocksdb.store;
 
 #include "details/plugin_impl.hxx"
 #include "details/transaction_impl.hxx"

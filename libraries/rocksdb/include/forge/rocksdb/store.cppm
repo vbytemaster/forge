@@ -40,6 +40,7 @@ class transaction {
 
    explicit transaction(std::unique_ptr<impl> impl_value);
    void ensure_active(std::string_view context) const;
+   void rollback_if_active() noexcept;
 
    std::unique_ptr<impl> impl_;
 };

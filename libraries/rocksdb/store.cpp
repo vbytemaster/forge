@@ -244,14 +244,25 @@ transaction::impl::impl(std::shared_ptr<store::impl> store_value, std::unique_pt
 transaction::transaction(std::unique_ptr<impl> impl_value) : impl_{std::move(impl_value)} {}
 
 transaction::~transaction() {
-   if (impl_ != nullptr && !impl_->finished && impl_->transaction != nullptr) {
-      impl_->transaction->Rollback();
-      impl_->finished = true;
-   }
+   rollback_if_active();
 }
 
 transaction::transaction(transaction&&) noexcept = default;
-transaction& transaction::operator=(transaction&&) noexcept = default;
+
+transaction& transaction::operator=(transaction&& other) noexcept {
+   if (this != &other) {
+      rollback_if_active();
+      impl_ = std::move(other.impl_);
+   }
+   return *this;
+}
+
+void transaction::rollback_if_active() noexcept {
+   if (impl_ != nullptr && !impl_->finished && impl_->transaction != nullptr) {
+      static_cast<void>(impl_->transaction->Rollback());
+      impl_->finished = true;
+   }
+}
 
 void transaction::ensure_active(std::string_view context) const {
    if (impl_ == nullptr || impl_->finished || impl_->transaction == nullptr) {

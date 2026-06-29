@@ -339,8 +339,10 @@ class binding_builder {
 
    [[nodiscard]] static bool request_content_type_matches(const request& request_value, body_codec codec) {
       const auto content_type_header = request_value.find(field::content_type);
-      return content_type_header != request_value.end() &&
-             detail::media_type_matches(codec, std::string_view{content_type_header->value()});
+      if (content_type_header == request_value.end() || content_type_header->value().empty()) {
+         return true;
+      }
+      return detail::media_type_matches(codec, std::string_view{content_type_header->value()});
    }
 
    static void require_request_content_type(const request& request_value, body_codec codec) {

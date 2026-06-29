@@ -2920,6 +2920,31 @@ BOOST_AUTO_TEST_CASE(http_api_macro_put_rejects_unsupported_media_type) {
    BOOST_TEST(response.body().find("unsupported_media_type") != std::string::npos);
 }
 
+BOOST_AUTO_TEST_CASE(http_api_macro_put_uses_default_json_codec_without_content_type) {
+   auto runtime = forge::asio::runtime{};
+   auto apis = forge::api::registry{};
+   apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
+
+   auto router = forge::http::router{};
+   auto binding = forge::http::api::binding().use(forge::api::binding().serve(apis).build()).bind<macro_cache>().build();
+   router.mount(binding);
+
+   auto request = make_request(method::put, "/cache/chunks/abc");
+   request.body() = R"({"ref":"abc","bytes":"payload"})";
+   request.prepare_payload();
+
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+
+   const auto response = handle(router, context);
+   const auto decoded = forge::json::read<macro_chunk>(response.body());
+
+   BOOST_TEST(response.result_int() == static_cast<unsigned>(status::created));
+   BOOST_TEST(response[field::content_type] == "application/json");
+   BOOST_REQUIRE(decoded.ok());
+   BOOST_TEST(decoded.value.bytes == "abc:payload");
+}
+
 BOOST_AUTO_TEST_CASE(http_api_macro_put_reports_invalid_json_as_validation_error) {
    auto runtime = forge::asio::runtime{};
    auto apis = forge::api::registry{};

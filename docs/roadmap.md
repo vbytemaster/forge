@@ -59,6 +59,8 @@ plugins, telemetry and compatibility layers должны быть пригодн
   boundary and diagnostics.
 - [XML + HTTP API Codecs](iterations/forge-xml-http-api-codec-v1.md): planned
   XML library first, then HTTP API multi-codec body/error binding.
+- [Object Database](iterations/forge-object-database-v1.md): problem notes for
+  a neutral typed object/index/session layer above key/value backends.
 - [Config](config/schema-config-program-options.md): schema rules, neutral
   config documents, env/CLI adapters and redaction.
 - [Secret Provider](iterations/fcl-secret-provider-v1.md): neutral

@@ -74,6 +74,14 @@ target_link_libraries(test_forge_raw forge Boost::included_unit_test_framework)
 add_test(NAME test_forge_raw COMMAND test_forge_raw WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
+   test_forge_objectdb
+   unit/main.cpp
+   objectdb/objectdb_tests.cpp
+)
+target_link_libraries(test_forge_objectdb forge_objectdb forge Boost::included_unit_test_framework)
+add_test(NAME test_forge_objectdb COMMAND test_forge_objectdb WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(
    test_forge_crypto
    unit/main.cpp
    crypto/test_base32.cpp
@@ -438,6 +446,17 @@ add_custom_target(
    DEPENDS test_forge_package_install
 )
 add_custom_target(
+   test_forge_package_objectdb_component
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_objectdb_component
+      ${CMAKE_BINARY_DIR}/forge-package-objectdb-component
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_objectdb_component
+   DEPENDS test_forge_package_install
+)
+add_custom_target(
    test_forge_package_xml_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
@@ -684,6 +703,17 @@ add_test(
       --test-command forge_package_http_api_component
 )
 set_tests_properties(test_forge_package_http_api_component PROPERTIES DEPENDS test_forge_package_install)
+add_test(
+   NAME test_forge_package_objectdb_component
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_objectdb_component
+      ${CMAKE_BINARY_DIR}/forge-package-objectdb-component
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_objectdb_component
+)
+set_tests_properties(test_forge_package_objectdb_component PROPERTIES DEPENDS test_forge_package_install)
 add_test(
    NAME test_forge_package_xml_component
    COMMAND ${CMAKE_CTEST_COMMAND}

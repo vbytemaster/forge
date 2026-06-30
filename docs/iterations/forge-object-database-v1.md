@@ -8,19 +8,20 @@ into Forge.
 
 ## Why Forge Needs This Layer
 
-Forge already has two database layers:
+Forge already has two database-related layers:
 
 - `forge_rocksdb`: a concrete blocking RocksDB TransactionDB wrapper.
 - `forge::plugins::db::rocksdb`: an app/plugin lifecycle API over that wrapper.
 
-Those layers expose ordered key/value transactions, but consumers still have to
-hand-roll object ids, keyspaces, index records, cursor pages, record
-serialization, transaction composition and conflict handling. Both donor areas
-show that this code is being repeated in product layers.
+Those layers expose ordered key/value mechanics, but consumers still have to
+hand-roll object ids, keyspaces, index records, cursor pages and mutation
+records. Both donor areas show that this code is being repeated in product
+layers.
 
-The missing Forge layer is a neutral object database: typed objects, stable
-ordered indexes, sessions/transactions, paged scans and optional revision
-changesets over an existing key/value backend.
+The missing Forge layer starts smaller: a neutral `forge::objectdb` primitives
+library for typed objects, stable ordered keys, index descriptors, cursor
+boundaries and storage-neutral records/mutations. It is not a backend, runtime,
+plugin, repository, session or transaction abstraction.
 
 ## Donor: `blockchain/libraries/db`
 
@@ -41,8 +42,9 @@ It should not be copied into Forge unchanged.
 ### Problems To Fix Before Porting
 
 - The RocksDB adapter is built over the runtime plugin API
-  `forge.plugins.db.rocksdb.api`. A Forge library must depend on the lower
-  library boundary, `forge::rocksdb`, not on an app plugin.
+  `forge.plugins.db.rocksdb.api`. `forge::objectdb` must not depend on either
+  the plugin API or `forge::rocksdb`; storage application belongs above this
+  primitive layer.
 - `session::scan_prefix(...)` pulls the full backend prefix and merges the
   session overlay in memory. This is not acceptable as the production scan
   primitive for large tables.
@@ -57,8 +59,8 @@ It should not be copied into Forge unchanged.
 - Ordered key encoding currently covers only the subset needed by the prototype.
   Forge needs a clearly owned key codec for unsigned/signed integers, strings,
   bytes, enums, object ids and composite keys.
-- Revision changesets are useful, but they must be optional. Not every Forge
-  object database consumer needs a chain-style revision journal.
+- Revision changesets are useful, but they are not v1 primitives. Not every
+  Forge object database consumer needs a chain-style revision journal.
 
 ### What Must Stay Outside Forge
 
@@ -131,37 +133,45 @@ accidental mix into the object database contract.
 
 The likely library should be top-level:
 
-- namespace: `forge::object_database`;
-- target/component: `forge_object_database` / `object_database`;
-- module prefix: `forge.object_database.*`.
+- namespace: `forge::objectdb`;
+- target/component: `forge_objectdb` / `objectdb`;
+- module prefix: `forge.objectdb.*`.
 
-It should sit above `forge::rocksdb` and below app plugins/products.
+It should sit below storage backends, app plugins and products. It provides
+stable primitives those layers can reuse; it does not apply them to any
+storage engine.
 
-Initial scope should include:
+Initial primitives-only scope should include:
 
 - typed object ids and table ids;
 - primary and secondary index descriptors;
 - stable ordered key encoding;
-- primary object storage and index maintenance;
-- paged prefix/range scans with opaque cursors;
-- transaction/session boundaries;
-- typed duplicate, missing, stale session, conflict and backend errors;
-- optional changeset/revision support as a separate module.
+- object and index key prefixes;
+- prefix/range boundaries;
+- opaque cursor/page request primitives;
+- storage-neutral records and mutation records;
+- typed primitive validation errors.
 
-The first implementation should default to a conservative concurrency model:
-one active writer session per database plus many readers. A parallel-writer mode
-can be added only after Forge owns explicit lock scopes, deterministic lock
-ordering, typed conflict results and retry tests.
+Explicitly out of v1:
+
+- backend contracts or ports;
+- `get`, `put`, `erase`, `scan`, `begin`, `commit` or `rollback`;
+- repositories, sessions or transaction managers;
+- automatic index-maintenance algorithms;
+- concurrency, lock, retry or conflict policy;
+- blockchain/FUSE/Spring/content semantics.
+
+The next layer can add pure planning algorithms, for example
+`insert/update/erase -> mutation_batch` and `range_query -> key_range`, but those
+algorithms should still avoid owning a backend/runtime.
 
 ## Acceptance For The Future Implementation
 
-- `forge_object_database` does not import app/plugin APIs.
-- The RocksDB adapter uses `forge::rocksdb`, not
-  `forge::plugins::db::rocksdb`.
-- Scans are bounded and cursor-first; no public API requires full-prefix loads
-  for ordinary pagination.
+- `forge_objectdb` does not import app/plugin APIs, `forge::rocksdb` or product
+  libraries.
+- The v1 API exposes only primitives and primitive validation helpers.
+- Key prefixes and cursor boundaries are byte-stable and covered by golden
+  tests.
 - Composite indexes are byte-stable and covered by golden tests.
-- Single-writer behavior is explicit and tested, or parallel-writer behavior is
-  explicit and tested with conflict/retry cases.
 - Downstream Storlane plugins can remove local `key_for_*` and cursor helpers
   without moving Storlane product semantics into Forge.

@@ -20,6 +20,7 @@ Documents below explain cross-library architecture decisions.
 | [web/http-files-and-s3.md](web/http-files-and-s3.md) | HTTP file upload/download gaps, Beast capabilities and S3-ready substrate plan. |
 | [iterations/forge-xml-http-api-codec-v1.md](iterations/forge-xml-http-api-codec-v1.md) | XML codec and HTTP API multi-codec implementation order for S3-ready typed APIs. |
 | [iterations/forge-object-database-v1.md](iterations/forge-object-database-v1.md) | Problem notes for a neutral object database layer based on blockchain and mountd donors. |
+| [donors/forge-objectdb-donor-baseline-v1.md](donors/forge-objectdb-donor-baseline-v1.md) | Donor systems, database classes and accepted/rejected patterns for future objectdb primitives. |
 | [network/quic-p2p.md](network/quic-p2p.md) | QUIC transport, P2P peer identity, protocol streams and failure model. |
 | [tui/notcurses-component-library.md](tui/notcurses-component-library.md) | TUI value models, deterministic rendering, navigation and Notcurses boundary. |
 | [codecs/json-yaml-glaze.md](codecs/json-yaml-glaze.md) | JSON/YAML API shape, Glaze backend isolation and diagnostics. |
@@ -45,6 +46,7 @@ Each library guide must be useful without reading source first:
 - [reflect](../libraries/reflect/README.md)
 - [variant](../libraries/variant/README.md)
 - [raw](../libraries/raw/README.md)
+- [ids](../libraries/ids/README.md)
 - [json](../libraries/json/README.md)
 - [yaml](../libraries/yaml/README.md)
 - `xml` — planned in [iterations/forge-xml-http-api-codec-v1.md](iterations/forge-xml-http-api-codec-v1.md)

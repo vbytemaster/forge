@@ -23,6 +23,11 @@ library for typed objects, stable ordered keys, index descriptors, cursor
 boundaries and storage-neutral records/mutations. It is not a backend, runtime,
 plugin, repository, session or transaction abstraction.
 
+The donor baseline is tracked separately in
+[`docs/donors/forge-objectdb-donor-baseline-v1.md`](../donors/forge-objectdb-donor-baseline-v1.md).
+That note records which serious database systems influence each objectdb
+component class.
+
 ## Donor: `blockchain/libraries/db`
 
 The `blockchain::db` prototype is the closest donor for the desired API shape.
@@ -143,7 +148,9 @@ storage engine.
 
 Initial primitives-only scope should include:
 
-- typed object ids and table ids;
+- object identity through `forge::ids::object_id` and
+  `forge::ids::typed_id<Space, Type>`;
+- table/type ids and descriptors;
 - primary and secondary index descriptors;
 - stable ordered key encoding;
 - object and index key prefixes;
@@ -160,6 +167,10 @@ Explicitly out of v1:
 - automatic index-maintenance algorithms;
 - concurrency, lock, retry or conflict policy;
 - blockchain/FUSE/Spring/content semantics.
+
+`forge::objectdb` must not introduce a parallel object-id model. The canonical
+ID foundation is `forge::ids`, ported from the Storlane/BitShares-style
+`{space,type,instance}` model.
 
 The next layer can add pure planning algorithms, for example
 `insert/update/erase -> mutation_batch` and `range_query -> key_range`, but those

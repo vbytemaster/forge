@@ -46,6 +46,7 @@ Each library guide must be useful without reading source first:
 - [variant](../libraries/variant/README.md)
 - [raw](../libraries/raw/README.md)
 - [ids](../libraries/ids/README.md)
+- [objectdb](../libraries/objectdb/README.md)
 - [json](../libraries/json/README.md)
 - [yaml](../libraries/yaml/README.md)
 - `xml` — planned in [iterations/forge-xml-http-api-codec-v1.md](iterations/forge-xml-http-api-codec-v1.md)

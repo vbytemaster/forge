@@ -203,6 +203,7 @@ set(
 	   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/variant/include"
 	   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/raw/include"
 	   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/ids/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/objectdb/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/json/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/config/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/yaml/include"
@@ -346,6 +347,7 @@ add_subdirectory(libraries/schema)
 add_subdirectory(libraries/variant)
 add_subdirectory(libraries/raw)
 add_subdirectory(libraries/ids)
+add_subdirectory(libraries/objectdb)
 add_subdirectory(libraries/config)
 add_subdirectory(libraries/json)
 add_subdirectory(libraries/yaml)
@@ -386,6 +388,7 @@ set(
 	   forge_variant
 	   forge_raw
 	   forge_ids
+   forge_objectdb
    forge_config
    forge_json
    forge_yaml
@@ -470,6 +473,7 @@ install(
 	             libraries/variant/include/forge
 	             libraries/raw/include/forge
 	             libraries/ids/include/forge
+             libraries/objectdb/include/forge
              libraries/json/include/forge
              libraries/config/include/forge
              libraries/yaml/include/forge

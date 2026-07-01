@@ -204,6 +204,7 @@ set(
 	   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/raw/include"
 	   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/ids/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/objectdb/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/objectdb_rocksdb/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/json/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/config/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/yaml/include"
@@ -365,6 +366,7 @@ add_subdirectory(libraries/http_api)
 add_subdirectory(libraries/otlp)
 if(FORGE_HAS_ROCKSDB)
    add_subdirectory(libraries/rocksdb)
+   add_subdirectory(libraries/objectdb_rocksdb)
 endif()
 add_subdirectory(libraries/websocket)
 add_subdirectory(libraries/transport)
@@ -425,6 +427,10 @@ set(
 
 if(TARGET forge_rocksdb)
    list(APPEND FORGE_LEAF_TARGETS forge_rocksdb)
+endif()
+
+if(TARGET forge_objectdb_rocksdb)
+   list(APPEND FORGE_LEAF_TARGETS forge_objectdb_rocksdb)
 endif()
 
 if(TARGET forge_plugins_db_rocksdb)
@@ -511,6 +517,13 @@ install(
 if(TARGET forge_rocksdb)
    install(
       DIRECTORY libraries/rocksdb/include/forge
+      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
+   )
+endif()
+
+if(TARGET forge_objectdb_rocksdb)
+   install(
+      DIRECTORY libraries/objectdb_rocksdb/include/forge
       DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev EXCLUDE_FROM_ALL
    )
 endif()

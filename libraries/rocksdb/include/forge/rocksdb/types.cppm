@@ -71,6 +71,7 @@ struct entry {
 
 struct scan_request {
    std::vector<std::byte> prefix;
+   std::vector<std::byte> lower_bound;
    std::vector<std::byte> cursor;
    std::uint64_t limit = 0;
    read_options options;
@@ -123,7 +124,7 @@ BOOST_DESCRIBE_STRUCT(config, (), (path, column_families, create_if_missing, cre
 BOOST_DESCRIBE_STRUCT(read_options, (), (verify_checksums, fill_cache))
 BOOST_DESCRIBE_STRUCT(write_options, (), (sync, disable_wal))
 BOOST_DESCRIBE_STRUCT(entry, (), (key, value))
-BOOST_DESCRIBE_STRUCT(scan_request, (), (prefix, cursor, limit, options))
+BOOST_DESCRIBE_STRUCT(scan_request, (), (prefix, lower_bound, cursor, limit, options))
 BOOST_DESCRIBE_STRUCT(scan_result, (), (entries, next_cursor))
 
 } // namespace forge::rocksdb

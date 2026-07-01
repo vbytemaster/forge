@@ -1,12 +1,12 @@
 module;
 
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/use_awaitable.hpp>
 #include <forge/exceptions/macros.hpp>
 
-#include <algorithm>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <map>
 #include <memory>
@@ -15,6 +15,7 @@ module;
 #include <string_view>
 #include <tuple>
 #include <typeindex>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -61,124 +62,6 @@ T unpack_value(const std::vector<std::byte>& bytes) {
    return forge::raw::unpack<T>(to_uint8_vector(bytes));
 }
 
-struct storage_session_concept {
-   virtual ~storage_session_concept() = default;
-
-   virtual boost::asio::awaitable<std::optional<std::vector<std::byte>>> get(record_key key) = 0;
-   virtual boost::asio::awaitable<void> put(record_key key, std::vector<std::byte> value) = 0;
-   virtual boost::asio::awaitable<void> erase(record_key key) = 0;
-   virtual boost::asio::awaitable<record_scan_result> scan_page(key_range range, page_request request) = 0;
-   virtual boost::asio::awaitable<void> commit() = 0;
-   virtual boost::asio::awaitable<void> rollback() = 0;
-};
-
-template <typename NativeSession>
-struct storage_session_model final : storage_session_concept {
-   explicit storage_session_model(NativeSession value) : native(std::move(value)) {}
-
-   boost::asio::awaitable<std::optional<std::vector<std::byte>>> get(record_key key) override {
-      co_return co_await native.get(std::move(key));
-   }
-
-   boost::asio::awaitable<void> put(record_key key, std::vector<std::byte> value) override {
-      co_await native.put(std::move(key), std::move(value));
-      co_return;
-   }
-
-   boost::asio::awaitable<void> erase(record_key key) override {
-      co_await native.erase(std::move(key));
-      co_return;
-   }
-
-   boost::asio::awaitable<record_scan_result> scan_page(key_range range, page_request request) override {
-      co_return co_await native.scan_page(std::move(range), std::move(request));
-   }
-
-   boost::asio::awaitable<void> commit() override {
-      co_await native.commit();
-      co_return;
-   }
-
-   boost::asio::awaitable<void> rollback() override {
-      co_await native.rollback();
-      co_return;
-   }
-
-   NativeSession native;
-};
-
-struct storage_concept {
-   virtual ~storage_concept() = default;
-   virtual boost::asio::awaitable<std::shared_ptr<storage_session_concept>> session() = 0;
-};
-
-template <typename Storage>
-struct storage_model final : storage_concept {
-   explicit storage_model(Storage value) : native(std::move(value)) {}
-
-   boost::asio::awaitable<std::shared_ptr<storage_session_concept>> session() override {
-      auto native_session = co_await native.session();
-      co_return std::make_shared<storage_session_model<decltype(native_session)>>(std::move(native_session));
-   }
-
-   Storage native;
-};
-
-struct store_state {
-   std::map<object_type, std::type_index> registered;
-};
-
-template <object_model Object, std::size_t Index = 0>
-boost::asio::awaitable<void> check_unique_indexes(storage_session_concept& storage,
-                                                  const typename Object::value_type& value) {
-   using indexes = typename Object::indexes_type::tuple_type;
-   if constexpr (Index < std::tuple_size_v<indexes>) {
-      using index = std::tuple_element_t<Index, indexes>;
-      if constexpr (index::kind == index_kind::secondary_unique) {
-         const auto key = layout<Object>::template index_entry_key<typename index::tag_type>(value);
-         const auto existing = co_await storage.get(key);
-         if (existing.has_value()) {
-            const auto existing_id = unpack_value<id_type_of<Object>>(*existing);
-            if (existing_id != value.id) {
-               FORGE_THROW_EXCEPTION(exceptions::duplicate_object, "objectdb unique index value already exists");
-            }
-         }
-      }
-      co_await check_unique_indexes<Object, Index + 1>(storage, value);
-   }
-   co_return;
-}
-
-template <object_model Object, std::size_t Index = 0>
-boost::asio::awaitable<void> put_secondary_indexes(storage_session_concept& storage,
-                                                   const typename Object::value_type& value) {
-   using indexes = typename Object::indexes_type::tuple_type;
-   if constexpr (Index < std::tuple_size_v<indexes>) {
-      using index = std::tuple_element_t<Index, indexes>;
-      if constexpr (secondary_index<index>) {
-         const auto key = layout<Object>::template index_entry_key<typename index::tag_type>(value);
-         co_await storage.put(key, pack_value(value.id));
-      }
-      co_await put_secondary_indexes<Object, Index + 1>(storage, value);
-   }
-   co_return;
-}
-
-template <object_model Object, std::size_t Index = 0>
-boost::asio::awaitable<void> erase_secondary_indexes(storage_session_concept& storage,
-                                                     const typename Object::value_type& value) {
-   using indexes = typename Object::indexes_type::tuple_type;
-   if constexpr (Index < std::tuple_size_v<indexes>) {
-      using index = std::tuple_element_t<Index, indexes>;
-      if constexpr (secondary_index<index>) {
-         const auto key = layout<Object>::template index_entry_key<typename index::tag_type>(value);
-         co_await storage.erase(key);
-      }
-      co_await erase_secondary_indexes<Object, Index + 1>(storage, value);
-   }
-   co_return;
-}
-
 template <object_model Object>
 id_type_of<Object> typed_id_from(forge::ids::object_id id) {
    if (!forge::ids::matches<id_type_of<Object>::space, id_type_of<Object>::type>(id)) {
@@ -201,7 +84,82 @@ struct stream_options {
    std::uint32_t page_size = default_page_limit;
 };
 
-class session;
+enum class mutation_kind : std::uint8_t {
+   insert = 1,
+   replace = 2,
+   modify = 3,
+   erase = 4,
+};
+
+struct object_mutation {
+   mutation_kind kind = mutation_kind::insert;
+   object_type type;
+   forge::ids::object_id id;
+   std::optional<std::vector<std::byte>> before;
+   std::optional<std::vector<std::byte>> after;
+};
+
+struct change_set {
+   std::vector<object_mutation> mutations;
+
+   [[nodiscard]] bool empty() const noexcept {
+      return mutations.empty();
+   }
+};
+
+class interceptor {
+ public:
+   virtual ~interceptor() = default;
+   virtual boost::asio::awaitable<void> before_mutation(const object_mutation& mutation) = 0;
+};
+
+class observer {
+ public:
+   virtual ~observer() = default;
+   virtual boost::asio::awaitable<void> after_commit(const change_set& changes) = 0;
+};
+
+class session {
+ public:
+   virtual ~session() = default;
+
+   virtual boost::asio::awaitable<std::optional<std::vector<std::byte>>> get(record_key key) = 0;
+   virtual boost::asio::awaitable<void> put(record_key key, std::vector<std::byte> value) = 0;
+   virtual boost::asio::awaitable<void> erase(record_key key) = 0;
+   virtual boost::asio::awaitable<record_scan_result> scan_page(key_range range, page_request request) = 0;
+   virtual boost::asio::awaitable<void> commit() = 0;
+   virtual boost::asio::awaitable<void> rollback() = 0;
+};
+
+template <typename T>
+concept session_model = std::derived_from<T, session>;
+
+template <session_model Session>
+class session_factory {
+ public:
+   using begin_fn = std::function<boost::asio::awaitable<std::unique_ptr<Session>>()>;
+
+   explicit session_factory(begin_fn begin) : begin_{std::move(begin)} {}
+
+ private:
+   friend class store;
+
+   boost::asio::awaitable<std::unique_ptr<session>> begin_session() const {
+      if (!begin_) {
+         FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor, "objectdb session factory is empty");
+      }
+      auto native = co_await begin_();
+      if (!native) {
+         FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor, "objectdb session factory returned null session");
+      }
+      std::unique_ptr<session> erased = std::move(native);
+      co_return erased;
+   }
+
+   begin_fn begin_;
+};
+
+class transaction;
 
 template <object_model Object, typename Tag>
 class range_query;
@@ -209,46 +167,84 @@ class range_query;
 template <object_model Object, typename Tag>
 class index_view;
 
+template <object_model Object, typename Tag>
+class store_range_query;
+
+template <object_model Object, typename Tag>
+class store_index_view;
+
+template <typename T>
+class index_stream;
+
+template <object_model Object, typename Tag>
+class store_index_stream;
+
 class store {
  public:
-   template <typename Storage>
-   explicit store(Storage storage)
-       : storage_{std::make_shared<detail::storage_model<Storage>>(std::move(storage))},
-         state_{std::make_shared<detail::store_state>()} {}
+   template <session_model Session>
+   explicit store(session_factory<Session> factory)
+       : impl_{std::make_shared<impl>(
+            [factory = std::move(factory)]() mutable -> boost::asio::awaitable<std::unique_ptr<session>> {
+               co_return co_await factory.begin_session();
+            })} {}
 
    template <object_model Object>
-   void register_object() {
-      const auto type = object_type_of<Object>::value;
-      if (state_->registered.contains(type)) {
-         FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor, "objectdb object type is already registered");
-      }
-      state_->registered.emplace(type, std::type_index{typeid(Object)});
-   }
+   void register_object();
 
-   boost::asio::awaitable<session> session();
+   void add_interceptor(std::shared_ptr<interceptor> value);
+   void add_observer(std::shared_ptr<observer> value);
+
+   boost::asio::awaitable<transaction> begin_transaction();
+
+   template <typed_object_id Id>
+   boost::asio::awaitable<typename object_index_for_id_t<Id>::value_type> get(Id id);
+
+   template <typed_object_id Id>
+   boost::asio::awaitable<std::optional<typename object_index_for_id_t<Id>::value_type>> find(Id id);
+
+   template <object_model Object>
+   boost::asio::awaitable<typename Object::value_type> get(forge::ids::object_id id);
+
+   template <object_model Object>
+   boost::asio::awaitable<std::optional<typename Object::value_type>> find(forge::ids::object_id id);
+
+   template <object_value Value>
+   boost::asio::awaitable<void> insert(Value value);
+
+   template <object_value Value>
+   boost::asio::awaitable<void> replace(Value value);
+
+   template <typed_object_id Id, typename Fn>
+   boost::asio::awaitable<void> modify(Id id, Fn&& fn);
+
+   template <typed_object_id Id>
+   boost::asio::awaitable<void> erase(Id id);
+
+   template <object_model Object>
+   boost::asio::awaitable<void> erase(forge::ids::object_id id);
+
+   template <object_model Object, typename Tag>
+   [[nodiscard]] store_index_view<Object, Tag> index() const;
 
  private:
-   friend class session;
+   friend class transaction;
 
-   std::shared_ptr<detail::storage_concept> storage_;
-   std::shared_ptr<detail::store_state> state_;
+   template <object_model Object, typename Tag>
+   friend class store_range_query;
+
+   template <object_model Object, typename Tag>
+   friend class store_index_view;
+
+   template <object_model Object, typename Tag>
+   friend class store_index_stream;
+
+   struct impl;
+   std::shared_ptr<impl> impl_;
 };
 
-class session {
+class transaction {
  public:
-   session() = default;
-
-   session(std::shared_ptr<detail::storage_session_concept> storage, std::shared_ptr<detail::store_state> state)
-       : storage_{std::move(storage)}, state_{std::move(state)} {}
-
-   template <object_model Object>
-   void ensure_registered() const {
-      const auto type = object_type_of<Object>::value;
-      const auto found = state_->registered.find(type);
-      if (found == state_->registered.end() || found->second != std::type_index{typeid(Object)}) {
-         FORGE_THROW_EXCEPTION(exceptions::unregistered_object, "objectdb object type is not registered");
-      }
-   }
+   transaction() = default;
 
    template <typed_object_id Id>
    boost::asio::awaitable<typename object_index_for_id_t<Id>::value_type> get(Id id) {
@@ -258,12 +254,6 @@ class session {
    template <typed_object_id Id>
    boost::asio::awaitable<std::optional<typename object_index_for_id_t<Id>::value_type>> find(Id id) {
       co_return co_await find<object_index_for_id_t<Id>>(id.as_object_id());
-   }
-
-   template <typed_object_id Id>
-   boost::asio::awaitable<void> erase(Id id) {
-      co_await erase<object_index_for_id_t<Id>>(id.as_object_id());
-      co_return;
    }
 
    template <object_model Object>
@@ -280,7 +270,7 @@ class session {
       ensure_registered<Object>();
       const auto typed = detail::typed_id_from<Object>(id);
       const auto key = layout<Object>::object_record_key(typed);
-      const auto bytes = co_await storage_->get(key);
+      const auto bytes = co_await active_session().get(key);
       if (!bytes.has_value()) {
          co_return std::nullopt;
       }
@@ -293,32 +283,45 @@ class session {
       ensure_registered<object_model_type>();
 
       const auto object_key = layout<object_model_type>::object_record_key(value.id);
-      if ((co_await storage_->get(object_key)).has_value()) {
+      if ((co_await active_session().get(object_key)).has_value()) {
          FORGE_THROW_EXCEPTION(exceptions::duplicate_object, "objectdb object id already exists");
       }
 
-      co_await detail::check_unique_indexes<object_model_type>(*storage_, value);
-      co_await storage_->put(object_key, detail::pack_value(value));
-      co_await detail::put_secondary_indexes<object_model_type>(*storage_, value);
-      co_await storage_->commit();
+      auto after = detail::pack_value(value);
+      auto mutation = object_mutation{
+         .kind = mutation_kind::insert,
+         .type = object_type_of<object_model_type>::value,
+         .id = value.id.as_object_id(),
+         .after = after,
+      };
+      co_await before_mutation(mutation);
+      co_await check_unique_indexes<object_model_type>(value);
+      co_await active_session().put(object_key, std::move(after));
+      co_await put_secondary_indexes<object_model_type>(value);
+      changes().mutations.push_back(std::move(mutation));
       co_return;
    }
 
    template <object_value Value>
    boost::asio::awaitable<void> replace(Value value) {
-      using object_model_type = object_index_for_id_t<typename Value::id_type>;
-      ensure_registered<object_model_type>();
+      co_await replace_value(std::move(value), mutation_kind::replace);
+      co_return;
+   }
 
-      const auto existing = co_await find<object_model_type>(value.id.as_object_id());
-      if (!existing.has_value()) {
-         FORGE_THROW_EXCEPTION(exceptions::not_found, "objectdb object was not found");
-      }
+   template <typed_object_id Id, typename Fn>
+   boost::asio::awaitable<void> modify(Id id, Fn&& fn) {
+      using object_model_type = object_index_for_id_t<Id>;
+      auto next = co_await get(id);
+      using result_type = std::invoke_result_t<Fn&, typename object_model_type::value_type&>;
+      static_assert(std::is_void_v<result_type>, "objectdb modify mutator must return void");
+      std::invoke(fn, next);
+      co_await replace_value(std::move(next), mutation_kind::modify);
+      co_return;
+   }
 
-      co_await detail::check_unique_indexes<object_model_type>(*storage_, value);
-      co_await detail::erase_secondary_indexes<object_model_type>(*storage_, *existing);
-      co_await storage_->put(layout<object_model_type>::object_record_key(value.id), detail::pack_value(value));
-      co_await detail::put_secondary_indexes<object_model_type>(*storage_, value);
-      co_await storage_->commit();
+   template <typed_object_id Id>
+   boost::asio::awaitable<void> erase(Id id) {
+      co_await erase<object_index_for_id_t<Id>>(id.as_object_id());
       co_return;
    }
 
@@ -331,9 +334,17 @@ class session {
          co_return;
       }
 
-      co_await detail::erase_secondary_indexes<Object>(*storage_, *existing);
-      co_await storage_->erase(layout<Object>::object_record_key(typed));
-      co_await storage_->commit();
+      auto before = detail::pack_value(*existing);
+      auto mutation = object_mutation{
+         .kind = mutation_kind::erase,
+         .type = object_type_of<Object>::value,
+         .id = typed.as_object_id(),
+         .before = before,
+      };
+      co_await before_mutation(mutation);
+      co_await erase_secondary_indexes<Object>(*existing);
+      co_await active_session().erase(layout<Object>::object_record_key(typed));
+      changes().mutations.push_back(std::move(mutation));
       co_return;
    }
 
@@ -343,20 +354,417 @@ class session {
       return index_view<Object, Tag>{*this};
    }
 
+   boost::asio::awaitable<void> commit();
+   boost::asio::awaitable<void> rollback();
+
  private:
+   friend class store;
+
    template <object_model Object, typename Tag>
    friend class range_query;
 
    template <object_model Object, typename Tag>
    friend class index_view;
 
-   std::shared_ptr<detail::storage_session_concept> storage_;
-   std::shared_ptr<detail::store_state> state_;
+   template <typename T>
+   friend class index_stream;
+
+   explicit transaction(std::shared_ptr<store::impl> owner, std::unique_ptr<session> active);
+
+   struct state;
+
+   [[nodiscard]] session& active_session() const;
+   [[nodiscard]] change_set& changes() const;
+
+   template <object_model Object>
+   void ensure_registered() const;
+
+   boost::asio::awaitable<void> before_mutation(const object_mutation& mutation) const;
+
+   template <object_model Object>
+   boost::asio::awaitable<void> check_unique_indexes(const typename Object::value_type& value);
+
+   template <object_model Object, std::size_t Index = 0>
+   boost::asio::awaitable<void> check_unique_indexes_impl(const typename Object::value_type& value);
+
+   template <object_model Object>
+   boost::asio::awaitable<void> put_secondary_indexes(const typename Object::value_type& value);
+
+   template <object_model Object, std::size_t Index = 0>
+   boost::asio::awaitable<void> put_secondary_indexes_impl(const typename Object::value_type& value);
+
+   template <object_model Object>
+   boost::asio::awaitable<void> erase_secondary_indexes(const typename Object::value_type& value);
+
+   template <object_model Object, std::size_t Index = 0>
+   boost::asio::awaitable<void> erase_secondary_indexes_impl(const typename Object::value_type& value);
+
+   template <object_value Value>
+   boost::asio::awaitable<void> replace_value(Value value, mutation_kind kind);
+
+   std::shared_ptr<state> state_;
 };
 
-inline boost::asio::awaitable<session> store::session() {
-   auto native_session = co_await storage_->session();
-   co_return forge::objectdb::session{std::move(native_session), state_};
+struct store::impl {
+   using begin_fn = std::function<boost::asio::awaitable<std::unique_ptr<session>>()>;
+
+   explicit impl(begin_fn begin) : begin_session{std::move(begin)} {}
+
+   boost::asio::awaitable<std::unique_ptr<session>> open_session() const {
+      if (!begin_session) {
+         FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor, "objectdb store has no session factory");
+      }
+      auto active = co_await begin_session();
+      if (!active) {
+         FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor, "objectdb session factory returned null session");
+      }
+      co_return active;
+   }
+
+   template <object_model Object>
+   void ensure_registered() const {
+      const auto type = object_type_of<Object>::value;
+      const auto found = registered.find(type);
+      if (found == registered.end() || found->second != std::type_index{typeid(Object)}) {
+         FORGE_THROW_EXCEPTION(exceptions::unregistered_object, "objectdb object type is not registered");
+      }
+   }
+
+   begin_fn begin_session;
+   std::map<object_type, std::type_index> registered;
+   std::vector<std::shared_ptr<interceptor>> interceptors;
+   std::vector<std::shared_ptr<observer>> observers;
+};
+
+struct transaction::state {
+   std::shared_ptr<store::impl> owner;
+   std::unique_ptr<session> active;
+   change_set changes;
+   bool closed = false;
+   bool committed = false;
+};
+
+template <object_model Object>
+void store::register_object() {
+   const auto type = object_type_of<Object>::value;
+   if (impl_->registered.contains(type)) {
+      FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor, "objectdb object type is already registered");
+   }
+   impl_->registered.emplace(type, std::type_index{typeid(Object)});
+}
+
+inline void store::add_interceptor(std::shared_ptr<interceptor> value) {
+   if (value) {
+      impl_->interceptors.push_back(std::move(value));
+   }
+}
+
+inline void store::add_observer(std::shared_ptr<observer> value) {
+   if (value) {
+      impl_->observers.push_back(std::move(value));
+   }
+}
+
+inline boost::asio::awaitable<transaction> store::begin_transaction() {
+   auto active = co_await impl_->open_session();
+   co_return transaction{impl_, std::move(active)};
+}
+
+inline transaction::transaction(std::shared_ptr<store::impl> owner, std::unique_ptr<session> active)
+    : state_{std::make_shared<state>(state{.owner = std::move(owner), .active = std::move(active)})} {}
+
+inline session& transaction::active_session() const {
+   if (!state_ || !state_->active || state_->closed) {
+      FORGE_THROW_EXCEPTION(exceptions::transaction_closed, "objectdb transaction is closed");
+   }
+   return *state_->active;
+}
+
+inline change_set& transaction::changes() const {
+   if (!state_) {
+      FORGE_THROW_EXCEPTION(exceptions::transaction_closed, "objectdb transaction is closed");
+   }
+   return state_->changes;
+}
+
+template <object_model Object>
+void transaction::ensure_registered() const {
+   if (!state_ || !state_->owner) {
+      FORGE_THROW_EXCEPTION(exceptions::transaction_closed, "objectdb transaction is closed");
+   }
+   state_->owner->template ensure_registered<Object>();
+}
+
+inline boost::asio::awaitable<void> transaction::before_mutation(const object_mutation& mutation) const {
+   for (const auto& hook : state_->owner->interceptors) {
+      co_await hook->before_mutation(mutation);
+   }
+   co_return;
+}
+
+template <object_model Object>
+boost::asio::awaitable<void> transaction::check_unique_indexes(const typename Object::value_type& value) {
+   co_await check_unique_indexes_impl<Object>(value);
+   co_return;
+}
+
+template <object_model Object, std::size_t Index>
+boost::asio::awaitable<void> transaction::check_unique_indexes_impl(const typename Object::value_type& value) {
+   using indexes = typename Object::indexes_type::tuple_type;
+   if constexpr (Index < std::tuple_size_v<indexes>) {
+      using index = std::tuple_element_t<Index, indexes>;
+      if constexpr (index::kind == index_kind::secondary_unique) {
+         const auto key = layout<Object>::template index_entry_key<typename index::tag_type>(value);
+         const auto existing = co_await active_session().get(key);
+         if (existing.has_value()) {
+            const auto existing_id = detail::unpack_value<id_type_of<Object>>(*existing);
+            if (existing_id != value.id) {
+               FORGE_THROW_EXCEPTION(exceptions::duplicate_object, "objectdb unique index value already exists");
+            }
+         }
+      }
+      co_await check_unique_indexes_impl<Object, Index + 1>(value);
+   }
+   co_return;
+}
+
+template <object_model Object>
+boost::asio::awaitable<void> transaction::put_secondary_indexes(const typename Object::value_type& value) {
+   co_await put_secondary_indexes_impl<Object>(value);
+   co_return;
+}
+
+template <object_model Object, std::size_t Index>
+boost::asio::awaitable<void> transaction::put_secondary_indexes_impl(const typename Object::value_type& value) {
+   using indexes = typename Object::indexes_type::tuple_type;
+   if constexpr (Index < std::tuple_size_v<indexes>) {
+      using index = std::tuple_element_t<Index, indexes>;
+      if constexpr (secondary_index<index>) {
+         const auto key = layout<Object>::template index_entry_key<typename index::tag_type>(value);
+         co_await active_session().put(key, detail::pack_value(value.id));
+      }
+      co_await put_secondary_indexes_impl<Object, Index + 1>(value);
+   }
+   co_return;
+}
+
+template <object_model Object>
+boost::asio::awaitable<void> transaction::erase_secondary_indexes(const typename Object::value_type& value) {
+   co_await erase_secondary_indexes_impl<Object>(value);
+   co_return;
+}
+
+template <object_model Object, std::size_t Index>
+boost::asio::awaitable<void> transaction::erase_secondary_indexes_impl(const typename Object::value_type& value) {
+   using indexes = typename Object::indexes_type::tuple_type;
+   if constexpr (Index < std::tuple_size_v<indexes>) {
+      using index = std::tuple_element_t<Index, indexes>;
+      if constexpr (secondary_index<index>) {
+         const auto key = layout<Object>::template index_entry_key<typename index::tag_type>(value);
+         co_await active_session().erase(key);
+      }
+      co_await erase_secondary_indexes_impl<Object, Index + 1>(value);
+   }
+   co_return;
+}
+
+template <object_value Value>
+boost::asio::awaitable<void> transaction::replace_value(Value value, mutation_kind kind) {
+   using object_model_type = object_index_for_id_t<typename Value::id_type>;
+   ensure_registered<object_model_type>();
+
+   const auto existing = co_await find<object_model_type>(value.id.as_object_id());
+   if (!existing.has_value()) {
+      FORGE_THROW_EXCEPTION(exceptions::not_found, "objectdb object was not found");
+   }
+
+   auto before = detail::pack_value(*existing);
+   auto after = detail::pack_value(value);
+   auto mutation = object_mutation{
+      .kind = kind,
+      .type = object_type_of<object_model_type>::value,
+      .id = value.id.as_object_id(),
+      .before = before,
+      .after = after,
+   };
+   co_await before_mutation(mutation);
+   co_await check_unique_indexes<object_model_type>(value);
+   co_await erase_secondary_indexes<object_model_type>(*existing);
+   co_await active_session().put(layout<object_model_type>::object_record_key(value.id), std::move(after));
+   co_await put_secondary_indexes<object_model_type>(value);
+   changes().mutations.push_back(std::move(mutation));
+   co_return;
+}
+
+inline boost::asio::awaitable<void> transaction::commit() {
+   auto& current = active_session();
+   co_await current.commit();
+   state_->committed = true;
+   state_->closed = true;
+   state_->active.reset();
+
+   if (!state_->changes.empty()) {
+      for (const auto& hook : state_->owner->observers) {
+         co_await hook->after_commit(state_->changes);
+      }
+   }
+   co_return;
+}
+
+inline boost::asio::awaitable<void> transaction::rollback() {
+   if (!state_ || !state_->active || state_->closed) {
+      co_return;
+   }
+   co_await state_->active->rollback();
+   state_->active.reset();
+   state_->closed = true;
+   state_->changes.mutations.clear();
+   co_return;
+}
+
+template <typed_object_id Id>
+boost::asio::awaitable<typename object_index_for_id_t<Id>::value_type> store::get(Id id) {
+   auto tx = co_await begin_transaction();
+   auto failure = std::exception_ptr{};
+   try {
+      auto value = co_await tx.get(id);
+      co_await tx.rollback();
+      co_return value;
+   } catch (...) {
+      failure = std::current_exception();
+   }
+   co_await tx.rollback();
+   std::rethrow_exception(failure);
+}
+
+template <typed_object_id Id>
+boost::asio::awaitable<std::optional<typename object_index_for_id_t<Id>::value_type>> store::find(Id id) {
+   auto tx = co_await begin_transaction();
+   auto failure = std::exception_ptr{};
+   try {
+      auto value = co_await tx.find(id);
+      co_await tx.rollback();
+      co_return value;
+   } catch (...) {
+      failure = std::current_exception();
+   }
+   co_await tx.rollback();
+   std::rethrow_exception(failure);
+}
+
+template <object_model Object>
+boost::asio::awaitable<typename Object::value_type> store::get(forge::ids::object_id id) {
+   auto tx = co_await begin_transaction();
+   auto failure = std::exception_ptr{};
+   try {
+      auto value = co_await tx.template get<Object>(id);
+      co_await tx.rollback();
+      co_return value;
+   } catch (...) {
+      failure = std::current_exception();
+   }
+   co_await tx.rollback();
+   std::rethrow_exception(failure);
+}
+
+template <object_model Object>
+boost::asio::awaitable<std::optional<typename Object::value_type>> store::find(forge::ids::object_id id) {
+   auto tx = co_await begin_transaction();
+   auto failure = std::exception_ptr{};
+   try {
+      auto value = co_await tx.template find<Object>(id);
+      co_await tx.rollback();
+      co_return value;
+   } catch (...) {
+      failure = std::current_exception();
+   }
+   co_await tx.rollback();
+   std::rethrow_exception(failure);
+}
+
+template <object_value Value>
+boost::asio::awaitable<void> store::insert(Value value) {
+   auto tx = co_await begin_transaction();
+   auto failure = std::exception_ptr{};
+   try {
+      co_await tx.insert(std::move(value));
+      co_await tx.commit();
+   } catch (...) {
+      failure = std::current_exception();
+   }
+   if (failure) {
+      co_await tx.rollback();
+      std::rethrow_exception(failure);
+   }
+   co_return;
+}
+
+template <object_value Value>
+boost::asio::awaitable<void> store::replace(Value value) {
+   auto tx = co_await begin_transaction();
+   auto failure = std::exception_ptr{};
+   try {
+      co_await tx.replace(std::move(value));
+      co_await tx.commit();
+   } catch (...) {
+      failure = std::current_exception();
+   }
+   if (failure) {
+      co_await tx.rollback();
+      std::rethrow_exception(failure);
+   }
+   co_return;
+}
+
+template <typed_object_id Id, typename Fn>
+boost::asio::awaitable<void> store::modify(Id id, Fn&& fn) {
+   auto tx = co_await begin_transaction();
+   auto failure = std::exception_ptr{};
+   try {
+      co_await tx.modify(id, std::forward<Fn>(fn));
+      co_await tx.commit();
+   } catch (...) {
+      failure = std::current_exception();
+   }
+   if (failure) {
+      co_await tx.rollback();
+      std::rethrow_exception(failure);
+   }
+   co_return;
+}
+
+template <typed_object_id Id>
+boost::asio::awaitable<void> store::erase(Id id) {
+   auto tx = co_await begin_transaction();
+   auto failure = std::exception_ptr{};
+   try {
+      co_await tx.erase(id);
+      co_await tx.commit();
+   } catch (...) {
+      failure = std::current_exception();
+   }
+   if (failure) {
+      co_await tx.rollback();
+      std::rethrow_exception(failure);
+   }
+   co_return;
+}
+
+template <object_model Object>
+boost::asio::awaitable<void> store::erase(forge::ids::object_id id) {
+   auto tx = co_await begin_transaction();
+   auto failure = std::exception_ptr{};
+   try {
+      co_await tx.template erase<Object>(id);
+      co_await tx.commit();
+   } catch (...) {
+      failure = std::current_exception();
+   }
+   if (failure) {
+      co_await tx.rollback();
+      std::rethrow_exception(failure);
+   }
+   co_return;
 }
 
 template <typename T>
@@ -409,13 +817,13 @@ class range_query {
 
    range_query() = default;
 
-   range_query(session owner, key_range range) : owner_{std::move(owner)}, range_{std::move(range)} {}
+   range_query(transaction owner, key_range range) : owner_{std::move(owner)}, range_{std::move(range)} {}
 
    boost::asio::awaitable<object_page<value_type>> page(page_request request = {}) {
       owner_.template ensure_registered<Object>();
       validate_page_request(request);
 
-      auto records = co_await owner_.storage_->scan_page(range_, request);
+      auto records = co_await owner_.active_session().scan_page(range_, request);
       auto out = object_page<value_type>{};
       out.next = std::move(records.next).transform([](record_key key) { return cursor{.boundary = std::move(key)}; });
 
@@ -445,7 +853,7 @@ class range_query {
    }
 
  private:
-   session owner_;
+   transaction owner_;
    key_range range_;
 };
 
@@ -454,7 +862,7 @@ class index_view {
  public:
    using value_type = typename Object::value_type;
 
-   explicit index_view(session owner) : owner_{std::move(owner)} {}
+   explicit index_view(transaction owner) : owner_{std::move(owner)} {}
 
    template <typename Key>
    boost::asio::awaitable<std::optional<value_type>> find(const Key& key) {
@@ -491,7 +899,134 @@ class index_view {
    }
 
  private:
-   session owner_;
+   transaction owner_;
 };
+
+template <object_model Object, typename Tag>
+class store_index_stream {
+ public:
+   using value_type = typename Object::value_type;
+
+   store_index_stream() = default;
+
+   store_index_stream(store owner, key_range range, stream_options options)
+       : owner_{std::move(owner)}, range_{std::move(range)}, options_{options} {}
+
+   boost::asio::awaitable<std::optional<value_type>> next() {
+      if (!active_) {
+         auto tx = co_await owner_.begin_transaction();
+         auto query = range_query<Object, Tag>{tx, range_};
+         active_ = std::move(tx);
+         values_ = query.stream(options_);
+      }
+
+      auto value = co_await values_->next();
+      if (!value.has_value()) {
+         co_await active_->rollback();
+         active_.reset();
+         values_.reset();
+      }
+      co_return value;
+   }
+
+ private:
+   store owner_;
+   key_range range_;
+   stream_options options_;
+   std::optional<transaction> active_;
+   std::optional<index_stream<value_type>> values_;
+};
+
+template <object_model Object, typename Tag>
+class store_range_query {
+ public:
+   using value_type = typename Object::value_type;
+
+   store_range_query() = default;
+
+   store_range_query(store owner, key_range range) : owner_{std::move(owner)}, range_{std::move(range)} {}
+
+   boost::asio::awaitable<object_page<value_type>> page(page_request request = {}) {
+      auto tx = co_await owner_.begin_transaction();
+      auto failure = std::exception_ptr{};
+      try {
+         auto result = co_await range_query<Object, Tag>{tx, range_}.page(std::move(request));
+         co_await tx.rollback();
+         co_return result;
+      } catch (...) {
+         failure = std::current_exception();
+      }
+      co_await tx.rollback();
+      std::rethrow_exception(failure);
+   }
+
+   [[nodiscard]] store_index_stream<Object, Tag> stream(stream_options options = {}) {
+      return store_index_stream<Object, Tag>{owner_, range_, options};
+   }
+
+   template <typename Fn>
+   boost::asio::awaitable<void> for_each(stream_options options, Fn&& fn) {
+      auto values = stream(options);
+      while (auto value = co_await values.next()) {
+         co_await std::invoke(fn, *value);
+      }
+      co_return;
+   }
+
+ private:
+   store owner_;
+   key_range range_;
+};
+
+template <object_model Object, typename Tag>
+class store_index_view {
+ public:
+   using value_type = typename Object::value_type;
+
+   explicit store_index_view(store owner) : owner_{std::move(owner)} {}
+
+   template <typename Key>
+   boost::asio::awaitable<std::optional<value_type>> find(const Key& key) {
+      auto result = co_await equal_range(std::tuple{key}).page(page_request{.limit = 1});
+      if (result.items.empty()) {
+         co_return std::nullopt;
+      }
+      co_return result.items.front();
+   }
+
+   template <typename... PrefixValues>
+   [[nodiscard]] store_range_query<Object, Tag> equal_range(const std::tuple<PrefixValues...>& prefix) const {
+      return store_range_query<Object, Tag>{owner_, layout<Object>::template index_prefix<Tag>(prefix)};
+   }
+
+   template <typename... PrefixValues>
+   [[nodiscard]] store_range_query<Object, Tag> equal_range(const PrefixValues&... values) const {
+      return equal_range(std::make_tuple(values...));
+   }
+
+   template <typename... PrefixValues>
+   [[nodiscard]] store_range_query<Object, Tag> lower_bound(const std::tuple<PrefixValues...>& prefix) const {
+      auto range = layout<Object>::template index_range<Tag>();
+      range.begin = layout<Object>::template index_prefix<Tag>(prefix).begin;
+      return store_range_query<Object, Tag>{owner_, std::move(range)};
+   }
+
+   template <typename... PrefixValues>
+   [[nodiscard]] store_range_query<Object, Tag> upper_bound(const std::tuple<PrefixValues...>& prefix) const {
+      auto range = layout<Object>::template index_range<Tag>();
+      auto exact = layout<Object>::template index_prefix<Tag>(prefix);
+      range.begin = exact.has_end ? std::move(exact.end) : std::move(exact.begin);
+      return store_range_query<Object, Tag>{owner_, std::move(range)};
+   }
+
+ private:
+   store owner_;
+};
+
+template <object_model Object, typename Tag>
+[[nodiscard]] store_index_view<Object, Tag> store::index() const {
+   impl_->template ensure_registered<Object>();
+   return store_index_view<Object, Tag>{*this};
+}
 
 } // namespace forge::objectdb

@@ -89,7 +89,7 @@ add_executable(
 target_link_libraries(test_forge_objectdb forge_objectdb forge Boost::included_unit_test_framework)
 target_compile_definitions(test_forge_objectdb PRIVATE FORGE_HAS_ROCKSDB=$<BOOL:${FORGE_HAS_ROCKSDB}>)
 if(FORGE_HAS_ROCKSDB)
-   target_link_libraries(test_forge_objectdb forge_rocksdb)
+   target_link_libraries(test_forge_objectdb forge_objectdb_rocksdb)
 endif()
 add_test(NAME test_forge_objectdb COMMAND test_forge_objectdb WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
@@ -573,6 +573,18 @@ add_custom_target(
 )
 if(FORGE_HAS_ROCKSDB)
    add_custom_target(
+      test_forge_package_objectdb_rocksdb_component
+      COMMAND ${CMAKE_CTEST_COMMAND}
+         --build-and-test
+         ${CMAKE_CURRENT_SOURCE_DIR}/package_objectdb_rocksdb_component
+         ${CMAKE_BINARY_DIR}/forge-package-objectdb-rocksdb-component
+         --build-generator ${CMAKE_GENERATOR}
+         --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+         --test-command forge_package_objectdb_rocksdb_component
+      DEPENDS test_forge_package_install
+   )
+
+   add_custom_target(
       test_forge_package_rocksdb_component
       COMMAND ${CMAKE_CTEST_COMMAND}
          --build-and-test
@@ -596,6 +608,10 @@ if(FORGE_HAS_ROCKSDB)
       DEPENDS test_forge_package_install
    )
 else()
+   add_custom_target(
+      test_forge_package_objectdb_rocksdb_component
+      COMMAND ${CMAKE_COMMAND} -E echo "Skipping test_forge_package_objectdb_rocksdb_component: RocksDB is not available"
+   )
    add_custom_target(
       test_forge_package_rocksdb_component
       COMMAND ${CMAKE_COMMAND} -E echo "Skipping test_forge_package_rocksdb_component: RocksDB is not available"
@@ -842,6 +858,18 @@ add_test(
 set_tests_properties(test_forge_package_plugins_log_otlp PROPERTIES DEPENDS test_forge_package_install)
 if(FORGE_HAS_ROCKSDB)
    add_test(
+      NAME test_forge_package_objectdb_rocksdb_component
+      COMMAND ${CMAKE_CTEST_COMMAND}
+         --build-and-test
+         ${CMAKE_CURRENT_SOURCE_DIR}/package_objectdb_rocksdb_component
+         ${CMAKE_BINARY_DIR}/forge-package-objectdb-rocksdb-component
+         --build-generator ${CMAKE_GENERATOR}
+         --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+         --test-command forge_package_objectdb_rocksdb_component
+   )
+   set_tests_properties(test_forge_package_objectdb_rocksdb_component PROPERTIES DEPENDS test_forge_package_install)
+
+   add_test(
       NAME test_forge_package_rocksdb_component
       COMMAND ${CMAKE_CTEST_COMMAND}
          --build-and-test
@@ -865,6 +893,10 @@ if(FORGE_HAS_ROCKSDB)
    )
    set_tests_properties(test_forge_package_plugins_db_rocksdb PROPERTIES DEPENDS test_forge_package_install)
 else()
+   add_test(
+      NAME test_forge_package_objectdb_rocksdb_component
+      COMMAND ${CMAKE_COMMAND} -E echo "Skipping test_forge_package_objectdb_rocksdb_component: RocksDB is not available"
+   )
    add_test(
       NAME test_forge_package_rocksdb_component
       COMMAND ${CMAKE_COMMAND} -E echo "Skipping test_forge_package_rocksdb_component: RocksDB is not available"

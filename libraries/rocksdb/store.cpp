@@ -54,12 +54,15 @@ scan_result read_scan_page(std::unique_ptr<::rocksdb::Iterator> iterator, scan_r
    if (request.limit == 0) {
       return result;
    }
+   if (!request.lower_bound.empty() && !starts_with(request.lower_bound, request.prefix)) {
+      return result;
+   }
    if (!request.cursor.empty() && !starts_with(request.cursor, request.prefix)) {
       return result;
    }
 
    if (request.cursor.empty()) {
-      iterator->Seek(to_slice(request.prefix));
+      iterator->Seek(to_slice(request.lower_bound.empty() ? request.prefix : request.lower_bound));
    } else {
       iterator->Seek(to_slice(request.cursor));
       if (iterator->Valid()) {

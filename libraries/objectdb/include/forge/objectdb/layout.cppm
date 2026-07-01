@@ -171,16 +171,25 @@ inline void append_index_prefix(std::vector<std::byte>& out, record_kind kind, o
 }
 
 inline key_range prefix_range(std::vector<std::byte> prefix) {
+   auto scan_prefix = prefix;
    auto end = prefix;
    for (auto index = end.size(); index > 0; --index) {
       auto value = static_cast<unsigned>(end[index - 1U]);
       if (value != 0xffU) {
          end[index - 1U] = static_cast<std::byte>(value + 1U);
          end.resize(index);
-         return key_range{.begin = record_key{std::move(prefix)}, .end = record_key{std::move(end)}, .has_end = true};
+         return key_range{
+            .begin = record_key{std::move(prefix)},
+            .end = record_key{std::move(end)},
+            .prefix = record_key{std::move(scan_prefix)},
+            .has_end = true};
       }
    }
-   return key_range{.begin = record_key{std::move(prefix)}, .end = record_key{}, .has_end = false};
+   return key_range{
+      .begin = record_key{std::move(prefix)},
+      .end = record_key{},
+      .prefix = record_key{std::move(scan_prefix)},
+      .has_end = false};
 }
 
 } // namespace forge::objectdb::detail

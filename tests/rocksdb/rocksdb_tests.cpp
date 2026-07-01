@@ -102,6 +102,13 @@ BOOST_AUTO_TEST_CASE(rocksdb_store_scan_page_bounds_prefix_with_cursor) {
    BOOST_REQUIRE_EQUAL(second.entries.size(), 1U);
    BOOST_TEST(to_string(second.entries[0].value) == "3");
    BOOST_TEST(second.next_cursor.empty());
+
+   auto lower = prefix;
+   forge::rocksdb::append_u64_be(lower, 2);
+   const auto bounded = db.scan_page(data, scan_request{.prefix = prefix, .lower_bound = lower, .limit = 2});
+   BOOST_REQUIRE_EQUAL(bounded.entries.size(), 2U);
+   BOOST_TEST(to_string(bounded.entries[0].value) == "2");
+   BOOST_TEST(to_string(bounded.entries[1].value) == "3");
 }
 
 BOOST_AUTO_TEST_CASE(rocksdb_store_batch_and_transactions_are_atomic) {

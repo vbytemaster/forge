@@ -62,6 +62,7 @@ class record_key {
 struct key_range {
    record_key begin;
    record_key end;
+   record_key prefix;
    bool has_end = true;
 };
 

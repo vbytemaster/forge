@@ -11,9 +11,10 @@ set(
    exceptions
    reflect
    schema
-   variant
-   raw
-   objectdb
+	   variant
+	   raw
+	   ids
+	   objectdb
    json
    yaml
    xml
@@ -67,13 +68,16 @@ macro(_forge_add_component component)
       elseif("${component}" STREQUAL "variant")
          _forge_add_component(core)
          _forge_add_component(reflect)
-      elseif("${component}" STREQUAL "raw")
-         _forge_add_component(core)
-         _forge_add_component(exceptions)
-         _forge_add_component(reflect)
-         _forge_add_component(variant)
-      elseif("${component}" STREQUAL "objectdb")
-         _forge_add_component(exceptions)
+	      elseif("${component}" STREQUAL "raw")
+	         _forge_add_component(core)
+	         _forge_add_component(exceptions)
+	         _forge_add_component(reflect)
+	         _forge_add_component(variant)
+	      elseif("${component}" STREQUAL "ids")
+	         _forge_add_component(raw)
+	         _forge_add_component(variant)
+	      elseif("${component}" STREQUAL "objectdb")
+	         _forge_add_component(exceptions)
       elseif("${component}" STREQUAL "json")
          _forge_add_component(core)
          _forge_add_component(config)

@@ -7,4 +7,5 @@ target_link_libraries(
    forge_objectdb PUBLIC
       forge_exceptions
       forge_ids
+      forge_raw
 )

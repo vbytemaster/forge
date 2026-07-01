@@ -37,22 +37,28 @@ the public API shape.
 ## Active First Slice
 
 The active first slice is now `forge_objectdb` with declarative object/index
-descriptors and deterministic key layout:
+descriptors, deterministic key layout and async store/index access:
 
-- user object types remain plain structs;
-- `object<T, indexed_by<...>>` is a schema descriptor, not a base class;
-- `primary_unique<Tag, &T::id>` derives the object type from
-  `forge::ids::typed_id<Space, Type>`;
+- user object types derive from `object<Derived, Space, Type>`;
+- the base owns `id` as `forge::ids::typed_id<Space, Type>` and contains no
+  storage behavior;
+- `object_index<T, indexed_by<...>>` is the schema descriptor;
+- `primary_unique<Tag>` is shorthand for the base `id`;
+- `FORGE_OBJECTDB_OBJECT(Object)` creates the inverse compile-time mapping from
+  typed id to object descriptor;
 - `secondary_unique` and `secondary_non_unique` describe stored index entries;
 - `composite_key<&T::field1, &T::field2>` establishes lexicographic member
-  order and partial prefix lookup;
+  order and partial prefix lookup through `std::make_tuple(...)`;
 - `layout<Object>` produces byte-stable low-level record keys for tests and
-  future store/session internals;
+  store/session internals;
 - `cursor` and `page_request` are key-boundary primitives, not offset-based
-  query state.
+  query state;
+- `store.register_object<T>()`, `session`, `index_view`, `page`, `stream` and
+  `for_each` execute over a caller-provided async storage context.
 
-This slice intentionally has no `store`, `session`, backend adapter, automatic
-index maintenance or concurrency policy.
+This slice intentionally has no catalog, runtime migration layer, plugin API,
+app lifecycle, scheduler ownership, backend opening policy or concurrency
+policy.
 
 ## Donor: `blockchain/libraries/db`
 
@@ -162,42 +168,40 @@ accidental mix into the object database contract.
 
 ## Forge Direction
 
-The likely library should be top-level:
+The library is top-level:
 
 - namespace: `forge::objectdb`;
 - target/component: `forge_objectdb` / `objectdb`;
 - module prefix: `forge.objectdb.*`.
 
-It should sit below storage backends, app plugins and products. It provides
-stable primitives those layers can reuse; it does not apply them to any
+It sits below storage backends, app plugins and products. It provides stable
+object/index components those layers can reuse; it does not open or own any
 storage engine.
 
-When the reusable engine is introduced, the preferred public type name is
-`forge::objectdb::store`, not `forge::objectdb::database`. The word "database"
-describes the architecture class, while `store` makes the C++ boundary clearer:
-it is an object/index engine over an explicit catalog and storage context, not
-a runtime owner that opens files, owns RocksDB, runs schedulers or exposes
-health/metrics.
+The reusable engine type is `forge::objectdb::store`, not
+`forge::objectdb::database`. The word "database" describes the architecture
+class, while `store` makes the C++ boundary clearer: it is an object/index
+engine over an explicit storage context, not a runtime owner that opens files,
+owns RocksDB, runs schedulers or exposes health/metrics.
 
-Initial primitives-only scope should include:
+The active scope includes:
 
 - object identity through `forge::ids::object_id` and
   `forge::ids::typed_id<Space, Type>`;
-- table/type ids and descriptors;
+- type descriptors;
 - primary and secondary index descriptors;
 - stable ordered key encoding;
 - object and index key prefixes;
 - prefix/range boundaries;
 - opaque cursor/page request primitives;
-- storage-neutral records and mutation records;
+- storage-neutral record execution;
 - typed primitive validation errors.
 
-Explicitly out of v1:
+Explicitly out of this block:
 
-- backend contracts or ports;
-- `get`, `put`, `erase`, `scan`, `begin`, `commit` or `rollback`;
-- repositories, sessions or transaction managers;
-- automatic index-maintenance algorithms;
+- catalog and migration runtime;
+- backend contracts, ports or plugin APIs;
+- repository APIs;
 - concurrency, lock, retry or conflict policy;
 - blockchain/FUSE/Spring/content semantics.
 
@@ -205,22 +209,22 @@ Explicitly out of v1:
 ID foundation is `forge::ids`, ported from the Storlane/BitShares-style
 `{space,type,instance}` model.
 
-The next layer can add pure planning algorithms, for example
-`insert/update/erase -> mutation_batch` and `range_query -> key_range`, but those
-algorithms should still avoid owning a backend/runtime.
+Future layers can add migrations, snapshots, revision journals and richer
+storage adapters, but those algorithms should still avoid product semantics and
+should not make `forge_objectdb` own app/plugin lifecycle.
 
 ## Query And Index Execution Direction
 
-The future objectdb store should feel closer to Boost.MultiIndex than to a
-manual RocksDB key helper layer:
+The objectdb store should feel closer to Boost.MultiIndex than to a manual
+RocksDB key helper layer:
 
 ```cpp
-auto by_name = session.index<account_object, by_name>();
-auto alice = by_name.find("alice");
+auto session = co_await store.session();
 
-auto by_region = session.index<account_object, by_region_balance>();
-auto page = by_region
-   .equal_range(std::uint32_t{3})
+auto alice = co_await session.index<account_object, by_name>().find("alice");
+
+auto page = co_await session.index<account_object, by_region_balance>()
+   .equal_range(std::make_tuple(std::uint32_t{3}))
    .page({.limit = 100});
 ```
 
@@ -228,8 +232,10 @@ The important part is not the exact spelling yet, but the contract:
 
 - `find`, `lower_bound`, `upper_bound` and `equal_range` operate only on
   declared indexes;
-- composite indexes support partial prefix queries;
+- composite indexes support full and partial prefix queries through
+  `std::make_tuple(...)`;
 - pagination is cursor/key-boundary based;
+- large ranges can be consumed lazily with `stream().next()` or `for_each(...)`;
 - non-indexed predicates must not be disguised as indexed lookup APIs.
 
 RocksDB does not provide native objectdb secondary indexes. Forge must maintain
@@ -245,35 +251,31 @@ those records. It must not load the whole index into memory to emulate
 `equal_range`. An in-memory backend can execute the same layout through an
 ordered map and `lower_bound`; the public semantics stay the same.
 
-## Next Implementation Block
+## Migration Groundwork
 
-The next block should add the objectdb store/index-access foundation without
-choosing final backend ownership:
+Catalog and runtime migration support are intentionally not part of this block.
+The current store uses `register_object<T>()` directly, similar to donor
+`add_index<T>()` patterns, and keeps descriptor/key-layout determinism tested.
 
-1. Add `forge.objectdb.catalog` for explicit registration of object
-   descriptors and stable index ordinals.
-2. Add storage-neutral record shapes for object records and secondary index
-   records.
-3. Add pure mutation planning for `insert`, `update` and `erase` that produces a
-   key/value mutation batch for one object plus its indexes.
-4. Add typed index view declarations for `find`, `lower_bound`, `upper_bound`,
-   `equal_range` and `page`, backed by the existing `layout<Object>` ranges.
-5. Add an in-memory ordered-KV test harness only inside tests, proving the index
-   API without creating a public backend abstraction.
-6. Keep `forge::rocksdb`, `forge::plugins::db::rocksdb`, app lifecycle,
-   scheduler, retry policy and product semantics out of `forge_objectdb`.
+These are migration events and must become explicit in a future migration
+block:
 
-The block after that can decide how a real `forge::objectdb::store` receives a
-storage context and transaction boundary. That decision should be based on the
-planned mutation/index API, not on the old quarantined prototype.
+1. changing `{space, type}`;
+2. changing index order or index kind;
+3. changing a mapper/extractor or composite-key member order;
+4. changing base object serialization;
+5. changing the ordered key codec.
 
 ## Acceptance For The Future Implementation
 
 - `forge_objectdb` does not import app/plugin APIs, `forge::rocksdb` or product
   libraries.
-- The v1 API exposes only primitives and primitive validation helpers.
+- The API exposes object descriptors, async store/session/index access and
+  primitive validation helpers.
 - Key prefixes and cursor boundaries are byte-stable and covered by golden
   tests.
 - Composite indexes are byte-stable and covered by golden tests.
+- In-memory and RocksDB storage contexts pass the same object/index behavior
+  suite.
 - Downstream Storlane plugins can remove local `key_for_*` and cursor helpers
   without moving Storlane product semantics into Forge.

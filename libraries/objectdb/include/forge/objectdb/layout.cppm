@@ -7,6 +7,7 @@ module;
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <tuple>
 #include <vector>
 
 export module forge.objectdb.layout;
@@ -88,6 +89,8 @@ void append_value(std::vector<std::byte>& out, const T& value) {
       append_string(out, value);
    } else if constexpr (std::is_same_v<value_type, std::string_view>) {
       append_string(out, value);
+   } else if constexpr (std::is_convertible_v<T, std::string_view>) {
+      append_string(out, std::string_view{value});
    } else if constexpr (std::is_same_v<value_type, forge::ids::object_id>) {
       append_object_id(out, value);
    } else if constexpr (typed_id_traits<value_type>::is_typed_id) {
@@ -97,19 +100,19 @@ void append_value(std::vector<std::byte>& out, const T& value) {
    }
 }
 
-template <auto Member, typename Value>
-void append_member(std::vector<std::byte>& out, const Value& value) {
-   append_value(out, member_pointer_traits<Member>::get(value));
+template <auto Extractor, typename Value>
+void append_extracted(std::vector<std::byte>& out, const Value& value) {
+   append_value(out, extractor_traits<Extractor>::get(value));
 }
 
 template <typename KeySpec>
 struct key_encoder;
 
-template <auto Member>
-struct key_encoder<member_key<Member>> {
+template <>
+struct key_encoder<primary_key> {
    template <typename Value>
    static void append_object(std::vector<std::byte>& out, const Value& value) {
-      append_member<Member>(out, value);
+      append_value(out, value.id);
    }
 
    template <typename PrefixValue>
@@ -118,19 +121,43 @@ struct key_encoder<member_key<Member>> {
    }
 };
 
-template <auto... Members>
-struct key_encoder<composite_key<Members...>> {
+template <auto Extractor>
+struct key_encoder<member_key<Extractor>> {
    template <typename Value>
    static void append_object(std::vector<std::byte>& out, const Value& value) {
-      (append_member<Members>(out, value), ...);
+      append_extracted<Extractor>(out, value);
+   }
+
+   template <typename PrefixValue>
+   static void append_prefix(std::vector<std::byte>& out, const PrefixValue& value) {
+      append_value(out, value);
+   }
+};
+
+template <auto... Extractors>
+struct key_encoder<composite_key<Extractors...>> {
+   template <typename Value>
+   static void append_object(std::vector<std::byte>& out, const Value& value) {
+      (append_extracted<Extractors>(out, value), ...);
    }
 
    template <typename... PrefixValues>
    static void append_prefix(std::vector<std::byte>& out, const PrefixValues&... values) {
-      static_assert(sizeof...(PrefixValues) <= sizeof...(Members), "objectdb composite prefix is longer than the composite key");
+      static_assert(sizeof...(PrefixValues) <= sizeof...(Extractors),
+                    "objectdb composite prefix is longer than the composite key");
       (append_value(out, values), ...);
    }
 };
+
+template <typename Tuple, std::size_t... Indexes>
+void append_tuple_prefix_impl(std::vector<std::byte>& out, const Tuple& tuple, std::index_sequence<Indexes...>) {
+   (append_value(out, std::get<Indexes>(tuple)), ...);
+}
+
+template <typename Tuple>
+void append_tuple_prefix(std::vector<std::byte>& out, const Tuple& tuple) {
+   append_tuple_prefix_impl(out, tuple, std::make_index_sequence<std::tuple_size_v<std::remove_cvref_t<Tuple>>>{});
+}
 
 inline void append_record_prefix(std::vector<std::byte>& out, record_kind kind, object_type type) {
    append_byte(out, static_cast<std::uint8_t>(kind));
@@ -176,8 +203,7 @@ struct layout {
    }
 
    [[nodiscard]] static record_key object_record_key(const value_type& value) {
-      using primary = detail::primary_index_t<Object>;
-      return object_record_key(member_pointer_traits<primary::member>::get(value));
+      return object_record_key(value.id);
    }
 
    template <typename Tag>
@@ -197,8 +223,7 @@ struct layout {
    }
 
    [[nodiscard]] static id_type object_record_id(const value_type& value) {
-      using primary = detail::primary_index_t<Object>;
-      return member_pointer_traits<primary::member>::get(value);
+      return value.id;
    }
 
    template <typename Tag, typename... PrefixValues>
@@ -211,6 +236,33 @@ struct layout {
                                                                         : record_kind::secondary_non_unique_index;
       detail::append_index_prefix(bytes, kind, type, index_id_by_tag<Object, Tag>);
       detail::key_encoder<typename index::key_spec>::append_prefix(bytes, values...);
+      return detail::prefix_range(std::move(bytes));
+   }
+
+   template <typename Tag, typename... PrefixValues>
+   [[nodiscard]] static key_range index_prefix(const std::tuple<PrefixValues...>& values) {
+      using index = index_by_tag<Object, Tag>;
+      static_assert(secondary_index<index>, "objectdb index_prefix is only valid for secondary indexes");
+      static_assert(sizeof...(PrefixValues) <= index::key_spec::size,
+                    "objectdb tuple prefix is longer than the index key");
+
+      auto bytes = std::vector<std::byte>{};
+      constexpr auto kind = index::kind == index_kind::secondary_unique ? record_kind::secondary_unique_index
+                                                                        : record_kind::secondary_non_unique_index;
+      detail::append_index_prefix(bytes, kind, type, index_id_by_tag<Object, Tag>);
+      detail::append_tuple_prefix(bytes, values);
+      return detail::prefix_range(std::move(bytes));
+   }
+
+   template <typename Tag>
+   [[nodiscard]] static key_range index_range() {
+      using index = index_by_tag<Object, Tag>;
+      static_assert(secondary_index<index>, "objectdb index_range is only valid for secondary indexes");
+
+      auto bytes = std::vector<std::byte>{};
+      constexpr auto kind = index::kind == index_kind::secondary_unique ? record_kind::secondary_unique_index
+                                                                        : record_kind::secondary_non_unique_index;
+      detail::append_index_prefix(bytes, kind, type, index_id_by_tag<Object, Tag>);
       return detail::prefix_range(std::move(bytes));
    }
 };

@@ -3,6 +3,7 @@ module;
 #include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -52,6 +53,7 @@ class record_key {
    }
 
    friend bool operator==(const record_key&, const record_key&) = default;
+   friend auto operator<=>(const record_key&, const record_key&) = default;
 
  private:
    std::vector<std::byte> _bytes;
@@ -61,6 +63,16 @@ struct key_range {
    record_key begin;
    record_key end;
    bool has_end = true;
+};
+
+struct record_entry {
+   record_key key;
+   std::vector<std::byte> value;
+};
+
+struct record_scan_result {
+   std::vector<record_entry> entries;
+   std::optional<record_key> next;
 };
 
 } // namespace forge::objectdb

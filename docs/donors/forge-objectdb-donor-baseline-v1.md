@@ -319,7 +319,8 @@ already provided storage context.
 Preferred vocabulary:
 
 - `forge::objectdb::store`: reusable object/index engine;
-- `forge::objectdb::catalog`: schema, object type and index registry;
+- `store.register_object<T>()`: direct object descriptor registration, matching
+  donor `add_index<T>()` patterns;
 - `forge::objectdb::session`: staged object mutations and index maintenance;
 - `forge::objectdb::snapshot`: stable read visibility;
 - `forge::objectdb::cursor` / `forge::objectdb::page`: paginated reads;
@@ -330,12 +331,15 @@ Reasoning:
 - `database` sounds like it owns process/runtime/backend lifecycle: opening
   RocksDB, WAL, files, scheduler, metrics and health.
 - `store` fits the Forge boundary better: it is a reusable component over an
-  explicit catalog and storage/transaction context.
+  explicit storage/transaction context.
 - Different products should define different object schemas, not different
   object database engines.
 - `forge::objectdb::store` and `forge::rocksdb::store` are not ambiguous
   because their namespaces carry different layers: object/index engine versus
   physical ordered key/value backend.
+- A catalog/migration layer is still expected later, but it should be designed
+  as an explicit migration block rather than hidden inside the first async store
+  slice.
 
 ### Future Index Views
 
@@ -347,9 +351,12 @@ Boost.MultiIndex:
 - unique and non-unique ordered indexes support `lower_bound`, `upper_bound`
   and `equal_range`;
 - composite indexes support partial prefix lookup, for example
-  `equal_range(region)` for an index declared as `(region, balance)`;
+  `equal_range(std::make_tuple(region))` for an index declared as
+  `(region, balance)`;
 - large results are read through `page({limit, cursor})`, not materialized as a
   full vector.
+- very large results can also be consumed lazily through `stream().next()` or
+  `for_each(...)`.
 
 This is not a SQL/query-planner layer. Query execution is still based on the
 declared object indexes and the ordered key layout:

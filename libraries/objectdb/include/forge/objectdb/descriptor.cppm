@@ -1,5 +1,7 @@
 module;
 
+#include <boost/describe.hpp>
+
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -28,11 +30,50 @@ struct typed_id_traits<forge::ids::typed_id<Space, Type>> {
 template <typename T>
 concept typed_object_id = typed_id_traits<std::remove_cvref_t<T>>::is_typed_id;
 
-template <auto Member>
-struct member_pointer_traits;
+template <typename Derived, std::uint8_t Space, std::uint16_t Type>
+struct object {
+   using derived_type = Derived;
+   using id_type = forge::ids::typed_id<Space, Type>;
+
+   static constexpr std::uint8_t space = Space;
+   static constexpr std::uint16_t type = Type;
+
+   id_type id;
+
+   bool operator==(const object&) const = default;
+   auto operator<=>(const object&) const = default;
+
+   BOOST_DESCRIBE_CLASS(object, (), (id), (), ())
+};
+
+template <typename T>
+struct object_base_traits {
+   static constexpr bool is_object_base = false;
+};
+
+template <typename Derived, std::uint8_t Space, std::uint16_t Type>
+struct object_base_traits<object<Derived, Space, Type>> {
+   static constexpr bool is_object_base = true;
+   using derived_type = Derived;
+   using id_type = forge::ids::typed_id<Space, Type>;
+   static constexpr std::uint8_t space = Space;
+   static constexpr std::uint16_t type = Type;
+};
+
+template <typename T>
+concept object_value = requires {
+   typename std::remove_cvref_t<T>::id_type;
+   { std::remove_cvref_t<T>::space } -> std::convertible_to<std::uint8_t>;
+   { std::remove_cvref_t<T>::type } -> std::convertible_to<std::uint16_t>;
+} && typed_id_traits<typename std::remove_cvref_t<T>::id_type>::is_typed_id &&
+   std::derived_from<std::remove_cvref_t<T>,
+                     object<std::remove_cvref_t<T>, std::remove_cvref_t<T>::space, std::remove_cvref_t<T>::type>>;
+
+template <auto Extractor>
+struct extractor_traits;
 
 template <typename Owner, typename Value, Value Owner::* Member>
-struct member_pointer_traits<Member> {
+struct extractor_traits<Member> {
    using owner_type = Owner;
    using value_type = Value;
 
@@ -43,50 +84,66 @@ struct member_pointer_traits<Member> {
    }
 };
 
-template <auto Member>
-struct member_key {
-   using owner_type = typename member_pointer_traits<Member>::owner_type;
-   using value_type = typename member_pointer_traits<Member>::value_type;
+template <typename Owner, typename Value, Value (*Function)(const Owner&)>
+struct extractor_traits<Function> {
+   using owner_type = Owner;
+   using value_type = Value;
 
-   static constexpr auto member = Member;
+   static constexpr auto pointer = Function;
+
+   [[nodiscard]] static constexpr decltype(auto) get(const Owner& value) noexcept(noexcept(Function(value))) {
+      return Function(value);
+   }
+};
+
+template <auto Extractor>
+using member_pointer_traits = extractor_traits<Extractor>;
+
+template <auto Extractor>
+struct member_key {
+   using owner_type = typename extractor_traits<Extractor>::owner_type;
+   using value_type = typename extractor_traits<Extractor>::value_type;
+
+   static constexpr auto extractor = Extractor;
    static constexpr std::size_t size = 1;
 };
 
-template <auto... Members>
+template <auto... Extractors>
 struct composite_key {
-   static_assert(sizeof...(Members) > 0, "forge::objectdb::composite_key requires at least one member");
+   static_assert(sizeof...(Extractors) > 0, "forge::objectdb::composite_key requires at least one member");
 
  private:
    template <auto First, auto... Rest>
-   struct first_member {
-      using owner_type = typename member_pointer_traits<First>::owner_type;
+   struct first_extractor {
+      using owner_type = typename extractor_traits<First>::owner_type;
    };
 
  public:
-   using owner_type = typename first_member<Members...>::owner_type;
+   using owner_type = typename first_extractor<Extractors...>::owner_type;
 
-   static constexpr std::size_t size = sizeof...(Members);
+   static constexpr std::size_t size = sizeof...(Extractors);
 };
 
-template <typename Tag, auto Member>
+struct primary_key {
+   static constexpr std::size_t size = 1;
+};
+
+template <typename Tag>
 struct primary_unique {
    using tag_type = Tag;
-   using owner_type = typename member_pointer_traits<Member>::owner_type;
-   using member_type = typename member_pointer_traits<Member>::value_type;
-   using key_spec = member_key<Member>;
+   using key_spec = primary_key;
 
-   static constexpr auto member = Member;
    static constexpr index_kind kind = index_kind::primary_unique;
 };
 
-template <typename Tag, auto Member>
+template <typename Tag, auto Extractor>
 struct secondary_unique {
    using tag_type = Tag;
-   using owner_type = typename member_pointer_traits<Member>::owner_type;
-   using member_type = typename member_pointer_traits<Member>::value_type;
-   using key_spec = member_key<Member>;
+   using owner_type = typename extractor_traits<Extractor>::owner_type;
+   using member_type = typename extractor_traits<Extractor>::value_type;
+   using key_spec = member_key<Extractor>;
 
-   static constexpr auto member = Member;
+   static constexpr auto extractor = Extractor;
    static constexpr index_kind kind = index_kind::secondary_unique;
 };
 
@@ -105,8 +162,17 @@ struct indexed_by {
    static constexpr std::size_t size = sizeof...(Indexes);
 };
 
+template <typename Value, bool Valid>
+struct object_index_value_traits {};
+
+template <typename Value>
+struct object_index_value_traits<Value, true> {
+   using base_type = object<Value, Value::space, Value::type>;
+   using id_type = typename Value::id_type;
+};
+
 template <typename Value, typename Indexes>
-struct object {
+struct object_index : object_index_value_traits<Value, object_value<Value>> {
    using value_type = Value;
    using indexes_type = Indexes;
 };
@@ -114,8 +180,8 @@ struct object {
 template <typename T>
 struct is_primary_index : std::false_type {};
 
-template <typename Tag, auto Member>
-struct is_primary_index<primary_unique<Tag, Member>> : std::true_type {};
+template <typename Tag>
+struct is_primary_index<primary_unique<Tag>> : std::true_type {};
 
 template <typename T>
 inline constexpr bool is_primary_index_v = is_primary_index<T>::value;
@@ -123,8 +189,8 @@ inline constexpr bool is_primary_index_v = is_primary_index<T>::value;
 template <typename T>
 struct is_secondary_index : std::false_type {};
 
-template <typename Tag, auto Member>
-struct is_secondary_index<secondary_unique<Tag, Member>> : std::true_type {};
+template <typename Tag, auto Extractor>
+struct is_secondary_index<secondary_unique<Tag, Extractor>> : std::true_type {};
 
 template <typename Tag, typename KeySpec>
 struct is_secondary_index<secondary_non_unique<Tag, KeySpec>> : std::true_type {};
@@ -135,7 +201,6 @@ inline constexpr bool is_secondary_index_v = is_secondary_index<T>::value;
 template <typename T>
 concept index_model = requires {
    typename T::tag_type;
-   typename T::owner_type;
    typename T::key_spec;
    { T::kind } -> std::convertible_to<index_kind>;
 };
@@ -170,7 +235,16 @@ struct indexes_match_object;
 
 template <typename Object, typename... Indexes>
 struct indexes_match_object<Object, indexed_by<Indexes...>> {
-   static constexpr bool value = (... && std::same_as<typename Indexes::owner_type, typename Object::value_type>);
+   template <typename Index>
+   static constexpr bool matches_index() {
+      if constexpr (is_primary_index_v<Index>) {
+         return true;
+      } else {
+         return std::same_as<typename Index::owner_type, typename Object::value_type>;
+      }
+   }
+
+   static constexpr bool value = (... && matches_index<Indexes>());
 };
 
 template <typename Indexes>
@@ -190,7 +264,7 @@ template <typename Object>
 using primary_index_t = typename first_primary_index<typename Object::indexes_type>::type;
 
 template <typename Object>
-using primary_id_t = typename primary_index_t<Object>::member_type;
+using primary_id_t = typename Object::id_type;
 
 template <typename Indexes>
 struct unique_tags;
@@ -213,16 +287,11 @@ struct valid_object_impl<Object, true> {
    static constexpr bool one_primary = indexed && primary_count<typename Object::indexes_type>::value == 1;
    static constexpr bool owner_match = indexed && indexes_match_object<Object, typename Object::indexes_type>::value;
    static constexpr bool tags_unique = indexed && unique_tags<typename Object::indexes_type>::value;
-   static constexpr bool primary_is_typed = [] {
-      if constexpr (one_primary) {
-         return typed_id_traits<std::remove_cvref_t<primary_id_t<Object>>>::is_typed_id;
-      } else {
-         return false;
-      }
-   }();
+   static constexpr bool value_has_base = object_value<typename Object::value_type>;
+   static constexpr bool primary_is_typed = typed_id_traits<std::remove_cvref_t<primary_id_t<Object>>>::is_typed_id;
 
  public:
-   static constexpr bool value = indexed && one_primary && owner_match && tags_unique && primary_is_typed;
+   static constexpr bool value = indexed && one_primary && owner_match && tags_unique && value_has_base && primary_is_typed;
 };
 
 template <typename Object>
@@ -230,6 +299,7 @@ struct valid_object
     : valid_object_impl<Object,
                         requires {
                            typename Object::value_type;
+                           typename Object::id_type;
                            typename Object::indexes_type;
                         }> {};
 
@@ -275,7 +345,7 @@ template <typename Object, typename Tag>
 struct index_lookup;
 
 template <typename Value, typename... Indexes, typename Tag>
-struct index_lookup<object<Value, indexed_by<Indexes...>>, Tag> {
+struct index_lookup<object_index<Value, indexed_by<Indexes...>>, Tag> {
  private:
    using impl = detail::find_index_by_tag_impl<Tag, 0, Indexes...>;
    static_assert(impl::found, "forge::objectdb index tag is not registered for this object");
@@ -290,5 +360,11 @@ using index_by_tag = typename index_lookup<Object, Tag>::type;
 
 template <object_model Object, typename Tag>
 inline constexpr index_id index_id_by_tag{.value = static_cast<std::uint32_t>(index_lookup<Object, Tag>::position)};
+
+template <typename Id>
+struct object_index_for_id;
+
+template <typename Id>
+using object_index_for_id_t = typename object_index_for_id<std::remove_cvref_t<Id>>::type;
 
 } // namespace forge::objectdb

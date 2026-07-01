@@ -87,6 +87,10 @@ add_executable(
    objectdb/objectdb_tests.cpp
 )
 target_link_libraries(test_forge_objectdb forge_objectdb forge Boost::included_unit_test_framework)
+target_compile_definitions(test_forge_objectdb PRIVATE FORGE_HAS_ROCKSDB=$<BOOL:${FORGE_HAS_ROCKSDB}>)
+if(FORGE_HAS_ROCKSDB)
+   target_link_libraries(test_forge_objectdb forge_rocksdb)
+endif()
 add_test(NAME test_forge_objectdb COMMAND test_forge_objectdb WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(

@@ -146,6 +146,13 @@ It should sit below storage backends, app plugins and products. It provides
 stable primitives those layers can reuse; it does not apply them to any
 storage engine.
 
+When the reusable engine is introduced, the preferred public type name is
+`forge::objectdb::store`, not `forge::objectdb::database`. The word "database"
+describes the architecture class, while `store` makes the C++ boundary clearer:
+it is an object/index engine over an explicit catalog and storage context, not
+a runtime owner that opens files, owns RocksDB, runs schedulers or exposes
+health/metrics.
+
 Initial primitives-only scope should include:
 
 - object identity through `forge::ids::object_id` and

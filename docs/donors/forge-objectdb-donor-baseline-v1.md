@@ -302,6 +302,34 @@ database.
 - storage-neutral records and mutation records;
 - primitive validation errors.
 
+### Future `forge::objectdb::store`
+
+The reusable object database engine should be named `store`, not `database`.
+The term "object database" remains the architecture class, but the C++ owner
+type should communicate that it is an object/index storage layer over an
+already provided storage context.
+
+Preferred vocabulary:
+
+- `forge::objectdb::store`: reusable object/index engine;
+- `forge::objectdb::catalog`: schema, object type and index registry;
+- `forge::objectdb::session`: staged object mutations and index maintenance;
+- `forge::objectdb::snapshot`: stable read visibility;
+- `forge::objectdb::cursor` / `forge::objectdb::page`: paginated reads;
+- `forge::rocksdb::store`: physical ordered key/value backend.
+
+Reasoning:
+
+- `database` sounds like it owns process/runtime/backend lifecycle: opening
+  RocksDB, WAL, files, scheduler, metrics and health.
+- `store` fits the Forge boundary better: it is a reusable component over an
+  explicit catalog and storage/transaction context.
+- Different products should define different object schemas, not different
+  object database engines.
+- `forge::objectdb::store` and `forge::rocksdb::store` are not ambiguous
+  because their namespaces carry different layers: object/index engine versus
+  physical ordered key/value backend.
+
 ### Future Higher Layers
 
 These may be useful later, but should not be part of the first primitive slice:

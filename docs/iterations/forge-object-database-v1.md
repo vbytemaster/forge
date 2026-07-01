@@ -28,6 +28,12 @@ The donor baseline is tracked separately in
 That note records which serious database systems influence each objectdb
 component class.
 
+The first prototype implementation has been quarantined under
+`legacy/objectdb/`. It is archival reference material only: it is not built,
+installed, exported as a package component or tested. New work should use this
+document and the donor baseline instead of treating the quarantined prototype as
+the public API shape.
+
 ## Donor: `blockchain/libraries/db`
 
 The `blockchain::db` prototype is the closest donor for the desired API shape.

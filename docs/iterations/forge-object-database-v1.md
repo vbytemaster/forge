@@ -34,6 +34,26 @@ installed, exported as a package component or tested. New work should use this
 document and the donor baseline instead of treating the quarantined prototype as
 the public API shape.
 
+## Active First Slice
+
+The active first slice is now `forge_objectdb` with declarative object/index
+descriptors and deterministic key layout:
+
+- user object types remain plain structs;
+- `object<T, indexed_by<...>>` is a schema descriptor, not a base class;
+- `primary_unique<Tag, &T::id>` derives the object type from
+  `forge::ids::typed_id<Space, Type>`;
+- `secondary_unique` and `secondary_non_unique` describe stored index entries;
+- `composite_key<&T::field1, &T::field2>` establishes lexicographic member
+  order and partial prefix lookup;
+- `layout<Object>` produces byte-stable low-level record keys for tests and
+  future store/session internals;
+- `cursor` and `page_request` are key-boundary primitives, not offset-based
+  query state.
+
+This slice intentionally has no `store`, `session`, backend adapter, automatic
+index maintenance or concurrency policy.
+
 ## Donor: `blockchain/libraries/db`
 
 The `blockchain::db` prototype is the closest donor for the desired API shape.
@@ -188,6 +208,64 @@ ID foundation is `forge::ids`, ported from the Storlane/BitShares-style
 The next layer can add pure planning algorithms, for example
 `insert/update/erase -> mutation_batch` and `range_query -> key_range`, but those
 algorithms should still avoid owning a backend/runtime.
+
+## Query And Index Execution Direction
+
+The future objectdb store should feel closer to Boost.MultiIndex than to a
+manual RocksDB key helper layer:
+
+```cpp
+auto by_name = session.index<account_object, by_name>();
+auto alice = by_name.find("alice");
+
+auto by_region = session.index<account_object, by_region_balance>();
+auto page = by_region
+   .equal_range(std::uint32_t{3})
+   .page({.limit = 100});
+```
+
+The important part is not the exact spelling yet, but the contract:
+
+- `find`, `lower_bound`, `upper_bound` and `equal_range` operate only on
+  declared indexes;
+- composite indexes support partial prefix queries;
+- pagination is cursor/key-boundary based;
+- non-indexed predicates must not be disguised as indexed lookup APIs.
+
+RocksDB does not provide native objectdb secondary indexes. Forge must maintain
+secondary index records itself:
+
+- primary record: `object-id -> serialized object`;
+- unique secondary index: `encoded index value -> object id`;
+- non-unique secondary index:
+  `encoded index value + primary object id -> marker/object id`.
+
+RocksDB execution should use `Get`, iterator `Seek` and bounded range scans over
+those records. It must not load the whole index into memory to emulate
+`equal_range`. An in-memory backend can execute the same layout through an
+ordered map and `lower_bound`; the public semantics stay the same.
+
+## Next Implementation Block
+
+The next block should add the objectdb store/index-access foundation without
+choosing final backend ownership:
+
+1. Add `forge.objectdb.catalog` for explicit registration of object
+   descriptors and stable index ordinals.
+2. Add storage-neutral record shapes for object records and secondary index
+   records.
+3. Add pure mutation planning for `insert`, `update` and `erase` that produces a
+   key/value mutation batch for one object plus its indexes.
+4. Add typed index view declarations for `find`, `lower_bound`, `upper_bound`,
+   `equal_range` and `page`, backed by the existing `layout<Object>` ranges.
+5. Add an in-memory ordered-KV test harness only inside tests, proving the index
+   API without creating a public backend abstraction.
+6. Keep `forge::rocksdb`, `forge::plugins::db::rocksdb`, app lifecycle,
+   scheduler, retry policy and product semantics out of `forge_objectdb`.
+
+The block after that can decide how a real `forge::objectdb::store` receives a
+storage context and transaction boundary. That decision should be based on the
+planned mutation/index API, not on the old quarantined prototype.
 
 ## Acceptance For The Future Implementation
 

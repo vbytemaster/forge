@@ -67,3 +67,39 @@ is stable.
 Application code should prefer descriptors now and future `store/session` APIs
 later. `record_key` is a low-level layout primitive, not the main user-facing
 object model.
+
+## Planned Index Access Model
+
+The next objectdb layer should expose Boost.MultiIndex-style accessors over the
+declared tags. This is the API direction, not part of the current slice:
+
+```cpp
+auto by_name = session.index<account_object, by_name>();
+auto alice = by_name.find("alice");
+
+auto by_region = session.index<account_object, by_region_balance>();
+auto page = by_region
+   .equal_range(std::uint32_t{3})
+   .page({.limit = 100});
+```
+
+The key rule is that indexed queries must execute through stored index records,
+not by loading all objects or all index entries into memory and then applying
+`std` algorithms.
+
+For an ordered key/value backend such as RocksDB:
+
+- `find` on a unique secondary index becomes an exact lookup of the encoded
+  index key, followed by a primary object lookup.
+- `equal_range` on a non-unique or composite index becomes an iterator seek to
+  the encoded prefix, then bounded reads while keys remain inside the range.
+- pagination uses opaque key-boundary cursors, not offsets.
+
+For an in-memory backend, the same objectdb layout can be executed over an
+ordered container such as `std::map<std::vector<std::byte>, bytes>`, using
+`lower_bound` and range iteration. The public object/index semantics should be
+the same even though the physical mechanics differ.
+
+Queries over fields that are not declared as indexes must not be hidden behind
+`find` or `equal_range`. They should be explicit scans/filters if a future layer
+supports them.

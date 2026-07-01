@@ -217,6 +217,13 @@ Accepted:
 - snapshots, iterators and write batches as backend donor mechanics;
 - compaction-safe key layout discipline.
 
+Important boundary:
+
+- RocksDB and Pebble do not provide Forge objectdb secondary indexes as a
+  native database feature. Forge must store secondary index entries as ordinary
+  ordered key/value records, then execute indexed access with exact lookup,
+  iterator seek, bounded range scans and opaque cursors.
+
 Rejected:
 
 - native `rocksdb::*` types in `forge::objectdb`;
@@ -329,6 +336,35 @@ Reasoning:
 - `forge::objectdb::store` and `forge::rocksdb::store` are not ambiguous
   because their namespaces carry different layers: object/index engine versus
   physical ordered key/value backend.
+
+### Future Index Views
+
+The store/session layer should expose typed index views inspired by
+Boost.MultiIndex:
+
+- `session.index<Object, Tag>()` returns a typed view over a declared index tag;
+- unique indexes support `find(key)`;
+- unique and non-unique ordered indexes support `lower_bound`, `upper_bound`
+  and `equal_range`;
+- composite indexes support partial prefix lookup, for example
+  `equal_range(region)` for an index declared as `(region, balance)`;
+- large results are read through `page({limit, cursor})`, not materialized as a
+  full vector.
+
+This is not a SQL/query-planner layer. Query execution is still based on the
+declared object indexes and the ordered key layout:
+
+- primary object record: `object-id -> serialized object`;
+- unique secondary index: `encoded index value -> object id`;
+- non-unique secondary index: `encoded index value + primary id -> marker/id`;
+- exact unique lookup: backend `get(index key)` then `get(object key)`;
+- prefix/range lookup: backend `lower_bound` or iterator `seek`, then bounded
+  reads until the key leaves the range.
+
+Backends differ only in mechanics. A RocksDB implementation uses native
+`Get`/iterator seek over persisted bytes. An in-memory implementation can use
+ordered containers over the same record keys. Neither implementation should
+load a whole index into memory to satisfy `find` or `equal_range`.
 
 ### Future Higher Layers
 

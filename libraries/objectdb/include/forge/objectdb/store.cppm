@@ -239,7 +239,7 @@ template <object_model Object, typename Tag>
          -> boost::asio::awaitable<object_page<typename Object::value_type>> {
          auto read = co_await owner.begin_read();
          auto view = read.template index<Object, Tag>();
-         co_return co_await detail::page_index_view(view, std::move(range), std::move(request));
+         co_return co_await view.page(std::move(range), std::move(request));
       },
       [owner = *this]() mutable -> index_page_query<typename Object::value_type> {
          auto active = std::make_shared<std::optional<snapshot>>();
@@ -249,7 +249,7 @@ template <object_model Object, typename Tag>
                active->emplace(co_await owner.begin_read());
             }
             auto view = active->value().template index<Object, Tag>();
-            co_return co_await detail::page_index_view(view, std::move(range), std::move(request));
+            co_return co_await view.page(std::move(range), std::move(request));
          };
       }};
 }

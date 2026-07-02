@@ -8,7 +8,6 @@
 #include <forge/objectdb/macros.hpp>
 
 import forge.ids.types;
-import forge.objectdb.descriptor;
 import forge.objectdb.index;
 import forge.objectdb.object;
 import forge.objectdb.record;

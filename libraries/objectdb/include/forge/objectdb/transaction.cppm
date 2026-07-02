@@ -6,8 +6,11 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <tuple>
 #include <typeindex>
 #include <typeinfo>
@@ -119,6 +122,203 @@ class transaction::access {
 } // namespace forge::objectdb
 
 namespace forge::objectdb::detail {
+
+enum class entry_kind : std::uint8_t {
+   object_record = 0x10,
+   secondary_unique_index = 0x20,
+   secondary_non_unique_index = 0x21,
+};
+
+inline void append_byte(std::vector<std::byte>& out, std::uint8_t value) {
+   out.push_back(static_cast<std::byte>(value));
+}
+
+inline void append_be16(std::vector<std::byte>& out, std::uint16_t value) {
+   append_byte(out, static_cast<std::uint8_t>((value >> 8U) & 0xffU));
+   append_byte(out, static_cast<std::uint8_t>(value & 0xffU));
+}
+
+inline void append_be32(std::vector<std::byte>& out, std::uint32_t value) {
+   append_byte(out, static_cast<std::uint8_t>((value >> 24U) & 0xffU));
+   append_byte(out, static_cast<std::uint8_t>((value >> 16U) & 0xffU));
+   append_byte(out, static_cast<std::uint8_t>((value >> 8U) & 0xffU));
+   append_byte(out, static_cast<std::uint8_t>(value & 0xffU));
+}
+
+inline void append_be64(std::vector<std::byte>& out, std::uint64_t value) {
+   for (auto shift = 56; shift >= 0; shift -= 8) {
+      append_byte(out, static_cast<std::uint8_t>((value >> static_cast<unsigned>(shift)) & 0xffU));
+   }
+}
+
+template <typename Unsigned>
+void append_unsigned(std::vector<std::byte>& out, Unsigned value) {
+   static_assert(std::is_unsigned_v<Unsigned>);
+   for (auto index = sizeof(Unsigned); index > 0; --index) {
+      const auto shift = static_cast<unsigned>((index - 1U) * 8U);
+      append_byte(out, static_cast<std::uint8_t>((value >> shift) & static_cast<Unsigned>(0xffU)));
+   }
+}
+
+template <typename Signed>
+void append_signed(std::vector<std::byte>& out, Signed value) {
+   static_assert(std::is_signed_v<Signed>);
+   using unsigned_type = std::make_unsigned_t<Signed>;
+   auto encoded = static_cast<unsigned_type>(value);
+   encoded ^= (unsigned_type{1} << (std::numeric_limits<unsigned_type>::digits - 1U));
+   append_unsigned(out, encoded);
+}
+
+inline void append_string(std::vector<std::byte>& out, std::string_view value) {
+   for (unsigned char ch : value) {
+      append_byte(out, ch);
+      if (ch == 0U) {
+         append_byte(out, 0xffU);
+      }
+   }
+   append_byte(out, 0U);
+}
+
+inline void append_object_id(std::vector<std::byte>& out, forge::ids::object_id value) {
+   append_byte(out, value.space);
+   append_be16(out, value.type);
+   append_be64(out, value.instance);
+}
+
+template <typename T>
+void append_value(std::vector<std::byte>& out, const T& value) {
+   using value_type = std::remove_cvref_t<T>;
+   if constexpr (std::is_same_v<value_type, bool>) {
+      append_byte(out, value ? 1U : 0U);
+   } else if constexpr (std::is_integral_v<value_type> && std::is_unsigned_v<value_type>) {
+      append_unsigned(out, value);
+   } else if constexpr (std::is_integral_v<value_type> && std::is_signed_v<value_type>) {
+      append_signed(out, value);
+   } else if constexpr (std::is_enum_v<value_type>) {
+      append_value(out, static_cast<std::underlying_type_t<value_type>>(value));
+   } else if constexpr (std::is_same_v<value_type, std::string>) {
+      append_string(out, value);
+   } else if constexpr (std::is_same_v<value_type, std::string_view>) {
+      append_string(out, value);
+   } else if constexpr (std::is_convertible_v<T, std::string_view>) {
+      append_string(out, std::string_view{value});
+   } else if constexpr (std::is_same_v<value_type, forge::ids::object_id>) {
+      append_object_id(out, value);
+   } else if constexpr (typed_id_traits<value_type>::is_typed_id) {
+      append_object_id(out, value.as_object_id());
+   } else {
+      static_assert(sizeof(value_type) == 0, "forge::objectdb cannot encode this key member type");
+   }
+}
+
+template <auto Extractor, typename Value>
+void append_extracted(std::vector<std::byte>& out, const Value& value) {
+   append_value(out, extractor_traits<Extractor>::get(value));
+}
+
+template <typename KeySpec>
+struct key_encoder;
+
+template <>
+struct key_encoder<primary_key> {
+   template <typename Value>
+   static void append_object(std::vector<std::byte>& out, const Value& value) {
+      append_value(out, value.id);
+   }
+};
+
+template <auto Extractor>
+struct key_encoder<member_key<Extractor>> {
+   template <typename Value>
+   static void append_object(std::vector<std::byte>& out, const Value& value) {
+      append_extracted<Extractor>(out, value);
+   }
+};
+
+template <auto... Extractors>
+struct key_encoder<composite_key<Extractors...>> {
+   template <typename Value>
+   static void append_object(std::vector<std::byte>& out, const Value& value) {
+      (append_extracted<Extractors>(out, value), ...);
+   }
+};
+
+inline void append_record_prefix(std::vector<std::byte>& out, entry_kind kind, forge::ids::object_id type) {
+   append_byte(out, static_cast<std::uint8_t>(kind));
+   append_byte(out, type.space);
+   append_be16(out, type.type);
+}
+
+inline void append_index_prefix(std::vector<std::byte>& out,
+                                entry_kind kind,
+                                forge::ids::object_id type,
+                                std::uint32_t ordinal) {
+   append_record_prefix(out, kind, type);
+   append_be32(out, ordinal);
+}
+
+template <object_model Object>
+[[nodiscard]] record_key object_record_key(id_type_of<Object> id) {
+   auto bytes = std::vector<std::byte>{};
+   append_record_prefix(bytes, entry_kind::object_record, object_id_of<Object>::value);
+   append_be64(bytes, id.instance);
+   return record_key{std::move(bytes)};
+}
+
+template <object_model Object, typename Tag>
+[[nodiscard]] record_key index_entry_key(const typename Object::value_type& value) {
+   using index = index_by_tag<Object, Tag>;
+   static_assert(secondary_index<index>, "objectdb index_entry_key is only valid for secondary indexes");
+
+   auto bytes = std::vector<std::byte>{};
+   constexpr auto kind = index::kind == index_kind::secondary_unique ? entry_kind::secondary_unique_index
+                                                                     : entry_kind::secondary_non_unique_index;
+   append_index_prefix(bytes, kind, object_id_of<Object>::value, index_id_by_tag<Object, Tag>);
+   key_encoder<typename index::key_spec>::append_object(bytes, value);
+   if constexpr (index::kind == index_kind::secondary_non_unique) {
+      append_be64(bytes, value.id.instance);
+   }
+   return record_key{std::move(bytes)};
+}
+
+template <typename T>
+std::vector<std::byte> to_byte_vector(const std::vector<T>& input) {
+   auto out = std::vector<std::byte>{};
+   out.reserve(input.size());
+   for (auto value : input) {
+      out.push_back(static_cast<std::byte>(value));
+   }
+   return out;
+}
+
+inline std::vector<std::uint8_t> to_uint8_vector(const std::vector<std::byte>& input) {
+   auto out = std::vector<std::uint8_t>{};
+   out.reserve(input.size());
+   for (auto value : input) {
+      out.push_back(static_cast<std::uint8_t>(value));
+   }
+   return out;
+}
+
+template <typename T>
+std::vector<std::byte> pack_value(const T& value) {
+   auto bytes = std::vector<std::uint8_t>{};
+   forge::raw::pack(bytes, value);
+   return to_byte_vector(bytes);
+}
+
+template <typename T>
+T unpack_value(const std::vector<std::byte>& bytes) {
+   return forge::raw::unpack<T>(to_uint8_vector(bytes));
+}
+
+template <object_model Object>
+id_type_of<Object> typed_id_from(forge::ids::object_id id) {
+   if (!forge::ids::matches<id_type_of<Object>::space, id_type_of<Object>::type>(id)) {
+      FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor, "object_id does not match objectdb object type");
+   }
+   return id_type_of<Object>{id};
+}
 
 template <object_model Object, typename Access>
 boost::asio::awaitable<std::optional<typename Object::value_type>> read_transaction_object(Access tx,

@@ -84,6 +84,61 @@ class snapshot::access {
 
 namespace forge::objectdb::detail {
 
+enum class entry_kind : std::uint8_t {
+   object_record = 0x10,
+};
+
+inline void append_byte(std::vector<std::byte>& out, std::uint8_t value) {
+   out.push_back(static_cast<std::byte>(value));
+}
+
+inline void append_be16(std::vector<std::byte>& out, std::uint16_t value) {
+   append_byte(out, static_cast<std::uint8_t>((value >> 8U) & 0xffU));
+   append_byte(out, static_cast<std::uint8_t>(value & 0xffU));
+}
+
+inline void append_be64(std::vector<std::byte>& out, std::uint64_t value) {
+   for (auto shift = 56; shift >= 0; shift -= 8) {
+      append_byte(out, static_cast<std::uint8_t>((value >> static_cast<unsigned>(shift)) & 0xffU));
+   }
+}
+
+inline void append_record_prefix(std::vector<std::byte>& out, entry_kind kind, forge::ids::object_id type) {
+   append_byte(out, static_cast<std::uint8_t>(kind));
+   append_byte(out, type.space);
+   append_be16(out, type.type);
+}
+
+template <object_model Object>
+[[nodiscard]] record_key object_record_key(id_type_of<Object> id) {
+   auto bytes = std::vector<std::byte>{};
+   append_record_prefix(bytes, entry_kind::object_record, object_id_of<Object>::value);
+   append_be64(bytes, id.instance);
+   return record_key{std::move(bytes)};
+}
+
+inline std::vector<std::uint8_t> to_uint8_vector(const std::vector<std::byte>& input) {
+   auto out = std::vector<std::uint8_t>{};
+   out.reserve(input.size());
+   for (auto value : input) {
+      out.push_back(static_cast<std::uint8_t>(value));
+   }
+   return out;
+}
+
+template <typename T>
+T unpack_value(const std::vector<std::byte>& bytes) {
+   return forge::raw::unpack<T>(to_uint8_vector(bytes));
+}
+
+template <object_model Object>
+id_type_of<Object> typed_id_from(forge::ids::object_id id) {
+   if (!forge::ids::matches<id_type_of<Object>::space, id_type_of<Object>::type>(id)) {
+      FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor, "object_id does not match objectdb object type");
+   }
+   return id_type_of<Object>{id};
+}
+
 template <object_model Object, typename Access>
 boost::asio::awaitable<std::optional<typename Object::value_type>> read_snapshot_object(Access view,
                                                                                         forge::ids::object_id id) {

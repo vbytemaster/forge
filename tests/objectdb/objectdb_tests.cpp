@@ -29,7 +29,6 @@ import forge.asio.blocking;
 import forge.crypto.hex;
 import forge.ids.types;
 import forge.objectdb.cursor;
-import forge.objectdb.descriptor;
 import forge.objectdb.exceptions;
 import forge.objectdb.hooks;
 import forge.objectdb.index;

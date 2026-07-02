@@ -22,7 +22,6 @@ import forge.objectdb.cursor;
 import forge.objectdb.exceptions;
 import forge.objectdb.object;
 import forge.objectdb.record;
-import forge.raw.raw;
 
 export namespace forge::objectdb {
 
@@ -340,10 +339,9 @@ class index_view;
 
 } // namespace forge::objectdb
 
-export namespace forge::objectdb::detail {
+namespace forge::objectdb::detail {
 
-enum class record_kind : std::uint8_t {
-   object_record = 0x10,
+enum class entry_kind : std::uint8_t {
    secondary_unique_index = 0x20,
    secondary_non_unique_index = 0x21,
 };
@@ -489,16 +487,16 @@ void append_tuple_prefix(std::vector<std::byte>& out, const Tuple& tuple) {
    append_tuple_prefix_impl(out, tuple, std::make_index_sequence<std::tuple_size_v<std::remove_cvref_t<Tuple>>>{});
 }
 
-inline void append_record_prefix(std::vector<std::byte>& out, record_kind kind, forge::ids::object_id type) {
+inline void append_record_prefix(std::vector<std::byte>& out, entry_kind kind, forge::ids::object_id type) {
    append_byte(out, static_cast<std::uint8_t>(kind));
    append_byte(out, type.space);
    append_be16(out, type.type);
 }
 
-inline void append_index_prefix(std::vector<std::byte>& out,
-                                record_kind kind,
-                                forge::ids::object_id type,
-                                std::uint32_t ordinal) {
+inline void append_secondary_prefix(std::vector<std::byte>& out,
+                                    entry_kind kind,
+                                    forge::ids::object_id type,
+                                    std::uint32_t ordinal) {
    append_record_prefix(out, kind, type);
    append_be32(out, ordinal);
 }
@@ -525,113 +523,45 @@ inline record_range prefix_range(std::vector<std::byte> prefix) {
       .has_end = false};
 }
 
-template <object_model Object>
-[[nodiscard]] record_key object_record_key(id_type_of<Object> id) {
-   auto bytes = std::vector<std::byte>{};
-   append_record_prefix(bytes, record_kind::object_record, object_id_of<Object>::value);
-   append_be64(bytes, id.instance);
-   return record_key{std::move(bytes)};
-}
-
-template <object_model Object, typename Tag>
-[[nodiscard]] record_key index_entry_key(const typename Object::value_type& value) {
-   using index = index_by_tag<Object, Tag>;
-   static_assert(secondary_index<index>, "objectdb index_entry_key is only valid for secondary indexes");
-
-   auto bytes = std::vector<std::byte>{};
-   constexpr auto kind = index::kind == index_kind::secondary_unique ? record_kind::secondary_unique_index
-                                                                     : record_kind::secondary_non_unique_index;
-   append_index_prefix(bytes, kind, object_id_of<Object>::value, index_id_by_tag<Object, Tag>);
-   key_encoder<typename index::key_spec>::append_object(bytes, value);
-   if constexpr (index::kind == index_kind::secondary_non_unique) {
-      append_be64(bytes, value.id.instance);
-   }
-   return record_key{std::move(bytes)};
-}
-
 template <object_model Object, typename Tag, typename... PrefixValues>
-[[nodiscard]] record_range index_prefix(const PrefixValues&... values) {
+[[nodiscard]] record_range range_from_prefix(const PrefixValues&... values) {
    using index = index_by_tag<Object, Tag>;
-   static_assert(secondary_index<index>, "objectdb index_prefix is only valid for secondary indexes");
+   static_assert(secondary_index<index>, "objectdb range_from_prefix is only valid for secondary indexes");
 
    auto bytes = std::vector<std::byte>{};
-   constexpr auto kind = index::kind == index_kind::secondary_unique ? record_kind::secondary_unique_index
-                                                                     : record_kind::secondary_non_unique_index;
-   append_index_prefix(bytes, kind, object_id_of<Object>::value, index_id_by_tag<Object, Tag>);
+   constexpr auto kind = index::kind == index_kind::secondary_unique ? entry_kind::secondary_unique_index
+                                                                     : entry_kind::secondary_non_unique_index;
+   append_secondary_prefix(bytes, kind, object_id_of<Object>::value, index_id_by_tag<Object, Tag>);
    key_encoder<typename index::key_spec>::append_prefix(bytes, values...);
    return prefix_range(std::move(bytes));
 }
 
 template <object_model Object, typename Tag, typename... PrefixValues>
-[[nodiscard]] record_range index_prefix(const std::tuple<PrefixValues...>& values) {
+[[nodiscard]] record_range range_from_prefix(const std::tuple<PrefixValues...>& values) {
    using index = index_by_tag<Object, Tag>;
-   static_assert(secondary_index<index>, "objectdb index_prefix is only valid for secondary indexes");
+   static_assert(secondary_index<index>, "objectdb range_from_prefix is only valid for secondary indexes");
    static_assert(sizeof...(PrefixValues) <= index::key_spec::size,
                  "objectdb tuple prefix is longer than the index key");
 
    auto bytes = std::vector<std::byte>{};
-   constexpr auto kind = index::kind == index_kind::secondary_unique ? record_kind::secondary_unique_index
-                                                                     : record_kind::secondary_non_unique_index;
-   append_index_prefix(bytes, kind, object_id_of<Object>::value, index_id_by_tag<Object, Tag>);
+   constexpr auto kind = index::kind == index_kind::secondary_unique ? entry_kind::secondary_unique_index
+                                                                     : entry_kind::secondary_non_unique_index;
+   append_secondary_prefix(bytes, kind, object_id_of<Object>::value, index_id_by_tag<Object, Tag>);
    append_tuple_prefix(bytes, values);
    return prefix_range(std::move(bytes));
 }
 
 template <object_model Object, typename Tag>
-[[nodiscard]] record_range index_range() {
+[[nodiscard]] record_range range_for_index() {
    using index = index_by_tag<Object, Tag>;
-   static_assert(secondary_index<index>, "objectdb index_range is only valid for secondary indexes");
+   static_assert(secondary_index<index>, "objectdb range_for_index is only valid for secondary indexes");
 
    auto bytes = std::vector<std::byte>{};
-   constexpr auto kind = index::kind == index_kind::secondary_unique ? record_kind::secondary_unique_index
-                                                                     : record_kind::secondary_non_unique_index;
-   append_index_prefix(bytes, kind, object_id_of<Object>::value, index_id_by_tag<Object, Tag>);
+   constexpr auto kind = index::kind == index_kind::secondary_unique ? entry_kind::secondary_unique_index
+                                                                     : entry_kind::secondary_non_unique_index;
+   append_secondary_prefix(bytes, kind, object_id_of<Object>::value, index_id_by_tag<Object, Tag>);
    return prefix_range(std::move(bytes));
 }
-
-template <typename T>
-std::vector<std::byte> to_byte_vector(const std::vector<T>& input) {
-   auto out = std::vector<std::byte>{};
-   out.reserve(input.size());
-   for (auto value : input) {
-      out.push_back(static_cast<std::byte>(value));
-   }
-   return out;
-}
-
-inline std::vector<std::uint8_t> to_uint8_vector(const std::vector<std::byte>& input) {
-   auto out = std::vector<std::uint8_t>{};
-   out.reserve(input.size());
-   for (auto value : input) {
-      out.push_back(static_cast<std::uint8_t>(value));
-   }
-   return out;
-}
-
-template <typename T>
-std::vector<std::byte> pack_value(const T& value) {
-   auto bytes = std::vector<std::uint8_t>{};
-   forge::raw::pack(bytes, value);
-   return to_byte_vector(bytes);
-}
-
-template <typename T>
-T unpack_value(const std::vector<std::byte>& bytes) {
-   return forge::raw::unpack<T>(to_uint8_vector(bytes));
-}
-
-template <object_model Object>
-id_type_of<Object> typed_id_from(forge::ids::object_id id) {
-   if (!forge::ids::matches<id_type_of<Object>::space, id_type_of<Object>::type>(id)) {
-      FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor, "object_id does not match objectdb object type");
-   }
-   return id_type_of<Object>{id};
-}
-
-template <object_model Object, typename Tag>
-boost::asio::awaitable<object_page<typename Object::value_type>> page_index_view(index_view<Object, Tag>& view,
-                                                                                 record_range range,
-                                                                                 page_request request);
 
 } // namespace forge::objectdb::detail
 
@@ -725,6 +655,10 @@ class index_view {
    explicit index_view(index_page_query<value_type> page, index_stream_query_factory<value_type> stream_page = {})
        : page_{std::move(page)}, stream_page_{std::move(stream_page)} {}
 
+   boost::asio::awaitable<object_page<value_type>> page(record_range range, page_request request) {
+      co_return co_await page_(std::move(range), std::move(request));
+   }
+
    template <typename Key>
    boost::asio::awaitable<std::optional<value_type>> find(const Key& key) {
       auto result = co_await equal_range(std::tuple{key}).page(page_request{.limit = 1});
@@ -736,7 +670,7 @@ class index_view {
 
    template <typename... PrefixValues>
    [[nodiscard]] range_query<Object, Tag> equal_range(const std::tuple<PrefixValues...>& prefix) const {
-      return range_query<Object, Tag>{page_, stream_page_, detail::index_prefix<Object, Tag>(prefix)};
+      return range_query<Object, Tag>{page_, stream_page_, detail::range_from_prefix<Object, Tag>(prefix)};
    }
 
    template <typename... PrefixValues>
@@ -746,39 +680,22 @@ class index_view {
 
    template <typename... PrefixValues>
    [[nodiscard]] range_query<Object, Tag> lower_bound(const std::tuple<PrefixValues...>& prefix) const {
-      auto range = detail::index_range<Object, Tag>();
-      range.begin = detail::index_prefix<Object, Tag>(prefix).begin;
+      auto range = detail::range_for_index<Object, Tag>();
+      range.begin = detail::range_from_prefix<Object, Tag>(prefix).begin;
       return range_query<Object, Tag>{page_, stream_page_, std::move(range)};
    }
 
    template <typename... PrefixValues>
    [[nodiscard]] range_query<Object, Tag> upper_bound(const std::tuple<PrefixValues...>& prefix) const {
-      auto range = detail::index_range<Object, Tag>();
-      auto exact = detail::index_prefix<Object, Tag>(prefix);
+      auto range = detail::range_for_index<Object, Tag>();
+      auto exact = detail::range_from_prefix<Object, Tag>(prefix);
       range.begin = exact.has_end ? std::move(exact.end) : std::move(exact.begin);
       return range_query<Object, Tag>{page_, stream_page_, std::move(range)};
    }
 
  private:
-   template <object_model FriendObject, typename FriendTag>
-   friend boost::asio::awaitable<object_page<typename FriendObject::value_type>> detail::page_index_view(
-      index_view<FriendObject, FriendTag>& view,
-      record_range range,
-      page_request request);
-
    index_page_query<value_type> page_;
    index_stream_query_factory<value_type> stream_page_;
 };
 
 } // namespace forge::objectdb
-
-export namespace forge::objectdb::detail {
-
-template <object_model Object, typename Tag>
-boost::asio::awaitable<object_page<typename Object::value_type>> page_index_view(index_view<Object, Tag>& view,
-                                                                                 record_range range,
-                                                                                 page_request request) {
-   co_return co_await view.page_(std::move(range), std::move(request));
-}
-
-} // namespace forge::objectdb::detail

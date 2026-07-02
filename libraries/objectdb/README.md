@@ -331,8 +331,6 @@ ID remains object identity inside that store.
 - `forge.objectdb.snapshot`: read-only stable snapshot API.
 - `forge.objectdb.hooks`: mutation interceptors, observers and change sets.
 - `forge.objectdb.store`: async object store and direct autocommit wrappers.
-- `forge.objectdb.descriptor`: compatibility entrypoint that re-exports object
-  and index descriptors.
 - `forge.objectdb.exceptions`: typed `forge.objectdb` errors.
 - `<forge/objectdb/macros.hpp>`: macro-only object-id mapping declaration.
 

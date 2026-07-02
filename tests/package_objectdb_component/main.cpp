@@ -7,7 +7,7 @@
 #include <boost/describe.hpp>
 #include <forge/objectdb/macros.hpp>
 
-import forge.ids.types;
+import forge.ids.object_id;
 import forge.objectdb.index;
 import forge.objectdb.object;
 import forge.objectdb.record;
@@ -33,6 +33,7 @@ FORGE_OBJECTDB_OBJECT(account_object)
 
 int main() {
    static_assert(forge::objectdb::object_model<account_object>);
+   static_assert(std::same_as<forge::ids::type_for_id_t<account::id_type>, account_object>);
    static_assert(std::same_as<forge::objectdb::object_index_for_id_t<account::id_type>, account_object>);
    constexpr auto type = forge::objectdb::object_id_of<account_object>::value;
    const auto key = forge::objectdb::record_key{std::vector<std::byte>{std::byte{0x01}}};

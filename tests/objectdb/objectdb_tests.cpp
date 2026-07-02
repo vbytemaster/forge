@@ -27,7 +27,7 @@
 import forge.asio.runtime;
 import forge.asio.blocking;
 import forge.crypto.hex;
-import forge.ids.types;
+import forge.ids.object_id;
 import forge.objectdb.cursor;
 import forge.objectdb.exceptions;
 import forge.objectdb.hooks;
@@ -395,6 +395,7 @@ static_assert(forge::objectdb::object_model<account_object>);
 static_assert(!forge::objectdb::object_model<bad_object>);
 static_assert(!forge::objectdb::object_model<duplicate_tag_object>);
 static_assert(std::same_as<forge::objectdb::id_type_of<account_object>, forge::ids::typed_id<1, 7>>);
+static_assert(std::same_as<forge::ids::type_for_id_t<account::id_type>, account_object>);
 static_assert(std::same_as<forge::objectdb::object_index_for_id_t<account::id_type>, account_object>);
 static_assert(std::same_as<forge::objectdb::index_by_tag<account_object, by_name>,
                            forge::objectdb::secondary_unique<by_name, &account::name>>);

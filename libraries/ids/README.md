@@ -5,7 +5,7 @@
 Use it when a type needs a BitShares/Storlane-style object identity:
 
 ```cpp
-import forge.ids.types;
+import forge.ids.object_id;
 
 using account_id = forge::ids::typed_id<1, 2>;
 
@@ -15,7 +15,7 @@ auto generic = account.as_object_id(); // {space=1, type=2, instance=42}
 
 ## Public Modules
 
-- `forge.ids.types` defines `forge::ids::object_id`, `typed_id<Space, Type>`, conversion helpers, string formatting, raw serialization, and variant conversion.
+- `forge.ids.object_id` defines `forge::ids::object_id`, `typed_id<Space, Type>`, typed-id traits, generic `type_for_id` binding, conversion helpers, string formatting, raw serialization, and variant conversion.
 
 ## Identity Model
 

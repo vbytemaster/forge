@@ -20,7 +20,7 @@ module;
 
 export module forge.objectdb.transaction;
 
-import forge.ids.types;
+import forge.ids.object_id;
 import forge.objectdb.cursor;
 import forge.objectdb.exceptions;
 import forge.objectdb.hooks;
@@ -44,10 +44,10 @@ class transaction {
                std::vector<std::shared_ptr<observer>> observers,
                release_fn release);
 
-   template <typed_object_id Id>
+   template <forge::ids::typed_id_like Id>
    boost::asio::awaitable<typename object_index_for_id_t<Id>::value_type> get(Id id);
 
-   template <typed_object_id Id>
+   template <forge::ids::typed_id_like Id>
    boost::asio::awaitable<std::optional<typename object_index_for_id_t<Id>::value_type>> find(Id id);
 
    template <object_model Object>
@@ -62,10 +62,10 @@ class transaction {
    template <object_value Value>
    boost::asio::awaitable<void> replace(Value value);
 
-   template <typed_object_id Id, typename Fn>
+   template <forge::ids::typed_id_like Id, typename Fn>
    boost::asio::awaitable<void> modify(Id id, Fn&& fn);
 
-   template <typed_object_id Id>
+   template <forge::ids::typed_id_like Id>
    boost::asio::awaitable<void> erase(Id id);
 
    template <object_model Object>
@@ -204,7 +204,7 @@ void append_value(std::vector<std::byte>& out, const T& value) {
       append_string(out, std::string_view{value});
    } else if constexpr (std::is_same_v<value_type, forge::ids::object_id>) {
       append_object_id(out, value);
-   } else if constexpr (typed_id_traits<value_type>::is_typed_id) {
+   } else if constexpr (forge::ids::typed_id_traits<value_type>::is_typed_id) {
       append_object_id(out, value.as_object_id());
    } else {
       static_assert(sizeof(value_type) == 0, "forge::objectdb cannot encode this key member type");
@@ -481,12 +481,12 @@ boost::asio::awaitable<void> erase_object(Access tx, forge::ids::object_id id) {
 
 export namespace forge::objectdb {
 
-template <typed_object_id Id>
+template <forge::ids::typed_id_like Id>
 boost::asio::awaitable<typename object_index_for_id_t<Id>::value_type> transaction::get(Id id) {
    co_return co_await get<object_index_for_id_t<Id>>(id.as_object_id());
 }
 
-template <typed_object_id Id>
+template <forge::ids::typed_id_like Id>
 boost::asio::awaitable<std::optional<typename object_index_for_id_t<Id>::value_type>> transaction::find(Id id) {
    co_return co_await find<object_index_for_id_t<Id>>(id.as_object_id());
 }
@@ -517,7 +517,7 @@ boost::asio::awaitable<void> transaction::replace(Value value) {
    co_return;
 }
 
-template <typed_object_id Id, typename Fn>
+template <forge::ids::typed_id_like Id, typename Fn>
 boost::asio::awaitable<void> transaction::modify(Id id, Fn&& fn) {
    using object_model_type = object_index_for_id_t<Id>;
    auto next = co_await get(id);
@@ -528,7 +528,7 @@ boost::asio::awaitable<void> transaction::modify(Id id, Fn&& fn) {
    co_return;
 }
 
-template <typed_object_id Id>
+template <forge::ids::typed_id_like Id>
 boost::asio::awaitable<void> transaction::erase(Id id) {
    co_await erase<object_index_for_id_t<Id>>(id.as_object_id());
    co_return;

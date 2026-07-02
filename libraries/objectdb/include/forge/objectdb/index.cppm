@@ -17,7 +17,7 @@ module;
 
 export module forge.objectdb.index;
 
-import forge.ids.types;
+import forge.ids.object_id;
 import forge.objectdb.cursor;
 import forge.objectdb.exceptions;
 import forge.objectdb.object;
@@ -260,7 +260,8 @@ struct valid_object_impl<Object, true> {
    static constexpr bool owner_match = indexed && indexes_match_object<Object, typename Object::indexes_type>::value;
    static constexpr bool tags_unique = indexed && unique_tags<typename Object::indexes_type>::value;
    static constexpr bool value_has_base = object_value<typename Object::value_type>;
-   static constexpr bool primary_is_typed = typed_id_traits<std::remove_cvref_t<primary_id_t<Object>>>::is_typed_id;
+   static constexpr bool primary_is_typed =
+      forge::ids::typed_id_traits<std::remove_cvref_t<primary_id_t<Object>>>::is_typed_id;
 
  public:
    static constexpr bool value = indexed && one_primary && owner_match && tags_unique && value_has_base && primary_is_typed;
@@ -309,8 +310,8 @@ struct object_id_of {
    using id_type = std::remove_cvref_t<id_type_of<Object>>;
 
  public:
-   static constexpr std::uint8_t space = typed_id_traits<id_type>::space;
-   static constexpr std::uint16_t type = typed_id_traits<id_type>::type;
+   static constexpr std::uint8_t space = forge::ids::typed_id_traits<id_type>::space;
+   static constexpr std::uint16_t type = forge::ids::typed_id_traits<id_type>::type;
    static constexpr forge::ids::object_id value{.space = space, .type = type, .instance = 0};
 };
 
@@ -421,7 +422,7 @@ void append_value(std::vector<std::byte>& out, const T& value) {
       append_string(out, std::string_view{value});
    } else if constexpr (std::is_same_v<value_type, forge::ids::object_id>) {
       append_object_id(out, value);
-   } else if constexpr (typed_id_traits<value_type>::is_typed_id) {
+   } else if constexpr (forge::ids::typed_id_traits<value_type>::is_typed_id) {
       append_object_id(out, value.as_object_id());
    } else {
       static_assert(sizeof(value_type) == 0, "forge::objectdb cannot encode this key member type");

@@ -9,7 +9,7 @@ module;
 
 export module forge.objectdb.hooks;
 
-import forge.ids.types;
+import forge.ids.object_id;
 
 export namespace forge::objectdb {
 

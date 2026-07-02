@@ -15,7 +15,7 @@ module;
 
 export module forge.objectdb.snapshot;
 
-import forge.ids.types;
+import forge.ids.object_id;
 import forge.objectdb.cursor;
 import forge.objectdb.exceptions;
 import forge.objectdb.index;
@@ -33,10 +33,10 @@ class snapshot {
    snapshot() = default;
    snapshot(std::unique_ptr<session> active, ensure_registered_fn ensure);
 
-   template <typed_object_id Id>
+   template <forge::ids::typed_id_like Id>
    boost::asio::awaitable<typename object_index_for_id_t<Id>::value_type> get(Id id);
 
-   template <typed_object_id Id>
+   template <forge::ids::typed_id_like Id>
    boost::asio::awaitable<std::optional<typename object_index_for_id_t<Id>::value_type>> find(Id id);
 
    template <object_model Object>
@@ -179,12 +179,12 @@ boost::asio::awaitable<object_page<typename Object::value_type>> page_snapshot_o
 
 export namespace forge::objectdb {
 
-template <typed_object_id Id>
+template <forge::ids::typed_id_like Id>
 boost::asio::awaitable<typename object_index_for_id_t<Id>::value_type> snapshot::get(Id id) {
    co_return co_await get<object_index_for_id_t<Id>>(id.as_object_id());
 }
 
-template <typed_object_id Id>
+template <forge::ids::typed_id_like Id>
 boost::asio::awaitable<std::optional<typename object_index_for_id_t<Id>::value_type>> snapshot::find(Id id) {
    co_return co_await find<object_index_for_id_t<Id>>(id.as_object_id());
 }

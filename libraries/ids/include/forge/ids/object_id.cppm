@@ -6,8 +6,9 @@ module;
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
-export module forge.ids.types;
+export module forge.ids.object_id;
 
 import forge.raw.raw;
 import forge.variant.value;
@@ -91,6 +92,27 @@ struct typed_id
    bool operator==(const typed_id&) const = default;
    auto operator<=>(const typed_id&) const = default;
 };
+
+template <typename T>
+struct typed_id_traits {
+   static constexpr bool is_typed_id = false;
+};
+
+template <std::uint8_t Space, std::uint16_t Type>
+struct typed_id_traits<typed_id<Space, Type>> {
+   static constexpr bool is_typed_id = true;
+   static constexpr std::uint8_t space = Space;
+   static constexpr std::uint16_t type = Type;
+};
+
+template <typename T>
+concept typed_id_like = typed_id_traits<std::remove_cvref_t<T>>::is_typed_id;
+
+template <typename Id>
+struct type_for_id;
+
+template <typename Id>
+using type_for_id_t = typename type_for_id<std::remove_cvref_t<Id>>::type;
 
 template <std::uint8_t Space, std::uint16_t Type>
 [[nodiscard]] constexpr typed_id<Space, Type> make_id(std::uint64_t instance) noexcept {

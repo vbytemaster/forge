@@ -5,9 +5,26 @@
 #include <string>
 #include <vector>
 
-import forge.ids.types;
+import forge.ids.object_id;
 import forge.raw.raw;
 import forge.variant.value;
+
+namespace {
+
+struct fake_object;
+
+using fake_id = forge::ids::typed_id<9, 42>;
+
+} // namespace
+
+namespace forge::ids {
+
+template <>
+struct type_for_id<fake_id> {
+   using type = fake_object;
+};
+
+} // namespace forge::ids
 
 namespace {
 
@@ -57,6 +74,9 @@ BOOST_AUTO_TEST_CASE(ids_typed_id_converts_to_and_from_object_id) {
    BOOST_CHECK_EQUAL(generic.type, 2U);
    BOOST_CHECK_EQUAL(generic.instance, 99U);
    BOOST_CHECK((forge::ids::matches<1, 2>(generic)));
+   static_assert(forge::ids::typed_id_like<account_id>);
+   static_assert(forge::ids::typed_id_traits<account_id>::space == 1);
+   static_assert(forge::ids::typed_id_traits<account_id>::type == 2);
 
    const auto roundtrip = account_id{generic};
    BOOST_CHECK(roundtrip == typed);
@@ -83,6 +103,10 @@ BOOST_AUTO_TEST_CASE(ids_to_string_uses_space_type_instance) {
 
    const auto typed = forge::ids::typed_id<5, 17>{1234};
    BOOST_CHECK_EQUAL(forge::ids::to_string(typed), "5/17/1234");
+}
+
+BOOST_AUTO_TEST_CASE(ids_type_for_id_maps_typed_ids_to_domain_types) {
+   static_assert(std::same_as<forge::ids::type_for_id_t<fake_id>, fake_object>);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

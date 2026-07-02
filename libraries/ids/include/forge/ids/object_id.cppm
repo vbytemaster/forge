@@ -115,11 +115,6 @@ template <typename Id>
 using type_for_id_t = typename type_for_id<std::remove_cvref_t<Id>>::type;
 
 template <std::uint8_t Space, std::uint16_t Type>
-[[nodiscard]] constexpr typed_id<Space, Type> make_id(std::uint64_t instance) noexcept {
-   return typed_id<Space, Type>{instance};
-}
-
-template <std::uint8_t Space, std::uint16_t Type>
 [[nodiscard]] std::optional<typed_id<Space, Type>> try_typed(object_id value) {
    if (!matches<Space, Type>(value)) {
       return std::nullopt;

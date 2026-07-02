@@ -30,11 +30,13 @@ class write_gate : public std::enable_shared_from_this<write_gate> {
  private:
    friend class ticket;
 
+   struct waiter;
+
    void release_one() noexcept;
 
    std::mutex mutex_;
    bool held_ = false;
-   std::deque<std::shared_ptr<boost::asio::steady_timer>> waiters_;
+   std::deque<std::shared_ptr<waiter>> waiters_;
 };
 
 } // namespace forge::objectdb::detail

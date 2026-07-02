@@ -719,6 +719,75 @@ BOOST_AUTO_TEST_CASE(objectdb_dropped_transaction_releases_writer_after_rollback
    }());
 }
 
+BOOST_AUTO_TEST_CASE(objectdb_explicit_rollback_failure_releases_writer_lane) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto driver = session_driver<throwing_rollback_session>{};
+   forge::asio::blocking::run(runtime, [&driver]() -> boost::asio::awaitable<void> {
+      auto store = forge::objectdb::store{driver.session_factory()};
+      store.register_object<account_object>();
+
+      auto tx = co_await store.begin_transaction();
+      auto rollback_error = std::exception_ptr{};
+      try {
+         co_await tx.rollback();
+      } catch (...) {
+         rollback_error = std::current_exception();
+      }
+
+      BOOST_REQUIRE(rollback_error);
+      BOOST_CHECK_EQUAL(driver.rollback_calls(), 1U);
+      BOOST_CHECK_EQUAL(driver.destroyed_without_finish(), 0U);
+
+      auto second_started = std::make_shared<bool>(false);
+      auto second_cancelled = std::make_shared<bool>(false);
+      auto second_finished = std::make_shared<bool>(false);
+      auto second_error = std::make_shared<std::exception_ptr>();
+      const auto executor = co_await boost::asio::this_coro::executor;
+      auto cancellation = std::make_shared<boost::asio::cancellation_signal>();
+
+      boost::asio::co_spawn(
+         executor,
+         [store, second_started, second_cancelled, second_finished, second_error]() mutable
+            -> boost::asio::awaitable<void> {
+            try {
+               auto second = co_await store.begin_transaction();
+               *second_started = true;
+               co_await second.commit();
+            } catch (const boost::system::system_error& error) {
+               if (error.code() == boost::asio::error::operation_aborted) {
+                  *second_cancelled = true;
+               } else {
+                  *second_error = std::current_exception();
+               }
+            } catch (...) {
+               *second_error = std::current_exception();
+            }
+            *second_finished = true;
+            co_return;
+         },
+         boost::asio::bind_cancellation_slot(cancellation->slot(), boost::asio::detached));
+
+      auto timer = boost::asio::steady_timer{executor};
+      timer.expires_after(std::chrono::milliseconds{50});
+      co_await timer.async_wait(boost::asio::use_awaitable);
+      cancellation->emit(boost::asio::cancellation_type::all);
+
+      timer.expires_after(std::chrono::milliseconds{50});
+      co_await timer.async_wait(boost::asio::use_awaitable);
+
+      if (*second_error) {
+         std::rethrow_exception(*second_error);
+      }
+      BOOST_CHECK(*second_finished);
+      BOOST_CHECK(*second_started);
+      BOOST_CHECK(!*second_cancelled);
+      BOOST_CHECK(!driver.overlapping_writes());
+      BOOST_CHECK_EQUAL(driver.active_writes(), 0U);
+
+      co_return;
+   }());
+}
+
 BOOST_AUTO_TEST_CASE(objectdb_begin_read_requires_snapshot_capability) {
    auto runtime = forge::asio::runtime{};
    auto driver = memory_driver{};

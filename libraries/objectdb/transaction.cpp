@@ -160,10 +160,17 @@ boost::asio::awaitable<void> transaction::rollback() {
    if (!impl_ || !impl_->active || impl_->closed) {
       co_return;
    }
-   co_await impl_->active->rollback();
-   impl_->active.reset();
+   auto active = std::move(impl_->active);
    impl_->closed = true;
    impl_->changes.mutations.clear();
+   try {
+      co_await active->rollback();
+   } catch (...) {
+      active.reset();
+      impl_->release();
+      throw;
+   }
+   active.reset();
    impl_->release();
    co_return;
 }

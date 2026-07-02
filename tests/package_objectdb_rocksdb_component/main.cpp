@@ -1,6 +1,7 @@
 #include <concepts>
 
 import forge.objectdb.store;
+import forge.objectdb.session;
 import forge.objectdb.rocksdb;
 
 int main() {

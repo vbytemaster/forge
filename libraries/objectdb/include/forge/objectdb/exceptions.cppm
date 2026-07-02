@@ -16,6 +16,7 @@ enum class code : std::uint16_t {
    duplicate_object = 4,
    unregistered_object = 5,
    transaction_closed = 6,
+   unsupported_operation = 7,
 };
 
 FORGE_DECLARE_EXCEPTION_CATEGORY(code, "forge.objectdb")
@@ -26,5 +27,6 @@ using not_found = forge::exceptions::coded_exception<code, code::not_found>;
 using duplicate_object = forge::exceptions::coded_exception<code, code::duplicate_object>;
 using unregistered_object = forge::exceptions::coded_exception<code, code::unregistered_object>;
 using transaction_closed = forge::exceptions::coded_exception<code, code::transaction_closed>;
+using unsupported_operation = forge::exceptions::coded_exception<code, code::unsupported_operation>;
 
 } // namespace forge::objectdb::exceptions

@@ -7,7 +7,7 @@ module;
 export module forge.objectdb.cursor;
 
 import forge.objectdb.exceptions;
-import forge.objectdb.types;
+import forge.objectdb.record;
 
 export namespace forge::objectdb {
 

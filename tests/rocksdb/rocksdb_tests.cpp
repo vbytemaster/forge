@@ -146,6 +146,38 @@ BOOST_AUTO_TEST_CASE(rocksdb_store_batch_and_transactions_are_atomic) {
    BOOST_TEST(to_string(*db.get(data, make_u64_key(8))) == "commit");
 }
 
+BOOST_AUTO_TEST_CASE(rocksdb_snapshot_preserves_old_values_and_scan_pages_after_commit) {
+   const auto root = root_guard{};
+   auto db = store{config_for(root.root / "store")};
+   const auto data = family{"data"};
+   const auto prefix = to_bytes("snap:");
+
+   auto key_one = prefix;
+   forge::rocksdb::append_u64_be(key_one, 1);
+   auto key_two = prefix;
+   forge::rocksdb::append_u64_be(key_two, 2);
+
+   db.put(data, key_one, to_bytes("one"), write_options{.sync = true});
+
+   auto snapshot = db.begin_snapshot();
+
+   db.put(data, key_one, to_bytes("one-new"), write_options{.sync = true});
+   db.put(data, key_two, to_bytes("two"), write_options{.sync = true});
+
+   const auto old_value = snapshot.get(data, key_one);
+   BOOST_REQUIRE(old_value.has_value());
+   BOOST_TEST(to_string(*old_value) == "one");
+
+   const auto snapshot_page = snapshot.scan_page(data, scan_request{.prefix = prefix, .limit = 10});
+   BOOST_REQUIRE_EQUAL(snapshot_page.entries.size(), 1U);
+   BOOST_TEST(to_string(snapshot_page.entries[0].value) == "one");
+
+   const auto fresh_page = db.scan_page(data, scan_request{.prefix = prefix, .limit = 10});
+   BOOST_REQUIRE_EQUAL(fresh_page.entries.size(), 2U);
+   BOOST_TEST(to_string(fresh_page.entries[0].value) == "one-new");
+   BOOST_TEST(to_string(fresh_page.entries[1].value) == "two");
+}
+
 BOOST_AUTO_TEST_CASE(rocksdb_transaction_move_assignment_rolls_back_replaced_transaction) {
    const auto root = root_guard{};
    auto db = store{config_for(root.root / "store")};

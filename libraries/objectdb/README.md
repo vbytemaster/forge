@@ -18,8 +18,9 @@ product policy surface.
 - FoundationDB tuple layer: stable ordered byte encoding for composite keys and
   cursor/range boundaries.
 - RocksDB/Pebble: exact lookup, iterator seek and bounded persisted index scans.
-- PostgreSQL/LMDB: migration, snapshot and concurrency concepts stay explicit
-  future blocks, not hidden behavior in this first store slice.
+- RocksDB Snapshot, LMDB read-only transactions, SQLite WAL and PostgreSQL
+  snapshot visibility: stable read views and single-writer/many-reader
+  concurrency are explicit store behavior, not hidden backend accidents.
 
 ## Object Declaration
 
@@ -63,9 +64,16 @@ typed-id operations do not require spelling the object type again.
 the object engine:
 
 ```cpp
+struct capabilities {
+   bool snapshot_reads = false;
+   bool writes = true;
+};
+
 class session {
 public:
    virtual ~session() = default;
+
+   virtual capabilities capabilities() const noexcept = 0;
 
    virtual boost::asio::awaitable<std::optional<std::vector<std::byte>>>
    get(record_key key) = 0;
@@ -76,8 +84,8 @@ public:
    virtual boost::asio::awaitable<void>
    erase(record_key key) = 0;
 
-   virtual boost::asio::awaitable<record_scan_result>
-   scan_page(key_range range, page_request page) = 0;
+   virtual boost::asio::awaitable<record_page>
+   scan_page(record_range range, page_request page) = 0;
 
    virtual boost::asio::awaitable<void> commit() = 0;
    virtual boost::asio::awaitable<void> rollback() = 0;
@@ -89,8 +97,15 @@ public:
 `forge_objectdb` does not import `forge_rocksdb`, plugins, app lifecycle or
 product code.
 
+Each session declares what it can safely do:
+
+- `snapshot_reads=false, writes=true`: write transaction session;
+- `snapshot_reads=true, writes=false`: read-only stable snapshot;
+- `snapshot_reads=true, writes=true`: universal session;
+- `snapshot_reads=false, writes=false`: invalid and rejected by the store.
+
 `session_factory<Session>` wraps a callable that opens one fresh backend session
-per transaction:
+for a transaction or read snapshot:
 
 ```cpp
 forge::objectdb::session_factory<my_session> factory{[]() -> boost::asio::awaitable<std::unique_ptr<my_session>> {
@@ -100,11 +115,11 @@ forge::objectdb::session_factory<my_session> factory{[]() -> boost::asio::awaita
 
 ## Store And Transaction
 
-`forge::objectdb::store` is non-templated. It receives a session factory and
-registers object descriptors at runtime:
+`forge::objectdb::store` is non-templated. It receives write and read session
+factories and registers object descriptors at runtime:
 
 ```cpp
-forge::objectdb::store store{factory};
+forge::objectdb::store store{write_factory, snapshot_factory};
 store.register_object<account_object>();
 
 auto tx = co_await store.begin_transaction();
@@ -118,6 +133,10 @@ auto runtime_loaded = co_await tx.get<account_object>(
 
 co_await tx.commit();
 ```
+
+If a single factory is passed, it must produce universal sessions with both
+`writes=true` and `snapshot_reads=true`; otherwise `begin_read()` rejects it with
+a typed `unsupported_operation`.
 
 Typed-id overloads use the macro mapping and return the correct object type.
 Runtime `forge::ids::object_id` overloads require explicit `<Object>` and reject
@@ -140,6 +159,9 @@ auto maybe = co_await store.find(account::id_type{42});
 auto alice = co_await store.index<account_object, by_name>().find("alice");
 ```
 
+Direct reads use a short-lived stable snapshot through `begin_read()`. Direct
+mutations use a short-lived transaction through `begin_transaction()`.
+
 Use an explicit transaction when several object mutations must commit or
 rollback together:
 
@@ -158,6 +180,42 @@ atomically within the backend session. Unique secondary conflicts throw typed
 `forge.objectdb` exceptions. If a transaction is destroyed without `commit()`,
 its backend session is rolled back best-effort and uncommitted object/index
 records are not persisted.
+
+## Snapshot Reads And Single Writer
+
+`store.begin_read()` returns a read-only `snapshot`. A snapshot supports
+`get`, `find`, declared index queries, pages and streams. It does not expose
+mutation or commit APIs:
+
+```cpp
+auto view = co_await store.begin_read();
+auto before = co_await view.find(account::id_type{42});
+
+auto page = co_await view.index<account_object, by_region_balance>()
+   .equal_range(std::make_tuple(std::uint32_t{3}))
+   .page({.limit = 100});
+```
+
+Streams keep one backend read session for the whole stream lifecycle, so paging
+does not silently jump across committed writes:
+
+```cpp
+auto stream = store.index<account_object, by_region_balance>()
+   .equal_range(std::make_tuple(std::uint32_t{3}))
+   .stream({.page_size = 100});
+
+while (auto item = co_await stream.next()) {
+   // The stream observes one stable snapshot.
+}
+```
+
+By default `store` uses `write_policy::single_writer`: only one objectdb write
+transaction is allowed through the mutation pipeline at a time. The writer lane
+is released by `commit()`, `rollback()` or transaction cleanup. Observers run
+after the backend commit and after the writer lane is released.
+
+`write_policy::backend` is available for drivers that intentionally manage
+write concurrency themselves.
 
 ## Index Access
 
@@ -232,9 +290,13 @@ forge::objectdb::rocksdb::driver rocks{
    }
 };
 
-forge::objectdb::store store{rocks.session_factory()};
+forge::objectdb::store store{rocks.session_factory(), rocks.snapshot_factory()};
 store.register_object<account_object>();
 ```
+
+The RocksDB adapter uses write transactions for `session_factory()` and native
+RocksDB snapshots for `snapshot_factory()`. In-memory/cache-like drivers can
+provide the same contract with copy-on-write or frozen-state snapshots.
 
 ## Future Plugin Model
 
@@ -257,14 +319,26 @@ ID remains object identity inside that store.
 
 ## Modules
 
-- `forge.objectdb.types`: shared value types and low-level record keys.
-- `forge.objectdb.descriptor`: base object and object/index descriptors.
-- `forge.objectdb.layout`: deterministic ordered key layout.
+- `forge.objectdb.object`: base object, object concepts and typed-id mapping.
+- `forge.objectdb.index`: object/index descriptors, index views, range queries
+  and streams.
+- `forge.objectdb.record`: public driver record types such as `record_key`,
+  `record_range`, `record_entry` and `record_page`.
+- `forge.objectdb.session`: public virtual driver contract and
+  `session_factory`.
 - `forge.objectdb.cursor`: opaque cursor and page request validation.
-- `forge.objectdb.store`: session contract, session factory, async store,
-  transaction, index view, range query and stream APIs.
+- `forge.objectdb.transaction`: explicit mutation/read transaction API.
+- `forge.objectdb.snapshot`: read-only stable snapshot API.
+- `forge.objectdb.hooks`: mutation interceptors, observers and change sets.
+- `forge.objectdb.store`: async object store and direct autocommit wrappers.
+- `forge.objectdb.descriptor`: compatibility entrypoint that re-exports object
+  and index descriptors.
 - `forge.objectdb.exceptions`: typed `forge.objectdb` errors.
 - `<forge/objectdb/macros.hpp>`: macro-only object-id mapping declaration.
+
+Deterministic key layout and record materialization are private implementation
+details. Backend adapters see `record_key`/`record_range`; ordinary users see
+object/index APIs.
 
 ## Migration Groundwork
 

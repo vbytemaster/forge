@@ -154,6 +154,12 @@ void throw_if_error(const ::rocksdb::Status& status, std::string_view context) {
    return native;
 }
 
+::rocksdb::ReadOptions to_native_options(const read_options& options, const ::rocksdb::Snapshot* snapshot) {
+   auto native = to_native_options(options);
+   native.snapshot = snapshot;
+   return native;
+}
+
 ::rocksdb::WriteOptions to_native_options(const write_options& options) {
    ::rocksdb::WriteOptions native;
    native.sync = options.sync;
@@ -239,6 +245,74 @@ store::impl::~impl() {
                           forge::exceptions::ctx("family", column_family.name));
    }
    return iterator->second;
+}
+
+snapshot::impl::impl(std::shared_ptr<store::impl> store_value, const ::rocksdb::Snapshot* snapshot_value)
+    : store{std::move(store_value)}, snapshot{snapshot_value} {}
+
+snapshot::impl::~impl() {
+   if (store && store->db && snapshot != nullptr) {
+      store->db->ReleaseSnapshot(snapshot);
+   }
+}
+
+snapshot::snapshot(std::unique_ptr<impl> impl_value) : impl_{std::move(impl_value)} {}
+snapshot::~snapshot() = default;
+snapshot::snapshot(snapshot&&) noexcept = default;
+snapshot& snapshot::operator=(snapshot&&) noexcept = default;
+
+void snapshot::ensure_active(std::string_view context) const {
+   if (impl_ == nullptr || impl_->snapshot == nullptr) {
+      FORGE_THROW_EXCEPTION(exceptions::invalid_argument, std::string{context} + ": RocksDB snapshot is closed");
+   }
+}
+
+std::optional<std::vector<std::byte>> snapshot::get(family column_family, std::vector<std::byte> key, read_options options) {
+   ensure_active("failed to get RocksDB snapshot value");
+   std::string value;
+   const auto status = impl_->store->db->Get(
+      detail::to_native_options(options, impl_->snapshot),
+      impl_->store->require_handle(column_family),
+      detail::to_slice(key),
+      &value);
+   if (status.IsNotFound()) {
+      return std::nullopt;
+   }
+   detail::throw_if_error(status, "failed to get RocksDB snapshot value");
+   auto bytes = std::vector<std::byte>{};
+   bytes.resize(value.size());
+   std::memcpy(bytes.data(), value.data(), value.size());
+   return bytes;
+}
+
+std::vector<entry> snapshot::scan(family column_family, std::vector<std::byte> prefix, read_options options) {
+   ensure_active("failed to scan RocksDB snapshot prefix");
+   auto iterator = std::unique_ptr<::rocksdb::Iterator>{
+      impl_->store->db->NewIterator(
+         detail::to_native_options(options, impl_->snapshot),
+         impl_->store->require_handle(column_family)),
+   };
+
+   auto values = std::vector<entry>{};
+   for (iterator->Seek(detail::to_slice(prefix)); iterator->Valid(); iterator->Next()) {
+      auto key = detail::bytes_from_slice(iterator->key());
+      if (!detail::starts_with(key, prefix)) {
+         break;
+      }
+      values.push_back(entry{.key = std::move(key), .value = detail::bytes_from_slice(iterator->value())});
+   }
+   detail::throw_if_error(iterator->status(), "failed to scan RocksDB snapshot prefix");
+   return values;
+}
+
+scan_result snapshot::scan_page(family column_family, scan_request request) {
+   ensure_active("failed to scan RocksDB snapshot prefix page");
+   auto iterator = std::unique_ptr<::rocksdb::Iterator>{
+      impl_->store->db->NewIterator(
+         detail::to_native_options(request.options, impl_->snapshot),
+         impl_->store->require_handle(column_family)),
+   };
+   return detail::read_scan_page(std::move(iterator), std::move(request), "failed to scan RocksDB snapshot prefix page");
 }
 
 transaction::impl::impl(std::shared_ptr<store::impl> store_value, std::unique_ptr<::rocksdb::Transaction> transaction_value)
@@ -444,6 +518,14 @@ transaction store::begin(write_options options) {
       FORGE_THROW_EXCEPTION(exceptions::internal_error, "failed to begin RocksDB transaction");
    }
    return transaction{std::make_unique<transaction::impl>(impl_, std::move(native))};
+}
+
+snapshot store::begin_snapshot() {
+   const auto native = impl_->db->GetSnapshot();
+   if (native == nullptr) {
+      FORGE_THROW_EXCEPTION(exceptions::internal_error, "failed to begin RocksDB snapshot");
+   }
+   return snapshot{std::make_unique<snapshot::impl>(impl_, native)};
 }
 
 void store::flush_wal(bool sync) {

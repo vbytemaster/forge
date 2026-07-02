@@ -11,6 +11,33 @@ export import forge.rocksdb.types;
 
 export namespace forge::rocksdb {
 
+class snapshot {
+ public:
+   ~snapshot();
+
+   snapshot(const snapshot&) = delete;
+   snapshot& operator=(const snapshot&) = delete;
+
+   snapshot(snapshot&&) noexcept;
+   snapshot& operator=(snapshot&&) noexcept;
+
+   [[nodiscard]] std::optional<std::vector<std::byte>>
+   get(family column_family, std::vector<std::byte> key, read_options options = {});
+
+   [[nodiscard]] std::vector<entry> scan(family column_family, std::vector<std::byte> prefix, read_options options = {});
+   [[nodiscard]] scan_result scan_page(family column_family, scan_request request);
+
+ private:
+   friend class store;
+
+   struct impl;
+
+   explicit snapshot(std::unique_ptr<impl> impl_value);
+   void ensure_active(std::string_view context) const;
+
+   std::unique_ptr<impl> impl_;
+};
+
 class transaction {
  public:
    ~transaction();
@@ -68,6 +95,7 @@ class store {
    [[nodiscard]] std::vector<entry> scan(family column_family, std::vector<std::byte> prefix, read_options options = {});
    [[nodiscard]] scan_result scan_page(family column_family, scan_request request);
    [[nodiscard]] transaction begin(write_options options = {});
+   [[nodiscard]] snapshot begin_snapshot();
 
    void flush_wal(bool sync = true);
 

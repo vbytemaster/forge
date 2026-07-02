@@ -1,13 +1,18 @@
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <boost/describe.hpp>
 #include <forge/objectdb/macros.hpp>
 
 import forge.ids.types;
 import forge.objectdb.descriptor;
-import forge.objectdb.layout;
+import forge.objectdb.index;
+import forge.objectdb.object;
+import forge.objectdb.record;
+import forge.objectdb.session;
 import forge.objectdb.store;
 
 struct account : forge::objectdb::object<account, 1, 7> {
@@ -30,7 +35,7 @@ FORGE_OBJECTDB_OBJECT(account_object)
 int main() {
    static_assert(forge::objectdb::object_model<account_object>);
    static_assert(std::same_as<forge::objectdb::object_index_for_id_t<account::id_type>, account_object>);
-   constexpr auto type = forge::objectdb::object_type_of<account_object>::value;
-   const auto key = forge::objectdb::layout<account_object>::object_record_key(forge::ids::typed_id<1, 7>{42});
+   constexpr auto type = forge::objectdb::object_id_of<account_object>::value;
+   const auto key = forge::objectdb::record_key{std::vector<std::byte>{std::byte{0x01}}};
    return type.space == 1 && type.type == 7 && !key.empty() ? 0 : 1;
 }

@@ -88,6 +88,10 @@ boost::asio::awaitable<write_gate::ticket> write_gate::acquire() {
       }
       if (cancellation.cancelled() != boost::asio::cancellation_type::none) {
          cancel(waiter);
+         if (slot.is_connected()) {
+            slot.clear();
+         }
+         throw boost::system::system_error{boost::asio::error::operation_aborted};
       }
 
       auto error = boost::system::error_code{};

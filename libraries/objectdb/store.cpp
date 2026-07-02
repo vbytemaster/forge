@@ -3,6 +3,7 @@ module;
 #include <forge/exceptions/macros.hpp>
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/this_coro.hpp>
 #include <boost/asio/steady_timer.hpp>
 
 #include <deque>
@@ -41,6 +42,7 @@ void store::add_observer(std::shared_ptr<observer> value) {
 }
 
 boost::asio::awaitable<transaction> store::begin_transaction() {
+   const auto executor = co_await boost::asio::this_coro::executor;
    auto ticket = std::optional<detail::write_gate::ticket>{};
    if (impl_->settings.writes == write_policy::single_writer) {
       ticket.emplace(co_await impl_->write_gate->acquire());
@@ -59,7 +61,8 @@ boost::asio::awaitable<transaction> store::begin_transaction() {
       },
       impl_->interceptors,
       impl_->observers,
-      std::move(release)};
+      std::move(release),
+      executor};
 }
 
 boost::asio::awaitable<snapshot> store::begin_read() {

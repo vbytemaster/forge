@@ -2,7 +2,10 @@ module;
 
 #include <forge/exceptions/macros.hpp>
 
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/system_executor.hpp>
 
 #include <memory>
 #include <typeindex>
@@ -16,20 +19,39 @@ import forge.objectdb.exceptions;
 
 namespace forge::objectdb {
 
+namespace {
+
+boost::asio::awaitable<void> rollback_dropped_transaction(std::unique_ptr<session> active,
+                                                          transaction::release_fn release) {
+   try {
+      co_await active->rollback();
+   } catch (...) {
+   }
+
+   active.reset();
+   if (release) {
+      release();
+   }
+   co_return;
+}
+
+} // namespace
+
 transaction::impl::impl(std::unique_ptr<session> active_value,
                         transaction::ensure_registered_fn ensure,
                         std::vector<std::shared_ptr<interceptor>> interceptors_value,
                         std::vector<std::shared_ptr<observer>> observers_value,
-                        transaction::release_fn release) noexcept
+                        transaction::release_fn release,
+                        boost::asio::any_io_executor executor) noexcept
     : active{std::move(active_value)},
       ensure_registered{std::move(ensure)},
       interceptors{std::move(interceptors_value)},
       observers{std::move(observers_value)},
-      release_writer{std::move(release)} {}
+      release_writer{std::move(release)},
+      cleanup_executor{std::move(executor)} {}
 
 transaction::impl::~impl() {
-   active.reset();
-   release();
+   rollback_on_drop();
 }
 
 void transaction::impl::release() noexcept {
@@ -39,13 +61,55 @@ void transaction::impl::release() noexcept {
    }
 }
 
+void transaction::impl::rollback_on_drop() noexcept {
+   if (!active || closed || committed) {
+      active.reset();
+      release();
+      return;
+   }
+
+   closed = true;
+   auto dropped = std::move(active);
+   auto release = std::move(release_writer);
+   release_writer = {};
+
+   try {
+      boost::asio::co_spawn(*cleanup_executor,
+                            rollback_dropped_transaction(std::move(dropped), std::move(release)),
+                            boost::asio::detached);
+   } catch (...) {
+      dropped.reset();
+      if (release) {
+         release();
+      }
+   }
+}
+
 transaction::transaction(std::unique_ptr<session> active,
                          ensure_registered_fn ensure,
                          std::vector<std::shared_ptr<interceptor>> interceptors,
                          std::vector<std::shared_ptr<observer>> observers,
                          release_fn release)
+    : transaction(std::move(active),
+                  std::move(ensure),
+                  std::move(interceptors),
+                  std::move(observers),
+                  std::move(release),
+                  boost::asio::system_executor{}) {}
+
+transaction::transaction(std::unique_ptr<session> active,
+                         ensure_registered_fn ensure,
+                         std::vector<std::shared_ptr<interceptor>> interceptors,
+                         std::vector<std::shared_ptr<observer>> observers,
+                         release_fn release,
+                         boost::asio::any_io_executor cleanup_executor)
     : impl_{std::make_shared<impl>(
-         std::move(active), std::move(ensure), std::move(interceptors), std::move(observers), std::move(release))} {}
+         std::move(active),
+         std::move(ensure),
+         std::move(interceptors),
+         std::move(observers),
+         std::move(release),
+         std::move(cleanup_executor))} {}
 
 session& transaction::active_session() const {
    if (!impl_ || !impl_->active || impl_->closed) {

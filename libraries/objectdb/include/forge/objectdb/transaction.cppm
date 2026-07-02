@@ -1,5 +1,6 @@
 module;
 
+#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <forge/exceptions/macros.hpp>
 
@@ -43,6 +44,12 @@ class transaction {
                std::vector<std::shared_ptr<interceptor>> interceptors,
                std::vector<std::shared_ptr<observer>> observers,
                release_fn release);
+   transaction(std::unique_ptr<session> active,
+               ensure_registered_fn ensure,
+               std::vector<std::shared_ptr<interceptor>> interceptors,
+               std::vector<std::shared_ptr<observer>> observers,
+               release_fn release,
+               boost::asio::any_io_executor cleanup_executor);
 
    template <forge::ids::typed_id_like Id>
    boost::asio::awaitable<typename object_index_for_id_t<Id>::value_type> get(Id id);

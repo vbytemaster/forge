@@ -1,5 +1,6 @@
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/cancel_after.hpp>
+#include <boost/asio/bind_cancellation_slot.hpp>
+#include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -37,6 +38,7 @@ import forge.objectdb.object;
 import forge.objectdb.record;
 import forge.objectdb.session;
 import forge.objectdb.store;
+import forge.objectdb.transaction;
 import forge.raw.raw;
 
 #if FORGE_HAS_ROCKSDB
@@ -651,40 +653,67 @@ BOOST_AUTO_TEST_CASE(objectdb_single_writer_cancelled_wait_does_not_acquire_gate
    auto driver = memory_driver{};
    forge::asio::blocking::run(runtime, [&driver]() -> boost::asio::awaitable<void> {
       auto store = make_store(driver);
-      auto first = co_await store.begin_transaction();
+      auto first = std::make_shared<std::optional<forge::objectdb::transaction>>(co_await store.begin_transaction());
 
+      auto second_waiting = std::make_shared<bool>(false);
       auto second_started = std::make_shared<bool>(false);
       auto second_cancelled = std::make_shared<bool>(false);
+      auto second_finished = std::make_shared<bool>(false);
       auto second_error = std::make_shared<std::exception_ptr>();
       const auto executor = co_await boost::asio::this_coro::executor;
+      auto cancellation = std::make_shared<boost::asio::cancellation_signal>();
 
-      try {
-         co_await boost::asio::co_spawn(
-            executor,
-            [store, second_started]() mutable -> boost::asio::awaitable<void> {
+      boost::asio::co_spawn(
+         executor,
+         [store, first, second_waiting, second_started, second_cancelled, second_finished, second_error]() mutable
+            -> boost::asio::awaitable<void> {
+            try {
+               co_await boost::asio::this_coro::reset_cancellation_state(
+                  [first](boost::asio::cancellation_type type) {
+                     first->reset();
+                     return type;
+                  });
+               *second_waiting = true;
                auto second = co_await store.begin_transaction();
                *second_started = true;
                co_await second.rollback();
-            },
-            boost::asio::cancel_after(std::chrono::milliseconds{50}, boost::asio::use_awaitable));
-      } catch (const boost::system::system_error& error) {
-         if (error.code() == boost::asio::error::operation_aborted) {
-            *second_cancelled = true;
-         } else {
-            *second_error = std::current_exception();
-         }
-      } catch (...) {
-         *second_error = std::current_exception();
+            } catch (const boost::system::system_error& error) {
+               if (error.code() == boost::asio::error::operation_aborted) {
+                  *second_cancelled = true;
+               } else {
+                  *second_error = std::current_exception();
+               }
+            } catch (...) {
+               *second_error = std::current_exception();
+            }
+            *second_finished = true;
+            co_return;
+         },
+         boost::asio::bind_cancellation_slot(cancellation->slot(), boost::asio::detached));
+
+      auto timer = boost::asio::steady_timer{executor};
+      while (!*second_waiting) {
+         timer.expires_after(std::chrono::milliseconds{1});
+         co_await timer.async_wait(boost::asio::use_awaitable);
       }
+
+      timer.expires_after(std::chrono::milliseconds{50});
+      co_await timer.async_wait(boost::asio::use_awaitable);
+
+      cancellation->emit(boost::asio::cancellation_type::all);
+
+      timer.expires_after(std::chrono::milliseconds{50});
+      co_await timer.async_wait(boost::asio::use_awaitable);
 
       if (*second_error) {
          std::rethrow_exception(*second_error);
       }
+      BOOST_CHECK(*second_finished);
       BOOST_CHECK(*second_cancelled);
       BOOST_CHECK(!*second_started);
+      BOOST_CHECK(!first->has_value());
       BOOST_CHECK(!driver.overlapping_writes());
 
-      co_await first.rollback();
       auto third = co_await store.begin_transaction();
       co_await third.rollback();
       BOOST_CHECK(!driver.overlapping_writes());

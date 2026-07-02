@@ -1,8 +1,10 @@
 module;
 
 #include <boost/asio/any_io_executor.hpp>
-#include <boost/asio/redirect_error.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/cancellation_state.hpp>
+#include <boost/asio/cancellation_type.hpp>
+#include <boost/asio/redirect_error.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
@@ -21,12 +23,19 @@ module forge.objectdb.store;
 
 namespace forge::objectdb::detail {
 
+enum class wait_state : std::uint8_t {
+   queued,
+   granted,
+   cancelled,
+   completed,
+};
+
 struct write_gate::waiter {
    explicit waiter(boost::asio::any_io_executor executor)
        : timer{std::move(executor), boost::asio::steady_timer::time_point::max()} {}
 
    boost::asio::steady_timer timer;
-   bool granted = false;
+   wait_state state = wait_state::queued;
 };
 
 write_gate::ticket::ticket(std::shared_ptr<write_gate> gate) : gate_{std::move(gate)} {}
@@ -54,6 +63,7 @@ void write_gate::ticket::release() noexcept {
 
 boost::asio::awaitable<write_gate::ticket> write_gate::acquire() {
    const auto executor = co_await boost::asio::this_coro::executor;
+   auto cancellation = co_await boost::asio::this_coro::cancellation_state;
    const auto self = shared_from_this();
 
    for (;;) {
@@ -68,24 +78,70 @@ boost::asio::awaitable<write_gate::ticket> write_gate::acquire() {
          waiters_.push_back(waiter);
       }
 
+      auto slot = cancellation.slot();
+      if (slot.is_connected()) {
+         slot.assign([self, waiter](boost::asio::cancellation_type_t type) {
+            if (type != boost::asio::cancellation_type::none) {
+               self->cancel(waiter);
+            }
+         });
+      }
+      if (cancellation.cancelled() != boost::asio::cancellation_type::none) {
+         cancel(waiter);
+      }
+
       auto error = boost::system::error_code{};
       co_await waiter->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
 
+      if (slot.is_connected()) {
+         slot.clear();
+      }
+
+      auto throw_error = boost::system::error_code{};
       {
          auto lock = std::scoped_lock{mutex_};
-         if (waiter->granted) {
+         if (waiter->state == wait_state::granted) {
+            waiter->state = wait_state::completed;
             co_return ticket{self};
          }
 
+         if (waiter->state == wait_state::cancelled) {
+            throw_error = error ? error : boost::asio::error::operation_aborted;
+         } else {
+            waiter->state = wait_state::cancelled;
+            const auto found = std::ranges::find(waiters_, waiter);
+            if (found != waiters_.end()) {
+               waiters_.erase(found);
+            }
+            throw_error = error ? error : boost::asio::error::operation_aborted;
+         }
+      }
+
+      if (throw_error) {
+         throw boost::system::system_error{throw_error};
+      }
+   }
+}
+
+void write_gate::cancel(std::shared_ptr<write_gate::waiter> waiter) noexcept {
+   auto release_grant = false;
+   {
+      auto lock = std::scoped_lock{mutex_};
+      if (waiter->state == wait_state::queued) {
+         waiter->state = wait_state::cancelled;
          const auto found = std::ranges::find(waiters_, waiter);
          if (found != waiters_.end()) {
             waiters_.erase(found);
          }
+      } else if (waiter->state == wait_state::granted) {
+         waiter->state = wait_state::cancelled;
+         release_grant = true;
       }
+   }
 
-      if (error) {
-         throw boost::system::system_error{error};
-      }
+   waiter->timer.cancel();
+   if (release_grant) {
+      release_one();
    }
 }
 
@@ -96,9 +152,12 @@ void write_gate::release_one() noexcept {
       while (!waiters_.empty() && !waiter) {
          waiter = std::move(waiters_.front());
          waiters_.pop_front();
+         if (waiter->state != wait_state::queued) {
+            waiter.reset();
+         }
       }
       if (waiter) {
-         waiter->granted = true;
+         waiter->state = wait_state::granted;
       } else {
          held_ = false;
       }

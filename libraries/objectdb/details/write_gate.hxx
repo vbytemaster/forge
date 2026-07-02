@@ -34,6 +34,7 @@ class write_gate : public std::enable_shared_from_this<write_gate> {
 
    void cancel(std::shared_ptr<waiter> waiter) noexcept;
    void release_one() noexcept;
+   static void wake(const std::shared_ptr<waiter>& waiter) noexcept;
 
    std::mutex mutex_;
    bool held_ = false;

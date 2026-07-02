@@ -143,7 +143,7 @@ void write_gate::cancel(std::shared_ptr<write_gate::waiter> waiter) noexcept {
       }
    }
 
-   waiter->timer.cancel();
+   wake(waiter);
    if (release_grant) {
       release_one();
    }
@@ -167,7 +167,16 @@ void write_gate::release_one() noexcept {
       }
    }
    if (waiter) {
+      wake(waiter);
+   }
+}
+
+void write_gate::wake(const std::shared_ptr<write_gate::waiter>& waiter) noexcept {
+   try {
+      waiter->timer.expires_at(boost::asio::steady_timer::time_point::min());
       waiter->timer.cancel();
+   } catch (...) {
+      // Wake-up is best-effort; gate cleanup paths must remain noexcept.
    }
 }
 

@@ -2,103 +2,70 @@ module;
 
 #include <forge/exceptions/macros.hpp>
 
+#include <boost/asio/awaitable.hpp>
+
+#include <coroutine>
 #include <memory>
 #include <utility>
-
-#include <boost/asio/awaitable.hpp>
 
 module forge.api.transport.connection;
 
 namespace forge::api::transport {
 
-struct connection::impl {
-   class stream_invoker final : public forge::api::core::remote_invoker {
-    public:
-      stream_invoker(std::shared_ptr<impl> owner, forge::api::core::descriptor contract)
-          : owner_(std::move(owner)), contract_(std::move(contract)) {}
-
-      boost::asio::awaitable<forge::api::core::response> async_call(forge::api::core::request value) override;
-
-    private:
-      std::shared_ptr<impl> owner_;
-      forge::api::core::descriptor contract_;
-   };
-
-   client transport;
-};
-
 connection::connection() = default;
 
-connection::connection(forge::net::transport::stream stream, options value) : impl_(std::make_shared<impl>()) {
-   impl_->transport = client{std::move(stream), std::move(value)};
-}
+connection::connection(forge::net::transport::stream stream, options value)
+    : session_{std::make_shared<forge::api::stream::session>(
+         std::move(stream), std::move(value))} {}
 
 connection::~connection() = default;
 connection::connection(connection&&) noexcept = default;
 connection& connection::operator=(connection&&) noexcept = default;
 
 bool connection::valid() const noexcept {
-   return impl_ && impl_->transport.valid();
+   return session_ && session_->valid();
 }
 
 const options& connection::settings() const noexcept {
    static const auto defaults = options{};
-   return impl_ ? impl_->transport.settings() : defaults;
+   return session_ ? session_->settings() : defaults;
 }
 
 boost::asio::awaitable<void> connection::async_close() {
-   if (!impl_) {
-      co_return;
+   return async_close_impl(session_);
+}
+
+boost::asio::awaitable<void>
+connection::async_close_impl(
+   std::shared_ptr<forge::api::stream::session> session) {
+   if (session) {
+      co_await session->async_close();
    }
-   co_await impl_->transport.async_close();
 }
 
 void connection::cancel() noexcept {
-   if (impl_) {
-      impl_->transport.cancel();
+   if (session_) {
+      session_->cancel();
    }
 }
 
 boost::asio::awaitable<std::shared_ptr<forge::api::core::remote_invoker>>
-connection::open_remote_invoker(forge::api::core::api_ref, forge::api::core::descriptor remote_descriptor) {
-   if (!valid()) {
-      FORGE_THROW_EXCEPTION(exceptions::cancelled, "API transport connection is closed");
-   }
-   co_return std::make_shared<impl::stream_invoker>(impl_, std::move(remote_descriptor));
+connection::open_remote_invoker(
+   forge::api::core::api_ref,
+   forge::api::core::descriptor remote_descriptor) {
+   return open_remote_invoker_impl(session_, std::move(remote_descriptor));
 }
 
-boost::asio::awaitable<forge::api::core::response> connection::impl::stream_invoker::async_call(forge::api::core::request value) {
-   auto outbound = forge::api::core::frame{
-       .kind = forge::api::core::frame_kind::request,
-       .api = std::move(value.api),
-       .method = std::move(value.method),
-       .meta = std::move(value.meta),
-       .codec = owner_->transport.settings().codec,
-       .payload = std::move(value.body),
-   };
-
-   auto inbound = co_await owner_->transport.async_call(std::move(outbound));
-   if (inbound.kind == forge::api::core::frame_kind::error) {
-      co_return forge::api::core::response{
-          .api = std::move(inbound.api),
-          .method = std::move(inbound.method),
-          .meta = std::move(inbound.meta),
-          .codec = std::move(inbound.codec),
-          .error = forge::api::core::unpack_body<forge::api::core::error_payload>(inbound.payload),
-      };
+boost::asio::awaitable<std::shared_ptr<forge::api::core::remote_invoker>>
+connection::open_remote_invoker_impl(
+   std::shared_ptr<forge::api::stream::session> session,
+   forge::api::core::descriptor remote_descriptor) {
+   if (!session || !session->valid()) {
+      FORGE_THROW_EXCEPTION(exceptions::cancelled,
+                            "API transport connection is closed");
    }
-   if (inbound.kind != forge::api::core::frame_kind::response) {
-      FORGE_THROW_EXCEPTION(forge::api::core::exceptions::protocol_error,
-                          "API transport connection received non-response frame",
-                          forge::exceptions::ctx("method", inbound.method));
-   }
-   co_return forge::api::core::response{
-       .api = std::move(inbound.api),
-       .method = std::move(inbound.method),
-       .meta = std::move(inbound.meta),
-       .codec = std::move(inbound.codec),
-       .body = std::move(inbound.payload),
-   };
+   co_return std::make_shared<client>(std::move(session),
+                                      std::move(remote_descriptor));
 }
 
 } // namespace forge::api::transport

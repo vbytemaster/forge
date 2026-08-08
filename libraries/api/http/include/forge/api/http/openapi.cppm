@@ -345,13 +345,13 @@ template <typename Tuple, std::size_t... Index>
 }
 
 template <auto Method> [[nodiscard]] std::vector<openapi_field> positional_fields() {
-   using tuple_type = forge::api::core::method_argument_tuple_t<Method>;
+   using tuple_type = http_method_argument_tuple_t<Method>;
    return positional_fields<tuple_type>(std::make_index_sequence<std::tuple_size_v<tuple_type>>{});
 }
 
 template <auto Method, typename Request, typename Response>
 [[nodiscard]] openapi_operation make_openapi_operation(route mapping) {
-   static_assert(std::same_as<clean_type<Request>, clean_type<forge::api::core::method_request_t<Method>>>);
+   static_assert(std::same_as<clean_type<Request>, clean_type<http_method_request_t<Method>>>);
    static_assert(std::same_as<clean_type<Response>, clean_type<forge::api::core::method_response_t<Method>>>);
    constexpr auto positional = is_positional_http_method_v<Method, Request>;
    constexpr auto response_body = [] {

@@ -1,5 +1,10 @@
 add_library(
    forge_api_stream STATIC
+   session.cpp
+   session_impl.cpp
+   session_impl_call.cpp
+   session_impl_reader.cpp
+   session_impl_writer.cpp
    server.cpp
 )
 forge_target_modules_at(forge_api_stream api/stream)

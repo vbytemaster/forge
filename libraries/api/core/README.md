@@ -30,9 +30,15 @@ diagnostic context.
 - `forge.api.core.descriptor` — contract and method descriptors.
 - `forge.api.core.error_projection` — error payload projection and remote typed-error restore.
 - `forge.api.core.handle` — typed local/remote handle wrapper.
+- `forge.api.core.stream_reader` and `forge.api.core.stream_writer` — move-only,
+  incremental typed stream endpoints.
+- `forge.api.core.duplex_stream` — independent typed input and output directions.
+- `forge.api.core.call_options` — per-call limits and optional total deadline.
+- `forge.api.core.server_stream_call`, `forge.api.core.client_stream_call` and
+  `forge.api.core.bidirectional_stream_call` — caller-owned live calls with
+  half-close, cancellation and mandatory terminal completion.
 - `forge.api.core.registry` — registry, installer, view and local frame dispatch.
-- `forge.api.core.binding` — binding plan, call runtime and protocol-neutral
-  interceptors.
+- `forge.api.core.binding` — binding plan and protocol-neutral interceptors.
 - `forge.api.core.dispatcher` — shared API frame dispatcher for stream-oriented
   bindings.
 - `forge.api.core.exceptions` — core typed exceptions such as `method_not_found`,
@@ -159,8 +165,9 @@ consumer_plugin::initialize(forge::app::plugin_context& context) {
 
 ## Message-Oriented Frame
 
-WebSocket, QUIC, P2P and TCP-like bindings use `forge::api::core::frame`. HTTP does not
-need to put this frame in the request body.
+WebSocket, QUIC, P2P and TCP-like bindings use `forge::api::core::frame`.
+Ordinary unary HTTP routes keep their native request/response mapping; live
+HTTP/1.1 stream bodies use a versioned length-delimited form of the same frame.
 
 ```cpp
 auto request = forge::api::core::frame{
@@ -173,36 +180,53 @@ auto request = forge::api::core::frame{
 forge::raw::pack(request.payload, protocol::read_chunk{.ref = ref});
 ```
 
-Frame lifecycle is checked by `forge::api::core::call_runtime`:
+Frame lifecycle belongs to the wire-v2 session in `forge_api_stream`. Call id
+zero is reserved for session control. `stream_end` closes only one direction;
+the call itself terminates exactly once with `response`, `error` or `cancel`.
+The session enforces deadlines, inflight limits, flow-control windows and late
+frame tombstones before dispatching application code.
 
-- `request` opens a call id and must be unique while active.
-- `response`, `error`, `cancel` and `stream_end` are terminal.
-- `stream_item` keeps a streaming call active.
-- unknown call ids, duplicate active ids and post-terminal frames are protocol
-  errors.
-- optional deadlines and max-inflight limits are enforced before dispatching the
-  frame to application handler code.
-
-Descriptor method kinds are explicit:
+Descriptor method kinds are inferred from the final move-only endpoint:
 
 ```cpp
-return forge::api::core::define<cache>({.id = {"cache.events"}, .version = {1, 0}})
-   .server_stream<&cache::watch, protocol::watch_chunks, models::chunk>("watch")
-   .build();
+class cache : public forge::api::core::contract<
+   cache,
+   forge::api::core::surface::local |
+      forge::api::core::surface::remote> {
+ public:
+   virtual boost::asio::awaitable<void>
+   watch(watch_request, forge::api::core::stream_writer<chunk>) = 0;
+
+   virtual boost::asio::awaitable<put_result>
+   upload(put_request, forge::api::core::stream_reader<chunk>) = 0;
+
+   virtual boost::asio::awaitable<void>
+   exchange(session_request,
+            forge::api::core::duplex_stream<request, response>) = 0;
+};
+
+FORGE_API(cache,
+          FORGE_API_CONTRACT("cache.events", 2, 0),
+          FORGE_API_METHOD(watch, request),
+          FORGE_API_METHOD(upload, request),
+          FORGE_API_METHOD(exchange, request))
 ```
 
-Client and bidirectional streams use grouped frame dispatch. A client-stream
-call starts with `request`, sends one or more `stream_item` frames with typed
-request DTO payloads and finishes its input with `stream_end`; the server
-returns a single `response` or `error`. A bidirectional stream follows the same
-input shape and returns `stream_item...stream_end` or `error`.
+The endpoint is always the final parameter and is not a wire argument. Zero or
+more ordinary arguments may precede it. `std::vector<T>` without a stream
+endpoint remains a unary DTO. For overloaded methods, use
+`FORGE_API_METHOD_EXACT` with the exact member pointer.
 
 ```cpp
-return forge::api::core::define<cache>({.id = {"cache.bulk"}, .version = {1, 0}})
-   .client_stream<&cache::upload, protocol::write_chunk, protocol::write_receipt>("upload")
-   .bidirectional_stream<&cache::sync, protocol::write_chunk, protocol::sync_event>("sync")
-   .build();
+auto call = co_await handle.async_open<&cache::upload>(request);
+co_await call.async_write(first);
+co_await call.async_write(second);
+co_await call.async_close();
+auto result = co_await call.async_finish();
 ```
+
+Destroying an unfinished call cancels that call only. A call keeps its
+implementation or remote invoker alive independently of the source handle.
 
 ## API Over Transport
 
@@ -215,10 +239,10 @@ on top of that stream primitive.
 
 This layer must not move into `forge_net_transport`: transport stays a low-level
 byte-stream/session contract and must not import the API contract layer.
-`forge.api.quic.binding` and `forge.api.p2p.binding` are thin adapters or policy wrappers over the
-API transport binding. WebSocket shares `forge::api::core::frame_dispatcher`, but not the
-stream transport binding, because it is message-oriented rather than a
-`transport::stream`. HTTP remains a separate binding because it is
+`forge.api.quic.binding` and `forge.api.p2p.binding` are thin adapters or policy
+wrappers over the API stream runtime. WebSocket preserves message boundaries by
+mapping exactly one binary WebSocket message to one transport frame, then uses
+the same wire-v2 session. HTTP remains a separate binding because it is
 request/response oriented rather than a long-lived bidirectional stream.
 
 The network/P2P implementation order is tracked only in

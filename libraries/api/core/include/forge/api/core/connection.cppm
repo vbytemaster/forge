@@ -60,6 +60,17 @@ class remote_invoker {
 
    virtual boost::asio::awaitable<response> async_call(request value) = 0;
 
+   virtual boost::asio::awaitable<response>
+   async_stream_call(request value, method_kind kind, std::shared_ptr<detail::stream_endpoint> input,
+                     std::shared_ptr<detail::stream_endpoint> output) {
+      static_cast<void>(value);
+      static_cast<void>(kind);
+      static_cast<void>(input);
+      static_cast<void>(output);
+      FORGE_THROW_EXCEPTION(forge::api::core::exceptions::protocol_error,
+                            "remote invoker does not support incremental stream calls");
+   }
+
    virtual bool supports_typed_arguments() const noexcept {
       return false;
    }
@@ -132,6 +143,18 @@ class remote_invoker {
 
 namespace detail {
 
+template <auto Method, typename Tuple, std::size_t... Index>
+[[nodiscard]] bytes pack_fixed_proxy_arguments(const Tuple& arguments, std::index_sequence<Index...>) {
+   constexpr auto count = sizeof...(Index);
+   if constexpr (count == 0) {
+      return {};
+   } else if constexpr (count == 1) {
+      return pack_body(std::get<0>(arguments));
+   } else {
+      return pack_body(std::tuple{std::get<Index>(arguments)...});
+   }
+}
+
 template <typename Interface, typename Request, typename Response>
 boost::asio::awaitable<Response> proxy_call(std::shared_ptr<remote_invoker> invoker, api_ref selected_api,
                                             std::string method, Request request) {
@@ -151,6 +174,52 @@ boost::asio::awaitable<Response> proxy_call_arguments(std::shared_ptr<remote_inv
           api_traits<Interface>::describe(), std::move(selected_api), std::move(method), std::forward<Args>(args)...);
    } else {
       FORGE_THROW_EXCEPTION(exceptions::protocol_error, "local-only API does not support remote invocation");
+   }
+}
+
+template <typename Interface, auto Method, typename... Args>
+boost::asio::awaitable<method_response_t<Method>> proxy_method(std::shared_ptr<remote_invoker> invoker,
+                                                               api_ref selected_api, std::string method,
+                                                               Args&&... args) {
+   validate_method_signature<Method>();
+   static_assert(sizeof...(Args) == method_argument_count_v<Method>,
+                 "generated API proxy argument count does not match method signature");
+   if constexpr (!remote_interface<Interface>) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "local-only API does not support remote invocation");
+   } else if constexpr (method_kind_v<Method> == method_kind::unary) {
+      co_return co_await proxy_call_arguments<Interface, method_response_t<Method>>(
+          std::move(invoker), std::move(selected_api), std::move(method), std::forward<Args>(args)...);
+   } else {
+      auto arguments = std::tuple<std::remove_cvref_t<Args>...>{std::forward<Args>(args)...};
+      auto& endpoint = std::get<method_argument_count_v<Method> - 1>(arguments);
+      auto input = std::shared_ptr<stream_endpoint>{};
+      auto output = std::shared_ptr<stream_endpoint>{};
+      if constexpr (method_kind_v<Method> == method_kind::server_stream) {
+         output = writer_access::endpoint(endpoint);
+      } else if constexpr (method_kind_v<Method> == method_kind::client_stream) {
+         input = reader_access::endpoint(endpoint);
+      } else {
+         input = reader_access::endpoint(endpoint.input());
+         output = writer_access::endpoint(endpoint.output());
+      }
+
+      auto outbound = request{
+          .api = std::move(selected_api),
+          .method = std::move(method),
+          .codec = {.value = "forge.raw"},
+          .body = pack_fixed_proxy_arguments<Method>(
+              arguments, std::make_index_sequence<fixed_argument_count_v<Method>>{}),
+      };
+      auto inbound = co_await invoker->async_stream_call(std::move(outbound), method_kind_v<Method>, std::move(input),
+                                                         std::move(output));
+      if (inbound.error) {
+         raise_remote_error(*inbound.error, find_method(api_traits<Interface>::describe(), inbound.method));
+      }
+      if constexpr (std::same_as<method_response_t<Method>, void>) {
+         co_return;
+      } else {
+         co_return unpack_body<method_response_t<Method>>(inbound.body);
+      }
    }
 }
 

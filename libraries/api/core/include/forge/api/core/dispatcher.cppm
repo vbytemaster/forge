@@ -3,10 +3,8 @@ module;
 #include <boost/asio/awaitable.hpp>
 
 #include <chrono>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <vector>
 
 export module forge.api.core.dispatcher;
 
@@ -32,12 +30,12 @@ class frame_dispatcher {
    frame_dispatcher(const frame_dispatcher&) = delete;
    frame_dispatcher& operator=(const frame_dispatcher&) = delete;
 
-   boost::asio::awaitable<std::vector<frame>> dispatch(frame value);
-   bool cancel(frame value);
+   boost::asio::awaitable<frame> dispatch(frame value);
+   boost::asio::awaitable<frame>
+   dispatch_stream(frame value, std::shared_ptr<detail::stream_endpoint> input,
+                   std::shared_ptr<detail::stream_endpoint> output);
 
    [[nodiscard]] const dispatch_options& options() const noexcept;
-   [[nodiscard]] std::size_t active_calls() const noexcept;
-   [[nodiscard]] std::size_t grouped_calls() const noexcept;
 
  private:
    struct impl;

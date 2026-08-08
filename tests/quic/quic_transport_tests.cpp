@@ -1,4 +1,5 @@
 #include <boost/test/unit_test.hpp>
+#include <forge/api/core/macros.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -29,6 +30,12 @@
 
 import forge.asio.blocking;
 import forge.asio.runtime;
+import forge.api.core.binding;
+import forge.api.core.connection;
+import forge.api.core.duplex_stream;
+import forge.api.core.registry;
+import forge.api.quic.binding;
+import forge.api.transport.connection;
 import forge.exceptions;
 import forge.net.quic.connection;
 import forge.net.quic.connector;
@@ -46,9 +53,40 @@ import forge.net.transport.registry;
 import forge.net.transport.session;
 import forge.net.transport.stream;
 
+namespace quic_live_types {
+
+class live_api
+    : public forge::api::core::contract<
+         live_api, forge::api::core::surface::local |
+                      forge::api::core::surface::remote> {
+ public:
+   virtual ~live_api() = default;
+
+   virtual boost::asio::awaitable<void>
+   exchange(forge::api::core::duplex_stream<std::uint32_t, std::uint32_t>) = 0;
+};
+
+} // namespace quic_live_types
+
+FORGE_API(::quic_live_types::live_api,
+          FORGE_API_CONTRACT("test.quic.live", 1, 0),
+          FORGE_API_METHOD(exchange))
+
 namespace {
 
 using bytes = std::vector<std::uint8_t>;
+using live_api = quic_live_types::live_api;
+
+class live_impl final : public live_api {
+ public:
+   boost::asio::awaitable<void>
+   exchange(forge::api::core::duplex_stream<std::uint32_t, std::uint32_t> stream) override {
+      while (const auto value = co_await stream.async_read()) {
+         co_await stream.async_write(*value * 2U);
+      }
+      co_await stream.async_close();
+   }
+};
 
 template <typename T>
 struct spawned_result {
@@ -350,6 +388,94 @@ boost::asio::awaitable<void> session_loopback_roundtrip(forge::asio::runtime& ru
    co_await listener.async_close();
 }
 
+boost::asio::awaitable<void>
+session_accept_failure_is_transport_typed(forge::asio::runtime& runtime) {
+   const auto material = make_tls_material();
+   auto listener = forge::net::quic::make_session_listener(
+      runtime, loopback_quic(0), make_server_options(material));
+   auto connector = forge::net::quic::make_session_connector(
+      runtime, make_client_options(material));
+   const auto executor = co_await boost::asio::this_coro::executor;
+
+   auto accept = spawn_result<forge::net::transport::session_connection>(
+      executor, listener.async_accept());
+   auto client = co_await connector.async_connect(listener.local_endpoint());
+   auto server = co_await take_result(accept);
+   auto pending = spawn_result<forge::net::transport::stream>(
+      executor, server.session.async_accept_stream());
+
+   server.session.cancel();
+   try {
+      (void)co_await take_result(pending);
+      BOOST_FAIL("expected canceled QUIC session accept to fail");
+   } catch (const forge::exceptions::base& error) {
+      const auto code = forge::net::transport::exceptions::code_of(error);
+      BOOST_REQUIRE(code.has_value());
+      const auto normalized =
+         *code == forge::net::transport::exceptions::code::closed ||
+         *code == forge::net::transport::exceptions::code::canceled;
+      BOOST_TEST(normalized);
+   }
+
+   client.session.cancel();
+   co_await listener.async_close();
+}
+
+boost::asio::awaitable<bool>
+accept_live_api(forge::api::quic::api_binding binding,
+                forge::net::transport::session* session) {
+   auto stream = co_await session->async_accept_stream();
+   co_await binding.accept(std::move(stream));
+   co_return true;
+}
+
+boost::asio::awaitable<void>
+live_api_roundtrip(forge::asio::runtime& runtime) {
+   const auto material = make_tls_material();
+   auto listener = forge::net::quic::make_session_listener(
+      runtime, loopback_quic(0), make_server_options(material));
+   auto connector = forge::net::quic::make_session_connector(
+      runtime, make_client_options(material));
+   const auto executor = co_await boost::asio::this_coro::executor;
+
+   auto accept_session = spawn_result<forge::net::transport::session_connection>(
+      executor, listener.async_accept());
+   auto client = co_await connector.async_connect(listener.local_endpoint());
+   auto server = co_await take_result(accept_session);
+
+   auto implementation = std::make_shared<live_impl>();
+   auto registry = forge::api::core::registry{};
+   registry.install<live_api>(live_api::describe(), implementation);
+   auto binding = forge::api::quic::api()
+                     .use(forge::api::core::binding().serve(registry).build())
+                     .build();
+   auto serving = spawn_result<bool>(
+      executor, accept_live_api(binding, &server.session));
+   auto client_stream = co_await client.session.async_open_stream();
+   auto connection = forge::api::transport::connection{
+      std::move(client_stream), binding.options()};
+   auto remote = co_await connection.get_remote_api<live_api>();
+   auto call = co_await remote.async_open<&live_api::exchange>();
+
+   co_await call.async_write(3U);
+   auto first = co_await call.async_read();
+   BOOST_REQUIRE(first.has_value());
+   BOOST_TEST(*first == 6U);
+   co_await call.async_write(5U);
+   auto second = co_await call.async_read();
+   BOOST_REQUIRE(second.has_value());
+   BOOST_TEST(*second == 10U);
+   co_await call.async_close();
+   BOOST_TEST(!(co_await call.async_read()).has_value());
+   co_await call.async_finish();
+
+   co_await connection.async_close();
+   BOOST_TEST(co_await take_result(serving));
+   co_await client.session.async_close();
+   co_await server.session.async_close();
+   co_await listener.async_close();
+}
+
 boost::asio::awaitable<void> registry_roundtrip(forge::asio::runtime& runtime) {
    const auto material = make_tls_material();
    auto registry = forge::net::transport::registry{};
@@ -528,6 +654,20 @@ BOOST_AUTO_TEST_CASE(endpoint_conversion_preserves_transport_shape) {
 BOOST_AUTO_TEST_CASE(loopback_session_connector_listener_transfer_frames) {
    auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    forge::asio::blocking::run(runtime, session_loopback_roundtrip(runtime));
+}
+
+BOOST_AUTO_TEST_CASE(session_failures_are_normalized_to_transport_errors) {
+   auto runtime = forge::asio::runtime{
+      forge::asio::runtime_options{.worker_threads = 2}};
+   BOOST_TEST(forge::asio::blocking::run_for(
+      runtime, session_accept_failure_is_transport_typed(runtime),
+      std::chrono::seconds{5}));
+}
+
+BOOST_AUTO_TEST_CASE(api_wire_v2_duplex_streams_over_direct_quic) {
+   auto runtime = forge::asio::runtime{
+      forge::asio::runtime_options{.worker_threads = 2}};
+   forge::asio::blocking::run(runtime, live_api_roundtrip(runtime));
 }
 
 BOOST_AUTO_TEST_CASE(registry_connect_listen_routes_quic_sessions) {

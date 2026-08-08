@@ -6,6 +6,7 @@ export module forge.api.stream.server;
 
 export import forge.api.core.dispatcher;
 export import forge.api.stream.options;
+export import forge.api.stream.session;
 export import forge.net.transport.stream;
 
 export namespace forge::api::stream {

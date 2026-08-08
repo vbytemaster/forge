@@ -30,12 +30,17 @@ class connection final : public forge::api::core::connection {
    void cancel() noexcept override;
 
  private:
-   struct impl;
+   static boost::asio::awaitable<void>
+   async_close_impl(std::shared_ptr<forge::api::stream::session> session);
+   static boost::asio::awaitable<std::shared_ptr<forge::api::core::remote_invoker>>
+   open_remote_invoker_impl(
+      std::shared_ptr<forge::api::stream::session> session,
+      forge::api::core::descriptor remote_descriptor);
 
    boost::asio::awaitable<std::shared_ptr<forge::api::core::remote_invoker>>
    open_remote_invoker(forge::api::core::api_ref requested, forge::api::core::descriptor remote_descriptor) override;
 
-   std::shared_ptr<impl> impl_;
+   std::shared_ptr<forge::api::stream::session> session_;
 };
 
 } // namespace forge::api::transport

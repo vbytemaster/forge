@@ -26,10 +26,17 @@ struct connection_metrics {
    std::size_t queued_writes = 0;
 };
 
+struct received_message {
+   std::string payload;
+   bool binary = false;
+};
+
 class connection final : public std::enable_shared_from_this<connection> {
  public:
    using ptr = std::shared_ptr<connection>;
    using message_handler = std::function<boost::asio::awaitable<void>(connection&, std::string)>;
+   using received_message_handler =
+      std::function<boost::asio::awaitable<void>(connection&, received_message)>;
    using close_handler = std::function<void(connection&)>;
 
    ~connection();
@@ -38,9 +45,11 @@ class connection final : public std::enable_shared_from_this<connection> {
    connection& operator=(const connection&) = delete;
 
    void on_message(message_handler handler);
+   void on_received_message(received_message_handler handler);
    void on_close(close_handler handler);
 
    boost::asio::awaitable<void> send(std::string message);
+   boost::asio::awaitable<void> send_binary(std::string message);
    boost::asio::awaitable<void> close();
    boost::asio::awaitable<void> ping(std::string payload = {});
    [[nodiscard]] connection_metrics metrics() const;
@@ -56,6 +65,8 @@ class connection final : public std::enable_shared_from_this<connection> {
 
    explicit connection(boost::beast::tcp_stream stream);
    explicit connection(boost::beast::ssl_stream<boost::beast::tcp_stream> stream);
+
+   boost::asio::awaitable<void> send_message(std::string message, bool binary);
 
    std::unique_ptr<impl> impl_;
 };

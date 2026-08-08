@@ -752,6 +752,7 @@ add_test(NAME test_forge_api_transport COMMAND test_forge_api_transport WORKING_
 add_executable(
    test_forge_http_websocket
    unit/main.cpp
+   http_websocket/api_live_stream_tests.cpp
    http_websocket/network_tests.cpp
 )
 target_link_libraries(test_forge_http_websocket forge Boost::included_unit_test_framework)

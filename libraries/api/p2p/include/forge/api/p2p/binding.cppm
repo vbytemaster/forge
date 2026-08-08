@@ -171,7 +171,7 @@ class api_builder {
  private:
    forge::net::p2p::node* owner_ = nullptr;
    forge::api::core::binding_plan plan_;
-   forge::net::p2p::protocol_id protocol_{.value = "/forge/api/1"};
+   forge::net::p2p::protocol_id protocol_{.value = "/forge/api/2"};
    forge::api::stream::options options_{.max_inflight = 64};
    api_binding::peer_policy peer_policy_{};
    api_binding::discovery_scope discovery_scope_{};

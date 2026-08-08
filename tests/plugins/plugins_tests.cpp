@@ -1272,7 +1272,7 @@ class resolver_protocol_conflict_plugin final : public forge::app::plugin {
       auto p2p = context.apis().get<forge::plugins::p2p::node::api>(
          {.id = {"forge.plugins.p2p.node"}, .major = 1, .min_revision = 0});
       p2p->publish_protocol(
-         forge::net::p2p::protocol_id{.value = "/forge/api/resolver/1"},
+         forge::net::p2p::protocol_id{.value = "/forge/api/resolver/2"},
          [](forge::net::p2p::node::incoming_protocol_stream) -> boost::asio::awaitable<void> {
             co_return;
          });
@@ -1306,7 +1306,7 @@ class scripted_resolver_plugin final : public forge::app::plugin {
                      .export_api<scripted_resolver_api>(
                         {.id = {"forge.plugins.p2p.resolver.protocol"}, .major = 1, .min_revision = 0})
                      .build();
-      p2p->publish_api(std::move(plan), forge::net::p2p::protocol_id{.value = "/forge/api/resolver/1"});
+      p2p->publish_api(std::move(plan), forge::net::p2p::protocol_id{.value = "/forge/api/resolver/2"});
       co_return;
    }
 
@@ -3831,7 +3831,7 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_plugin_config_is_described_from_public_sch
 
    const auto& protocol = require_field(*descriptor, "protocol-id");
    BOOST_TEST(protocol.has_default);
-   BOOST_TEST(std::get<std::string>(protocol.default_value.storage) == "/forge/api/resolver/1");
+   BOOST_TEST(std::get<std::string>(protocol.default_value.storage) == "/forge/api/resolver/2");
 
    const auto& cache_ttl = require_field(*descriptor, "cache-ttl-ms");
    BOOST_TEST(cache_ttl.has_default);

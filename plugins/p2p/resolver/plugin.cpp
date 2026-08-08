@@ -40,7 +40,7 @@ plugin::plugin() : impl_{std::make_shared<impl>()} {}
 plugin::~plugin() = default;
 
 forge::net::p2p::protocol_id default_protocol() {
-   return forge::net::p2p::protocol_id{.value = "/forge/api/resolver/1"};
+   return forge::net::p2p::protocol_id{.value = "/forge/api/resolver/2"};
 }
 
 forge::app::plugin_id plugin::id() const {

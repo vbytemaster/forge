@@ -148,6 +148,12 @@ template <typename Interface> struct traits;
 
 namespace detail {
 
+template <auto Method>
+using http_method_request_t = forge::api::core::detail::method_fixed_request_t<Method>;
+
+template <auto Method>
+using http_method_argument_tuple_t = forge::api::core::detail::method_fixed_argument_tuple_t<Method>;
+
 [[noreturn]] inline void throw_positional_proxy_not_supported() {
    FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
                          "HTTP positional proxy requires forge::api remote proxy");
@@ -241,7 +247,7 @@ response_media_types(body_codec codec) noexcept {
 
 template <auto Method, typename Request>
 inline constexpr auto is_positional_http_method_v =
-    forge::api::core::method_argument_count_v<Method> != 1U ||
+    std::tuple_size_v<http_method_argument_tuple_t<Method>> != 1U ||
     !forge::reflect::is_described_object_v<std::remove_cvref_t<Request>>;
 
 template <typename T> struct optional_field : std::false_type {};
@@ -505,6 +511,110 @@ template <typename Request> [[nodiscard]] std::string render_route_target(const 
       static_cast<void>(parse_route_template(route.target));
    }
    return routes;
+}
+
+[[nodiscard]] inline bool route_uses_fixed_field(const route& value, std::string_view name) {
+   const auto parsed = parse_route_template(value.target);
+   for (auto offset = std::size_t{0}; offset != parsed.path.size();) {
+      if (parsed.path[offset] != ':') {
+         ++offset;
+         continue;
+      }
+      auto end = offset + 1U;
+      while (end != parsed.path.size()) {
+         const auto character = parsed.path[end];
+         if (std::isalnum(static_cast<unsigned char>(character)) == 0 && character != '_') {
+            break;
+         }
+         ++end;
+      }
+      if (std::string_view{parsed.path}.substr(offset + 1U, end - offset - 1U) == name) {
+         return true;
+      }
+      offset = end;
+   }
+   return std::ranges::any_of(parsed.query, [&](const field_binding& binding) {
+      return binding.field == name;
+   });
+}
+
+template <typename T>
+inline constexpr auto client_stream_transport_parameter_v =
+   is_header<std::remove_cvref_t<T>>::value ||
+   is_query<std::remove_cvref_t<T>>::value ||
+   is_cookie<std::remove_cvref_t<T>>::value;
+
+template <auto Method, typename Request>
+void validate_live_stream_route(const route& value) {
+   constexpr auto kind = forge::api::core::method_kind_v<Method>;
+   if constexpr (kind == forge::api::core::method_kind::bidirectional_stream) {
+      FORGE_THROW_EXCEPTION(forge::api::core::exceptions::incompatible_version,
+                            "HTTP/1.1 does not support bidirectional API streams");
+   } else if constexpr (kind == forge::api::core::method_kind::client_stream) {
+      if (!value.forms.empty() || value.body_stream_field.has_value()) {
+         FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
+                               "HTTP API client stream reserves the request body for stream items");
+      }
+
+      using argument_tuple = http_method_argument_tuple_t<Method>;
+      if constexpr (is_positional_http_method_v<Method, Request>) {
+         using interface_type = forge::api::core::method_class_t<Method>;
+         const auto descriptor = forge::api::core::api_traits<interface_type>::describe();
+         const auto* method = forge::api::core::find_method(descriptor, value.method_name);
+         if (method == nullptr ||
+             (std::tuple_size_v<argument_tuple> != 0U && method->argument_names.size() !=
+                                                        std::tuple_size_v<argument_tuple>)) {
+            FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
+                                  "HTTP API positional stream method is missing argument metadata");
+         }
+         [&]<std::size_t... Index>(std::index_sequence<Index...>) {
+            (([&] {
+               using argument = std::tuple_element_t<Index, argument_tuple>;
+               const auto& name = method->argument_names[Index];
+               if constexpr (client_stream_transport_parameter_v<argument>) {
+                  if (route_uses_fixed_field(value, name)) {
+                     FORGE_THROW_EXCEPTION(
+                        forge::net::http::exceptions::bad_request,
+                        "HTTP parameter wrapper conflicts with route binding",
+                        forge::exceptions::ctx("field", name));
+                  }
+                  return;
+               } else if constexpr (is_http_parameter_v<std::remove_cvref_t<argument>>) {
+                  FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
+                                        "HTTP API client stream fixed argument requires request-body mapping",
+                                        forge::exceptions::ctx("field", name));
+               } else if (!route_uses_fixed_field(value, name)) {
+                  FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
+                                        "HTTP API client stream fixed argument is not bound by path or query",
+                                        forge::exceptions::ctx("field", name));
+               }
+            }()), ...);
+         }(std::make_index_sequence<std::tuple_size_v<argument_tuple>>{});
+      } else {
+         using request_type = std::remove_cvref_t<Request>;
+         forge::reflect::for_each_member<request_type>([&](const char* name, auto member) {
+            using member_type = std::remove_cvref_t<decltype(std::declval<request_type>().*member)>;
+            if constexpr (client_stream_transport_parameter_v<member_type>) {
+               if (route_uses_fixed_field(value, name)) {
+                  FORGE_THROW_EXCEPTION(
+                     forge::net::http::exceptions::bad_request,
+                     "HTTP parameter wrapper conflicts with route binding",
+                     forge::exceptions::ctx("field", name));
+               }
+               return;
+            } else if constexpr (is_http_parameter_v<member_type> || is_body_stream_v<member_type> ||
+                                 is_body_bytes_v<member_type> || is_upload_file_v<member_type>) {
+               FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
+                                     "HTTP API client stream fixed field requires request-body mapping",
+                                     forge::exceptions::ctx("field", name));
+            } else if (!route_uses_fixed_field(value, name)) {
+               FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
+                                     "HTTP API client stream fixed field is not bound by path or query",
+                                     forge::exceptions::ctx("field", name));
+            }
+         });
+      }
+   }
 }
 
 } // namespace detail

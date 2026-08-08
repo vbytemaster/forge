@@ -9,6 +9,8 @@ clients.
 
 - Expose a described Forge API contract over HTTP route/path/status semantics.
 - Build route-aware typed clients for the same contract.
+- Expose server-stream and client-stream methods as incremental HTTP/1.1
+  response and request bodies.
 - Use JSON by default and opt into XML per route for typed DTO bodies.
 - Keep native HTTP escape hatches such as file, stream, bytes, empty,
   body-stream, body-bytes and multipart routes.
@@ -39,6 +41,26 @@ clients.
   and route descriptors used by the HTTP binding.
 
 Macro header: `<forge/api/http/macros.hpp>`.
+
+## Live Streaming
+
+HTTP/1.1 supports server-stream and client-stream methods. Server streams use a
+chunked response; client streams use a streamed request body. Both carry
+versioned, length-delimited Forge API frames with media type
+`application/vnd.forge.api-stream; version=2`. Transport body backpressure is
+the flow-control mechanism, so HTTP bodies do not carry `stream_window` frames.
+
+The endpoint is still the final C++ parameter and is not part of the fixed wire
+arguments. For client streams, fixed arguments may be mapped only to path,
+query, header or cookie fields because the request body belongs to stream
+items. A conflicting body/form/body-stream mapping is rejected while building
+the binding. HTTP/1.1 bidirectional methods are rejected both at binding
+construction and before client I/O; use WebSocket, P2P or QUIC for duplex calls.
+
+If a server-stream failure occurs before response headers, the binding returns
+the ordinary HTTP error response. After streaming starts, it emits a terminal
+API error frame. Decoders bound frame length before allocation, require wire
+major 2, reject trailing bytes and require exactly one terminal outcome.
 
 ## Target And Component
 
@@ -111,6 +133,8 @@ before invoking the handler when the emitted codec is not acceptable.
 
 - Do not add route options that do not change runtime behavior and tests.
 - Do not decode native stream/file/bytes responses through JSON or XML.
+- Do not buffer API stream items into a vector or emulate bidirectional HTTP by
+  delaying either direction.
 - Do not make `forge_net_http` depend on `forge_api_http`; dependency direction is
   `forge_api_http -> forge_net_http`.
 - Do not use positional HTTP arguments for large envelopes. Use a described

@@ -50,7 +50,7 @@ It does not own the P2P node lifecycle; it composes through
 plugins:
    p2p:
       resolver:
-         protocol-id: /forge/api/resolver/1
+         protocol-id: /forge/api/resolver/2
          cache-ttl-ms: 60000
          query-deadline-ms: 5000
          open-deadline-ms: 10000

@@ -37,6 +37,8 @@ import forge.api.core.registry;
 import forge.api.core.binding;
 import forge.net.http.exceptions;
 import forge.net.http.body;
+import forge.net.http.client;
+import forge.net.http.connection;
 import forge.api.http.parameters;
 import forge.net.http.file;
 export import forge.api.http.mapping;
@@ -58,6 +60,42 @@ import forge.codec.xml;
 export namespace forge::api::http {
 
 using namespace forge::net::http;
+
+namespace detail {
+
+void validate_live_stream_headers(const forge::net::http::request& request,
+                                  forge::api::core::method_kind kind);
+
+boost::asio::awaitable<forge::net::http::stream_response>
+make_live_server_stream_response(forge::api::core::binding_plan plan,
+                                 forge::api::core::frame request,
+                                 forge::net::http::stream_request& http_request,
+                                 forge::net::http::status success_status);
+
+boost::asio::awaitable<forge::api::core::frame>
+dispatch_live_client_stream(forge::api::core::binding_plan plan,
+                            forge::api::core::frame request,
+                            forge::net::http::body_reader body,
+                            std::function<void(const forge::api::core::bytes&,
+                                               forge::raw::unpack_limits)> decoder);
+
+[[nodiscard]] forge::net::http::response
+make_live_terminal_response(const forge::net::http::request& request,
+                            forge::net::http::status success_status,
+                            const forge::api::core::frame& terminal);
+
+boost::asio::awaitable<forge::api::core::response>
+invoke_live_http_stream(forge::net::http::client& client,
+                        const forge::api::core::descriptor& descriptor,
+                        const route& route,
+                        forge::api::core::request request,
+                        forge::net::http::request http_request,
+                        forge::net::http::request_options request_options,
+                        forge::api::core::method_kind kind,
+                        std::shared_ptr<forge::api::core::detail::stream_endpoint> input,
+                        std::shared_ptr<forge::api::core::detail::stream_endpoint> output);
+
+} // namespace detail
 
 template <typename T> struct is_http_body_sequence : std::false_type {};
 
@@ -724,9 +762,7 @@ class binding_builder {
        !detail::is_body_bytes_v<std::remove_cvref_t<T>> && !detail::is_upload_file_v<std::remove_cvref_t<T>>;
 
    template <auto Method, typename Request>
-   static constexpr auto is_positional_http_method_v =
-       forge::api::core::method_argument_count_v<Method> != 1U ||
-       !forge::reflect::is_described_object_v<std::remove_cvref_t<Request>>;
+   static constexpr auto is_positional_http_method_v = detail::is_positional_http_method_v<Method, Request>;
 
    [[nodiscard]] static bool path_uses_field(std::string_view path, std::string_view name) {
       for (auto index = std::size_t{0}; index != path.size();) {
@@ -762,14 +798,37 @@ class binding_builder {
    template <typename Tuple, std::size_t... Index>
    static void validate_positional_http_arguments(method verb, std::string_view path, const route_options& options,
                                                   const forge::api::core::method_descriptor& method_descriptor,
+                                                  bool allow_body,
+                                                  bool allow_parameter_wrappers,
                                                   std::index_sequence<Index...>) {
       auto body_candidates = std::size_t{0};
       (([&] {
           using argument_type = std::remove_cvref_t<std::tuple_element_t<Index, Tuple>>;
           const auto name = argument_name(method_descriptor, Index);
-          if constexpr (detail::is_http_parameter_v<argument_type>) {
+          if constexpr (detail::is_header<argument_type>::value ||
+                        detail::is_query<argument_type>::value ||
+                        detail::is_cookie<argument_type>::value) {
+             if (!allow_parameter_wrappers) {
+                FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
+                                      "HTTP positional methods cannot use forge::http parameter wrappers",
+                                      forge::exceptions::ctx("field", name));
+             }
+             if (path_uses_field(path, name) ||
+                 query_uses_field(options, name)) {
+                FORGE_THROW_EXCEPTION(
+                   forge::net::http::exceptions::bad_request,
+                   "HTTP parameter wrapper conflicts with route binding",
+                   forge::exceptions::ctx("field", name));
+             }
+             return;
+          } else if constexpr (detail::is_http_parameter_v<argument_type> ||
+                               positional_argument_needs_stream_v<argument_type>) {
+             if (allow_parameter_wrappers && allow_body && uses_request_body(verb)) {
+                ++body_candidates;
+                return;
+             }
              FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
-                                   "HTTP positional methods cannot use forge::http parameter wrappers",
+                                   "HTTP positional argument requires request-body mapping",
                                    forge::exceptions::ctx("field", name));
           } else if (path_uses_field(path, name) || query_uses_field(options, name)) {
              return;
@@ -796,9 +855,48 @@ class binding_builder {
 
    template <typename Tuple>
    static void validate_positional_http_arguments(method verb, std::string_view path, const route_options& options,
-                                                  const forge::api::core::method_descriptor& method_descriptor) {
-      validate_positional_http_arguments<Tuple>(verb, path, options, method_descriptor,
+                                                  const forge::api::core::method_descriptor& method_descriptor,
+                                                  bool allow_body = true,
+                                                  bool allow_parameter_wrappers = false) {
+      validate_positional_http_arguments<Tuple>(verb, path, options, method_descriptor, allow_body,
+                                                allow_parameter_wrappers,
                                                 std::make_index_sequence<std::tuple_size_v<Tuple>>{});
+   }
+
+   template <typename Request>
+   static void validate_client_stream_request(std::string_view path, const route_options& options) {
+      if (!options.forms.empty() || options.body_stream_field.has_value()) {
+         FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
+                               "HTTP API client stream reserves the request body for stream items");
+      }
+      if constexpr (forge::reflect::is_described_object_v<Request>) {
+         forge::reflect::for_each_member<Request>([&](const char* name, auto member) {
+            using member_type = std::remove_cvref_t<decltype(std::declval<Request>().*member)>;
+            if constexpr (detail::is_header<member_type>::value ||
+                          detail::is_query<member_type>::value ||
+                          detail::is_cookie<member_type>::value) {
+               if (path_uses_field(path, name) ||
+                   query_uses_field(options, name)) {
+                  FORGE_THROW_EXCEPTION(
+                     forge::net::http::exceptions::bad_request,
+                     "HTTP parameter wrapper conflicts with route binding",
+                     forge::exceptions::ctx("field", name));
+               }
+               return;
+            } else if constexpr (detail::is_http_parameter_v<member_type> ||
+                                 detail::is_body_stream_v<member_type> ||
+                                 detail::is_body_bytes_v<member_type> ||
+                                 detail::is_upload_file_v<member_type>) {
+               FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
+                                     "HTTP API client stream fixed field requires request-body mapping",
+                                     forge::exceptions::ctx("field", name));
+            } else if (!path_uses_field(path, name) && !query_uses_field(options, name)) {
+               FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
+                                     "HTTP API client stream fixed field is not bound by path or query",
+                                     forge::exceptions::ctx("field", name));
+            }
+         });
+      }
    }
 
    [[nodiscard]] static std::string argument_name(const forge::api::core::method_descriptor& method_descriptor,
@@ -1557,6 +1655,19 @@ class binding_builder {
       return stream_response::buffered(std::move(value));
    }
 
+   template <typename Interface>
+   [[nodiscard]] static forge::api::core::frame
+   make_live_request(std::string name, forge::api::core::bytes payload) {
+      return forge::api::core::frame{
+         .kind = forge::api::core::frame_kind::request,
+         .id = {.value = 1},
+         .api = Interface::ref(),
+         .method = std::move(name),
+         .codec = {.value = "forge.raw"},
+         .payload = std::move(payload),
+      };
+   }
+
    template <typename Response> static void validate_response_file_option(const route_options& options) {
       constexpr auto response_is_file = std::is_same_v<std::remove_cvref_t<Response>, file_response>;
       constexpr auto response_is_stream = detail::is_streaming_response_v<Response>;
@@ -1592,23 +1703,144 @@ class binding_builder {
    [[nodiscard]] mount_action make_step(method verb, std::string path, route_options options,
                                         std::string explicit_name) {
       using interface_type = typename method_class<decltype(Method)>::type;
-      using argument_tuple = forge::api::core::method_argument_tuple_t<Method>;
+      using argument_tuple = detail::http_method_argument_tuple_t<Method>;
       auto plan = plan_;
       auto name = explicit_name.empty() ? method_name<interface_type, Request, Response>() : std::move(explicit_name);
       return [plan = std::move(plan), verb, path = std::move(path), options = std::move(options),
               name = std::move(name)](router& target, std::string_view base_path) {
          validate_response_file_option<Response>(options);
+         if constexpr (forge::api::core::method_kind_v<Method> ==
+                       forge::api::core::method_kind::bidirectional_stream) {
+            FORGE_THROW_EXCEPTION(forge::api::core::exceptions::incompatible_version,
+                                  "HTTP/1.1 does not support bidirectional API streams",
+                                  forge::exceptions::ctx("method", name));
+         }
          const auto api_descriptor = interface_type::describe();
          const auto* mount_method_descriptor = forge::api::core::find_method(api_descriptor, name);
          if constexpr (is_positional_http_method_v<Method, Request>) {
-            if (mount_method_descriptor == nullptr || mount_method_descriptor->argument_names.empty()) {
+            if (mount_method_descriptor == nullptr ||
+                (std::tuple_size_v<argument_tuple> != 0U && mount_method_descriptor->argument_names.empty())) {
                FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
                                      "HTTP API positional method is missing argument metadata");
             }
-            validate_positional_http_arguments<argument_tuple>(verb, path, options, *mount_method_descriptor);
+            validate_positional_http_arguments<argument_tuple>(
+               verb, path, options, *mount_method_descriptor,
+               forge::api::core::method_kind_v<Method> != forge::api::core::method_kind::client_stream,
+               forge::api::core::method_kind_v<Method> != forge::api::core::method_kind::unary);
+         } else if constexpr (forge::api::core::method_kind_v<Method> ==
+                              forge::api::core::method_kind::client_stream) {
+            validate_client_stream_request<Request>(path, options);
          }
          auto mounted_path = join_path(base_path, path);
-         if constexpr (detail::request_needs_stream_v<Request> || tuple_needs_stream_v<argument_tuple> ||
+         if constexpr (forge::api::core::method_kind_v<Method> != forge::api::core::method_kind::unary) {
+            auto stream_handler = [plan, options,
+                                   name](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+               if (plan.local == nullptr) {
+                  FORGE_THROW_EXCEPTION(forge::api::core::exceptions::incompatible_version,
+                                        "HTTP API binding has no local registry");
+               }
+               const auto api_descriptor = interface_type::describe();
+               const auto* method_descriptor = forge::api::core::find_method(api_descriptor, name);
+               try {
+                  if (method_descriptor == nullptr) {
+                     FORGE_THROW_EXCEPTION(forge::api::core::exceptions::method_not_found,
+                                           "HTTP API stream method is not declared");
+                  }
+                  detail::validate_live_stream_headers(
+                     request_value.context.request, forge::api::core::method_kind_v<Method>);
+
+                  auto payload = forge::api::core::bytes{};
+                  if constexpr (is_positional_http_method_v<Method, Request>) {
+                     if constexpr (std::tuple_size_v<argument_tuple> != 0U) {
+                        if (method_descriptor->argument_names.empty()) {
+                           FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
+                                                 "HTTP API positional method is missing argument metadata");
+                        }
+                     }
+                     if constexpr (forge::api::core::method_kind_v<Method> ==
+                                   forge::api::core::method_kind::server_stream) {
+                        auto arguments = co_await make_positional_arguments_from_stream<argument_tuple>(
+                           request_value, options, *method_descriptor);
+                        payload = forge::api::core::detail::pack_fixed_proxy_arguments<Method>(
+                           arguments, std::make_index_sequence<std::tuple_size_v<argument_tuple>>{});
+                     } else {
+                        auto arguments = make_positional_arguments_from_http<argument_tuple>(
+                           request_value.context, options, *method_descriptor);
+                        payload = forge::api::core::detail::pack_fixed_proxy_arguments<Method>(
+                           arguments, std::make_index_sequence<std::tuple_size_v<argument_tuple>>{});
+                     }
+                  } else {
+                     if constexpr (forge::api::core::method_kind_v<Method> ==
+                                   forge::api::core::method_kind::server_stream) {
+                        auto request = co_await make_request_from_stream<Request>(request_value, options);
+                        payload = forge::api::core::pack_body(request);
+                     } else {
+                        auto request = make_request_from_http<Request>(request_value.context, options);
+                        payload = forge::api::core::pack_body(request);
+                     }
+                  }
+
+                  auto request = make_live_request<interface_type>(name, std::move(payload));
+                  if constexpr (forge::api::core::method_kind_v<Method> ==
+                                forge::api::core::method_kind::server_stream) {
+                     auto output = co_await detail::make_live_server_stream_response(
+                        plan, std::move(request), request_value, options.success_status);
+                     apply_cache_policy(output.head, options);
+                     co_return output;
+                  } else {
+                     auto terminal = co_await detail::dispatch_live_client_stream(
+                        plan, std::move(request), std::move(request_value.body), method_descriptor->input_decoder);
+                     if (terminal.kind == forge::api::core::frame_kind::error) {
+                        auto payload = forge::raw::unpack_exact<forge::api::core::error_payload>(terminal.payload);
+                        co_return buffered(make_error_response(request_value.context.request, payload, options));
+                     }
+                     auto output = detail::make_live_terminal_response(
+                        request_value.context.request, options.success_status, terminal);
+                     apply_cache_policy(output, options);
+                     co_return buffered(std::move(output));
+                  }
+               } catch (const forge::net::http::exceptions::unsupported_media_type& error) {
+                  co_return buffered(make_http_error_response(request_value.context.request, "unsupported_media_type",
+                                                              error.message(), status::unsupported_media_type,
+                                                              options));
+               } catch (const forge::net::http::exceptions::not_acceptable& error) {
+                  co_return buffered(make_http_error_response(request_value.context.request, "not_acceptable",
+                                                              error.message(), status::not_acceptable, options));
+               } catch (const forge::net::http::exceptions::bad_request& error) {
+                  co_return buffered(make_validation_response(request_value.context.request, error.message(), options));
+               } catch (const forge::exceptions::base& error) {
+                  if (method_descriptor != nullptr) {
+                     const auto payload = forge::api::core::project_error(*method_descriptor, error);
+                     co_return buffered(make_error_response(request_value.context.request, payload, options));
+                  }
+                  co_return buffered(make_error_response(request_value.context.request,
+                                                          forge::api::core::make_internal_error_payload(), options));
+               }
+            };
+            switch (verb) {
+            case method::get:
+               target.get_stream(std::move(mounted_path), std::move(stream_handler));
+               break;
+            case method::head:
+               target.head_stream(std::move(mounted_path), std::move(stream_handler));
+               break;
+            case method::post:
+               target.post_stream(std::move(mounted_path), std::move(stream_handler));
+               break;
+            case method::put:
+               target.put_stream(std::move(mounted_path), std::move(stream_handler));
+               break;
+            case method::patch:
+               target.patch_stream(std::move(mounted_path), std::move(stream_handler));
+               break;
+            case method::delete_:
+               target.del_stream(std::move(mounted_path), std::move(stream_handler));
+               break;
+            default:
+               FORGE_THROW_EXCEPTION(forge::net::http::exceptions::method_not_allowed,
+                                     "unsupported HTTP API live stream route verb");
+            }
+         } else if constexpr (detail::request_needs_stream_v<Request> || tuple_needs_stream_v<argument_tuple> ||
                        detail::response_needs_stream_v<Response>) {
             auto stream_handler = [plan, options,
                                    name](stream_request& request_value) -> boost::asio::awaitable<stream_response> {

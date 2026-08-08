@@ -39,41 +39,39 @@ boost::asio::awaitable<void> serve_session(forge::net::transport::session sessio
       FORGE_THROW_EXCEPTION(exceptions::resource_exhausted, "API transport max concurrent streams must be positive");
    }
 
-   struct state {
-      explicit state(boost::asio::any_io_executor executor)
-          : strand(boost::asio::make_strand(std::move(executor))), wake(strand) {
-         wake.expires_at(boost::asio::steady_timer::time_point::max());
-      }
-
-      boost::asio::strand<boost::asio::any_io_executor> strand;
-      boost::asio::steady_timer wake;
-      std::size_t slots = 0;
-   };
-
    const auto executor = co_await boost::asio::this_coro::executor;
-   auto shared = std::make_shared<state>(executor);
-   auto reserve_slot = [shared, max = value.max_concurrent_streams]() -> boost::asio::awaitable<void> {
-      co_await boost::asio::dispatch(shared->strand, boost::asio::use_awaitable);
-      while (shared->slots >= max) {
-         shared->wake.expires_at(boost::asio::steady_timer::time_point::max());
+   auto strand = boost::asio::make_strand(executor);
+   auto wake = std::make_shared<boost::asio::steady_timer>(strand);
+   auto slots = std::make_shared<std::size_t>(0);
+   wake->expires_at(boost::asio::steady_timer::time_point::max());
+   auto reserve_slot = [strand, wake, slots,
+                        max = value.max_concurrent_streams]()
+      -> boost::asio::awaitable<void> {
+      co_await boost::asio::dispatch(strand, boost::asio::use_awaitable);
+      while (*slots >= max) {
+         wake->expires_at(boost::asio::steady_timer::time_point::max());
          auto error = boost::system::error_code{};
-         co_await shared->wake.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+         co_await wake->async_wait(boost::asio::redirect_error(
+            boost::asio::use_awaitable, error));
       }
-      ++shared->slots;
+      ++*slots;
    };
-   auto release_slot = [shared]() -> boost::asio::awaitable<void> {
-      co_await boost::asio::dispatch(shared->strand, boost::asio::use_awaitable);
-      if (shared->slots > 0) {
-         --shared->slots;
+   auto release_slot = [strand, wake, slots]()
+      -> boost::asio::awaitable<void> {
+      co_await boost::asio::dispatch(strand, boost::asio::use_awaitable);
+      if (*slots > 0) {
+         --*slots;
       }
-      shared->wake.cancel();
+      wake->cancel();
    };
-   auto wait_for_drain = [shared]() -> boost::asio::awaitable<void> {
-      co_await boost::asio::dispatch(shared->strand, boost::asio::use_awaitable);
-      while (shared->slots > 0) {
-         shared->wake.expires_at(boost::asio::steady_timer::time_point::max());
+   auto wait_for_drain = [strand, wake, slots]()
+      -> boost::asio::awaitable<void> {
+      co_await boost::asio::dispatch(strand, boost::asio::use_awaitable);
+      while (*slots > 0) {
+         wake->expires_at(boost::asio::steady_timer::time_point::max());
          auto error = boost::system::error_code{};
-         co_await shared->wake.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+         co_await wake->async_wait(boost::asio::redirect_error(
+            boost::asio::use_awaitable, error));
       }
    };
 

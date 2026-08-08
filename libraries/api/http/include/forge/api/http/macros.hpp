@@ -95,40 +95,46 @@
 
 #define FORGE_HTTP_DETAIL_BIND_ROUTE(r, INTERFACE, ROUTE)                                                              \
    builder.template route<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE),                                                 \
-                          ::forge::api::core::method_request_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>,           \
+                          ::forge::api::http::detail::http_method_request_t<                                           \
+                              &INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>,                                            \
                           ::forge::api::core::method_response_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>>(         \
        FORGE_HTTP_DETAIL_ROUTE(ROUTE));
 
 #define FORGE_HTTP_DETAIL_ROUTE_CALL(r, INTERFACE, ROUTE)                                                              \
    ::forge::api::http::detail::make_route_call<                                                                        \
        &INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE),                                                                    \
-       ::forge::api::core::method_request_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>,                              \
+       ::forge::api::http::detail::http_method_request_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>,                \
        ::forge::api::core::method_response_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>>(                            \
        FORGE_HTTP_DETAIL_ROUTE(ROUTE)),
 
 #define FORGE_HTTP_DETAIL_OPENAPI_OPERATION(r, INTERFACE, ROUTE)                                                       \
    ::forge::api::http::detail::make_openapi_operation<                                                                 \
        &INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE),                                                                    \
-       ::forge::api::core::method_request_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>,                              \
+       ::forge::api::http::detail::http_method_request_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>,                \
        ::forge::api::core::method_response_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>>(                            \
        FORGE_HTTP_DETAIL_ROUTE(ROUTE)),
 
 #define FORGE_HTTP_DETAIL_ROUTE_API_PROXY_SUPPORTED(r, INTERFACE, ROUTE)                                               \
    &&::forge::api::http::detail::route_can_use_api_proxy_v<                                                            \
        &INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE),                                                                    \
-       ::forge::api::core::method_request_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>,                              \
+       ::forge::api::http::detail::http_method_request_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>,                \
        ::forge::api::core::method_response_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>>
 
 #define FORGE_HTTP_DETAIL_PROXY_USING(r, INTERFACE, ROUTE)                                                             \
    using ::forge::api::core::proxy<INTERFACE>::FORGE_HTTP_DETAIL_METHOD(ROUTE);
 
 #define FORGE_HTTP_DETAIL_PROXY_METHOD(r, INTERFACE, ROUTE)                                                            \
+   template <::forge::api::core::method_kind Kind =                                                                   \
+                 ::forge::api::core::method_kind_v<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>>                      \
+      requires(Kind == ::forge::api::core::method_kind::unary)                                                        \
    boost::asio::awaitable<::forge::api::core::method_response_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>>          \
    FORGE_HTTP_DETAIL_METHOD(ROUTE)(                                                                                    \
-       ::forge::api::core::method_request_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)> request) {                    \
-      if constexpr (::forge::api::core::method_argument_count_v<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)> == 1U) {  \
+       ::forge::api::http::detail::http_method_request_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)> request) {      \
+      if constexpr (std::tuple_size_v<::forge::api::http::detail::http_method_argument_tuple_t<                       \
+                        &INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>> == 1U) {                                         \
          using request_type =                                                                                          \
-             std::remove_cvref_t<::forge::api::core::method_request_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>>;   \
+             std::remove_cvref_t<::forge::api::http::detail::http_method_request_t<                                   \
+                 &INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>>;                                                       \
          if constexpr (::forge::api::http::detail::is_positional_http_method_v<                                        \
                            &INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE), request_type>) {                               \
             auto arguments = std::make_tuple(std::move(request));                                                      \
@@ -141,7 +147,8 @@
                                                                BOOST_PP_STRINGIZE(FORGE_HTTP_DETAIL_METHOD(ROUTE))));  \
          } else {                                                                                                      \
             co_return co_await ::forge::api::http::detail::call<                                                       \
-                ::forge::api::core::method_request_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>,                     \
+                ::forge::api::http::detail::http_method_request_t<                                                     \
+                    &INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>,                                                      \
                 ::forge::api::core::method_response_t<&INTERFACE::FORGE_HTTP_DETAIL_METHOD(ROUTE)>>(                   \
                 *client_, ::forge::api::core::api_traits<INTERFACE>::describe(), FORGE_HTTP_DETAIL_ROUTE(ROUTE),       \
                 std::move(request));                                                                                   \

@@ -193,7 +193,7 @@
         "test_forge_plugins p2p_api_resolver_resolves_remote_api_and_opens_typed_remote",
         "test_forge_plugins p2p_api_resolver_rejects_malformed_remote_metadata_without_caching_it"
       ],
-      "known_gap": "`/forge/api/resolver/1` is an FORGE-specific metadata protocol; no Go/Rust libp2p resolver interop claim is made."
+      "known_gap": "`/forge/api/resolver/2` is an FORGE-specific metadata protocol; no Go/Rust libp2p resolver interop claim is made."
     },
     {
       "id": "plugin.p2p_diagnostics_snapshot",

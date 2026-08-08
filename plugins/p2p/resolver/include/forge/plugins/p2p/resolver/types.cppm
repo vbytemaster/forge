@@ -30,7 +30,7 @@ import forge.schema.enums;
 export namespace forge::plugins::p2p::resolver {
 
 struct config {
-   std::string protocol_id = "/forge/api/resolver/1";
+   std::string protocol_id = "/forge/api/resolver/2";
    std::uint64_t cache_ttl_ms = 60'000;
    std::uint64_t query_deadline_ms = 5'000;
    std::uint64_t open_deadline_ms = 10'000;
@@ -119,7 +119,7 @@ export template <> struct forge::schema::rules<forge::plugins::p2p::resolver::co
    [[nodiscard]] static forge::schema::object_schema<forge::plugins::p2p::resolver::config> define() {
       auto schema = forge::schema::object<forge::plugins::p2p::resolver::config>();
       schema.field<&forge::plugins::p2p::resolver::config::protocol_id>("protocol-id")
-         .default_value("/forge/api/resolver/1")
+         .default_value("/forge/api/resolver/2")
          .description("P2P protocol id used for FORGE API metadata resolution");
       schema.field<&forge::plugins::p2p::resolver::config::cache_ttl_ms>("cache-ttl-ms")
          .default_value(std::uint64_t{60'000})

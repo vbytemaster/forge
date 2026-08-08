@@ -2,6 +2,7 @@ module;
 
 #include <chrono>
 #include <algorithm>
+#include <atomic>
 #include <coroutine>
 #include <deque>
 #include <exception>
@@ -179,7 +180,10 @@ response make_header_response(const beast_http::response_parser<beast_http::buff
    return output;
 }
 
-template <typename Stream> class beast_response_body_source final : public body_reader::source {
+template <typename Stream>
+class beast_response_body_source final
+    : public body_reader::source,
+      public std::enable_shared_from_this<beast_response_body_source<Stream>> {
  public:
    beast_response_body_source(Stream stream, beast::flat_buffer buffer,
                               std::shared_ptr<beast_http::response_parser<beast_http::buffer_body>> parser,
@@ -214,6 +218,10 @@ template <typename Stream> class beast_response_body_source final : public body_
             read_error = {};
          }
          if (read_error) {
+            if (cancelled_.load(std::memory_order_acquire)) {
+               throw forge::asio::exceptions::canceled{
+                  "HTTP response body read was canceled"};
+            }
             if (cancellation_error(read_error)) {
                if (deadline_expired(deadline_)) {
                   throw exceptions::gateway_timeout{"HTTP response body exceeded its transport deadline"};
@@ -249,12 +257,29 @@ template <typename Stream> class beast_response_body_source final : public body_
       return bytes_read_;
    }
 
+   void cancel() noexcept override {
+      cancelled_.store(true, std::memory_order_release);
+      try {
+         asio::dispatch(stream_.get_executor(),
+                        [self = this->shared_from_this()] {
+                           auto ignored = boost::system::error_code{};
+                           auto& socket = beast::get_lowest_layer(self->stream_).socket();
+                           socket.cancel(ignored);
+                           socket.set_option(asio::socket_base::linger{true, 0}, ignored);
+                           socket.close(ignored);
+                        });
+      } catch (...) {
+         // Cancellation is a best-effort no-throw operation.
+      }
+   }
+
  private:
    Stream stream_;
    beast::flat_buffer buffer_;
    std::shared_ptr<beast_http::response_parser<beast_http::buffer_body>> parser_;
    transport_deadline deadline_;
    std::uint64_t bytes_read_ = 0;
+   std::atomic_bool cancelled_ = false;
 };
 
 awaitable<std::optional<body_chunk>> read_body_until(body_reader& body, transport_deadline deadline) {

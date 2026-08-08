@@ -69,8 +69,9 @@ class registry : public service_mount {
 
    [[nodiscard]] const descriptor* describe(api_ref requested) const noexcept;
    boost::asio::awaitable<frame> dispatch(frame request) const;
-   boost::asio::awaitable<std::vector<frame>> dispatch_many(frame request) const;
-   boost::asio::awaitable<std::vector<frame>> dispatch_stream(std::vector<frame> frames) const;
+   boost::asio::awaitable<frame>
+   dispatch_stream(frame request, std::shared_ptr<detail::stream_endpoint> input,
+                   std::shared_ptr<detail::stream_endpoint> output) const;
    [[nodiscard]] std::size_t size() const noexcept;
    void clear() noexcept;
 

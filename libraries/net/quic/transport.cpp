@@ -4,6 +4,7 @@ module;
 
 #include <atomic>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <span>
 #include <string>
@@ -19,9 +20,29 @@ module forge.net.quic.transport;
 
 import forge.asio.runtime;
 import forge.net.quic.exceptions;
+import forge.net.transport.exceptions;
 
 namespace forge::net::quic {
 namespace {
+
+[[noreturn]] void raise_transport_failure(
+   const forge::exceptions::base& error) {
+   const auto code = exceptions::code_of(error);
+   if (code == exceptions::code::connection_closed ||
+       code == exceptions::code::stream_closed) {
+      FORGE_THROW_EXCEPTION(
+         forge::net::transport::exceptions::closed, error.what());
+   }
+   if (code == exceptions::code::canceled) {
+      FORGE_THROW_EXCEPTION(
+         forge::net::transport::exceptions::canceled, error.what());
+   }
+   if (code == exceptions::code::frame_too_large) {
+      FORGE_THROW_EXCEPTION(
+         forge::net::transport::exceptions::frame_too_large, error.what());
+   }
+   std::rethrow_exception(std::current_exception());
+}
 
 class quic_stream_concept final : public forge::net::transport::detail::stream_concept {
  public:
@@ -36,23 +57,43 @@ class quic_stream_concept final : public forge::net::transport::detail::stream_c
    }
 
    boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> bytes) override {
-      co_await value_.async_write(bytes);
+      try {
+         co_await value_.async_write(bytes);
+      } catch (const forge::exceptions::base& error) {
+         raise_transport_failure(error);
+      }
    }
 
    boost::asio::awaitable<void> async_write_chunk(forge::net::transport::chunk bytes) override {
-      co_await value_.async_write(bytes.bytes());
+      try {
+         co_await value_.async_write(bytes.bytes());
+      } catch (const forge::exceptions::base& error) {
+         raise_transport_failure(error);
+      }
    }
 
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read() override {
-      co_return co_await value_.async_read();
+      try {
+         co_return co_await value_.async_read();
+      } catch (const forge::exceptions::base& error) {
+         raise_transport_failure(error);
+      }
    }
 
    boost::asio::awaitable<forge::net::transport::chunk> async_read_chunk() override {
-      co_return forge::net::transport::chunk{co_await value_.async_read()};
+      try {
+         co_return forge::net::transport::chunk{co_await value_.async_read()};
+      } catch (const forge::exceptions::base& error) {
+         raise_transport_failure(error);
+      }
    }
 
    boost::asio::awaitable<void> async_close() override {
-      co_await value_.async_close();
+      try {
+         co_await value_.async_close();
+      } catch (const forge::exceptions::base& error) {
+         raise_transport_failure(error);
+      }
    }
 
    void cancel() override {
@@ -72,15 +113,27 @@ class quic_session_concept final : public forge::net::transport::detail::session
    }
 
    boost::asio::awaitable<forge::net::transport::stream> async_open_stream() override {
-      co_return as_transport_stream(co_await value_.async_open_stream());
+      try {
+         co_return as_transport_stream(co_await value_.async_open_stream());
+      } catch (const forge::exceptions::base& error) {
+         raise_transport_failure(error);
+      }
    }
 
    boost::asio::awaitable<forge::net::transport::stream> async_accept_stream() override {
-      co_return as_transport_stream(co_await value_.async_accept_stream());
+      try {
+         co_return as_transport_stream(co_await value_.async_accept_stream());
+      } catch (const forge::exceptions::base& error) {
+         raise_transport_failure(error);
+      }
    }
 
    boost::asio::awaitable<void> async_close() override {
-      co_await value_.async_close();
+      try {
+         co_await value_.async_close();
+      } catch (const forge::exceptions::base& error) {
+         raise_transport_failure(error);
+      }
    }
 
    void cancel() override {

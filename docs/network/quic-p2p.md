@@ -453,7 +453,7 @@ READMEs may link here, but must not define a second block order.
   lets clients resolve a compatible API without hardcoded product protocol ids.
   Identify continues to advertise protocol ids; the resolver adds typed FORGE API
   metadata above P2P instead of expanding core Identify semantics. Its network
-  metadata protocol `/forge/api/resolver/1` is FORGE-specific and does not extend
+  metadata protocol `/forge/api/resolver/2` is FORGE-specific and does not extend
   Go/Rust libp2p support claims.
 - G.4 implemented checkpoint: `forge::plugins::p2p::diagnostics` is a read-only in-process
   plugin for peer/path/session/relay/DHT/Rendezvous/pubsub/connection-manager

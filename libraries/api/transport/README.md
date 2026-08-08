@@ -45,8 +45,8 @@ HTTP, plugins or application policy.
   `forge_net_transport`.
 - `forge_api_quic` and `forge_api_p2p` use `forge_api_stream` directly for
   their stream adapters.
-- `forge_api_websocket` shares `forge::api::core::frame_dispatcher`, but not this layer,
-  because WebSocket is message-oriented rather than a `transport::stream`.
+- `forge_api_websocket` adapts one binary WebSocket message to one transport
+  frame and reuses the same `forge_api_stream` session runtime.
 
 ## Examples
 
@@ -139,7 +139,8 @@ read_remote(forge::net::transport::stream stream, std::string ref) {
 
 ## Notes
 
-- The vector API remains the stable convenience path for typed DTO payloads.
+- `std::vector<T>` remains an ordinary unary DTO. Streaming methods use the
+  endpoint and call APIs; there is no vector-shaped streaming fallback.
 - Large application data-plane policy stays above this layer; this binding only
   moves API frames over an already established stream/session.
 - `serve_session(...)` owns admission through a Boost.Asio strand, so accepted

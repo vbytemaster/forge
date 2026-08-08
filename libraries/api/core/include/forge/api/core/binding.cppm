@@ -4,14 +4,12 @@ module;
 #include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
 #include <typeinfo>
 #include <utility>
-#include <unordered_map>
 #include <vector>
 
 export module forge.api.core.binding;
@@ -53,41 +51,6 @@ class interceptor_builder {
 
 [[nodiscard]] interceptor_builder interceptor();
 
-struct call_runtime_options {
-   std::size_t max_inflight = 128;
-   std::chrono::milliseconds deadline{0};
-};
-
-class call_runtime {
- public:
-   explicit call_runtime(call_runtime_options options = {});
-
-   void observe(const frame& value);
-   void observe_input_stream_end(const frame& value);
-   [[nodiscard]] bool active(call_id id) const noexcept;
-   [[nodiscard]] std::size_t active_calls() const noexcept;
-
- private:
-   struct generation_token {
-      call_id id;
-      std::uint64_t generation = 0;
-   };
-
-   struct active_call {
-      std::chrono::steady_clock::time_point started_at;
-      std::uint64_t generation = 0;
-   };
-
-   [[nodiscard]] generation_token current(call_id id) const;
-   void observe(const frame& value, generation_token expected);
-
-   friend struct binding_plan;
-
-   call_runtime_options options_;
-   std::unordered_map<std::uint64_t, active_call> active_;
-   std::uint64_t next_generation_ = 1;
-};
-
 struct binding_plan {
    const registry* local = nullptr;
    std::vector<descriptor> exports;
@@ -95,11 +58,10 @@ struct binding_plan {
    std::vector<interceptor_step> interceptors;
 
    boost::asio::awaitable<frame> dispatch(frame request) const;
-   boost::asio::awaitable<frame> dispatch(frame request, call_runtime& calls) const;
-   boost::asio::awaitable<std::vector<frame>> dispatch_many(frame request) const;
-   boost::asio::awaitable<std::vector<frame>> dispatch_many(frame request, call_runtime& calls) const;
-   boost::asio::awaitable<std::vector<frame>> dispatch_stream(std::vector<frame> frames) const;
-   boost::asio::awaitable<std::vector<frame>> dispatch_stream(std::vector<frame> frames, call_runtime& calls) const;
+   boost::asio::awaitable<frame>
+   dispatch_stream(frame request,
+                   std::shared_ptr<detail::stream_endpoint> input,
+                   std::shared_ptr<detail::stream_endpoint> output) const;
 };
 
 class binding_builder {

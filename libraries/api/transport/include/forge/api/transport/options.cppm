@@ -13,11 +13,7 @@ export namespace forge::api::transport {
 
 using options = forge::api::stream::options;
 
-struct call_options {
-   forge::api::core::call_id id{};
-   forge::api::core::metadata meta;
-   std::chrono::milliseconds deadline{0};
-};
+using call_options = forge::api::stream::call_options;
 
 struct session_options {
    options stream;

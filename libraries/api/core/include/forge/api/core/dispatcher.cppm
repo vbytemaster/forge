@@ -33,6 +33,7 @@ class frame_dispatcher {
    frame_dispatcher& operator=(const frame_dispatcher&) = delete;
 
    boost::asio::awaitable<std::vector<frame>> dispatch(frame value);
+   bool cancel(frame value);
 
    [[nodiscard]] const dispatch_options& options() const noexcept;
    [[nodiscard]] std::size_t active_calls() const noexcept;
@@ -43,4 +44,4 @@ class frame_dispatcher {
    std::shared_ptr<impl> impl_;
 };
 
-} // namespace forge::api
+} // namespace forge::api::core

@@ -57,7 +57,8 @@ template <typename T>
 inline constexpr bool scalar_value_v =
    std::same_as<std::remove_cvref_t<T>, std::string> || std::same_as<std::remove_cvref_t<T>, bool> ||
    (std::integral<std::remove_cvref_t<T>> && !std::same_as<std::remove_cvref_t<T>, bool>) ||
-   std::floating_point<std::remove_cvref_t<T>> || std::is_enum_v<std::remove_cvref_t<T>>;
+   std::floating_point<std::remove_cvref_t<T>> || std::is_enum_v<std::remove_cvref_t<T>> ||
+   schema::canonical_string_scalar<std::remove_cvref_t<T>>;
 
 [[nodiscard]] inline schema::diagnostic make_diagnostic(std::string path,
                                                         std::string code,
@@ -298,14 +299,14 @@ template <typename T>
                                       std::vector<schema::diagnostic>& diagnostics) {
    if (!input.children.empty()) {
       diagnostics.push_back(make_error(std::string{path}, "xml.type", "expected scalar XML text"));
-      return {};
+      return T{};
    }
 
    try {
       return schema::parse_scalar_text<T>(input.text);
    } catch (const std::exception& error) {
       diagnostics.push_back(make_error(std::string{path}, "xml.type", error.what()));
-      return {};
+      return T{};
    }
 }
 
@@ -322,7 +323,7 @@ template <typename Member>
       diagnostics.push_back(make_error(std::string{path},
                                        "xml.type",
                                        "vector XML member must be decoded from repeated child elements"));
-      return {};
+      return clean{};
    } else if constexpr (described_object_v<clean>) {
       auto output = clean{};
       const auto rules = schema::rules<clean>::define();
@@ -331,14 +332,18 @@ template <typename Member>
       auto validation = rules.validate(output, path);
       diagnostics.insert(diagnostics.end(), validation.begin(), validation.end());
       return output;
-   } else {
+   } else if constexpr (scalar_value_v<clean>) {
       return decode_scalar_element<clean>(input, path, diagnostics);
+   } else {
+      diagnostics.push_back(make_error(std::string{path}, "xml.type", "field is not readable from XML"));
+      return clean{};
    }
 }
 
-template <typename Member, typename T>
+template <typename Member, typename Owner, typename T>
+   requires std::derived_from<T, Owner> || std::same_as<T, Owner>
 void assign_member(T& output,
-                   Member T::*member,
+                   Member Owner::*member,
                    const std::vector<child_match>& matches,
                    const schema::field_rule<T>* field,
                    std::string_view base_path,
@@ -511,17 +516,15 @@ template <typename T> [[nodiscard]] read_result<T> read(std::string_view input, 
       output.value = detail::decode_scalar_element<T>(parsed.value.root, {}, output.diagnostics);
    } else {
       auto rules = schema::rules<T>::define();
-      rules.apply_defaults(output.value);
-      if (!rules.fields().empty()) {
+      if constexpr (detail::described_object_v<T>) {
+         rules.apply_defaults(output.value);
          detail::decode_object(parsed.value.root, output.value, {}, options, output.diagnostics);
-      } else if constexpr (detail::described_object_v<T>) {
-         detail::decode_object(parsed.value.root, output.value, {}, options, output.diagnostics);
+         auto validation = rules.validate(output.value);
+         output.diagnostics.insert(output.diagnostics.end(), validation.begin(), validation.end());
       } else {
          output.diagnostics.push_back(detail::make_error({}, "xml.type", "type is not readable from XML"));
          return output;
       }
-      auto validation = rules.validate(output.value);
-      output.diagnostics.insert(output.diagnostics.end(), validation.begin(), validation.end());
    }
    return output;
 }
@@ -540,10 +543,12 @@ template <typename T> [[nodiscard]] write_result write(const T& input, write_opt
                                 ? options.root_name
                                 : detail::fallback_root_name(forge::type_name<std::remove_cvref_t<T>>());
       auto doc = document{.root = element{.name = root_name}};
-      if (!rules.fields().empty()) {
-         detail::append_schema_object_children(doc.root.children, input, result.diagnostics);
-      } else if constexpr (detail::described_object_v<T>) {
-         doc.root = detail::object_to_element(root_name, input, result.diagnostics);
+      if constexpr (detail::described_object_v<T>) {
+         if (!rules.fields().empty()) {
+            detail::append_schema_object_children(doc.root.children, input, result.diagnostics);
+         } else {
+            doc.root = detail::object_to_element(root_name, input, result.diagnostics);
+         }
       } else {
          result.diagnostics.push_back(detail::make_error({}, "xml.type", "type is not writable to XML"));
          return result;

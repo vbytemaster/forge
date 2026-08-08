@@ -58,14 +58,15 @@ void plugin::impl::configure(config value) {
          record->durability = item.mdbx.value_or(mdbx_driver_config{}).durability;
       }
       record->path = item.path;
+      record->families = item.families;
       record->options = detail::parse_options(item);
       configured.emplace(record->name, std::move(record));
    }
 
    auto lock = std::scoped_lock{mutex};
    const auto state = current.load();
-   if (state == phase::starting || state == phase::ready || state == phase::started ||
-       state == phase::stopping || state == phase::stopped) {
+   if (state == phase::starting || state == phase::ready || state == phase::started || state == phase::stopping ||
+       state == phase::stopped) {
       FORGE_THROW_EXCEPTION(exceptions::stopped, "db store plugin cannot be configured after startup or stop");
    }
 
@@ -88,8 +89,8 @@ void plugin::impl::initialize() {
 
 void plugin::impl::reject_started_setup() const {
    const auto state = current.load();
-   if (state == phase::starting || state == phase::ready || state == phase::started ||
-       state == phase::stopping || state == phase::stopped) {
+   if (state == phase::starting || state == phase::ready || state == phase::started || state == phase::stopping ||
+       state == phase::stopped) {
       FORGE_THROW_EXCEPTION(exceptions::stopped, "db stores can only be added before startup");
    }
 }
@@ -101,9 +102,7 @@ void plugin::impl::reject_duplicate_name(const std::string& name) const {
    }
 }
 
-void plugin::impl::add_store(std::string name,
-                             std::shared_ptr<forge::db::core::driver> driver,
-                             store_options options) {
+void plugin::impl::add_store(std::string name, std::shared_ptr<forge::db::core::driver> driver, store_options options) {
    if (name.empty()) {
       FORGE_THROW_EXCEPTION(exceptions::invalid_argument, "db store name must not be empty");
    }
@@ -112,8 +111,7 @@ void plugin::impl::add_store(std::string name,
                             forge::exceptions::ctx("store", name));
    }
    if (options.revision && !options.object) {
-      FORGE_THROW_EXCEPTION(exceptions::invalid_argument,
-                            "db store revision layer requires object layer",
+      FORGE_THROW_EXCEPTION(exceptions::invalid_argument, "db store revision layer requires object layer",
                             forge::exceptions::ctx("store", name));
    }
    if (!options.object && !options.blob) {
@@ -159,19 +157,17 @@ boost::asio::awaitable<void> plugin::impl::open() {
       pending.reserve(stores.size());
       for (const auto& [name, record] : stores) {
          auto item = pending_open{
-            .name = name,
-            .options = record->options,
-            .owns_driver = record->owns_driver,
-            .driver = record->driver,
+             .name = name,
+             .options = record->options,
+             .owns_driver = record->owns_driver,
+             .driver = record->driver,
          };
          if (!item.driver) {
-            const auto configured = std::ranges::find_if(settings.stores, [&](const auto& value) {
-               return value.name == name;
-            });
+            const auto configured =
+                std::ranges::find_if(settings.stores, [&](const auto& value) { return value.name == name; });
             if (configured == settings.stores.end()) {
                current.store(restore_phase);
-               FORGE_THROW_EXCEPTION(exceptions::initialize_failed,
-                                     "db store configured store is not registered",
+               FORGE_THROW_EXCEPTION(exceptions::initialize_failed, "db store configured store is not registered",
                                      forge::exceptions::ctx("store", name));
             }
             item.config = *configured;
@@ -192,27 +188,24 @@ boost::asio::awaitable<void> plugin::impl::open() {
          }
          if (item.options.object) {
             auto objects = co_await forge::db::object::store::open(
-               item.driver,
-               forge::db::object::store::config{.family = item.options.object->family},
-               item.options.object->runtime);
+                item.driver, forge::db::object::store::config{.family = item.options.object->family},
+                item.options.object->runtime);
             item.objects = std::make_shared<forge::db::object::store>(std::move(objects));
          }
          if (item.options.revision) {
             if (!item.objects) {
-               FORGE_THROW_EXCEPTION(exceptions::initialize_failed,
-                                     "db store revision layer requires object layer",
+               FORGE_THROW_EXCEPTION(exceptions::initialize_failed, "db store revision layer requires object layer",
                                      forge::exceptions::ctx("store", item.name));
             }
             auto revisions = co_await forge::db::revision::store::open(item.driver, *item.objects);
             item.revisions = std::make_shared<forge::db::revision::store>(std::move(revisions));
          }
          if (item.options.blob) {
-            item.blobs = std::make_shared<forge::db::blob::store>(
-               item.driver,
-               forge::db::blob::store::config{
-                  .data_family = item.options.blob->data_family,
-                  .refs_family = item.options.blob->refs_family,
-               });
+            item.blobs =
+                std::make_shared<forge::db::blob::store>(item.driver, forge::db::blob::store::config{
+                                                                          .data_family = item.options.blob->data_family,
+                                                                          .refs_family = item.options.blob->refs_family,
+                                                                      });
          }
       }
 
@@ -344,17 +337,16 @@ opened_store plugin::impl::require_setup_store(const std::string& name) const {
 
    const auto& record = found->second;
    const auto state = current.load();
-   if ((state != phase::ready && state != phase::started && state != phase::stopping) ||
-       record->driver == nullptr || !record->opened) {
-      FORGE_THROW_EXCEPTION(exceptions::stopped, "db store is not ready",
-                            forge::exceptions::ctx("store", name));
+   if ((state != phase::ready && state != phase::started && state != phase::stopping) || record->driver == nullptr ||
+       !record->opened) {
+      FORGE_THROW_EXCEPTION(exceptions::stopped, "db store is not ready", forge::exceptions::ctx("store", name));
    }
 
    return opened_store{
-      .driver = record->driver,
-      .objects = record->objects,
-      .blobs = record->blobs,
-      .revisions = record->revisions,
+       .driver = record->driver,
+       .objects = record->objects,
+       .blobs = record->blobs,
+       .revisions = record->revisions,
    };
 }
 
@@ -368,17 +360,16 @@ opened_store plugin::impl::require_started_store(const std::string& name) const 
 
    const auto& record = found->second;
    const auto state = current.load();
-   if ((state != phase::started && state != phase::stopping) ||
-       record->driver == nullptr || !record->opened || !record->started) {
-      FORGE_THROW_EXCEPTION(exceptions::stopped, "db store is not started",
-                            forge::exceptions::ctx("store", name));
+   if ((state != phase::started && state != phase::stopping) || record->driver == nullptr || !record->opened ||
+       !record->started) {
+      FORGE_THROW_EXCEPTION(exceptions::stopped, "db store is not started", forge::exceptions::ctx("store", name));
    }
 
    return opened_store{
-      .driver = record->driver,
-      .objects = record->objects,
-      .blobs = record->blobs,
-      .revisions = record->revisions,
+       .driver = record->driver,
+       .objects = record->objects,
+       .blobs = record->blobs,
+       .revisions = record->revisions,
    };
 }
 
@@ -392,6 +383,7 @@ status plugin::impl::current_status() const {
           .driver = record->driver_name,
           .durability = record->durability,
           .path = record->path,
+          .families = record->families,
           .object = record->options.object.has_value(),
           .blob = record->options.blob.has_value(),
           .revision = record->options.revision.has_value(),
@@ -442,20 +434,18 @@ namespace {
 [[nodiscard]] forge::rocksdb::blob_options to_rocksdb_blob_options(const blob_data_options& value,
                                                                    const std::string& store_name) {
    return forge::rocksdb::blob_options{
-      .enable_blob_files = value.enable_blob_files,
-      .min_blob_size = value.min_blob_size,
-      .blob_file_size = value.blob_file_size,
-      .blob_compression_type = parse_blob_compression(value.blob_compression_type, store_name),
-      .enable_blob_garbage_collection = value.enable_blob_garbage_collection,
-      .blob_garbage_collection_age_cutoff = value.blob_garbage_collection_age_cutoff,
+       .enable_blob_files = value.enable_blob_files,
+       .min_blob_size = value.min_blob_size,
+       .blob_file_size = value.blob_file_size,
+       .blob_compression_type = parse_blob_compression(value.blob_compression_type, store_name),
+       .enable_blob_garbage_collection = value.enable_blob_garbage_collection,
+       .blob_garbage_collection_age_cutoff = value.blob_garbage_collection_age_cutoff,
    };
 }
 
 void add_family_once(std::vector<forge::rocksdb::column_family_config>& families,
                      forge::rocksdb::column_family_config value) {
-   const auto found = std::ranges::find_if(families, [&](const auto& item) {
-      return item.name == value.name;
-   });
+   const auto found = std::ranges::find_if(families, [&](const auto& item) { return item.name == value.name; });
    if (found == families.end()) {
       families.push_back(std::move(value));
    }
@@ -463,6 +453,9 @@ void add_family_once(std::vector<forge::rocksdb::column_family_config>& families
 
 [[nodiscard]] std::vector<forge::rocksdb::column_family_config> configured_families(const store_config& value) {
    auto families = std::vector<forge::rocksdb::column_family_config>{};
+   for (const auto& family : value.families) {
+      add_family_once(families, forge::rocksdb::column_family_config{family});
+   }
    if (value.object) {
       add_family_once(families, forge::rocksdb::column_family_config{value.object->family});
    }
@@ -478,7 +471,7 @@ void add_family_once(std::vector<forge::rocksdb::column_family_config>& families
 
 #if FORGE_PLUGINS_DB_STORE_HAS_MDBX
 [[nodiscard]] std::vector<std::string> configured_family_names(const store_config& value) {
-   auto families = std::vector<std::string>{};
+   auto families = value.families;
    const auto add = [&](const std::string& family) {
       if (std::ranges::find(families, family) == families.end()) {
          families.push_back(family);
@@ -504,20 +497,21 @@ void add_family_once(std::vector<forge::rocksdb::column_family_config>& families
 [[nodiscard]] forge::db::mdbx::config configured_mdbx(const store_config& value) {
    const auto options = value.mdbx.value_or(mdbx_driver_config{});
    return forge::db::mdbx::config{
-      .path = value.path,
-      .families = configured_family_names(value),
-      .durability_mode = parse_mdbx_durability(options.durability),
-      .map = forge::db::mdbx::geometry{
-         .lower_size = options.map.lower_size,
-         .current_size = options.map.current_size,
-         .upper_size = options.map.upper_size,
-         .growth_step = options.map.growth_step,
-         .shrink_threshold = options.map.shrink_threshold,
-         .page_size = options.map.page_size,
-      },
-      .max_readers = options.max_readers,
-      .create_if_missing = value.create_if_missing,
-      .create_missing_families = value.create_missing_column_families,
+       .path = value.path,
+       .families = configured_family_names(value),
+       .durability_mode = parse_mdbx_durability(options.durability),
+       .map =
+           forge::db::mdbx::geometry{
+               .lower_size = options.map.lower_size,
+               .current_size = options.map.current_size,
+               .upper_size = options.map.upper_size,
+               .growth_step = options.map.growth_step,
+               .shrink_threshold = options.map.shrink_threshold,
+               .page_size = options.map.page_size,
+           },
+       .max_readers = options.max_readers,
+       .create_if_missing = value.create_if_missing,
+       .create_missing_families = value.create_missing_column_families,
    };
 }
 #endif
@@ -528,13 +522,12 @@ boost::asio::awaitable<std::shared_ptr<forge::db::core::driver>>
 plugin::impl::make_configured_driver(const store_config& value) {
    if (value.driver == "rocksdb") {
 #if FORGE_PLUGINS_DB_STORE_HAS_ROCKSDB
-      co_return std::make_shared<forge::db::rocksdb::driver>(
-         forge::db::rocksdb::config{
-            .path = value.path,
-            .families = configured_families(value),
-            .create_if_missing = value.create_if_missing,
-            .create_missing_column_families = value.create_missing_column_families,
-         });
+      co_return std::make_shared<forge::db::rocksdb::driver>(forge::db::rocksdb::config{
+          .path = value.path,
+          .families = configured_families(value),
+          .create_if_missing = value.create_if_missing,
+          .create_missing_column_families = value.create_missing_column_families,
+      });
 #else
       FORGE_THROW_EXCEPTION(exceptions::invalid_config, "db store rocksdb driver is not available in this build",
                             forge::exceptions::ctx("store", value.name));
@@ -546,22 +539,19 @@ plugin::impl::make_configured_driver(const store_config& value) {
       auto native = configured_mdbx(value);
       const auto options = value.mdbx.value_or(mdbx_driver_config{});
       co_return co_await forge::db::mdbx::driver::open(
-         std::move(native),
-         forge::asio::affine::lane::options{
-            .max_pending_operations = options.lane.max_pending_operations,
-            .max_waiting_submissions = options.lane.max_waiting_submissions,
-            .thread_name = options.lane.thread_name.value_or("db-mdbx-" + value.name),
-         });
+          std::move(native), forge::asio::affine::lane::options{
+                                 .max_pending_operations = options.lane.max_pending_operations,
+                                 .max_waiting_submissions = options.lane.max_waiting_submissions,
+                                 .thread_name = options.lane.thread_name.value_or("db-mdbx-" + value.name),
+                             });
 #else
-      FORGE_THROW_EXCEPTION(exceptions::invalid_config,
-                            "db store MDBX driver is not available in this build",
+      FORGE_THROW_EXCEPTION(exceptions::invalid_config, "db store MDBX driver is not available in this build",
                             forge::exceptions::ctx("store", value.name));
 #endif
    }
 
    FORGE_THROW_EXCEPTION(exceptions::invalid_config, "db store driver is unsupported",
-                         forge::exceptions::ctx("store", value.name),
-                         forge::exceptions::ctx("driver", value.driver));
+                         forge::exceptions::ctx("store", value.name), forge::exceptions::ctx("driver", value.driver));
 }
 
 } // namespace forge::plugins::db::store

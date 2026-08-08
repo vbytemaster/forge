@@ -1,5 +1,7 @@
 module;
 
+#include <forge/exceptions/macros.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -11,6 +13,7 @@ module;
 module forge.codec.json;
 
 import :exact;
+import forge.schema.exceptions;
 
 namespace forge::codec::json::detail {
 
@@ -119,9 +122,11 @@ schema::input_value to_schema_input(const variant& source) {
       return schema::input_value{std::move(output)};
    }
    case variant::blob_type:
-      throw std::invalid_argument{"JSON schema records cannot contain blob values"};
+      FORGE_THROW_EXCEPTION(schema::exceptions::invalid_value,
+                            "JSON schema records cannot contain blob values");
    }
-   throw std::invalid_argument{"unsupported JSON schema value"};
+   FORGE_THROW_EXCEPTION(schema::exceptions::invalid_value,
+                         "unsupported JSON schema value");
 }
 
 void append_schema_diagnostics(std::vector<schema::diagnostic>& output, std::vector<schema::diagnostic> diagnostics) {

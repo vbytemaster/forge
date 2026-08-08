@@ -8,7 +8,15 @@ add_library(
    error.cpp
    scan.cpp
 )
+set(FORGE_db_mdbx_DISABLED_MODULES error)
 forge_target_modules_at(forge_db_mdbx db/mdbx)
+target_sources(
+   forge_db_mdbx PRIVATE
+      FILE_SET private_modules TYPE CXX_MODULES
+      BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include"
+      FILES
+         "${CMAKE_CURRENT_SOURCE_DIR}/include/forge/db/mdbx/error.cppm"
+)
 
 target_include_directories(forge_db_mdbx PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 target_include_directories(

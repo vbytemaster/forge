@@ -59,8 +59,9 @@ jobs:
             eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
             echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
           fi
-          brew install boost cmake glaze gmp libngtcp2 ninja openssl@3
-          echo "CMAKE_PREFIX_PATH=$(brew --prefix);$(brew --prefix boost);$(brew --prefix glaze);$(brew --prefix libngtcp2);$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          brew install boost cmake gmp libngtcp2 ninja openssl@3
+          "$GITHUB_WORKSPACE/.github/scripts/install-glaze.sh" "$RUNNER_TEMP/forge-glaze"
+          echo "CMAKE_PREFIX_PATH=$RUNNER_TEMP/forge-glaze;$(brew --prefix);$(brew --prefix boost);$(brew --prefix libngtcp2);$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             sudo apt-get update
             sudo apt-get install -y clang-22 clang-tools-22 libc++-22-dev libc++abi-22-dev
@@ -120,12 +121,13 @@ jobs:
         shell: bash
         run: |
           test "$(uname -m)" = "arm64"
-          brew install boost cmake glaze gmp libngtcp2 ninja openssl@3 llvm
+          brew install boost cmake gmp libngtcp2 ninja openssl@3 llvm
+          "$GITHUB_WORKSPACE/.github/scripts/install-glaze.sh" "$RUNNER_TEMP/forge-glaze"
           llvm_prefix="$(brew --prefix llvm)"
           echo "$llvm_prefix/bin" >> "$GITHUB_PATH"
           echo "CC=$llvm_prefix/bin/clang" >> "$GITHUB_ENV"
           echo "CXX=$llvm_prefix/bin/clang++" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=$(brew --prefix);$(brew --prefix boost);$(brew --prefix glaze);$(brew --prefix libngtcp2);$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$RUNNER_TEMP/forge-glaze;$(brew --prefix);$(brew --prefix boost);$(brew --prefix libngtcp2);$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
       - name: Configure interpreter build
         shell: bash
@@ -169,8 +171,9 @@ jobs:
             eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
             echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
           fi
-          brew install boost cmake glaze gmp libngtcp2 ninja openssl@3
-          echo "CMAKE_PREFIX_PATH=$(brew --prefix);$(brew --prefix boost);$(brew --prefix glaze);$(brew --prefix libngtcp2);$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          brew install boost cmake gmp libngtcp2 ninja openssl@3
+          "$GITHUB_WORKSPACE/.github/scripts/install-glaze.sh" "$RUNNER_TEMP/forge-glaze"
+          echo "CMAKE_PREFIX_PATH=$RUNNER_TEMP/forge-glaze;$(brew --prefix);$(brew --prefix boost);$(brew --prefix libngtcp2);$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
           sudo apt-get update
           sudo apt-get install -y clang-22 clang-tools-22 libc++-22-dev libc++abi-22-dev
           echo "CC=/usr/bin/clang-22" >> "$GITHUB_ENV"
@@ -229,8 +232,9 @@ jobs:
             eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
             echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
           fi
-          brew install boost cmake glaze gmp libngtcp2 ninja openssl@3
-          echo "CMAKE_PREFIX_PATH=$(brew --prefix);$(brew --prefix boost);$(brew --prefix glaze);$(brew --prefix libngtcp2);$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          brew install boost cmake gmp libngtcp2 ninja openssl@3
+          "$GITHUB_WORKSPACE/.github/scripts/install-glaze.sh" "$RUNNER_TEMP/forge-glaze"
+          echo "CMAKE_PREFIX_PATH=$RUNNER_TEMP/forge-glaze;$(brew --prefix);$(brew --prefix boost);$(brew --prefix libngtcp2);$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
           sudo apt-get update
           sudo apt-get install -y clang-22 clang-tools-22 libc++-22-dev libc++abi-22-dev
           echo "CC=/usr/bin/clang-22" >> "$GITHUB_ENV"

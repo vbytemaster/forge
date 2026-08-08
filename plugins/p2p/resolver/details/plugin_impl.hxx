@@ -23,6 +23,7 @@ struct plugin::impl : public std::enable_shared_from_this<plugin::impl> {
    [[nodiscard]] forge::plugins::p2p::node::api& require_p2p() const;
    [[nodiscard]] std::chrono::milliseconds query_deadline(resolve_options value) const;
    [[nodiscard]] std::chrono::milliseconds open_deadline(resolve_options value) const;
+   [[nodiscard]] std::chrono::milliseconds request_deadline(resolve_options value) const;
    void evict_cache_locked();
    [[nodiscard]] std::optional<std::vector<entry>> cached_peer(const forge::net::p2p::peer_id& peer,
                                                               resolve_options options) const;

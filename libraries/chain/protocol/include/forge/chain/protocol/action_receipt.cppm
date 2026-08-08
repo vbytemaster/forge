@@ -26,6 +26,8 @@ struct action_receipt {
    std::flat_map<account_name, std::uint64_t> auth_sequence;
    forge::unsigned_int code_sequence = 0;
    forge::unsigned_int abi_sequence = 0;
+
+   bool operator==(const action_receipt&) const = default;
 };
 
 core::digest calculate_savanna_witness_hash(const action_receipt& receipt);

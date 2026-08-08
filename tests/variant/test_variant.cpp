@@ -50,6 +50,63 @@ BOOST_AUTO_TEST_CASE(boost_describe_struct_variant_roundtrip) {
    BOOST_CHECK(original == roundtrip);
 }
 
+BOOST_AUTO_TEST_CASE(variant_equality_covers_all_value_kinds) {
+   const auto object = forge::variant{forge::mutable_variant_object{}("enabled", true)(
+       "payload", forge::blob{{0x01U, 0x02U}})("nested", forge::variants{forge::variant{nullptr}})};
+   const auto equal = forge::variant{forge::mutable_variant_object{}("enabled", true)(
+       "payload", forge::blob{{0x01U, 0x02U}})("nested", forge::variants{forge::variant{nullptr}})};
+   const auto different = forge::variant{forge::mutable_variant_object{}("enabled", false)(
+       "payload", forge::blob{{0x01U, 0x02U}})("nested", forge::variants{forge::variant{nullptr}})};
+
+   BOOST_CHECK(object == equal);
+   BOOST_CHECK(object != different);
+   BOOST_CHECK(forge::variant{true} == forge::variant{true});
+   BOOST_CHECK(forge::variant{true} != forge::variant{false});
+   BOOST_CHECK(forge::variant{nullptr} == forge::variant{nullptr});
+   BOOST_CHECK(forge::variant{forge::blob{{0x01U}}} == forge::variant{forge::blob{{0x01U}}});
+   BOOST_CHECK(forge::variant{forge::blob{{0x01U}}} != forge::variant{forge::blob{{0x02U}}});
+   BOOST_CHECK(forge::variant{forge::variants{forge::variant{1}}} != forge::variant{true});
+}
+
+BOOST_AUTO_TEST_CASE(variant_object_equality_is_independent_of_member_insertion_order) {
+   const auto left = forge::variant{forge::mutable_variant_object{}("first", 1)("second", "value")};
+   const auto reordered = forge::variant{forge::mutable_variant_object{}("second", "value")("first", 1)};
+   const auto different = forge::variant{forge::mutable_variant_object{}("second", "other")("first", 1)};
+   const auto duplicates =
+       forge::variant{forge::mutable_variant_object{}("same", forge::variant{1})("same", forge::variant{2})};
+   const auto reordered_duplicates =
+       forge::variant{forge::mutable_variant_object{}("same", forge::variant{2})("same", forge::variant{1})};
+   const auto mismatched_duplicates =
+       forge::variant{forge::mutable_variant_object{}("same", forge::variant{1})("other", forge::variant{2})};
+
+   BOOST_CHECK(left == reordered);
+   BOOST_CHECK(reordered == left);
+   BOOST_CHECK(left != different);
+   BOOST_CHECK(duplicates == reordered_duplicates);
+   BOOST_CHECK(duplicates != mismatched_duplicates);
+}
+
+BOOST_AUTO_TEST_CASE(variant_equality_rejects_structural_scalar_mismatches_without_conversion) {
+   const auto object = forge::variant{forge::mutable_variant_object{}("value", 1)};
+   const auto array = forge::variant{forge::variants{forge::variant{1}}};
+   const auto blob_value = forge::variant{forge::blob{{0x01U}}};
+   const auto text = forge::variant{"value"};
+   const auto number = forge::variant{1};
+
+   BOOST_CHECK_NO_THROW(static_cast<void>(object == text));
+   BOOST_CHECK_NO_THROW(static_cast<void>(text == object));
+   BOOST_CHECK_NO_THROW(static_cast<void>(array == number));
+   BOOST_CHECK_NO_THROW(static_cast<void>(number == array));
+   BOOST_CHECK_NO_THROW(static_cast<void>(blob_value == text));
+   BOOST_CHECK_NO_THROW(static_cast<void>(text == blob_value));
+   BOOST_CHECK(object != text);
+   BOOST_CHECK(text != object);
+   BOOST_CHECK(array != number);
+   BOOST_CHECK(number != array);
+   BOOST_CHECK(blob_value != text);
+   BOOST_CHECK(text != blob_value);
+}
+
 BOOST_AUTO_TEST_CASE(boost_describe_variant_missing_fields_keep_defaults_and_unknown_fields_are_ignored) {
    const forge::variant input = forge::mutable_variant_object()("name", "override")("unknown", "ignored");
 

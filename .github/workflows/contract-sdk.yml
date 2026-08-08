@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/contract-sdk.yml"
+      - ".github/scripts/install-glaze.sh"
       - "CMakeLists.txt"
       - "cmake/**"
       - "libraries/asio/**"
@@ -97,8 +98,9 @@ jobs:
             echo "CXX=$(brew --prefix llvm)/bin/clang++" >> "$GITHUB_ENV"
             echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
           fi
-          brew install boost cmake glaze gmp libngtcp2 ninja openssl@3
-          echo "CMAKE_PREFIX_PATH=$(brew --prefix);$(brew --prefix boost);$(brew --prefix glaze);$(brew --prefix libngtcp2);$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          brew install boost cmake gmp libngtcp2 ninja openssl@3
+          "$GITHUB_WORKSPACE/.github/scripts/install-glaze.sh" "$RUNNER_TEMP/forge-glaze"
+          echo "CMAKE_PREFIX_PATH=$RUNNER_TEMP/forge-glaze;$(brew --prefix);$(brew --prefix boost);$(brew --prefix libngtcp2);$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
       - name: Check out pinned LLVM and CDT donors
         shell: bash
@@ -273,8 +275,9 @@ jobs:
             echo "CXX=$(brew --prefix llvm)/bin/clang++" >> "$GITHUB_ENV"
             echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
           fi
-          brew install boost cmake glaze gmp libngtcp2 ninja openssl@3
-          echo "CMAKE_PREFIX_PATH=$(brew --prefix);$(brew --prefix boost);$(brew --prefix glaze);$(brew --prefix libngtcp2);$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          brew install boost cmake gmp libngtcp2 ninja openssl@3
+          "$GITHUB_WORKSPACE/.github/scripts/install-glaze.sh" "$RUNNER_TEMP/forge-glaze"
+          echo "CMAKE_PREFIX_PATH=$RUNNER_TEMP/forge-glaze;$(brew --prefix);$(brew --prefix boost);$(brew --prefix libngtcp2);$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
       - name: Check out pinned LLVM
         shell: bash

@@ -1,5 +1,6 @@
 module;
 
+#include <boost/describe.hpp>
 #include <forge/exceptions/macros.hpp>
 
 #include <bit>
@@ -11,12 +12,25 @@ module;
 export module forge.chain.core.merkle;
 
 export import forge.chain.core.types;
+export import forge.chain.core.exceptions;
 import forge.raw.exceptions;
 import forge.raw.raw;
 
 export namespace forge::chain::core {
 
+struct merkle_step {
+   digest sibling;
+   bool sibling_on_left = false;
+
+   bool operator==(const merkle_step&) const = default;
+};
+
+BOOST_DESCRIBE_STRUCT(merkle_step, (), (sibling, sibling_on_left))
+
 digest calculate_merkle_root(std::span<const digest> leaves);
+std::vector<merkle_step> calculate_merkle_path(std::span<const digest> leaves, std::uint64_t index);
+bool verify_merkle_path(const digest& leaf, std::uint64_t index, std::uint64_t leaf_count,
+                        std::span<const merkle_step> path, const digest& expected_root);
 
 class incremental_merkle_tree {
  public:

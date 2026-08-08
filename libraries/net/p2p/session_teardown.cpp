@@ -54,6 +54,7 @@ struct session_teardown::state : std::enable_shared_from_this<state> {
    bool started = false;
    bool completed = false;
    std::size_t pending = 0;
+   std::size_t tracked = 0;
    std::exception_ptr failure;
    std::vector<operation> operations;
    std::vector<std::shared_ptr<teardown_waiter>> waiters;
@@ -96,6 +97,21 @@ struct session_teardown::state : std::enable_shared_from_this<state> {
       }
    }
 
+   void release_ticket() noexcept {
+      auto complete_after_start = false;
+      {
+         const auto lock = std::scoped_lock{mutex};
+         if (tracked == 0) {
+            return;
+         }
+         --tracked;
+         complete_after_start = started;
+      }
+      if (complete_after_start) {
+         complete_one();
+      }
+   }
+
    [[nodiscard]] std::exception_ptr error() const {
       const auto lock = std::scoped_lock{mutex};
       return failure;
@@ -105,7 +121,44 @@ struct session_teardown::state : std::enable_shared_from_this<state> {
 session_teardown::session_teardown(boost::asio::any_io_executor executor)
     : state_{std::make_shared<state>(std::move(executor))} {}
 
+session_teardown::ticket::ticket(std::shared_ptr<state> state) : state_{std::move(state)} {}
+
+session_teardown::ticket::ticket(ticket&& other) noexcept : state_{std::move(other.state_)} {}
+
+session_teardown::ticket& session_teardown::ticket::operator=(ticket&& other) noexcept {
+   if (this != &other) {
+      release();
+      state_ = std::move(other.state_);
+   }
+   return *this;
+}
+
+session_teardown::ticket::~ticket() {
+   release();
+}
+
+bool session_teardown::ticket::active() const noexcept {
+   return static_cast<bool>(state_);
+}
+
+void session_teardown::ticket::release() noexcept {
+   if (auto state = std::move(state_)) {
+      state->release_ticket();
+   }
+}
+
+session_teardown::ticket session_teardown::track() noexcept {
+   const auto lock = std::scoped_lock{state_->mutex};
+   if (state_->started) {
+      return {};
+   }
+   ++state_->tracked;
+   return ticket{state_};
+}
+
 void session_teardown::start(std::vector<operation> operations) noexcept {
+   auto operation_count = std::size_t{};
+   auto complete_immediately = false;
    {
       const auto lock = std::scoped_lock{state_->mutex};
       if (state_->started) {
@@ -113,15 +166,16 @@ void session_teardown::start(std::vector<operation> operations) noexcept {
       }
       state_->started = true;
       state_->operations = std::move(operations);
-      state_->pending = state_->operations.size();
+      state_->pending = state_->operations.size() + state_->tracked;
+      operation_count = state_->operations.size();
+      complete_immediately = state_->pending == 0;
    }
 
-   if (state_->operations.empty()) {
+   if (complete_immediately) {
       state_->complete();
       return;
    }
 
-   const auto operation_count = state_->operations.size();
    for (auto index = std::size_t{0}; index < operation_count; ++index) {
       auto state = state_;
       try {

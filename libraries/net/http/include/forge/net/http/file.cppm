@@ -53,6 +53,10 @@ struct file_response {
       return head_.result();
    }
 
+   [[nodiscard]] bool path_backed() const noexcept {
+      return server_path_;
+   }
+
    [[nodiscard]] const response& head() const noexcept {
       return head_;
    }

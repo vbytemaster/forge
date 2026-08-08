@@ -34,6 +34,7 @@ struct config {
    std::uint64_t cache_ttl_ms = 60'000;
    std::uint64_t query_deadline_ms = 5'000;
    std::uint64_t open_deadline_ms = 10'000;
+   std::uint64_t request_deadline_ms = 0;
    std::uint64_t max_cached_peers = 4'096;
    std::uint64_t max_apis_per_peer = 1'024;
    std::uint64_t max_methods_per_api = 256;
@@ -47,6 +48,7 @@ struct publish_options {
 struct resolve_options {
    std::chrono::milliseconds query_deadline{0};
    std::chrono::milliseconds open_deadline{0};
+   std::chrono::milliseconds request_deadline{0};
    bool force_refresh = false;
 };
 
@@ -103,8 +105,8 @@ struct response {
 };
 
 BOOST_DESCRIBE_STRUCT(config, (),
-                      (protocol_id, cache_ttl_ms, query_deadline_ms, open_deadline_ms, max_cached_peers,
-                       max_apis_per_peer, max_methods_per_api, max_errors_per_method))
+                      (protocol_id, cache_ttl_ms, query_deadline_ms, open_deadline_ms, request_deadline_ms,
+                       max_cached_peers, max_apis_per_peer, max_methods_per_api, max_errors_per_method))
 BOOST_DESCRIBE_STRUCT(error, (), (name, identity, status_code, retryable))
 BOOST_DESCRIBE_STRUCT(method, (), (name, kind, errors))
 BOOST_DESCRIBE_STRUCT(entry, (), (id, version, protocol, codec, max_inflight, max_frame_size, methods))
@@ -128,6 +130,10 @@ export template <> struct forge::schema::rules<forge::plugins::p2p::resolver::co
       schema.field<&forge::plugins::p2p::resolver::config::open_deadline_ms>("open-deadline-ms")
          .default_value(std::uint64_t{10'000})
          .range(1, 86'400'000);
+      schema.field<&forge::plugins::p2p::resolver::config::request_deadline_ms>("request-deadline-ms")
+         .default_value(std::uint64_t{0})
+         .range(0, 86'400'000)
+         .description("optional connection-wide request deadline; zero preserves method-owned deadlines");
       schema.field<&forge::plugins::p2p::resolver::config::max_cached_peers>("max-cached-peers")
          .default_value(std::uint64_t{4'096})
          .range(1, 1'000'000);

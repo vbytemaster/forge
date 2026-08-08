@@ -16,10 +16,13 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/experimental/concurrent_channel.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/strand.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <openssl/asn1.h>
@@ -31,6 +34,8 @@
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
+
+#include "../../libraries/net/stcp/details/handshake_deadline.hxx"
 
 import forge.asio.blocking;
 import forge.asio.runtime;
@@ -50,11 +55,12 @@ namespace {
 
 using bytes = std::vector<std::uint8_t>;
 
-template <typename T>
-struct spawned_result {
+template <typename T> struct spawned_result {
    explicit spawned_result(boost::asio::any_io_executor executor)
-       : timer(std::move(executor), (std::chrono::steady_clock::time_point::max)()) {}
+       : strand(boost::asio::make_strand(std::move(executor))),
+         timer(strand, (std::chrono::steady_clock::time_point::max)()) {}
 
+   boost::asio::strand<boost::asio::any_io_executor> strand;
    boost::asio::steady_timer timer;
    std::optional<T> value;
    std::exception_ptr error;
@@ -63,37 +69,73 @@ struct spawned_result {
 
 template <typename T>
 [[nodiscard]] std::shared_ptr<spawned_result<T>> spawn_result(boost::asio::any_io_executor executor,
-                                                             boost::asio::awaitable<T> operation) {
+                                                              boost::asio::awaitable<T> operation) {
    auto state = std::make_shared<spawned_result<T>>(executor);
    boost::asio::co_spawn(
-       executor,
+       state->strand,
        [state, operation = std::move(operation)]() mutable -> boost::asio::awaitable<void> {
           try {
              state->value.emplace(co_await std::move(operation));
+             state->done = true;
           } catch (...) {
              state->error = std::current_exception();
+             state->done = true;
           }
-          state->done = true;
           state->timer.cancel();
        },
        boost::asio::detached);
    return state;
 }
 
-template <typename T>
-boost::asio::awaitable<T> take_result(std::shared_ptr<spawned_result<T>> state) {
-   auto error = boost::system::error_code{};
-   while (!state->done) {
-      co_await state->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
-      if (error && error != boost::asio::error::operation_aborted) {
-         throw boost::system::system_error{error};
-      }
-   }
-   if (state->error) {
-      std::rethrow_exception(state->error);
-   }
-   co_return std::move(*state->value);
+template <typename T> boost::asio::awaitable<T> take_result(std::shared_ptr<spawned_result<T>> state) {
+   co_return co_await boost::asio::co_spawn(
+       state->strand,
+       [state = std::move(state)]() -> boost::asio::awaitable<T> {
+          auto error = boost::system::error_code{};
+          while (!state->done) {
+             co_await state->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+             if (error && error != boost::asio::error::operation_aborted) {
+                throw boost::system::system_error{error};
+             }
+          }
+          if (state->error) {
+             std::rethrow_exception(state->error);
+          }
+          co_return std::move(*state->value);
+       },
+       boost::asio::use_awaitable);
 }
+
+class async_start_barrier final : public std::enable_shared_from_this<async_start_barrier> {
+ public:
+   async_start_barrier(boost::asio::any_io_executor executor, std::size_t target)
+       : arrivals_(executor, target), releases_(std::move(executor), target), target_(target) {}
+
+   void start() {
+      auto self = shared_from_this();
+      boost::asio::co_spawn(
+          arrivals_.get_executor(),
+          [self = std::move(self)]() -> boost::asio::awaitable<void> {
+             for (auto arrived = std::size_t{}; arrived < self->target_; ++arrived) {
+                co_await self->arrivals_.async_receive(boost::asio::use_awaitable);
+             }
+             for (auto released = std::size_t{}; released < self->target_; ++released) {
+                co_await self->releases_.async_send(boost::system::error_code{}, boost::asio::use_awaitable);
+             }
+          },
+          boost::asio::detached);
+   }
+
+   boost::asio::awaitable<void> arrive_and_wait() {
+      co_await arrivals_.async_send(boost::system::error_code{}, boost::asio::use_awaitable);
+      co_await releases_.async_receive(boost::asio::use_awaitable);
+   }
+
+ private:
+   boost::asio::experimental::concurrent_channel<void(boost::system::error_code)> arrivals_;
+   boost::asio::experimental::concurrent_channel<void(boost::system::error_code)> releases_;
+   std::size_t target_ = 0;
+};
 
 struct pem_pair {
    std::string certificate;
@@ -134,9 +176,9 @@ using bio_ptr = std::unique_ptr<BIO, bio_deleter>;
 
 [[nodiscard]] forge::net::transport::endpoint loopback(std::uint16_t port) {
    return forge::net::transport::endpoint{.host_type = forge::net::transport::endpoint::host_kind::ip4,
-                                   .protocol = forge::net::transport::endpoint::protocol_kind::tcp,
-                                   .host = "127.0.0.1",
-                                   .port = port};
+                                          .protocol = forge::net::transport::endpoint::protocol_kind::tcp,
+                                          .host = "127.0.0.1",
+                                          .port = port};
 }
 
 [[nodiscard]] evp_pkey_ptr make_key() {
@@ -162,8 +204,7 @@ void add_extension(X509* certificate, X509* issuer, int nid, std::string_view va
 }
 
 [[nodiscard]] x509_ptr make_certificate(EVP_PKEY* subject_key, std::string_view common_name, std::uint32_t serial,
-                                        X509* issuer, EVP_PKEY* issuer_key, bool ca,
-                                        std::string_view san = {}) {
+                                        X509* issuer, EVP_PKEY* issuer_key, bool ca, std::string_view san = {}) {
    auto certificate = x509_ptr{X509_new()};
    BOOST_REQUIRE(certificate != nullptr);
    X509_set_version(certificate.get(), 2);
@@ -218,8 +259,8 @@ void add_extension(X509* certificate, X509* issuer, int nid, std::string_view va
    auto client_key = make_key();
 
    auto ca_certificate = make_certificate(ca_key.get(), "forge test ca", 1, nullptr, nullptr, true);
-   auto server_certificate = make_certificate(server_key.get(), "localhost", 2, ca_certificate.get(), ca_key.get(), false,
-                                             "DNS:localhost,IP:127.0.0.1");
+   auto server_certificate = make_certificate(server_key.get(), "localhost", 2, ca_certificate.get(), ca_key.get(),
+                                              false, "DNS:localhost,IP:127.0.0.1");
    auto client_certificate =
        make_certificate(client_key.get(), "forge test client", 3, ca_certificate.get(), ca_key.get(), false);
 
@@ -241,7 +282,8 @@ void add_extension(X509* certificate, X509* issuer, int nid, std::string_view va
    return out;
 }
 
-[[nodiscard]] forge::net::stcp::client_options client_options(const tls_material& material, bool with_certificate = false) {
+[[nodiscard]] forge::net::stcp::client_options client_options(const tls_material& material,
+                                                              bool with_certificate = false) {
    auto out = forge::net::stcp::client_options{};
    out.security.trusted_ca_pem = material.ca.certificate;
    out.server_name = "localhost";
@@ -267,7 +309,7 @@ int capture_sni_callback(SSL* ssl, int*, void* arg) {
 }
 
 boost::asio::awaitable<raw_tls_observation> accept_raw_tls_once(forge::net::tcp::listener& listener,
-                                                               const tls_material& material) {
+                                                                const tls_material& material) {
    namespace asio = boost::asio;
    auto observation = raw_tls_observation{};
    auto tcp = co_await listener.async_accept_connection();
@@ -321,17 +363,203 @@ boost::asio::awaitable<void> stcp_direct_roundtrip() {
    co_await client_stream.stream.async_write(forge::net::transport::chunk{chunk_payload});
    auto received_chunk = co_await server_stream.stream.async_read_chunk();
    const auto received_chunk_bytes = received_chunk.to_vector();
-   BOOST_CHECK_EQUAL_COLLECTIONS(
-       received_chunk_bytes.begin(), received_chunk_bytes.end(), chunk_payload.begin(), chunk_payload.end());
+   BOOST_CHECK_EQUAL_COLLECTIONS(received_chunk_bytes.begin(), received_chunk_bytes.end(), chunk_payload.begin(),
+                                 chunk_payload.end());
 
    const auto framed = text_bytes("tls framed chunk");
    co_await client_stream.stream.async_write_frame(forge::net::transport::chunk{framed});
    auto received_frame = co_await server_stream.stream.async_read_frame_chunk();
    const auto received_frame_bytes = received_frame.to_vector();
-   BOOST_CHECK_EQUAL_COLLECTIONS(received_frame_bytes.begin(), received_frame_bytes.end(), framed.begin(), framed.end());
+   BOOST_CHECK_EQUAL_COLLECTIONS(received_frame_bytes.begin(), received_frame_bytes.end(), framed.begin(),
+                                 framed.end());
 
    co_await client_stream.stream.async_close();
    co_await server_stream.stream.async_close();
+   co_await listener.async_close();
+}
+
+boost::asio::awaitable<void> stcp_stalled_peer_returns_typed_handshake_timeout(tls_material material) {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto listener = forge::net::tcp::listener{executor, loopback(0)};
+   auto accept = spawn_result<forge::net::tcp::connection>(executor, listener.async_accept_connection());
+   auto connector = forge::net::tcp::connector{executor};
+   auto client_tcp = co_await connector.async_connect_connection(listener.local_endpoint());
+   auto server_tcp = co_await take_result(accept);
+   try {
+      static_cast<void>(co_await forge::net::stcp::async_upgrade_client(std::move(client_tcp), client_options(material),
+                                                                        std::chrono::milliseconds{25}));
+      BOOST_FAIL("stalled TCP peer should time out during TLS handshake");
+   } catch (const forge::exceptions::base& error) {
+      BOOST_REQUIRE(forge::net::stcp::exceptions::code_of(error).has_value());
+      BOOST_CHECK(*forge::net::stcp::exceptions::code_of(error) == forge::net::stcp::exceptions::code::timeout);
+   }
+   co_await server_tcp.async_close();
+   co_await listener.async_close();
+}
+
+boost::asio::awaitable<std::size_t> read_framed_sequence(forge::net::transport::stream& stream, std::uint8_t marker,
+                                                         std::size_t count) {
+   for (auto index = std::size_t{}; index < count; ++index) {
+      const auto received = co_await stream.async_read_frame();
+      const auto expected = bytes{marker, static_cast<std::uint8_t>(index)};
+      BOOST_TEST(received == expected, boost::test_tools::per_element());
+   }
+   co_return count;
+}
+
+boost::asio::awaitable<void> stcp_full_duplex_uses_one_connection_strand(tls_material material) {
+   constexpr auto frame_count = std::size_t{64};
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto listener = forge::net::stcp::listener{executor, loopback(0), server_options(material)};
+   auto accept = spawn_result<forge::net::stcp::connection>(executor, listener.async_accept_connection());
+   auto connector = forge::net::stcp::connector{executor, client_options(material)};
+   auto client = co_await connector.async_connect_connection(listener.local_endpoint());
+   auto server = co_await take_result(accept);
+   auto client_stream = std::move(client).into_transport_stream();
+   auto server_stream = std::move(server).into_transport_stream();
+
+   auto client_reads =
+       spawn_result<std::size_t>(executor, read_framed_sequence(client_stream.stream, std::uint8_t{0x5a}, frame_count));
+   auto server_reads =
+       spawn_result<std::size_t>(executor, read_framed_sequence(server_stream.stream, std::uint8_t{0xa5}, frame_count));
+
+   for (auto index = std::size_t{}; index < frame_count; ++index) {
+      co_await client_stream.stream.async_write_frame(bytes{std::uint8_t{0xa5}, static_cast<std::uint8_t>(index)});
+      co_await server_stream.stream.async_write_frame(bytes{std::uint8_t{0x5a}, static_cast<std::uint8_t>(index)});
+   }
+
+   BOOST_TEST(co_await take_result(client_reads) == frame_count);
+   BOOST_TEST(co_await take_result(server_reads) == frame_count);
+   co_await client_stream.stream.async_close();
+   co_await server_stream.stream.async_close();
+   co_await listener.async_close();
+}
+
+boost::asio::awaitable<bytes> read_exact(forge::net::stcp::connection& connection, std::size_t size) {
+   auto out = bytes{};
+   out.reserve(size);
+   while (out.size() < size) {
+      auto next = co_await connection.async_read();
+      out.insert(out.end(), next.begin(), next.end());
+   }
+   co_return out;
+}
+
+boost::asio::awaitable<std::size_t> write_after_barrier(forge::net::stcp::connection& connection,
+                                                        std::shared_ptr<async_start_barrier> barrier, bytes payload,
+                                                        std::size_t index) {
+   co_await barrier->arrive_and_wait();
+   co_await connection.async_write(payload);
+   co_return index;
+}
+
+boost::asio::awaitable<void> stcp_same_direction_writes_are_serialized(tls_material material) {
+   constexpr auto write_count = std::size_t{16};
+   constexpr auto record_size = std::size_t{32};
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto listener = forge::net::stcp::listener{executor, loopback(0), server_options(material)};
+   auto accept = spawn_result<forge::net::stcp::connection>(executor, listener.async_accept_connection());
+   auto connector = forge::net::stcp::connector{executor, client_options(material)};
+   auto client = co_await connector.async_connect_connection(listener.local_endpoint());
+   auto server = co_await take_result(accept);
+
+   auto received = spawn_result<bytes>(executor, read_exact(server, write_count * record_size));
+   auto barrier = std::make_shared<async_start_barrier>(executor, write_count);
+   barrier->start();
+   auto writes = std::vector<std::shared_ptr<spawned_result<std::size_t>>>{};
+   writes.reserve(write_count);
+   for (auto index = std::size_t{}; index < write_count; ++index) {
+      writes.push_back(spawn_result<std::size_t>(
+          executor,
+          write_after_barrier(client, barrier, bytes(record_size, static_cast<std::uint8_t>(index + 1U)), index)));
+   }
+
+   auto completed = std::vector<bool>(write_count, false);
+   for (auto& write : writes) {
+      const auto index = co_await take_result(write);
+      BOOST_REQUIRE(index < write_count);
+      BOOST_TEST(!completed[index]);
+      completed[index] = true;
+   }
+   const auto wire = co_await take_result(received);
+   BOOST_REQUIRE(wire.size() == write_count * record_size);
+   auto seen = std::vector<bool>(write_count, false);
+   for (auto offset = std::size_t{}; offset < wire.size(); offset += record_size) {
+      const auto marker = wire[offset];
+      BOOST_REQUIRE(marker >= 1U);
+      BOOST_REQUIRE(marker <= write_count);
+      BOOST_TEST(std::all_of(wire.begin() + static_cast<std::ptrdiff_t>(offset),
+                             wire.begin() + static_cast<std::ptrdiff_t>(offset + record_size),
+                             [marker](std::uint8_t value) { return value == marker; }));
+      BOOST_TEST(!seen[marker - 1U]);
+      seen[marker - 1U] = true;
+   }
+   BOOST_TEST(std::ranges::all_of(seen, [](bool value) { return value; }));
+
+   co_await client.async_close();
+   co_await server.async_close();
+   co_await listener.async_close();
+}
+
+boost::asio::awaitable<void> stcp_cancel_wakes_same_direction_read_waiter(tls_material material) {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto listener = forge::net::stcp::listener{executor, loopback(0), server_options(material)};
+   auto accept = spawn_result<forge::net::stcp::connection>(executor, listener.async_accept_connection());
+   auto connector = forge::net::stcp::connector{executor, client_options(material)};
+   auto client = co_await connector.async_connect_connection(listener.local_endpoint());
+   auto server = co_await take_result(accept);
+
+   auto first = spawn_result<bytes>(executor, client.async_read());
+   co_await boost::asio::post(executor, boost::asio::use_awaitable);
+   co_await boost::asio::post(executor, boost::asio::use_awaitable);
+   auto second = spawn_result<bytes>(executor, client.async_read());
+   co_await boost::asio::post(executor, boost::asio::use_awaitable);
+   co_await boost::asio::post(executor, boost::asio::use_awaitable);
+   client.cancel();
+
+   for (const auto& read : {first, second}) {
+      try {
+         static_cast<void>(co_await take_result(read));
+         BOOST_FAIL("stcp read should be canceled");
+      } catch (const forge::net::stcp::exceptions::canceled&) {
+      }
+   }
+   co_await server.async_close();
+   co_await listener.async_close();
+}
+
+boost::asio::awaitable<void> stcp_peer_eof_terminalizes_both_io_directions(tls_material material) {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto listener = forge::net::stcp::listener{executor, loopback(0), server_options(material)};
+   auto accept = spawn_result<forge::net::stcp::connection>(executor, listener.async_accept_connection());
+   auto connector = forge::net::stcp::connector{executor, client_options(material)};
+   auto client = co_await connector.async_connect_connection(listener.local_endpoint());
+   auto server = co_await take_result(accept);
+   auto client_stream = std::move(client).into_transport_stream();
+   auto server_stream = std::move(server).into_transport_stream();
+
+   auto first = spawn_result<bytes>(executor, client_stream.stream.async_read());
+   co_await boost::asio::post(executor, boost::asio::use_awaitable);
+   co_await boost::asio::post(executor, boost::asio::use_awaitable);
+   auto queued = spawn_result<bytes>(executor, client_stream.stream.async_read());
+   co_await boost::asio::post(executor, boost::asio::use_awaitable);
+   co_await boost::asio::post(executor, boost::asio::use_awaitable);
+
+   co_await server_stream.stream.async_close();
+   for (const auto& read : {first, queued}) {
+      try {
+         static_cast<void>(co_await take_result(read));
+         BOOST_FAIL("stcp read should close after peer EOF");
+      } catch (const forge::net::stcp::exceptions::closed&) {
+      }
+   }
+   const auto after_eof = text_bytes("after EOF");
+   try {
+      co_await client_stream.stream.async_write(after_eof);
+      BOOST_FAIL("stcp write gate should close after peer EOF");
+   } catch (const forge::net::stcp::exceptions::closed&) {
+   }
+   BOOST_TEST(!client_stream.stream.valid());
    co_await listener.async_close();
 }
 
@@ -349,9 +577,8 @@ boost::asio::awaitable<void> stcp_upgrade_roundtrip() {
    auto received_prelude = co_await server_tcp.async_read();
    BOOST_CHECK_EQUAL_COLLECTIONS(received_prelude.begin(), received_prelude.end(), prelude.begin(), prelude.end());
 
-   auto server_upgrade =
-       spawn_result<forge::net::stcp::connection>(executor,
-                                           forge::net::stcp::async_upgrade_server(std::move(server_tcp), server_options(material)));
+   auto server_upgrade = spawn_result<forge::net::stcp::connection>(
+       executor, forge::net::stcp::async_upgrade_server(std::move(server_tcp), server_options(material)));
    auto client = co_await forge::net::stcp::async_upgrade_client(std::move(client_tcp), client_options(material));
    auto server = co_await take_result(server_upgrade);
 
@@ -571,9 +798,9 @@ boost::asio::awaitable<void> stcp_rejects_tls12_peer() {
    auto accept = spawn_result<forge::net::stcp::connection>(executor, listener.async_accept_connection());
 
    auto socket = boost::asio::ip::tcp::socket{executor};
-   co_await socket.async_connect(boost::asio::ip::tcp::endpoint{boost::asio::ip::make_address("127.0.0.1"),
-                                                                 listener.local_endpoint().port},
-                                 boost::asio::use_awaitable);
+   co_await socket.async_connect(
+       boost::asio::ip::tcp::endpoint{boost::asio::ip::make_address("127.0.0.1"), listener.local_endpoint().port},
+       boost::asio::use_awaitable);
    auto context = asio::ssl::context{asio::ssl::context::tls_client};
    SSL_CTX_set_max_proto_version(context.native_handle(), TLS1_2_VERSION);
    context.set_verify_mode(asio::ssl::verify_none);
@@ -598,6 +825,51 @@ BOOST_AUTO_TEST_CASE(stcp_loopback_roundtrip_and_transport_stream) {
 BOOST_AUTO_TEST_CASE(stcp_upgrades_existing_tcp_connection) {
    auto runtime = forge::asio::runtime{};
    forge::asio::blocking::run(runtime, stcp_upgrade_roundtrip());
+}
+
+BOOST_AUTO_TEST_CASE(stcp_handshake_deadline_has_one_deterministic_terminal_state) {
+   using forge::net::stcp::detail::handshake_deadline_state;
+   using forge::net::stcp::detail::handshake_terminal_state;
+
+   auto completed = handshake_deadline_state{};
+   BOOST_TEST(completed.try_complete());
+   BOOST_TEST(!completed.try_timeout());
+   BOOST_CHECK(completed.current() == handshake_terminal_state::completed);
+
+   auto timed_out = handshake_deadline_state{};
+   BOOST_TEST(timed_out.try_timeout());
+   BOOST_TEST(!timed_out.try_complete());
+   BOOST_CHECK(timed_out.current() == handshake_terminal_state::timed_out);
+}
+
+BOOST_AUTO_TEST_CASE(stcp_stalled_peer_reports_typed_handshake_timeout) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
+   BOOST_CHECK(forge::asio::blocking::run_for(
+       runtime, stcp_stalled_peer_returns_typed_handshake_timeout(make_tls_material()), std::chrono::seconds{2}));
+}
+
+BOOST_AUTO_TEST_CASE(stcp_serializes_full_duplex_ssl_operations_on_multi_worker_runtime) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 8}};
+   BOOST_CHECK(forge::asio::blocking::run_for(runtime, stcp_full_duplex_uses_one_connection_strand(make_tls_material()),
+                                              std::chrono::seconds{5}));
+}
+
+BOOST_AUTO_TEST_CASE(stcp_serializes_concurrent_same_direction_writes) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 8}};
+   BOOST_CHECK(forge::asio::blocking::run_for(runtime, stcp_same_direction_writes_are_serialized(make_tls_material()),
+                                              std::chrono::seconds{5}));
+}
+
+BOOST_AUTO_TEST_CASE(stcp_cancel_wakes_queued_same_direction_read) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
+   BOOST_CHECK(forge::asio::blocking::run_for(
+       runtime, stcp_cancel_wakes_same_direction_read_waiter(make_tls_material()), std::chrono::seconds{5}));
+}
+
+BOOST_AUTO_TEST_CASE(stcp_peer_eof_wakes_queued_read_and_closes_opposite_direction) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
+   BOOST_CHECK(forge::asio::blocking::run_for(
+       runtime, stcp_peer_eof_terminalizes_both_io_directions(make_tls_material()), std::chrono::seconds{5}));
 }
 
 BOOST_AUTO_TEST_CASE(stcp_rejects_wrong_hostname_and_fingerprint) {
@@ -627,7 +899,8 @@ BOOST_AUTO_TEST_CASE(stcp_alpn_selects_client_preferred_supported_protocol) {
 
 BOOST_AUTO_TEST_CASE(stcp_cancel_unblocks_pending_read) {
    auto runtime = forge::asio::runtime{};
-   BOOST_CHECK(forge::asio::blocking::run_for(runtime, stcp_connection_cancel_unblocks_pending_read(), std::chrono::seconds{2}));
+   BOOST_CHECK(forge::asio::blocking::run_for(runtime, stcp_connection_cancel_unblocks_pending_read(),
+                                              std::chrono::seconds{2}));
 }
 
 BOOST_AUTO_TEST_CASE(stcp_requires_tls13_by_default) {

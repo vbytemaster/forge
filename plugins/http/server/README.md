@@ -32,6 +32,7 @@ before startup.
 - Public modules:
   - `forge.plugins.http.server.plugin`
   - `forge.plugins.http.server.api`
+  - `forge.plugins.http.server.bearer_auth`
   - `forge.plugins.http.server.middleware`
   - `forge.plugins.http.server.types`
   - `forge.plugins.http.server.exceptions`
@@ -44,9 +45,11 @@ before startup.
 - Accepts typed `FORGE_HTTP_API` publications through `publish<Interface>()`.
 - Accepts plugin-owned middleware descriptors through
   `forge::plugins::http::server::middleware_descriptor`.
+- Provides a reusable Bearer authentication middleware that compares SHA-256
+  token hashes in constant time and never stores the clear token in its options.
 
 It does not expose raw route verbs, raw `forge::net::http::router`,
-diagnostics/status endpoints, auth policy, TLS policy, CORS policy or
+diagnostics/status endpoints, product authorization policy, TLS policy, CORS policy or
 product-specific behavior.
 
 ## Dependencies
@@ -97,6 +100,7 @@ import forge.net.http.file;
 import forge.net.http.stream;
 import forge.net.http.types;
 import forge.plugins.http.server.api;
+import forge.plugins.http.server.bearer_auth;
 import forge.plugins.http.server.middleware;
 import forge.plugins.http.server.plugin;
 
@@ -159,6 +163,13 @@ class object_http_plugin final : public forge::app::plugin {
       auto http = context.apis().get<forge::plugins::http::server::api>(
          {.id = {"forge.plugins.http.server"}, .major = 1});
 
+      co_await http->use(forge::plugins::http::server::bearer_auth({
+         .path_prefix = "/api/v1/admin",
+         .token_hashes = {
+            forge::plugins::http::server::hash_bearer_token(configured_token),
+         },
+      }));
+
       co_await http->use(forge::plugins::http::server::middleware_descriptor{
          .id = "trace",
          .phase = forge::plugins::http::server::middleware_phase::before_handler,
@@ -189,6 +200,11 @@ registry.register_plugin(forge::plugins::http::server::descriptor());
 
 - The plugin is not an authority boundary. Authentication, authorization,
   tenancy and rate policy belong to middleware or consuming product plugins.
+- `bearer_auth` proves possession of a configured token only. The consumer
+  chooses protected paths and maps authenticated callers to product permissions.
+- Prefer supplying precomputed token hashes from a secret provider. The helper
+  `hash_bearer_token` is intended for already-secret runtime input, not for
+  embedding clear production tokens in source or ordinary config files.
 - Body/header limits and timeouts are config-owned and enforced by `forge_net_http`.
 - Middleware should avoid logging raw headers, query strings or request bodies
   before redaction.
@@ -208,5 +224,6 @@ registry.register_plugin(forge::plugins::http::server::descriptor());
 ## Tests
 
 - `test_forge_plugins`
+- `test_forge_plugins_http_server`
 - `test_forge_http_websocket`
 - `test_forge_api_core`

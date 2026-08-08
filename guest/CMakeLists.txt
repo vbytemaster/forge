@@ -506,6 +506,11 @@ configure_file(
    "${CMAKE_CURRENT_BINARY_DIR}/ForgeContractToolchain.cmake"
    @ONLY
 )
+configure_file(
+   cmake/ForgeContractPaths.cmake.in
+   "${CMAKE_CURRENT_BINARY_DIR}/ForgeContractPaths.cmake"
+   @ONLY
+)
 configure_package_config_file(
    cmake/ForgeContractConfig.cmake.in
    "${CMAKE_CURRENT_BINARY_DIR}/ForgeContractConfig.cmake"
@@ -524,6 +529,7 @@ install(
    FILES
       "${CMAKE_CURRENT_BINARY_DIR}/ForgeContractConfig.cmake"
       "${CMAKE_CURRENT_BINARY_DIR}/ForgeContractConfigVersion.cmake"
+      "${CMAKE_CURRENT_BINARY_DIR}/ForgeContractPaths.cmake"
       "${CMAKE_CURRENT_BINARY_DIR}/ForgeContractToolchain.cmake"
       cmake/ForgeContractFunctions.cmake
       cmake/ForgeContractLibraries.cmake

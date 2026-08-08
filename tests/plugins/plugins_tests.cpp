@@ -1,6 +1,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/error.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/redirect_error.hpp>
@@ -8,6 +9,7 @@
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/describe.hpp>
+#include <boost/system/system_error.hpp>
 #include <boost/test/unit_test.hpp>
 #include <forge/api/core/macros.hpp>
 #include <forge/exceptions/macros.hpp>
@@ -394,6 +396,34 @@ class node_test_api_impl final : public node_test_api {
    boost::asio::awaitable<int> ping(int request) override {
       co_return request + 1;
    }
+};
+
+struct nonresponding_node_test_state {
+   std::atomic_bool started{false};
+   std::atomic_bool cancelled{false};
+};
+
+class nonresponding_node_test_api_impl final : public node_test_api {
+ public:
+   explicit nonresponding_node_test_api_impl(std::shared_ptr<nonresponding_node_test_state> state)
+       : state_{std::move(state)} {}
+
+   boost::asio::awaitable<int> ping(int request) override {
+      auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor, std::chrono::seconds{2}};
+      state_->started.store(true, std::memory_order_release);
+      try {
+         co_await timer.async_wait(boost::asio::use_awaitable);
+      } catch (const boost::system::system_error& error) {
+         if (error.code() == boost::asio::error::operation_aborted) {
+            state_->cancelled.store(true, std::memory_order_release);
+         }
+         throw;
+      }
+      co_return request + 1;
+   }
+
+ private:
+   std::shared_ptr<nonresponding_node_test_state> state_;
 };
 
 class peer_context_test_api_impl final : public peer_context_test_api {
@@ -1379,6 +1409,11 @@ class fake_pubsub_application final : public forge::app::application_shell {
 };
 
 class resolver_plugin_application final : public forge::app::application_shell {
+ public:
+   explicit resolver_plugin_application(
+      std::shared_ptr<node_test_api> node_api = std::make_shared<node_test_api_impl>())
+       : node_api_{std::move(node_api)} {}
+
  protected:
    void on_register_plugins(forge::app::plugin_registry& registry) override {
       registry.register_plugin(forge::plugins::p2p::node::descriptor());
@@ -1393,11 +1428,14 @@ class resolver_plugin_application final : public forge::app::application_shell {
    }
 
    boost::asio::awaitable<void> on_provide(forge::app::application_context& context) override {
-      context.apis().install<node_test_api>(node_test_api::describe(), std::make_shared<node_test_api_impl>());
+      context.apis().install<node_test_api>(node_test_api::describe(), node_api_);
       context.apis().install<peer_context_test_api>(peer_context_test_api::describe(),
                                                     std::make_shared<peer_context_test_api_impl>());
       co_return;
    }
+
+ private:
+   std::shared_ptr<node_test_api> node_api_;
 };
 
 class resolver_only_application final : public forge::app::application_shell {
@@ -3799,6 +3837,10 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_plugin_config_is_described_from_public_sch
    BOOST_TEST(cache_ttl.has_default);
    BOOST_TEST(std::get<std::uint64_t>(cache_ttl.default_value.storage) > 0U);
 
+   const auto& request_deadline = require_field(*descriptor, "request-deadline-ms");
+   BOOST_TEST(request_deadline.has_default);
+   BOOST_TEST(std::get<std::uint64_t>(request_deadline.default_value.storage) == 0U);
+
    const auto& max_peers = require_field(*descriptor, "max-cached-peers");
    BOOST_TEST(max_peers.has_default);
    BOOST_TEST(std::get<std::uint64_t>(max_peers.default_value.storage) > 0U);
@@ -3916,6 +3958,47 @@ BOOST_AUTO_TEST_CASE(p2p_api_resolver_resolves_remote_api_and_opens_typed_remote
    auto remote = forge::asio::blocking::run(client.runtime(), resolver->remote<node_test_api>(server_peer));
    const auto response = forge::asio::blocking::run(client.runtime(), remote->ping(41));
    BOOST_TEST(response == 42);
+
+   forge::asio::blocking::run(client.runtime(), client.shutdown());
+   forge::asio::blocking::run(server.runtime(), server.shutdown());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_api_resolver_remote_applies_request_deadline_when_node_default_is_unbounded) {
+   const auto server_peer = test_peer(76);
+   auto server_config = test_p2p_config(server_peer);
+   server_config.set("plugins.p2p.node.listen", forge::config::core::value::array_type{
+                                      forge::config::core::value{"/ip4/127.0.0.1/udp/0/quic-v1"}});
+
+   auto handler_state = std::make_shared<nonresponding_node_test_state>();
+   auto server = resolver_plugin_application{std::make_shared<nonresponding_node_test_api_impl>(handler_state)};
+   server.configure(server_config);
+   forge::asio::blocking::run(server.runtime(), server.startup());
+
+   auto server_p2p = server.apis().get<forge::plugins::p2p::node::api>(
+      {.id = {"forge.plugins.p2p.node"}, .major = 1, .min_revision = 0});
+   const auto server_endpoint = server_p2p->local_endpoint();
+   BOOST_REQUIRE(server_endpoint.has_value());
+
+   auto client_config = test_p2p_config(test_peer(77));
+   client_config.set("plugins.p2p.node.api.deadline-ms", std::uint64_t{0});
+   client_config.set("plugins.p2p.resolver.request-deadline-ms", std::uint64_t{250});
+   client_config.set("plugins.p2p.node.bootstrap",
+                     forge::config::core::value::array_type{forge::config::core::value{server_endpoint->to_string()}});
+   auto client = resolver_only_application{};
+   client.configure(client_config);
+   forge::asio::blocking::run(client.runtime(), client.startup());
+
+   auto resolver = client.apis().get<forge::plugins::p2p::resolver::api>(
+      {.id = {"forge.plugins.p2p.resolver"}, .major = 1, .min_revision = 0});
+   auto remote = forge::asio::blocking::run(client.runtime(), resolver->remote<node_test_api>(server_peer));
+
+   BOOST_CHECK_THROW(forge::asio::blocking::run(client.runtime(), remote->ping(41)),
+                     forge::api::core::exceptions::deadline_exceeded);
+   BOOST_TEST(handler_state->started.load(std::memory_order_acquire));
+   BOOST_TEST(forge::asio::blocking::run(
+      server.runtime(), async_wait_for_condition(
+                           [&] { return handler_state->cancelled.load(std::memory_order_acquire); },
+                           std::chrono::seconds{2})));
 
    forge::asio::blocking::run(client.runtime(), client.shutdown());
    forge::asio::blocking::run(server.runtime(), server.shutdown());

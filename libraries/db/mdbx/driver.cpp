@@ -6,6 +6,7 @@ module;
 #include <boost/asio/awaitable.hpp>
 
 #include <atomic>
+#include <filesystem>
 #include <functional>
 #include <limits>
 #include <map>
@@ -150,6 +151,10 @@ driver::open_transaction() {
 boost::asio::awaitable<std::unique_ptr<forge::db::core::session>>
 driver::open_snapshot() {
    co_return impl_->open_snapshot();
+}
+
+boost::asio::awaitable<void> driver::create_checkpoint_impl(std::filesystem::path destination) {
+   co_await impl_->create_checkpoint(destination.string());
 }
 
 boost::asio::awaitable<void> driver::close_driver() {

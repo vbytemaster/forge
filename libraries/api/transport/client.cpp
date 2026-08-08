@@ -11,13 +11,17 @@ module;
 #include <exception>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <span>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/cancellation_state.hpp>
+#include <boost/asio/cancellation_type.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/detached.hpp>
@@ -28,10 +32,12 @@ module;
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/system/error_code.hpp>
+#include <boost/system/system_error.hpp>
 
 module forge.api.transport.client;
 
 import forge.raw.raw;
+import forge.raw.exceptions;
 import forge.net.transport.exceptions;
 import forge.net.transport.frame;
 
@@ -65,12 +71,12 @@ void compact_buffer(std::vector<std::uint8_t>& buffer, std::size_t& consumed) {
 }
 
 boost::asio::awaitable<forge::net::transport::chunk> read_transport_frame(forge::net::transport::stream& stream,
-                                                                   std::vector<std::uint8_t>& buffer,
-                                                                   std::size_t& consumed,
-                                                                   std::uint32_t max_frame_size) {
+                                                                          std::vector<std::uint8_t>& buffer,
+                                                                          std::size_t& consumed,
+                                                                          std::uint32_t max_frame_size) {
    while (true) {
-      const auto decoded = forge::net::transport::decode_frame_view(available_bytes(buffer, consumed),
-                                                             forge::net::transport::frame_options{.max_size = max_frame_size});
+      const auto decoded = forge::net::transport::decode_frame_view(
+          available_bytes(buffer, consumed), forge::net::transport::frame_options{.max_size = max_frame_size});
       if (decoded.status == forge::net::transport::frame_decode_status::complete) {
          const auto payload = forge::net::transport::chunk{decoded.payload};
          consumed += decoded.consumed;
@@ -87,11 +93,47 @@ boost::asio::awaitable<forge::net::transport::chunk> read_transport_frame(forge:
    }
 }
 
-boost::asio::awaitable<void> write_transport_frame(forge::net::transport::stream& stream, std::span<const std::uint8_t> payload,
-                                                  std::uint32_t max_frame_size) {
+boost::asio::awaitable<void> write_transport_frame(forge::net::transport::stream& stream,
+                                                   std::span<const std::uint8_t> payload,
+                                                   std::uint32_t max_frame_size) {
    auto encoded = std::vector<std::uint8_t>{};
-   forge::net::transport::encode_frame_to(encoded, payload, forge::net::transport::frame_options{.max_size = max_frame_size});
+   forge::net::transport::encode_frame_to(encoded, payload,
+                                          forge::net::transport::frame_options{.max_size = max_frame_size});
    co_await stream.async_write(forge::net::transport::chunk{std::move(encoded)});
+}
+
+[[nodiscard]] forge::raw::unpack_limits wire_unpack_limits(std::size_t payload_size,
+                                                           std::uint32_t max_frame_size) noexcept {
+   const auto bounded_size = static_cast<std::uint32_t>(std::min<std::size_t>(payload_size, max_frame_size));
+   return forge::raw::unpack_limits{
+       .max_container_elements = bounded_size,
+       .max_total_container_elements = bounded_size,
+       .max_bytes = bounded_size,
+       .first_container_elements = bounded_size,
+   };
+}
+
+[[nodiscard]] forge::api::core::frame decode_wire_frame(forge::net::transport::chunk payload,
+                                                        std::uint32_t max_frame_size) {
+   try {
+      auto encoded = std::move(payload).into_vector();
+      return forge::raw::unpack_exact<forge::api::core::frame>(std::span<const std::uint8_t>{encoded},
+                                                               wire_unpack_limits(encoded.size(), max_frame_size));
+   } catch (const forge::raw::exceptions::allocation_limit&) {
+      FORGE_THROW_EXCEPTION(exceptions::resource_exhausted, "API transport frame exceeds allocation limits");
+   } catch (const std::bad_alloc&) {
+      FORGE_THROW_EXCEPTION(exceptions::resource_exhausted, "API transport frame allocation failed");
+   } catch (const forge::raw::exceptions::range_error&) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport frame is malformed");
+   } catch (const forge::raw::exceptions::codec_error&) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport frame is malformed");
+   } catch (const forge::exceptions::base&) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport frame is malformed");
+   } catch (const std::exception&) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport frame is malformed");
+   } catch (...) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport frame is malformed");
+   }
 }
 
 [[nodiscard]] std::exception_ptr make_cancelled_error(const char* message) {
@@ -112,7 +154,7 @@ boost::asio::awaitable<void> write_transport_frame(forge::net::transport::stream
 [[nodiscard]] std::exception_ptr make_deadline_error(forge::api::core::call_id id) {
    try {
       FORGE_THROW_EXCEPTION(exceptions::deadline_exceeded, "API transport call deadline exceeded",
-                          forge::exceptions::ctx("call_id", id.value));
+                            forge::exceptions::ctx("call_id", id.value));
    } catch (...) {
       return std::current_exception();
    }
@@ -137,6 +179,10 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       std::vector<forge::api::core::frame> responses;
       std::exception_ptr error;
       bool done = false;
+      bool caller_cancelled = false;
+      bool request_written = false;
+      bool write_active = false;
+      bool write_deadline_expired = false;
    };
 
    struct write_waiter {
@@ -157,6 +203,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
    std::size_t consumed = 0;
    std::uint64_t next_id = 1;
    std::unordered_map<std::uint64_t, std::shared_ptr<pending_call>> pending;
+   std::unordered_set<std::uint64_t> retired;
    std::deque<std::shared_ptr<write_waiter>> write_waiters;
    std::exception_ptr failure;
    mutable std::mutex strand_mutex;
@@ -165,6 +212,26 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
    bool reader_started = false;
    bool write_busy = false;
    bool canceled = false;
+
+   struct caller_cancellation_filter {
+      std::weak_ptr<impl> owner;
+      std::weak_ptr<pending_call> pending_value;
+      strand_type executor;
+      forge::api::core::call_id id;
+
+      boost::asio::cancellation_type_t operator()(boost::asio::cancellation_type_t type) const noexcept {
+         if (type != boost::asio::cancellation_type::none) {
+            boost::asio::dispatch(executor, [owner = owner, pending_value = pending_value, id = id] {
+               if (auto self = owner.lock()) {
+                  if (auto value = pending_value.lock()) {
+                     self->cancel_pending_on_strand(id, value);
+                  }
+               }
+            });
+         }
+         return boost::asio::cancellation_type::none;
+      }
+   };
 
    [[nodiscard]] strand_type ensure_strand(boost::asio::any_io_executor executor) {
       auto lock = std::scoped_lock{strand_mutex};
@@ -201,6 +268,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
          cancel_timer_on_strand(pending_value->timer);
       }
       pending.clear();
+      retired.clear();
       while (!write_waiters.empty()) {
          auto waiter = std::move(write_waiters.front());
          write_waiters.pop_front();
@@ -232,14 +300,15 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       bool start_reader = false;
    };
 
-   reservation reserve_call_on_strand(forge::api::core::frame& request, call_options& value, const strand_type& executor) {
+   reservation reserve_call_on_strand(forge::api::core::frame& request, call_options& value,
+                                      const strand_type& executor) {
       auto pending_value = std::make_shared<pending_call>(executor);
       if (!valid_on_strand()) {
          FORGE_THROW_EXCEPTION(exceptions::cancelled, "API transport client is closed");
       }
       if (pending.size() >= settings.max_inflight) {
          FORGE_THROW_EXCEPTION(exceptions::resource_exhausted, "API transport max inflight calls exceeded",
-                             forge::exceptions::ctx("max_inflight", settings.max_inflight));
+                               forge::exceptions::ctx("max_inflight", settings.max_inflight));
       }
       if (value.id.value != 0) {
          request.id = value.id;
@@ -251,9 +320,9 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       }
       request.codec = settings.codec;
 
-      if (pending.contains(request.id.value)) {
-         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "duplicate active API transport call",
-                             forge::exceptions::ctx("call_id", request.id.value));
+      if (pending.contains(request.id.value) || retired.contains(request.id.value)) {
+         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport call_id is active or awaiting cancellation",
+                               forge::exceptions::ctx("call_id", request.id.value));
       }
       const auto deadline = effective_deadline(value, settings);
       if (deadline.count() > 0) {
@@ -276,6 +345,28 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       }
    }
 
+   void cancel_pending_on_strand(forge::api::core::call_id id, const std::shared_ptr<pending_call>& pending_value) {
+      const auto found = pending.find(id.value);
+      if (found == pending.end() || found->second != pending_value || pending_value->done) {
+         return;
+      }
+      pending_value->caller_cancelled = true;
+      if (pending_value->write_active) {
+         auto error = make_cancelled_error("API transport call was cancelled during write");
+         fail_all_on_strand(error);
+         cancel_stream_on_strand();
+         return;
+      }
+      cancel_timer_on_strand(pending_value->timer);
+      for (auto& waiter : write_waiters) {
+         if (waiter->id == id && !waiter->ready) {
+            waiter->error = make_cancelled_error("API transport call was cancelled");
+            waiter->ready = true;
+            cancel_timer_on_strand(waiter->timer);
+         }
+      }
+   }
+
    void remove_write_waiter_on_strand(const std::shared_ptr<write_waiter>& waiter) {
       auto found = std::find(write_waiters.begin(), write_waiters.end(), waiter);
       if (found != write_waiters.end()) {
@@ -284,19 +375,37 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
    }
 
    void complete_pending_on_strand(forge::api::core::frame response) {
-      if (response.kind != forge::api::core::frame_kind::response && response.kind != forge::api::core::frame_kind::error &&
-          response.kind != forge::api::core::frame_kind::stream_item && response.kind != forge::api::core::frame_kind::stream_end) {
+      if (response.kind == forge::api::core::frame_kind::cancel) {
+         if (response.codec != settings.codec) {
+            FORGE_THROW_EXCEPTION(exceptions::codec_failed,
+                                  "API transport cancel acknowledgement codec is not accepted",
+                                  forge::exceptions::ctx("codec", response.codec.value));
+         }
+         if (retired.erase(response.id.value) == 0) {
+            FORGE_THROW_EXCEPTION(exceptions::protocol_error,
+                                  "API transport received cancel acknowledgement for unknown call_id",
+                                  forge::exceptions::ctx("call_id", response.id.value));
+         }
+         return;
+      }
+      if (response.kind != forge::api::core::frame_kind::response &&
+          response.kind != forge::api::core::frame_kind::error &&
+          response.kind != forge::api::core::frame_kind::stream_item &&
+          response.kind != forge::api::core::frame_kind::stream_end) {
          FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport received non-response frame",
-                             forge::exceptions::ctx("call_id", response.id.value));
+                               forge::exceptions::ctx("call_id", response.id.value));
       }
       if (response.codec != settings.codec) {
          FORGE_THROW_EXCEPTION(exceptions::codec_failed, "API transport response codec is not accepted",
-                             forge::exceptions::ctx("codec", response.codec.value));
+                               forge::exceptions::ctx("codec", response.codec.value));
       }
       auto found = pending.find(response.id.value);
       if (found == pending.end()) {
+         if (retired.contains(response.id.value)) {
+            return;
+         }
          FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport received unknown call_id",
-                             forge::exceptions::ctx("call_id", response.id.value));
+                               forge::exceptions::ctx("call_id", response.id.value));
       }
       auto pending_value = found->second;
       const auto terminal = response.kind == forge::api::core::frame_kind::response ||
@@ -312,7 +421,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
    }
 
    [[nodiscard]] bool no_pending_and_stop_reader_on_strand() {
-      if (!pending.empty()) {
+      if (!pending.empty() || !retired.empty()) {
          return false;
       }
       reader_started = false;
@@ -327,7 +436,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       try {
          while (!canceled) {
             auto payload = co_await read_transport_frame(stream, read_buffer, consumed, settings.max_frame_size);
-            complete_pending_on_strand(forge::raw::unpack<forge::api::core::frame>(payload.to_vector()));
+            complete_pending_on_strand(decode_wire_frame(std::move(payload), settings.max_frame_size));
             if (no_pending_and_stop_reader_on_strand()) {
                co_return;
             }
@@ -348,6 +457,93 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
           boost::asio::detached);
    }
 
+   boost::asio::awaitable<void> send_cancel_on_strand(forge::api::core::frame value, const strand_type& executor) {
+      auto write_state = std::make_shared<pending_call>(executor);
+      write_state->timer.expires_after(settings.control_timeout);
+      write_state->deadline_at = write_state->timer.expiry();
+      try {
+         co_await acquire_write_on_strand(value.id, write_state, executor);
+         write_state->write_active = true;
+         boost::asio::co_spawn(
+             executor,
+             [self = shared_from_this(), write_state]() mutable -> boost::asio::awaitable<void> {
+                auto error = boost::system::error_code{};
+                co_await write_state->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+                if (error || !write_state->write_active || write_state->done) {
+                   co_return;
+                }
+                write_state->write_deadline_expired = true;
+                self->fail_all_on_strand(
+                    make_cancelled_error("API transport session was closed after a control write deadline"));
+                self->cancel_stream_on_strand();
+             },
+             boost::asio::detached);
+         try {
+            auto encoded = forge::api::core::bytes{};
+            forge::raw::pack(encoded, value);
+            co_await write_transport_frame(stream, encoded, settings.max_frame_size);
+         } catch (...) {
+            write_state->write_active = false;
+            write_state->done = true;
+            cancel_timer_on_strand(write_state->timer);
+            release_write_on_strand();
+            throw;
+         }
+         write_state->write_active = false;
+         write_state->done = true;
+         cancel_timer_on_strand(write_state->timer);
+         release_write_on_strand();
+      } catch (const forge::api::core::exceptions::deadline_exceeded&) {
+         auto error = make_cancelled_error("API transport session was closed after a control write deadline");
+         fail_all_on_strand(error);
+         cancel_stream_on_strand();
+      } catch (...) {
+         auto error = std::current_exception();
+         fail_all_on_strand(error);
+         cancel_stream_on_strand();
+      }
+   }
+
+   void start_cancel_write_on_strand(forge::api::core::frame value, const strand_type& executor) {
+      boost::asio::co_spawn(
+          executor,
+          [self = shared_from_this(), value = std::move(value), executor]() mutable -> boost::asio::awaitable<void> {
+             co_await self->send_cancel_on_strand(std::move(value), executor);
+          },
+          boost::asio::detached);
+   }
+
+   void retire_call_on_strand(const forge::api::core::frame& request, const reservation& value,
+                              const strand_type& executor) {
+      remove_pending_on_strand(value.id, value.pending);
+      if (value.pending->request_written && valid_on_strand()) {
+         if (retired.size() >= std::max(std::size_t{1}, settings.max_inflight)) {
+            auto error = make_cancelled_error("API transport retired call limit exceeded");
+            fail_all_on_strand(error);
+            cancel_stream_on_strand();
+         } else {
+            retired.insert(value.id.value);
+            auto cancel = request;
+            cancel.kind = forge::api::core::frame_kind::cancel;
+            cancel.payload.clear();
+            start_cancel_write_on_strand(std::move(cancel), executor);
+         }
+      }
+   }
+
+   [[noreturn]] void finish_caller_cancellation_on_strand(const forge::api::core::frame& request,
+                                                          const reservation& value, const strand_type& executor) {
+      retire_call_on_strand(request, value, executor);
+      FORGE_THROW_EXCEPTION(exceptions::cancelled, "API transport call was cancelled",
+                            forge::exceptions::ctx("call_id", value.id.value));
+   }
+
+   [[noreturn]] void finish_deadline_on_strand(const forge::api::core::frame& request, const reservation& value,
+                                               const strand_type& executor) {
+      retire_call_on_strand(request, value, executor);
+      std::rethrow_exception(make_deadline_error(value.id));
+   }
+
    boost::asio::awaitable<void> acquire_write_on_strand(forge::api::core::call_id id,
                                                         const std::shared_ptr<pending_call>& pending_value,
                                                         const strand_type& executor) {
@@ -358,8 +554,7 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       if (canceled) {
          FORGE_THROW_EXCEPTION(exceptions::cancelled, "API transport client is closed");
       }
-      if (pending_value->deadline_at &&
-          boost::asio::steady_timer::clock_type::now() >= *pending_value->deadline_at) {
+      if (pending_value->deadline_at && boost::asio::steady_timer::clock_type::now() >= *pending_value->deadline_at) {
          std::rethrow_exception(make_deadline_error(id));
       }
       if (!write_busy) {
@@ -395,6 +590,9 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       while (!write_waiters.empty()) {
          auto waiter = std::move(write_waiters.front());
          write_waiters.pop_front();
+         if (waiter->ready) {
+            continue;
+         }
          if (waiter->deadline_at && now >= *waiter->deadline_at) {
             waiter->error = make_deadline_error(waiter->id);
             waiter->ready = true;
@@ -408,10 +606,58 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
       write_busy = false;
    }
 
-   boost::asio::awaitable<std::vector<forge::api::core::frame>> async_call_stream_on_strand(forge::api::core::frame request,
-                                                                                    call_options value,
-                                                                                    const strand_type& executor) {
+   boost::asio::awaitable<void>
+   watch_active_write_deadline_on_strand(forge::api::core::call_id id,
+                                         const std::shared_ptr<pending_call>& pending_value) {
+      if (!pending_value->deadline_at) {
+         co_return;
+      }
+      auto error = boost::system::error_code{};
+      co_await pending_value->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+      if (error || !pending_value->write_active || pending_value->done) {
+         co_return;
+      }
+      const auto found = pending.find(id.value);
+      if (found == pending.end() || found->second != pending_value) {
+         co_return;
+      }
+      pending_value->write_deadline_expired = true;
+      auto deadline_error = make_deadline_error(id);
+      fail_all_on_strand(make_cancelled_error("API transport session was cancelled after a write deadline"));
+      pending_value->error = deadline_error;
+      cancel_stream_on_strand();
+   }
+
+   void start_active_write_deadline_on_strand(forge::api::core::call_id id,
+                                              const std::shared_ptr<pending_call>& pending_value,
+                                              const strand_type& executor) {
+      if (!pending_value->deadline_at) {
+         return;
+      }
+      boost::asio::co_spawn(
+          executor,
+          [self = shared_from_this(), id, pending_value]() mutable -> boost::asio::awaitable<void> {
+             co_await self->watch_active_write_deadline_on_strand(id, pending_value);
+          },
+          boost::asio::detached);
+   }
+
+   boost::asio::awaitable<std::vector<forge::api::core::frame>>
+   async_call_stream_on_strand(forge::api::core::frame request, call_options value, const strand_type& executor) {
+      auto cancellation = co_await boost::asio::this_coro::cancellation_state;
+      if (cancellation.cancelled() != boost::asio::cancellation_type::none) {
+         FORGE_THROW_EXCEPTION(exceptions::cancelled, "API transport call was cancelled");
+      }
       auto reservation = reserve_call_on_strand(request, value, executor);
+      co_await boost::asio::this_coro::reset_cancellation_state(
+          boost::asio::enable_total_cancellation{}, caller_cancellation_filter{.owner = weak_from_this(),
+                                                                               .pending_value = reservation.pending,
+                                                                               .executor = executor,
+                                                                               .id = reservation.id});
+      cancellation = co_await boost::asio::this_coro::cancellation_state;
+      if (cancellation.cancelled() != boost::asio::cancellation_type::none) {
+         cancel_pending_on_strand(reservation.id, reservation.pending);
+      }
       if (reservation.start_reader) {
          start_reader_on_strand(executor);
       }
@@ -421,33 +667,47 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
 
       try {
          co_await acquire_write_on_strand(reservation.id, reservation.pending, executor);
+         reservation.pending->write_active = true;
+         start_active_write_deadline_on_strand(reservation.id, reservation.pending, executor);
          try {
             co_await write_transport_frame(stream, encoded, settings.max_frame_size);
+            reservation.pending->write_active = false;
+            reservation.pending->request_written = true;
          } catch (...) {
+            reservation.pending->write_active = false;
             release_write_on_strand();
             throw;
          }
          release_write_on_strand();
       } catch (const exceptions::deadline_exceeded&) {
-         remove_pending_on_strand(reservation.id, reservation.pending);
-         auto timeout = std::current_exception();
-         fail_all_on_strand(timeout);
-         cancel_stream_on_strand();
-         throw;
+         finish_deadline_on_strand(request, reservation, executor);
       } catch (...) {
+         if (reservation.pending->caller_cancelled) {
+            finish_caller_cancellation_on_strand(request, reservation, executor);
+         }
+         if (reservation.pending->write_deadline_expired) {
+            finish_deadline_on_strand(request, reservation, executor);
+         }
+         if (reservation.pending->error) {
+            remove_pending_on_strand(reservation.id, reservation.pending);
+            std::rethrow_exception(reservation.pending->error);
+         }
          remove_pending_on_strand(reservation.id, reservation.pending);
          throw;
+      }
+
+      if (reservation.pending->caller_cancelled) {
+         finish_caller_cancellation_on_strand(request, reservation, executor);
       }
 
       while (!reservation.pending->done) {
          auto error = boost::system::error_code{};
          co_await reservation.pending->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+         if (reservation.pending->caller_cancelled) {
+            finish_caller_cancellation_on_strand(request, reservation, executor);
+         }
          if (!reservation.pending->done && !error) {
-            remove_pending_on_strand(reservation.id, reservation.pending);
-            auto timeout = make_deadline_error(reservation.id);
-            fail_all_on_strand(timeout);
-            cancel_stream_on_strand();
-            std::rethrow_exception(timeout);
+            finish_deadline_on_strand(request, reservation, executor);
          }
       }
       if (reservation.pending->error) {
@@ -460,6 +720,9 @@ struct client::impl : std::enable_shared_from_this<client::impl> {
 client::client() = default;
 
 client::client(forge::net::transport::stream stream, options value) : impl_(std::make_shared<impl>()) {
+   if (value.control_timeout.count() <= 0) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport control timeout must be positive");
+   }
    impl_->stream = std::move(stream);
    impl_->settings = std::move(value);
 }
@@ -478,23 +741,47 @@ const options& client::settings() const noexcept {
 }
 
 boost::asio::awaitable<std::vector<forge::api::core::frame>> client::async_call_stream(forge::api::core::frame request,
-                                                                               call_options value) {
+                                                                                       call_options value) {
    auto self = impl_;
    if (!self) {
       FORGE_THROW_EXCEPTION(exceptions::cancelled, "API transport client is closed");
    }
    const auto executor = co_await boost::asio::this_coro::executor;
    auto strand = self->ensure_strand(executor);
-   co_return co_await boost::asio::co_spawn(
-       strand,
-       [self, strand, request = std::move(request), value = std::move(value)]() mutable
-           -> boost::asio::awaitable<std::vector<forge::api::core::frame>> {
-          co_return co_await self->async_call_stream_on_strand(std::move(request), std::move(value), strand);
-       },
-       boost::asio::use_awaitable);
+   try {
+      co_return co_await boost::asio::co_spawn(
+          strand,
+          [self, strand, request = std::move(request),
+           value = std::move(value)]() mutable -> boost::asio::awaitable<std::vector<forge::api::core::frame>> {
+             co_return co_await self->async_call_stream_on_strand(std::move(request), std::move(value), strand);
+          },
+          boost::asio::use_awaitable);
+   } catch (const forge::raw::exceptions::allocation_limit&) {
+      FORGE_THROW_EXCEPTION(exceptions::resource_exhausted, "API transport payload exceeds allocation limits");
+   } catch (const std::bad_alloc&) {
+      FORGE_THROW_EXCEPTION(exceptions::resource_exhausted, "API transport payload allocation failed");
+   } catch (const forge::raw::exceptions::range_error&) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport payload is malformed");
+   } catch (const forge::raw::exceptions::codec_error&) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport payload is malformed");
+   } catch (const forge::exceptions::base&) {
+      throw;
+   } catch (const boost::system::system_error& error) {
+      if (error.code() == boost::asio::error::operation_aborted) {
+         FORGE_THROW_EXCEPTION(exceptions::cancelled, "API transport call was cancelled");
+      }
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport call failed",
+                            forge::exceptions::ctx("cause", error.what()));
+   } catch (const std::exception& error) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport call failed",
+                            forge::exceptions::ctx("cause", error.what()));
+   } catch (...) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API transport call failed");
+   }
 }
 
-boost::asio::awaitable<forge::api::core::frame> client::async_call(forge::api::core::frame request, call_options value) {
+boost::asio::awaitable<forge::api::core::frame> client::async_call(forge::api::core::frame request,
+                                                                   call_options value) {
    auto responses = co_await async_call_stream(std::move(request), std::move(value));
    for (auto& response : responses) {
       if (response.kind != forge::api::core::frame_kind::stream_end) {

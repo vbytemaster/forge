@@ -112,18 +112,15 @@ bool same_owner(const std::shared_ptr<forge::db::core::driver>& left,
    return !less(left, right) && !less(right, left);
 }
 
-std::shared_ptr<runtime_state> acquire_runtime_state(
-   const std::shared_ptr<forge::db::core::driver>& driver,
-   const forge::db::core::family& family) {
+std::shared_ptr<runtime_state> acquire_runtime_state(const std::shared_ptr<forge::db::core::driver>& driver,
+                                                     const forge::db::core::family& family) {
    auto guard = std::scoped_lock{runtime_registry_mutex()};
    auto& entries = runtime_registry();
 
-   entries.erase(std::remove_if(entries.begin(),
-                                entries.end(),
-                                [](const runtime_entry& entry) {
-                                   return entry.driver.expired() || entry.runtime.expired();
-                                }),
-                 entries.end());
+   entries.erase(
+       std::remove_if(entries.begin(), entries.end(),
+                      [](const runtime_entry& entry) { return entry.driver.expired() || entry.runtime.expired(); }),
+       entries.end());
 
    for (const auto& entry : entries) {
       auto existing_driver = entry.driver.lock();
@@ -141,12 +138,9 @@ std::shared_ptr<runtime_state> acquire_runtime_state(
 
 } // namespace
 
-store::impl::impl(std::shared_ptr<forge::db::core::driver> driver_value,
-                  store::config config_value,
+store::impl::impl(std::shared_ptr<forge::db::core::driver> driver_value, store::config config_value,
                   store::options options_value)
-    : driver{std::move(driver_value)},
-      config{std::move(config_value)},
-      settings{options_value} {
+    : driver{std::move(driver_value)}, config{std::move(config_value)}, settings{options_value} {
    if (!driver) {
       FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor, "db object driver is null");
    }
@@ -177,13 +171,10 @@ store::impl::initialize_header(forge::db::core::transaction& active) const {
    const auto existing = co_await active.get(config.family, key);
 
    if (!existing.has_value()) {
-      const auto records = co_await active.scan_page(
-         config.family,
-         forge::db::core::record_range{.has_end = false},
-         forge::db::core::page_request{.limit = 1});
+      const auto records = co_await active.scan_page(config.family, forge::db::core::record_range{.has_end = false},
+                                                     forge::db::core::page_request{.limit = 1});
       if (!records.entries.empty()) {
-         FORGE_THROW_EXCEPTION(exceptions::incompatible_version,
-                               "db object family is non-empty but has no header",
+         FORGE_THROW_EXCEPTION(exceptions::incompatible_version, "db object family is non-empty but has no header",
                                forge::exceptions::ctx("family", config.family.name));
       }
 
@@ -213,11 +204,33 @@ store::impl::initialize_header(forge::db::core::transaction& active) const {
 }
 
 boost::asio::awaitable<forge::db::ids::object_id> store::impl::allocate_id(forge::db::ids::object_id type,
-                                                                       forge::db::core::transaction& active) {
+                                                                           forge::db::core::transaction& active) {
+   const auto key = detail::record_key::sequence(type);
+   if (settings.id_allocation == id_allocation_policy::transactional) {
+      const auto existing = co_await active.get(config.family, key);
+      auto next = existing.has_value() ? decode_next_instance(*existing) : std::uint64_t{0};
+      auto candidate = type;
+      candidate.instance = next;
+      while ((co_await active.get(config.family, detail::record_key::object(candidate))).has_value()) {
+         if (next == std::numeric_limits<std::uint64_t>::max()) {
+            FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor, "db object id sequence is exhausted");
+         }
+         ++next;
+         candidate.instance = next;
+      }
+      if (next == std::numeric_limits<std::uint64_t>::max()) {
+         FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor, "db object id sequence is exhausted");
+      }
+
+      auto allocated = type;
+      allocated.instance = next;
+      co_await active.put(config.family, key, encode_next_instance(next + 1U));
+      co_return allocated;
+   }
+
    const auto ticket = co_await runtime->allocator_gate->acquire();
    auto allocated = type;
 
-   const auto key = detail::record_key::sequence(type);
    auto cursor = runtime->next_instances.find(type);
    if (cursor == runtime->next_instances.end()) {
       const auto existing = co_await active.get(config.family, key);

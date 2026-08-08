@@ -89,6 +89,7 @@ plugin::api_impl::open_resolved_connection(forge::net::p2p::peer_id peer,
          .open_deadline = impl_->open_deadline(options),
          .codec = selected.api.codec,
          .max_inflight = static_cast<std::size_t>(selected.api.max_inflight),
+         .deadline = impl_->request_deadline(options),
          .max_frame_size = static_cast<std::uint32_t>(selected.api.max_frame_size),
       });
    co_return resolved_connection{

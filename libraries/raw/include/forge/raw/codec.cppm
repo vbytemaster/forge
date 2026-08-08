@@ -2,6 +2,7 @@ module;
 
 #include <boost/pfr/core.hpp>
 
+#include <algorithm>
 #include <array>
 #include <climits>
 #include <cstddef>
@@ -65,16 +66,42 @@ template <typename T> struct codec_traits {};
 inline constexpr auto max_array_elements = std::uint32_t{1024U * 1024U};
 inline constexpr auto max_byte_array_size = std::uint32_t{20U * 1024U * 1024U};
 
+struct unpack_limits {
+   std::uint32_t max_container_elements = max_array_elements;
+   std::uint32_t max_total_container_elements = max_array_elements;
+   std::uint32_t max_bytes = max_byte_array_size;
+   std::uint32_t first_container_elements = max_array_elements;
+};
+
 static_assert(CHAR_BIT == 8, "Forge raw serialization requires 8-bit bytes");
 
 namespace detail {
 
 [[noreturn]] void fail_codec(const char* message);
-datastream<std::vector<std::uint8_t>> make_input_stream(std::span<const std::uint8_t> input);
+[[noreturn]] void fail_allocation(const char* message);
+datastream<std::vector<std::uint8_t>> make_input_stream(std::span<const std::uint8_t> input, unpack_limits limits = {});
 
 inline void require(bool condition, const char* message) {
    if (!condition) {
       fail_codec(message);
+   }
+}
+
+template <typename Stream> void require_container_allocation(Stream& stream, std::size_t size, const char* message) {
+   require(size <= max_array_elements, message);
+   if constexpr (requires { stream.consume_container_elements(size); }) {
+      if (!stream.consume_container_elements(size)) {
+         fail_allocation(message);
+      }
+   }
+}
+
+template <typename Stream> void require_byte_allocation(const Stream& stream, std::size_t size, const char* message) {
+   require(size <= max_byte_array_size, message);
+   if constexpr (requires { stream.allocation_limits(); }) {
+      if (size > stream.allocation_limits().bytes) {
+         fail_allocation(message);
+      }
    }
 }
 
@@ -443,7 +470,7 @@ template <typename Stream> void pack(Stream& stream, const std::string& value) {
 
 template <typename Stream> void unpack(Stream& stream, std::string& value) {
    const auto size = detail::unpack_unsigned_int(stream);
-   detail::require(size <= max_byte_array_size, "raw string exceeds the byte limit");
+   detail::require_byte_allocation(stream, size, "raw string exceeds the byte limit");
    value.resize(size);
    if (!value.empty()) {
       stream.read(value.data(), value.size());
@@ -462,7 +489,7 @@ template <typename Stream, typename Byte> void pack_byte_vector(Stream& stream, 
 
 template <typename Stream, typename Byte> void unpack_byte_vector(Stream& stream, std::vector<Byte>& value) {
    const auto size = unpack_unsigned_int(stream);
-   require(size <= max_byte_array_size, "raw byte vector exceeds the byte limit");
+   require_byte_allocation(stream, size, "raw byte vector exceeds the byte limit");
    value.resize(size);
    if (!value.empty()) {
       read_bytes(stream, std::as_writable_bytes(std::span{value}));
@@ -505,7 +532,7 @@ template <typename Stream, typename T> void pack(Stream& stream, const std::vect
 
 template <typename Stream, typename T> void unpack(Stream& stream, std::vector<T>& value) {
    const auto size = detail::unpack_unsigned_int(stream);
-   detail::require(size <= max_array_elements, "raw vector exceeds the element limit");
+   detail::require_container_allocation(stream, size, "raw vector exceeds the element limit");
    value.resize(size);
    for (auto& item : value) {
       unpack(stream, item);
@@ -524,7 +551,7 @@ void pack(Stream& stream, const std::deque<T, Allocator>& value) {
 template <typename Stream, typename T, typename Allocator>
 void unpack(Stream& stream, std::deque<T, Allocator>& value) {
    const auto size = detail::unpack_unsigned_int(stream);
-   detail::require(size <= max_array_elements, "raw deque exceeds the element limit");
+   detail::require_container_allocation(stream, size, "raw deque exceeds the element limit");
    value.resize(size);
    for (auto& item : value) {
       unpack(stream, item);
@@ -542,7 +569,7 @@ void pack(Stream& stream, const std::list<T, Allocator>& value) {
 
 template <typename Stream, typename T, typename Allocator> void unpack(Stream& stream, std::list<T, Allocator>& value) {
    const auto size = detail::unpack_unsigned_int(stream);
-   detail::require(size <= max_array_elements, "raw list exceeds the element limit");
+   detail::require_container_allocation(stream, size, "raw list exceeds the element limit");
    value.clear();
    for (auto index = std::uint32_t{0}; index < size; ++index) {
       auto item = T{};
@@ -563,7 +590,7 @@ void pack(Stream& stream, const std::set<Key, Compare, Allocator>& value) {
 template <typename Stream, typename Key, typename Compare, typename Allocator>
 void unpack(Stream& stream, std::set<Key, Compare, Allocator>& value) {
    const auto size = detail::unpack_unsigned_int(stream);
-   detail::require(size <= max_array_elements, "raw set exceeds the element limit");
+   detail::require_container_allocation(stream, size, "raw set exceeds the element limit");
    value.clear();
    for (auto index = std::uint32_t{0}; index < size; ++index) {
       auto item = Key{};
@@ -584,7 +611,7 @@ void pack(Stream& stream, const std::map<Key, Value, Compare, Allocator>& value)
 template <typename Stream, typename Key, typename Value, typename Compare, typename Allocator>
 void unpack(Stream& stream, std::map<Key, Value, Compare, Allocator>& value) {
    const auto size = detail::unpack_unsigned_int(stream);
-   detail::require(size <= max_array_elements, "raw map exceeds the element limit");
+   detail::require_container_allocation(stream, size, "raw map exceeds the element limit");
    value.clear();
    for (auto index = std::uint32_t{0}; index < size; ++index) {
       auto item = std::pair<Key, Value>{};
@@ -747,8 +774,25 @@ template <typename T> void unpack(std::span<const std::uint8_t> input, T& value)
    unpack(stream, value);
 }
 
+template <typename T> void unpack(std::span<const std::uint8_t> input, T& value, unpack_limits limits) {
+   auto stream = detail::make_input_stream(input, limits);
+   unpack(stream, value);
+}
+
+template <typename T> T unpack(std::span<const std::uint8_t> input, unpack_limits limits) {
+   auto value = T{};
+   unpack(input, value, limits);
+   return value;
+}
+
 template <typename T> void unpack_exact(std::span<const std::uint8_t> input, T& value) {
    auto stream = detail::make_input_stream(input);
+   unpack(stream, value);
+   detail::require(stream.remaining() == 0U, "raw input contains trailing bytes");
+}
+
+template <typename T> void unpack_exact(std::span<const std::uint8_t> input, T& value, unpack_limits limits) {
+   auto stream = detail::make_input_stream(input, limits);
    unpack(stream, value);
    detail::require(stream.remaining() == 0U, "raw input contains trailing bytes");
 }
@@ -758,6 +802,12 @@ template <typename T> T unpack_exact(std::span<const std::uint8_t> input) {
    auto stream = detail::make_input_stream(input);
    unpack(stream, value);
    detail::require(stream.remaining() == 0U, "raw input contains trailing bytes");
+   return value;
+}
+
+template <typename T> T unpack_exact(std::span<const std::uint8_t> input, unpack_limits limits) {
+   auto value = T{};
+   unpack_exact(input, value, limits);
    return value;
 }
 

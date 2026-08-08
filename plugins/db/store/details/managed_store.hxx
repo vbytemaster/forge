@@ -7,6 +7,7 @@ struct managed_store {
    std::string driver_name;
    std::optional<std::string> durability;
    std::string path;
+   std::vector<std::string> families;
    store_options options;
    bool owns_driver = false;
    std::shared_ptr<forge::db::core::driver> driver;

@@ -7,6 +7,7 @@ module;
 
 #include <memory>
 #include <mutex>
+#include <filesystem>
 #include <utility>
 
 module forge.db.core.driver;
@@ -86,6 +87,18 @@ boost::asio::awaitable<snapshot> driver::begin_read() {
    co_return snapshot{
       std::make_unique<detail::tracked_session>(std::move(active), std::move(admission)),
       snapshot_origin_};
+}
+
+boost::asio::awaitable<void> driver::create_checkpoint(std::filesystem::path destination) {
+   if (destination.empty()) {
+      FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor, "db checkpoint destination must not be empty");
+   }
+   auto admission = admit_operation();
+   co_await create_checkpoint_impl(std::move(destination));
+}
+
+boost::asio::awaitable<void> driver::create_checkpoint_impl(std::filesystem::path) {
+   FORGE_THROW_EXCEPTION(exceptions::unsupported_operation, "db driver does not support durable checkpoints");
 }
 
 boost::asio::awaitable<void> driver::async_close() {

@@ -8,11 +8,10 @@ export module forge.chain.protocol.types:value;
 
 export import forge.chain.protocol.time;
 export import forge.chain.protocol.values;
-
-import forge.crypto.digest.ripemd160;
-import forge.crypto.digest.sha256;
-import forge.crypto.digest.sha512;
-import forge.crypto.asymmetric.values;
+export import forge.crypto.asymmetric.values;
+export import forge.crypto.digest.ripemd160;
+export import forge.crypto.digest.sha256;
+export import forge.crypto.digest.sha512;
 
 export namespace forge::chain::protocol {
 

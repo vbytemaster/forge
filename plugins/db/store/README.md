@@ -32,9 +32,12 @@ plugins:
         - name: "witness"
           driver: "rocksdb"
           path: "./data/rocksdb/witness"
+          families:
+            - "authenticated-state"
           object:
             family: "objectdb"
             write-policy: "single-writer"
+            id-allocation: "monotonic"
           blob:
             data-family: "blobdb.data"
             refs-family: "blobdb.refs"
@@ -47,6 +50,10 @@ plugins:
 `revision: {}` explicitly enables durable revisions. It requires `object:`,
 uses the same Object family for its system rows and does not create another
 RocksDB column family. Omitting `revision:` leaves the layer disabled.
+
+`families` declares additional physical DB Core families used by transaction
+participants that share this store but are not ObjectDB or BlobDB layers. Names
+must be non-empty and distinct from every configured ObjectDB and BlobDB family.
 
 MDBX is configured on the same named-store surface:
 
@@ -153,6 +160,40 @@ Revision state, entries and deltas are DB Object system models. They are
 readable through the configured Object store, but application Object mutation
 APIs cannot modify them. Object, Blob and Revision operations joined to one
 plugin transaction commit or roll back through the same Core driver.
+
+## Authenticated State
+
+`store_handle::authenticated(config)` creates a typed
+`forge.db.authenticated` view over the same physical named store. The
+application owns the authenticated family/domain policy, while DB Store keeps
+the physical driver private:
+
+```cpp
+auto authenticated = state.authenticated({
+   .family = forge::db::core::family{"state.authenticated"},
+   .domain = "spine.consensus.state",
+});
+
+auto tx = co_await state.begin_transaction();
+auto revision = co_await state.revisions().join(tx);
+auto tree = co_await authenticated.join(tx, revision.id());
+auto objects = co_await state.objects().join(tx);
+
+// Apply ObjectDB mutations, project the final change set, then stage one root.
+co_await tree.stage(projected_mutations, expected_root);
+co_await tx.commit();
+```
+
+The authenticated handle provides versioned reads, point/range proofs and
+bounded pruning. `join` and `prune_through` reject a transaction created by a
+different named store. Attach Revision and authenticated participants before
+the first application mutation; DB Store remains the only owner of commit and
+rollback.
+
+`store_handle::create_checkpoint(path)` forwards the neutral Core checkpoint
+boundary to the physical driver. It creates one backend-owned durable copy and
+does not reconstruct a database through Object or Blob iteration. Drivers that
+do not support checkpoints fail with the Core typed error.
 
 ## Shared Reads
 

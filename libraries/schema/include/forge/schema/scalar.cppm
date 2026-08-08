@@ -2,6 +2,7 @@ module;
 
 #include <boost/describe.hpp>
 #include <boost/mp11/algorithm.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <cerrno>
@@ -21,6 +22,7 @@ module;
 
 export module forge.schema.scalar;
 
+import forge.schema.exceptions;
 import forge.schema.enums;
 import forge.schema.value_kind;
 
@@ -33,9 +35,14 @@ template <typename T> struct scalar_optional<std::optional<T>> : std::true_type 
 
 template <typename T>
 concept canonical_string_scalar =
-    std::constructible_from<std::remove_cvref_t<T>, std::string> &&
+    (std::constructible_from<std::remove_cvref_t<T>, std::string> ||
+     requires(std::string_view text) {
+        { std::remove_cvref_t<T>::from_string(text) } -> std::same_as<std::remove_cvref_t<T>>;
+     }) &&
     (std::convertible_to<const std::remove_cvref_t<T>&, std::string> || requires(const std::remove_cvref_t<T>& value) {
        { value.str() } -> std::convertible_to<std::string>;
+    } || requires(const std::remove_cvref_t<T>& value) {
+       { value.to_string() } -> std::convertible_to<std::string>;
     });
 
 [[nodiscard]] inline bool parse_bool_text(std::string text, bool& output) {
@@ -57,29 +64,29 @@ template <typename Target, typename Source> [[nodiscard]] Target checked_integra
    if constexpr (signed_integral_value<Source> && signed_integral_value<Target>) {
       if constexpr (std::numeric_limits<Target>::digits < std::numeric_limits<Source>::digits) {
          if (value < static_cast<Source>((limits::min)()) || value > static_cast<Source>((limits::max)())) {
-            throw std::invalid_argument{"integer is outside target type range"};
+            FORGE_THROW_EXCEPTION(exceptions::invalid_value, "integer is outside target type range");
          }
       }
    } else if constexpr (signed_integral_value<Source> && unsigned_integral_value<Target>) {
       if (value < 0) {
-         throw std::invalid_argument{"integer is outside target type range"};
+         FORGE_THROW_EXCEPTION(exceptions::invalid_value, "integer is outside target type range");
       }
       if constexpr (std::numeric_limits<Target>::digits < std::numeric_limits<Source>::digits) {
          using unsigned_source = unsigned_integral_t<Source>;
          if (static_cast<unsigned_source>(value) > static_cast<unsigned_source>((limits::max)())) {
-            throw std::invalid_argument{"integer is outside target type range"};
+            FORGE_THROW_EXCEPTION(exceptions::invalid_value, "integer is outside target type range");
          }
       }
    } else if constexpr (unsigned_integral_value<Source> && signed_integral_value<Target>) {
       if constexpr (std::numeric_limits<Target>::digits < std::numeric_limits<Source>::digits) {
          if (value > static_cast<Source>((limits::max)())) {
-            throw std::invalid_argument{"integer is outside target type range"};
+            FORGE_THROW_EXCEPTION(exceptions::invalid_value, "integer is outside target type range");
          }
       }
    } else {
       if constexpr (std::numeric_limits<Target>::digits < std::numeric_limits<Source>::digits) {
          if (value > static_cast<Source>((limits::max)())) {
-            throw std::invalid_argument{"integer is outside target type range"};
+            FORGE_THROW_EXCEPTION(exceptions::invalid_value, "integer is outside target type range");
          }
       }
    }
@@ -89,7 +96,7 @@ template <typename Target, typename Source> [[nodiscard]] Target checked_integra
 template <typename Value> [[nodiscard]] Value parse_integral_text(std::string_view text) {
    static_assert(integral_value<Value> && !std::same_as<Value, bool>);
    if (text.empty()) {
-      throw std::invalid_argument{"integer has invalid syntax"};
+      FORGE_THROW_EXCEPTION(exceptions::invalid_value, "integer has invalid syntax");
    }
 
    using unsigned_value = unsigned_integral_t<Value>;
@@ -100,7 +107,7 @@ template <typename Value> [[nodiscard]] Value parse_integral_text(std::string_vi
       position = negative ? 1 : 0;
    }
    if (position == text.size()) {
-      throw std::invalid_argument{"integer has invalid syntax"};
+      FORGE_THROW_EXCEPTION(exceptions::invalid_value, "integer has invalid syntax");
    }
 
    const auto positive_limit = static_cast<unsigned_value>((std::numeric_limits<Value>::max)());
@@ -109,11 +116,11 @@ template <typename Value> [[nodiscard]] Value parse_integral_text(std::string_vi
    for (; position < text.size(); ++position) {
       const auto character = text[position];
       if (character < '0' || character > '9') {
-         throw std::invalid_argument{"integer has invalid syntax"};
+         FORGE_THROW_EXCEPTION(exceptions::invalid_value, "integer has invalid syntax");
       }
       const auto digit = static_cast<unsigned_value>(character - '0');
       if (magnitude > static_cast<unsigned_value>((limit - digit) / unsigned_value{10})) {
-         throw std::invalid_argument{"integer is outside target type range"};
+         FORGE_THROW_EXCEPTION(exceptions::invalid_value, "integer is outside target type range");
       }
       magnitude = static_cast<unsigned_value>(magnitude * unsigned_value{10} + digit);
    }
@@ -136,7 +143,7 @@ template <typename T> [[nodiscard]] T parse_scalar_text(std::string_view text) {
    } else if constexpr (std::same_as<clean, bool>) {
       auto parsed = false;
       if (!parse_bool_text(std::string{text}, parsed)) {
-         throw std::invalid_argument{"boolean has invalid syntax"};
+         FORGE_THROW_EXCEPTION(exceptions::invalid_value, "boolean has invalid syntax");
       }
       return parsed;
    } else if constexpr (signed_integral_value<clean> && !std::same_as<clean, bool>) {
@@ -149,7 +156,7 @@ template <typename T> [[nodiscard]] T parse_scalar_text(std::string_view text) {
       errno = 0;
       const auto parsed = std::strtold(copy.c_str(), &end);
       if (errno != 0 || end != copy.c_str() + copy.size()) {
-         throw std::invalid_argument{"floating-point value has invalid syntax"};
+         FORGE_THROW_EXCEPTION(exceptions::invalid_value, "floating-point value has invalid syntax");
       }
       return static_cast<clean>(parsed);
    } else if constexpr (std::is_enum_v<clean>) {
@@ -157,9 +164,21 @@ template <typename T> [[nodiscard]] T parse_scalar_text(std::string_view text) {
       if (enum_from_config_string(text, parsed)) {
          return parsed;
       }
-      throw std::invalid_argument{"enum value is invalid"};
+      FORGE_THROW_EXCEPTION(exceptions::invalid_value, "enum value is invalid");
    } else if constexpr (canonical_string_scalar<clean>) {
-      return clean{std::string{text}};
+      try {
+         if constexpr (requires { clean::from_string(text); }) {
+            return clean::from_string(text);
+         } else {
+            return clean{std::string{text}};
+         }
+      } catch (const forge::exceptions::base& error) {
+         FORGE_THROW_EXCEPTION(exceptions::invalid_value, "canonical scalar value is invalid",
+                               forge::exceptions::ctx("reason", error.message()));
+      } catch (const std::exception& error) {
+         FORGE_THROW_EXCEPTION(exceptions::invalid_value, "canonical scalar value is invalid",
+                               forge::exceptions::ctx("reason", error.what()));
+      }
    } else {
       static_assert(sizeof(clean) == 0, "parse_scalar_text requires a scalar text type");
    }
@@ -205,10 +224,19 @@ template <typename T> [[nodiscard]] std::optional<std::string> format_scalar_tex
    } else if constexpr (std::is_enum_v<clean>) {
       return enum_to_config_string(value);
    } else if constexpr (canonical_string_scalar<clean>) {
-      if constexpr (std::convertible_to<const clean&, std::string>) {
-         return static_cast<std::string>(value);
-      } else {
-         return value.str();
+      try {
+         if constexpr (std::convertible_to<const clean&, std::string>) {
+            return static_cast<std::string>(value);
+         } else if constexpr (requires { value.str(); }) {
+            return value.str();
+         } else {
+            return value.to_string();
+         }
+      } catch (const forge::exceptions::base&) {
+         throw;
+      } catch (const std::exception& error) {
+         FORGE_THROW_EXCEPTION(exceptions::invalid_value, "canonical scalar value cannot be formatted",
+                               forge::exceptions::ctx("reason", error.what()));
       }
    } else {
       return std::nullopt;

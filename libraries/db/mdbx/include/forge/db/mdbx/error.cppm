@@ -1,4 +1,8 @@
-#pragma once
+module;
+
+#include <string_view>
+
+export module forge.db.mdbx.driver:error;
 
 namespace forge::db::mdbx::detail {
 

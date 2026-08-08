@@ -19,6 +19,7 @@ import forge.crypto.asymmetric;
 import forge.crypto.asymmetric.secp256k1;
 import forge.crypto.digest.sha256;
 import forge.compression.exceptions;
+import forge.codec.json;
 import forge.raw.raw;
 import forge.raw.exceptions;
 import forge.variant.described;
@@ -28,6 +29,7 @@ import forge.chain.core.merkle;
 import forge.chain.protocol.abi;
 import forge.chain.protocol.action;
 import forge.chain.protocol.action_receipt;
+import forge.chain.protocol.admin;
 import forge.chain.protocol.block;
 import forge.chain.protocol.blockchain_parameters;
 import forge.chain.protocol.call_access_mode;
@@ -563,13 +565,55 @@ BOOST_AUTO_TEST_CASE(time_and_extended_asset_match_cdt_wire_layout) {
    const auto parsed = protocol::time_point::from_iso_string("2000-01-01T00:00:00");
    BOOST_TEST(parsed.time_since_epoch().count() == 946'684'800'000'000LL);
    BOOST_TEST(parsed.to_string() == "2000-01-01T00:00:00");
+   BOOST_TEST(protocol::time_point_sec::from_iso_string("2000-01-01T00:00:00").to_string() == "2000-01-01T00:00:00");
    BOOST_TEST(protocol::block_timestamp{parsed}.slot == 0U);
+   const auto half_second = protocol::block_timestamp{1U};
+   BOOST_TEST(half_second.to_string() == "2000-01-01T00:00:00.500");
+   BOOST_TEST(protocol::block_timestamp::from_iso_string(half_second.to_string()).slot == half_second.slot);
+   auto half_second_variant = forge::variant{};
+   protocol::to_variant(half_second, half_second_variant);
+   auto half_second_roundtrip = protocol::block_timestamp{};
+   protocol::from_variant(half_second_variant, half_second_roundtrip);
+   BOOST_TEST(half_second_roundtrip.slot == half_second.slot);
+   BOOST_CHECK_EXCEPTION((void)protocol::block_timestamp::from_iso_string("2000-01-01T00:00:00.250"),
+                         std::invalid_argument,
+                         [](const auto& error) { return has_message(error, "date parsing failed"); });
    BOOST_TEST(protocol::block_timestamp::maximum().slot == 0xffffU);
    BOOST_TEST(protocol::block_timestamp::maximum().next().slot == 0x10000U);
    BOOST_TEST(protocol::block_timestamp{parsed}.next().slot == 1U);
    BOOST_CHECK_EXCEPTION((void)protocol::block_timestamp{std::numeric_limits<std::uint32_t>::max()}.next(),
                          std::invalid_argument,
                          [](const auto& error) { return has_message(error, "block timestamp overflow"); });
+}
+
+BOOST_AUTO_TEST_CASE(time_point_host_json_preserves_fractional_microseconds) {
+   const auto whole_second = protocol::time_point{protocol::microseconds{946'684'800'000'000LL}};
+   const auto whole_second_encoded = forge::codec::json::write(whole_second);
+   BOOST_REQUIRE(whole_second_encoded.ok());
+   BOOST_TEST(whole_second_encoded.text == R"("2000-01-01T00:00:00")");
+
+   const auto point = protocol::time_point{protocol::microseconds{946'684'800'123'456LL}};
+   const auto encoded = forge::codec::json::write(point);
+   BOOST_REQUIRE(encoded.ok());
+   BOOST_TEST(encoded.text == "\"2000-01-01T00:00:00.123456\"");
+
+   const auto decoded = forge::codec::json::read<protocol::time_point>(encoded.text);
+   BOOST_REQUIRE(decoded.ok());
+   BOOST_TEST(decoded.value.time_since_epoch().count() == point.time_since_epoch().count());
+
+   const auto milliseconds = forge::codec::json::read<protocol::time_point>("\"2000-01-01T00:00:00.5\"");
+   BOOST_REQUIRE(milliseconds.ok());
+   BOOST_TEST(milliseconds.value.time_since_epoch().count() == 946'684'800'500'000LL);
+   BOOST_TEST(milliseconds.value.to_string() == "2000-01-01T00:00:00.500");
+
+   const auto single_microsecond = forge::codec::json::read<protocol::time_point>("\"2000-01-01T00:00:00.000001\"");
+   BOOST_REQUIRE(single_microsecond.ok());
+   BOOST_TEST(single_microsecond.value.time_since_epoch().count() == 946'684'800'000'001LL);
+
+   for (const auto* malformed :
+        {"\"2000-01-01T00:00:00.\"", "\"2000-01-01T00:00:00.1234567\"", "\"2000-01-01T00:00:00.12x\""}) {
+      BOOST_TEST(!forge::codec::json::read<protocol::time_point>(malformed).ok());
+   }
 }
 
 BOOST_AUTO_TEST_CASE(action_transaction_and_signed_transaction_match_spring_fixtures) {
@@ -843,6 +887,35 @@ BOOST_AUTO_TEST_CASE(named_action_payload_owns_name_and_raw_bytes) {
    BOOST_TEST(action.authorization.front().actor.value == permission.actor.value);
    BOOST_TEST(action.authorization.front().permission.value == permission.permission.value);
    BOOST_TEST(action.data == forge::raw::pack(payload));
+}
+
+BOOST_AUTO_TEST_CASE(supported_protocol_features_have_a_typed_variant_contract) {
+   const auto value = protocol::supported_protocol_features_response{
+       .features =
+           {
+               {
+                   .feature_digest =
+                       protocol::digest{"0ec7e080177b2c02b278d5088611686b49d739925a92d9bfcacd7fc6b74053bd"},
+                   .subjective_restrictions =
+                       {
+                           .enabled = true,
+                           .preactivation_required = false,
+                           .earliest_allowed_activation_time = protocol::time_point{},
+                       },
+                   .description_digest =
+                       protocol::digest{"64fe7df32e9b86be2b296b3f81dfd527f84e82b98e363bc97e40bc7a83733310"},
+                   .protocol_feature_type = "builtin",
+                   .specification = {{.name = "builtin_feature_codename", .value = "PREACTIVATE_FEATURE"}},
+               },
+           },
+   };
+
+   auto encoded = forge::variant{};
+   forge::to_variant(value, encoded);
+   auto decoded = protocol::supported_protocol_features_response{};
+   forge::from_variant(encoded, decoded);
+
+   BOOST_CHECK(decoded == value);
 }
 
 BOOST_AUTO_TEST_CASE(forge_secp256k1_is_the_crypto_surface_for_runtime_signatures) {

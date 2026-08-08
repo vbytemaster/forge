@@ -68,12 +68,24 @@ class call_runtime {
    [[nodiscard]] std::size_t active_calls() const noexcept;
 
  private:
+   struct generation_token {
+      call_id id;
+      std::uint64_t generation = 0;
+   };
+
    struct active_call {
       std::chrono::steady_clock::time_point started_at;
+      std::uint64_t generation = 0;
    };
+
+   [[nodiscard]] generation_token current(call_id id) const;
+   void observe(const frame& value, generation_token expected);
+
+   friend struct binding_plan;
 
    call_runtime_options options_;
    std::unordered_map<std::uint64_t, active_call> active_;
+   std::uint64_t next_generation_ = 1;
 };
 
 struct binding_plan {
@@ -100,18 +112,17 @@ class binding_builder {
       auto descriptor = Interface::describe();
       if (api.min_revision > descriptor.version.revision) {
          FORGE_THROW_EXCEPTION(exceptions::incompatible_version, "API export revision exceeds implementation revision",
-                             forge::exceptions::ctx("api", api.id.value),
-                             forge::exceptions::ctx("requested_revision", api.min_revision),
-                             forge::exceptions::ctx("implementation_revision", descriptor.version.revision));
+                               forge::exceptions::ctx("api", api.id.value),
+                               forge::exceptions::ctx("requested_revision", api.min_revision),
+                               forge::exceptions::ctx("implementation_revision", descriptor.version.revision));
       }
       descriptor.id = std::move(api.id);
       descriptor.version.major = api.major;
       descriptor.version.revision = api.min_revision;
-      descriptor.methods.erase(std::remove_if(descriptor.methods.begin(), descriptor.methods.end(),
-                                              [&](const auto& method) {
-                                                 return method.since_revision > api.min_revision;
-                                              }),
-                               descriptor.methods.end());
+      descriptor.methods.erase(
+          std::remove_if(descriptor.methods.begin(), descriptor.methods.end(),
+                         [&](const auto& method) { return method.since_revision > api.min_revision; }),
+          descriptor.methods.end());
       plan_.exports.push_back(std::move(descriptor));
       return *this;
    }
@@ -132,4 +143,4 @@ class binding_builder {
 
 [[nodiscard]] binding_builder binding();
 
-} // namespace forge::api
+} // namespace forge::api::core

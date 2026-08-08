@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <ranges>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,17 @@ struct wide_range_config {
    unsigned __int128 unsigned_value = 0;
 };
 
+struct throwing_scalar {
+   throwing_scalar() = default;
+   explicit throwing_scalar(std::string) {
+      throw std::runtime_error{"invalid scalar"};
+   }
+
+   [[nodiscard]] std::string to_string() const {
+      throw std::runtime_error{"unformattable scalar"};
+   }
+};
+
 } // namespace forge_schema_tests
 
 BOOST_DESCRIBE_STRUCT(forge_schema_tests::http_config, (), (bind_port, bind_host, tls_enabled, tags, token))
@@ -63,6 +75,7 @@ BOOST_DESCRIBE_STRUCT(forge_schema_tests::policy_list_config, (), (policies))
 BOOST_DESCRIBE_STRUCT(forge_schema_tests::wide_range_config, (), (signed_value, unsigned_value))
 
 import forge.schema.diagnostic;
+import forge.schema.exceptions;
 import forge.schema.value_kind;
 import forge.schema.object;
 import forge.schema.enums;
@@ -325,11 +338,29 @@ BOOST_AUTO_TEST_CASE(schema_checked_integral_cast_handles_widening_and_narrowing
    BOOST_TEST(forge::schema::checked_integral_cast<long long>(std::uint32_t{123}) == 123LL);
 
    BOOST_CHECK_THROW(static_cast<void>(forge::schema::checked_integral_cast<std::uint8_t>(std::uint16_t{256})),
-                     std::invalid_argument);
+                     forge::schema::exceptions::invalid_value);
    BOOST_CHECK_THROW(static_cast<void>(forge::schema::checked_integral_cast<std::int8_t>(std::int16_t{128})),
-                     std::invalid_argument);
+                     forge::schema::exceptions::invalid_value);
    BOOST_CHECK_THROW(static_cast<void>(forge::schema::checked_integral_cast<std::uint8_t>(std::int16_t{-1})),
-                     std::invalid_argument);
+                     forge::schema::exceptions::invalid_value);
+}
+
+BOOST_AUTO_TEST_CASE(schema_public_scalar_and_default_failures_are_typed) {
+   auto schema = forge::schema::object<forge_schema_tests::http_config>();
+   BOOST_CHECK_THROW(
+       schema.field<&forge_schema_tests::http_config::bind_port>("bind-port").default_value(std::string{"not-a-port"}),
+       forge::schema::exceptions::invalid_value);
+   BOOST_CHECK_THROW(static_cast<void>(forge::schema::parse_scalar_text<forge_schema_tests::throwing_scalar>("x")),
+                     forge::schema::exceptions::invalid_value);
+   BOOST_CHECK_THROW(static_cast<void>(forge::schema::parse_scalar_text<forge::crypto::digest::sha256>("invalid")),
+                     forge::schema::exceptions::invalid_value);
+   BOOST_CHECK_THROW(static_cast<void>(forge::schema::format_scalar_text(forge_schema_tests::throwing_scalar{})),
+                     forge::schema::exceptions::invalid_value);
+
+   auto diagnostics = std::vector<forge::schema::diagnostic>{};
+   BOOST_CHECK_THROW(static_cast<void>(forge::schema::cast_input_to<double>(
+                         forge::schema::input_value{std::string{"not-a-number"}}, "value", diagnostics)),
+                     forge::schema::exceptions::invalid_value);
 }
 
 BOOST_AUTO_TEST_CASE(schema_exact_scalar_validation_checks_float_range_before_narrowing) {

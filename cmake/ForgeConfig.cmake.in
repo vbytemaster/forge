@@ -38,6 +38,8 @@ set(
    db_object
    db_blob
    db_revision
+   db_authenticated
+   chain_api
    db_mdbx
    db_rocksdb
    codec_base32
@@ -116,6 +118,7 @@ macro(_forge_add_component component)
       elseif("${component}" STREQUAL "reflect")
          _forge_add_component(core)
       elseif("${component}" STREQUAL "schema")
+         _forge_add_component(exceptions)
          _forge_add_component(reflect)
       elseif("${component}" STREQUAL "variant")
          _forge_add_component(core)
@@ -222,6 +225,20 @@ macro(_forge_add_component component)
          _forge_add_component(exceptions)
          _forge_add_component(db_ids)
          _forge_add_component(raw)
+      elseif("${component}" STREQUAL "db_authenticated")
+         _forge_add_component(crypto_digest)
+         _forge_add_component(db_core)
+         _forge_add_component(exceptions)
+      elseif("${component}" STREQUAL "chain_api")
+         _forge_add_component(api_core)
+         _forge_add_component(api_http)
+         _forge_add_component(chain_protocol)
+         _forge_add_component(crypto_asymmetric)
+         _forge_add_component(crypto_digest)
+         _forge_add_component(db_authenticated)
+         _forge_add_component(exceptions)
+         _forge_add_component(net_http)
+         _forge_add_component(variant)
       elseif("${component}" STREQUAL "db_mdbx")
          if(NOT Forge_BUILT_WITH_MDBX)
             set(Forge_db_mdbx_FOUND FALSE)
@@ -371,6 +388,7 @@ macro(_forge_add_component component)
       elseif("${component}" STREQUAL "net_tcp")
          _forge_add_component(net_transport)
       elseif("${component}" STREQUAL "net_stcp")
+         _forge_add_component(asio)
          _forge_add_component(net_tcp)
          _forge_add_component(crypto_pki)
       elseif("${component}" STREQUAL "net_yamux")

@@ -11,6 +11,7 @@ module;
 #include <atomic>
 #include <functional>
 #include <future>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -22,6 +23,7 @@ module;
 
 module forge.db.mdbx.driver;
 
+import :error;
 import forge.asio.affine;
 import forge.asio.gate;
 import forge.db.core.driver;
@@ -30,7 +32,6 @@ import forge.db.core.record;
 
 #include "details/driver_impl.hxx"
 #include "details/environment.hxx"
-#include "details/error.hxx"
 #include "details/snapshot_session.hxx"
 #include "details/transaction_session.hxx"
 
@@ -82,6 +83,38 @@ std::unique_ptr<forge::db::core::session> driver_impl::open_snapshot() {
       mdbx_txn_begin(environment_->native(), nullptr, MDBX_TXN_RDONLY, &anchor),
       "mdbx_txn_begin snapshot");
    return std::make_unique<snapshot_session>(shared_from_this(), anchor);
+}
+
+boost::asio::awaitable<void> driver_impl::create_checkpoint(std::string destination) {
+   require_open();
+   auto ticket = co_await writer_gate_->acquire();
+   require_open();
+   co_await executor_.execute(
+      {.name = "mdbx-create-checkpoint"},
+      [environment = environment_, destination = std::move(destination)] {
+         const auto path = std::filesystem::path{destination};
+         const auto parent = path.parent_path();
+         auto error = std::error_code{};
+         if (!parent.empty() && !std::filesystem::create_directories(parent, error) && error) {
+            FORGE_THROW_EXCEPTION(exceptions::open_failed, "cannot create MDBX checkpoint parent directory",
+                                  forge::exceptions::ctx("path", parent.string()),
+                                  forge::exceptions::ctx("error", error.message()));
+         }
+         if (!std::filesystem::create_directory(path, error)) {
+            FORGE_THROW_EXCEPTION(exceptions::open_failed, "MDBX checkpoint destination already exists or is invalid",
+                                  forge::exceptions::ctx("path", path.string()),
+                                  forge::exceptions::ctx("error", error.message()));
+         }
+         try {
+            const auto data = path / "mdbx.dat";
+            require_mdbx_success(
+               mdbx_env_copy(environment->native(), data.c_str(), MDBX_CP_COMPACT),
+               "mdbx_env_copy checkpoint");
+         } catch (...) {
+            std::filesystem::remove_all(path, error);
+            throw;
+         }
+      });
 }
 
 boost::asio::awaitable<void> driver_impl::flush(bool sync) {

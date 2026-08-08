@@ -323,6 +323,7 @@ def main() -> None:
         cxx_compiler=args.cxx_compiler,
         forge_package=forge_package,
         contract_package=package,
+        forge_source_root=args.source_root.resolve(),
         source=args.dual_target_source.resolve(),
         output=output / "dual-target",
     )

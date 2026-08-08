@@ -245,7 +245,11 @@ boost::asio::awaitable<stream_response> file_response::materialize(const request
       };
    }
    if (!std::filesystem::is_regular_file(path_)) {
-      co_return stream_response::buffered(make_text_response(request_value, status::not_found, "not found"));
+      auto reply = make_text_response(request_value, status::not_found, "not found");
+      if (request_value.method() == method::head) {
+         reply.body().clear();
+      }
+      co_return stream_response::buffered(std::move(reply));
    }
 
    const auto size = static_cast<std::uint64_t>(std::filesystem::file_size(path_));

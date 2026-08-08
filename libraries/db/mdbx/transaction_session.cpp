@@ -18,6 +18,7 @@ module;
 
 module forge.db.mdbx.driver;
 
+import :error;
 import forge.asio.affine;
 import forge.asio.gate;
 import forge.db.core.driver;
@@ -26,7 +27,6 @@ import forge.db.core.record;
 
 #include "details/driver_impl.hxx"
 #include "details/environment.hxx"
-#include "details/error.hxx"
 #include "details/scan.hxx"
 #include "details/transaction_session.hxx"
 

@@ -76,6 +76,19 @@ std::int64_t parse_seconds(const std::string& text) {
    return days_from_civil(year, month, day) * 86'400 + static_cast<std::int64_t>(hour * 3'600U + minute * 60U + second);
 }
 
+std::uint32_t parse_fractional_microseconds(const std::string& text) {
+   if (text.size() < 21U || text.size() > 26U || text[19] != '.') {
+      detail::fail_value("date parsing failed");
+   }
+
+   const auto digits = text.size() - 20U;
+   auto fraction = parse_digits(text, 20U, digits);
+   for (auto index = digits; index < 6U; ++index) {
+      fraction *= 10U;
+   }
+   return fraction;
+}
+
 void append_decimal(std::string& result, std::uint64_t value, std::size_t width) {
    const auto offset = result.size();
    result.append(width, '0');
@@ -112,11 +125,32 @@ std::string format_seconds(std::int64_t seconds) {
 } // namespace
 
 time_point time_point::from_iso_string(const std::string& text) {
-   return time_point{protocol::seconds(parse_seconds(text))};
+   if (text.size() == 19U) {
+      return time_point{protocol::seconds(parse_seconds(text))};
+   }
+   const auto seconds = parse_seconds(text.substr(0U, 19U));
+   return time_point{protocol::seconds(seconds) + microseconds{parse_fractional_microseconds(text)}};
 }
 
 std::string time_point::to_string() const {
-   return format_seconds(time_since_epoch().to_seconds());
+   auto seconds = time_since_epoch().count() / 1'000'000;
+   auto fraction = time_since_epoch().count() % 1'000'000;
+   if (fraction < 0) {
+      fraction += 1'000'000;
+      --seconds;
+   }
+
+   auto result = format_seconds(seconds);
+   if (fraction == 0) {
+      return result;
+   }
+   result.push_back('.');
+   if (fraction % 1'000 == 0) {
+      append_decimal(result, static_cast<std::uint64_t>(fraction / 1'000), 3U);
+   } else {
+      append_decimal(result, static_cast<std::uint64_t>(fraction), 6U);
+   }
+   return result;
 }
 
 time_point_sec time_point_sec::from_iso_string(const std::string& text) {
@@ -149,11 +183,32 @@ time_point block_timestamp::to_time_point() const noexcept {
 }
 
 block_timestamp block_timestamp::from_iso_string(const std::string& text) {
-   return block_timestamp{time_point::from_iso_string(text)};
+   const auto has_fraction = text.size() == 23U && text[19] == '.';
+   if (text.size() != 19U && !has_fraction) {
+      detail::fail_value("date parsing failed");
+   }
+
+   const auto seconds = parse_seconds(text.substr(0U, 19U));
+   const auto fraction = has_fraction ? parse_digits(text, 20U, 3U) : 0U;
+   if (fraction != 0U && fraction != static_cast<unsigned>(block_interval_ms)) {
+      detail::fail_value("date parsing failed");
+   }
+
+   const auto milliseconds_since_epoch = seconds * 1'000 + static_cast<std::int64_t>(fraction);
+   const auto elapsed = milliseconds_since_epoch - block_timestamp_epoch;
+   if (elapsed < 0 || elapsed % block_interval_ms != 0 ||
+       elapsed / block_interval_ms > std::numeric_limits<std::uint32_t>::max()) {
+      detail::fail_value("date parsing failed");
+   }
+   return block_timestamp{static_cast<std::uint32_t>(elapsed / block_interval_ms)};
 }
 
 std::string block_timestamp::to_string() const {
-   return to_time_point().to_string();
+   auto result = format_seconds(block_timestamp_epoch / 1'000 + static_cast<std::int64_t>(slot / 2U));
+   if (slot % 2U != 0U) {
+      result += ".500";
+   }
+   return result;
 }
 
 block_timestamp& block_timestamp::operator=(time_point value) noexcept {
@@ -161,5 +216,31 @@ block_timestamp& block_timestamp::operator=(time_point value) noexcept {
    slot = static_cast<std::uint32_t>((milliseconds_since_epoch - block_timestamp_epoch) / block_interval_ms);
    return *this;
 }
+
+#if !defined(FORGE_CONTRACT_GUEST)
+void to_variant(const time_point& value, forge::variant& output) {
+   output = value.to_string();
+}
+
+void from_variant(const forge::variant& value, time_point& output) {
+   output = time_point::from_iso_string(value.as_string());
+}
+
+void to_variant(const time_point_sec& value, forge::variant& output) {
+   output = value.to_string();
+}
+
+void from_variant(const forge::variant& value, time_point_sec& output) {
+   output = time_point_sec::from_iso_string(value.as_string());
+}
+
+void to_variant(const block_timestamp& value, forge::variant& output) {
+   output = value.to_string();
+}
+
+void from_variant(const forge::variant& value, block_timestamp& output) {
+   output = block_timestamp::from_iso_string(value.as_string());
+}
+#endif
 
 } // namespace forge::chain::protocol

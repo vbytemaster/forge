@@ -58,6 +58,17 @@ namespace forge::net::p2p {
 
 namespace asio = boost::asio;
 
+operation_deadline::stop_token::stop_token(std::shared_ptr<std::atomic<state_value>> state)
+    : state_{std::move(state)} {}
+
+[[nodiscard]] bool operation_deadline::stop_token::request_stop() const noexcept {
+   if (!state_) {
+      return false;
+   }
+   auto expected = state_value::pending;
+   return state_->compare_exchange_strong(expected, state_value::stopped, std::memory_order_acq_rel);
+}
+
 operation_deadline::operation_deadline(boost::asio::io_context& context, std::chrono::milliseconds timeout)
     : timer_(std::make_shared<asio::steady_timer>(context)),
       state_(std::make_shared<std::atomic<state_value>>(state_value::pending)) {
@@ -107,8 +118,16 @@ void operation_deadline::cancel() noexcept {
    }
 }
 
+[[nodiscard]] operation_deadline::stop_token operation_deadline::stopping() const noexcept {
+   return stop_token{state_};
+}
+
 [[nodiscard]] bool operation_deadline::timed_out() const noexcept {
    return state_->load(std::memory_order_acquire) == state_value::timed_out;
+}
+
+[[nodiscard]] bool operation_deadline::stopped() const noexcept {
+   return state_->load(std::memory_order_acquire) == state_value::stopped;
 }
 
 } // namespace forge::net::p2p

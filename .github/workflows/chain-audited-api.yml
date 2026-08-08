@@ -1,0 +1,424 @@
+name: Chain Audited API
+run-name: Chain Audited API / ${{ github.ref_name }}
+
+on:
+  push:
+    tags:
+      - "ci/chain-audited-api/**"
+  workflow_dispatch:
+    inputs:
+      run_10m:
+        description: Run the ten-million-key authenticated DB baseline
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+  FORGE_MACOS_DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+
+jobs:
+  gate:
+    name: Validate reviewed Forge revision
+    runs-on: ubuntu-26.04
+    outputs:
+      forge_commit: ${{ steps.revisions.outputs.forge_commit }}
+      run_10m: ${{ steps.revisions.outputs.run_10m }}
+    steps:
+      - id: revisions
+        name: Resolve immutable acceptance revisions
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          EVENT_REF: ${{ github.ref }}
+          INPUT_RUN_10M: ${{ inputs.run_10m }}
+        run: |
+          set -euo pipefail
+
+          forge_commit="$EVENT_SHA"
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            pattern='^refs/tags/ci/chain-audited-api/([0-9a-f]{40})/(1m|10m)$'
+            if [[ ! "$EVENT_REF" =~ $pattern ]]; then
+              echo "invalid Chain Audited API acceptance tag: $EVENT_REF" >&2
+              exit 1
+            fi
+            if [[ "${BASH_REMATCH[1]}" != "$forge_commit" ]]; then
+              echo "acceptance tag does not point to its declared Forge revision" >&2
+              exit 1
+            fi
+            [[ "${BASH_REMATCH[2]}" == "10m" ]] && run_10m=true || run_10m=false
+          else
+            run_10m="$INPUT_RUN_10M"
+          fi
+
+          if [[ ! "$forge_commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Forge revision must be a full lowercase 40-character Git SHA" >&2
+            exit 1
+          fi
+          if [[ "$run_10m" != "true" && "$run_10m" != "false" ]]; then
+            echo "run_10m must resolve to true or false" >&2
+            exit 1
+          fi
+
+          echo "forge_commit=$forge_commit" >> "$GITHUB_OUTPUT"
+          echo "run_10m=$run_10m" >> "$GITHUB_OUTPUT"
+
+  style:
+    name: ubuntu-26.04 / structure and format
+    needs: gate
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.forge_commit }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install clang-format 22
+        run: sudo apt-get update && sudo apt-get install -y clang-format-22
+
+      - name: Check Forge-owned sources
+        shell: bash
+        run: |
+          base_tag="$(git describe --tags --match 'v[0-9]*' --abbrev=0)"
+          clang_format="$(command -v clang-format-22 || command -v clang-format)"
+          git_clang_format="$(command -v git-clang-format-22 || command -v git-clang-format)"
+
+          sources=()
+          while IFS= read -r -d '' source; do
+            case "$source" in
+              *.cppm|*.cpp|*.hpp|*.hxx) sources+=("$source") ;;
+            esac
+          done < <(
+            git diff --name-only --diff-filter=ACMR -z "$base_tag"...HEAD -- \
+              libraries/api libraries/chain/api libraries/chain/protocol libraries/db/authenticated \
+              libraries/net/http tests/chain_api tests/db_authenticated tests/http_websocket \
+              tests/package_chain_api_component
+          )
+
+          if (( ${#sources[@]} != 0 )); then
+            format_diff="$(
+              "$git_clang_format" --diff --quiet --binary "$clang_format" \
+                "$base_tag" -- "${sources[@]}"
+            )"
+            if [[ -n "$format_diff" ]]; then
+              printf '%s\n' "$format_diff"
+              exit 1
+            fi
+          fi
+
+          git diff --check "$base_tag"...HEAD
+  native:
+    name: ${{ matrix.os }} / Release
+    needs: gate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-26.04, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.forge_commit }}
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install toolchain and dependencies
+        shell: bash
+        run: |
+          if ! command -v brew >/dev/null 2>&1; then
+            NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+            echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
+          fi
+          brew install boost cmake gmp libngtcp2 ninja openssl@3
+          "$GITHUB_WORKSPACE/.github/scripts/install-glaze.sh" "$RUNNER_TEMP/forge-glaze"
+          glaze_config="$RUNNER_TEMP/forge-glaze/share/glaze/glazeConfig.cmake"
+          if [[ ! -f "$glaze_config" || ! -f "$(dirname "$glaze_config")/glazeConfigVersion.cmake" ]]; then
+            echo "pinned Glaze config is unavailable under its isolated prefix" >&2
+            exit 1
+          fi
+          echo "FORGE_GLAZE_DIR=$(cd "$(dirname "$glaze_config")" && pwd -P)" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix);$(brew --prefix boost);$(brew --prefix libngtcp2);$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y clang-22 clang-tools-22
+            echo "CC=/usr/bin/clang-22" >> "$GITHUB_ENV"
+            echo "CXX=/usr/bin/clang++-22" >> "$GITHUB_ENV"
+          else
+            if [[ ! -d "$FORGE_MACOS_DEVELOPER_DIR" ]]; then
+              echo "required Xcode is unavailable: $FORGE_MACOS_DEVELOPER_DIR" >&2
+              exit 1
+            fi
+            export DEVELOPER_DIR="$FORGE_MACOS_DEVELOPER_DIR"
+            echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
+            echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+            brew install llvm
+            llvm_prefix="$(brew --prefix llvm)"
+            echo "$llvm_prefix/bin" >> "$GITHUB_PATH"
+            echo "CC=$llvm_prefix/bin/clang" >> "$GITHUB_ENV"
+            echo "CXX=$llvm_prefix/bin/clang++" >> "$GITHUB_ENV"
+          fi
+
+      - name: Configure
+        shell: bash
+        run: |
+          osx_options=()
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            osx_options+=("-DCMAKE_OSX_SYSROOT=$SDKROOT")
+          fi
+          cmake -S . -B build/chain-audited-api -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER="$CC" \
+            -DCMAKE_CXX_COMPILER="$CXX" \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+            -Dglaze_DIR="$FORGE_GLAZE_DIR" \
+            -DFORGE_ENABLE_MODULES=ON \
+            -DFORGE_ENABLE_ROCKSDB=OFF \
+            -DFORGE_ENABLE_TUI=OFF \
+            -DBUILD_TESTING=ON \
+            "${osx_options[@]}"
+
+      - name: Build acceptance targets
+        run: >-
+          cmake --build build/chain-audited-api --target
+          test_forge_chain_protocol_query
+          test_forge_chain_api
+          test_forge_db_authenticated
+          test_forge_http_websocket
+          test_forge_stcp
+          test_forge_quic_p2p
+          test_forge_package_chain_api_component
+          test_forge_package_db_mdbx_component
+          test_forge_package_net_stcp_component
+          -j 4
+
+      - name: Run acceptance
+        run: >-
+          ctest --test-dir build/chain-audited-api
+          -R '^(test_forge_structure|test_forge_vendor_compile_policy|test_forge_vendor_compile_policy_multi_config|test_forge_chain_protocol_query|test_forge_chain_api|test_forge_db_authenticated|test_forge_http_websocket|test_forge_stcp|test_forge_quic_p2p|test_forge_package_chain_api_component|test_forge_package_db_mdbx_component|test_forge_package_net_stcp_component|test_forge_package_explicit_glaze_dir)$'
+          --output-on-failure -j 1
+
+      - name: Run authenticated benchmark CLI regression
+        shell: bash
+        run: |
+          cmake --build build/chain-audited-api --target benchmark_forge_db_authenticated -j 4
+          ctest --test-dir build/chain-audited-api \
+            -R '^test_forge_db_authenticated_benchmark_cli$' \
+            --output-on-failure -j 1
+
+  sanitizer:
+    name: ubuntu-26.04 / ASan+UBSan+fuzz
+    needs: gate
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.forge_commit }}
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          if ! command -v brew >/dev/null 2>&1; then
+            NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+            echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
+          fi
+          brew install boost cmake gmp libngtcp2 ninja openssl@3
+          "$GITHUB_WORKSPACE/.github/scripts/install-glaze.sh" "$RUNNER_TEMP/forge-glaze"
+          glaze_config="$RUNNER_TEMP/forge-glaze/share/glaze/glazeConfig.cmake"
+          if [[ ! -f "$glaze_config" || ! -f "$(dirname "$glaze_config")/glazeConfigVersion.cmake" ]]; then
+            echo "pinned Glaze config is unavailable under its isolated prefix" >&2
+            exit 1
+          fi
+          echo "FORGE_GLAZE_DIR=$(cd "$(dirname "$glaze_config")" && pwd -P)" >> "$GITHUB_ENV"
+          sudo apt-get update
+          sudo apt-get install -y clang-22 clang-tools-22
+          echo "CC=/usr/bin/clang-22" >> "$GITHUB_ENV"
+          echo "CXX=/usr/bin/clang++-22" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix);$(brew --prefix boost);$(brew --prefix libngtcp2);$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+
+      - name: Configure
+        shell: bash
+        run: |
+          sanitizer_flags="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          cmake -S . -B build/chain-audited-api-sanitizer -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER="$CC" \
+            -DCMAKE_CXX_COMPILER="$CXX" \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+            -Dglaze_DIR="$FORGE_GLAZE_DIR" \
+            -DCMAKE_C_FLAGS="$sanitizer_flags" \
+            -DCMAKE_CXX_FLAGS="$sanitizer_flags" \
+            -DCMAKE_EXE_LINKER_FLAGS="$sanitizer_flags" \
+            -DFORGE_ENABLE_MODULES=ON \
+            -DFORGE_ENABLE_ROCKSDB=OFF \
+            -DFORGE_ENABLE_TUI=OFF \
+            -DFORGE_DB_AUTHENTICATED_ENABLE_FUZZ_TESTS=ON \
+            -DBUILD_TESTING=ON
+
+      - name: Build sanitizer and fuzz targets
+        run: >-
+          cmake --build build/chain-audited-api-sanitizer --target
+          test_forge_chain_api
+          test_forge_db_authenticated
+          forge_db_authenticated_fuzz
+          -j 4
+
+      - name: Run sanitizer tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >-
+          ctest --test-dir build/chain-audited-api-sanitizer
+          -R '^(test_forge_chain_api|test_forge_db_authenticated)$'
+          --output-on-failure -j 1
+
+      - name: Run sanitized authenticated benchmark CLI regression
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        shell: bash
+        run: |
+          cmake --build build/chain-audited-api-sanitizer --target benchmark_forge_db_authenticated -j 4
+          ctest --test-dir build/chain-audited-api-sanitizer \
+            -R '^test_forge_db_authenticated_benchmark_cli$' \
+            --output-on-failure -j 1
+
+      - name: Run hostile-input fuzz smoke
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: build/chain-audited-api-sanitizer/tests/forge_db_authenticated_fuzz -max_total_time=60
+
+      - name: Configure P2P ThreadSanitizer regression
+        shell: bash
+        run: |
+          sanitizer_flags="-fsanitize=thread -fno-omit-frame-pointer"
+          cmake -S . -B build/chain-audited-api-tsan -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER="$CC" \
+            -DCMAKE_CXX_COMPILER="$CXX" \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+            -Dglaze_DIR="$FORGE_GLAZE_DIR" \
+            -DCMAKE_C_FLAGS="$sanitizer_flags" \
+            -DCMAKE_CXX_FLAGS="$sanitizer_flags" \
+            -DCMAKE_EXE_LINKER_FLAGS="$sanitizer_flags" \
+            -DFORGE_ENABLE_MODULES=ON \
+            -DFORGE_ENABLE_ROCKSDB=OFF \
+            -DFORGE_ENABLE_TUI=OFF \
+            -DBUILD_TESTING=ON
+
+      - name: Run P2P ThreadSanitizer regression
+        env:
+          TSAN_OPTIONS: halt_on_error=1:history_size=7
+        shell: bash
+        run: |
+          cmake --build build/chain-audited-api-tsan --target test_forge_quic_p2p -j 4
+          build/chain-audited-api-tsan/tests/test_forge_quic_p2p \
+            --run_test=p2p_session_teardown_handles_concurrent_track_release_and_start,p2p_operation_deadline_preserves_shutdown_winner_past_timeout,p2p_operation_deadline_preserves_timeout_winner_after_shutdown \
+            --log_level=message
+
+  performance:
+    name: ${{ matrix.os }} / authenticated DB baselines
+    needs: gate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-26.04, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.forge_commit }}
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install toolchain and dependencies
+        shell: bash
+        run: |
+          if ! command -v brew >/dev/null 2>&1; then
+            NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+            echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
+          fi
+          brew install boost cmake gmp libngtcp2 ninja openssl@3
+          "$GITHUB_WORKSPACE/.github/scripts/install-glaze.sh" "$RUNNER_TEMP/forge-glaze"
+          glaze_config="$RUNNER_TEMP/forge-glaze/share/glaze/glazeConfig.cmake"
+          if [[ ! -f "$glaze_config" || ! -f "$(dirname "$glaze_config")/glazeConfigVersion.cmake" ]]; then
+            echo "pinned Glaze config is unavailable under its isolated prefix" >&2
+            exit 1
+          fi
+          echo "FORGE_GLAZE_DIR=$(cd "$(dirname "$glaze_config")" && pwd -P)" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix);$(brew --prefix boost);$(brew --prefix libngtcp2);$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y clang-22
+            echo "CC=/usr/bin/clang-22" >> "$GITHUB_ENV"
+            echo "CXX=/usr/bin/clang++-22" >> "$GITHUB_ENV"
+          else
+            if [[ ! -d "$FORGE_MACOS_DEVELOPER_DIR" ]]; then
+              echo "required Xcode is unavailable: $FORGE_MACOS_DEVELOPER_DIR" >&2
+              exit 1
+            fi
+            export DEVELOPER_DIR="$FORGE_MACOS_DEVELOPER_DIR"
+            echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
+            echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+            brew install llvm
+            llvm_prefix="$(brew --prefix llvm)"
+            echo "$llvm_prefix/bin" >> "$GITHUB_PATH"
+            echo "CC=$llvm_prefix/bin/clang" >> "$GITHUB_ENV"
+            echo "CXX=$llvm_prefix/bin/clang++" >> "$GITHUB_ENV"
+          fi
+
+      - name: Configure benchmark
+        shell: bash
+        run: |
+          osx_options=()
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            osx_options+=("-DCMAKE_OSX_SYSROOT=$SDKROOT")
+          fi
+          cmake -S . -B build/chain-audited-api-performance -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER="$CC" \
+            -DCMAKE_CXX_COMPILER="$CXX" \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+            -Dglaze_DIR="$FORGE_GLAZE_DIR" \
+            -DFORGE_ENABLE_MODULES=ON \
+            -DFORGE_ENABLE_ROCKSDB=OFF \
+            -DFORGE_ENABLE_TUI=OFF \
+            -DBUILD_TESTING=ON \
+            "${osx_options[@]}"
+          cmake --build build/chain-audited-api-performance --target benchmark_forge_db_authenticated -j 4
+
+      - name: Run one-million-key baseline
+        shell: bash
+        run: |
+          mkdir -p build/chain-audited-api-performance/results
+          # 50K/32,768 scaled logical footprint was 192 MiB; 8 GiB is 2.1x its 1M projection.
+          build/chain-audited-api-performance/tests/benchmark_forge_db_authenticated \
+            --baseline 1m --mdbx-upper-bytes 8589934592 \
+            --machine-label "${{ matrix.os }}-Release" \
+            | tee build/chain-audited-api-performance/results/authenticated-1m.json
+
+      - name: Run ten-million-key baseline
+        if: needs.gate.outputs.run_10m == 'true'
+        shell: bash
+        run: |
+          # 100K/65,536 scaled logical footprint was 384 MiB; 64 GiB is 1.7x its 10M projection.
+          build/chain-audited-api-performance/tests/benchmark_forge_db_authenticated \
+            --baseline 10m --mdbx-upper-bytes 68719476736 \
+            --machine-label "${{ matrix.os }}-Release" \
+            | tee build/chain-audited-api-performance/results/authenticated-10m.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: authenticated-db-${{ matrix.os }}
+          path: build/chain-audited-api-performance/results/*.json

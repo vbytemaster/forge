@@ -44,8 +44,8 @@ class transaction_access;
 class transaction {
  public:
    using ensure_registered_fn = std::function<void(forge::db::ids::object_id, std::type_index)>;
-   using allocate_id_fn = std::function<boost::asio::awaitable<forge::db::ids::object_id>(forge::db::ids::object_id,
-                                                                                      forge::db::core::transaction&)>;
+   using allocate_id_fn = std::function<boost::asio::awaitable<forge::db::ids::object_id>(
+       forge::db::ids::object_id, forge::db::core::transaction&)>;
    using allocation_seal_map = std::map<forge::db::ids::object_id, std::uint64_t>;
    using seal_allocations_fn = std::function<boost::asio::awaitable<void>(allocation_seal_map)>;
    using release_fn = std::function<void()>;
@@ -60,8 +60,7 @@ class transaction {
                release_fn release, boost::asio::any_io_executor cleanup_executor);
    transaction(forge::db::core::transaction& active, forge::db::core::family family, ensure_registered_fn ensure,
                allocate_id_fn allocate, seal_allocations_fn seal,
-               std::vector<std::shared_ptr<interceptor>> interceptors,
-               std::vector<std::shared_ptr<observer>> observers,
+               std::vector<std::shared_ptr<interceptor>> interceptors, std::vector<std::shared_ptr<observer>> observers,
                release_fn release = {});
    transaction(forge::db::core::transaction& active, forge::db::core::family family, ensure_registered_fn ensure,
                allocate_id_fn allocate, std::vector<std::shared_ptr<interceptor>> interceptors,
@@ -114,6 +113,8 @@ class transaction {
    template <object_model Object, typename Tag> [[nodiscard]] index_view<Object, Tag> index() const;
 
    [[nodiscard]] forge::db::core::transaction& db_transaction() const;
+   [[nodiscard]] change_set projected_changes() const;
+   void add_precommit_observer(std::shared_ptr<precommit_observer> value);
 
    boost::asio::awaitable<void> commit();
    boost::asio::awaitable<void> rollback();
@@ -123,16 +124,15 @@ class transaction {
    struct impl;
 
    explicit transaction(std::shared_ptr<impl> implementation);
-   transaction(forge::db::core::transaction&& active, forge::db::core::family family,
-               ensure_registered_fn ensure, allocate_id_fn allocate, seal_allocations_fn seal,
-               std::vector<std::shared_ptr<interceptor>> interceptors,
-               std::vector<std::shared_ptr<observer>> observers, release_fn release,
-               boost::asio::any_io_executor cleanup_executor, bool backend_writes);
-   transaction(forge::db::core::transaction& active, forge::db::core::family family,
-               ensure_registered_fn ensure, allocate_id_fn allocate, seal_allocations_fn seal,
-               std::vector<std::shared_ptr<interceptor>> interceptors,
-               std::vector<std::shared_ptr<observer>> observers, release_fn release,
-               bool backend_writes);
+   transaction(forge::db::core::transaction&& active, forge::db::core::family family, ensure_registered_fn ensure,
+               allocate_id_fn allocate, seal_allocations_fn seal,
+               std::vector<std::shared_ptr<interceptor>> interceptors, std::vector<std::shared_ptr<observer>> observers,
+               release_fn release, boost::asio::any_io_executor cleanup_executor, bool backend_writes,
+               bool reuse_rolled_back_ids);
+   transaction(forge::db::core::transaction& active, forge::db::core::family family, ensure_registered_fn ensure,
+               allocate_id_fn allocate, seal_allocations_fn seal,
+               std::vector<std::shared_ptr<interceptor>> interceptors, std::vector<std::shared_ptr<observer>> observers,
+               release_fn release, bool backend_writes, bool reuse_rolled_back_ids);
 
    [[nodiscard]] change_set& changes() const;
    [[nodiscard]] forge::db::core::transaction& active_transaction() const;
@@ -143,8 +143,7 @@ class transaction {
    boost::asio::awaitable<std::optional<std::vector<std::byte>>> get_record(forge::db::core::record_key key) const;
    boost::asio::awaitable<void> put_record(forge::db::core::record_key key, std::vector<std::byte> value) const;
    boost::asio::awaitable<void> erase_record(forge::db::core::record_key key) const;
-   boost::asio::awaitable<std::optional<std::vector<std::byte>>>
-   lock_record(forge::db::core::record_key key) const;
+   boost::asio::awaitable<std::optional<std::vector<std::byte>>> lock_record(forge::db::core::record_key key) const;
    boost::asio::awaitable<forge::db::core::record_page> scan_records(forge::db::core::record_range range,
                                                                      forge::db::core::page_request request) const;
 
@@ -158,20 +157,18 @@ namespace detail {
 
 class transaction_access {
  public:
-   [[nodiscard]] static transaction make_owned(
-      forge::db::core::transaction&& active, forge::db::core::family family,
-      transaction::ensure_registered_fn ensure, transaction::allocate_id_fn allocate,
-      transaction::seal_allocations_fn seal,
-      std::vector<std::shared_ptr<interceptor>> interceptors,
-      std::vector<std::shared_ptr<observer>> observers, transaction::release_fn release,
-      boost::asio::any_io_executor cleanup_executor, bool backend_writes);
-   [[nodiscard]] static transaction make_joined(
-      forge::db::core::transaction& active, forge::db::core::family family,
-      transaction::ensure_registered_fn ensure, transaction::allocate_id_fn allocate,
-      transaction::seal_allocations_fn seal,
-      std::vector<std::shared_ptr<interceptor>> interceptors,
-      std::vector<std::shared_ptr<observer>> observers, transaction::release_fn release,
-      bool backend_writes);
+   [[nodiscard]] static transaction
+   make_owned(forge::db::core::transaction&& active, forge::db::core::family family,
+              transaction::ensure_registered_fn ensure, transaction::allocate_id_fn allocate,
+              transaction::seal_allocations_fn seal, std::vector<std::shared_ptr<interceptor>> interceptors,
+              std::vector<std::shared_ptr<observer>> observers, transaction::release_fn release,
+              boost::asio::any_io_executor cleanup_executor, bool backend_writes, bool reuse_rolled_back_ids);
+   [[nodiscard]] static transaction
+   make_joined(forge::db::core::transaction& active, forge::db::core::family family,
+               transaction::ensure_registered_fn ensure, transaction::allocate_id_fn allocate,
+               transaction::seal_allocations_fn seal, std::vector<std::shared_ptr<interceptor>> interceptors,
+               std::vector<std::shared_ptr<observer>> observers, transaction::release_fn release, bool backend_writes,
+               bool reuse_rolled_back_ids);
    static void bind_store(transaction& active, std::shared_ptr<const void> identity);
    [[nodiscard]] static bool belongs_to(const transaction& active, const void* identity) noexcept;
    [[nodiscard]] static transaction joined(transaction& active);
@@ -264,65 +261,58 @@ template <typename T> T unpack_value(const std::vector<std::byte>& bytes) {
 
 [[noreturn]] inline void throw_ranked_error(const ranked_index::error& failure) {
    switch (failure.code) {
-      case ranked_index::error_code::rebuild_required:
-         FORGE_THROW_EXCEPTION(exceptions::aggregate_rebuild_required, failure.what());
-      case ranked_index::error_code::corruption:
-         FORGE_THROW_EXCEPTION(exceptions::aggregate_corruption, failure.what());
-      case ranked_index::error_code::overflow:
-         FORGE_THROW_EXCEPTION(exceptions::aggregate_overflow, failure.what());
+   case ranked_index::error_code::rebuild_required:
+      FORGE_THROW_EXCEPTION(exceptions::aggregate_rebuild_required, failure.what());
+   case ranked_index::error_code::corruption:
+      FORGE_THROW_EXCEPTION(exceptions::aggregate_corruption, failure.what());
+   case ranked_index::error_code::overflow:
+      FORGE_THROW_EXCEPTION(exceptions::aggregate_overflow, failure.what());
    }
    FORGE_THROW_EXCEPTION(exceptions::aggregate_corruption, "unknown ranked index failure");
 }
 
-template <typename Access>
-ranked_index::read_access make_ranked_read_access(Access source) {
+template <typename Access> ranked_index::read_access make_ranked_read_access(Access source) {
    return ranked_index::read_access{
-      .get = [source](ranked_index::bytes key) mutable
-         -> boost::asio::awaitable<std::optional<ranked_index::bytes>> {
-         co_return co_await source.get(forge::db::core::record_key{std::move(key)});
-      },
-      .next = [source](ranked_index::bytes prefix, ranked_index::bytes after) mutable
-         -> boost::asio::awaitable<std::optional<ranked_index::record>> {
-         auto range = detail::ordered_key::prefix_range(std::move(prefix));
-         auto page = co_await source.scan_page(
-            std::move(range),
-            forge::db::core::page_request{
-               .after = forge::db::core::cursor{forge::db::core::record_key{std::move(after)}},
-               .limit = 1});
-         if (page.entries.empty()) {
-            co_return std::nullopt;
-         }
-         co_return ranked_index::record{
-            .key = page.entries.front().key.bytes(),
-            .value = std::move(page.entries.front().value)};
-      },
-      .has_any = [source](ranked_index::bytes prefix) mutable -> boost::asio::awaitable<bool> {
-         auto page = co_await source.scan_page(
-            detail::ordered_key::prefix_range(std::move(prefix)),
-            forge::db::core::page_request{.limit = 1});
-         co_return !page.entries.empty();
-      },
+       .get = [source](ranked_index::bytes key) mutable -> boost::asio::awaitable<std::optional<ranked_index::bytes>> {
+          co_return co_await source.get(forge::db::core::record_key{std::move(key)});
+       },
+       .next = [source](ranked_index::bytes prefix, ranked_index::bytes after) mutable
+           -> boost::asio::awaitable<std::optional<ranked_index::record>> {
+          auto range = detail::ordered_key::prefix_range(std::move(prefix));
+          auto page = co_await source.scan_page(
+              std::move(range),
+              forge::db::core::page_request{
+                  .after = forge::db::core::cursor{forge::db::core::record_key{std::move(after)}}, .limit = 1});
+          if (page.entries.empty()) {
+             co_return std::nullopt;
+          }
+          co_return ranked_index::record{.key = page.entries.front().key.bytes(),
+                                         .value = std::move(page.entries.front().value)};
+       },
+       .has_any = [source](ranked_index::bytes prefix) mutable -> boost::asio::awaitable<bool> {
+          auto page = co_await source.scan_page(detail::ordered_key::prefix_range(std::move(prefix)),
+                                                forge::db::core::page_request{.limit = 1});
+          co_return !page.entries.empty();
+       },
    };
 }
 
-template <typename Access>
-ranked_index::write_access make_ranked_write_access(Access source) {
+template <typename Access> ranked_index::write_access make_ranked_write_access(Access source) {
    auto read = make_ranked_read_access(source);
    auto result = ranked_index::write_access{};
    result.get = std::move(read.get);
    result.next = std::move(read.next);
    result.has_any = std::move(read.has_any);
-   result.lock = [source](ranked_index::bytes key) mutable
-         -> boost::asio::awaitable<std::optional<ranked_index::bytes>> {
-         co_return co_await source.lock(forge::db::core::record_key{std::move(key)});
-      };
-   result.put = [source](ranked_index::bytes key, ranked_index::bytes value) mutable
-         -> boost::asio::awaitable<void> {
-         co_await source.put(forge::db::core::record_key{std::move(key)}, std::move(value));
-      };
+   result.lock =
+       [source](ranked_index::bytes key) mutable -> boost::asio::awaitable<std::optional<ranked_index::bytes>> {
+      co_return co_await source.lock(forge::db::core::record_key{std::move(key)});
+   };
+   result.put = [source](ranked_index::bytes key, ranked_index::bytes value) mutable -> boost::asio::awaitable<void> {
+      co_await source.put(forge::db::core::record_key{std::move(key)}, std::move(value));
+   };
    result.erase = [source](ranked_index::bytes key) mutable -> boost::asio::awaitable<void> {
-         co_await source.erase(forge::db::core::record_key{std::move(key)});
-      };
+      co_await source.erase(forge::db::core::record_key{std::move(key)});
+   };
    return result;
 }
 
@@ -334,8 +324,8 @@ template <object_model Object> id_t_of<Object> typed_id_from(forge::db::ids::obj
 }
 
 template <object_model Object, typename Access>
-boost::asio::awaitable<std::optional<typename Object::value_type>> read_transaction_object(Access tx,
-                                                                                           forge::db::ids::object_id id) {
+boost::asio::awaitable<std::optional<typename Object::value_type>>
+read_transaction_object(Access tx, forge::db::ids::object_id id) {
    tx.template ensure_registered<Object>();
    const auto typed = typed_id_from<Object>(id);
    const auto key = detail::ordered_key::object_record_key<Object>(typed);
@@ -374,15 +364,14 @@ page_transaction_objects(Access tx, forge::db::core::record_range range, forge::
 }
 
 template <object_model Object, typename Tag, typename Access>
-boost::asio::awaitable<index_aggregate_result>
-query_transaction_aggregate(Access tx, forge::db::core::record_range range) {
+boost::asio::awaitable<index_aggregate_result> query_transaction_aggregate(Access tx,
+                                                                           forge::db::core::record_range range) {
    using index = index_by_tag<Object, Tag>;
    static_assert(forge::db::object::ranked_index<index>);
    try {
       const auto descriptor = detail::ordered_key::ranked_layout<Object, Tag>();
-      auto result = co_await ranked_index::query(
-         make_ranked_read_access(tx), descriptor,
-         detail::ordered_key::ranked_bounds<Object, Tag>(descriptor, range));
+      auto result = co_await ranked_index::query(make_ranked_read_access(tx), descriptor,
+                                                 detail::ordered_key::ranked_bounds<Object, Tag>(descriptor, range));
       co_return index_aggregate_result{.count = result.count, .sums = std::move(result.sums)};
    } catch (const ranked_index::error& failure) {
       throw_ranked_error(failure);
@@ -390,19 +379,17 @@ query_transaction_aggregate(Access tx, forge::db::core::record_range range) {
 }
 
 template <object_model Object, typename Tag, typename Access>
-boost::asio::awaitable<index_rank_result>
-query_transaction_ranks(Access tx, forge::db::core::record_range range) {
+boost::asio::awaitable<index_rank_result> query_transaction_ranks(Access tx, forge::db::core::record_range range) {
    using index = index_by_tag<Object, Tag>;
    static_assert(forge::db::object::ranked_index<index>);
    try {
       const auto descriptor = detail::ordered_key::ranked_layout<Object, Tag>();
       const auto result = co_await ranked_index::query_ranks(
-         make_ranked_read_access(tx), descriptor,
-         detail::ordered_key::ranked_bounds<Object, Tag>(descriptor, range));
+          make_ranked_read_access(tx), descriptor, detail::ordered_key::ranked_bounds<Object, Tag>(descriptor, range));
       co_return index_rank_result{
-         .lower = result.lower,
-         .upper = result.upper,
-         .size = result.size,
+          .lower = result.lower,
+          .upper = result.upper,
+          .size = result.size,
       };
    } catch (const ranked_index::error& failure) {
       throw_ranked_error(failure);
@@ -410,8 +397,8 @@ query_transaction_ranks(Access tx, forge::db::core::record_range range) {
 }
 
 template <object_model Object, typename Tag, typename Access>
-boost::asio::awaitable<std::optional<typename Object::value_type>>
-nth_transaction_object(Access tx, std::uint64_t position) {
+boost::asio::awaitable<std::optional<typename Object::value_type>> nth_transaction_object(Access tx,
+                                                                                          std::uint64_t position) {
    using index = index_by_tag<Object, Tag>;
    static_assert(forge::db::object::ranked_index<index>);
    try {
@@ -420,11 +407,9 @@ nth_transaction_object(Access tx, std::uint64_t position) {
       if (!logical.has_value()) {
          co_return std::nullopt;
       }
-      const auto encoded = co_await tx.get(forge::db::core::record_key{
-         ranked_index::source_key(descriptor, *logical)});
+      const auto encoded = co_await tx.get(forge::db::core::record_key{ranked_index::source_key(descriptor, *logical)});
       if (!encoded.has_value()) {
-         FORGE_THROW_EXCEPTION(exceptions::aggregate_corruption,
-                               "ranked index points to a missing source record");
+         FORGE_THROW_EXCEPTION(exceptions::aggregate_corruption, "ranked index points to a missing source record");
       }
       if constexpr (primary_index<index>) {
          co_return unpack_value<typename Object::value_type>(*encoded);
@@ -432,8 +417,7 @@ nth_transaction_object(Access tx, std::uint64_t position) {
          const auto id = unpack_value<id_t_of<Object>>(*encoded);
          auto value = co_await read_transaction_object<Object>(tx, id.as_object_id());
          if (!value.has_value()) {
-            FORGE_THROW_EXCEPTION(exceptions::aggregate_corruption,
-                                  "ranked index points to a missing object");
+            FORGE_THROW_EXCEPTION(exceptions::aggregate_corruption, "ranked index points to a missing object");
          }
          co_return std::move(*value);
       }
@@ -446,14 +430,13 @@ template <object_model Object, typename Tag, typename Access>
 boost::asio::awaitable<std::optional<std::uint64_t>>
 query_transaction_exact_rank(Access tx, const typename Object::value_type& value) {
    if (!(co_await detail::ordered_key::ranked_entry_exists<Object, Tag>(
-          tx, value,
-          [](const std::vector<std::byte>& encoded, const id_t_of<Object>& expected) {
-             return detail::unpack_value<id_t_of<Object>>(encoded) == expected;
-          }))) {
+           tx, value, [](const std::vector<std::byte>& encoded, const id_t_of<Object>& expected) {
+              return detail::unpack_value<id_t_of<Object>>(encoded) == expected;
+           }))) {
       co_return std::nullopt;
    }
-   const auto bounds = co_await query_transaction_ranks<Object, Tag>(
-      tx, detail::ordered_key::range_for_value<Object, Tag>(value));
+   const auto bounds =
+       co_await query_transaction_ranks<Object, Tag>(tx, detail::ordered_key::range_for_value<Object, Tag>(value));
    if (bounds.upper - bounds.lower != 1U) {
       co_return std::nullopt;
    }
@@ -531,7 +514,7 @@ boost::asio::awaitable<void> lock_ranked_indexes(const ranked_index::write_acces
       if constexpr (forge::db::object::ranked_index<index>) {
          try {
             co_await ranked_index::lock_root(access,
-               detail::ordered_key::ranked_layout<Object, typename index::tag_type>());
+                                             detail::ordered_key::ranked_layout<Object, typename index::tag_type>());
          } catch (const ranked_index::error& failure) {
             throw_ranked_error(failure);
          }
@@ -542,10 +525,8 @@ boost::asio::awaitable<void> lock_ranked_indexes(const ranked_index::write_acces
 
 template <object_model Object, std::size_t Index = 0U>
 boost::asio::awaitable<void>
-plan_ranked_indexes(const typename Object::value_type* before,
-                    const typename Object::value_type* after,
-                    const ranked_index::write_access& access,
-                    std::vector<ranked_index::mutation_plan>& plans) {
+plan_ranked_indexes(const typename Object::value_type* before, const typename Object::value_type* after,
+                    const ranked_index::write_access& access, std::vector<ranked_index::mutation_plan>& plans) {
    using indexes = typename Object::indexes_type::tuple_type;
    if constexpr (Index < std::tuple_size_v<indexes>) {
       using index = std::tuple_element_t<Index, indexes>;
@@ -555,17 +536,17 @@ plan_ranked_indexes(const typename Object::value_type* before,
             auto new_entry = std::optional<ranked_index::entry>{};
             if (before) {
                old_entry.emplace(ranked_index::entry{
-                  .key = detail::ordered_key::logical_key<Object, typename index::tag_type>(*before),
-                  .contribution = detail::ordered_key::ranked_contribution<index>(*before)});
+                   .key = detail::ordered_key::logical_key<Object, typename index::tag_type>(*before),
+                   .contribution = detail::ordered_key::ranked_contribution<index>(*before)});
             }
             if (after) {
                new_entry.emplace(ranked_index::entry{
-                  .key = detail::ordered_key::logical_key<Object, typename index::tag_type>(*after),
-                  .contribution = detail::ordered_key::ranked_contribution<index>(*after)});
+                   .key = detail::ordered_key::logical_key<Object, typename index::tag_type>(*after),
+                   .contribution = detail::ordered_key::ranked_contribution<index>(*after)});
             }
             plans.push_back(co_await ranked_index::plan_change(
-               access, detail::ordered_key::ranked_layout<Object, typename index::tag_type>(),
-               std::move(old_entry), std::move(new_entry)));
+                access, detail::ordered_key::ranked_layout<Object, typename index::tag_type>(), std::move(old_entry),
+                std::move(new_entry)));
          } catch (const ranked_index::error& failure) {
             throw_ranked_error(failure);
          }
@@ -574,9 +555,8 @@ plan_ranked_indexes(const typename Object::value_type* before,
    }
 }
 
-inline boost::asio::awaitable<void>
-apply_ranked_plans(const ranked_index::write_access& access,
-                   std::vector<ranked_index::mutation_plan> plans) {
+inline boost::asio::awaitable<void> apply_ranked_plans(const ranked_index::write_access& access,
+                                                       std::vector<ranked_index::mutation_plan> plans) {
    try {
       for (auto& plan : plans) {
          co_await ranked_index::apply(access, std::move(plan));
@@ -588,8 +568,7 @@ apply_ranked_plans(const ranked_index::write_access& access,
 
 template <object_model Object, typename Access>
 boost::asio::awaitable<std::vector<ranked_index::mutation_plan>>
-prepare_ranked_change(Access tx, const typename Object::value_type* before,
-                      const typename Object::value_type* after) {
+prepare_ranked_change(Access tx, const typename Object::value_type* before, const typename Object::value_type* after) {
    auto access = make_ranked_write_access(tx);
    co_await lock_ranked_indexes<Object>(access);
    auto plans = std::vector<ranked_index::mutation_plan>{};
@@ -646,8 +625,8 @@ boost::asio::awaitable<void> replace_object(Access tx, Value value, mutation_kin
    };
    co_await tx.before_mutation(mutation);
    co_await verify_unique_indexes<object_model_type>(tx, value, new_indexes);
-   auto ranked = co_await prepare_ranked_change<object_model_type>(
-      tx, std::addressof(*existing), std::addressof(value));
+   auto ranked =
+       co_await prepare_ranked_change<object_model_type>(tx, std::addressof(*existing), std::addressof(value));
    co_await remove_secondary_indexes(tx, old_indexes);
    co_await tx.put(detail::ordered_key::object_record_key<object_model_type>(value.id), std::move(after));
    co_await write_secondary_indexes(tx, new_indexes, value.id);
@@ -780,35 +759,39 @@ template <object_model Object, typename Tag> [[nodiscard]] index_view<Object, Ta
    auto nth = index_nth_query<typename Object::value_type>{};
    auto exact_rank = index_exact_rank_query<typename Object::value_type>{};
    if constexpr (ranked_index<index_by_tag<Object, Tag>>) {
-      aggregate = [implementation = impl_](forge::db::core::record_range range) mutable
-         -> boost::asio::awaitable<index_aggregate_result> {
+      aggregate = [implementation = impl_](
+                      forge::db::core::record_range range) mutable -> boost::asio::awaitable<index_aggregate_result> {
          auto owner = transaction{implementation};
          co_return co_await detail::query_transaction_aggregate<Object, Tag>(access{owner}, std::move(range));
       };
-      ranks = [implementation = impl_](forge::db::core::record_range range) mutable
-         -> boost::asio::awaitable<index_rank_result> {
+      ranks = [implementation =
+                   impl_](forge::db::core::record_range range) mutable -> boost::asio::awaitable<index_rank_result> {
          auto owner = transaction{implementation};
          co_return co_await detail::query_transaction_ranks<Object, Tag>(access{owner}, std::move(range));
       };
-      nth = [implementation = impl_](std::uint64_t position) mutable
-         -> boost::asio::awaitable<std::optional<typename Object::value_type>> {
+      nth = [implementation = impl_](
+                std::uint64_t position) mutable -> boost::asio::awaitable<std::optional<typename Object::value_type>> {
          auto owner = transaction{implementation};
          co_return co_await detail::nth_transaction_object<Object, Tag>(access{owner}, position);
       };
       exact_rank = [implementation = impl_](const typename Object::value_type& value) mutable
-         -> boost::asio::awaitable<std::optional<std::uint64_t>> {
+          -> boost::asio::awaitable<std::optional<std::uint64_t>> {
          auto owner = transaction{implementation};
          co_return co_await detail::query_transaction_exact_rank<Object, Tag>(access{owner}, value);
       };
    }
    return index_view<Object, Tag>{
-      [implementation = impl_](forge::db::core::record_range range,
-                               forge::db::core::page_request request) mutable
-         -> boost::asio::awaitable<object_page<typename Object::value_type>> {
-         auto owner = transaction{implementation};
-         co_return co_await detail::page_transaction_objects<Object, Tag>(
-            access{owner}, std::move(range), std::move(request));
-      }, {}, std::move(aggregate), std::move(ranks), std::move(nth), std::move(exact_rank)};
+       [implementation = impl_](forge::db::core::record_range range, forge::db::core::page_request request) mutable
+           -> boost::asio::awaitable<object_page<typename Object::value_type>> {
+          auto owner = transaction{implementation};
+          co_return co_await detail::page_transaction_objects<Object, Tag>(access{owner}, std::move(range),
+                                                                           std::move(request));
+       },
+       {},
+       std::move(aggregate),
+       std::move(ranks),
+       std::move(nth),
+       std::move(exact_rank)};
 }
 
 } // namespace forge::db::object

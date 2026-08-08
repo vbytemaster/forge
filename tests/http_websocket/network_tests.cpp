@@ -27,13 +27,18 @@
 #include <vector>
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/bind_cancellation_slot.hpp>
+#include <boost/asio/cancellation_state.hpp>
+#include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/redirect_error.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/use_future.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/core/tcp_stream.hpp>
 #include <boost/beast/http.hpp>
@@ -50,6 +55,7 @@ import forge.api.core.registry;
 import forge.api.core.binding;
 import forge.api.core.dispatcher;
 import forge.asio.blocking;
+import forge.asio.exceptions;
 import forge.asio.runtime;
 import forge.api.http.binding;
 import forge.net.http.base_url;
@@ -60,6 +66,7 @@ import forge.net.http.connection;
 import forge.net.http.exceptions;
 import forge.net.http.file;
 import forge.api.http.mapping;
+import forge.api.http.openapi;
 import forge.net.http.middleware;
 import forge.net.http.negotiation;
 import forge.api.http.proxy;
@@ -72,6 +79,7 @@ import forge.net.http.target;
 import forge.net.http.types;
 import forge.net.http.upload;
 import forge.codec.json;
+import forge.variant.value;
 import forge.raw.raw;
 import forge.schema.object;
 import forge.codec.xml;
@@ -92,13 +100,14 @@ using tcp = asio::ip::tcp;
 using raw_mount_step = std::function<void(forge::net::http::router&, std::string_view)>;
 static_assert(!std::is_constructible_v<forge::api::http::binding_plan, std::vector<raw_mount_step>>);
 static_assert(!std::is_same_v<forge::net::http::request, boost::beast::http::request<boost::beast::http::string_body>>);
-static_assert(!std::is_same_v<forge::net::http::response, boost::beast::http::response<boost::beast::http::string_body>>);
+static_assert(
+    !std::is_same_v<forge::net::http::response, boost::beast::http::response<boost::beast::http::string_body>>);
 
 BOOST_AUTO_TEST_CASE(http_negotiation_matches_media_types_suffixes_and_accept_quality) {
    constexpr auto json = std::array{media_type_match{.type = "application/json", .structured_suffix = "+json"}};
    constexpr auto xml = std::array{
-      media_type_match{.type = "application/xml", .structured_suffix = "+xml"},
-      media_type_match{.type = "text/xml", .structured_suffix = {}},
+       media_type_match{.type = "application/xml", .structured_suffix = "+xml"},
+       media_type_match{.type = "text/xml", .structured_suffix = {}},
    };
 
    BOOST_TEST(media_type_matches("application/json; charset=utf-8", json));
@@ -176,8 +185,8 @@ BOOST_AUTO_TEST_CASE(http_negotiation_matches_media_types_suffixes_and_accept_qu
 }
 
 [[nodiscard]] beast_http::response<beast_http::string_body> to_beast_response(const response& source) {
-   auto target = beast_http::response<beast_http::string_body>{
-      static_cast<beast_http::status>(source.result_int()), source.version()};
+   auto target = beast_http::response<beast_http::string_body>{static_cast<beast_http::status>(source.result_int()),
+                                                               source.version()};
    target.keep_alive(source.keep_alive());
    for (const auto& header : source.headers()) {
       target.insert(header.name, header.text);
@@ -219,6 +228,11 @@ struct macro_write_request {
    std::string bytes;
 };
 
+struct optional_query_request {
+   std::string ref;
+   std::optional<std::uint32_t> limit;
+};
+
 struct macro_chunk {
    std::string bytes;
 };
@@ -232,12 +246,28 @@ struct search_response {
    std::string value;
 };
 
+struct empty_post_request {};
+
+struct open_post_request {};
+
 struct positional_http_response {
    std::string value;
 };
 
 struct positional_body_payload {
    std::string value;
+};
+
+struct colliding_parameters_request {
+   forge::api::http::query<std::uint32_t> explicit_value;
+   forge::api::http::query<std::uint32_t> page_size;
+   forge::api::http::body<positional_body_payload> payload;
+};
+
+struct colliding_headers_request {
+   forge::api::http::header<std::string> explicit_header;
+   forge::api::http::header<std::string> x_request_id;
+   forge::api::http::body<positional_body_payload> payload;
 };
 
 struct positional_ref_payload {
@@ -374,9 +404,14 @@ BOOST_DESCRIBE_STRUCT(api_routed_read_chunk, (), (ref, offset, limit))
 BOOST_DESCRIBE_STRUCT(api_chunk, (), (bytes))
 BOOST_DESCRIBE_STRUCT(macro_read_request, (), (ref, offset, limit))
 BOOST_DESCRIBE_STRUCT(macro_write_request, (), (ref, bytes))
+BOOST_DESCRIBE_STRUCT(optional_query_request, (), (ref, limit))
 BOOST_DESCRIBE_STRUCT(macro_chunk, (), (bytes))
 BOOST_DESCRIBE_STRUCT(search_request, (), (term, limit))
 BOOST_DESCRIBE_STRUCT(search_response, (), (value))
+BOOST_DESCRIBE_STRUCT(empty_post_request, (), ())
+BOOST_DESCRIBE_STRUCT(open_post_request, (), ())
+BOOST_DESCRIBE_STRUCT(colliding_parameters_request, (), (explicit_value, page_size, payload))
+BOOST_DESCRIBE_STRUCT(colliding_headers_request, (), (explicit_header, x_request_id, payload))
 BOOST_DESCRIBE_STRUCT(positional_http_response, (), (value))
 BOOST_DESCRIBE_STRUCT(positional_body_payload, (), (value))
 BOOST_DESCRIBE_STRUCT(positional_ref_payload, (), (ref, value))
@@ -405,7 +440,8 @@ BOOST_DESCRIBE_STRUCT(stream_buffered_request, (), (id, body))
 BOOST_DESCRIBE_STRUCT(stream_body_echo_request, (), (id, body))
 BOOST_DESCRIBE_STRUCT(mixed_download_request, (), (collection, key))
 
-class api_cache : public forge::api::core::contract<api_cache, forge::api::core::surface::local | forge::api::core::surface::remote> {
+class api_cache : public forge::api::core::contract<api_cache, forge::api::core::surface::local |
+                                                                   forge::api::core::surface::remote> {
  public:
    virtual ~api_cache() = default;
 
@@ -415,14 +451,16 @@ class api_cache : public forge::api::core::contract<api_cache, forge::api::core:
 };
 
 class websocket_positional_api
-    : public forge::api::core::contract<websocket_positional_api, forge::api::core::surface::local | forge::api::core::surface::remote> {
+    : public forge::api::core::contract<websocket_positional_api,
+                                        forge::api::core::surface::local | forge::api::core::surface::remote> {
  public:
    virtual ~websocket_positional_api() = default;
 
    virtual boost::asio::awaitable<api_chunk> join(std::string left, std::string right) = 0;
 };
 
-class macro_cache : public forge::api::core::contract<macro_cache, forge::api::core::surface::local | forge::api::core::surface::remote> {
+class macro_cache : public forge::api::core::contract<macro_cache, forge::api::core::surface::local |
+                                                                       forge::api::core::surface::remote> {
  public:
    virtual ~macro_cache() = default;
 
@@ -430,7 +468,8 @@ class macro_cache : public forge::api::core::contract<macro_cache, forge::api::c
    virtual boost::asio::awaitable<macro_chunk> write(macro_write_request request) = 0;
 };
 
-class xml_cache_api : public forge::api::core::contract<xml_cache_api, forge::api::core::surface::local | forge::api::core::surface::remote> {
+class xml_cache_api : public forge::api::core::contract<xml_cache_api, forge::api::core::surface::local |
+                                                                           forge::api::core::surface::remote> {
  public:
    virtual ~xml_cache_api() = default;
 
@@ -439,8 +478,8 @@ class xml_cache_api : public forge::api::core::contract<xml_cache_api, forge::ap
 };
 
 template <typename Interface>
-using http_contract = forge::api::core::contract<
-   Interface, forge::api::core::surface::local | forge::api::core::surface::remote>;
+using http_contract =
+    forge::api::core::contract<Interface, forge::api::core::surface::local | forge::api::core::surface::remote>;
 
 class search_api : public http_contract<search_api> {
  public:
@@ -449,15 +488,42 @@ class search_api : public http_contract<search_api> {
    virtual boost::asio::awaitable<search_response> search(search_request request) = 0;
 };
 
+class empty_post_api : public http_contract<empty_post_api> {
+ public:
+   virtual ~empty_post_api() = default;
+
+   virtual boost::asio::awaitable<forge::api::http::empty_response> invoke(empty_post_request request) = 0;
+};
+
+class open_post_api : public http_contract<open_post_api> {
+ public:
+   virtual ~open_post_api() = default;
+
+   virtual boost::asio::awaitable<forge::api::http::empty_response> invoke(open_post_request request) = 0;
+};
+
+class colliding_parameters_api : public http_contract<colliding_parameters_api> {
+ public:
+   virtual ~colliding_parameters_api() = default;
+
+   virtual boost::asio::awaitable<forge::api::http::empty_response> invoke(colliding_parameters_request request) = 0;
+};
+
+class colliding_headers_api : public http_contract<colliding_headers_api> {
+ public:
+   virtual ~colliding_headers_api() = default;
+
+   virtual boost::asio::awaitable<forge::api::http::empty_response> invoke(colliding_headers_request request) = 0;
+};
+
 class positional_api_http : public http_contract<positional_api_http> {
  public:
    virtual ~positional_api_http() = default;
 
-   virtual boost::asio::awaitable<positional_http_response>
-   read(std::string ref,
-        forge::api::http::query<std::uint32_t> limit,
-        forge::api::http::header<std::string> request_id,
-        forge::api::http::cookie<std::string> session) = 0;
+   virtual boost::asio::awaitable<positional_http_response> read(std::string ref,
+                                                                 forge::api::http::query<std::uint32_t> limit,
+                                                                 forge::api::http::header<std::string> request_id,
+                                                                 forge::api::http::cookie<std::string> session) = 0;
 };
 
 class positional_body_api : public http_contract<positional_body_api> {
@@ -472,56 +538,53 @@ class positional_single_query_api : public http_contract<positional_single_query
  public:
    virtual ~positional_single_query_api() = default;
 
-   virtual boost::asio::awaitable<positional_http_response>
-   read(forge::api::http::query<std::uint32_t> limit) = 0;
+   virtual boost::asio::awaitable<positional_http_response> read(forge::api::http::query<std::uint32_t> limit) = 0;
 };
 
 class positional_query_append_api : public http_contract<positional_query_append_api> {
  public:
    virtual ~positional_query_append_api() = default;
 
-   virtual boost::asio::awaitable<positional_http_response>
-   read(std::string ref, forge::api::http::query<std::uint32_t> limit) = 0;
+   virtual boost::asio::awaitable<positional_http_response> read(std::string ref,
+                                                                 forge::api::http::query<std::uint32_t> limit) = 0;
 };
 
 class positional_plain_body_api : public http_contract<positional_plain_body_api> {
  public:
    virtual ~positional_plain_body_api() = default;
 
-   virtual boost::asio::awaitable<positional_body_response>
-   write(std::string ref, positional_body_payload payload) = 0;
+   virtual boost::asio::awaitable<positional_body_response> write(std::string ref, positional_body_payload payload) = 0;
 };
 
 class positional_ambiguous_body_api : public http_contract<positional_ambiguous_body_api> {
  public:
    virtual ~positional_ambiguous_body_api() = default;
 
-   virtual boost::asio::awaitable<positional_body_response>
-   write(std::string ref, positional_body_payload left, positional_body_payload right) = 0;
+   virtual boost::asio::awaitable<positional_body_response> write(std::string ref, positional_body_payload left,
+                                                                  positional_body_payload right) = 0;
 };
 
 class positional_checked_body_api : public http_contract<positional_checked_body_api> {
  public:
    virtual ~positional_checked_body_api() = default;
 
-   virtual boost::asio::awaitable<positional_body_response>
-   write(std::string ref, positional_ref_payload payload) = 0;
+   virtual boost::asio::awaitable<positional_body_response> write(std::string ref, positional_ref_payload payload) = 0;
 };
 
 class positional_streaming_body_api : public http_contract<positional_streaming_body_api> {
  public:
    virtual ~positional_streaming_body_api() = default;
 
-   virtual boost::asio::awaitable<forge::net::http::streaming_response>
-   write(std::string ref, positional_body_payload payload) = 0;
+   virtual boost::asio::awaitable<forge::net::http::streaming_response> write(std::string ref,
+                                                                              positional_body_payload payload) = 0;
 };
 
 class positional_stream_api : public http_contract<positional_stream_api> {
  public:
    virtual ~positional_stream_api() = default;
 
-   virtual boost::asio::awaitable<positional_body_response>
-   write(std::string ref, forge::api::http::body_stream body) = 0;
+   virtual boost::asio::awaitable<positional_body_response> write(std::string ref,
+                                                                  forge::api::http::body_stream body) = 0;
 };
 
 class dto_api_http : public http_contract<dto_api_http> {
@@ -579,6 +642,8 @@ class control_api : public http_contract<control_api> {
    virtual boost::asio::awaitable<forge::api::http::bytes_response> bytes(control_request request) = 0;
    virtual boost::asio::awaitable<forge::api::http::empty_response> accepted(control_request request) = 0;
    virtual boost::asio::awaitable<forge::api::http::empty_response> head(control_request request) = 0;
+   virtual boost::asio::awaitable<control_response> head_dto(control_request request) = 0;
+   virtual boost::asio::awaitable<forge::net::http::streaming_response> head_stream(control_request request) = 0;
 };
 
 class alias_api : public http_contract<alias_api> {
@@ -653,7 +718,8 @@ class stream_body_echo_api : public http_contract<stream_body_echo_api> {
    virtual ~stream_body_echo_api() = default;
 
    virtual boost::asio::awaitable<forge::net::http::streaming_response> write(stream_body_echo_request request) = 0;
-   virtual boost::asio::awaitable<forge::net::http::streaming_response> independent(stream_body_echo_request request) = 0;
+   virtual boost::asio::awaitable<forge::net::http::streaming_response>
+   independent(stream_body_echo_request request) = 0;
 };
 
 class mixed_proxy_api : public http_contract<mixed_proxy_api> {
@@ -664,142 +730,174 @@ class mixed_proxy_api : public http_contract<mixed_proxy_api> {
    virtual boost::asio::awaitable<forge::net::http::file_response> download(mixed_download_request request) = 0;
 };
 
+class positional_timeout_api : public http_contract<positional_timeout_api> {
+ public:
+   virtual ~positional_timeout_api() = default;
+
+   virtual boost::asio::awaitable<control_response> read(std::string key, std::uint64_t timeout_ms) = 0;
+};
+
 } // namespace test_api
 } // namespace forge::net::http
 
 FORGE_API(::forge::net::http::test_api::macro_cache, FORGE_API_CONTRACT("cache.macro", 1, 0), FORGE_API_METHOD(read),
-        FORGE_API_METHOD(write))
+          FORGE_API_METHOD(write))
 
 FORGE_API(::forge::net::http::test_api::xml_cache_api, FORGE_API_CONTRACT("cache.xml", 1, 0), FORGE_API_METHOD(read),
-        FORGE_API_METHOD(write))
+          FORGE_API_METHOD(write))
 
 FORGE_API(::forge::net::http::test_api::websocket_positional_api, FORGE_API_CONTRACT("websocket.positional", 1, 0),
-        FORGE_API_METHOD(join, left, right))
+          FORGE_API_METHOD(join, left, right))
 
 FORGE_API(::forge::net::http::test_api::search_api, FORGE_API_CONTRACT("search", 1, 0),
-        FORGE_API_METHOD_TYPED(search, ::forge::net::http::test_api::search_request, ::forge::net::http::test_api::search_response))
+          FORGE_API_METHOD_TYPED(search, ::forge::net::http::test_api::search_request,
+                                 ::forge::net::http::test_api::search_response))
+
+FORGE_API(::forge::net::http::test_api::empty_post_api, FORGE_API_CONTRACT("empty-post", 1, 0),
+          FORGE_API_METHOD_TYPED(invoke, ::forge::net::http::test_api::empty_post_request,
+                                 ::forge::api::http::empty_response))
+
+FORGE_API(::forge::net::http::test_api::open_post_api, FORGE_API_CONTRACT("open-post", 1, 0),
+          FORGE_API_METHOD_TYPED(invoke, ::forge::net::http::test_api::open_post_request,
+                                 ::forge::api::http::empty_response))
+
+FORGE_API(::forge::net::http::test_api::colliding_parameters_api, FORGE_API_CONTRACT("colliding-parameters", 1, 0),
+          FORGE_API_METHOD_TYPED(invoke, ::forge::net::http::test_api::colliding_parameters_request,
+                                 ::forge::api::http::empty_response))
+
+FORGE_API(::forge::net::http::test_api::colliding_headers_api, FORGE_API_CONTRACT("colliding-headers", 1, 0),
+          FORGE_API_METHOD_TYPED(invoke, ::forge::net::http::test_api::colliding_headers_request,
+                                 ::forge::api::http::empty_response))
 
 FORGE_API(::forge::net::http::test_api::positional_api_http, FORGE_API_CONTRACT("http.positional", 1, 0),
-        FORGE_API_METHOD(read, ref, limit, request_id, session))
+          FORGE_API_METHOD(read, ref, limit, request_id, session))
 
 FORGE_API(::forge::net::http::test_api::positional_body_api, FORGE_API_CONTRACT("http.positional.body", 1, 0),
-        FORGE_API_METHOD(write, ref, payload))
+          FORGE_API_METHOD(write, ref, payload))
 
-FORGE_API(::forge::net::http::test_api::positional_single_query_api, FORGE_API_CONTRACT("http.positional.single-query", 1, 0),
-        FORGE_API_METHOD(read, limit))
+FORGE_API(::forge::net::http::test_api::positional_single_query_api,
+          FORGE_API_CONTRACT("http.positional.single-query", 1, 0), FORGE_API_METHOD(read, limit))
 
-FORGE_API(::forge::net::http::test_api::positional_query_append_api, FORGE_API_CONTRACT("http.positional.query-append", 1, 0),
-        FORGE_API_METHOD(read, ref, limit))
+FORGE_API(::forge::net::http::test_api::positional_query_append_api,
+          FORGE_API_CONTRACT("http.positional.query-append", 1, 0), FORGE_API_METHOD(read, ref, limit))
 
-FORGE_API(::forge::net::http::test_api::positional_plain_body_api, FORGE_API_CONTRACT("http.positional.plain-body", 1, 0),
-        FORGE_API_METHOD(write, ref, payload))
+FORGE_API(::forge::net::http::test_api::positional_plain_body_api,
+          FORGE_API_CONTRACT("http.positional.plain-body", 1, 0), FORGE_API_METHOD(write, ref, payload))
 
 FORGE_API(::forge::net::http::test_api::positional_ambiguous_body_api,
-        FORGE_API_CONTRACT("http.positional.ambiguous-body", 1, 0),
-        FORGE_API_METHOD(write, ref, left, right))
+          FORGE_API_CONTRACT("http.positional.ambiguous-body", 1, 0), FORGE_API_METHOD(write, ref, left, right))
 
-FORGE_API(::forge::net::http::test_api::positional_checked_body_api, FORGE_API_CONTRACT("http.positional.checked-body", 1, 0),
-        FORGE_API_METHOD(write, ref, payload))
+FORGE_API(::forge::net::http::test_api::positional_checked_body_api,
+          FORGE_API_CONTRACT("http.positional.checked-body", 1, 0), FORGE_API_METHOD(write, ref, payload))
 
 FORGE_API(::forge::net::http::test_api::positional_streaming_body_api,
-        FORGE_API_CONTRACT("http.positional.streaming-body", 1, 0),
-        FORGE_API_METHOD(write, ref, payload))
+          FORGE_API_CONTRACT("http.positional.streaming-body", 1, 0), FORGE_API_METHOD(write, ref, payload))
 
 FORGE_API(::forge::net::http::test_api::positional_stream_api, FORGE_API_CONTRACT("http.positional.stream", 1, 0),
-        FORGE_API_METHOD(write, ref, body))
+          FORGE_API_METHOD(write, ref, body))
 
 FORGE_API(::forge::net::http::test_api::dto_api_http, FORGE_API_CONTRACT("http.dto", 1, 0),
-        FORGE_API_METHOD_TYPED(write, ::forge::net::http::test_api::dto_http_request,
-                             ::forge::net::http::test_api::positional_body_response),
-        FORGE_API_METHOD_TYPED(write_bytes, ::forge::net::http::test_api::dto_bytes_request,
-                             ::forge::net::http::test_api::positional_body_response),
-        FORGE_API_METHOD_TYPED(upload, ::forge::net::http::test_api::dto_multipart_request,
-                             ::forge::net::http::test_api::positional_body_response))
+          FORGE_API_METHOD_TYPED(write, ::forge::net::http::test_api::dto_http_request,
+                                 ::forge::net::http::test_api::positional_body_response),
+          FORGE_API_METHOD_TYPED(write_bytes, ::forge::net::http::test_api::dto_bytes_request,
+                                 ::forge::net::http::test_api::positional_body_response),
+          FORGE_API_METHOD_TYPED(upload, ::forge::net::http::test_api::dto_multipart_request,
+                                 ::forge::net::http::test_api::positional_body_response))
 
-FORGE_API(::forge::net::http::test_api::dto_ambiguous_body_api,
-        FORGE_API_CONTRACT("http.dto.ambiguous-body", 1, 0),
-        FORGE_API_METHOD_TYPED(write, ::forge::net::http::test_api::dto_ambiguous_body_request,
-                             ::forge::net::http::test_api::positional_body_response))
+FORGE_API(::forge::net::http::test_api::dto_ambiguous_body_api, FORGE_API_CONTRACT("http.dto.ambiguous-body", 1, 0),
+          FORGE_API_METHOD_TYPED(write, ::forge::net::http::test_api::dto_ambiguous_body_request,
+                                 ::forge::net::http::test_api::positional_body_response))
 
 FORGE_API(::forge::net::http::test_api::positional_scalar_body_api,
-        FORGE_API_CONTRACT("http.positional.scalar-body", 1, 0),
-        FORGE_API_METHOD(write, ref, payload))
+          FORGE_API_CONTRACT("http.positional.scalar-body", 1, 0), FORGE_API_METHOD(write, ref, payload))
 
 FORGE_API(::forge::net::http::test_api::object_api, FORGE_API_CONTRACT("object", 1, 0),
-        FORGE_API_METHOD_TYPED(put_object, ::forge::net::http::test_api::object_put_request,
-                             ::forge::net::http::test_api::object_put_response),
-        FORGE_API_METHOD_TYPED(get_object, ::forge::net::http::test_api::object_get_request, ::forge::net::http::file_response),
-        FORGE_API_METHOD_TYPED(head_object, ::forge::net::http::test_api::object_get_request, ::forge::net::http::file_response),
-        FORGE_API_METHOD_TYPED(stream_object, ::forge::net::http::test_api::object_get_request,
-                             ::forge::net::http::streaming_response),
-        FORGE_API_METHOD_TYPED(delete_object, ::forge::net::http::test_api::object_get_request, ::forge::api::http::empty_response))
+          FORGE_API_METHOD_TYPED(put_object, ::forge::net::http::test_api::object_put_request,
+                                 ::forge::net::http::test_api::object_put_response),
+          FORGE_API_METHOD_TYPED(get_object, ::forge::net::http::test_api::object_get_request,
+                                 ::forge::net::http::file_response),
+          FORGE_API_METHOD_TYPED(head_object, ::forge::net::http::test_api::object_get_request,
+                                 ::forge::net::http::file_response),
+          FORGE_API_METHOD_TYPED(stream_object, ::forge::net::http::test_api::object_get_request,
+                                 ::forge::net::http::streaming_response),
+          FORGE_API_METHOD_TYPED(delete_object, ::forge::net::http::test_api::object_get_request,
+                                 ::forge::api::http::empty_response))
 
 FORGE_API(::forge::net::http::test_api::file_only_api, FORGE_API_CONTRACT("file-only", 1, 0),
-        FORGE_API_METHOD_TYPED(download, ::forge::net::http::test_api::object_get_request, ::forge::net::http::file_response))
+          FORGE_API_METHOD_TYPED(download, ::forge::net::http::test_api::object_get_request,
+                                 ::forge::net::http::file_response))
 
 FORGE_API(::forge::net::http::test_api::form_api, FORGE_API_CONTRACT("form", 1, 0),
-        FORGE_API_METHOD_TYPED(submit, ::forge::net::http::test_api::form_submit_request,
-                             ::forge::net::http::test_api::form_submit_response))
+          FORGE_API_METHOD_TYPED(submit, ::forge::net::http::test_api::form_submit_request,
+                                 ::forge::net::http::test_api::form_submit_response))
 
-FORGE_API(::forge::net::http::test_api::control_api, FORGE_API_CONTRACT("control", 1, 0),
-        FORGE_API_METHOD_TYPED(bytes, ::forge::net::http::test_api::control_request, ::forge::api::http::bytes_response),
-        FORGE_API_METHOD_TYPED(accepted, ::forge::net::http::test_api::control_request, ::forge::api::http::empty_response),
-        FORGE_API_METHOD_TYPED(head, ::forge::net::http::test_api::control_request, ::forge::api::http::empty_response))
+FORGE_API(
+    ::forge::net::http::test_api::control_api, FORGE_API_CONTRACT("control", 1, 0),
+    FORGE_API_METHOD_TYPED(bytes, ::forge::net::http::test_api::control_request, ::forge::api::http::bytes_response),
+    FORGE_API_METHOD_TYPED(accepted, ::forge::net::http::test_api::control_request, ::forge::api::http::empty_response),
+    FORGE_API_METHOD_TYPED(head, ::forge::net::http::test_api::control_request, ::forge::api::http::empty_response),
+    FORGE_API_METHOD_TYPED(head_dto, ::forge::net::http::test_api::control_request,
+                           ::forge::net::http::test_api::control_response),
+    FORGE_API_METHOD_TYPED(head_stream, ::forge::net::http::test_api::control_request,
+                           ::forge::net::http::streaming_response))
 
 FORGE_API(::forge::net::http::test_api::alias_api, FORGE_API_CONTRACT("alias", 1, 0),
-        FORGE_API_METHOD_TYPED(current, ::forge::net::http::test_api::control_request,
-                             ::forge::net::http::test_api::control_response),
-        FORGE_API_METHOD_TYPED(legacy, ::forge::net::http::test_api::control_request,
-                             ::forge::net::http::test_api::control_response))
+          FORGE_API_METHOD_TYPED(current, ::forge::net::http::test_api::control_request,
+                                 ::forge::net::http::test_api::control_response),
+          FORGE_API_METHOD_TYPED(legacy, ::forge::net::http::test_api::control_request,
+                                 ::forge::net::http::test_api::control_response))
 
 FORGE_API(::forge::net::http::test_api::patch_api, FORGE_API_CONTRACT("patch", 1, 0),
-        FORGE_API_METHOD_TYPED(patch, ::forge::net::http::test_api::control_patch_request,
-                             ::forge::net::http::test_api::control_response))
+          FORGE_API_METHOD_TYPED(patch, ::forge::net::http::test_api::control_patch_request,
+                                 ::forge::net::http::test_api::control_response))
 
 FORGE_API(::forge::net::http::test_api::delete_body_api, FORGE_API_CONTRACT("delete-body", 1, 0),
-        FORGE_API_METHOD_TYPED(remove, ::forge::net::http::test_api::delete_body_request,
-                             ::forge::net::http::test_api::control_response))
+          FORGE_API_METHOD_TYPED(remove, ::forge::net::http::test_api::delete_body_request,
+                                 ::forge::net::http::test_api::control_response))
 
 FORGE_API(::forge::net::http::test_api::delete_path_api, FORGE_API_CONTRACT("delete-path", 1, 0),
-        FORGE_API_METHOD_TYPED(remove, ::forge::net::http::test_api::delete_path_request,
-                             ::forge::net::http::test_api::control_response))
+          FORGE_API_METHOD_TYPED(remove, ::forge::net::http::test_api::delete_path_request,
+                                 ::forge::net::http::test_api::control_response))
 
 FORGE_API(::forge::net::http::test_api::delete_stream_api, FORGE_API_CONTRACT("delete-stream", 1, 0),
-        FORGE_API_METHOD_TYPED(remove, ::forge::net::http::test_api::delete_stream_request,
-                             ::forge::net::http::test_api::control_response))
+          FORGE_API_METHOD_TYPED(remove, ::forge::net::http::test_api::delete_stream_request,
+                                 ::forge::net::http::test_api::control_response))
 
 FORGE_API(::forge::net::http::test_api::default_header_api, FORGE_API_CONTRACT("default-header", 1, 0),
-        FORGE_API_METHOD_TYPED(echo, ::forge::net::http::test_api::default_header_request,
-                             ::forge::net::http::test_api::default_header_response))
+          FORGE_API_METHOD_TYPED(echo, ::forge::net::http::test_api::default_header_request,
+                                 ::forge::net::http::test_api::default_header_response))
 
 FORGE_API(::forge::net::http::test_api::json_stream_api, FORGE_API_CONTRACT("json-stream", 1, 0),
-        FORGE_API_METHOD_TYPED(stream, ::forge::net::http::test_api::json_stream_request,
-                             ::forge::net::http::streaming_response))
+          FORGE_API_METHOD_TYPED(stream, ::forge::net::http::test_api::json_stream_request,
+                                 ::forge::net::http::streaming_response))
 
 FORGE_API(::forge::net::http::test_api::endpoint_api, FORGE_API_CONTRACT("endpoint", 1, 0),
-        FORGE_API_METHOD_TYPED(current, ::forge::net::http::test_api::endpoint_control_request,
-                             ::forge::net::http::test_api::endpoint_control_response),
-        FORGE_API_METHOD_TYPED(download, ::forge::net::http::test_api::endpoint_control_request,
-                             ::forge::net::http::file_response),
-        FORGE_API_METHOD_TYPED(stream, ::forge::net::http::test_api::endpoint_control_request,
-                             ::forge::net::http::streaming_response),
-        FORGE_API_METHOD_TYPED(accepted, ::forge::net::http::test_api::endpoint_control_request,
-                             ::forge::api::http::empty_response))
+          FORGE_API_METHOD_TYPED(current, ::forge::net::http::test_api::endpoint_control_request,
+                                 ::forge::net::http::test_api::endpoint_control_response),
+          FORGE_API_METHOD_TYPED(download, ::forge::net::http::test_api::endpoint_control_request,
+                                 ::forge::net::http::file_response),
+          FORGE_API_METHOD_TYPED(stream, ::forge::net::http::test_api::endpoint_control_request,
+                                 ::forge::net::http::streaming_response),
+          FORGE_API_METHOD_TYPED(accepted, ::forge::net::http::test_api::endpoint_control_request,
+                                 ::forge::api::http::empty_response))
 
 FORGE_API(::forge::net::http::test_api::stream_buffered_api, FORGE_API_CONTRACT("stream-buffered", 1, 0),
-        FORGE_API_METHOD_TYPED(write, ::forge::net::http::test_api::stream_buffered_request,
-                             ::forge::net::http::test_api::endpoint_control_response))
+          FORGE_API_METHOD_TYPED(write, ::forge::net::http::test_api::stream_buffered_request,
+                                 ::forge::net::http::test_api::endpoint_control_response))
 
 FORGE_API(::forge::net::http::test_api::stream_body_echo_api, FORGE_API_CONTRACT("stream-body-echo", 1, 0),
-        FORGE_API_METHOD_TYPED(write, ::forge::net::http::test_api::stream_body_echo_request,
-                              ::forge::net::http::streaming_response),
-        FORGE_API_METHOD_TYPED(independent, ::forge::net::http::test_api::stream_body_echo_request,
-                              ::forge::net::http::streaming_response))
+          FORGE_API_METHOD_TYPED(write, ::forge::net::http::test_api::stream_body_echo_request,
+                                 ::forge::net::http::streaming_response),
+          FORGE_API_METHOD_TYPED(independent, ::forge::net::http::test_api::stream_body_echo_request,
+                                 ::forge::net::http::streaming_response))
 
 FORGE_API(::forge::net::http::test_api::mixed_proxy_api, FORGE_API_CONTRACT("mixed-proxy", 1, 0),
-        FORGE_API_METHOD(read, collection, key),
-        FORGE_API_METHOD_TYPED(download, ::forge::net::http::test_api::mixed_download_request,
-                             ::forge::net::http::file_response))
+          FORGE_API_METHOD(read, collection, key),
+          FORGE_API_METHOD_TYPED(download, ::forge::net::http::test_api::mixed_download_request,
+                                 ::forge::net::http::file_response))
+
+FORGE_API(::forge::net::http::test_api::positional_timeout_api, FORGE_API_CONTRACT("positional-timeout", 1, 0),
+          FORGE_API_METHOD(read, key, timeout_ms))
 
 template <> struct forge::schema::rules<::forge::net::http::test_api::search_request> {
    [[nodiscard]] static forge::schema::object_schema<::forge::net::http::test_api::search_request> define() {
@@ -836,124 +934,124 @@ template <> struct forge::schema::rules<::forge::net::http::test_api::json_strea
    }
 };
 
+template <> struct forge::api::http::json_schema_traits<::forge::net::http::test_api::open_post_request> {
+   [[nodiscard]] static forge::variant make() {
+      return forge::variant{forge::mutable_variant_object{}("type", "string")("maxProperties", std::uint64_t{0})};
+   }
+};
+
 FORGE_HTTP_API(::forge::net::http::test_api::macro_cache,
-             FORGE_HTTP_GET(read, "/cache/chunks/:ref?offset={offset}&limit={limit}"),
-             FORGE_HTTP_PUT(write, "/cache/chunks/:ref", created))
+               FORGE_HTTP_GET(read, "/cache/chunks/:ref?offset={offset}&limit={limit}", FORGE_HTTP_CACHE(no_store)),
+               FORGE_HTTP_PUT(write, "/cache/chunks/:ref", created))
 
 FORGE_HTTP_API(::forge::net::http::test_api::xml_cache_api,
-             FORGE_HTTP_GET(read, "/xml/cache/chunks/:ref?offset={offset}&limit={limit}",
-                            FORGE_HTTP_RESPONSE_BODY(xml),
-                            FORGE_HTTP_ERROR_BODY(xml)),
-             FORGE_HTTP_PUT(write, "/xml/cache/chunks/:ref", created,
-                            FORGE_HTTP_REQUEST_BODY(xml),
-                            FORGE_HTTP_RESPONSE_BODY(xml),
-                            FORGE_HTTP_ERROR_BODY(xml)))
+               FORGE_HTTP_GET(read, "/xml/cache/chunks/:ref?offset={offset}&limit={limit}",
+                              FORGE_HTTP_RESPONSE_BODY(xml), FORGE_HTTP_ERROR_BODY(xml)),
+               FORGE_HTTP_PUT(write, "/xml/cache/chunks/:ref", created, FORGE_HTTP_REQUEST_BODY(xml),
+                              FORGE_HTTP_RESPONSE_BODY(xml), FORGE_HTTP_ERROR_BODY(xml)))
 
-FORGE_HTTP_API(::forge::net::http::test_api::search_api,
-             FORGE_HTTP_GET(search, "/search/{term}?page_size={limit}"))
+FORGE_HTTP_API(::forge::net::http::test_api::search_api, FORGE_HTTP_GET(search, "/search/{term}?page_size={limit}"))
 
-FORGE_HTTP_API(::forge::net::http::test_api::positional_api_http,
-             FORGE_HTTP_GET(read, "/objects/:ref?limit={limit}"))
+FORGE_HTTP_API(::forge::net::http::test_api::empty_post_api, FORGE_HTTP_POST(invoke, "/empty-post", no_content))
 
-FORGE_HTTP_API(::forge::net::http::test_api::positional_body_api,
-             FORGE_HTTP_POST(write, "/objects/:ref", ok))
+FORGE_HTTP_API(::forge::net::http::test_api::open_post_api, FORGE_HTTP_POST(invoke, "/open-post", no_content))
 
-FORGE_HTTP_API(::forge::net::http::test_api::positional_single_query_api,
-             FORGE_HTTP_GET(read, "/single?limit={limit}"))
+FORGE_HTTP_API(::forge::net::http::test_api::colliding_parameters_api,
+               FORGE_HTTP_POST(invoke, "/colliding?page_size={explicit_value}", no_content))
 
-FORGE_HTTP_API(::forge::net::http::test_api::positional_query_append_api,
-             FORGE_HTTP_GET(read, "/query/:ref"))
+FORGE_HTTP_API(::forge::net::http::test_api::colliding_headers_api,
+               FORGE_HTTP_POST(invoke, "/colliding-headers", no_content,
+                               FORGE_HTTP_HEADER(explicit_header, "X-Request-Id")))
 
-FORGE_HTTP_API(::forge::net::http::test_api::positional_plain_body_api,
-             FORGE_HTTP_POST(write, "/plain/:ref", created))
+FORGE_HTTP_API(::forge::net::http::test_api::positional_api_http, FORGE_HTTP_GET(read, "/objects/:ref?limit={limit}"))
+
+FORGE_HTTP_API(::forge::net::http::test_api::positional_body_api, FORGE_HTTP_POST(write, "/objects/:ref", ok))
+
+FORGE_HTTP_API(::forge::net::http::test_api::positional_single_query_api, FORGE_HTTP_GET(read, "/single?limit={limit}"))
+
+FORGE_HTTP_API(::forge::net::http::test_api::positional_query_append_api, FORGE_HTTP_GET(read, "/query/:ref"))
+
+FORGE_HTTP_API(::forge::net::http::test_api::positional_plain_body_api, FORGE_HTTP_POST(write, "/plain/:ref", created))
 
 FORGE_HTTP_API(::forge::net::http::test_api::positional_ambiguous_body_api,
-             FORGE_HTTP_POST(write, "/ambiguous/:ref", created))
+               FORGE_HTTP_POST(write, "/ambiguous/:ref", created))
 
 FORGE_HTTP_API(::forge::net::http::test_api::positional_checked_body_api,
-             FORGE_HTTP_POST(write, "/checked/:ref", created))
+               FORGE_HTTP_POST(write, "/checked/:ref", created))
 
 FORGE_HTTP_API(::forge::net::http::test_api::positional_streaming_body_api,
-             FORGE_HTTP_POST(write, "/stream-plain/:ref", ok, FORGE_HTTP_RESPONSE_STREAM))
+               FORGE_HTTP_POST(write, "/stream-plain/:ref", ok, FORGE_HTTP_RESPONSE_STREAM))
 
-FORGE_HTTP_API(::forge::net::http::test_api::positional_stream_api,
-             FORGE_HTTP_PUT(write, "/streams/:ref", ok))
+FORGE_HTTP_API(::forge::net::http::test_api::positional_stream_api, FORGE_HTTP_PUT(write, "/streams/:ref", ok))
 
 FORGE_HTTP_API(::forge::net::http::test_api::dto_api_http,
-             FORGE_HTTP_POST(write, "/dto/:ref?limit={limit}", created,
-                           FORGE_HTTP_HEADER(request_id, "X-Request-Id")),
-             FORGE_HTTP_PUT(write_bytes, "/dto-bytes/:ref", ok),
-             FORGE_HTTP_POST(upload, "/dto-upload", ok,
-                           FORGE_HTTP_FORM(category, "category"),
-                           FORGE_HTTP_FORM(count, "count"),
-                           FORGE_HTTP_FORM(file, "file")))
+               FORGE_HTTP_POST(write, "/dto/:ref?limit={limit}", created,
+                               FORGE_HTTP_HEADER(request_id, "X-Request-Id")),
+               FORGE_HTTP_PUT(write_bytes, "/dto-bytes/:ref", ok),
+               FORGE_HTTP_POST(upload, "/dto-upload", ok, FORGE_HTTP_FORM(category, "category"),
+                               FORGE_HTTP_FORM(count, "count"), FORGE_HTTP_FORM(file, "file")))
 
 FORGE_HTTP_API(::forge::net::http::test_api::dto_ambiguous_body_api,
-             FORGE_HTTP_POST(write, "/dto-ambiguous/:ref", created))
+               FORGE_HTTP_POST(write, "/dto-ambiguous/:ref", created))
 
 FORGE_HTTP_API(::forge::net::http::test_api::positional_scalar_body_api,
-             FORGE_HTTP_POST(write, "/scalar-body/:ref", created))
+               FORGE_HTTP_POST(write, "/scalar-body/:ref", created))
 
 FORGE_HTTP_API(::forge::net::http::test_api::object_api,
-             FORGE_HTTP_PUT(put_object, "/objects/:collection/:key", created,
-                           FORGE_HTTP_BODY_STREAM(body),
-                           FORGE_HTTP_HEADER(content_type, "Content-Type"),
-                           FORGE_HTTP_HEADER(digest, "Content-MD5")),
-             FORGE_HTTP_GET(get_object, "/objects/:collection/:key", FORGE_HTTP_RESPONSE_FILE),
-             FORGE_HTTP_HEAD(head_object, "/objects/:collection/:key", FORGE_HTTP_RESPONSE_FILE),
-             FORGE_HTTP_GET(stream_object, "/objects/:collection/:key/stream", FORGE_HTTP_RESPONSE_STREAM),
-             FORGE_HTTP_DELETE(delete_object, "/objects/:collection/:key", no_content))
+               FORGE_HTTP_PUT(put_object, "/objects/:collection/:key", created, FORGE_HTTP_BODY_STREAM(body),
+                              FORGE_HTTP_HEADER(content_type, "Content-Type"),
+                              FORGE_HTTP_HEADER(digest, "Content-MD5")),
+               FORGE_HTTP_GET(get_object, "/objects/:collection/:key", FORGE_HTTP_RESPONSE_FILE),
+               FORGE_HTTP_HEAD(head_object, "/objects/:collection/:key", FORGE_HTTP_RESPONSE_FILE),
+               FORGE_HTTP_GET(stream_object, "/objects/:collection/:key/stream", FORGE_HTTP_RESPONSE_STREAM),
+               FORGE_HTTP_DELETE(delete_object, "/objects/:collection/:key", no_content))
 
 FORGE_HTTP_API(::forge::net::http::test_api::form_api,
-             FORGE_HTTP_POST(submit, "/forms", ok,
-                           FORGE_HTTP_FORM(label, "label"),
-                           FORGE_HTTP_FORM(count, "count")))
+               FORGE_HTTP_POST(submit, "/forms", ok, FORGE_HTTP_FORM(label, "label"), FORGE_HTTP_FORM(count, "count")))
 
-FORGE_HTTP_API(::forge::net::http::test_api::control_api,
-             FORGE_HTTP_GET(bytes, "/controls/:id/bytes"),
-             FORGE_HTTP_GET(accepted, "/controls/:id/accepted"),
-             FORGE_HTTP_HEAD(head, "/controls/:id"))
+FORGE_HTTP_API(::forge::net::http::test_api::control_api, FORGE_HTTP_GET(bytes, "/controls/:id/bytes"),
+               FORGE_HTTP_GET(accepted, "/controls/:id/accepted", FORGE_HTTP_SUCCESS_STATUS(accepted)),
+               FORGE_HTTP_HEAD(head, "/controls/:id", FORGE_HTTP_SUCCESS_STATUS(no_content)),
+               FORGE_HTTP_HEAD(head_dto, "/controls/:id/dto"),
+               FORGE_HTTP_HEAD(head_stream, "/controls/:id/stream", FORGE_HTTP_RESPONSE_STREAM))
 
-FORGE_HTTP_API(::forge::net::http::test_api::alias_api,
-             FORGE_HTTP_GET(current, "/aliases/:id/current"),
-             FORGE_HTTP_GET(legacy, "/aliases/:id"))
+FORGE_HTTP_API(::forge::net::http::test_api::alias_api, FORGE_HTTP_GET(current, "/aliases/:id/current"),
+               FORGE_HTTP_GET(legacy, "/aliases/:id"))
 
-FORGE_HTTP_API(::forge::net::http::test_api::patch_api,
-             FORGE_HTTP_PATCH(patch, "/controls/:id", ok))
+FORGE_HTTP_API(::forge::net::http::test_api::patch_api, FORGE_HTTP_PATCH(patch, "/controls/:id", ok))
 
-FORGE_HTTP_API(::forge::net::http::test_api::delete_body_api,
-             FORGE_HTTP_DELETE(remove, "/delete/:ref", ok))
+FORGE_HTTP_API(::forge::net::http::test_api::delete_body_api, FORGE_HTTP_DELETE(remove, "/delete/:ref", ok))
 
 FORGE_HTTP_API(::forge::net::http::test_api::delete_path_api,
-             FORGE_HTTP_DELETE(remove, "/delete-path/:collection/:key", ok))
+               FORGE_HTTP_DELETE(remove, "/delete-path/:collection/:key", ok))
 
-FORGE_HTTP_API(::forge::net::http::test_api::delete_stream_api,
-             FORGE_HTTP_DELETE(remove, "/delete-stream/:ref", ok))
+FORGE_HTTP_API(::forge::net::http::test_api::delete_stream_api, FORGE_HTTP_DELETE(remove, "/delete-stream/:ref", ok))
 
 FORGE_HTTP_API(::forge::net::http::test_api::default_header_api,
-             FORGE_HTTP_PUT(echo, "/headers/default", ok, FORGE_HTTP_BODY_STREAM(body)))
+               FORGE_HTTP_PUT(echo, "/headers/default", ok, FORGE_HTTP_BODY_STREAM(body)))
 
 FORGE_HTTP_API(::forge::net::http::test_api::json_stream_api,
-             FORGE_HTTP_POST(stream, "/json-stream/:id", ok, FORGE_HTTP_RESPONSE_STREAM))
+               FORGE_HTTP_POST(stream, "/json-stream/:id", ok, FORGE_HTTP_RESPONSE_STREAM))
 
-FORGE_HTTP_API(::forge::net::http::test_api::endpoint_api,
-             FORGE_HTTP_GET(current, "/endpoint/:id"),
-             FORGE_HTTP_GET(download, "/endpoint/:id/file", FORGE_HTTP_RESPONSE_FILE),
-             FORGE_HTTP_GET(stream, "/endpoint/:id/stream", FORGE_HTTP_RESPONSE_STREAM),
-             FORGE_HTTP_GET(accepted, "/endpoint/:id/accepted"))
+FORGE_HTTP_API(::forge::net::http::test_api::endpoint_api, FORGE_HTTP_GET(current, "/endpoint/:id"),
+               FORGE_HTTP_GET(download, "/endpoint/:id/file", FORGE_HTTP_RESPONSE_FILE),
+               FORGE_HTTP_GET(stream, "/endpoint/:id/stream", FORGE_HTTP_RESPONSE_STREAM),
+               FORGE_HTTP_GET(accepted, "/endpoint/:id/accepted", FORGE_HTTP_SUCCESS_STATUS(accepted)))
 
 FORGE_HTTP_API(::forge::net::http::test_api::stream_buffered_api,
-             FORGE_HTTP_PUT(write, "/stream-buffered/:id", ok, FORGE_HTTP_BODY_STREAM(body)))
+               FORGE_HTTP_PUT(write, "/stream-buffered/:id", ok, FORGE_HTTP_BODY_STREAM(body)))
 
 FORGE_HTTP_API(::forge::net::http::test_api::stream_body_echo_api,
-             FORGE_HTTP_PUT(write, "/stream-body-echo/:id", ok, FORGE_HTTP_BODY_STREAM(body),
-                             FORGE_HTTP_RESPONSE_STREAM),
-             FORGE_HTTP_PUT(independent, "/stream-body-independent/:id", ok, FORGE_HTTP_BODY_STREAM(body),
-                            FORGE_HTTP_RESPONSE_STREAM))
+               FORGE_HTTP_PUT(write, "/stream-body-echo/:id", ok, FORGE_HTTP_BODY_STREAM(body),
+                              FORGE_HTTP_RESPONSE_STREAM),
+               FORGE_HTTP_PUT(independent, "/stream-body-independent/:id", ok, FORGE_HTTP_BODY_STREAM(body),
+                              FORGE_HTTP_RESPONSE_STREAM))
 
-FORGE_HTTP_API(::forge::net::http::test_api::mixed_proxy_api,
-             FORGE_HTTP_GET(read, "/mixed/:collection/:key"),
-             FORGE_HTTP_GET(download, "/mixed/:collection/:key/file", FORGE_HTTP_RESPONSE_FILE))
+FORGE_HTTP_API(::forge::net::http::test_api::mixed_proxy_api, FORGE_HTTP_GET(read, "/mixed/:collection/:key"),
+               FORGE_HTTP_GET(download, "/mixed/:collection/:key/file", FORGE_HTTP_RESPONSE_FILE))
+
+FORGE_HTTP_API(::forge::net::http::test_api::positional_timeout_api,
+               FORGE_HTTP_GET(read, "/positional-timeout/:key?timeout_ms={timeout_ms}", FORGE_HTTP_TIMEOUT(timeout_ms)))
 
 namespace forge::api::core {
 
@@ -974,17 +1072,19 @@ template <> struct api_traits<::forge::net::http::test_api::api_cache> {
    static descriptor describe() {
       using api_cache = ::forge::net::http::test_api::api_cache;
       return define<api_cache>(descriptor{.id = id(), .version = version(), .interface_type = typeid(api_cache)})
-          .method<&api_cache::read, ::forge::net::http::test_api::api_read_chunk, ::forge::net::http::test_api::api_chunk>("read")
+          .method<&api_cache::read, ::forge::net::http::test_api::api_read_chunk,
+                  ::forge::net::http::test_api::api_chunk>("read")
           .error<::forge::net::http::test_api::api_errors::chunk_not_found>(
-             "chunk_not_found", {.status_code = status::not_found, .retryable = false})
+              "chunk_not_found", {.status_code = status::not_found, .retryable = false})
           .method<&api_cache::routed_read, ::forge::net::http::test_api::api_routed_read_chunk,
                   ::forge::net::http::test_api::api_chunk>("routed_read")
-          .method<&api_cache::write, ::forge::net::http::test_api::api_chunk, ::forge::net::http::test_api::api_chunk>("write")
+          .method<&api_cache::write, ::forge::net::http::test_api::api_chunk, ::forge::net::http::test_api::api_chunk>(
+              "write")
           .build();
    }
 };
 
-} // namespace forge::api
+} // namespace forge::api::core
 
 namespace forge::net::http {
 namespace {
@@ -996,75 +1096,81 @@ namespace beast_websocket = boost::beast::websocket;
 using tcp = asio::ip::tcp;
 
 namespace api_errors = test_api::api_errors;
+using test_api::alias_api;
 using test_api::api_cache;
 using test_api::api_chunk;
 using test_api::api_read_chunk;
-using test_api::websocket_positional_api;
 using test_api::api_routed_read_chunk;
-using test_api::macro_cache;
-using test_api::macro_chunk;
-using test_api::macro_read_request;
-using test_api::macro_write_request;
-using test_api::xml_cache_api;
-using test_api::search_api;
-using test_api::search_request;
-using test_api::search_response;
+using test_api::colliding_headers_api;
+using test_api::colliding_parameters_api;
 using test_api::control_api;
-using test_api::alias_api;
 using test_api::control_patch_request;
 using test_api::control_request;
 using test_api::control_response;
+using test_api::default_header_api;
+using test_api::default_header_request;
+using test_api::default_header_response;
 using test_api::delete_body_api;
 using test_api::delete_body_request;
 using test_api::delete_path_api;
 using test_api::delete_path_request;
 using test_api::delete_stream_api;
 using test_api::delete_stream_request;
-using test_api::default_header_api;
-using test_api::default_header_request;
-using test_api::default_header_response;
+using test_api::dto_ambiguous_body_api;
+using test_api::dto_ambiguous_body_request;
+using test_api::dto_api_http;
+using test_api::dto_bytes_request;
+using test_api::dto_http_request;
+using test_api::dto_multipart_request;
+using test_api::empty_post_api;
+using test_api::endpoint_api;
+using test_api::endpoint_control_request;
+using test_api::endpoint_control_response;
 using test_api::form_api;
 using test_api::form_submit_request;
 using test_api::form_submit_response;
 using test_api::json_stream_api;
 using test_api::json_stream_request;
-using test_api::endpoint_api;
-using test_api::endpoint_control_request;
-using test_api::endpoint_control_response;
-using test_api::stream_buffered_api;
-using test_api::stream_buffered_request;
-using test_api::stream_body_echo_api;
-using test_api::stream_body_echo_request;
+using test_api::macro_cache;
+using test_api::macro_chunk;
+using test_api::macro_read_request;
+using test_api::macro_write_request;
 using test_api::mixed_download_request;
 using test_api::mixed_proxy_api;
-using test_api::to_beast_response;
-using test_api::to_http_request;
-using test_api::to_http_response;
-using test_api::dto_bytes_request;
-using test_api::dto_ambiguous_body_api;
-using test_api::dto_ambiguous_body_request;
-using test_api::dto_api_http;
-using test_api::dto_http_request;
-using test_api::dto_multipart_request;
 using test_api::object_api;
 using test_api::object_get_request;
 using test_api::object_put_request;
 using test_api::object_put_response;
+using test_api::open_post_api;
+using test_api::optional_query_request;
 using test_api::patch_api;
+using test_api::positional_ambiguous_body_api;
 using test_api::positional_api_http;
-using test_api::positional_http_response;
 using test_api::positional_body_api;
 using test_api::positional_body_payload;
 using test_api::positional_body_response;
-using test_api::positional_ambiguous_body_api;
 using test_api::positional_checked_body_api;
+using test_api::positional_http_response;
 using test_api::positional_plain_body_api;
 using test_api::positional_query_append_api;
 using test_api::positional_ref_payload;
-using test_api::positional_single_query_api;
 using test_api::positional_scalar_body_api;
-using test_api::positional_streaming_body_api;
+using test_api::positional_single_query_api;
 using test_api::positional_stream_api;
+using test_api::positional_streaming_body_api;
+using test_api::positional_timeout_api;
+using test_api::search_api;
+using test_api::search_request;
+using test_api::search_response;
+using test_api::stream_body_echo_api;
+using test_api::stream_body_echo_request;
+using test_api::stream_buffered_api;
+using test_api::stream_buffered_request;
+using test_api::to_beast_response;
+using test_api::to_http_request;
+using test_api::to_http_response;
+using test_api::websocket_positional_api;
+using test_api::xml_cache_api;
 
 [[nodiscard]] forge::api::core::descriptor api_cache_descriptor() {
    return api_cache::describe();
@@ -1091,55 +1197,44 @@ using test_api::positional_stream_api;
 }
 
 template <typename T>
-concept has_public_can_handle = requires(T& router_value, route_context& context) {
-   router_value.can_handle(context);
-};
+concept has_public_can_handle = requires(T& router_value, route_context& context) { router_value.can_handle(context); };
 
 template <typename T>
-concept has_public_header_preflight_classifier = requires(T& router_value, route_context& context) {
-   router_value.classify_header_only_rejection(context);
-};
+concept has_public_header_preflight_classifier =
+    requires(T& router_value, route_context& context) { router_value.classify_header_only_rejection(context); };
 
 template <typename T>
-concept has_public_header_only_rejection_response = requires(T& router_value, route_context& context) {
-   router_value.header_only_rejection_response(context);
-};
+concept has_public_header_only_rejection_response =
+    requires(T& router_value, route_context& context) { router_value.header_only_rejection_response(context); };
 
 template <typename T>
-concept has_public_source_identity = requires(const T& body) {
-   body.source_identity();
-};
+concept has_public_source_identity = requires(const T& body) { body.source_identity(); };
 
 template <typename T>
-concept has_public_body_backed_by = requires(T& body, const body_reader::source* source) {
-   body.backed_by(source);
-};
+concept has_public_body_backed_by = requires(T& body, const body_reader::source* source) { body.backed_by(source); };
 
 template <typename T>
 concept has_public_request_marking_body_source =
-   requires(body_reader& body, stream_response::body_source::callback_type callback) {
-      T{body, std::move(callback)};
-   };
+    requires(body_reader& body, stream_response::body_source::callback_type callback) { T{body, std::move(callback)}; };
 
 template <typename T>
 concept has_public_request_marker_body_source_constructor =
-   requires(stream_response::body_source::callback_type callback, std::shared_ptr<const void> marker) {
-      T{std::move(callback), std::move(marker)};
-   };
+    requires(stream_response::body_source::callback_type callback, std::shared_ptr<const void> marker) {
+       T{std::move(callback), std::move(marker)};
+    };
 
 template <typename T>
 concept has_public_request_marker_stream_request =
-   requires(route_context& context, body_reader body, std::shared_ptr<const void> marker) {
-      T{context, std::move(body), marker};
-   };
+    requires(route_context& context, body_reader body, std::shared_ptr<const void> marker) {
+       T{context, std::move(body), marker};
+    };
 
 body_reader make_body_reader(std::vector<std::string> chunks);
 
 [[nodiscard]] const forge::codec::xml::element* find_xml_child(const forge::codec::xml::element& parent,
-                                                        std::string_view name) noexcept {
-   const auto found = std::find_if(parent.children.begin(), parent.children.end(), [&](const forge::codec::xml::element& child) {
-      return child.name == name;
-   });
+                                                               std::string_view name) noexcept {
+   const auto found = std::find_if(parent.children.begin(), parent.children.end(),
+                                   [&](const forge::codec::xml::element& child) { return child.name == name; });
    return found == parent.children.end() ? nullptr : &*found;
 }
 
@@ -1176,8 +1271,8 @@ class routed_api_cache final : public api_cache {
    }
 
    boost::asio::awaitable<api_chunk> routed_read(api_routed_read_chunk request) override {
-      co_return api_chunk{.bytes = request.ref + ":" + std::to_string(request.offset) + ":" +
-                                   std::to_string(request.limit)};
+      co_return api_chunk{.bytes =
+                              request.ref + ":" + std::to_string(request.offset) + ":" + std::to_string(request.limit)};
    }
 
    boost::asio::awaitable<api_chunk> write(api_chunk request) override {
@@ -1195,11 +1290,13 @@ class websocket_positional_impl final : public websocket_positional_api {
 class escaping_api_cache final : public api_cache {
  public:
    boost::asio::awaitable<api_chunk> read(api_read_chunk) override {
-      FORGE_THROW_EXCEPTION(api_errors::chunk_not_found, std::string{"chunk \"missing\"\n"} + '\b' + '\0' + "not found");
+      FORGE_THROW_EXCEPTION(api_errors::chunk_not_found,
+                            std::string{"chunk \"missing\"\n"} + '\b' + '\0' + "not found");
    }
 
    boost::asio::awaitable<api_chunk> routed_read(api_routed_read_chunk) override {
-      FORGE_THROW_EXCEPTION(api_errors::chunk_not_found, std::string{"chunk \"missing\"\n"} + '\b' + '\0' + "not found");
+      FORGE_THROW_EXCEPTION(api_errors::chunk_not_found,
+                            std::string{"chunk \"missing\"\n"} + '\b' + '\0' + "not found");
    }
 
    boost::asio::awaitable<api_chunk> write(api_chunk request) override {
@@ -1221,8 +1318,7 @@ class macro_cache_impl final : public macro_cache {
 
 class xml_cache_api_impl final : public xml_cache_api {
  public:
-   explicit xml_cache_api_impl(std::shared_ptr<std::atomic<std::uint32_t>> writes = {})
-       : writes_{std::move(writes)} {}
+   explicit xml_cache_api_impl(std::shared_ptr<std::atomic<std::uint32_t>> writes = {}) : writes_{std::move(writes)} {}
 
    boost::asio::awaitable<macro_chunk> read(macro_read_request request) override {
       co_return macro_chunk{.bytes = request.ref + ":" + std::to_string(request.offset) + ":" +
@@ -1249,11 +1345,9 @@ class search_api_impl final : public search_api {
 
 class positional_http_api_impl final : public positional_api_http {
  public:
-   boost::asio::awaitable<positional_http_response>
-   read(std::string ref,
-        forge::api::http::query<std::uint32_t> limit,
-        forge::api::http::header<std::string> request_id,
-        forge::api::http::cookie<std::string> session) override {
+   boost::asio::awaitable<positional_http_response> read(std::string ref, forge::api::http::query<std::uint32_t> limit,
+                                                         forge::api::http::header<std::string> request_id,
+                                                         forge::api::http::cookie<std::string> session) override {
       const auto limit_text = limit.present ? std::to_string(limit.value) : std::string{"missing-limit"};
       const auto request_text = request_id.present ? request_id.value : std::string{"missing-request"};
       const auto session_text = session.present ? session.value : std::string{"missing-session"};
@@ -1273,8 +1367,7 @@ class positional_body_api_impl final : public positional_body_api {
 
 class positional_single_query_api_impl final : public positional_single_query_api {
  public:
-   boost::asio::awaitable<positional_http_response>
-   read(forge::api::http::query<std::uint32_t> limit) override {
+   boost::asio::awaitable<positional_http_response> read(forge::api::http::query<std::uint32_t> limit) override {
       const auto limit_text = limit.present ? std::to_string(limit.value) : std::string{"missing-limit"};
       co_return positional_http_response{.value = "single:" + limit_text};
    }
@@ -1282,8 +1375,8 @@ class positional_single_query_api_impl final : public positional_single_query_ap
 
 class positional_query_append_api_impl final : public positional_query_append_api {
  public:
-   boost::asio::awaitable<positional_http_response>
-   read(std::string ref, forge::api::http::query<std::uint32_t> limit) override {
+   boost::asio::awaitable<positional_http_response> read(std::string ref,
+                                                         forge::api::http::query<std::uint32_t> limit) override {
       const auto limit_text = limit.present ? std::to_string(limit.value) : std::string{"missing-limit"};
       co_return positional_http_response{.value = std::move(ref) + ":" + limit_text};
    }
@@ -1291,54 +1384,51 @@ class positional_query_append_api_impl final : public positional_query_append_ap
 
 class positional_plain_body_api_impl final : public positional_plain_body_api {
  public:
-   boost::asio::awaitable<positional_body_response>
-   write(std::string ref, positional_body_payload payload) override {
+   boost::asio::awaitable<positional_body_response> write(std::string ref, positional_body_payload payload) override {
       co_return positional_body_response{.summary = std::move(ref) + ":" + payload.value};
    }
 };
 
 class positional_ambiguous_body_api_impl final : public positional_ambiguous_body_api {
  public:
-   boost::asio::awaitable<positional_body_response>
-   write(std::string ref, positional_body_payload left, positional_body_payload right) override {
+   boost::asio::awaitable<positional_body_response> write(std::string ref, positional_body_payload left,
+                                                          positional_body_payload right) override {
       co_return positional_body_response{.summary = std::move(ref) + ":" + left.value + ":" + right.value};
    }
 };
 
 class positional_checked_body_api_impl final : public positional_checked_body_api {
  public:
-   boost::asio::awaitable<positional_body_response>
-   write(std::string ref, positional_ref_payload payload) override {
+   boost::asio::awaitable<positional_body_response> write(std::string ref, positional_ref_payload payload) override {
       co_return positional_body_response{.summary = std::move(ref) + ":" + payload.ref + ":" + payload.value};
    }
 };
 
 class positional_streaming_body_api_impl final : public positional_streaming_body_api {
  public:
-   boost::asio::awaitable<forge::net::http::streaming_response>
-   write(std::string ref, positional_body_payload payload) override {
+   boost::asio::awaitable<forge::net::http::streaming_response> write(std::string ref,
+                                                                      positional_body_payload payload) override {
       auto text = std::make_shared<std::string>(std::move(ref) + ":" + payload.value);
-      co_return forge::net::http::streaming_response::from_source(
-         forge::net::http::streaming_response_options{
-            .content_type = "text/plain",
-            .body =
-               [text, sent = false]() mutable -> boost::asio::awaitable<std::optional<forge::api::http::body_chunk>> {
-                  if (sent) {
-                     co_return std::nullopt;
-                  }
-                  sent = true;
-                  auto bytes = std::vector<std::byte>(text->size());
-                  std::memcpy(bytes.data(), text->data(), text->size());
-                  co_return forge::api::http::body_chunk{.bytes = std::move(bytes)};
-               },
-         });
+      co_return forge::net::http::streaming_response::from_source(forge::net::http::streaming_response_options{
+          .content_type = "text/plain",
+          .body = [text,
+                   sent = false]() mutable -> boost::asio::awaitable<std::optional<forge::api::http::body_chunk>> {
+             if (sent) {
+                co_return std::nullopt;
+             }
+             sent = true;
+             auto bytes = std::vector<std::byte>(text->size());
+             std::memcpy(bytes.data(), text->data(), text->size());
+             co_return forge::api::http::body_chunk{.bytes = std::move(bytes)};
+          },
+      });
    }
 };
 
 class positional_stream_api_impl final : public positional_stream_api {
  public:
-   boost::asio::awaitable<positional_body_response>
-   write(std::string ref, forge::api::http::body_stream body) override {
+   boost::asio::awaitable<positional_body_response> write(std::string ref,
+                                                          forge::api::http::body_stream body) override {
       auto text = co_await body.async_read_all();
       co_return positional_body_response{.summary = std::move(ref) + ":" + std::move(text)};
    }
@@ -1352,7 +1442,7 @@ class dto_http_api_impl final : public dto_api_http {
       const auto session = request.session.present ? request.session.value : std::string{"missing-session"};
       const auto body = request.payload.present ? request.payload.value.value : std::string{"missing-body"};
       co_return positional_body_response{
-         .summary = request.ref + ":" + limit + ":" + request_id + ":" + session + ":" + body,
+          .summary = request.ref + ":" + limit + ":" + request_id + ":" + session + ":" + body,
       };
    }
 
@@ -1369,11 +1459,11 @@ class dto_http_api_impl final : public dto_api_http {
       const auto category = request.category.present ? request.category.value : std::string{"missing-category"};
       const auto count = request.count.present ? std::to_string(request.count.value) : std::string{"missing-count"};
       const auto filename = request.file.present() && request.file.part().filename.has_value()
-                               ? *request.file.part().filename
-                               : std::string{"missing-file"};
+                                ? *request.file.part().filename
+                                : std::string{"missing-file"};
       const auto text = request.file.present() ? request.file.part().text() : std::string{"missing-body"};
       co_return positional_body_response{
-         .summary = category + ":" + count + ":" + filename + ":" + text,
+          .summary = category + ":" + count + ":" + filename + ":" + text,
       };
    }
 };
@@ -1398,9 +1488,9 @@ class default_header_api_impl final : public default_header_api {
    boost::asio::awaitable<default_header_response> echo(default_header_request request) override {
       auto body = co_await request.body.async_read_all();
       co_return default_header_response{
-         .request_id = request.request_id.value,
-         .body = std::move(body),
-         .present = request.request_id.present,
+          .request_id = request.request_id.value,
+          .body = std::move(body),
+          .present = request.request_id.present,
       };
    }
 };
@@ -1416,16 +1506,21 @@ class object_api_impl final : public object_api {
       auto output = std::ofstream{path, std::ios::binary};
       output << body;
       co_return object_put_response{
-         .bytes = static_cast<std::uint64_t>(body.size()),
-         .content_type = request.content_type.present ? request.content_type.value : std::string{},
-         .content_md5 = request.digest.present ? request.digest.value : std::string{},
+          .bytes = static_cast<std::uint64_t>(body.size()),
+          .content_type = request.content_type.present ? request.content_type.value : std::string{},
+          .content_md5 = request.digest.present ? request.digest.value : std::string{},
       };
    }
 
    boost::asio::awaitable<forge::net::http::file_response> get_object(object_get_request request) override {
+      if (request.key == "body.bin" || request.key == "wrong-status.bin") {
+         auto reply = response{request.key == "body.bin" ? status::ok : status::accepted, 11};
+         reply.set(field::content_type, "application/octet-stream");
+         co_return forge::net::http::file_response::from_body(std::move(reply), make_body_reader({"body-payload"}));
+      }
       co_return forge::net::http::file_response::from_path(
-         object_path(request.collection, request.key),
-         forge::net::http::file_options{.content_type = "application/octet-stream"});
+          object_path(request.collection, request.key),
+          forge::net::http::file_options{.content_type = "application/octet-stream"});
    }
 
    boost::asio::awaitable<forge::net::http::file_response> head_object(object_get_request request) override {
@@ -1434,21 +1529,19 @@ class object_api_impl final : public object_api {
 
    boost::asio::awaitable<forge::net::http::streaming_response> stream_object(object_get_request request) override {
       auto file = std::make_shared<std::ifstream>(object_path(request.collection, request.key), std::ios::binary);
-      co_return forge::net::http::streaming_response::from_source(
-         forge::net::http::streaming_response_options{
-            .content_type = "application/octet-stream",
-            .body =
-               [file]() mutable -> boost::asio::awaitable<std::optional<forge::api::http::body_chunk>> {
-                  auto bytes = std::vector<std::byte>(7);
-                  file->read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-                  const auto count = static_cast<std::size_t>(file->gcount());
-                  if (count == 0) {
-                     co_return std::nullopt;
-                  }
-                  bytes.resize(count);
-                  co_return forge::api::http::body_chunk{.bytes = std::move(bytes)};
-               },
-         });
+      co_return forge::net::http::streaming_response::from_source(forge::net::http::streaming_response_options{
+          .content_type = "application/octet-stream",
+          .body = [file]() mutable -> boost::asio::awaitable<std::optional<forge::api::http::body_chunk>> {
+             auto bytes = std::vector<std::byte>(7);
+             file->read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+             const auto count = static_cast<std::size_t>(file->gcount());
+             if (count == 0) {
+                co_return std::nullopt;
+             }
+             bytes.resize(count);
+             co_return forge::api::http::body_chunk{.bytes = std::move(bytes)};
+          },
+      });
    }
 
    boost::asio::awaitable<forge::api::http::empty_response> delete_object(object_get_request request) override {
@@ -1495,23 +1588,21 @@ class object_proxy_api_impl final : public object_api {
 class json_stream_api_impl final : public json_stream_api {
  public:
    boost::asio::awaitable<forge::net::http::streaming_response> stream(json_stream_request request) override {
-      auto chunks = std::make_shared<std::vector<std::string>>(
-         std::vector<std::string>{request.id + ":", request.value});
+      auto chunks =
+          std::make_shared<std::vector<std::string>>(std::vector<std::string>{request.id + ":", request.value});
       auto index = std::make_shared<std::size_t>(0);
-      co_return forge::net::http::streaming_response::from_source(
-         forge::net::http::streaming_response_options{
-            .content_type = "text/plain",
-            .body =
-               [chunks, index]() mutable -> boost::asio::awaitable<std::optional<forge::api::http::body_chunk>> {
-                  if (*index == chunks->size()) {
-                     co_return std::nullopt;
-                  }
-                  const auto& text = (*chunks)[(*index)++];
-                  auto bytes = std::vector<std::byte>(text.size());
-                  std::memcpy(bytes.data(), text.data(), text.size());
-                  co_return forge::api::http::body_chunk{.bytes = std::move(bytes)};
-               },
-         });
+      co_return forge::net::http::streaming_response::from_source(forge::net::http::streaming_response_options{
+          .content_type = "text/plain",
+          .body = [chunks, index]() mutable -> boost::asio::awaitable<std::optional<forge::api::http::body_chunk>> {
+             if (*index == chunks->size()) {
+                co_return std::nullopt;
+             }
+             const auto& text = (*chunks)[(*index)++];
+             auto bytes = std::vector<std::byte>(text.size());
+             std::memcpy(bytes.data(), text.data(), text.size());
+             co_return forge::api::http::body_chunk{.bytes = std::move(bytes)};
+          },
+      });
    }
 };
 
@@ -1522,16 +1613,19 @@ class endpoint_api_impl final : public endpoint_api {
    boost::asio::awaitable<endpoint_control_response> current(endpoint_control_request request) override {
       request.response().set("X-Endpoint-Id", request.id);
       request.response().set_cookie("endpoint", request.id);
+      if (request.id == "status-mismatch") {
+         request.response().result(status::accepted);
+      }
       const auto trace = request.request().header("X-Trace").value_or("missing-trace");
       co_return endpoint_control_response{
-         .summary = request.id + ":" + std::string{request.request().target()} + ":" + std::string{trace},
+          .summary = request.id + ":" + std::string{request.request().target()} + ":" + std::string{trace},
       };
    }
 
    boost::asio::awaitable<forge::net::http::file_response> download(endpoint_control_request request) override {
       request.response().set("X-Endpoint-File", request.id);
-      co_return forge::net::http::file_response::from_path(root_ / "asset.txt",
-                                                    forge::net::http::file_options{.content_type = "text/plain"});
+      co_return forge::net::http::file_response::from_path(
+          root_ / "asset.txt", forge::net::http::file_options{.content_type = "text/plain"});
    }
 
    boost::asio::awaitable<forge::net::http::streaming_response> stream(endpoint_control_request request) override {
@@ -1539,24 +1633,24 @@ class endpoint_api_impl final : public endpoint_api {
       request.response().set_cookie("endpoint", request.id);
       request.response().set_cookie("stream", "yes");
       auto text = std::make_shared<std::string>("stream:" + request.id);
-      co_return forge::net::http::streaming_response::from_source(
-         forge::net::http::streaming_response_options{
-            .content_type = "text/plain",
-            .body =
-               [text, sent = false]() mutable -> boost::asio::awaitable<std::optional<forge::api::http::body_chunk>> {
-                  if (sent) {
-                     co_return std::nullopt;
-                  }
-                  sent = true;
-                  auto bytes = std::vector<std::byte>(text->size());
-                  std::memcpy(bytes.data(), text->data(), text->size());
-                  co_return forge::api::http::body_chunk{.bytes = std::move(bytes)};
-               },
-         });
+      co_return forge::net::http::streaming_response::from_source(forge::net::http::streaming_response_options{
+          .content_type = "text/plain",
+          .body = [text,
+                   sent = false]() mutable -> boost::asio::awaitable<std::optional<forge::api::http::body_chunk>> {
+             if (sent) {
+                co_return std::nullopt;
+             }
+             sent = true;
+             auto bytes = std::vector<std::byte>(text->size());
+             std::memcpy(bytes.data(), text->data(), text->size());
+             co_return forge::api::http::body_chunk{.bytes = std::move(bytes)};
+          },
+      });
    }
 
    boost::asio::awaitable<forge::api::http::empty_response> accepted(endpoint_control_request request) override {
       request.response().set("X-Endpoint-Empty", request.id);
+      request.response().result(status::accepted);
       co_return forge::api::http::empty_response{.status_code = status::accepted};
    }
 
@@ -1583,7 +1677,8 @@ class stream_body_echo_api_impl final : public stream_body_echo_api {
    }
 
    boost::asio::awaitable<forge::net::http::streaming_response> independent(stream_body_echo_request request) override {
-      auto reply = response{status::ok, request.request().version()};
+      const auto result = request.id == "status-mismatch" ? status::accepted : status::ok;
+      auto reply = response{result, request.request().version()};
       reply.set(field::content_type, "application/octet-stream");
       co_return forge::net::http::streaming_response::from_body(std::move(reply), make_body_reader({"independent"}));
    }
@@ -1599,8 +1694,8 @@ class mixed_proxy_api_impl final : public mixed_proxy_api {
 
    boost::asio::awaitable<forge::net::http::file_response> download(mixed_download_request request) override {
       co_return forge::net::http::file_response::from_path(
-         root_ / request.collection / request.key,
-         forge::net::http::file_options{.content_type = "application/octet-stream"});
+          root_ / request.collection / request.key,
+          forge::net::http::file_options{.content_type = "application/octet-stream"});
    }
 
  private:
@@ -1611,8 +1706,8 @@ class form_api_impl final : public form_api {
  public:
    boost::asio::awaitable<form_submit_response> submit(form_submit_request request) override {
       co_return form_submit_response{
-         .summary = (request.label.present ? request.label.value : std::string{}) + ":" +
-                    (request.count.present ? std::to_string(request.count.value) : std::string{"missing"}),
+          .summary = (request.label.present ? request.label.value : std::string{}) + ":" +
+                     (request.count.present ? std::to_string(request.count.value) : std::string{"missing"}),
       };
    }
 };
@@ -1624,8 +1719,8 @@ class control_api_impl final : public control_api {
       auto bytes = std::vector<std::byte>(text.size());
       std::memcpy(bytes.data(), text.data(), text.size());
       co_return forge::api::http::bytes_response{
-         .bytes = std::move(bytes),
-         .content_type = "application/control",
+          .bytes = std::move(bytes),
+          .content_type = "application/control",
       };
    }
 
@@ -1635,6 +1730,27 @@ class control_api_impl final : public control_api {
 
    boost::asio::awaitable<forge::api::http::empty_response> head(control_request) override {
       co_return forge::api::http::empty_response{.status_code = status::no_content};
+   }
+
+   boost::asio::awaitable<control_response> head_dto(control_request request) override {
+      co_return control_response{.value = "head:" + request.id};
+   }
+
+   boost::asio::awaitable<forge::net::http::streaming_response> head_stream(control_request request) override {
+      auto text = std::make_shared<std::string>("head-stream:" + request.id);
+      co_return forge::net::http::streaming_response::from_source(forge::net::http::streaming_response_options{
+          .content_type = "text/plain",
+          .body = [text,
+                   sent = false]() mutable -> boost::asio::awaitable<std::optional<forge::api::http::body_chunk>> {
+             if (sent) {
+                co_return std::nullopt;
+             }
+             sent = true;
+             auto bytes = std::vector<std::byte>(text->size());
+             std::memcpy(bytes.data(), text->data(), text->size());
+             co_return forge::api::http::body_chunk{.bytes = std::move(bytes)};
+          },
+      });
    }
 };
 
@@ -1668,8 +1784,8 @@ class delete_path_api_impl final : public delete_path_api {
  public:
    boost::asio::awaitable<control_response> remove(delete_path_request request) override {
       co_return control_response{
-         .value = request.collection + ":" + request.key + ":" +
-                  (request.request().body().empty() ? "bodyless" : "body-present"),
+          .value = request.collection + ":" + request.key + ":" +
+                   (request.request().body().empty() ? "bodyless" : "body-present"),
       };
    }
 };
@@ -1733,6 +1849,61 @@ class vector_body_source final : public body_reader::source {
    std::uint64_t bytes_read_ = 0;
 };
 
+class delayed_body_source final : public body_reader::source {
+ public:
+   delayed_body_source(std::vector<std::string> chunks, std::chrono::milliseconds delay)
+       : chunks_(std::move(chunks)), delay_(delay) {}
+
+   boost::asio::awaitable<std::optional<body_chunk>> async_read() override {
+      if (index_ == chunks_.size()) {
+         co_return std::nullopt;
+      }
+      auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+      timer.expires_after(delay_);
+      co_await timer.async_wait(boost::asio::use_awaitable);
+      auto chunk = make_body_chunk(chunks_[index_++]);
+      bytes_read_ += chunk.bytes.size();
+      co_return chunk;
+   }
+
+   [[nodiscard]] std::uint64_t bytes_read() const noexcept override {
+      return bytes_read_;
+   }
+
+ private:
+   std::vector<std::string> chunks_;
+   std::chrono::milliseconds delay_;
+   std::size_t index_ = 0;
+   std::uint64_t bytes_read_ = 0;
+};
+
+class failing_body_source final : public body_reader::source {
+ public:
+   enum class failure {
+      standard,
+      typed,
+   };
+
+   explicit failing_body_source(failure value) : failure_{value} {}
+
+   boost::asio::awaitable<std::optional<body_chunk>> async_read() override {
+      if (failure_ == failure::typed) {
+         throw forge::net::http::exceptions::bad_request{"typed request body failure"};
+      }
+      if (failure_ == failure::standard) {
+         throw std::runtime_error{"standard request body failure"};
+      }
+      co_return std::nullopt;
+   }
+
+   [[nodiscard]] std::uint64_t bytes_read() const noexcept override {
+      return 0;
+   }
+
+ private:
+   failure failure_;
+};
+
 body_reader make_body_reader(std::vector<std::string> chunks) {
    return body_reader{std::make_shared<vector_body_source>(std::move(chunks))};
 }
@@ -1780,16 +1951,19 @@ response raw_http_exchange(std::uint16_t port, std::string request_text,
    return to_http_response(beast_response);
 }
 
+void abort_connection(beast::tcp_stream& stream) {
+   stream.socket().set_option(asio::socket_base::linger{true, 0});
+   stream.socket().close();
+}
+
 struct expect_continue_exchange_result {
    std::optional<response> interim;
    response final;
 };
 
-expect_continue_exchange_result raw_expect_continue_exchange(std::uint16_t port,
-                                                             std::string headers,
-                                                             std::string body,
-                                                             std::chrono::milliseconds timeout =
-                                                                std::chrono::seconds{2}) {
+expect_continue_exchange_result raw_expect_continue_exchange(std::uint16_t port, std::string headers, std::string body,
+                                                             std::chrono::milliseconds timeout = std::chrono::seconds{
+                                                                 2}) {
    auto io_context = asio::io_context{};
    auto stream = beast::tcp_stream{io_context};
    stream.expires_after(timeout);
@@ -1812,8 +1986,8 @@ expect_continue_exchange_result raw_expect_continue_exchange(std::uint16_t port,
    return expect_continue_exchange_result{.interim = std::move(first_response), .final = to_http_response(second)};
 }
 
-std::pair<response, response>
-raw_two_request_exchange(std::uint16_t port, std::string first_request, std::string second_request) {
+std::pair<response, response> raw_two_request_exchange(std::uint16_t port, std::string first_request,
+                                                       std::string second_request) {
    auto io_context = asio::io_context{};
    auto stream = beast::tcp_stream{io_context};
    stream.expires_after(std::chrono::seconds{2});
@@ -2005,6 +2179,64 @@ class flaky_server {
    std::uint16_t port_ = 0;
 };
 
+class stale_keep_alive_server {
+ public:
+   stale_keep_alive_server() : acceptor_(io_context_) {
+      acceptor_.open(tcp::v4());
+      acceptor_.set_option(asio::socket_base::reuse_address(true));
+      acceptor_.bind(tcp::endpoint{asio::ip::make_address("127.0.0.1"), 0});
+      acceptor_.listen(asio::socket_base::max_listen_connections);
+      port_ = acceptor_.local_endpoint().port();
+      worker_ = std::thread([this] { run(); });
+   }
+
+   ~stale_keep_alive_server() {
+      auto ignored = boost::system::error_code{};
+      acceptor_.close(ignored);
+      io_context_.stop();
+      if (worker_.joinable()) {
+         worker_.join();
+      }
+   }
+
+   [[nodiscard]] std::uint16_t port() const noexcept {
+      return port_;
+   }
+
+ private:
+   void serve_once(std::string body, bool keep_alive) {
+      auto socket = tcp::socket{io_context_};
+      acceptor_.accept(socket);
+      auto stream = beast::tcp_stream{std::move(socket)};
+      auto buffer = beast::flat_buffer{};
+      auto request = beast_http::request<beast_http::string_body>{};
+      beast_http::read(stream, buffer, request);
+
+      auto response = beast_http::response<beast_http::string_body>{beast_http::status::ok, request.version()};
+      response.set(beast_http::field::content_type, "application/json");
+      response.body() = std::move(body);
+      response.keep_alive(keep_alive);
+      response.prepare_payload();
+      beast_http::write(stream, response);
+
+      auto ignored = boost::system::error_code{};
+      stream.socket().close(ignored);
+   }
+
+   void run() {
+      try {
+         serve_once(R"({"value":"first"})", true);
+         serve_once(R"({"value":"second"})", false);
+      } catch (...) {
+      }
+   }
+
+   asio::io_context io_context_;
+   tcp::acceptor acceptor_;
+   std::thread worker_;
+   std::uint16_t port_ = 0;
+};
+
 BOOST_AUTO_TEST_CASE(http_request_response_copy_has_value_semantics) {
    auto original_request = make_request(method::post, "/items");
    original_request.set(field::content_type, "application/json");
@@ -2036,6 +2268,21 @@ BOOST_AUTO_TEST_CASE(base_url_parses_https_origin_and_base_path) {
    BOOST_TEST(parsed.secure());
    BOOST_TEST(parsed.origin() == "https://node.example.com:9443");
    BOOST_TEST(parsed.make_target("/v1/chain/get_info") == "/api/v1/chain/get_info");
+}
+
+BOOST_AUTO_TEST_CASE(http_owned_parsers_report_typed_failures) {
+   BOOST_CHECK_THROW(static_cast<void>(parse_base_url("not a URL")), forge::net::http::exceptions::bad_request);
+   BOOST_CHECK_THROW(static_cast<void>(parse_base_url("ftp://node.example.com")),
+                     forge::net::http::exceptions::bad_request);
+   BOOST_CHECK_THROW(static_cast<void>(parse_target("not an origin target")),
+                     forge::net::http::exceptions::bad_request);
+
+   auto router = forge::net::http::router{};
+   BOOST_CHECK_THROW(router.get("missing-leading-slash",
+                                [](route_context& context) -> boost::asio::awaitable<response> {
+                                   co_return make_text_response(context.request, status::ok, "unreachable");
+                                }),
+                     forge::net::http::exceptions::bad_request);
 }
 
 BOOST_AUTO_TEST_CASE(target_parses_path_segments_and_query_params) {
@@ -2223,12 +2470,11 @@ BOOST_AUTO_TEST_CASE(router_rejects_duplicate_routes_before_serving) {
       co_return make_text_response(context.request, status::ok, "one");
    });
 
-   BOOST_CHECK_THROW(
-       router.get("/items",
-                  [](route_context& context) -> boost::asio::awaitable<response> {
-                     co_return make_text_response(context.request, status::ok, "two");
-                  }),
-       forge::net::http::exceptions::conflict);
+   BOOST_CHECK_THROW(router.get("/items",
+                                [](route_context& context) -> boost::asio::awaitable<response> {
+                                   co_return make_text_response(context.request, status::ok, "two");
+                                }),
+                     forge::net::http::exceptions::conflict);
 }
 
 BOOST_AUTO_TEST_CASE(router_rejects_duplicate_buffered_and_stream_routes) {
@@ -2237,25 +2483,23 @@ BOOST_AUTO_TEST_CASE(router_rejects_duplicate_buffered_and_stream_routes) {
       co_return make_text_response(context.request, status::ok, "buffered");
    });
 
-   BOOST_CHECK_THROW(
-      router.get_stream("/items",
-                        [](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
-                           co_return stream_response::buffered(
-                              make_text_response(request_value.context.request, status::ok, "stream"));
-                        }),
-      forge::net::http::exceptions::conflict);
+   BOOST_CHECK_THROW(router.get_stream("/items",
+                                       [](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+                                          co_return stream_response::buffered(
+                                              make_text_response(request_value.context.request, status::ok, "stream"));
+                                       }),
+                     forge::net::http::exceptions::conflict);
 
    auto reverse = forge::net::http::router{};
    reverse.post_stream("/upload", [](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
       co_return stream_response::buffered(make_text_response(request_value.context.request, status::ok, "stream"));
    });
 
-   BOOST_CHECK_THROW(
-      reverse.post("/upload",
-                   [](route_context& context) -> boost::asio::awaitable<response> {
-                      co_return make_text_response(context.request, status::ok, "buffered");
-                   }),
-      forge::net::http::exceptions::conflict);
+   BOOST_CHECK_THROW(reverse.post("/upload",
+                                  [](route_context& context) -> boost::asio::awaitable<response> {
+                                     co_return make_text_response(context.request, status::ok, "buffered");
+                                  }),
+                     forge::net::http::exceptions::conflict);
 }
 
 BOOST_AUTO_TEST_CASE(http_api_plan_maps_custom_exception_to_native_status) {
@@ -2317,10 +2561,10 @@ BOOST_AUTO_TEST_CASE(http_api_plan_escapes_json_error_fields) {
    apis.install<api_cache>(api_cache_descriptor(), std::make_shared<escaping_api_cache>());
 
    auto router = forge::net::http::router{};
-   auto binding =
-       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build())
-           .get<&api_cache::read, api_read_chunk, api_chunk>("/cache/chunks/:ref")
-           .build();
+   auto binding = forge::api::http::binding()
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .get<&api_cache::read, api_read_chunk, api_chunk>("/cache/chunks/:ref")
+                      .build();
    router.mount(binding);
 
    auto request = make_request(method::get, "/cache/chunks/abc");
@@ -2378,10 +2622,166 @@ BOOST_AUTO_TEST_CASE(http_api_macro_describes_routes_for_api_core) {
    BOOST_TEST(routes[0].method_name == "read");
    BOOST_TEST(routes[0].target == "/cache/chunks/:ref?offset={offset}&limit={limit}");
    BOOST_TEST(routes[0].success_status == status::ok);
+   BOOST_TEST(static_cast<int>(routes[0].cache) == static_cast<int>(forge::api::http::cache_policy::no_store));
    BOOST_TEST(routes[1].verb == method::put);
    BOOST_TEST(routes[1].method_name == "write");
    BOOST_TEST(routes[1].target == "/cache/chunks/:ref");
    BOOST_TEST(routes[1].success_status == status::created);
+}
+
+BOOST_AUTO_TEST_CASE(http_api_openapi_uses_typed_contract_and_route_descriptors) {
+   const auto document = forge::api::http::openapi<macro_cache>(
+       {.title = "Cache API", .version = "1.0.0", .servers = {"https://cache.example"}});
+
+   BOOST_REQUIRE(document.is_object());
+   BOOST_TEST(document["openapi"].as_string() == "3.1.0");
+   BOOST_TEST(document["info"]["title"].as_string() == "Cache API");
+   BOOST_TEST(document["servers"][std::size_t{0}]["url"].as_string() == "https://cache.example");
+
+   const auto& read = document["paths"]["/cache/chunks/{ref}"]["get"];
+   BOOST_TEST(read["operationId"].as_string() == "cache.macro.read");
+   BOOST_REQUIRE_EQUAL(read["parameters"].size(), 3U);
+   BOOST_TEST(read["parameters"][std::size_t{0}]["name"].as_string() == "ref");
+   BOOST_TEST(read["parameters"][std::size_t{0}]["in"].as_string() == "path");
+   BOOST_TEST(read["parameters"][std::size_t{0}]["required"].as_bool());
+   BOOST_TEST(read["parameters"][std::size_t{1}]["name"].as_string() == "offset");
+   BOOST_TEST(read["responses"]["200"]["content"]["application/json"]["schema"]["type"].as_string() == "object");
+   BOOST_TEST(read["x-forge-cache-policy"].as_string() == "no-store");
+
+   const auto& write = document["paths"]["/cache/chunks/{ref}"]["put"];
+   BOOST_TEST(
+       write["requestBody"]["content"]["application/json"]["schema"]["properties"]["bytes"]["type"].as_string() ==
+       "string");
+   BOOST_TEST(write["responses"]["201"]["description"].as_string() == "Successful response");
+}
+
+BOOST_AUTO_TEST_CASE(http_api_openapi_uses_wire_parameter_names) {
+   const auto search_document = forge::api::http::openapi<search_api>();
+   const auto& search_parameters = search_document["paths"]["/search/{term}"]["get"]["parameters"].get_array();
+   BOOST_REQUIRE_EQUAL(search_parameters.size(), 2U);
+   BOOST_TEST(search_parameters[1]["name"].as_string() == "page_size");
+   BOOST_TEST(search_parameters[1]["schema"]["format"].as_string() == "uint32");
+
+   const auto dto_document = forge::api::http::openapi<dto_api_http>();
+   const auto& dto_parameters = dto_document["paths"]["/dto/{ref}"]["post"]["parameters"].get_array();
+   const auto request_id = std::ranges::find_if(
+       dto_parameters, [](const forge::variant& value) { return value["name"].as_string() == "X-Request-Id"; });
+   BOOST_REQUIRE(request_id != dto_parameters.end());
+   BOOST_TEST((*request_id)["in"].as_string() == "header");
+   BOOST_TEST(!(*request_id)["required"].as_bool());
+
+   const auto session = std::ranges::find_if(
+       dto_parameters, [](const forge::variant& value) { return value["name"].as_string() == "session"; });
+   BOOST_REQUIRE(session != dto_parameters.end());
+   BOOST_TEST((*session)["in"].as_string() == "cookie");
+   BOOST_TEST(!(*session)["required"].as_bool());
+
+   const auto& request_body = dto_document["paths"]["/dto/{ref}"]["post"]["requestBody"];
+   BOOST_TEST(!request_body["required"].as_bool());
+   const auto& body_schema = request_body["content"]["application/json"]["schema"];
+   BOOST_TEST(body_schema["properties"]["value"]["type"].as_string() == "string");
+   BOOST_TEST(!body_schema["properties"].get_object().contains("ref"));
+
+   const auto default_header_document = forge::api::http::openapi<default_header_api>();
+   const auto& default_parameters =
+       default_header_document["paths"]["/headers/default"]["put"]["parameters"].get_array();
+   const auto default_request_id = std::ranges::find_if(
+       default_parameters, [](const forge::variant& value) { return value["name"].as_string() == "request-id"; });
+   BOOST_REQUIRE(default_request_id != default_parameters.end());
+   BOOST_TEST((*default_request_id)["in"].as_string() == "header");
+   BOOST_TEST(!(*default_request_id)["required"].as_bool());
+}
+
+BOOST_AUTO_TEST_CASE(http_api_openapi_omits_body_for_empty_typed_request) {
+   const auto document = forge::api::http::openapi<empty_post_api>();
+   const auto& operation = document["paths"]["/empty-post"]["post"];
+   BOOST_TEST(!operation.get_object().contains("requestBody"));
+   BOOST_TEST(!operation["responses"]["204"].get_object().contains("content"));
+}
+
+BOOST_AUTO_TEST_CASE(http_api_openapi_describes_valid_positional_fields) {
+   const auto document = forge::api::http::openapi<positional_plain_body_api>();
+   const auto& operation = document["paths"]["/plain/{ref}"]["post"];
+   BOOST_TEST(operation["parameters"][std::size_t{0}]["schema"]["type"].as_string() == "string");
+   BOOST_TEST(
+       operation["requestBody"]["content"]["application/json"]["schema"]["properties"]["value"]["type"].as_string() ==
+       "string");
+}
+
+BOOST_AUTO_TEST_CASE(http_api_openapi_rejects_positional_wrappers) {
+   BOOST_CHECK_THROW(static_cast<void>(forge::api::http::openapi<positional_api_http>()),
+                     forge::api::core::exceptions::protocol_error);
+   BOOST_CHECK_THROW(static_cast<void>(forge::api::http::openapi<positional_body_api>()),
+                     forge::api::core::exceptions::protocol_error);
+   BOOST_CHECK_THROW(static_cast<void>(forge::api::http::openapi<dto_ambiguous_body_api>()),
+                     forge::api::core::exceptions::protocol_error);
+}
+
+BOOST_AUTO_TEST_CASE(http_api_openapi_preserves_custom_open_object_body) {
+   const auto document = forge::api::http::openapi<open_post_api>();
+   const auto& operation = document["paths"]["/open-post"]["post"];
+   BOOST_TEST(operation.get_object().contains("requestBody"));
+}
+
+BOOST_AUTO_TEST_CASE(http_api_openapi_rejects_parameter_wire_collisions) {
+   BOOST_CHECK_THROW(static_cast<void>(forge::api::http::openapi<colliding_parameters_api>()),
+                     forge::api::core::exceptions::protocol_error);
+   BOOST_CHECK_THROW(static_cast<void>(forge::api::http::openapi<colliding_headers_api>()),
+                     forge::api::core::exceptions::protocol_error);
+}
+
+BOOST_AUTO_TEST_CASE(http_api_openapi_uses_configured_body_codecs) {
+   const auto document = forge::api::http::openapi<xml_cache_api>();
+   const auto& write = document["paths"]["/xml/cache/chunks/{ref}"]["put"];
+   BOOST_TEST(write["requestBody"]["content"].get_object().contains("application/xml"));
+   BOOST_TEST(write["responses"]["201"]["content"].get_object().contains("application/xml"));
+   BOOST_TEST(write["responses"]["default"]["content"].get_object().contains("application/xml"));
+
+   const auto& read = document["paths"]["/xml/cache/chunks/{ref}"]["get"];
+   BOOST_TEST(read["responses"]["200"]["content"].get_object().contains("application/xml"));
+   BOOST_TEST(read["responses"]["default"]["content"].get_object().contains("application/xml"));
+}
+
+BOOST_AUTO_TEST_CASE(http_api_openapi_describes_native_http_bodies) {
+   const auto dto = forge::api::http::openapi<dto_api_http>();
+   const auto& bytes = dto["paths"]["/dto-bytes/{ref}"]["put"]["requestBody"]["content"]["*/*"]["schema"];
+   BOOST_TEST(bytes["type"].as_string() == "string");
+   BOOST_TEST(bytes["format"].as_string() == "binary");
+
+   const auto& multipart =
+       dto["paths"]["/dto-upload"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"];
+   BOOST_TEST(multipart["properties"]["category"]["type"].as_string() == "string");
+   BOOST_TEST(multipart["properties"]["count"]["type"].as_string() == "integer");
+   BOOST_TEST(multipart["properties"]["file"]["format"].as_string() == "binary");
+
+   const auto objects = forge::api::http::openapi<object_api>();
+   const auto& stream =
+       objects["paths"]["/objects/{collection}/{key}"]["put"]["requestBody"]["content"]["*/*"]["schema"];
+   BOOST_TEST(stream["format"].as_string() == "binary");
+   BOOST_TEST(
+       objects["paths"]["/objects/{collection}/{key}"]["get"]["responses"]["200"]["content"]["*/*"]["schema"]["format"]
+           .as_string() == "binary");
+   const auto& file_responses = objects["paths"]["/objects/{collection}/{key}"]["get"]["responses"];
+   BOOST_TEST(file_responses.get_object().contains("206"));
+   BOOST_TEST(file_responses["206"]["content"]["*/*"]["schema"]["format"].as_string() == "binary");
+   BOOST_TEST(file_responses.get_object().contains("304"));
+   BOOST_TEST(!file_responses["304"].get_object().contains("content"));
+   BOOST_TEST(file_responses.get_object().contains("404"));
+   BOOST_TEST(file_responses["404"]["content"]["text/plain"]["schema"]["type"].as_string() == "string");
+   BOOST_TEST(file_responses.get_object().contains("416"));
+   BOOST_TEST(!file_responses["416"].get_object().contains("content"));
+   BOOST_TEST(
+       !objects["paths"]["/objects/{collection}/{key}"]["head"]["responses"]["200"].get_object().contains("content"));
+   BOOST_TEST(
+       !objects["paths"]["/objects/{collection}/{key}"]["head"]["responses"]["404"].get_object().contains("content"));
+
+   const auto control = forge::api::http::openapi<control_api>();
+   const auto& response =
+       control["paths"]["/controls/{id}/bytes"]["get"]["responses"]["200"]["content"]["*/*"]["schema"];
+   BOOST_TEST(response["format"].as_string() == "binary");
+   BOOST_TEST(control["paths"]["/controls/{id}/accepted"]["get"]["responses"].get_object().contains("202"));
+   BOOST_TEST(!control["paths"]["/controls/{id}/accepted"]["get"]["responses"].get_object().contains("200"));
+   BOOST_TEST(control["paths"]["/controls/{id}"]["head"]["responses"].get_object().contains("204"));
 }
 
 BOOST_AUTO_TEST_CASE(http_api_macro_get_maps_route_and_query) {
@@ -2390,7 +2790,8 @@ BOOST_AUTO_TEST_CASE(http_api_macro_get_maps_route_and_query) {
    apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<macro_cache>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<macro_cache>().build();
    router.mount(binding);
 
    auto request = make_request(method::get, "/cache/chunks/abc?offset=7&limit=4096");
@@ -2401,8 +2802,41 @@ BOOST_AUTO_TEST_CASE(http_api_macro_get_maps_route_and_query) {
    const auto unpacked = forge::codec::json::read<macro_chunk>(response.body());
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(response.header("Cache-Control").value_or("") == "no-store");
    BOOST_REQUIRE(unpacked.ok());
    BOOST_TEST(unpacked.value.bytes == "abc:7:4096");
+}
+
+BOOST_AUTO_TEST_CASE(http_api_rejects_invalid_scalar_query_as_bad_request) {
+   auto runtime = forge::asio::runtime{};
+   auto apis = forge::api::core::registry{};
+   apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
+
+   auto router = forge::net::http::router{};
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<macro_cache>().build();
+   router.mount(binding);
+
+   auto request = make_request(method::get, "/cache/chunks/abc?offset=invalid&limit=4096");
+   auto context = make_route_context(request);
+   context.runtime = &runtime;
+
+   const auto response = handle(router, context);
+   BOOST_TEST(response.result_int() == 422U);
+   BOOST_TEST(response.body().find("validation_error") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(http_api_optional_query_is_omitted_from_remote_target) {
+   const auto route = forge::api::http::route{
+       .verb = method::get,
+       .method_name = "read",
+       .target = "/objects/{ref}?limit={limit}",
+   };
+
+   BOOST_TEST(forge::api::http::detail::render_route_target(
+                  route, optional_query_request{.ref = "a/b", .limit = std::nullopt}) == "/objects/a%2Fb");
+   BOOST_TEST(forge::api::http::detail::render_route_target(route, optional_query_request{.ref = "a/b", .limit = 25}) ==
+              "/objects/a%2Fb?limit=25");
 }
 
 BOOST_AUTO_TEST_CASE(http_api_query_template_preserves_wire_alias) {
@@ -2411,7 +2845,8 @@ BOOST_AUTO_TEST_CASE(http_api_query_template_preserves_wire_alias) {
    apis.install<search_api>(search_api::describe(), std::make_shared<search_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<search_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<search_api>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -2429,8 +2864,269 @@ BOOST_AUTO_TEST_CASE(http_api_query_template_preserves_wire_alias) {
    auto client = forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
    auto search = forge::asio::blocking::run(runtime, forge::api::http::remote<search_api>(client));
    const auto remote_response =
-      forge::asio::blocking::run(runtime, search->search(search_request{.term = "remote", .limit = 17}));
+       forge::asio::blocking::run(runtime, search->search(search_request{.term = "remote", .limit = 17}));
    BOOST_TEST(remote_response.value == "remote:17");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_connection_cancellation_unblocks_serial_request_queue) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto started = std::make_shared<std::atomic<bool>>(false);
+   auto owner_canceled = std::make_shared<std::atomic<bool>>(false);
+   auto router = forge::net::http::router{};
+   router.get("/wait", [started, owner_canceled](route_context& context) -> boost::asio::awaitable<response> {
+      started->store(true);
+      auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+      timer.expires_after(std::chrono::seconds{2});
+      auto error = boost::system::error_code{};
+      co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+      if (error == boost::asio::error::operation_aborted) {
+         owner_canceled->store(true);
+      }
+      co_return make_text_response(context.request, status::ok, "late");
+   });
+   router.get("/ready", [](route_context& context) -> boost::asio::awaitable<response> {
+      co_return make_text_response(context.request, status::ok, "ready");
+   });
+
+   auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+   auto connection = forge::net::http::connection{
+       runtime, parse_base_url("http://127.0.0.1:" + std::to_string(wait_for_port(server)))};
+
+   auto cancellation = boost::asio::cancellation_signal{};
+   auto waiting =
+       boost::asio::co_spawn(runtime.context(), connection.async_request(make_request(method::get, "/wait")),
+                             boost::asio::bind_cancellation_slot(cancellation.slot(), boost::asio::use_future));
+   const auto start_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+   while (!started->load() && std::chrono::steady_clock::now() < start_deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+   }
+   BOOST_REQUIRE(started->load());
+
+   cancellation.emit(boost::asio::cancellation_type::terminal);
+   BOOST_REQUIRE(waiting.wait_for(std::chrono::seconds{1}) == std::future_status::ready);
+   BOOST_CHECK_THROW(static_cast<void>(waiting.get()), forge::asio::exceptions::canceled);
+   const auto cancel_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+   while (!owner_canceled->load() && std::chrono::steady_clock::now() < cancel_deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+   }
+   BOOST_REQUIRE(owner_canceled->load());
+
+   const auto ready = forge::asio::blocking::run(
+       runtime, connection.async_request(make_request(method::get, "/ready"),
+                                         request_options{.timeout = std::chrono::milliseconds{500}}));
+   BOOST_TEST(ready.result() == status::ok);
+   BOOST_TEST(ready.body() == "ready");
+   BOOST_TEST(connection.metrics().cancellations >= 1U);
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_connection_timeout_is_reported_as_typed_exception) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto owner_canceled = std::make_shared<std::atomic<bool>>(false);
+   auto router = forge::net::http::router{};
+   router.get("/slow", [owner_canceled](route_context& context) -> boost::asio::awaitable<response> {
+      auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+      timer.expires_after(std::chrono::milliseconds{100});
+      auto error = boost::system::error_code{};
+      co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+      if (error == boost::asio::error::operation_aborted) {
+         owner_canceled->store(true);
+      }
+      co_return make_text_response(context.request, status::ok, "late");
+   });
+   router.get("/ready", [](route_context& context) -> boost::asio::awaitable<response> {
+      co_return make_text_response(context.request, status::ok, "ready");
+   });
+
+   auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+   auto connection = forge::net::http::connection{
+       runtime, parse_base_url("http://127.0.0.1:" + std::to_string(wait_for_port(server)))};
+
+   BOOST_CHECK_THROW(forge::asio::blocking::run(
+                         runtime, connection.async_request(make_request(method::get, "/slow"),
+                                                           request_options{.timeout = std::chrono::milliseconds{10}})),
+                     forge::net::http::exceptions::gateway_timeout);
+   BOOST_TEST(connection.metrics().timeouts >= 1U);
+   const auto cancel_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+   while (!owner_canceled->load() && std::chrono::steady_clock::now() < cancel_deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+   }
+   BOOST_REQUIRE(owner_canceled->load());
+
+   const auto ready = forge::asio::blocking::run(
+       runtime, connection.async_request(make_request(method::get, "/ready"),
+                                         request_options{.timeout = std::chrono::seconds{1}}));
+   BOOST_TEST(ready.result() == status::ok);
+   BOOST_TEST(ready.body() == "ready");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_connection_deadline_expires_while_request_is_queued) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto started = std::make_shared<std::atomic<bool>>(false);
+   auto router = forge::net::http::router{};
+   router.get("/wait", [started](route_context& context) -> boost::asio::awaitable<response> {
+      started->store(true);
+      auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+      timer.expires_after(std::chrono::seconds{2});
+      co_await timer.async_wait(boost::asio::use_awaitable);
+      co_return make_text_response(context.request, status::ok, "late");
+   });
+   router.get("/ready", [](route_context& context) -> boost::asio::awaitable<response> {
+      co_return make_text_response(context.request, status::ok, "ready");
+   });
+
+   auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+   auto connection = forge::net::http::connection{
+       runtime, parse_base_url("http://127.0.0.1:" + std::to_string(wait_for_port(server)))};
+
+   auto cancellation = boost::asio::cancellation_signal{};
+   auto first =
+       boost::asio::co_spawn(runtime.context(), connection.async_request(make_request(method::get, "/wait")),
+                             boost::asio::bind_cancellation_slot(cancellation.slot(), boost::asio::use_future));
+   const auto start_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+   while (!started->load() && std::chrono::steady_clock::now() < start_deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+   }
+   BOOST_REQUIRE(started->load());
+
+   const auto queued_at = std::chrono::steady_clock::now();
+   BOOST_CHECK_THROW(forge::asio::blocking::run(
+                         runtime, connection.async_request(make_request(method::get, "/ready"),
+                                                           request_options{.timeout = std::chrono::milliseconds{20}})),
+                     forge::net::http::exceptions::gateway_timeout);
+   const auto queued_milliseconds =
+       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - queued_at).count();
+   BOOST_TEST(queued_milliseconds < 250);
+
+   cancellation.emit(boost::asio::cancellation_type::all);
+   BOOST_REQUIRE(first.wait_for(std::chrono::seconds{1}) == std::future_status::ready);
+   BOOST_CHECK_THROW(static_cast<void>(first.get()), forge::asio::exceptions::canceled);
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_connection_cancellation_interrupts_tls_handshake) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto acceptor = std::make_shared<tcp::acceptor>(runtime.context(), tcp::endpoint{tcp::v4(), 0});
+   auto accepted = std::make_shared<std::atomic<bool>>(false);
+   auto release =
+       std::make_shared<boost::asio::steady_timer>(runtime.context(), (std::chrono::steady_clock::time_point::max)());
+   boost::asio::co_spawn(
+       runtime.context(),
+       [acceptor, accepted, release]() -> boost::asio::awaitable<void> {
+          auto socket = co_await acceptor->async_accept(boost::asio::use_awaitable);
+          accepted->store(true);
+          auto ignored = boost::system::error_code{};
+          co_await release->async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, ignored));
+          socket.close(ignored);
+       },
+       boost::asio::detached);
+
+   auto connection = forge::net::http::connection{
+       runtime, parse_base_url("https://127.0.0.1:" + std::to_string(acceptor->local_endpoint().port()))};
+   auto cancellation = boost::asio::cancellation_signal{};
+   auto pending =
+       boost::asio::co_spawn(runtime.context(),
+                             connection.async_request(make_request(method::get, "/wait"),
+                                                      request_options{.timeout = std::chrono::seconds{10}}),
+                             boost::asio::bind_cancellation_slot(cancellation.slot(), boost::asio::use_future));
+
+   const auto accept_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+   while (!accepted->load() && std::chrono::steady_clock::now() < accept_deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+   }
+   BOOST_REQUIRE(accepted->load());
+
+   cancellation.emit(boost::asio::cancellation_type::terminal);
+   BOOST_REQUIRE(pending.wait_for(std::chrono::seconds{1}) == std::future_status::ready);
+   BOOST_CHECK_THROW(static_cast<void>(pending.get()), forge::asio::exceptions::canceled);
+
+   release->cancel();
+   auto ignored = boost::system::error_code{};
+   acceptor->close(ignored);
+}
+
+BOOST_AUTO_TEST_CASE(http_connection_streaming_failures_use_typed_exceptions) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto router = forge::net::http::router{};
+   router.post_stream("/upload", [](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      static_cast<void>(co_await request_value.body.async_read_all());
+      co_return stream_response::buffered(response{status::ok, request_value.context.request.version()});
+   });
+   router.get_stream("/slow-stream", [](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      auto first = std::make_shared<bool>(true);
+      auto reply = response{status::ok, request_value.context.request.version()};
+      co_return stream_response{
+          .head = std::move(reply),
+          .body = [first]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
+             if (!*first) {
+                co_return std::nullopt;
+             }
+             *first = false;
+             auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+             timer.expires_after(std::chrono::milliseconds{100});
+             co_await timer.async_wait(boost::asio::use_awaitable);
+             co_return make_body_chunk("late");
+          },
+      };
+   });
+
+   auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+   auto connection = forge::net::http::connection{
+       runtime, parse_base_url("http://127.0.0.1:" + std::to_string(wait_for_port(server)))};
+
+   auto standard_request = make_request(method::post, "/upload");
+   BOOST_CHECK_THROW(forge::asio::blocking::run(
+                         runtime, connection.async_streaming_request(std::move(standard_request),
+                                                                     body_reader{std::make_shared<failing_body_source>(
+                                                                         failing_body_source::failure::standard)})),
+                     forge::net::http::exceptions::internal);
+
+   auto typed_request = make_request(method::post, "/upload");
+   BOOST_CHECK_THROW(forge::asio::blocking::run(
+                         runtime, connection.async_streaming_request(std::move(typed_request),
+                                                                     body_reader{std::make_shared<failing_body_source>(
+                                                                         failing_body_source::failure::typed)})),
+                     forge::net::http::exceptions::bad_request);
+
+   auto streamed = forge::asio::blocking::run(
+       runtime, connection.async_stream_request(make_request(method::get, "/slow-stream"),
+                                                request_options{.timeout = std::chrono::milliseconds{10}}));
+   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime, streamed.body.async_read()),
+                     forge::net::http::exceptions::gateway_timeout);
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_connection_streaming_upload_uses_one_absolute_deadline) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto router = forge::net::http::router{};
+   router.post_stream("/upload", [](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      static_cast<void>(co_await request_value.body.async_read_all());
+      co_return stream_response::buffered(response{status::ok, request_value.context.request.version()});
+   });
+
+   auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+   auto connection = forge::net::http::connection{
+       runtime, parse_base_url("http://127.0.0.1:" + std::to_string(wait_for_port(server)))};
+
+   auto request_value = make_request(method::post, "/upload");
+   auto source = std::make_shared<delayed_body_source>(std::vector<std::string>{"a", "b", "c", "d"},
+                                                       std::chrono::milliseconds{25});
+   BOOST_CHECK_THROW(
+       forge::asio::blocking::run(
+           runtime, connection.async_streaming_request(std::move(request_value), body_reader{std::move(source)},
+                                                       request_options{.timeout = std::chrono::milliseconds{40}})),
+       forge::net::http::exceptions::gateway_timeout);
 
    server.stop();
 }
@@ -2441,7 +3137,10 @@ BOOST_AUTO_TEST_CASE(http_typed_proxy_sends_default_mapped_header_fields) {
    apis.install<default_header_api>(default_header_api::describe(), std::make_shared<default_header_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<default_header_api>().build();
+   auto binding = forge::api::http::binding()
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .bind<default_header_api>()
+                      .build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -2451,11 +3150,10 @@ BOOST_AUTO_TEST_CASE(http_typed_proxy_sends_default_mapped_header_fields) {
    auto headers = forge::asio::blocking::run(runtime, forge::api::http::remote<default_header_api>(client));
 
    const auto response = forge::asio::blocking::run(
-      runtime,
-      headers->echo(default_header_request{
-         .request_id = forge::api::http::header<std::string>{.value = "trace-123", .present = true},
-         .body = forge::api::http::body_stream{make_body_reader({"payload"})},
-      }));
+       runtime, headers->echo(default_header_request{
+                    .request_id = forge::api::http::header<std::string>{.value = "trace-123", .present = true},
+                    .body = forge::api::http::body_stream{make_body_reader({"payload"})},
+                }));
 
    BOOST_TEST(response.present);
    BOOST_TEST(response.request_id == "trace-123");
@@ -2470,7 +3168,8 @@ BOOST_AUTO_TEST_CASE(http_dto_parameters_bind_query_header_cookie_and_body) {
    apis.install<dto_api_http>(dto_api_http::describe(), std::make_shared<dto_http_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<dto_api_http>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<dto_api_http>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -2480,18 +3179,17 @@ BOOST_AUTO_TEST_CASE(http_dto_parameters_bind_query_header_cookie_and_body) {
    auto api = forge::asio::blocking::run(runtime, forge::api::http::remote<dto_api_http>(client));
 
    const auto response = forge::asio::blocking::run(
-      runtime,
-      api->write(dto_http_request{
-         .ref = "chunk-1",
-         .limit = forge::api::http::query<std::uint32_t>{.value = 9, .present = true},
-         .request_id = forge::api::http::header<std::string>{.value = "trace-123", .present = true},
-         .session = forge::api::http::cookie<std::string>{.value = "session-7", .present = true},
-         .payload =
-            forge::api::http::body<positional_body_payload>{
-               .value = positional_body_payload{.value = "payload"},
-               .present = true,
-            },
-      }));
+       runtime, api->write(dto_http_request{
+                    .ref = "chunk-1",
+                    .limit = forge::api::http::query<std::uint32_t>{.value = 9, .present = true},
+                    .request_id = forge::api::http::header<std::string>{.value = "trace-123", .present = true},
+                    .session = forge::api::http::cookie<std::string>{.value = "session-7", .present = true},
+                    .payload =
+                        forge::api::http::body<positional_body_payload>{
+                            .value = positional_body_payload{.value = "payload"},
+                            .present = true,
+                        },
+                }));
 
    BOOST_TEST(response.summary == "chunk-1:9:trace-123:session-7:payload");
 
@@ -2504,7 +3202,8 @@ BOOST_AUTO_TEST_CASE(http_typed_proxy_sends_delete_json_body) {
    apis.install<delete_body_api>(delete_body_api::describe(), std::make_shared<delete_body_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<delete_body_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<delete_body_api>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -2513,16 +3212,15 @@ BOOST_AUTO_TEST_CASE(http_typed_proxy_sends_delete_json_body) {
    auto client = forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
    auto api = forge::asio::blocking::run(runtime, forge::api::http::remote<delete_body_api>(client));
 
-   const auto response = forge::asio::blocking::run(
-      runtime,
-      api->remove(delete_body_request{
-         .ref = "chunk-1",
-         .payload =
-            forge::api::http::body<positional_body_payload>{
-               .value = positional_body_payload{.value = "payload"},
-               .present = true,
-            },
-      }));
+   const auto response =
+       forge::asio::blocking::run(runtime, api->remove(delete_body_request{
+                                               .ref = "chunk-1",
+                                               .payload =
+                                                   forge::api::http::body<positional_body_payload>{
+                                                       .value = positional_body_payload{.value = "payload"},
+                                                       .present = true,
+                                                   },
+                                           }));
 
    BOOST_TEST(response.value == "chunk-1:payload");
 
@@ -2535,7 +3233,8 @@ BOOST_AUTO_TEST_CASE(http_typed_proxy_keeps_path_only_delete_bodyless) {
    apis.install<delete_path_api>(delete_path_api::describe(), std::make_shared<delete_path_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<delete_path_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<delete_path_api>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -2547,9 +3246,7 @@ BOOST_AUTO_TEST_CASE(http_typed_proxy_keeps_path_only_delete_bodyless) {
    auto request = delete_path_request{};
    request.collection = "cache";
    request.key = "chunk-1";
-   const auto response = forge::asio::blocking::run(
-      runtime,
-      api->remove(std::move(request)));
+   const auto response = forge::asio::blocking::run(runtime, api->remove(std::move(request)));
 
    BOOST_TEST(response.value == "cache:chunk-1:bodyless");
 
@@ -2562,7 +3259,10 @@ BOOST_AUTO_TEST_CASE(http_delete_stream_body_route_mounts_and_reads_body) {
    apis.install<delete_stream_api>(delete_stream_api::describe(), std::make_shared<delete_stream_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<delete_stream_api>().build();
+   auto binding = forge::api::http::binding()
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .bind<delete_stream_api>()
+                      .build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -2571,12 +3271,11 @@ BOOST_AUTO_TEST_CASE(http_delete_stream_body_route_mounts_and_reads_body) {
    auto client = forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
    auto api = forge::asio::blocking::run(runtime, forge::api::http::remote<delete_stream_api>(client));
 
-   auto response = forge::asio::blocking::run(
-      runtime,
-      api->remove(delete_stream_request{
-         .ref = "chunk-stream",
-         .body = forge::api::http::body_stream{make_body_reader({"pay", "load"})},
-      }));
+   auto response =
+       forge::asio::blocking::run(runtime, api->remove(delete_stream_request{
+                                               .ref = "chunk-stream",
+                                               .body = forge::api::http::body_stream{make_body_reader({"pay", "load"})},
+                                           }));
 
    BOOST_TEST(response.value == "chunk-stream:payload");
 
@@ -2592,15 +3291,16 @@ BOOST_AUTO_TEST_CASE(http_endpoint_request_injects_request_and_response_state) {
    apis.install<endpoint_api>(endpoint_api::describe(), std::make_shared<endpoint_api_impl>(directory.path()));
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<endpoint_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<endpoint_api>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
    server.start();
 
    auto connection = forge::net::http::connection{
-      runtime,
-      parse_base_url("http://127.0.0.1:" + std::to_string(server.port())),
+       runtime,
+       parse_base_url("http://127.0.0.1:" + std::to_string(server.port())),
    };
 
    auto current_request = make_request(method::get, "/endpoint/abc");
@@ -2612,17 +3312,18 @@ BOOST_AUTO_TEST_CASE(http_endpoint_request_injects_request_and_response_state) {
    BOOST_TEST(current["X-Endpoint-Id"] == "abc");
    BOOST_TEST(current["Set-Cookie"].find("endpoint=abc") != std::string::npos);
 
-   auto file = forge::asio::blocking::run(runtime, connection.async_request(make_request(method::get, "/endpoint/abc/file")));
+   auto file =
+       forge::asio::blocking::run(runtime, connection.async_request(make_request(method::get, "/endpoint/abc/file")));
    BOOST_TEST(file.body() == "file-body");
    BOOST_TEST(file["X-Endpoint-File"] == "abc");
 
-   auto stream = forge::asio::blocking::run(runtime, connection.async_request(make_request(method::get, "/endpoint/abc/stream")));
+   auto stream =
+       forge::asio::blocking::run(runtime, connection.async_request(make_request(method::get, "/endpoint/abc/stream")));
    BOOST_TEST(stream.body() == "stream:abc");
    BOOST_TEST(stream["X-Endpoint-Stream"] == "abc");
    const auto stream_headers = stream.headers();
-   const auto stream_cookies = std::count_if(stream_headers.begin(), stream_headers.end(), [](const header_entry& header) {
-      return header.name == "Set-Cookie";
-   });
+   const auto stream_cookies = std::count_if(stream_headers.begin(), stream_headers.end(),
+                                             [](const header_entry& header) { return header.name == "Set-Cookie"; });
    BOOST_TEST(stream_cookies == 2);
    BOOST_TEST(std::any_of(stream_headers.begin(), stream_headers.end(), [](const header_entry& header) {
       return header.name == "Set-Cookie" && header.text == "endpoint=abc";
@@ -2631,10 +3332,14 @@ BOOST_AUTO_TEST_CASE(http_endpoint_request_injects_request_and_response_state) {
       return header.name == "Set-Cookie" && header.text == "stream=yes";
    }));
 
-   auto accepted =
-      forge::asio::blocking::run(runtime, connection.async_request(make_request(method::get, "/endpoint/abc/accepted")));
+   auto accepted = forge::asio::blocking::run(
+       runtime, connection.async_request(make_request(method::get, "/endpoint/abc/accepted")));
    BOOST_TEST(accepted.result() == status::accepted);
    BOOST_TEST(accepted["X-Endpoint-Empty"] == "abc");
+
+   auto mismatch = forge::asio::blocking::run(
+       runtime, connection.async_request(make_request(method::get, "/endpoint/status-mismatch")));
+   BOOST_TEST(mismatch.result() == status::internal_server_error);
 
    server.stop();
 }
@@ -2647,22 +3352,23 @@ BOOST_AUTO_TEST_CASE(http_endpoint_request_preserves_repeated_set_cookie_on_stre
    apis.install<endpoint_api>(endpoint_api::describe(), std::make_shared<endpoint_api_impl>(directory.path()));
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<endpoint_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<endpoint_api>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
    server.start();
 
    auto connection = forge::net::http::connection{
-      runtime,
-      parse_base_url("http://127.0.0.1:" + std::to_string(server.port())),
+       runtime,
+       parse_base_url("http://127.0.0.1:" + std::to_string(server.port())),
    };
-   auto stream = forge::asio::blocking::run(runtime, connection.async_request(make_request(method::get, "/endpoint/abc/stream")));
+   auto stream =
+       forge::asio::blocking::run(runtime, connection.async_request(make_request(method::get, "/endpoint/abc/stream")));
    const auto headers = stream.headers();
 
-   BOOST_TEST(std::count_if(headers.begin(), headers.end(), [](const header_entry& header) {
-                 return header.name == "Set-Cookie";
-              }) == 2);
+   BOOST_TEST(std::count_if(headers.begin(), headers.end(),
+                            [](const header_entry& header) { return header.name == "Set-Cookie"; }) == 2);
    BOOST_TEST(std::any_of(headers.begin(), headers.end(), [](const header_entry& header) {
       return header.name == "Set-Cookie" && header.text == "endpoint=abc";
    }));
@@ -2679,16 +3385,18 @@ BOOST_AUTO_TEST_CASE(http_stream_path_buffered_response_merges_endpoint_headers_
    apis.install<stream_buffered_api>(stream_buffered_api::describe(), std::make_shared<stream_buffered_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding =
-      forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<stream_buffered_api>().build();
+   auto binding = forge::api::http::binding()
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .bind<stream_buffered_api>()
+                      .build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
    server.start();
 
    auto connection = forge::net::http::connection{
-      runtime,
-      parse_base_url("http://127.0.0.1:" + std::to_string(server.port())),
+       runtime,
+       parse_base_url("http://127.0.0.1:" + std::to_string(server.port())),
    };
    auto request = make_request(method::put, "/stream-buffered/abc");
    request.body() = "payload";
@@ -2698,9 +3406,8 @@ BOOST_AUTO_TEST_CASE(http_stream_path_buffered_response_merges_endpoint_headers_
    auto response_value = forge::asio::blocking::run(runtime, connection.async_request(std::move(request)));
    const auto headers = response_value.headers();
 
-   BOOST_TEST(std::count_if(headers.begin(), headers.end(), [](const header_entry& header) {
-                 return header.name == "Set-Cookie";
-              }) == 2);
+   BOOST_TEST(std::count_if(headers.begin(), headers.end(),
+                            [](const header_entry& header) { return header.name == "Set-Cookie"; }) == 2);
    BOOST_TEST(std::any_of(headers.begin(), headers.end(), [](const header_entry& header) {
       return header.name == "Set-Cookie" && header.text == "endpoint=abc";
    }));
@@ -2725,7 +3432,7 @@ BOOST_AUTO_TEST_CASE(http_fallback_proxy_supports_positional_methods_in_mixed_ap
 
    auto router = forge::net::http::router{};
    auto binding =
-      forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<mixed_proxy_api>().build();
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<mixed_proxy_api>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -2746,7 +3453,8 @@ BOOST_AUTO_TEST_CASE(http_dto_body_bytes_roundtrips) {
    apis.install<dto_api_http>(dto_api_http::describe(), std::make_shared<dto_http_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<dto_api_http>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<dto_api_http>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -2758,12 +3466,11 @@ BOOST_AUTO_TEST_CASE(http_dto_body_bytes_roundtrips) {
    const auto text = std::string{"raw-payload"};
    auto bytes = std::vector<std::byte>(text.size());
    std::memcpy(bytes.data(), text.data(), text.size());
-   const auto response = forge::asio::blocking::run(
-      runtime,
-      api->write_bytes(dto_bytes_request{
-         .ref = "chunk-bytes",
-         .bytes = forge::api::http::body_bytes{.bytes = std::move(bytes)},
-      }));
+   const auto response =
+       forge::asio::blocking::run(runtime, api->write_bytes(dto_bytes_request{
+                                               .ref = "chunk-bytes",
+                                               .bytes = forge::api::http::body_bytes{.bytes = std::move(bytes)},
+                                           }));
 
    BOOST_TEST(response.summary == "chunk-bytes:raw-payload");
 
@@ -2776,7 +3483,8 @@ BOOST_AUTO_TEST_CASE(http_dto_multipart_form_and_upload_roundtrips) {
    apis.install<dto_api_http>(dto_api_http::describe(), std::make_shared<dto_http_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<dto_api_http>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<dto_api_http>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -2786,23 +3494,22 @@ BOOST_AUTO_TEST_CASE(http_dto_multipart_form_and_upload_roundtrips) {
    auto file_bytes = std::vector<std::byte>(file_text.size());
    std::memcpy(file_bytes.data(), file_text.data(), file_text.size());
    auto part = forge::net::http::upload_part{
-      .name = "file",
-      .filename = "demo.txt",
-      .content_type = "text/plain",
-      .memory = std::move(file_bytes),
-      .size = static_cast<std::uint64_t>(file_text.size()),
+       .name = "file",
+       .filename = "demo.txt",
+       .content_type = "text/plain",
+       .memory = std::move(file_bytes),
+       .size = static_cast<std::uint64_t>(file_text.size()),
    };
 
    auto client = forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
    auto api = forge::asio::blocking::run(runtime, forge::api::http::remote<dto_api_http>(client));
 
    const auto response = forge::asio::blocking::run(
-      runtime,
-      api->upload(dto_multipart_request{
-         .category = forge::api::http::form<std::string>{.value = "images", .present = true},
-         .count = forge::api::http::form_field<std::uint32_t>{.value = 2, .present = true},
-         .file = forge::api::http::upload_file{std::move(part)},
-      }));
+       runtime, api->upload(dto_multipart_request{
+                    .category = forge::api::http::form<std::string>{.value = "images", .present = true},
+                    .count = forge::api::http::form_field<std::uint32_t>{.value = 2, .present = true},
+                    .file = forge::api::http::upload_file{std::move(part)},
+                }));
 
    BOOST_TEST(response.summary == "images:2:demo.txt:file-content");
 
@@ -2815,7 +3522,8 @@ BOOST_AUTO_TEST_CASE(http_dto_body_field_reports_schema_errors) {
    apis.install<dto_api_http>(dto_api_http::describe(), std::make_shared<dto_http_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<dto_api_http>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<dto_api_http>().build();
    router.mount(binding);
 
    auto request = make_request(method::post, "/dto/chunk-invalid?limit=7");
@@ -2841,18 +3549,16 @@ BOOST_AUTO_TEST_CASE(http_dto_rejects_multiple_body_sources) {
    std::memcpy(bytes.data(), text.data(), text.size());
 
    BOOST_CHECK_THROW(
-      forge::asio::blocking::run(
-         runtime,
-         api->write(dto_ambiguous_body_request{
-            .ref = "chunk-1",
-            .payload =
-               forge::api::http::body<positional_body_payload>{
-                  .value = positional_body_payload{.value = "json-payload"},
-                  .present = true,
-               },
-            .bytes = forge::api::http::body_bytes{.bytes = std::move(bytes)},
-         })),
-      forge::net::http::exceptions::bad_request);
+       forge::asio::blocking::run(runtime, api->write(dto_ambiguous_body_request{
+                                               .ref = "chunk-1",
+                                               .payload =
+                                                   forge::api::http::body<positional_body_payload>{
+                                                       .value = positional_body_payload{.value = "json-payload"},
+                                                       .present = true,
+                                                   },
+                                               .bytes = forge::api::http::body_bytes{.bytes = std::move(bytes)},
+                                           })),
+       forge::net::http::exceptions::bad_request);
 }
 
 BOOST_AUTO_TEST_CASE(http_positional_api_rejects_http_parameter_wrappers) {
@@ -2861,7 +3567,10 @@ BOOST_AUTO_TEST_CASE(http_positional_api_rejects_http_parameter_wrappers) {
    apis.install<positional_api_http>(positional_api_http::describe(), std::make_shared<positional_http_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<positional_api_http>().build();
+   auto binding = forge::api::http::binding()
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .bind<positional_api_http>()
+                      .build();
 
    BOOST_CHECK_THROW(router.mount(binding), forge::net::http::exceptions::bad_request);
 }
@@ -2872,7 +3581,10 @@ BOOST_AUTO_TEST_CASE(http_positional_body_wrapper_is_rejected) {
    apis.install<positional_body_api>(positional_body_api::describe(), std::make_shared<positional_body_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<positional_body_api>().build();
+   auto binding = forge::api::http::binding()
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .bind<positional_body_api>()
+                      .build();
 
    BOOST_CHECK_THROW(router.mount(binding), forge::net::http::exceptions::bad_request);
 }
@@ -2884,8 +3596,10 @@ BOOST_AUTO_TEST_CASE(http_positional_stream_wrapper_is_rejected) {
                                        std::make_shared<positional_stream_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding =
-      forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<positional_stream_api>().build();
+   auto binding = forge::api::http::binding()
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .bind<positional_stream_api>()
+                      .build();
 
    BOOST_CHECK_THROW(router.mount(binding), forge::net::http::exceptions::bad_request);
 }
@@ -2895,11 +3609,9 @@ BOOST_AUTO_TEST_CASE(http_positional_client_rejects_http_parameter_wrappers) {
    auto client = forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:9")};
    auto api = forge::asio::blocking::run(runtime, forge::api::http::remote<positional_stream_api>(client));
 
-   BOOST_CHECK_THROW(
-      forge::asio::blocking::run(
-         runtime,
-         api->write("chunk-3", forge::api::http::body_stream{make_body_reader({"payload"})})),
-      forge::net::http::exceptions::bad_request);
+   BOOST_CHECK_THROW(forge::asio::blocking::run(
+                         runtime, api->write("chunk-3", forge::api::http::body_stream{make_body_reader({"payload"})})),
+                     forge::net::http::exceptions::bad_request);
 }
 
 BOOST_AUTO_TEST_CASE(http_positional_unconsumed_scalar_body_is_rejected) {
@@ -2909,8 +3621,10 @@ BOOST_AUTO_TEST_CASE(http_positional_unconsumed_scalar_body_is_rejected) {
                                             std::make_shared<positional_scalar_body_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding =
-      forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<positional_scalar_body_api>().build();
+   auto binding = forge::api::http::binding()
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .bind<positional_scalar_body_api>()
+                      .build();
 
    BOOST_CHECK_THROW(router.mount(binding), forge::net::http::exceptions::bad_request);
 }
@@ -2922,8 +3636,10 @@ BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_roundtrips_without_body_w
                                            std::make_shared<positional_plain_body_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding =
-      forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<positional_plain_body_api>().build();
+   auto binding = forge::api::http::binding()
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .bind<positional_plain_body_api>()
+                      .build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -2932,9 +3648,8 @@ BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_roundtrips_without_body_w
    auto client = forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
    auto api = forge::asio::blocking::run(runtime, forge::api::http::remote<positional_plain_body_api>(client));
 
-   const auto response = forge::asio::blocking::run(
-      runtime,
-      api->write("chunk-plain", positional_body_payload{.value = "payload"}));
+   const auto response =
+       forge::asio::blocking::run(runtime, api->write("chunk-plain", positional_body_payload{.value = "payload"}));
 
    BOOST_TEST(response.summary == "chunk-plain:payload");
 
@@ -2948,8 +3663,10 @@ BOOST_AUTO_TEST_CASE(http_positional_stream_response_decodes_ordinary_dto_body) 
                                                std::make_shared<positional_streaming_body_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding =
-      forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<positional_streaming_body_api>().build();
+   auto binding = forge::api::http::binding()
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .bind<positional_streaming_body_api>()
+                      .build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -2958,9 +3675,8 @@ BOOST_AUTO_TEST_CASE(http_positional_stream_response_decodes_ordinary_dto_body) 
    auto client = forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
    auto api = forge::asio::blocking::run(runtime, forge::api::http::remote<positional_streaming_body_api>(client));
 
-   auto response = forge::asio::blocking::run(
-      runtime,
-      api->write("chunk-stream", positional_body_payload{.value = "payload"}));
+   auto response =
+       forge::asio::blocking::run(runtime, api->write("chunk-stream", positional_body_payload{.value = "payload"}));
    auto text = forge::asio::blocking::run(runtime, response.body().async_read_all());
 
    BOOST_TEST(response.status_code() == status::ok);
@@ -2977,8 +3693,10 @@ BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_rejects_multiple_candidat
                                                std::make_shared<positional_ambiguous_body_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding =
-      forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<positional_ambiguous_body_api>().build();
+   auto binding = forge::api::http::binding()
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .bind<positional_ambiguous_body_api>()
+                      .build();
 
    BOOST_CHECK_THROW(router.mount(binding), forge::net::http::exceptions::bad_request);
 }
@@ -2990,8 +3708,10 @@ BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_reports_schema_errors) {
                                            std::make_shared<positional_plain_body_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding =
-      forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<positional_plain_body_api>().build();
+   auto binding = forge::api::http::binding()
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .bind<positional_plain_body_api>()
+                      .build();
    router.mount(binding);
 
    auto request = make_request(method::post, "/plain/chunk-invalid");
@@ -3015,8 +3735,10 @@ BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_rejects_route_disagreemen
                                              std::make_shared<positional_checked_body_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding =
-      forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<positional_checked_body_api>().build();
+   auto binding = forge::api::http::binding()
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .bind<positional_checked_body_api>()
+                      .build();
    router.mount(binding);
 
    auto request = make_request(method::post, "/checked/route-ref");
@@ -3035,17 +3757,16 @@ BOOST_AUTO_TEST_CASE(http_positional_ordinary_dto_body_rejects_route_disagreemen
 
 BOOST_AUTO_TEST_CASE(http_parameter_wrappers_reject_generic_raw_serialization) {
    BOOST_CHECK_THROW(
-      (void)forge::api::core::pack_body(forge::api::http::query<std::uint32_t>{.value = 7, .present = true}),
-      forge::api::core::exceptions::protocol_error);
+       (void)forge::api::core::pack_body(forge::api::http::query<std::uint32_t>{.value = 7, .present = true}),
+       forge::api::core::exceptions::protocol_error);
    BOOST_CHECK_THROW(
-      (void)forge::api::core::pack_body(forge::api::http::header<std::string>{.value = "trace", .present = true}),
-      forge::api::core::exceptions::protocol_error);
-   BOOST_CHECK_THROW(
-      (void)forge::api::core::pack_body(forge::api::http::body<positional_body_payload>{
-         .value = positional_body_payload{.value = "payload"},
-         .present = true,
-      }),
-      forge::api::core::exceptions::protocol_error);
+       (void)forge::api::core::pack_body(forge::api::http::header<std::string>{.value = "trace", .present = true}),
+       forge::api::core::exceptions::protocol_error);
+   BOOST_CHECK_THROW((void)forge::api::core::pack_body(forge::api::http::body<positional_body_payload>{
+                         .value = positional_body_payload{.value = "payload"},
+                         .present = true,
+                     }),
+                     forge::api::core::exceptions::protocol_error);
 }
 
 BOOST_AUTO_TEST_CASE(http_api_validates_schema_after_route_and_query_binding) {
@@ -3054,7 +3775,8 @@ BOOST_AUTO_TEST_CASE(http_api_validates_schema_after_route_and_query_binding) {
    apis.install<search_api>(search_api::describe(), std::make_shared<search_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<search_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<search_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::get, "/search/cache?page_size=0");
@@ -3082,7 +3804,8 @@ BOOST_AUTO_TEST_CASE(http_api_macro_put_rejects_body_route_disagreement) {
    apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<macro_cache>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<macro_cache>().build();
    router.mount(binding);
 
    auto request = make_request(method::put, "/cache/chunks/abc");
@@ -3105,7 +3828,8 @@ BOOST_AUTO_TEST_CASE(http_api_macro_put_rejects_unsupported_media_type) {
    apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<macro_cache>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<macro_cache>().build();
    router.mount(binding);
 
    auto request = make_request(method::put, "/cache/chunks/abc");
@@ -3137,7 +3861,8 @@ BOOST_AUTO_TEST_CASE(http_api_macro_put_uses_default_json_codec_without_content_
    apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<macro_cache>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<macro_cache>().build();
    router.mount(binding);
 
    auto request = make_request(method::put, "/cache/chunks/abc");
@@ -3162,7 +3887,8 @@ BOOST_AUTO_TEST_CASE(http_api_macro_put_reports_invalid_json_as_validation_error
    apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<macro_cache>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<macro_cache>().build();
    router.mount(binding);
 
    auto request = make_request(method::put, "/cache/chunks/abc");
@@ -3186,7 +3912,8 @@ BOOST_AUTO_TEST_CASE(http_api_xml_request_and_response_body_roundtrip) {
    apis.install<xml_cache_api>(xml_cache_api::describe(), std::make_shared<xml_cache_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::put, "/xml/cache/chunks/abc");
@@ -3213,7 +3940,8 @@ BOOST_AUTO_TEST_CASE(http_api_xml_error_body_uses_route_error_codec) {
    apis.install<xml_cache_api>(xml_cache_api::describe(), std::make_shared<xml_cache_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::put, "/xml/cache/chunks/abc");
@@ -3239,7 +3967,8 @@ BOOST_AUTO_TEST_CASE(http_api_request_content_type_rejects_wildcard_media_range)
    apis.install<xml_cache_api>(xml_cache_api::describe(), std::make_shared<xml_cache_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::put, "/xml/cache/chunks/abc");
@@ -3265,7 +3994,8 @@ BOOST_AUTO_TEST_CASE(http_api_xml_route_rejects_unacceptable_accept) {
    apis.install<xml_cache_api>(xml_cache_api::describe(), std::make_shared<xml_cache_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::get, "/xml/cache/chunks/abc?offset=1&limit=2");
@@ -3289,7 +4019,8 @@ BOOST_AUTO_TEST_CASE(http_api_xml_route_rejects_specific_zero_quality_accept) {
    apis.install<xml_cache_api>(xml_cache_api::describe(), std::make_shared<xml_cache_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::get, "/xml/cache/chunks/abc?offset=1&limit=2");
@@ -3313,7 +4044,8 @@ BOOST_AUTO_TEST_CASE(http_api_xml_route_combines_repeated_accept_headers) {
    apis.install<xml_cache_api>(xml_cache_api::describe(), std::make_shared<xml_cache_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::get, "/xml/cache/chunks/abc?offset=1&limit=2");
@@ -3339,7 +4071,8 @@ BOOST_AUTO_TEST_CASE(http_api_xml_route_combines_repeated_accept_zero_quality_be
    apis.install<xml_cache_api>(xml_cache_api::describe(), std::make_shared<xml_cache_api_impl>(writes));
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::put, "/xml/cache/chunks/abc");
@@ -3369,7 +4102,8 @@ BOOST_AUTO_TEST_CASE(http_api_xml_route_negotiates_actual_response_media_type_be
    apis.install<xml_cache_api>(xml_cache_api::describe(), std::make_shared<xml_cache_api_impl>(writes));
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
    router.mount(binding);
 
    const auto exercise = [&](std::string_view accept) {
@@ -3403,7 +4137,8 @@ BOOST_AUTO_TEST_CASE(http_api_json_route_rejects_specific_zero_quality_accept) {
    apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<macro_cache>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<macro_cache>().build();
    router.mount(binding);
 
    auto request = make_request(method::get, "/cache/chunks/abc?offset=1&limit=2");
@@ -3425,7 +4160,8 @@ BOOST_AUTO_TEST_CASE(http_api_route_rejects_specific_family_zero_quality_accept)
    apis.install<xml_cache_api>(xml_cache_api::describe(), std::make_shared<xml_cache_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::get, "/xml/cache/chunks/abc?offset=1&limit=2");
@@ -3447,7 +4183,8 @@ BOOST_AUTO_TEST_CASE(http_api_rejects_unacceptable_accept_before_handler_invocat
    apis.install<xml_cache_api>(xml_cache_api::describe(), std::make_shared<xml_cache_api_impl>(writes));
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::put, "/xml/cache/chunks/abc");
@@ -3475,7 +4212,8 @@ BOOST_AUTO_TEST_CASE(typed_http_client_supports_xml_request_and_response_bodies)
    apis.install<xml_cache_api>(xml_cache_api::describe(), std::make_shared<xml_cache_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<xml_cache_api>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -3486,7 +4224,7 @@ BOOST_AUTO_TEST_CASE(typed_http_client_supports_xml_request_and_response_bodies)
    auto cache = forge::asio::blocking::run(runtime, forge::api::http::remote<xml_cache_api>(client));
 
    const auto response =
-      forge::asio::blocking::run(runtime, cache->write(macro_write_request{.ref = "abc", .bytes = "payload"}));
+       forge::asio::blocking::run(runtime, cache->write(macro_write_request{.ref = "abc", .bytes = "payload"}));
 
    BOOST_TEST(response.bytes == "abc:payload");
 
@@ -3504,33 +4242,34 @@ BOOST_AUTO_TEST_CASE(http_api_native_responses_bypass_xml_codec_options) {
    apis.install<object_api>(object_api::describe(), std::make_shared<object_api_impl>(files.path()));
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding()
-                     .use(forge::api::core::binding().serve(apis).build())
-                     .route<&control_api::bytes, control_request, forge::api::http::bytes_response>(
-                        forge::api::http::route_builder{method::get, "bytes", "/xml/native/:id/bytes", status::ok}
-                           .response_body_codec(forge::api::http::body_codec::xml)
-                           .build())
-                     .route<&control_api::accepted, control_request, forge::api::http::empty_response>(
-                        forge::api::http::route_builder{method::get, "accepted", "/xml/native/:id/accepted", status::ok}
-                           .response_body_codec(forge::api::http::body_codec::xml)
-                           .build())
-                     .route<&object_api::get_object, object_get_request, forge::net::http::file_response>(
-                        forge::api::http::route_builder{method::get,
-                                                        "get_object",
-                                                        "/xml/native/:collection/:key/file",
-                                                        status::ok}
-                           .response_file()
-                           .response_body_codec(forge::api::http::body_codec::xml)
-                           .build())
-                     .route<&object_api::stream_object, object_get_request, forge::net::http::streaming_response>(
-                        forge::api::http::route_builder{method::get,
-                                                        "stream_object",
-                                                        "/xml/native/:collection/:key/stream",
-                                                        status::ok}
-                           .response_stream()
-                           .response_body_codec(forge::api::http::body_codec::xml)
-                           .build())
-                     .build();
+   auto binding =
+       forge::api::http::binding()
+           .use(forge::api::core::binding().serve(apis).build())
+           .route<&control_api::bytes, control_request, forge::api::http::bytes_response>(
+               forge::api::http::route_builder{method::get, "bytes", "/xml/native/:id/bytes", status::ok}
+                   .response_body_codec(forge::api::http::body_codec::xml)
+                   .build())
+           .route<&control_api::accepted, control_request, forge::api::http::empty_response>(
+               forge::api::http::route_builder{method::get, "accepted", "/xml/native/:id/accepted", status::accepted}
+                   .response_body_codec(forge::api::http::body_codec::xml)
+                   .build())
+           .route<&control_api::accepted, control_request, forge::api::http::empty_response>(
+               forge::api::http::route_builder{method::get, "mismatched", "/xml/native/:id/mismatched", status::ok}
+                   .response_body_codec(forge::api::http::body_codec::xml)
+                   .build())
+           .route<&object_api::get_object, object_get_request, forge::net::http::file_response>(
+               forge::api::http::route_builder{method::get, "get_object", "/xml/native/:collection/:key/file",
+                                               status::ok}
+                   .response_file()
+                   .response_body_codec(forge::api::http::body_codec::xml)
+                   .build())
+           .route<&object_api::stream_object, object_get_request, forge::net::http::streaming_response>(
+               forge::api::http::route_builder{method::get, "stream_object", "/xml/native/:collection/:key/stream",
+                                               status::ok}
+                   .response_stream()
+                   .response_body_codec(forge::api::http::body_codec::xml)
+                   .build())
+           .build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -3547,10 +4286,27 @@ BOOST_AUTO_TEST_CASE(http_api_native_responses_bypass_xml_codec_options) {
    BOOST_TEST(empty.result_int() == static_cast<unsigned>(status::accepted));
    BOOST_TEST(empty.body().empty());
 
+   const auto mismatched = forge::asio::blocking::run(runtime, client.async_get("/xml/native/abc/mismatched"));
+   BOOST_TEST(mismatched.result_int() == static_cast<unsigned>(status::internal_server_error));
+
    const auto file = forge::asio::blocking::run(runtime, client.async_get("/xml/native/cache/chunk.bin/file"));
    BOOST_TEST(file.result_int() == static_cast<unsigned>(status::ok));
    BOOST_TEST(file[field::content_type] == "application/octet-stream");
    BOOST_TEST(file.body() == "file-payload");
+
+   const auto body_file = forge::asio::blocking::run(runtime, client.async_get("/xml/native/cache/body.bin/file"));
+   BOOST_TEST(body_file.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(body_file.body() == "body-payload");
+
+   const auto mismatched_body =
+       forge::asio::blocking::run(runtime, client.async_get("/xml/native/cache/wrong-status.bin/file"));
+   BOOST_TEST(mismatched_body.result_int() == static_cast<unsigned>(status::internal_server_error));
+
+   const auto missing_file =
+       forge::asio::blocking::run(runtime, client.async_get("/xml/native/cache/missing.bin/file"));
+   BOOST_TEST(missing_file.result_int() == static_cast<unsigned>(status::not_found));
+   BOOST_TEST(missing_file[field::content_type].starts_with("text/plain"));
+   BOOST_TEST(missing_file.body() == "not found");
 
    const auto stream = forge::asio::blocking::run(runtime, client.async_get("/xml/native/cache/chunk.bin/stream"));
    BOOST_TEST(stream.result_int() == static_cast<unsigned>(status::ok));
@@ -3566,7 +4322,8 @@ BOOST_AUTO_TEST_CASE(typed_http_client_supports_handle_methods) {
    apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<macro_cache>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<macro_cache>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -3576,10 +4333,10 @@ BOOST_AUTO_TEST_CASE(typed_http_client_supports_handle_methods) {
    auto client = forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
 
    auto cache = forge::asio::blocking::run(runtime, forge::api::http::remote<macro_cache>(client));
-   auto chunk = forge::asio::blocking::run(
-      runtime, cache->read(macro_read_request{.ref = "abc", .offset = 3, .limit = 64}));
-   auto receipt = forge::asio::blocking::run(
-      runtime, cache->write(macro_write_request{.ref = "abc", .bytes = "payload"}));
+   auto chunk =
+       forge::asio::blocking::run(runtime, cache->read(macro_read_request{.ref = "abc", .offset = 3, .limit = 64}));
+   auto receipt =
+       forge::asio::blocking::run(runtime, cache->write(macro_write_request{.ref = "abc", .bytes = "payload"}));
 
    BOOST_TEST(chunk.bytes == "abc:3:64");
    BOOST_TEST(receipt.bytes == "abc:payload");
@@ -3593,7 +4350,8 @@ BOOST_AUTO_TEST_CASE(typed_http_client_supports_native_bytes_and_empty_responses
    apis.install<control_api>(control_api::describe(), std::make_shared<control_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<control_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<control_api>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -3610,6 +4368,9 @@ BOOST_AUTO_TEST_CASE(typed_http_client_supports_native_bytes_and_empty_responses
    BOOST_TEST(bytes.content_type == "application/control");
    BOOST_TEST(text == "bytes:abc");
 
+   auto accepted = forge::asio::blocking::run(runtime, control->accepted(control_request{.id = "abc"}));
+   BOOST_TEST(accepted.status_code == status::accepted);
+
    auto head = forge::asio::blocking::run(runtime, control->head(control_request{.id = "abc"}));
    BOOST_TEST(head.status_code == status::no_content);
 
@@ -3622,7 +4383,8 @@ BOOST_AUTO_TEST_CASE(http_empty_response_frames_keep_alive_body_capable_status) 
    apis.install<control_api>(control_api::describe(), std::make_shared<control_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<control_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<control_api>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -3633,11 +4395,10 @@ BOOST_AUTO_TEST_CASE(http_empty_response_frames_keep_alive_body_capable_status) 
    stream.expires_after(std::chrono::seconds{2});
    stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
 
-   asio::write(stream.socket(), asio::buffer(std::string{
-      "GET /controls/abc/accepted HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Connection: keep-alive\r\n"
-      "\r\n"}));
+   asio::write(stream.socket(), asio::buffer(std::string{"GET /controls/abc/accepted HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: keep-alive\r\n"
+                                                         "\r\n"}));
 
    auto buffer = beast::flat_buffer{};
    auto first_parser = beast_http::response_parser<beast_http::string_body>{};
@@ -3653,11 +4414,112 @@ BOOST_AUTO_TEST_CASE(http_empty_response_frames_keep_alive_body_capable_status) 
    BOOST_TEST(first["Content-Length"] == "0");
    BOOST_TEST(first["Content-Type"].empty());
 
-   asio::write(stream.socket(), asio::buffer(std::string{
-      "GET /controls/abc/bytes HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Connection: close\r\n"
-      "\r\n"}));
+   asio::write(stream.socket(), asio::buffer(std::string{"GET /controls/abc/bytes HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: close\r\n"
+                                                         "\r\n"}));
+
+   auto beast_second = beast_http::response<beast_http::string_body>{};
+   stream.expires_after(std::chrono::seconds{2});
+   beast_http::read(stream, buffer, beast_second);
+   auto second = to_http_response(beast_second);
+   BOOST_TEST(second.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(second.body() == "bytes:abc");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_head_dto_suppresses_body_and_preserves_keep_alive) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto apis = forge::api::core::registry{};
+   apis.install<control_api>(control_api::describe(), std::make_shared<control_api_impl>());
+
+   auto router = forge::net::http::router{};
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<control_api>().build();
+   router.mount(binding);
+
+   auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(std::chrono::seconds{2});
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
+
+   asio::write(stream.socket(), asio::buffer(std::string{"HEAD /controls/abc/dto HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: keep-alive\r\n"
+                                                         "\r\n"}));
+
+   auto buffer = beast::flat_buffer{};
+   auto first_parser = beast_http::response_parser<beast_http::string_body>{};
+   first_parser.skip(true);
+   stream.expires_after(std::chrono::seconds{2});
+   beast_http::read_header(stream, buffer, first_parser);
+
+   const auto expected = forge::codec::json::write(control_response{.value = "head:abc"});
+   BOOST_REQUIRE(expected.ok());
+   const auto& first = first_parser.get();
+   BOOST_TEST(first.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(first.keep_alive());
+   BOOST_TEST(first["Content-Type"] == "application/json");
+   BOOST_TEST(first["Content-Length"] == std::to_string(expected.text.size()));
+
+   asio::write(stream.socket(), asio::buffer(std::string{"GET /controls/abc/bytes HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: close\r\n"
+                                                         "\r\n"}));
+
+   auto beast_second = beast_http::response<beast_http::string_body>{};
+   stream.expires_after(std::chrono::seconds{2});
+   beast_http::read(stream, buffer, beast_second);
+   auto second = to_http_response(beast_second);
+   BOOST_TEST(second.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(second.body() == "bytes:abc");
+
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(http_head_stream_suppresses_body_and_preserves_keep_alive) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto apis = forge::api::core::registry{};
+   apis.install<control_api>(control_api::describe(), std::make_shared<control_api_impl>());
+
+   auto router = forge::net::http::router{};
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<control_api>().build();
+   router.mount(binding);
+
+   auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
+   server.start();
+
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(std::chrono::seconds{2});
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
+
+   asio::write(stream.socket(), asio::buffer(std::string{"HEAD /controls/abc/stream HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: keep-alive\r\n"
+                                                         "\r\n"}));
+
+   auto buffer = beast::flat_buffer{};
+   auto first_parser = beast_http::response_parser<beast_http::string_body>{};
+   first_parser.skip(true);
+   stream.expires_after(std::chrono::seconds{2});
+   beast_http::read_header(stream, buffer, first_parser);
+
+   const auto& first = first_parser.get();
+   BOOST_TEST(first.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(first.keep_alive());
+   BOOST_TEST(first["Content-Type"] == "text/plain");
+   BOOST_TEST(first["Transfer-Encoding"].empty());
+
+   asio::write(stream.socket(), asio::buffer(std::string{"GET /controls/abc/bytes HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: close\r\n"
+                                                         "\r\n"}));
 
    auto beast_second = beast_http::response<beast_http::string_body>{};
    stream.expires_after(std::chrono::seconds{2});
@@ -3675,7 +4537,8 @@ BOOST_AUTO_TEST_CASE(http_api_preserves_explicit_method_name_for_same_dto_method
    apis.install<alias_api>(alias_api::describe(), std::make_shared<alias_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<alias_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<alias_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::get, "/aliases/abc");
@@ -3696,7 +4559,8 @@ BOOST_AUTO_TEST_CASE(http_api_special_types_support_streaming_put_and_file_get) 
    apis.install<object_api>(object_api::describe(), std::make_shared<object_api_impl>(files.path()));
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<object_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<object_api>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -3709,21 +4573,20 @@ BOOST_AUTO_TEST_CASE(http_api_special_types_support_streaming_put_and_file_get) 
 
    auto payload = std::string(96 * 1024, 'x');
    auto put_body = forge::asio::blocking::run(
-      runtime,
-      object->put_object(object_put_request{
-         .collection = "cache",
-         .key = "chunk.bin",
-         .content_type = forge::api::http::header<std::string>{.value = "application/octet-stream", .present = true},
-         .digest = forge::api::http::header<std::string>{.value = "checksum", .present = true},
-         .body = forge::api::http::body_stream{make_body_reader({payload.substr(0, 2048), payload.substr(2048)})},
-      }));
+       runtime,
+       object->put_object(object_put_request{
+           .collection = "cache",
+           .key = "chunk.bin",
+           .content_type = forge::api::http::header<std::string>{.value = "application/octet-stream", .present = true},
+           .digest = forge::api::http::header<std::string>{.value = "checksum", .present = true},
+           .body = forge::api::http::body_stream{make_body_reader({payload.substr(0, 2048), payload.substr(2048)})},
+       }));
    BOOST_TEST(put_body.bytes == 96U * 1024U);
    BOOST_TEST(put_body.content_type == "application/octet-stream");
    BOOST_TEST(put_body.content_md5 == "checksum");
 
    auto file = forge::asio::blocking::run(
-      runtime,
-      object->get_object(object_get_request{.collection = "cache", .key = "chunk.bin"}));
+       runtime, object->get_object(object_get_request{.collection = "cache", .key = "chunk.bin"}));
    BOOST_TEST(file.status_code() == status::ok);
    BOOST_TEST(file.content_type() == "application/octet-stream");
    auto saved = files.path() / "saved.bin";
@@ -3731,19 +4594,49 @@ BOOST_AUTO_TEST_CASE(http_api_special_types_support_streaming_put_and_file_get) 
    BOOST_TEST(std::filesystem::file_size(saved) == 96U * 1024U);
 
    auto streamed = forge::asio::blocking::run(
-      runtime,
-      object->stream_object(object_get_request{.collection = "cache", .key = "chunk.bin"}));
+       runtime, object->stream_object(object_get_request{.collection = "cache", .key = "chunk.bin"}));
    auto streamed_text = forge::asio::blocking::run(runtime, streamed.body().async_read_all());
    BOOST_TEST(streamed.status_code() == status::ok);
    BOOST_TEST(streamed_text == payload);
 
    auto head_request = make_request(method::head, "/objects/cache/chunk.bin");
-   const auto head_response =
-      forge::asio::blocking::run(runtime, connection.async_request(std::move(head_request)));
+   const auto head_response = forge::asio::blocking::run(runtime, connection.async_request(std::move(head_request)));
    BOOST_TEST(head_response.result_int() == static_cast<unsigned>(status::ok));
    BOOST_TEST(head_response.body().empty());
    BOOST_TEST(head_response[field::content_length] == std::to_string(96U * 1024U));
    BOOST_TEST(head_response[field::accept_ranges] == "bytes");
+
+   auto ranged_request = make_request(method::get, "/objects/cache/chunk.bin");
+   ranged_request.set(field::range, "bytes=2-5");
+   const auto ranged_response =
+       forge::asio::blocking::run(runtime, connection.async_request(std::move(ranged_request)));
+   BOOST_TEST(ranged_response.result_int() == static_cast<unsigned>(status::partial_content));
+   BOOST_TEST(ranged_response.body() == payload.substr(2, 4));
+
+   auto invalid_range = make_request(method::get, "/objects/cache/chunk.bin");
+   invalid_range.set(field::range, "bytes=999999-1000000");
+   const auto invalid_range_response =
+       forge::asio::blocking::run(runtime, connection.async_request(std::move(invalid_range)));
+   BOOST_TEST(invalid_range_response.result_int() == static_cast<unsigned>(status::range_not_satisfiable));
+   BOOST_TEST(invalid_range_response.body().empty());
+
+   const auto etag_response = forge::asio::blocking::run(
+       runtime, connection.async_request(make_request(method::get, "/objects/cache/chunk.bin")));
+   auto conditional = make_request(method::get, "/objects/cache/chunk.bin");
+   conditional.set(field::if_none_match, etag_response[field::etag]);
+   const auto not_modified = forge::asio::blocking::run(runtime, connection.async_request(std::move(conditional)));
+   BOOST_TEST(not_modified.result_int() == static_cast<unsigned>(status::not_modified));
+   BOOST_TEST(not_modified.body().empty());
+
+   const auto missing_head = forge::asio::blocking::run(
+       runtime, connection.async_request(make_request(method::head, "/objects/cache/missing.bin")));
+   BOOST_TEST(missing_head.result_int() == static_cast<unsigned>(status::not_found));
+   BOOST_TEST(missing_head.body().empty());
+   BOOST_TEST(missing_head[field::content_length] == "9");
+   const auto after_missing_head = forge::asio::blocking::run(
+       runtime, connection.async_request(make_request(method::get, "/objects/cache/chunk.bin")));
+   BOOST_TEST(after_missing_head.result_int() == static_cast<unsigned>(status::ok));
+   BOOST_TEST(after_missing_head.body() == payload);
 
    server.stop();
 }
@@ -3753,25 +4646,25 @@ BOOST_AUTO_TEST_CASE(http_typed_streaming_client_rejects_oversized_error_body) {
    auto emitted = std::make_shared<std::atomic<unsigned>>(0);
 
    auto router = forge::net::http::router{};
-   router.get_stream("/objects/:collection/:key/stream",
-                     [emitted](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
-      auto chunks = std::make_shared<std::vector<std::string>>(
-         std::vector<std::string>{std::string(40 * 1024, 'a'), std::string(40 * 1024, 'b')});
-      auto index = std::make_shared<std::size_t>(0);
-      auto reply = response{status::bad_request, request_value.context.request.version()};
-      reply.set(field::content_type, "application/json");
-      co_return stream_response{
-         .head = std::move(reply),
-         .body =
-            [chunks, index, emitted]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
-               if (*index == chunks->size()) {
-                  co_return std::nullopt;
-               }
-               emitted->fetch_add(1);
-               co_return make_body_chunk((*chunks)[(*index)++]);
-            },
-      };
-   });
+   router.get_stream(
+       "/objects/:collection/:key/stream",
+       [emitted](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+          auto chunks = std::make_shared<std::vector<std::string>>(
+              std::vector<std::string>{std::string(40 * 1024, 'a'), std::string(40 * 1024, 'b')});
+          auto index = std::make_shared<std::size_t>(0);
+          auto reply = response{status::bad_request, request_value.context.request.version()};
+          reply.set(field::content_type, "application/json");
+          co_return stream_response{
+              .head = std::move(reply),
+              .body = [chunks, index, emitted]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
+                 if (*index == chunks->size()) {
+                    co_return std::nullopt;
+                 }
+                 emitted->fetch_add(1);
+                 co_return make_body_chunk((*chunks)[(*index)++]);
+              },
+          };
+       });
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
    server.start();
@@ -3779,11 +4672,9 @@ BOOST_AUTO_TEST_CASE(http_typed_streaming_client_rejects_oversized_error_body) {
    auto client = forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
    auto object = forge::asio::blocking::run(runtime, forge::api::http::remote<object_api>(client));
 
-   BOOST_CHECK_THROW(
-      forge::asio::blocking::run(
-         runtime,
-         object->stream_object(object_get_request{.collection = "cache", .key = "chunk.bin"})),
-      forge::net::http::exceptions::payload_too_large);
+   BOOST_CHECK_THROW(forge::asio::blocking::run(
+                         runtime, object->stream_object(object_get_request{.collection = "cache", .key = "chunk.bin"})),
+                     forge::net::http::exceptions::payload_too_large);
    BOOST_TEST(emitted->load() == 2U);
 
    server.stop();
@@ -3800,7 +4691,8 @@ BOOST_AUTO_TEST_CASE(http_file_response_save_to_reports_write_failures) {
                      forge::net::http::exceptions::internal);
 
    auto saved = files.path() / "saved.txt";
-   auto valid = forge::net::http::file_response::from_body(response{status::ok, 11}, make_body_reader({"alpha", "omega"}));
+   auto valid =
+       forge::net::http::file_response::from_body(response{status::ok, 11}, make_body_reader({"alpha", "omega"}));
    forge::asio::blocking::run(runtime, valid.save_to(saved));
    auto input = std::ifstream{saved, std::ios::binary};
    auto bytes = std::string{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
@@ -3820,19 +4712,19 @@ BOOST_AUTO_TEST_CASE(http_streaming_response_status_is_owned_by_route_mapping) {
 
    auto router = forge::net::http::router{};
    auto binding = forge::api::http::binding()
-                     .use(forge::api::core::binding().serve(apis).build())
-                     .get<&object_api::stream_object, object_get_request, forge::net::http::streaming_response>(
-                        "/objects/:collection/:key/status-stream",
-                        forge::api::http::route_options{.response_stream = true,
-                                                       .success_status = status::accepted})
-                     .build();
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .get<&object_api::stream_object, object_get_request, forge::net::http::streaming_response>(
+                          "/objects/:collection/:key/status-stream",
+                          forge::api::http::route_options{.response_stream = true, .success_status = status::accepted})
+                      .build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
    server.start();
 
    auto client = forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   const auto response = forge::asio::blocking::run(runtime, client.async_get("/objects/cache/chunk.bin/status-stream"));
+   const auto response =
+       forge::asio::blocking::run(runtime, client.async_get("/objects/cache/chunk.bin/status-stream"));
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::accepted));
    BOOST_TEST(response.body() == "alpha");
@@ -3846,7 +4738,8 @@ BOOST_AUTO_TEST_CASE(http_streamed_response_route_decodes_json_request_body) {
    apis.install<json_stream_api>(json_stream_api::describe(), std::make_shared<json_stream_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<json_stream_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<json_stream_api>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -3873,7 +4766,8 @@ BOOST_AUTO_TEST_CASE(http_streamed_response_route_rejects_json_body_path_disagre
    apis.install<json_stream_api>(json_stream_api::describe(), std::make_shared<json_stream_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<json_stream_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<json_stream_api>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -3907,24 +4801,28 @@ BOOST_AUTO_TEST_CASE(http_streaming_response_from_client_body_is_reserved_when_r
    upstream_apis.install<object_api>(object_api::describe(), std::make_shared<object_api_impl>(files.path()));
    auto upstream_router = forge::net::http::router{};
    upstream_router.mount(forge::api::http::binding()
-                            .use(forge::api::core::binding().serve(upstream_apis).build())
-                            .bind<object_api>()
-                            .build());
+                             .use(forge::api::core::binding().serve(upstream_apis).build())
+                             .bind<object_api>()
+                             .build());
    auto upstream_server = forge::net::http::server{runtime, server_config{}, std::move(upstream_router)};
    upstream_server.start();
 
    auto upstream_client =
-      forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(upstream_server.port()))};
+       forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(upstream_server.port()))};
    auto upstream = forge::asio::blocking::run(runtime, forge::api::http::remote<object_api>(upstream_client));
 
    auto proxy_apis = forge::api::core::registry{};
    proxy_apis.install<object_api>(object_api::describe(), std::make_shared<object_proxy_api_impl>(std::move(upstream)));
    auto proxy_router = forge::net::http::router{};
-   proxy_router.mount(forge::api::http::binding().use(forge::api::core::binding().serve(proxy_apis).build()).bind<object_api>().build());
+   proxy_router.mount(forge::api::http::binding()
+                          .use(forge::api::core::binding().serve(proxy_apis).build())
+                          .bind<object_api>()
+                          .build());
    auto proxy_server = forge::net::http::server{runtime, server_config{}, std::move(proxy_router)};
    proxy_server.start();
 
-   auto client = forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(proxy_server.port()))};
+   auto client =
+       forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(proxy_server.port()))};
    const auto response = forge::asio::blocking::run(runtime, client.async_get("/objects/cache/chunk.bin/stream"));
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
@@ -3948,24 +4846,28 @@ BOOST_AUTO_TEST_CASE(http_file_response_from_client_body_is_reserved_when_re_ser
    upstream_apis.install<object_api>(object_api::describe(), std::make_shared<object_api_impl>(files.path()));
    auto upstream_router = forge::net::http::router{};
    upstream_router.mount(forge::api::http::binding()
-                            .use(forge::api::core::binding().serve(upstream_apis).build())
-                            .bind<object_api>()
-                            .build());
+                             .use(forge::api::core::binding().serve(upstream_apis).build())
+                             .bind<object_api>()
+                             .build());
    auto upstream_server = forge::net::http::server{runtime, server_config{}, std::move(upstream_router)};
    upstream_server.start();
 
    auto upstream_client =
-      forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(upstream_server.port()))};
+       forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(upstream_server.port()))};
    auto upstream = forge::asio::blocking::run(runtime, forge::api::http::remote<object_api>(upstream_client));
 
    auto proxy_apis = forge::api::core::registry{};
    proxy_apis.install<object_api>(object_api::describe(), std::make_shared<object_proxy_api_impl>(std::move(upstream)));
    auto proxy_router = forge::net::http::router{};
-   proxy_router.mount(forge::api::http::binding().use(forge::api::core::binding().serve(proxy_apis).build()).bind<object_api>().build());
+   proxy_router.mount(forge::api::http::binding()
+                          .use(forge::api::core::binding().serve(proxy_apis).build())
+                          .bind<object_api>()
+                          .build());
    auto proxy_server = forge::net::http::server{runtime, server_config{}, std::move(proxy_router)};
    proxy_server.start();
 
-   auto client = forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(proxy_server.port()))};
+   auto client =
+       forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(proxy_server.port()))};
    const auto response = forge::asio::blocking::run(runtime, client.async_get("/objects/cache/chunk.bin"));
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::ok));
@@ -3980,10 +4882,10 @@ BOOST_AUTO_TEST_CASE(http_api_response_file_option_is_required_for_file_response
    auto apis = forge::api::core::registry{};
    auto router = forge::net::http::router{};
    auto binding = forge::api::http::binding()
-                     .use(forge::api::core::binding().serve(apis).build())
-                     .get<&test_api::file_only_api::download, object_get_request, forge::net::http::file_response>(
-                        "/objects/:collection/:key")
-                     .build();
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .get<&test_api::file_only_api::download, object_get_request, forge::net::http::file_response>(
+                          "/objects/:collection/:key")
+                      .build();
 
    BOOST_CHECK_THROW(router.mount(binding), forge::net::http::exceptions::bad_request);
 }
@@ -3992,11 +4894,23 @@ BOOST_AUTO_TEST_CASE(http_api_response_file_option_rejects_non_file_responses) {
    auto apis = forge::api::core::registry{};
    auto router = forge::net::http::router{};
    auto binding = forge::api::http::binding()
-                     .use(forge::api::core::binding().serve(apis).build())
-                     .get<&api_cache::read, api_read_chunk, api_chunk>(
-                        "/cache/chunks/:ref",
-                        forge::api::http::route_options{.response_file = true})
-                     .build();
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .get<&api_cache::read, api_read_chunk, api_chunk>(
+                          "/cache/chunks/:ref", forge::api::http::route_options{.response_file = true})
+                      .build();
+
+   BOOST_CHECK_THROW(router.mount(binding), forge::net::http::exceptions::bad_request);
+}
+
+BOOST_AUTO_TEST_CASE(http_api_response_file_option_rejects_non_ok_routes) {
+   auto apis = forge::api::core::registry{};
+   auto router = forge::net::http::router{};
+   auto binding = forge::api::http::binding()
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .get<&test_api::file_only_api::download, object_get_request, forge::net::http::file_response>(
+                          "/objects/:collection/:key",
+                          forge::api::http::route_options{.response_file = true, .success_status = status::accepted})
+                      .build();
 
    BOOST_CHECK_THROW(router.mount(binding), forge::net::http::exceptions::bad_request);
 }
@@ -4011,7 +4925,8 @@ BOOST_AUTO_TEST_CASE(http_api_stream_route_does_not_shadow_regular_route_with_sa
    apis.install<object_api>(object_api::describe(), std::make_shared<object_api_impl>(files.path()));
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<object_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<object_api>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -4021,7 +4936,7 @@ BOOST_AUTO_TEST_CASE(http_api_stream_route_does_not_shadow_regular_route_with_sa
    auto connection = forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
    auto delete_request = make_request(method::delete_, "/objects/cache/chunk.bin");
    const auto delete_response =
-      forge::asio::blocking::run(runtime, connection.async_request(std::move(delete_request)));
+       forge::asio::blocking::run(runtime, connection.async_request(std::move(delete_request)));
 
    BOOST_TEST(delete_response.result_int() == static_cast<unsigned>(status::no_content));
    BOOST_TEST(!std::filesystem::exists(files.path() / "cache" / "chunk.bin"));
@@ -4035,7 +4950,8 @@ BOOST_AUTO_TEST_CASE(http_api_form_only_request_uses_multipart_binding) {
    apis.install<form_api>(form_api::describe(), std::make_shared<form_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<form_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<form_api>().build();
    router.mount(binding);
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -4045,14 +4961,13 @@ BOOST_AUTO_TEST_CASE(http_api_form_only_request_uses_multipart_binding) {
    auto connection = forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(port))};
    auto request_value = make_request(method::post, "/forms");
    request_value.set(field::content_type, "multipart/form-data; boundary=demo");
-   request_value.body() =
-      "--demo\r\n"
-      "Content-Disposition: form-data; name=\"label\"\r\n\r\n"
-      "alpha\r\n"
-      "--demo\r\n"
-      "Content-Disposition: form-data; name=\"count\"\r\n\r\n"
-      "7\r\n"
-      "--demo--\r\n";
+   request_value.body() = "--demo\r\n"
+                          "Content-Disposition: form-data; name=\"label\"\r\n\r\n"
+                          "alpha\r\n"
+                          "--demo\r\n"
+                          "Content-Disposition: form-data; name=\"count\"\r\n\r\n"
+                          "7\r\n"
+                          "--demo--\r\n";
    request_value.prepare_payload();
 
    const auto response = forge::asio::blocking::run(runtime, connection.async_request(std::move(request_value)));
@@ -4070,7 +4985,8 @@ BOOST_AUTO_TEST_CASE(http_api_non_stream_head_route_is_head_only) {
    apis.install<control_api>(control_api::describe(), std::make_shared<control_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<control_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<control_api>().build();
    router.mount(binding);
 
    auto head_request = make_request(method::head, "/controls/abc");
@@ -4090,7 +5006,8 @@ BOOST_AUTO_TEST_CASE(http_api_patch_route_is_mounted) {
    apis.install<patch_api>(patch_api::describe(), std::make_shared<patch_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding = forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<patch_api>().build();
+   auto binding =
+       forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<patch_api>().build();
    router.mount(binding);
 
    auto request = make_request(method::patch, "/controls/abc");
@@ -4146,6 +5063,39 @@ BOOST_AUTO_TEST_CASE(middleware_runs_in_order_and_can_short_circuit) {
    BOOST_TEST(handle(short_router, secure_context).result_int() == static_cast<unsigned>(status::unauthorized));
 }
 
+BOOST_AUTO_TEST_CASE(middleware_prefix_matches_the_decoded_route_path) {
+   const auto add_auth = [](forge::net::http::router& router, std::string path_prefix) {
+      router.use(forge::net::http::middleware_descriptor{
+          .id = "admin-auth",
+          .phase = forge::net::http::middleware_phase::security,
+          .path_prefix = std::move(path_prefix),
+          .handler = [](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
+             static_cast<void>(next);
+             co_return make_text_response(context.request, status::unauthorized, "auth required");
+          },
+      });
+   };
+   const auto add_route = [](forge::net::http::router& router, std::string path) {
+      router.get(std::move(path), [](route_context& context) -> boost::asio::awaitable<response> {
+         co_return make_text_response(context.request, status::ok, "unreachable");
+      });
+   };
+
+   auto exact = forge::net::http::router{};
+   add_auth(exact, "/v1/chain/admin");
+   add_route(exact, "/v1/chain/admin");
+   auto exact_request = make_request(method::get, "/v1/chain/%61dmin");
+   auto exact_context = make_route_context(exact_request);
+   BOOST_TEST(handle(exact, exact_context).result_int() == static_cast<unsigned>(status::unauthorized));
+
+   auto descendant = forge::net::http::router{};
+   add_auth(descendant, "/v1/chain/admin/");
+   add_route(descendant, "/v1/chain/admin/users");
+   auto descendant_request = make_request(method::get, "/v1/chain/%61dmin/users");
+   auto descendant_context = make_route_context(descendant_request);
+   BOOST_TEST(handle(descendant, descendant_context).result_int() == static_cast<unsigned>(status::unauthorized));
+}
+
 BOOST_AUTO_TEST_CASE(http_api_plan_mounts_ordered_middleware_contributions) {
    auto runtime = forge::asio::runtime{};
    auto apis = forge::api::core::registry{};
@@ -4153,38 +5103,37 @@ BOOST_AUTO_TEST_CASE(http_api_plan_mounts_ordered_middleware_contributions) {
 
    auto trace = std::make_shared<std::string>();
    auto plan = forge::api::core::binding().serve(apis).build();
-   auto binding = forge::api::http::binding()
-                      .use(std::move(plan))
-                      .middleware(forge::net::http::middleware_descriptor{
-                          .id = "limits",
-                          .phase = forge::net::http::middleware_phase::limits,
-                          .order = 10,
-                          .path_prefix = "/cache",
-                          .handler =
-                              [trace](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
-                                 static_cast<void>(context);
-                                 *trace += "limits>";
-                                 auto response = co_await next();
-                                 *trace += "<limits";
-                                 co_return response;
-                              },
-                      })
-                      .middleware(forge::net::http::middleware_descriptor{
-                          .id = "auth",
-                          .phase = forge::net::http::middleware_phase::security,
-                          .order = 100,
-                          .path_prefix = "/cache",
-                          .handler =
-                              [trace](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
-                                 static_cast<void>(context);
-                                 *trace += "auth>";
-                                 auto response = co_await next();
-                                 *trace += "<auth";
-                                 co_return response;
-                              },
-                      })
-                      .get<&api_cache::read, api_read_chunk, api_chunk>("/cache/chunks/:ref")
-                      .build();
+   auto binding =
+       forge::api::http::binding()
+           .use(std::move(plan))
+           .middleware(forge::net::http::middleware_descriptor{
+               .id = "limits",
+               .phase = forge::net::http::middleware_phase::limits,
+               .order = 10,
+               .path_prefix = "/cache",
+               .handler = [trace](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
+                  static_cast<void>(context);
+                  *trace += "limits>";
+                  auto response = co_await next();
+                  *trace += "<limits";
+                  co_return response;
+               },
+           })
+           .middleware(forge::net::http::middleware_descriptor{
+               .id = "auth",
+               .phase = forge::net::http::middleware_phase::security,
+               .order = 100,
+               .path_prefix = "/cache",
+               .handler = [trace](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
+                  static_cast<void>(context);
+                  *trace += "auth>";
+                  auto response = co_await next();
+                  *trace += "<auth";
+                  co_return response;
+               },
+           })
+           .get<&api_cache::read, api_read_chunk, api_chunk>("/cache/chunks/:ref")
+           .build();
 
    auto router = forge::net::http::router{};
    router.mount(binding);
@@ -4204,22 +5153,22 @@ BOOST_AUTO_TEST_CASE(http_api_plan_mounts_under_base_path) {
    apis.install<macro_cache>(macro_cache::describe(), std::make_shared<macro_cache_impl>());
 
    auto trace = std::make_shared<std::string>();
-   auto binding = forge::api::http::binding()
-                      .use(forge::api::core::binding().serve(apis).build())
-                      .middleware(forge::net::http::middleware_descriptor{
-                          .id = "api-limit",
-                          .path_prefix = "/cache",
-                          .handler =
-                              [trace](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
-                                 static_cast<void>(context);
-                                 *trace += "limit>";
-                                 auto response = co_await next();
-                                 *trace += "<limit";
-                                 co_return response;
-                              },
-                      })
-                      .bind<macro_cache>()
-                      .build();
+   auto binding =
+       forge::api::http::binding()
+           .use(forge::api::core::binding().serve(apis).build())
+           .middleware(forge::net::http::middleware_descriptor{
+               .id = "api-limit",
+               .path_prefix = "/cache",
+               .handler = [trace](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
+                  static_cast<void>(context);
+                  *trace += "limit>";
+                  auto response = co_await next();
+                  *trace += "<limit";
+                  co_return response;
+               },
+           })
+           .bind<macro_cache>()
+           .build();
 
    auto router = forge::net::http::router{};
    binding.mount(router, "/api/v1");
@@ -4243,24 +5192,23 @@ BOOST_AUTO_TEST_CASE(http_api_plan_mounts_under_base_path) {
 }
 
 BOOST_AUTO_TEST_CASE(http_api_plan_rejects_duplicate_middleware_ids) {
-   auto duplicate = forge::api::http::binding()
-                        .middleware(forge::net::http::middleware_descriptor{
-                            .id = "auth",
-                            .handler = [](route_context& context,
-                                          next_handler next) -> boost::asio::awaitable<response> {
-                               static_cast<void>(context);
-                               co_return co_await next();
-                            },
-                        })
-                        .middleware(forge::net::http::middleware_descriptor{
-                            .id = "auth",
-                            .handler = [](route_context& context,
-                                          next_handler next) -> boost::asio::awaitable<response> {
-                               static_cast<void>(context);
-                               co_return co_await next();
-                            },
-                        })
-                        .build();
+   auto duplicate =
+       forge::api::http::binding()
+           .middleware(forge::net::http::middleware_descriptor{
+               .id = "auth",
+               .handler = [](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
+                  static_cast<void>(context);
+                  co_return co_await next();
+               },
+           })
+           .middleware(forge::net::http::middleware_descriptor{
+               .id = "auth",
+               .handler = [](route_context& context, next_handler next) -> boost::asio::awaitable<response> {
+                  static_cast<void>(context);
+                  co_return co_await next();
+               },
+           })
+           .build();
 
    auto router = forge::net::http::router{};
    BOOST_CHECK_THROW(router.mount(duplicate), forge::net::http::exceptions::conflict);
@@ -4316,11 +5264,11 @@ BOOST_AUTO_TEST_CASE(client_roundtrips_over_local_server) {
 BOOST_AUTO_TEST_CASE(server_async_start_binds_before_return) {
    auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = forge::net::http::server{
-      runtime,
-      server_config{},
-      [](route_context& context) -> boost::asio::awaitable<response> {
-         co_return make_text_response(context.request, status::ok, "ready");
-      },
+       runtime,
+       server_config{},
+       [](route_context& context) -> boost::asio::awaitable<response> {
+          co_return make_text_response(context.request, status::ok, "ready");
+       },
    };
 
    forge::asio::blocking::run(runtime, server.async_start());
@@ -4339,16 +5287,17 @@ BOOST_AUTO_TEST_CASE(server_rejects_request_body_over_configured_limit) {
    auto runtime = forge::asio::runtime{};
    auto invoked = std::make_shared<std::atomic<bool>>(false);
    auto server = forge::net::http::server{
-      runtime,
-      server_config{.max_request_body_bytes = 4},
-      [invoked](route_context& context) -> boost::asio::awaitable<response> {
-         *invoked = true;
-         co_return make_text_response(context.request, status::ok, "unreachable");
-      },
+       runtime,
+       server_config{.max_request_body_bytes = 4},
+       [invoked](route_context& context) -> boost::asio::awaitable<response> {
+          *invoked = true;
+          co_return make_text_response(context.request, status::ok, "unreachable");
+       },
    };
    forge::asio::blocking::run(runtime, server.async_start());
 
-   auto connection = forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto connection =
+       forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
    auto request = make_request(method::post, "/upload");
    request.body() = "12345";
    request.prepare_payload();
@@ -4360,16 +5309,534 @@ BOOST_AUTO_TEST_CASE(server_rejects_request_body_over_configured_limit) {
    forge::asio::blocking::run(runtime, server.async_stop());
 }
 
+BOOST_AUTO_TEST_CASE(http_server_half_close_preserves_response_and_closes_keep_alive) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto owner_canceled = std::make_shared<std::atomic_bool>(false);
+   auto server = forge::net::http::server{
+       runtime,
+       server_config{.read_timeout = std::chrono::seconds{2}, .idle_timeout = std::chrono::seconds{2}},
+       [owner_canceled](route_context& context) -> boost::asio::awaitable<response> {
+          auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+          timer.expires_after(std::chrono::milliseconds{50});
+          auto error = boost::system::error_code{};
+          co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+          if (error == boost::asio::error::operation_aborted) {
+             owner_canceled->store(true);
+          }
+          co_return make_text_response(context.request, status::ok, "finished");
+       },
+   };
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(std::chrono::seconds{2});
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
+   asio::write(stream.socket(), asio::buffer(std::string{"GET /work HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: keep-alive\r\n"
+                                                         "\r\n"}));
+
+   stream.socket().shutdown(tcp::socket::shutdown_send);
+   auto buffer = beast::flat_buffer{};
+   auto message = beast_http::response<beast_http::string_body>{};
+   beast_http::read(stream, buffer, message);
+   const auto response = to_http_response(message);
+
+   BOOST_TEST(response.result() == status::ok);
+   BOOST_TEST(response.body() == "finished");
+   BOOST_TEST(!response.keep_alive());
+   BOOST_TEST(!owner_canceled->load());
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_server_half_close_preserves_buffered_stream_body) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto router = forge::net::http::router{};
+   router.post_stream("/upload", [](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+      timer.expires_after(std::chrono::milliseconds{50});
+      co_await timer.async_wait(boost::asio::use_awaitable);
+      const auto body = co_await request_value.body.async_read_all();
+      co_return stream_response::buffered(make_text_response(request_value.context.request, status::ok, body));
+   });
+
+   auto server = forge::net::http::server{
+       runtime,
+       server_config{.read_timeout = std::chrono::seconds{2}, .idle_timeout = std::chrono::seconds{2}},
+       std::move(router),
+   };
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   const auto body = std::string{"buffered-after-fin"};
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(std::chrono::seconds{2});
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
+   asio::write(stream.socket(), asio::buffer(std::string{"POST /upload HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: keep-alive\r\n"
+                                                         "Content-Length: "} +
+                                             std::to_string(body.size()) + "\r\n\r\n" + body));
+   stream.socket().shutdown(tcp::socket::shutdown_send);
+
+   auto buffer = beast::flat_buffer{};
+   auto message = beast_http::response<beast_http::string_body>{};
+   beast_http::read(stream, buffer, message);
+   const auto response = to_http_response(message);
+
+   BOOST_TEST(response.result() == status::ok);
+   BOOST_TEST(response.body() == body);
+   BOOST_TEST(!response.keep_alive());
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_server_disconnect_cancels_owner_and_accepts_next_connection) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto owner_started = std::make_shared<std::atomic_bool>(false);
+   auto owner_canceled = std::make_shared<std::atomic_bool>(false);
+   auto server = forge::net::http::server{
+       runtime,
+       server_config{.read_timeout = std::chrono::seconds{2}, .idle_timeout = std::chrono::seconds{2}},
+       [owner_started, owner_canceled](route_context& context) -> boost::asio::awaitable<response> {
+          if (context.request.target() == "/cancel") {
+             owner_started->store(true);
+             auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+             timer.expires_after(std::chrono::seconds{2});
+             auto error = boost::system::error_code{};
+             co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+             if (error == boost::asio::error::operation_aborted) {
+                owner_canceled->store(true);
+             }
+             co_return make_text_response(context.request, status::ok, "cancel-finished");
+          }
+          co_return make_text_response(context.request, status::ok, "ready");
+       },
+   };
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(std::chrono::seconds{2});
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
+   asio::write(stream.socket(), asio::buffer(std::string{"GET /cancel HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: keep-alive\r\n"
+                                                         "\r\n"}));
+
+   const auto start_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+   while (!owner_started->load() && std::chrono::steady_clock::now() < start_deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+   }
+   BOOST_REQUIRE(owner_started->load());
+
+   abort_connection(stream);
+
+   const auto cancel_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+   while (!owner_canceled->load() && std::chrono::steady_clock::now() < cancel_deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+   }
+   BOOST_REQUIRE(owner_canceled->load());
+
+   const auto next = raw_http_exchange(server.port(), "GET /ready HTTP/1.1\r\n"
+                                                      "Host: 127.0.0.1\r\n"
+                                                      "Connection: close\r\n"
+                                                      "\r\n");
+   BOOST_TEST(next.result() == status::ok);
+   BOOST_TEST(next.body() == "ready");
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_server_disconnect_cancels_stream_owner_and_accepts_next_connection) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto owner_started = std::make_shared<std::atomic_bool>(false);
+   auto owner_canceled = std::make_shared<std::atomic_bool>(false);
+   auto router = forge::net::http::router{};
+   router.post_stream(
+       "/cancel",
+       [owner_started, owner_canceled](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+          owner_started->store(true);
+          auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+          timer.expires_after(std::chrono::seconds{2});
+          auto error = boost::system::error_code{};
+          co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+          if (error == boost::asio::error::operation_aborted) {
+             owner_canceled->store(true);
+          }
+          co_return stream_response::buffered(
+              make_text_response(request_value.context.request, status::ok, "cancel-finished"));
+       });
+   router.get("/ready", [](route_context& context) -> boost::asio::awaitable<response> {
+      co_return make_text_response(context.request, status::ok, "ready");
+   });
+
+   auto server = forge::net::http::server{
+       runtime,
+       server_config{.read_timeout = std::chrono::seconds{2}, .idle_timeout = std::chrono::seconds{2}},
+       std::move(router),
+   };
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(std::chrono::seconds{2});
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
+   asio::write(stream.socket(), asio::buffer(std::string{"POST /cancel HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: keep-alive\r\n"
+                                                         "Content-Length: 7\r\n"
+                                                         "\r\n"
+                                                         "payload"}));
+
+   const auto start_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+   while (!owner_started->load() && std::chrono::steady_clock::now() < start_deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+   }
+   BOOST_REQUIRE(owner_started->load());
+
+   abort_connection(stream);
+
+   const auto cancel_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+   while (!owner_canceled->load() && std::chrono::steady_clock::now() < cancel_deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+   }
+   BOOST_REQUIRE(owner_canceled->load());
+
+   const auto next = raw_http_exchange(server.port(), "GET /ready HTTP/1.1\r\n"
+                                                      "Host: 127.0.0.1\r\n"
+                                                      "Connection: close\r\n"
+                                                      "\r\n");
+   BOOST_TEST(next.result() == status::ok);
+   BOOST_TEST(next.body() == "ready");
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_server_disconnect_after_pipeline_still_cancels_owner) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto owner_started = std::make_shared<std::atomic_bool>(false);
+   auto owner_canceled = std::make_shared<std::atomic_bool>(false);
+   auto second_invoked = std::make_shared<std::atomic_bool>(false);
+   auto server = forge::net::http::server{
+       runtime,
+       server_config{.read_timeout = std::chrono::seconds{2}, .idle_timeout = std::chrono::seconds{2}},
+       [owner_started, owner_canceled, second_invoked](route_context& context) -> boost::asio::awaitable<response> {
+          if (context.request.target() == "/first") {
+             owner_started->store(true);
+             auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+             timer.expires_after(std::chrono::seconds{2});
+             auto error = boost::system::error_code{};
+             co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+             if (error == boost::asio::error::operation_aborted) {
+                owner_canceled->store(true);
+             }
+             co_return make_text_response(context.request, status::ok, "first");
+          }
+          second_invoked->store(true);
+          co_return make_text_response(context.request, status::ok, "second");
+       },
+   };
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(std::chrono::seconds{2});
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
+   asio::write(stream.socket(), asio::buffer(std::string{"GET /first HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: keep-alive\r\n"
+                                                         "\r\n"}));
+
+   const auto start_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+   while (!owner_started->load() && std::chrono::steady_clock::now() < start_deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+   }
+   BOOST_REQUIRE(owner_started->load());
+
+   asio::write(stream.socket(), asio::buffer(std::string{"GET /second HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: close\r\n"
+                                                         "\r\n"}));
+
+   abort_connection(stream);
+
+   const auto cancel_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+   while (!owner_canceled->load() && std::chrono::steady_clock::now() < cancel_deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+   }
+   BOOST_REQUIRE(owner_canceled->load());
+   BOOST_TEST(!second_invoked->load());
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_server_disconnect_cancels_streaming_response_body) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto body_started = std::make_shared<std::atomic_bool>(false);
+   auto body_canceled = std::make_shared<std::atomic_bool>(false);
+   auto router = forge::net::http::router{};
+   router.get_stream(
+       "/stream",
+       [body_started, body_canceled](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+          auto reply = response{status::ok, request_value.context.request.version()};
+          auto completed = std::make_shared<std::atomic_bool>(false);
+          co_return stream_response{
+              .head = std::move(reply),
+              .body = [body_started, body_canceled, completed]() -> boost::asio::awaitable<std::optional<body_chunk>> {
+                 if (completed->exchange(true)) {
+                    co_return std::nullopt;
+                 }
+                 body_started->store(true);
+                 auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+                 timer.expires_after(std::chrono::seconds{2});
+                 auto error = boost::system::error_code{};
+                 co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+                 if (error == boost::asio::error::operation_aborted) {
+                    body_canceled->store(true);
+                 }
+                 co_return std::nullopt;
+              },
+          };
+       });
+
+   auto server = forge::net::http::server{
+       runtime,
+       server_config{.read_timeout = std::chrono::seconds{2}, .idle_timeout = std::chrono::seconds{2}},
+       std::move(router),
+   };
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(std::chrono::seconds{2});
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
+   asio::write(stream.socket(), asio::buffer(std::string{"GET /stream HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: keep-alive\r\n"
+                                                         "\r\n"}));
+
+   auto buffer = beast::flat_buffer{};
+   auto parser = beast_http::response_parser<beast_http::buffer_body>{};
+   beast_http::read_header(stream, buffer, parser);
+   const auto start_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+   while (!body_started->load() && std::chrono::steady_clock::now() < start_deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+   }
+   BOOST_REQUIRE(body_started->load());
+
+   abort_connection(stream);
+
+   const auto cancel_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+   while (!body_canceled->load() && std::chrono::steady_clock::now() < cancel_deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+   }
+   BOOST_REQUIRE(body_canceled->load());
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_server_owner_disconnect_watch_preserves_pipelined_keep_alive) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto owner_canceled = std::make_shared<std::atomic_bool>(false);
+   auto requests = std::make_shared<std::atomic<unsigned>>(0);
+   auto server = forge::net::http::server{
+       runtime,
+       server_config{.read_timeout = std::chrono::seconds{2}, .idle_timeout = std::chrono::seconds{2}},
+       [owner_canceled, requests](route_context& context) -> boost::asio::awaitable<response> {
+          requests->fetch_add(1);
+          if (context.request.target() == "/first") {
+             auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+             timer.expires_after(std::chrono::milliseconds{100});
+             auto error = boost::system::error_code{};
+             co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+             if (error == boost::asio::error::operation_aborted) {
+                owner_canceled->store(true);
+             }
+             co_return make_text_response(context.request, status::ok, "first");
+          }
+          co_return make_text_response(context.request, status::ok, "second");
+       },
+   };
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(std::chrono::seconds{2});
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
+   asio::write(stream.socket(), asio::buffer(std::string{"GET /first HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: keep-alive\r\n"
+                                                         "\r\n"
+                                                         "GET /second HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: close\r\n"
+                                                         "\r\n"}));
+   stream.socket().shutdown(tcp::socket::shutdown_send);
+
+   auto buffer = beast::flat_buffer{};
+   auto first_message = beast_http::response<beast_http::string_body>{};
+   beast_http::read(stream, buffer, first_message);
+   auto second_message = beast_http::response<beast_http::string_body>{};
+   beast_http::read(stream, buffer, second_message);
+
+   const auto first = to_http_response(first_message);
+   const auto second = to_http_response(second_message);
+   BOOST_TEST(first.result() == status::ok);
+   BOOST_TEST(first.body() == "first");
+   BOOST_TEST(first.keep_alive());
+   BOOST_TEST(second.result() == status::ok);
+   BOOST_TEST(second.body() == "second");
+   BOOST_TEST(!second.keep_alive());
+   BOOST_TEST(!owner_canceled->load());
+   BOOST_TEST(requests->load() == 2U);
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_server_full_request_buffer_applies_backpressure_without_canceling_owner) {
+   constexpr auto request_buffer_bytes = std::size_t{128U};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto owner_canceled = std::make_shared<std::atomic_bool>(false);
+   auto requests = std::make_shared<std::atomic<unsigned>>(0);
+   auto server = forge::net::http::server{
+       runtime,
+       server_config{
+           .max_request_body_bytes = 0,
+           .max_header_bytes = request_buffer_bytes,
+           .read_timeout = std::chrono::seconds{2},
+           .idle_timeout = std::chrono::seconds{2},
+       },
+       [owner_canceled, requests](route_context& context) -> boost::asio::awaitable<response> {
+          requests->fetch_add(1);
+          if (context.request.target() == "/first") {
+             auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+             timer.expires_after(std::chrono::milliseconds{100});
+             auto error = boost::system::error_code{};
+             co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+             if (error == boost::asio::error::operation_aborted) {
+                owner_canceled->store(true);
+             }
+             co_return make_text_response(context.request, status::ok, "first");
+          }
+          co_return make_text_response(context.request, status::ok, "second");
+       },
+   };
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   auto second_request = std::string{"GET /second HTTP/1.1\r\nHost: x\r\nConnection: close\r\nX-Pad: "};
+   BOOST_REQUIRE_LT(second_request.size() + 4U, request_buffer_bytes);
+   second_request.append(request_buffer_bytes - second_request.size() - 4U, 'a');
+   second_request += "\r\n\r\n";
+   BOOST_REQUIRE_EQUAL(second_request.size(), request_buffer_bytes);
+
+   auto io_context = asio::io_context{};
+   auto stream = beast::tcp_stream{io_context};
+   stream.expires_after(std::chrono::seconds{2});
+   stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
+   asio::write(stream.socket(), asio::buffer(std::string{"GET /first HTTP/1.1\r\n"
+                                                         "Host: x\r\n"
+                                                         "Connection: keep-alive\r\n"
+                                                         "\r\n"} +
+                                             second_request));
+   stream.socket().shutdown(tcp::socket::shutdown_send);
+
+   auto buffer = beast::flat_buffer{};
+   auto first_message = beast_http::response<beast_http::string_body>{};
+   beast_http::read(stream, buffer, first_message);
+   auto second_message = beast_http::response<beast_http::string_body>{};
+   beast_http::read(stream, buffer, second_message);
+
+   BOOST_TEST(to_http_response(first_message).body() == "first");
+   BOOST_TEST(to_http_response(second_message).body() == "second");
+   BOOST_TEST(!owner_canceled->load());
+   BOOST_TEST(requests->load() == 2U);
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_server_allows_response_generation_beyond_idle_timeout) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto server = forge::net::http::server{
+       runtime,
+       server_config{.read_timeout = std::chrono::seconds{2}, .idle_timeout = std::chrono::milliseconds{20}},
+       [](route_context& context) -> boost::asio::awaitable<response> {
+          auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+          timer.expires_after(std::chrono::milliseconds{75});
+          co_await timer.async_wait(boost::asio::use_awaitable);
+          co_return make_text_response(context.request, status::ok, "after-handler");
+       },
+   };
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   auto connection =
+       forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   const auto response = forge::asio::blocking::run(
+       runtime, connection.async_request(make_request(method::get, "/wait"),
+                                         request_options{.timeout = std::chrono::seconds{1}}));
+
+   BOOST_TEST(response.result() == status::ok);
+   BOOST_TEST(response.body() == "after-handler");
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
+BOOST_AUTO_TEST_CASE(http_server_allows_stream_body_generation_beyond_idle_timeout) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto router = forge::net::http::router{};
+   router.get_stream("/wait", [](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+      auto handler_timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+      handler_timer.expires_after(std::chrono::milliseconds{75});
+      co_await handler_timer.async_wait(boost::asio::use_awaitable);
+
+      auto step = std::make_shared<unsigned>(0);
+      co_return stream_response{
+          .head = response{status::ok, request_value.context.request.version()},
+          .body = [step]() -> boost::asio::awaitable<std::optional<body_chunk>> {
+             auto timer = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+             timer.expires_after(std::chrono::milliseconds{75});
+             co_await timer.async_wait(boost::asio::use_awaitable);
+             if ((*step)++ == 0U) {
+                co_return make_body_chunk("first-");
+             }
+             if (*step == 2U) {
+                co_return make_body_chunk("second");
+             }
+             co_return std::nullopt;
+          },
+      };
+   });
+
+   auto server = forge::net::http::server{
+       runtime,
+       server_config{.read_timeout = std::chrono::seconds{2}, .idle_timeout = std::chrono::milliseconds{20}},
+       std::move(router),
+   };
+   forge::asio::blocking::run(runtime, server.async_start());
+
+   auto connection =
+       forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   const auto response = forge::asio::blocking::run(
+       runtime, connection.async_request(make_request(method::get, "/wait"),
+                                         request_options{.timeout = std::chrono::seconds{1}}));
+
+   BOOST_TEST(response.result() == status::ok);
+   BOOST_TEST(response.body() == "first-second");
+
+   forge::asio::blocking::run(runtime, server.async_stop());
+}
+
 BOOST_AUTO_TEST_CASE(server_keep_alive_gap_uses_idle_timeout) {
    auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto requests = std::make_shared<std::atomic<unsigned>>(0);
    auto server = forge::net::http::server{
-      runtime,
-      server_config{.read_timeout = std::chrono::seconds{2}, .idle_timeout = std::chrono::milliseconds{50}},
-      [requests](route_context& context) -> boost::asio::awaitable<response> {
-         requests->fetch_add(1);
-         co_return make_text_response(context.request, status::ok, "ok");
-      },
+       runtime,
+       server_config{.read_timeout = std::chrono::seconds{2}, .idle_timeout = std::chrono::milliseconds{50}},
+       [requests](route_context& context) -> boost::asio::awaitable<response> {
+          requests->fetch_add(1);
+          co_return make_text_response(context.request, status::ok, "ok");
+       },
    };
    forge::asio::blocking::run(runtime, server.async_start());
 
@@ -4378,11 +5845,10 @@ BOOST_AUTO_TEST_CASE(server_keep_alive_gap_uses_idle_timeout) {
    stream.expires_after(std::chrono::seconds{2});
    stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
 
-   asio::write(stream.socket(), asio::buffer(std::string{
-      "GET /first HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Connection: keep-alive\r\n"
-   "\r\n"}));
+   asio::write(stream.socket(), asio::buffer(std::string{"GET /first HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: keep-alive\r\n"
+                                                         "\r\n"}));
    auto buffer = beast::flat_buffer{};
    auto beast_first = beast_http::response<beast_http::string_body>{};
    beast_http::read(stream, buffer, beast_first);
@@ -4392,11 +5858,12 @@ BOOST_AUTO_TEST_CASE(server_keep_alive_gap_uses_idle_timeout) {
 
    std::this_thread::sleep_for(std::chrono::milliseconds{150});
    auto write_error = boost::system::error_code{};
-   asio::write(stream.socket(), asio::buffer(std::string{
-      "GET /second HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Connection: keep-alive\r\n"
-      "\r\n"}), write_error);
+   asio::write(stream.socket(),
+               asio::buffer(std::string{"GET /second HTTP/1.1\r\n"
+                                        "Host: 127.0.0.1\r\n"
+                                        "Connection: keep-alive\r\n"
+                                        "\r\n"}),
+               write_error);
 
    auto read_error = boost::system::error_code{};
    auto second = beast_http::response<beast_http::string_body>{};
@@ -4413,12 +5880,12 @@ BOOST_AUTO_TEST_CASE(server_async_stop_cancels_active_keep_alive_sessions) {
    auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto requests = std::make_shared<std::atomic<unsigned>>(0);
    auto server = forge::net::http::server{
-      runtime,
-      server_config{.read_timeout = std::chrono::seconds{5}, .idle_timeout = std::chrono::seconds{5}},
-      [requests](route_context& context) -> boost::asio::awaitable<response> {
-         requests->fetch_add(1);
-         co_return make_text_response(context.request, status::ok, "ok");
-      },
+       runtime,
+       server_config{.read_timeout = std::chrono::seconds{5}, .idle_timeout = std::chrono::seconds{5}},
+       [requests](route_context& context) -> boost::asio::awaitable<response> {
+          requests->fetch_add(1);
+          co_return make_text_response(context.request, status::ok, "ok");
+       },
    };
    forge::asio::blocking::run(runtime, server.async_start());
 
@@ -4427,11 +5894,10 @@ BOOST_AUTO_TEST_CASE(server_async_stop_cancels_active_keep_alive_sessions) {
    stream.expires_after(std::chrono::seconds{2});
    stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
 
-   asio::write(stream.socket(), asio::buffer(std::string{
-      "GET /first HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Connection: keep-alive\r\n"
-   "\r\n"}));
+   asio::write(stream.socket(), asio::buffer(std::string{"GET /first HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: keep-alive\r\n"
+                                                         "\r\n"}));
    auto buffer = beast::flat_buffer{};
    auto beast_first = beast_http::response<beast_http::string_body>{};
    beast_http::read(stream, buffer, beast_first);
@@ -4442,10 +5908,11 @@ BOOST_AUTO_TEST_CASE(server_async_stop_cancels_active_keep_alive_sessions) {
    forge::asio::blocking::run(runtime, server.async_stop());
 
    auto write_error = boost::system::error_code{};
-   asio::write(stream.socket(), asio::buffer(std::string{
-      "GET /second HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "\r\n"}), write_error);
+   asio::write(stream.socket(),
+               asio::buffer(std::string{"GET /second HTTP/1.1\r\n"
+                                        "Host: 127.0.0.1\r\n"
+                                        "\r\n"}),
+               write_error);
 
    auto read_error = boost::system::error_code{};
    auto second = beast_http::response<beast_http::string_body>{};
@@ -4457,25 +5924,26 @@ BOOST_AUTO_TEST_CASE(server_async_stop_cancels_active_keep_alive_sessions) {
 }
 
 BOOST_AUTO_TEST_CASE(server_stop_waits_for_executor_work_before_returning) {
-   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
-   auto mutex = std::mutex{};
-   auto ready = std::condition_variable{};
-   auto release = std::condition_variable{};
-   auto handler_started = false;
-   auto handler_released = false;
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto handler_started = std::promise<void>{};
+   auto handler_started_future = handler_started.get_future();
+   auto blocker =
+       std::make_shared<asio::steady_timer>(runtime.context(), (std::chrono::steady_clock::time_point::max)());
+   auto handler_invocations = std::atomic_uint{0};
 
    auto server = forge::net::http::server{
-      runtime,
-      server_config{.read_timeout = std::chrono::seconds{5}, .idle_timeout = std::chrono::seconds{5}},
-      [&](route_context& context) -> boost::asio::awaitable<response> {
-         {
-            auto lock = std::unique_lock{mutex};
-            handler_started = true;
-            ready.notify_all();
-            release.wait(lock, [&] { return handler_released; });
-         }
-         co_return make_text_response(context.request, status::ok, "released");
-      },
+       runtime,
+       server_config{.read_timeout = std::chrono::seconds{5}, .idle_timeout = std::chrono::seconds{5}},
+       [&](route_context& context) -> boost::asio::awaitable<response> {
+          handler_invocations.fetch_add(1, std::memory_order_relaxed);
+          if (context.request.target() == "/blocked") {
+             handler_started.set_value();
+             co_await asio::this_coro::reset_cancellation_state(asio::disable_cancellation{});
+             auto ignored = boost::system::error_code{};
+             co_await blocker->async_wait(asio::redirect_error(asio::use_awaitable, ignored));
+          }
+          co_return make_text_response(context.request, status::ok, "released");
+       },
    };
    forge::asio::blocking::run(runtime, server.async_start());
 
@@ -4483,33 +5951,59 @@ BOOST_AUTO_TEST_CASE(server_stop_waits_for_executor_work_before_returning) {
    auto stream = beast::tcp_stream{io_context};
    stream.expires_after(std::chrono::seconds{2});
    stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
-   asio::write(stream.socket(), asio::buffer(std::string{
-      "GET /blocked HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Connection: keep-alive\r\n"
-      "\r\n"}));
+   asio::write(stream.socket(), asio::buffer(std::string{"GET /blocked HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: keep-alive\r\n"
+                                                         "\r\n"}));
+   BOOST_REQUIRE(handler_started_future.wait_for(std::chrono::seconds{2}) == std::future_status::ready);
 
-   {
-      auto lock = std::unique_lock{mutex};
-      BOOST_REQUIRE(ready.wait_for(lock, std::chrono::seconds{2}, [&] { return handler_started; }));
-   }
+   auto idle_stream = beast::tcp_stream{io_context};
+   idle_stream.expires_after(std::chrono::seconds{2});
+   idle_stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), server.port()});
+   asio::write(idle_stream.socket(), asio::buffer(std::string{"GET /ready HTTP/1.1\r\n"
+                                                              "Host: 127.0.0.1\r\n"
+                                                              "Connection: keep-alive\r\n"
+                                                              "\r\n"}));
+   auto idle_buffer = beast::flat_buffer{};
+   auto idle_response = beast_http::response<beast_http::string_body>{};
+   beast_http::read(idle_stream, idle_buffer, idle_response);
+   BOOST_TEST(idle_response.result() == beast_http::status::ok);
 
-   auto stop_returned = std::atomic_bool{false};
+   auto stop_started = std::promise<void>{};
+   auto stop_started_future = stop_started.get_future();
+   auto stop_returned = std::promise<void>{};
+   auto stop_returned_future = stop_returned.get_future();
    auto stop_thread = std::thread{[&] {
+      stop_started.set_value();
       server.stop();
-      stop_returned.store(true);
+      stop_returned.set_value();
    }};
 
-   std::this_thread::sleep_for(std::chrono::milliseconds{100});
-   BOOST_TEST(!stop_returned.load());
+   stop_started_future.wait();
+   BOOST_TEST(
+       static_cast<bool>(stop_returned_future.wait_for(std::chrono::milliseconds{100}) == std::future_status::timeout));
 
-   {
-      const auto lock = std::scoped_lock{mutex};
-      handler_released = true;
-   }
-   release.notify_all();
+   auto second_stop_returned = std::promise<void>{};
+   auto second_stop_returned_future = second_stop_returned.get_future();
+   auto second_stop_thread = std::thread{[&] {
+      server.stop();
+      second_stop_returned.set_value();
+   }};
+   BOOST_TEST(static_cast<bool>(second_stop_returned_future.wait_for(std::chrono::milliseconds{100}) ==
+                                std::future_status::timeout));
+
+   auto idle_read_error = boost::system::error_code{};
+   auto after_stop = beast_http::response<beast_http::string_body>{};
+   idle_stream.expires_after(std::chrono::seconds{2});
+   beast_http::read(idle_stream, idle_buffer, after_stop, idle_read_error);
+   BOOST_TEST(idle_read_error != boost::system::error_code{});
+
+   asio::post(blocker->get_executor(), [blocker] { blocker->cancel(); });
+   BOOST_TEST(static_cast<bool>(stop_returned_future.wait_for(std::chrono::seconds{2}) == std::future_status::ready));
+   BOOST_TEST(
+       static_cast<bool>(second_stop_returned_future.wait_for(std::chrono::seconds{2}) == std::future_status::ready));
    stop_thread.join();
-   BOOST_TEST(stop_returned.load());
+   second_stop_thread.join();
 
    auto buffer = beast::flat_buffer{};
    auto response_value = beast_http::response<beast_http::string_body>{};
@@ -4517,39 +6011,90 @@ BOOST_AUTO_TEST_CASE(server_stop_waits_for_executor_work_before_returning) {
    stream.expires_after(std::chrono::milliseconds{500});
    beast_http::read(stream, buffer, response_value, read_error);
    if (!read_error) {
-      asio::write(stream.socket(), asio::buffer(std::string{
-         "GET /after-stop HTTP/1.1\r\n"
-         "Host: 127.0.0.1\r\n"
-         "\r\n"}), read_error);
+      asio::write(stream.socket(),
+                  asio::buffer(std::string{"GET /after-stop HTTP/1.1\r\n"
+                                           "Host: 127.0.0.1\r\n"
+                                           "\r\n"}),
+                  read_error);
       auto after_stop = beast_http::response<beast_http::string_body>{};
       stream.expires_after(std::chrono::milliseconds{500});
       beast_http::read(stream, buffer, after_stop, read_error);
    }
    BOOST_TEST(read_error != boost::system::error_code{});
+   BOOST_TEST(handler_invocations.load(std::memory_order_relaxed) == 2U);
 }
 
 BOOST_AUTO_TEST_CASE(server_stop_without_start_returns_without_executor_state_race) {
    auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto server = forge::net::http::server{
-      runtime,
-      server_config{},
-      [](route_context& context) -> boost::asio::awaitable<response> {
-         co_return make_text_response(context.request, status::ok, "unused");
-      },
+       runtime,
+       server_config{},
+       [](route_context& context) -> boost::asio::awaitable<response> {
+          co_return make_text_response(context.request, status::ok, "unused");
+       },
    };
 
    server.stop();
    server.stop();
 }
 
+BOOST_AUTO_TEST_CASE(server_stop_drains_accept_loop_before_returning) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
+   auto stop_returned = std::atomic_bool{false};
+   auto late_handlers = std::atomic_uint{0};
+   auto server = forge::net::http::server{
+       runtime,
+       server_config{.read_timeout = std::chrono::seconds{2}, .idle_timeout = std::chrono::seconds{2}},
+       [&](route_context& context) -> boost::asio::awaitable<response> {
+          if (stop_returned.load(std::memory_order_acquire)) {
+             late_handlers.fetch_add(1, std::memory_order_relaxed);
+          }
+          co_return make_text_response(context.request, status::ok, "accepted");
+       },
+   };
+   forge::asio::blocking::run(runtime, server.async_start());
+   const auto port = server.port();
+
+   auto release = std::promise<void>{};
+   auto ready = release.get_future().share();
+   auto clients = std::vector<std::thread>{};
+   clients.reserve(16U);
+   for (auto index = 0U; index < 16U; ++index) {
+      clients.emplace_back([ready, port] {
+         ready.wait();
+         try {
+            auto io_context = asio::io_context{};
+            auto stream = beast::tcp_stream{io_context};
+            stream.expires_after(std::chrono::milliseconds{500});
+            stream.connect(tcp::endpoint{asio::ip::make_address("127.0.0.1"), port});
+            asio::write(stream.socket(), asio::buffer(std::string{"GET /race HTTP/1.1\r\n"
+                                                                  "Host: 127.0.0.1\r\n"
+                                                                  "Connection: close\r\n"
+                                                                  "\r\n"}));
+            auto buffer = beast::flat_buffer{};
+            auto response_value = beast_http::response<beast_http::string_body>{};
+            beast_http::read(stream, buffer, response_value);
+         } catch (const boost::system::system_error&) {
+         }
+      });
+   }
+
+   release.set_value();
+   server.stop();
+   stop_returned.store(true, std::memory_order_release);
+   for (auto& client : clients) {
+      client.join();
+   }
+
+   BOOST_TEST(late_handlers.load(std::memory_order_relaxed) == 0U);
+}
+
 BOOST_AUTO_TEST_CASE(server_stop_called_from_runtime_worker_does_not_deadlock) {
    auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = std::make_shared<forge::net::http::server>(
-      runtime,
-      server_config{},
-      [](route_context& context) -> boost::asio::awaitable<response> {
-         co_return make_text_response(context.request, status::ok, "unused");
-      });
+       runtime, server_config{}, [](route_context& context) -> boost::asio::awaitable<response> {
+          co_return make_text_response(context.request, status::ok, "unused");
+       });
    forge::asio::blocking::run(runtime, server->async_start());
 
    auto stopped = std::make_shared<std::promise<void>>();
@@ -4566,12 +6111,9 @@ BOOST_AUTO_TEST_CASE(server_stop_called_from_runtime_worker_does_not_deadlock) {
 BOOST_AUTO_TEST_CASE(server_accept_loop_survives_runtime_worker_stop_and_server_destruction) {
    auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto server = std::make_shared<std::optional<forge::net::http::server>>();
-   server->emplace(
-      runtime,
-      server_config{},
-      [](route_context& context) -> boost::asio::awaitable<response> {
-         co_return make_text_response(context.request, status::ok, "unused");
-      });
+   server->emplace(runtime, server_config{}, [](route_context& context) -> boost::asio::awaitable<response> {
+      co_return make_text_response(context.request, status::ok, "unused");
+   });
    forge::asio::blocking::run(runtime, (*server)->async_start());
 
    auto stopped = std::make_shared<std::promise<void>>();
@@ -4586,20 +6128,16 @@ BOOST_AUTO_TEST_CASE(server_accept_loop_survives_runtime_worker_stop_and_server_
 
    auto drained = std::make_shared<std::promise<void>>();
    auto drained_future = drained->get_future();
-   asio::post(runtime.context(), [drained] {
-      drained->set_value();
-   });
+   asio::post(runtime.context(), [drained] { drained->set_value(); });
    BOOST_REQUIRE(drained_future.wait_for(std::chrono::seconds{2}) == std::future_status::ready);
 }
 
 BOOST_AUTO_TEST_CASE(server_stop_after_runtime_stop_returns_without_waiting) {
    auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto server = std::make_unique<forge::net::http::server>(
-      runtime,
-      server_config{},
-      [](route_context& context) -> boost::asio::awaitable<response> {
-         co_return make_text_response(context.request, status::ok, "unused");
-      });
+       runtime, server_config{}, [](route_context& context) -> boost::asio::awaitable<response> {
+          co_return make_text_response(context.request, status::ok, "unused");
+       });
    forge::asio::blocking::run(runtime, server->async_start());
 
    runtime.stop();
@@ -4633,11 +6171,11 @@ BOOST_AUTO_TEST_CASE(server_start_waits_for_executor_work_before_returning) {
    }
 
    auto server = forge::net::http::server{
-      runtime,
-      server_config{},
-      [](route_context& context) -> boost::asio::awaitable<response> {
-         co_return make_text_response(context.request, status::ok, "started");
-      },
+       runtime,
+       server_config{},
+       [](route_context& context) -> boost::asio::awaitable<response> {
+          co_return make_text_response(context.request, status::ok, "started");
+       },
    };
 
    auto start_returned = std::atomic_bool{false};
@@ -4669,11 +6207,9 @@ BOOST_AUTO_TEST_CASE(server_start_waits_for_executor_work_before_returning) {
 BOOST_AUTO_TEST_CASE(server_start_called_from_runtime_worker_fails_without_deadlock) {
    auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    auto server = std::make_shared<forge::net::http::server>(
-      runtime,
-      server_config{},
-      [](route_context& context) -> boost::asio::awaitable<response> {
-         co_return make_text_response(context.request, status::ok, "unused");
-      });
+       runtime, server_config{}, [](route_context& context) -> boost::asio::awaitable<response> {
+          co_return make_text_response(context.request, status::ok, "unused");
+       });
 
    auto result = std::make_shared<std::promise<std::exception_ptr>>();
    auto future = result->get_future();
@@ -4707,8 +6243,8 @@ BOOST_AUTO_TEST_CASE(http_stream_route_reads_large_request_body_in_chunks) {
 
    auto router = forge::net::http::router{};
    router.post_stream("/upload",
-                      [total_bytes, chunk_count, header_body_empty](stream_request& request_value)
-                         -> boost::asio::awaitable<stream_response> {
+                      [total_bytes, chunk_count,
+                       header_body_empty](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
                          header_body_empty->store(request_value.context.request.body().empty());
                          while (auto chunk = co_await request_value.body.async_read()) {
                             total_bytes->fetch_add(chunk->bytes.size());
@@ -4719,10 +6255,12 @@ BOOST_AUTO_TEST_CASE(http_stream_route_reads_large_request_body_in_chunks) {
                          co_return stream_response::buffered(std::move(reply));
                       });
 
-   auto server = forge::net::http::server{runtime, server_config{.max_request_body_bytes = 512 * 1024}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.max_request_body_bytes = 512 * 1024}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
-   auto connection = forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto connection =
+       forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
    auto request_value = make_request(method::post, "/upload");
    request_value.body().assign(256 * 1024, 'x');
    request_value.prepare_payload();
@@ -4744,21 +6282,19 @@ BOOST_AUTO_TEST_CASE(http_stream_route_writes_chunked_response_body) {
 
    auto router = forge::net::http::router{};
    router.get_stream("/download", [produced](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
-      auto chunks = std::make_shared<std::vector<std::string>>(
-         std::vector<std::string>{"alpha", "-", "omega"});
+      auto chunks = std::make_shared<std::vector<std::string>>(std::vector<std::string>{"alpha", "-", "omega"});
       auto index = std::make_shared<std::size_t>(0);
       auto reply = response{status::ok, request_value.context.request.version()};
       reply.set(field::content_type, "application/octet-stream");
       co_return stream_response{
           .head = std::move(reply),
-          .body =
-             [chunks, index, produced]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
-                if (*index == chunks->size()) {
-                   co_return std::nullopt;
-                }
-                produced->fetch_add(1);
-                co_return make_body_chunk((*chunks)[(*index)++]);
-             },
+          .body = [chunks, index, produced]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
+             if (*index == chunks->size()) {
+                co_return std::nullopt;
+             }
+             produced->fetch_add(1);
+             co_return make_body_chunk((*chunks)[(*index)++]);
+          },
       };
    });
 
@@ -4788,24 +6324,24 @@ BOOST_AUTO_TEST_CASE(http_stream_route_response_passes_through_after_middleware)
       result.set("X-Stream-Middleware", context.parsed_target.path);
       co_return result;
    });
-   router.get_stream("/download", [invoked, produced](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
-      invoked->fetch_add(1);
-      auto chunks = std::make_shared<std::vector<std::string>>(std::vector<std::string>{"alpha", "omega"});
-      auto index = std::make_shared<std::size_t>(0);
-      auto reply = response{status::ok, request_value.context.request.version()};
-      reply.set(field::content_type, "application/octet-stream");
-      co_return stream_response{
-          .head = std::move(reply),
-          .body =
-             [chunks, index, produced]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
-                if (*index == chunks->size()) {
-                   co_return std::nullopt;
-                }
-                produced->fetch_add(1);
-                co_return make_body_chunk((*chunks)[(*index)++]);
-             },
-      };
-   });
+   router.get_stream(
+       "/download", [invoked, produced](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+          invoked->fetch_add(1);
+          auto chunks = std::make_shared<std::vector<std::string>>(std::vector<std::string>{"alpha", "omega"});
+          auto index = std::make_shared<std::size_t>(0);
+          auto reply = response{status::ok, request_value.context.request.version()};
+          reply.set(field::content_type, "application/octet-stream");
+          co_return stream_response{
+              .head = std::move(reply),
+              .body = [chunks, index, produced]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
+                 if (*index == chunks->size()) {
+                    co_return std::nullopt;
+                 }
+                 produced->fetch_add(1);
+                 co_return make_body_chunk((*chunks)[(*index)++]);
+              },
+          };
+       });
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
@@ -4834,24 +6370,24 @@ BOOST_AUTO_TEST_CASE(http_stream_middleware_replacement_does_not_leak_original_b
       static_cast<void>(co_await next());
       co_return make_text_response(context.request, status::forbidden, "blocked");
    });
-   router.get_stream("/download", [invoked, produced](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
-      invoked->fetch_add(1);
-      auto chunks = std::make_shared<std::vector<std::string>>(std::vector<std::string>{"secret", "-stream"});
-      auto index = std::make_shared<std::size_t>(0);
-      auto reply = response{status::ok, request_value.context.request.version()};
-      reply.set(field::content_type, "application/octet-stream");
-      co_return stream_response{
-          .head = std::move(reply),
-          .body =
-             [chunks, index, produced]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
-                if (*index == chunks->size()) {
-                   co_return std::nullopt;
-                }
-                produced->fetch_add(1);
-                co_return make_body_chunk((*chunks)[(*index)++]);
-             },
-      };
-   });
+   router.get_stream(
+       "/download", [invoked, produced](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+          invoked->fetch_add(1);
+          auto chunks = std::make_shared<std::vector<std::string>>(std::vector<std::string>{"secret", "-stream"});
+          auto index = std::make_shared<std::size_t>(0);
+          auto reply = response{status::ok, request_value.context.request.version()};
+          reply.set(field::content_type, "application/octet-stream");
+          co_return stream_response{
+              .head = std::move(reply),
+              .body = [chunks, index, produced]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
+                 if (*index == chunks->size()) {
+                    co_return std::nullopt;
+                 }
+                 produced->fetch_add(1);
+                 co_return make_body_chunk((*chunks)[(*index)++]);
+              },
+          };
+       });
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
@@ -4885,12 +6421,12 @@ BOOST_AUTO_TEST_CASE(http_stream_middleware_short_circuits_before_body_read) {
       co_return stream_response::buffered(response{status::ok, 11});
    });
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
-   const auto response = raw_http_exchange(
-      server.port(),
-      "POST /upload HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 1048576\r\n\r\n");
+   const auto response =
+       raw_http_exchange(server.port(), "POST /upload HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 1048576\r\n\r\n");
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::unauthorized));
    BOOST_TEST(response.body() == "blocked");
@@ -4904,26 +6440,27 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_accepted_stream_sends_interim_before_b
    auto bytes_read = std::make_shared<std::atomic<std::size_t>>(0);
 
    auto router = forge::net::http::router{};
-   router.post_stream("/upload", [bytes_read](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
-      const auto body = co_await request_value.body.async_read_all();
-      bytes_read->store(body.size());
-      co_return stream_response::buffered(make_text_response(request_value.context.request, status::ok, body));
-   });
+   router.post_stream(
+       "/upload", [bytes_read](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+          const auto body = co_await request_value.body.async_read_all();
+          bytes_read->store(body.size());
+          co_return stream_response::buffered(make_text_response(request_value.context.request, status::ok, body));
+       });
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
    const auto body = std::string{"large-payload"};
-   const auto exchange = raw_expect_continue_exchange(
-      server.port(),
-      "POST /upload HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Expect: 100-continue\r\n"
-      "Content-Length: " +
-         std::to_string(body.size()) + "\r\n"
-         "\r\n",
-      body,
-      std::chrono::milliseconds{500});
+   const auto exchange = raw_expect_continue_exchange(server.port(),
+                                                      "POST /upload HTTP/1.1\r\n"
+                                                      "Host: 127.0.0.1\r\n"
+                                                      "Expect: 100-continue\r\n"
+                                                      "Content-Length: " +
+                                                          std::to_string(body.size()) +
+                                                          "\r\n"
+                                                          "\r\n",
+                                                      body, std::chrono::milliseconds{500});
 
    BOOST_REQUIRE(exchange.interim.has_value());
    BOOST_TEST(exchange.interim->result_int() == static_cast<unsigned>(status::continue_));
@@ -4942,23 +6479,23 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_body_backed_stream_sends_interim_befor
       auto reply = response{status::ok, request_value.context.request.version()};
       reply.set(field::content_type, "application/octet-stream");
       co_return forge::net::http::streaming_response::from_body(std::move(reply), std::move(request_value.body))
-         .materialize(request_value, status::ok);
+          .materialize(request_value, status::ok);
    });
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
    const auto body = std::string{"body-backed-payload"};
-   const auto exchange = raw_expect_continue_exchange(
-      server.port(),
-      "POST /upload HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Expect: 100-continue\r\n"
-      "Content-Length: " +
-         std::to_string(body.size()) + "\r\n"
-         "\r\n",
-      body,
-      std::chrono::milliseconds{500});
+   const auto exchange = raw_expect_continue_exchange(server.port(),
+                                                      "POST /upload HTTP/1.1\r\n"
+                                                      "Host: 127.0.0.1\r\n"
+                                                      "Expect: 100-continue\r\n"
+                                                      "Content-Length: " +
+                                                          std::to_string(body.size()) +
+                                                          "\r\n"
+                                                          "\r\n",
+                                                      body, std::chrono::milliseconds{500});
 
    BOOST_REQUIRE(exchange.interim.has_value());
    BOOST_TEST(exchange.interim->result_int() == static_cast<unsigned>(status::continue_));
@@ -4976,23 +6513,23 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_body_backed_stream_old_materialize_sen
       auto reply = response{status::ok, request_value.context.request.version()};
       reply.set(field::content_type, "application/octet-stream");
       co_return forge::net::http::streaming_response::from_body(std::move(reply), std::move(request_value.body))
-         .materialize(request_value.context.request, status::ok);
+          .materialize(request_value.context.request, status::ok);
    });
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
    const auto body = std::string{"old-materialize-body-backed-payload"};
-   const auto exchange = raw_expect_continue_exchange(
-      server.port(),
-      "POST /upload HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Expect: 100-continue\r\n"
-      "Content-Length: " +
-         std::to_string(body.size()) + "\r\n"
-         "\r\n",
-      body,
-      std::chrono::milliseconds{500});
+   const auto exchange = raw_expect_continue_exchange(server.port(),
+                                                      "POST /upload HTTP/1.1\r\n"
+                                                      "Host: 127.0.0.1\r\n"
+                                                      "Expect: 100-continue\r\n"
+                                                      "Content-Length: " +
+                                                          std::to_string(body.size()) +
+                                                          "\r\n"
+                                                          "\r\n",
+                                                      body, std::chrono::milliseconds{500});
 
    BOOST_REQUIRE(exchange.interim.has_value());
    BOOST_TEST(exchange.interim->result_int() == static_cast<unsigned>(status::continue_));
@@ -5011,23 +6548,23 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_copied_body_backed_stream_sends_interi
       reply.set(field::content_type, "application/octet-stream");
       auto copied_body = request_value.body;
       co_return forge::net::http::streaming_response::from_body(std::move(reply), std::move(copied_body))
-         .materialize(request_value, status::ok);
+          .materialize(request_value, status::ok);
    });
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
    const auto body = std::string{"copied-body-backed-payload"};
-   const auto exchange = raw_expect_continue_exchange(
-      server.port(),
-      "POST /upload HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Expect: 100-continue\r\n"
-      "Content-Length: " +
-         std::to_string(body.size()) + "\r\n"
-         "\r\n",
-      body,
-      std::chrono::milliseconds{500});
+   const auto exchange = raw_expect_continue_exchange(server.port(),
+                                                      "POST /upload HTTP/1.1\r\n"
+                                                      "Host: 127.0.0.1\r\n"
+                                                      "Expect: 100-continue\r\n"
+                                                      "Content-Length: " +
+                                                          std::to_string(body.size()) +
+                                                          "\r\n"
+                                                          "\r\n",
+                                                      body, std::chrono::milliseconds{500});
 
    BOOST_REQUIRE(exchange.interim.has_value());
    BOOST_TEST(exchange.interim->result_int() == static_cast<unsigned>(status::continue_));
@@ -5043,24 +6580,26 @@ BOOST_AUTO_TEST_CASE(http_api_body_stream_from_body_sends_interim_before_final_h
    apis.install<stream_body_echo_api>(stream_body_echo_api::describe(), std::make_shared<stream_body_echo_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding =
-      forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<stream_body_echo_api>().build();
+   auto binding = forge::api::http::binding()
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .bind<stream_body_echo_api>()
+                      .build();
    router.mount(binding);
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
    const auto body = std::string{"http-api-body-stream-payload"};
-   const auto exchange = raw_expect_continue_exchange(
-      server.port(),
-      "PUT /stream-body-echo/abc HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Expect: 100-continue\r\n"
-      "Content-Length: " +
-         std::to_string(body.size()) + "\r\n"
-         "\r\n",
-      body,
-      std::chrono::milliseconds{500});
+   const auto exchange = raw_expect_continue_exchange(server.port(),
+                                                      "PUT /stream-body-echo/abc HTTP/1.1\r\n"
+                                                      "Host: 127.0.0.1\r\n"
+                                                      "Expect: 100-continue\r\n"
+                                                      "Content-Length: " +
+                                                          std::to_string(body.size()) +
+                                                          "\r\n"
+                                                          "\r\n",
+                                                      body, std::chrono::milliseconds{500});
 
    BOOST_REQUIRE(exchange.interim.has_value());
    BOOST_TEST(exchange.interim->result_int() == static_cast<unsigned>(status::continue_));
@@ -5076,33 +6615,47 @@ BOOST_AUTO_TEST_CASE(http_api_independent_stream_body_does_not_send_interim_cont
    apis.install<stream_body_echo_api>(stream_body_echo_api::describe(), std::make_shared<stream_body_echo_api_impl>());
 
    auto router = forge::net::http::router{};
-   auto binding =
-      forge::api::http::binding().use(forge::api::core::binding().serve(apis).build()).bind<stream_body_echo_api>().build();
+   auto binding = forge::api::http::binding()
+                      .use(forge::api::core::binding().serve(apis).build())
+                      .bind<stream_body_echo_api>()
+                      .build();
    router.mount(binding);
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
    const auto body = std::string{"body-that-should-not-be-requested"};
-   const auto exchange = raw_expect_continue_exchange(
-      server.port(),
-      "PUT /stream-body-independent/abc HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Expect: 100-continue\r\n"
-      "Content-Length: " +
-         std::to_string(body.size()) + "\r\n"
-         "\r\n",
-      body,
-      std::chrono::milliseconds{500});
+   const auto exchange = raw_expect_continue_exchange(server.port(),
+                                                      "PUT /stream-body-independent/abc HTTP/1.1\r\n"
+                                                      "Host: 127.0.0.1\r\n"
+                                                      "Expect: 100-continue\r\n"
+                                                      "Content-Length: " +
+                                                          std::to_string(body.size()) +
+                                                          "\r\n"
+                                                          "\r\n",
+                                                      body, std::chrono::milliseconds{500});
 
    BOOST_TEST(!exchange.interim.has_value());
    BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::ok));
    BOOST_TEST(exchange.final.body() == "independent");
 
+   auto connection = forge::net::http::connection{
+       runtime,
+       parse_base_url("http://127.0.0.1:" + std::to_string(server.port())),
+   };
+   auto mismatched_request = make_request(method::put, "/stream-body-independent/status-mismatch");
+   mismatched_request.set(field::content_type, "application/octet-stream");
+   mismatched_request.body() = "ignored";
+   mismatched_request.prepare_payload();
+   auto mismatched = forge::asio::blocking::run(runtime, connection.async_request(std::move(mismatched_request)));
+   BOOST_TEST(mismatched.result() == status::internal_server_error);
+
    forge::asio::blocking::run(runtime, server.async_stop());
 }
 
-BOOST_AUTO_TEST_CASE(http_expect_continue_custom_body_callback_reading_request_body_sends_interim_before_final_headers) {
+BOOST_AUTO_TEST_CASE(
+    http_expect_continue_custom_body_callback_reading_request_body_sends_interim_before_final_headers) {
    auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
 
    auto router = forge::net::http::router{};
@@ -5112,28 +6665,28 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_custom_body_callback_reading_request_b
       auto copied_body = request_value.body;
       auto callback_body = copied_body;
       co_return stream_response{
-         .head = std::move(reply),
-         .body = request_value.response_body(
-            [body = std::move(callback_body)]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
-               co_return co_await body.async_read();
-            }),
+          .head = std::move(reply),
+          .body = request_value.response_body(
+              [body = std::move(callback_body)]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
+                 co_return co_await body.async_read();
+              }),
       };
    });
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
    const auto body = std::string{"custom-callback-body-backed-payload"};
-   const auto exchange = raw_expect_continue_exchange(
-      server.port(),
-      "POST /upload HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Expect: 100-continue\r\n"
-      "Content-Length: " +
-         std::to_string(body.size()) + "\r\n"
-         "\r\n",
-      body,
-      std::chrono::milliseconds{500});
+   const auto exchange = raw_expect_continue_exchange(server.port(),
+                                                      "POST /upload HTTP/1.1\r\n"
+                                                      "Host: 127.0.0.1\r\n"
+                                                      "Expect: 100-continue\r\n"
+                                                      "Content-Length: " +
+                                                          std::to_string(body.size()) +
+                                                          "\r\n"
+                                                          "\r\n",
+                                                      body, std::chrono::milliseconds{500});
 
    BOOST_REQUIRE(exchange.interim.has_value());
    BOOST_TEST(exchange.interim->result_int() == static_cast<unsigned>(status::continue_));
@@ -5152,21 +6705,21 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_moved_body_buffered_rejection_does_not
       invoked->store(true);
       auto moved_body = std::move(request_value.body);
       static_cast<void>(moved_body);
-      co_return stream_response::buffered(make_text_response(request_value.context.request, status::forbidden, "blocked"));
+      co_return stream_response::buffered(
+          make_text_response(request_value.context.request, status::forbidden, "blocked"));
    });
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
-   const auto exchange = raw_expect_continue_exchange(
-      server.port(),
-      "POST /upload HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Expect: 100-continue\r\n"
-      "Content-Length: 1048576\r\n"
-      "\r\n",
-      std::string(1024, 'x'),
-      std::chrono::milliseconds{500});
+   const auto exchange = raw_expect_continue_exchange(server.port(),
+                                                      "POST /upload HTTP/1.1\r\n"
+                                                      "Host: 127.0.0.1\r\n"
+                                                      "Expect: 100-continue\r\n"
+                                                      "Content-Length: 1048576\r\n"
+                                                      "\r\n",
+                                                      std::string(1024, 'x'), std::chrono::milliseconds{500});
 
    BOOST_TEST(!exchange.interim.has_value());
    BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::forbidden));
@@ -5180,7 +6733,8 @@ BOOST_AUTO_TEST_CASE(http_streaming_response_from_body_does_not_expose_internal_
    auto reply = response{status::ok, 11};
    reply.set(field::content_type, "application/octet-stream");
 
-   const auto streamed = forge::net::http::streaming_response::from_body(std::move(reply), make_body_reader({"payload"}));
+   const auto streamed =
+       forge::net::http::streaming_response::from_body(std::move(reply), make_body_reader({"payload"}));
 
    BOOST_TEST(!has_internal_forge_header(streamed.head()));
 }
@@ -5195,21 +6749,20 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_public_from_body_stream_without_reques
       auto reply = response{status::forbidden, request_value.context.request.version()};
       reply.set(field::content_type, "text/plain");
       co_return forge::net::http::streaming_response::from_body(std::move(reply), make_body_reader({"blocked"}))
-         .materialize(request_value.context.request, status::forbidden);
+          .materialize(request_value.context.request, status::forbidden);
    });
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
-   const auto exchange = raw_expect_continue_exchange(
-      server.port(),
-      "POST /upload HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Expect: 100-continue\r\n"
-      "Content-Length: 1048576\r\n"
-      "\r\n",
-      std::string(1024, 'x'),
-      std::chrono::milliseconds{500});
+   const auto exchange = raw_expect_continue_exchange(server.port(),
+                                                      "POST /upload HTTP/1.1\r\n"
+                                                      "Host: 127.0.0.1\r\n"
+                                                      "Expect: 100-continue\r\n"
+                                                      "Content-Length: 1048576\r\n"
+                                                      "\r\n",
+                                                      std::string(1024, 'x'), std::chrono::milliseconds{500});
 
    BOOST_TEST(!exchange.interim.has_value());
    BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::forbidden));
@@ -5230,30 +6783,28 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_stream_response_without_request_body_r
       auto reply = response{status::forbidden, 11};
       reply.set(field::content_type, "text/plain");
       co_return stream_response{
-         .head = std::move(reply),
-         .body =
-            [sent = false]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
-            if (sent) {
-               co_return std::nullopt;
-            }
-            sent = true;
-            co_return make_body_chunk("blocked");
-         },
+          .head = std::move(reply),
+          .body = [sent = false]() mutable -> boost::asio::awaitable<std::optional<body_chunk>> {
+             if (sent) {
+                co_return std::nullopt;
+             }
+             sent = true;
+             co_return make_body_chunk("blocked");
+          },
       };
    });
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
-   const auto exchange = raw_expect_continue_exchange(
-      server.port(),
-      "POST /upload HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Expect: 100-continue\r\n"
-      "Content-Length: 1048576\r\n"
-      "\r\n",
-      std::string(1024, 'x'),
-      std::chrono::milliseconds{500});
+   const auto exchange = raw_expect_continue_exchange(server.port(),
+                                                      "POST /upload HTTP/1.1\r\n"
+                                                      "Host: 127.0.0.1\r\n"
+                                                      "Expect: 100-continue\r\n"
+                                                      "Content-Length: 1048576\r\n"
+                                                      "\r\n",
+                                                      std::string(1024, 'x'), std::chrono::milliseconds{500});
 
    BOOST_TEST(!exchange.interim.has_value());
    BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::forbidden));
@@ -5272,18 +6823,17 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_missing_path_rejects_without_interim) 
       co_return stream_response::buffered(response{status::ok, 11});
    });
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
-   const auto exchange = raw_expect_continue_exchange(
-      server.port(),
-      "POST /missing HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Expect: 100-continue\r\n"
-      "Content-Length: 1048576\r\n"
-      "\r\n",
-      std::string(1024, 'x'),
-      std::chrono::milliseconds{500});
+   const auto exchange = raw_expect_continue_exchange(server.port(),
+                                                      "POST /missing HTTP/1.1\r\n"
+                                                      "Host: 127.0.0.1\r\n"
+                                                      "Expect: 100-continue\r\n"
+                                                      "Content-Length: 1048576\r\n"
+                                                      "\r\n",
+                                                      std::string(1024, 'x'), std::chrono::milliseconds{500});
 
    BOOST_TEST(!exchange.interim.has_value());
    BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::not_found));
@@ -5302,18 +6852,17 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_wrong_method_on_stream_route_rejects_w
       co_return stream_response::buffered(response{status::ok, 11});
    });
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
-   const auto exchange = raw_expect_continue_exchange(
-      server.port(),
-      "PUT /upload HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Expect: 100-continue\r\n"
-      "Content-Length: 1048576\r\n"
-      "\r\n",
-      std::string(1024, 'x'),
-      std::chrono::milliseconds{500});
+   const auto exchange = raw_expect_continue_exchange(server.port(),
+                                                      "PUT /upload HTTP/1.1\r\n"
+                                                      "Host: 127.0.0.1\r\n"
+                                                      "Expect: 100-continue\r\n"
+                                                      "Content-Length: 1048576\r\n"
+                                                      "\r\n",
+                                                      std::string(1024, 'x'), std::chrono::milliseconds{500});
 
    BOOST_TEST(!exchange.interim.has_value());
    BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::method_not_allowed));
@@ -5330,19 +6879,19 @@ BOOST_AUTO_TEST_CASE(http_preflight_bodyless_rejection_preserves_keep_alive) {
       co_return make_text_response(context.request, status::ok, "still-open");
    });
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
-   const auto [first, second] = raw_two_request_exchange(
-      server.port(),
-      "GET /missing HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Connection: keep-alive\r\n"
-      "\r\n",
-      "GET /ok HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Connection: close\r\n"
-      "\r\n");
+   const auto [first, second] = raw_two_request_exchange(server.port(),
+                                                         "GET /missing HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: keep-alive\r\n"
+                                                         "\r\n",
+                                                         "GET /ok HTTP/1.1\r\n"
+                                                         "Host: 127.0.0.1\r\n"
+                                                         "Connection: close\r\n"
+                                                         "\r\n");
 
    BOOST_TEST(first.result_int() == static_cast<unsigned>(status::not_found));
    BOOST_TEST(first.keep_alive());
@@ -5362,20 +6911,20 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_accepted_buffered_route_sends_interim_
       co_return make_text_response(context.request, status::ok, context.request.body());
    });
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
    const auto body = std::string{"buffered-payload"};
-   const auto exchange = raw_expect_continue_exchange(
-      server.port(),
-      "POST /buffered HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Expect: 100-continue\r\n"
-      "Content-Length: " +
-         std::to_string(body.size()) + "\r\n"
-         "\r\n",
-      body,
-      std::chrono::milliseconds{500});
+   const auto exchange = raw_expect_continue_exchange(server.port(),
+                                                      "POST /buffered HTTP/1.1\r\n"
+                                                      "Host: 127.0.0.1\r\n"
+                                                      "Expect: 100-continue\r\n"
+                                                      "Content-Length: " +
+                                                          std::to_string(body.size()) +
+                                                          "\r\n"
+                                                          "\r\n",
+                                                      body, std::chrono::milliseconds{500});
 
    BOOST_REQUIRE(exchange.interim.has_value());
    BOOST_TEST(exchange.interim->result_int() == static_cast<unsigned>(status::continue_));
@@ -5401,18 +6950,17 @@ BOOST_AUTO_TEST_CASE(http_expect_continue_rejection_does_not_consume_body) {
       co_return stream_response::buffered(response{status::ok, 11});
    });
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
-   const auto exchange = raw_expect_continue_exchange(
-      server.port(),
-      "POST /upload HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Expect: 100-continue\r\n"
-      "Content-Length: 1048576\r\n"
-      "\r\n",
-      std::string(1024, 'x'),
-      std::chrono::milliseconds{500});
+   const auto exchange = raw_expect_continue_exchange(server.port(),
+                                                      "POST /upload HTTP/1.1\r\n"
+                                                      "Host: 127.0.0.1\r\n"
+                                                      "Expect: 100-continue\r\n"
+                                                      "Content-Length: 1048576\r\n"
+                                                      "\r\n",
+                                                      std::string(1024, 'x'), std::chrono::milliseconds{500});
 
    BOOST_TEST(!exchange.interim.has_value());
    BOOST_TEST(exchange.final.result_int() == static_cast<unsigned>(status::unauthorized));
@@ -5435,29 +6983,31 @@ BOOST_AUTO_TEST_CASE(http_stream_short_circuit_closes_connection_with_unread_bod
       }
       co_return co_await next();
    });
-   router.post_stream("/upload", [upload_invoked](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
-      static_cast<void>(request_value);
-      upload_invoked->store(true);
-      co_return stream_response::buffered(response{status::ok, 11});
-   });
+   router.post_stream("/upload",
+                      [upload_invoked](stream_request& request_value) -> boost::asio::awaitable<stream_response> {
+                         static_cast<void>(request_value);
+                         upload_invoked->store(true);
+                         co_return stream_response::buffered(response{status::ok, 11});
+                      });
    router.get("/ok", [ok_requests](route_context& context) -> boost::asio::awaitable<response> {
       ok_requests->fetch_add(1);
       co_return make_text_response(context.request, status::ok, "ok");
    });
 
-   auto server = forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
+   auto server =
+       forge::net::http::server{runtime, server_config{.read_timeout = std::chrono::seconds{5}}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
    const auto unread_body = std::string{"GET /ok HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"};
-   const auto response = raw_http_exchange(
-      server.port(),
-      "POST /upload HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Content-Length: " +
-         std::to_string(unread_body.size()) + "\r\n"
-         "\r\n" +
-         unread_body,
-      std::chrono::milliseconds{100});
+   const auto response = raw_http_exchange(server.port(),
+                                           "POST /upload HTTP/1.1\r\n"
+                                           "Host: 127.0.0.1\r\n"
+                                           "Content-Length: " +
+                                               std::to_string(unread_body.size()) +
+                                               "\r\n"
+                                               "\r\n" +
+                                               unread_body,
+                                           std::chrono::milliseconds{100});
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::unauthorized));
    BOOST_TEST(response.body() == "blocked");
@@ -5483,16 +7033,14 @@ BOOST_AUTO_TEST_CASE(http_stream_body_limit_fires_during_stream_read) {
    auto server = forge::net::http::server{runtime, server_config{.max_request_body_bytes = 4}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
-   const auto response = raw_http_exchange(
-      server.port(),
-      "POST /upload HTTP/1.1\r\n"
-      "Host: 127.0.0.1\r\n"
-      "Transfer-Encoding: chunked\r\n"
-      "\r\n"
-      "5\r\n"
-      "12345\r\n"
-      "0\r\n"
-      "\r\n");
+   const auto response = raw_http_exchange(server.port(), "POST /upload HTTP/1.1\r\n"
+                                                          "Host: 127.0.0.1\r\n"
+                                                          "Transfer-Encoding: chunked\r\n"
+                                                          "\r\n"
+                                                          "5\r\n"
+                                                          "12345\r\n"
+                                                          "0\r\n"
+                                                          "\r\n");
 
    BOOST_TEST(response.result_int() == static_cast<unsigned>(status::payload_too_large));
    BOOST_TEST(response.body().find("payload_too_large") != std::string::npos);
@@ -5542,7 +7090,8 @@ BOOST_AUTO_TEST_CASE(http_static_file_root_serves_byte_range) {
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
-   auto connection = forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto connection =
+       forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
    auto request_value = make_request(method::get, "/files/chunk.bin");
    request_value.set(field::range, "bytes=2-5");
 
@@ -5570,7 +7119,8 @@ BOOST_AUTO_TEST_CASE(http_static_file_root_ignores_unsupported_multi_range) {
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
-   auto connection = forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto connection =
+       forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
    auto request_value = make_request(method::get, "/files/chunk.bin");
    request_value.set(field::range, "bytes=0-1,4-5");
 
@@ -5599,7 +7149,8 @@ BOOST_AUTO_TEST_CASE(http_static_file_root_rejects_invalid_range) {
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
-   auto connection = forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto connection =
+       forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
    auto request_value = make_request(method::get, "/files/chunk.bin");
    request_value.set(field::range, "bytes=20-30");
 
@@ -5626,8 +7177,10 @@ BOOST_AUTO_TEST_CASE(http_static_file_root_uses_deterministic_weak_etag) {
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
-   auto connection = forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
-   const auto first = forge::asio::blocking::run(runtime, connection.async_request(make_request(method::get, "/files/chunk.bin")));
+   auto connection =
+       forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   const auto first =
+       forge::asio::blocking::run(runtime, connection.async_request(make_request(method::get, "/files/chunk.bin")));
 
    BOOST_TEST(first.result_int() == static_cast<unsigned>(status::ok));
    BOOST_TEST(std::string{first[field::etag]}.starts_with("W/\""));
@@ -5656,7 +7209,8 @@ BOOST_AUTO_TEST_CASE(http_static_file_root_head_returns_headers_without_body) {
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
    forge::asio::blocking::run(runtime, server.async_start());
 
-   auto connection = forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
+   auto connection =
+       forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
    auto request_value = make_request(method::head, "/files/chunk.bin");
 
    const auto response = forge::asio::blocking::run(runtime, connection.async_request(std::move(request_value)));
@@ -5731,9 +7285,9 @@ BOOST_AUTO_TEST_CASE(http_static_file_root_rejects_backslash_and_symlink_escape_
 
 BOOST_AUTO_TEST_CASE(http_upload_reader_keeps_small_upload_in_memory) {
    auto runtime = forge::asio::runtime{};
-   auto reader = upload_reader{make_body_reader({"hello", " ", "world"}),
-                               upload_options{.memory_threshold_bytes = 64, .max_file_bytes = 1024,
-                                              .max_total_bytes = 1024}};
+   auto reader =
+       upload_reader{make_body_reader({"hello", " ", "world"}),
+                     upload_options{.memory_threshold_bytes = 64, .max_file_bytes = 1024, .max_total_bytes = 1024}};
 
    const auto part = forge::asio::blocking::run(runtime, reader.async_read());
 
@@ -5748,9 +7302,11 @@ BOOST_AUTO_TEST_CASE(http_upload_reader_spools_large_upload_and_cleans_up) {
    auto runtime = forge::asio::runtime{};
    auto spool_path = std::filesystem::path{};
    {
-      auto reader = upload_reader{make_body_reader({"0123", "4567", "89"}),
-                                  upload_options{.memory_threshold_bytes = 4, .max_file_bytes = 1024,
-                                                 .max_total_bytes = 1024, .spool_directory = files.path()}};
+      auto reader =
+          upload_reader{make_body_reader({"0123", "4567", "89"}), upload_options{.memory_threshold_bytes = 4,
+                                                                                 .max_file_bytes = 1024,
+                                                                                 .max_total_bytes = 1024,
+                                                                                 .spool_directory = files.path()}};
 
       const auto part = forge::asio::blocking::run(runtime, reader.async_read());
 
@@ -5768,23 +7324,23 @@ BOOST_AUTO_TEST_CASE(http_upload_reader_spools_large_upload_and_cleans_up) {
 BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_extracts_fields_and_files) {
    auto files = temp_directory{};
    auto runtime = forge::asio::runtime{};
-   const auto body =
-      std::string{"--demo\r\n"
-                  "Content-Disposition: form-data; name=\"title\"\r\n"
-                  "\r\n"
-                  "sample\r\n"
-                  "--demo\r\n"
-                  "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
-                  "Content-Type: text/plain\r\n"
-                  "\r\n"
-                  "abcdefghi\r\n"
-                  "--demo--\r\n"};
-   auto reader = upload_reader{make_body_reader({body}),
-                               upload_options{.memory_threshold_bytes = 4, .max_file_bytes = 1024,
-                                              .max_total_bytes = 1024, .spool_directory = files.path()}};
+   const auto body = std::string{"--demo\r\n"
+                                 "Content-Disposition: form-data; name=\"title\"\r\n"
+                                 "\r\n"
+                                 "sample\r\n"
+                                 "--demo\r\n"
+                                 "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
+                                 "Content-Type: text/plain\r\n"
+                                 "\r\n"
+                                 "abcdefghi\r\n"
+                                 "--demo--\r\n"};
+   auto reader = upload_reader{make_body_reader({body}), upload_options{.memory_threshold_bytes = 4,
+                                                                        .max_file_bytes = 1024,
+                                                                        .max_total_bytes = 1024,
+                                                                        .spool_directory = files.path()}};
 
-   const auto form = forge::asio::blocking::run(
-      runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
+   const auto form =
+       forge::asio::blocking::run(runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
 
    BOOST_REQUIRE_EQUAL(form.parts.size(), 2U);
    const auto title = form.field("title");
@@ -5803,13 +7359,13 @@ BOOST_AUTO_TEST_CASE(http_multipart_writer_generates_safe_boundaries_and_quoted_
    auto runtime = forge::asio::runtime{};
    const auto payload = std::string{"alpha\r\n--forge-http-boundary\r\nomega"};
    auto written = write_multipart_form({
-      multipart_writer_part{.name = "title", .body = payload},
-      multipart_writer_part{
-         .name = "file",
-         .filename = std::string{"..\\secret\"quoted.txt"},
-         .content_type = "text/plain",
-         .body = "file-body",
-      },
+       multipart_writer_part{.name = "title", .body = payload},
+       multipart_writer_part{
+           .name = "file",
+           .filename = std::string{"..\\secret\"quoted.txt"},
+           .content_type = "text/plain",
+           .body = "file-body",
+       },
    });
 
    BOOST_TEST(written.content_type.find("forge-http-boundary") == std::string::npos);
@@ -5830,108 +7386,100 @@ BOOST_AUTO_TEST_CASE(http_multipart_writer_generates_safe_boundaries_and_quoted_
 }
 
 BOOST_AUTO_TEST_CASE(http_multipart_writer_rejects_control_bytes_in_parameters) {
-   BOOST_CHECK_THROW(
-      static_cast<void>(write_multipart_form({
-         multipart_writer_part{
-            .name = std::string{"field\r\nX-Injected: yes"},
-            .body = "value",
-         },
-      })),
-      forge::net::http::exceptions::bad_request);
+   BOOST_CHECK_THROW(static_cast<void>(write_multipart_form({
+                         multipart_writer_part{
+                             .name = std::string{"field\r\nX-Injected: yes"},
+                             .body = "value",
+                         },
+                     })),
+                     forge::net::http::exceptions::bad_request);
 
-   BOOST_CHECK_THROW(
-      static_cast<void>(write_multipart_form({
-         multipart_writer_part{
-            .name = std::string{"field\033name"},
-            .body = "value",
-         },
-      })),
-      forge::net::http::exceptions::bad_request);
+   BOOST_CHECK_THROW(static_cast<void>(write_multipart_form({
+                         multipart_writer_part{
+                             .name = std::string{"field\033name"},
+                             .body = "value",
+                         },
+                     })),
+                     forge::net::http::exceptions::bad_request);
 
-   BOOST_CHECK_THROW(
-      static_cast<void>(write_multipart_form({
-         multipart_writer_part{
-            .name = "file",
-            .filename = std::string{"bad\0name.txt", 12},
-            .body = "file-body",
-         },
-      })),
-      forge::net::http::exceptions::bad_request);
+   BOOST_CHECK_THROW(static_cast<void>(write_multipart_form({
+                         multipart_writer_part{
+                             .name = "file",
+                             .filename = std::string{"bad\0name.txt", 12},
+                             .body = "file-body",
+                         },
+                     })),
+                     forge::net::http::exceptions::bad_request);
 }
 
 BOOST_AUTO_TEST_CASE(http_multipart_writer_rejects_crlf_in_content_type) {
-   BOOST_CHECK_THROW(
-      static_cast<void>(write_multipart_form({
-         multipart_writer_part{
-            .name = "file",
-            .filename = std::string{"chunk.txt"},
-            .content_type = "text/plain\r\nX-Injected: yes",
-            .body = "file-body",
-         },
-      })),
-      forge::net::http::exceptions::bad_request);
+   BOOST_CHECK_THROW(static_cast<void>(write_multipart_form({
+                         multipart_writer_part{
+                             .name = "file",
+                             .filename = std::string{"chunk.txt"},
+                             .content_type = "text/plain\r\nX-Injected: yes",
+                             .body = "file-body",
+                         },
+                     })),
+                     forge::net::http::exceptions::bad_request);
 }
 
 BOOST_AUTO_TEST_CASE(http_upload_reader_rejects_malformed_multipart_boundary) {
    auto runtime = forge::asio::runtime{};
-   auto reader = upload_reader{make_body_reader({"--demo\r\nContent-Disposition: form-data; name=\"x\"\r\n\r\nvalue\r\n"}),
-                               upload_options{.memory_threshold_bytes = 64, .max_file_bytes = 1024,
-                                              .max_total_bytes = 1024}};
+   auto reader =
+       upload_reader{make_body_reader({"--demo\r\nContent-Disposition: form-data; name=\"x\"\r\n\r\nvalue\r\n"}),
+                     upload_options{.memory_threshold_bytes = 64, .max_file_bytes = 1024, .max_total_bytes = 1024}};
 
-   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime, reader.async_read_multipart(
-                                                    "multipart/form-data; boundary=demo")),
-                     exceptions::bad_request);
+   BOOST_CHECK_THROW(
+       forge::asio::blocking::run(runtime, reader.async_read_multipart("multipart/form-data; boundary=demo")),
+       exceptions::bad_request);
 }
 
 BOOST_AUTO_TEST_CASE(http_upload_reader_accepts_boundary_like_bytes_inside_file_content) {
    auto runtime = forge::asio::runtime{};
    const auto content = std::string{"alpha\r\n--demo-not-a-delimiter\r\nomega"};
-   const auto body =
-      std::string{"--demo\r\n"
-                  "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
-                  "Content-Type: text/plain\r\n"
-                  "\r\n"} +
-      content +
-      "\r\n--demo--\r\n";
-   auto reader = upload_reader{make_body_reader({body}),
-                               upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 1024,
-                                              .max_total_bytes = 1024}};
+   const auto body = std::string{"--demo\r\n"
+                                 "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
+                                 "Content-Type: text/plain\r\n"
+                                 "\r\n"} +
+                     content + "\r\n--demo--\r\n";
+   auto reader =
+       upload_reader{make_body_reader({body}),
+                     upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 1024, .max_total_bytes = 1024}};
 
-   const auto form = forge::asio::blocking::run(
-      runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
+   const auto form =
+       forge::asio::blocking::run(runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
 
    BOOST_REQUIRE_EQUAL(form.files.size(), 1U);
    BOOST_TEST(form.files.front().text() == content);
 
-   auto malformed = upload_reader{
-      make_body_reader({"--demo\r\n"
-                        "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
-                        "\r\n"
-                        "alpha\r\n"
-                        "--demo-not-a-delimiter\r\n"
-                        "omega\r\n"}),
-      upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 1024, .max_total_bytes = 1024}};
-   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime, malformed.async_read_multipart(
-                                                    "multipart/form-data; boundary=demo")),
-                     exceptions::bad_request);
+   auto malformed =
+       upload_reader{make_body_reader({"--demo\r\n"
+                                       "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
+                                       "\r\n"
+                                       "alpha\r\n"
+                                       "--demo-not-a-delimiter\r\n"
+                                       "omega\r\n"}),
+                     upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 1024, .max_total_bytes = 1024}};
+   BOOST_CHECK_THROW(
+       forge::asio::blocking::run(runtime, malformed.async_read_multipart("multipart/form-data; boundary=demo")),
+       exceptions::bad_request);
 }
 
 BOOST_AUTO_TEST_CASE(http_upload_reader_accepts_closing_boundary_like_bytes_inside_file_content) {
    auto runtime = forge::asio::runtime{};
    const auto content = std::string{"alpha\r\n--demo--not-a-delimiter\r\nomega"};
-   const auto body =
-      std::string{"--demo\r\n"
-                  "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
-                  "Content-Type: text/plain\r\n"
-                  "\r\n"} +
-      content +
-      "\r\n--demo--\r\n";
-   auto reader = upload_reader{make_body_reader({body}),
-                               upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 1024,
-                                              .max_total_bytes = 1024}};
+   const auto body = std::string{"--demo\r\n"
+                                 "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
+                                 "Content-Type: text/plain\r\n"
+                                 "\r\n"} +
+                     content + "\r\n--demo--\r\n";
+   auto reader =
+       upload_reader{make_body_reader({body}),
+                     upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 1024, .max_total_bytes = 1024}};
 
-   const auto form = forge::asio::blocking::run(
-      runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
+   const auto form =
+       forge::asio::blocking::run(runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
 
    BOOST_REQUIRE_EQUAL(form.files.size(), 1U);
    BOOST_TEST(form.files.front().text() == content);
@@ -5939,69 +7487,66 @@ BOOST_AUTO_TEST_CASE(http_upload_reader_accepts_closing_boundary_like_bytes_insi
 
 BOOST_AUTO_TEST_CASE(http_upload_reader_enforces_file_and_total_limits) {
    auto runtime = forge::asio::runtime{};
-   auto total_limited = upload_reader{make_body_reader({"123", "45"}),
-                                      upload_options{.memory_threshold_bytes = 64, .max_file_bytes = 1024,
-                                                     .max_total_bytes = 4}};
+   auto total_limited =
+       upload_reader{make_body_reader({"123", "45"}),
+                     upload_options{.memory_threshold_bytes = 64, .max_file_bytes = 1024, .max_total_bytes = 4}};
    BOOST_CHECK_THROW(forge::asio::blocking::run(runtime, total_limited.async_read()), exceptions::payload_too_large);
 
-   const auto body =
-      std::string{"--demo\r\n"
-                  "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
-                  "\r\n"
-                  "12345\r\n"
-                  "--demo--\r\n"};
-   auto file_limited = upload_reader{make_body_reader({body}),
-                                     upload_options{.memory_threshold_bytes = 64, .max_file_bytes = 4,
-                                                    .max_total_bytes = 1024}};
-   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime, file_limited.async_read_multipart(
-                                                    "multipart/form-data; boundary=demo")),
-                     exceptions::payload_too_large);
+   const auto body = std::string{"--demo\r\n"
+                                 "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
+                                 "\r\n"
+                                 "12345\r\n"
+                                 "--demo--\r\n"};
+   auto file_limited =
+       upload_reader{make_body_reader({body}),
+                     upload_options{.memory_threshold_bytes = 64, .max_file_bytes = 4, .max_total_bytes = 1024}};
+   BOOST_CHECK_THROW(
+       forge::asio::blocking::run(runtime, file_limited.async_read_multipart("multipart/form-data; boundary=demo")),
+       exceptions::payload_too_large);
 }
 
 BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_limits_non_file_fields) {
    auto runtime = forge::asio::runtime{};
-   const auto body =
-      std::string{"--demo\r\n"
-                  "Content-Disposition: form-data; name=\"notes\"\r\n"
-                  "\r\n"
-                  "123456\r\n"
-                  "--demo--\r\n"};
-   auto reader = upload_reader{make_body_reader({body}),
-                               upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 1024,
-                                              .max_field_bytes = 5, .max_total_bytes = 1024}};
+   const auto body = std::string{"--demo\r\n"
+                                 "Content-Disposition: form-data; name=\"notes\"\r\n"
+                                 "\r\n"
+                                 "123456\r\n"
+                                 "--demo--\r\n"};
+   auto reader = upload_reader{make_body_reader({body}), upload_options{.memory_threshold_bytes = 256,
+                                                                        .max_file_bytes = 1024,
+                                                                        .max_field_bytes = 5,
+                                                                        .max_total_bytes = 1024}};
 
-   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime, reader.async_read_multipart(
-                                                    "multipart/form-data; boundary=demo")),
-                     exceptions::payload_too_large);
+   BOOST_CHECK_THROW(
+       forge::asio::blocking::run(runtime, reader.async_read_multipart("multipart/form-data; boundary=demo")),
+       exceptions::payload_too_large);
 }
 
 BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_accepts_configured_count_limits) {
    auto runtime = forge::asio::runtime{};
-   const auto body =
-      std::string{"--demo\r\n"
-                  "Content-Disposition: form-data; name=\"first\"\r\n"
-                  "\r\n"
-                  "1\r\n"
-                  "--demo\r\n"
-                  "Content-Disposition: form-data; name=\"second\"\r\n"
-                  "\r\n"
-                  "2\r\n"
-                  "--demo\r\n"
-                  "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
-                  "\r\n"
-                  "abc\r\n"
-                  "--demo--\r\n"};
-   auto reader = upload_reader{make_body_reader({body}),
-                               upload_options{.memory_threshold_bytes = 256,
-                                              .max_file_bytes = 8,
-                                              .max_field_bytes = 8,
-                                              .max_total_bytes = 1024,
-                                              .max_parts = 3,
-                                              .max_files = 1,
-                                              .max_fields = 2}};
+   const auto body = std::string{"--demo\r\n"
+                                 "Content-Disposition: form-data; name=\"first\"\r\n"
+                                 "\r\n"
+                                 "1\r\n"
+                                 "--demo\r\n"
+                                 "Content-Disposition: form-data; name=\"second\"\r\n"
+                                 "\r\n"
+                                 "2\r\n"
+                                 "--demo\r\n"
+                                 "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
+                                 "\r\n"
+                                 "abc\r\n"
+                                 "--demo--\r\n"};
+   auto reader = upload_reader{make_body_reader({body}), upload_options{.memory_threshold_bytes = 256,
+                                                                        .max_file_bytes = 8,
+                                                                        .max_field_bytes = 8,
+                                                                        .max_total_bytes = 1024,
+                                                                        .max_parts = 3,
+                                                                        .max_files = 1,
+                                                                        .max_fields = 2}};
 
-   const auto form = forge::asio::blocking::run(
-      runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
+   const auto form =
+       forge::asio::blocking::run(runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
 
    BOOST_REQUIRE_EQUAL(form.parts.size(), 3U);
    BOOST_REQUIRE_EQUAL(form.files.size(), 1U);
@@ -6015,156 +7560,146 @@ BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_accepts_configured_count_limit
 
 BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_enforces_part_file_field_count_limits) {
    auto runtime = forge::asio::runtime{};
-   const auto two_fields =
-      std::string{"--demo\r\n"
-                  "Content-Disposition: form-data; name=\"first\"\r\n"
-                  "\r\n"
-                  "1\r\n"
-                  "--demo\r\n"
-                  "Content-Disposition: form-data; name=\"second\"\r\n"
-                  "\r\n"
-                  "2\r\n"
-                  "--demo--\r\n"};
-   auto part_limited = upload_reader{make_body_reader({two_fields}),
-                                     upload_options{.memory_threshold_bytes = 256,
-                                                    .max_file_bytes = 8,
-                                                    .max_field_bytes = 8,
-                                                    .max_total_bytes = 1024,
-                                                    .max_parts = 1,
-                                                    .max_files = 1,
-                                                    .max_fields = 2}};
-   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime, part_limited.async_read_multipart(
-                                                    "multipart/form-data; boundary=demo")),
-                     exceptions::payload_too_large);
+   const auto two_fields = std::string{"--demo\r\n"
+                                       "Content-Disposition: form-data; name=\"first\"\r\n"
+                                       "\r\n"
+                                       "1\r\n"
+                                       "--demo\r\n"
+                                       "Content-Disposition: form-data; name=\"second\"\r\n"
+                                       "\r\n"
+                                       "2\r\n"
+                                       "--demo--\r\n"};
+   auto part_limited = upload_reader{make_body_reader({two_fields}), upload_options{.memory_threshold_bytes = 256,
+                                                                                    .max_file_bytes = 8,
+                                                                                    .max_field_bytes = 8,
+                                                                                    .max_total_bytes = 1024,
+                                                                                    .max_parts = 1,
+                                                                                    .max_files = 1,
+                                                                                    .max_fields = 2}};
+   BOOST_CHECK_THROW(
+       forge::asio::blocking::run(runtime, part_limited.async_read_multipart("multipart/form-data; boundary=demo")),
+       exceptions::payload_too_large);
 
-   auto field_limited = upload_reader{make_body_reader({two_fields}),
-                                      upload_options{.memory_threshold_bytes = 256,
-                                                     .max_file_bytes = 8,
-                                                     .max_field_bytes = 8,
-                                                     .max_total_bytes = 1024,
-                                                     .max_parts = 2,
-                                                     .max_files = 1,
-                                                     .max_fields = 1}};
-   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime, field_limited.async_read_multipart(
-                                                    "multipart/form-data; boundary=demo")),
-                     exceptions::payload_too_large);
+   auto field_limited = upload_reader{make_body_reader({two_fields}), upload_options{.memory_threshold_bytes = 256,
+                                                                                     .max_file_bytes = 8,
+                                                                                     .max_field_bytes = 8,
+                                                                                     .max_total_bytes = 1024,
+                                                                                     .max_parts = 2,
+                                                                                     .max_files = 1,
+                                                                                     .max_fields = 1}};
+   BOOST_CHECK_THROW(
+       forge::asio::blocking::run(runtime, field_limited.async_read_multipart("multipart/form-data; boundary=demo")),
+       exceptions::payload_too_large);
 
-   const auto two_files =
-      std::string{"--demo\r\n"
-                  "Content-Disposition: form-data; name=\"first\"; filename=\"first.txt\"\r\n"
-                  "\r\n"
-                  "a\r\n"
-                  "--demo\r\n"
-                  "Content-Disposition: form-data; name=\"second\"; filename=\"second.txt\"\r\n"
-                  "\r\n"
-                  "b\r\n"
-                  "--demo--\r\n"};
-   auto file_limited = upload_reader{make_body_reader({two_files}),
-                                     upload_options{.memory_threshold_bytes = 256,
-                                                    .max_file_bytes = 8,
-                                                    .max_field_bytes = 8,
-                                                    .max_total_bytes = 1024,
-                                                    .max_parts = 2,
-                                                    .max_files = 1,
-                                                    .max_fields = 1}};
-   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime, file_limited.async_read_multipart(
-                                                    "multipart/form-data; boundary=demo")),
-                     exceptions::payload_too_large);
+   const auto two_files = std::string{"--demo\r\n"
+                                      "Content-Disposition: form-data; name=\"first\"; filename=\"first.txt\"\r\n"
+                                      "\r\n"
+                                      "a\r\n"
+                                      "--demo\r\n"
+                                      "Content-Disposition: form-data; name=\"second\"; filename=\"second.txt\"\r\n"
+                                      "\r\n"
+                                      "b\r\n"
+                                      "--demo--\r\n"};
+   auto file_limited = upload_reader{make_body_reader({two_files}), upload_options{.memory_threshold_bytes = 256,
+                                                                                   .max_file_bytes = 8,
+                                                                                   .max_field_bytes = 8,
+                                                                                   .max_total_bytes = 1024,
+                                                                                   .max_parts = 2,
+                                                                                   .max_files = 1,
+                                                                                   .max_fields = 1}};
+   BOOST_CHECK_THROW(
+       forge::asio::blocking::run(runtime, file_limited.async_read_multipart("multipart/form-data; boundary=demo")),
+       exceptions::payload_too_large);
 }
 
 BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_enforces_part_header_limits) {
    auto runtime = forge::asio::runtime{};
-   const auto extra_header =
-      std::string{"--demo\r\n"
-                  "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
-                  "X-Test: value\r\n"
-                  "\r\n"
-                  "abc\r\n"
-                  "--demo--\r\n"};
-   auto count_limited = upload_reader{make_body_reader({extra_header}),
-                                      upload_options{.memory_threshold_bytes = 256,
-                                                     .max_file_bytes = 8,
-                                                     .max_field_bytes = 8,
-                                                     .max_total_bytes = 1024,
-                                                     .max_parts = 1,
-                                                     .max_files = 1,
-                                                     .max_fields = 0,
-                                                     .max_part_headers = 1,
-                                                     .max_part_header_bytes = 1024}};
-   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime, count_limited.async_read_multipart(
-                                                    "multipart/form-data; boundary=demo")),
-                     exceptions::payload_too_large);
+   const auto extra_header = std::string{"--demo\r\n"
+                                         "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n"
+                                         "X-Test: value\r\n"
+                                         "\r\n"
+                                         "abc\r\n"
+                                         "--demo--\r\n"};
+   auto count_limited = upload_reader{make_body_reader({extra_header}), upload_options{.memory_threshold_bytes = 256,
+                                                                                       .max_file_bytes = 8,
+                                                                                       .max_field_bytes = 8,
+                                                                                       .max_total_bytes = 1024,
+                                                                                       .max_parts = 1,
+                                                                                       .max_files = 1,
+                                                                                       .max_fields = 0,
+                                                                                       .max_part_headers = 1,
+                                                                                       .max_part_header_bytes = 1024}};
+   BOOST_CHECK_THROW(
+       forge::asio::blocking::run(runtime, count_limited.async_read_multipart("multipart/form-data; boundary=demo")),
+       exceptions::payload_too_large);
 
-   auto bytes_limited = upload_reader{make_body_reader({extra_header}),
-                                      upload_options{.memory_threshold_bytes = 256,
-                                                     .max_file_bytes = 8,
-                                                     .max_field_bytes = 8,
-                                                     .max_total_bytes = 1024,
-                                                     .max_parts = 1,
-                                                     .max_files = 1,
-                                                     .max_fields = 0,
-                                                     .max_part_headers = 8,
-                                                     .max_part_header_bytes = 16}};
-   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime, bytes_limited.async_read_multipart(
-                                                    "multipart/form-data; boundary=demo")),
-                     exceptions::payload_too_large);
+   auto bytes_limited = upload_reader{make_body_reader({extra_header}), upload_options{.memory_threshold_bytes = 256,
+                                                                                       .max_file_bytes = 8,
+                                                                                       .max_field_bytes = 8,
+                                                                                       .max_total_bytes = 1024,
+                                                                                       .max_parts = 1,
+                                                                                       .max_files = 1,
+                                                                                       .max_fields = 0,
+                                                                                       .max_part_headers = 8,
+                                                                                       .max_part_header_bytes = 16}};
+   BOOST_CHECK_THROW(
+       forge::asio::blocking::run(runtime, bytes_limited.async_read_multipart("multipart/form-data; boundary=demo")),
+       exceptions::payload_too_large);
 }
 
 BOOST_AUTO_TEST_CASE(http_upload_reader_multipart_applies_file_limit_per_part) {
    auto runtime = forge::asio::runtime{};
-   const auto two_files =
-      std::string{"--demo\r\n"
-                  "Content-Disposition: form-data; name=\"first\"; filename=\"first.txt\"\r\n"
-                  "\r\n"
-                  "12345\r\n"
-                  "--demo\r\n"
-                  "Content-Disposition: form-data; name=\"second\"; filename=\"second.txt\"\r\n"
-                  "\r\n"
-                  "abcde\r\n"
-                  "--demo--\r\n"};
-   auto reader = upload_reader{make_body_reader({two_files}),
-                               upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 5,
-                                              .max_total_bytes = 1024}};
+   const auto two_files = std::string{"--demo\r\n"
+                                      "Content-Disposition: form-data; name=\"first\"; filename=\"first.txt\"\r\n"
+                                      "\r\n"
+                                      "12345\r\n"
+                                      "--demo\r\n"
+                                      "Content-Disposition: form-data; name=\"second\"; filename=\"second.txt\"\r\n"
+                                      "\r\n"
+                                      "abcde\r\n"
+                                      "--demo--\r\n"};
+   auto reader =
+       upload_reader{make_body_reader({two_files}),
+                     upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 5, .max_total_bytes = 1024}};
 
-   const auto form = forge::asio::blocking::run(
-      runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
+   const auto form =
+       forge::asio::blocking::run(runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
    BOOST_REQUIRE_EQUAL(form.files.size(), 2U);
    BOOST_TEST(form.files[0].text() == "12345");
    BOOST_TEST(form.files[1].text() == "abcde");
 
-   const auto oversized_file =
-      std::string{"--demo\r\n"
-                  "Content-Disposition: form-data; name=\"file\"; filename=\"large.txt\"\r\n"
-                  "\r\n"
-                  "123456\r\n"
-                  "--demo--\r\n"};
-   auto file_limited = upload_reader{make_body_reader({oversized_file}),
-                                     upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 5,
-                                                    .max_total_bytes = 1024}};
-   BOOST_CHECK_THROW(forge::asio::blocking::run(runtime, file_limited.async_read_multipart(
-                                                    "multipart/form-data; boundary=demo")),
-                     exceptions::payload_too_large);
+   const auto oversized_file = std::string{"--demo\r\n"
+                                           "Content-Disposition: form-data; name=\"file\"; filename=\"large.txt\"\r\n"
+                                           "\r\n"
+                                           "123456\r\n"
+                                           "--demo--\r\n"};
+   auto file_limited =
+       upload_reader{make_body_reader({oversized_file}),
+                     upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 5, .max_total_bytes = 1024}};
+   BOOST_CHECK_THROW(
+       forge::asio::blocking::run(runtime, file_limited.async_read_multipart("multipart/form-data; boundary=demo")),
+       exceptions::payload_too_large);
 }
 
 BOOST_AUTO_TEST_CASE(http_upload_reader_parses_spooled_multipart_without_full_body_materialization) {
    auto files = temp_directory{};
    auto runtime = forge::asio::runtime{};
    const auto content = std::string{"0123456789abcdef0123456789abcdef"};
-   auto reader = upload_reader{
-      make_body_reader({
-         "--demo\r\nContent-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n",
-         "Content-Type: text/plain\r\n\r\n0123456789",
-         "abcdef0123456789",
-         "abcdef\r\n--demo--\r\n",
-      }),
-      upload_options{.memory_threshold_bytes = 8,
-                     .max_file_bytes = 1024,
-                     .max_field_bytes = 1024,
-                     .max_total_bytes = 1024,
-                     .spool_directory = files.path()}};
+   auto reader =
+       upload_reader{make_body_reader({
+                         "--demo\r\nContent-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n",
+                         "Content-Type: text/plain\r\n\r\n0123456789",
+                         "abcdef0123456789",
+                         "abcdef\r\n--demo--\r\n",
+                     }),
+                     upload_options{.memory_threshold_bytes = 8,
+                                    .max_file_bytes = 1024,
+                                    .max_field_bytes = 1024,
+                                    .max_total_bytes = 1024,
+                                    .spool_directory = files.path()}};
 
-   const auto form = forge::asio::blocking::run(
-      runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
+   const auto form =
+       forge::asio::blocking::run(runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
 
    BOOST_REQUIRE_EQUAL(form.files.size(), 1U);
    const auto& file = form.files.front();
@@ -6180,19 +7715,18 @@ BOOST_AUTO_TEST_CASE(http_upload_reader_parses_spooled_multipart_without_full_bo
 
 BOOST_AUTO_TEST_CASE(http_upload_file_exposes_safe_filename_without_path_segments) {
    auto runtime = forge::asio::runtime{};
-   const auto body =
-      std::string{"--demo\r\n"
-                  "Content-Disposition: form-data; name=\"file\"; filename=\"..\\\\secret file.txt\"\r\n"
-                  "Content-Type: text/plain\r\n"
-                  "\r\n"
-                  "payload\r\n"
-                  "--demo--\r\n"};
-   auto reader = upload_reader{make_body_reader({body}),
-                               upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 1024,
-                                              .max_total_bytes = 1024}};
+   const auto body = std::string{"--demo\r\n"
+                                 "Content-Disposition: form-data; name=\"file\"; filename=\"..\\\\secret file.txt\"\r\n"
+                                 "Content-Type: text/plain\r\n"
+                                 "\r\n"
+                                 "payload\r\n"
+                                 "--demo--\r\n"};
+   auto reader =
+       upload_reader{make_body_reader({body}),
+                     upload_options{.memory_threshold_bytes = 256, .max_file_bytes = 1024, .max_total_bytes = 1024}};
 
-   const auto form = forge::asio::blocking::run(
-      runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
+   const auto form =
+       forge::asio::blocking::run(runtime, reader.async_read_multipart("multipart/form-data; boundary=demo"));
 
    BOOST_REQUIRE_EQUAL(form.files.size(), 1U);
    BOOST_REQUIRE(form.files.front().filename.has_value());
@@ -6248,13 +7782,11 @@ BOOST_AUTO_TEST_CASE(connection_retries_only_idempotent_requests_after_remote_cl
        forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(retry_server.port()))};
 
    auto get_request = make_request(method::get, "/retry");
-   const auto get_response =
-      forge::asio::blocking::run(runtime,
-                               connection.async_request(
-                                  std::move(get_request),
-                                  request_options{.retry_idempotent = true,
-                                                  .max_retries = 1,
-                                                  .retry_backoff = std::chrono::milliseconds{1}}));
+   const auto get_response = forge::asio::blocking::run(
+       runtime,
+       connection.async_request(
+           std::move(get_request),
+           request_options{.retry_idempotent = true, .max_retries = 1, .retry_backoff = std::chrono::milliseconds{1}}));
 
    BOOST_TEST(get_response.result_int() == static_cast<unsigned>(status::ok));
    BOOST_TEST(get_response.body() == "retry-ok");
@@ -6262,18 +7794,111 @@ BOOST_AUTO_TEST_CASE(connection_retries_only_idempotent_requests_after_remote_cl
    BOOST_CHECK_EQUAL(connection.metrics().completed_requests, 1U);
 
    auto no_retry_server = flaky_server{false};
-   auto no_retry_connection =
-       forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(no_retry_server.port()))};
+   auto no_retry_connection = forge::net::http::connection{
+       runtime, parse_base_url("http://127.0.0.1:" + std::to_string(no_retry_server.port()))};
    auto post_request = make_request(method::post, "/mutation");
    BOOST_CHECK_THROW(
-       forge::asio::blocking::run(runtime,
-                                no_retry_connection.async_request(
-                                   std::move(post_request),
-                                   request_options{.retry_idempotent = true,
-                                                   .max_retries = 1,
-                                                   .retry_backoff = std::chrono::milliseconds{1}})),
+       forge::asio::blocking::run(
+           runtime, no_retry_connection.async_request(std::move(post_request),
+                                                      request_options{.retry_idempotent = true,
+                                                                      .max_retries = 1,
+                                                                      .retry_backoff = std::chrono::milliseconds{1}})),
        std::exception);
    BOOST_CHECK_EQUAL(no_retry_connection.metrics().retry_attempts, 0U);
+}
+
+BOOST_AUTO_TEST_CASE(http_api_proxy_retries_file_response_after_remote_close) {
+   auto retry_server = flaky_server{true};
+   auto runtime = forge::asio::runtime{};
+   auto client =
+       forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(retry_server.port()))};
+   auto object = forge::asio::blocking::run(runtime, forge::api::http::remote<object_api>(client));
+
+   auto file = forge::asio::blocking::run(
+       runtime, object->get_object(object_get_request{.collection = "cache", .key = "chunk.bin"}));
+   const auto body = forge::asio::blocking::run(runtime, file.body().async_read_all());
+
+   BOOST_TEST(file.status_code() == status::ok);
+   BOOST_TEST(body == "retry-ok");
+   BOOST_CHECK_EQUAL(client.metrics().retry_attempts, 1U);
+   BOOST_CHECK_EQUAL(client.metrics().reconnects, 1U);
+   BOOST_CHECK_EQUAL(client.metrics().completed_requests, 1U);
+}
+
+BOOST_AUTO_TEST_CASE(http_stream_response_retry_preserves_absolute_deadline_metrics) {
+   auto retry_server = flaky_server{false};
+   auto runtime = forge::asio::runtime{};
+   auto connection =
+       forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(retry_server.port()))};
+
+   BOOST_CHECK_THROW(
+       forge::asio::blocking::run(
+           runtime, connection.async_stream_request(make_request(method::get, "/deadline"),
+                                                    request_options{.timeout = std::chrono::milliseconds{500},
+                                                                    .retry_idempotent = true,
+                                                                    .max_retries = 1,
+                                                                    .retry_backoff = std::chrono::seconds{1}})),
+       forge::net::http::exceptions::gateway_timeout);
+
+   BOOST_CHECK_EQUAL(connection.metrics().retry_attempts, 1U);
+   BOOST_CHECK_EQUAL(connection.metrics().reconnects, 0U);
+   BOOST_CHECK_EQUAL(connection.metrics().timeouts, 1U);
+}
+
+BOOST_AUTO_TEST_CASE(http_stream_response_counts_deadline_before_retry_attempt) {
+   auto runtime = forge::asio::runtime{};
+   auto connection = forge::net::http::connection{runtime, parse_base_url("http://127.0.0.1:1")};
+
+   BOOST_CHECK_THROW(
+       forge::asio::blocking::run(
+           runtime, connection.async_stream_request(make_request(method::get, "/deadline"),
+                                                    request_options{.timeout = std::chrono::milliseconds{0},
+                                                                    .retry_idempotent = true,
+                                                                    .max_retries = 1,
+                                                                    .retry_backoff = std::chrono::milliseconds{0}})),
+       forge::net::http::exceptions::gateway_timeout);
+
+   BOOST_CHECK_EQUAL(connection.metrics().retry_attempts, 0U);
+   BOOST_CHECK_EQUAL(connection.metrics().reconnects, 0U);
+   BOOST_CHECK_EQUAL(connection.metrics().failed_requests, 1U);
+   BOOST_CHECK_EQUAL(connection.metrics().timeouts, 1U);
+}
+
+BOOST_AUTO_TEST_CASE(http_api_proxy_retries_get_after_stale_keep_alive) {
+   auto runtime = forge::asio::runtime{};
+   auto typed_server = stale_keep_alive_server{};
+   auto typed_client =
+       forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(typed_server.port()))};
+   auto search = forge::asio::blocking::run(runtime, forge::api::http::remote<search_api>(typed_client));
+
+   const auto first = forge::asio::blocking::run(runtime, search->search(search_request{.term = "first", .limit = 1}));
+   const auto second =
+       forge::asio::blocking::run(runtime, search->search(search_request{.term = "second", .limit = 1}));
+
+   BOOST_TEST(first.value == "first");
+   BOOST_TEST(second.value == "second");
+
+   auto positional_server = stale_keep_alive_server{};
+   auto positional_client = forge::net::http::client{
+       runtime, parse_base_url("http://127.0.0.1:" + std::to_string(positional_server.port()))};
+   auto positional = forge::asio::blocking::run(runtime, forge::api::http::remote<mixed_proxy_api>(positional_client));
+
+   const auto positional_first = forge::asio::blocking::run(runtime, positional->read("first", "one"));
+   const auto positional_second = forge::asio::blocking::run(runtime, positional->read("second", "two"));
+
+   BOOST_TEST(positional_first.value == "first");
+   BOOST_TEST(positional_second.value == "second");
+
+   auto timeout_server = stale_keep_alive_server{};
+   auto timeout_client =
+       forge::net::http::client{runtime, parse_base_url("http://127.0.0.1:" + std::to_string(timeout_server.port()))};
+   auto timeout = forge::asio::blocking::run(runtime, forge::api::http::remote<positional_timeout_api>(timeout_client));
+
+   const auto timeout_first = forge::asio::blocking::run(runtime, timeout->read("first", 1'000U));
+   const auto timeout_second = forge::asio::blocking::run(runtime, timeout->read("second", 1'000U));
+
+   BOOST_TEST(timeout_first.value == "first");
+   BOOST_TEST(timeout_second.value == "second");
 }
 
 BOOST_AUTO_TEST_CASE(connection_serializes_concurrent_requests) {
@@ -6332,18 +7957,18 @@ BOOST_AUTO_TEST_CASE(websocket_echo_shares_server_port) {
    auto received_cv = std::condition_variable{};
    auto received = std::string{};
    auto received_ready = false;
-   connection->on_message(
-       [&received_mutex, &received_cv, &received,
-        &received_ready](forge::net::websocket::connection& connection, std::string message) -> boost::asio::awaitable<void> {
-          static_cast<void>(connection);
-          {
-             const auto lock = std::scoped_lock{received_mutex};
-             received = std::move(message);
-             received_ready = true;
-          }
-          received_cv.notify_all();
-          co_return;
-       });
+   connection->on_message([&received_mutex, &received_cv, &received,
+                           &received_ready](forge::net::websocket::connection& connection,
+                                            std::string message) -> boost::asio::awaitable<void> {
+      static_cast<void>(connection);
+      {
+         const auto lock = std::scoped_lock{received_mutex};
+         received = std::move(message);
+         received_ready = true;
+      }
+      received_cv.notify_all();
+      co_return;
+   });
    forge::asio::blocking::run(runtime, connection->send("hello"));
 
    {
@@ -6364,30 +7989,30 @@ BOOST_AUTO_TEST_CASE(websocket_api_adapter_strips_reserved_metadata) {
 
    auto observed_peer = std::make_shared<std::string>();
    auto observed_public = std::make_shared<std::string>();
-   auto plan = forge::api::core::binding()
-                  .serve(registry)
-                  .interceptor(forge::api::core::interceptor()
-                                  .id("websocket-metadata")
-                                  .phase(forge::api::core::interceptor_phase::authorize)
-                                  .handler([observed_peer, observed_public](forge::api::core::call_context& context)
-                                               -> boost::asio::awaitable<void> {
-                                     *observed_peer = forge::api::core::metadata_value(
-                                                        context.meta,
-                                                        forge::api::core::p2p_remote_peer_metadata_key)
-                                                        .value_or("missing");
-                                     *observed_public =
-                                        forge::api::core::metadata_value(context.meta, "x-client-trace")
-                                           .value_or("missing");
-                                     co_return;
-                                  })
-                                  .build())
-                  .build();
+   auto plan =
+       forge::api::core::binding()
+           .serve(registry)
+           .interceptor(forge::api::core::interceptor()
+                            .id("websocket-metadata")
+                            .phase(forge::api::core::interceptor_phase::authorize)
+                            .handler([observed_peer, observed_public](
+                                         forge::api::core::call_context& context) -> boost::asio::awaitable<void> {
+                               *observed_peer = forge::api::core::metadata_value(
+                                                    context.meta, forge::api::core::p2p_remote_peer_metadata_key)
+                                                    .value_or("missing");
+                               *observed_public =
+                                   forge::api::core::metadata_value(context.meta, "x-client-trace").value_or("missing");
+                               co_return;
+                            })
+                            .build())
+           .build();
 
    auto binding = forge::api::websocket::api().use(std::move(plan)).build();
    auto router = forge::net::http::router{};
-   router.websocket("/api", [&runtime, binding = std::move(binding)](forge::net::websocket::connection::ptr connection) mutable {
-      boost::asio::co_spawn(runtime.context(), binding.accept(std::move(connection)), boost::asio::detached);
-   });
+   router.websocket(
+       "/api", [&runtime, binding = std::move(binding)](forge::net::websocket::connection::ptr connection) mutable {
+          boost::asio::co_spawn(runtime.context(), binding.accept(std::move(connection)), boost::asio::detached);
+       });
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
    server.start();
@@ -6416,10 +8041,10 @@ BOOST_AUTO_TEST_CASE(websocket_api_adapter_strips_reserved_metadata) {
        .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
        .method = "read",
        .meta =
-          {
-             {.key = std::string{forge::api::core::p2p_remote_peer_metadata_key}, .value = "spoofed-peer"},
-             {.key = "x-client-trace", .value = "trace-2"},
-       },
+           {
+               {.key = std::string{forge::api::core::p2p_remote_peer_metadata_key}, .value = "spoofed-peer"},
+               {.key = "x-client-trace", .value = "trace-2"},
+           },
        .codec = {.value = "forge.raw"},
        .payload = pack_api_payload(api_read_chunk{}),
    };
@@ -6428,9 +8053,7 @@ BOOST_AUTO_TEST_CASE(websocket_api_adapter_strips_reserved_metadata) {
 
    {
       auto lock = std::unique_lock{response_mutex};
-      BOOST_CHECK(response_cv.wait_for(lock, std::chrono::seconds{2}, [&response_ready] {
-         return response_ready;
-      }));
+      BOOST_CHECK(response_cv.wait_for(lock, std::chrono::seconds{2}, [&response_ready] { return response_ready; }));
    }
 
    const auto frame = unpack_websocket_api_frame(response);
@@ -6451,9 +8074,10 @@ BOOST_AUTO_TEST_CASE(websocket_api_adapter_dispatches_positional_method) {
    auto binding = forge::api::websocket::api().use(forge::api::core::binding().serve(registry).build()).build();
 
    auto router = forge::net::http::router{};
-   router.websocket("/api", [&runtime, binding = std::move(binding)](forge::net::websocket::connection::ptr connection) mutable {
-      boost::asio::co_spawn(runtime.context(), binding.accept(std::move(connection)), boost::asio::detached);
-   });
+   router.websocket(
+       "/api", [&runtime, binding = std::move(binding)](forge::net::websocket::connection::ptr connection) mutable {
+          boost::asio::co_spawn(runtime.context(), binding.accept(std::move(connection)), boost::asio::detached);
+       });
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
    server.start();
@@ -6489,9 +8113,7 @@ BOOST_AUTO_TEST_CASE(websocket_api_adapter_dispatches_positional_method) {
 
    {
       auto lock = std::unique_lock{response_mutex};
-      BOOST_CHECK(response_cv.wait_for(lock, std::chrono::seconds{2}, [&response_ready] {
-         return response_ready;
-      }));
+      BOOST_CHECK(response_cv.wait_for(lock, std::chrono::seconds{2}, [&response_ready] { return response_ready; }));
    }
 
    const auto frame = unpack_websocket_api_frame(response);
@@ -6517,10 +8139,9 @@ BOOST_AUTO_TEST_CASE(websocket_handler_exception_is_not_silently_swallowed) {
          }
          close_cv.notify_all();
       });
-      connection->on_message(
-          [](forge::net::websocket::connection&, std::string) -> boost::asio::awaitable<void> {
-             FORGE_THROW_EXCEPTION(forge::net::websocket::exceptions::malformed_frame, "bad websocket message");
-          });
+      connection->on_message([](forge::net::websocket::connection&, std::string) -> boost::asio::awaitable<void> {
+         FORGE_THROW_EXCEPTION(forge::net::websocket::exceptions::malformed_frame, "bad websocket message");
+      });
    });
 
    auto server = forge::net::http::server{runtime, server_config{}, std::move(router)};
@@ -6552,18 +8173,18 @@ BOOST_AUTO_TEST_CASE(websocket_client_connects_over_tls) {
    auto received_cv = std::condition_variable{};
    auto received = std::string{};
    auto received_ready = false;
-   connection->on_message(
-       [&received_mutex, &received_cv, &received,
-        &received_ready](forge::net::websocket::connection& connection, std::string message) -> boost::asio::awaitable<void> {
-          static_cast<void>(connection);
-          {
-             const auto lock = std::scoped_lock{received_mutex};
-             received = std::move(message);
-             received_ready = true;
-          }
-          received_cv.notify_all();
-          co_return;
-       });
+   connection->on_message([&received_mutex, &received_cv, &received,
+                           &received_ready](forge::net::websocket::connection& connection,
+                                            std::string message) -> boost::asio::awaitable<void> {
+      static_cast<void>(connection);
+      {
+         const auto lock = std::scoped_lock{received_mutex};
+         received = std::move(message);
+         received_ready = true;
+      }
+      received_cv.notify_all();
+      co_return;
+   });
 
    forge::asio::blocking::run(runtime, connection->send("secure-hello"));
    {

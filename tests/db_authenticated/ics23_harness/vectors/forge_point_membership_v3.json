@@ -1,0 +1,40 @@
+{
+  "format": "forge.db.authenticated.point.vector.v1",
+  "hash_schema": 3,
+  "domain": "forge.test.cross-language.point.v3",
+  "tree": "state",
+  "anchor": {
+    "state_root": "a9d7cc0f76024d939d11d752016e985635a4f861f4e51a02484906730d01799d",
+    "state_size": 2
+  },
+  "query_key": "616c706861",
+  "terminal": {
+    "key": "616c706861",
+    "value_hash": "f91eb855f01d5bb7bf379141735bb57f1ffc66b1f94bc9988f10a7b91fb80bb7",
+    "value": "6f6e65"
+  },
+  "path": [
+    {
+      "child": "left",
+      "height": 1,
+      "subtree_size": 2,
+      "min_key": "616c706861",
+      "max_key": "67616d6d61",
+      "separator": "67616d6d61",
+      "sibling": {
+        "kind": "leaf",
+        "leaf": {
+          "key": "67616d6d61",
+          "value_hash": "fa3435e1ca13ee8e6077d37652e69910d95aa2bdd473fe59c99db7097b756008",
+          "value": "7468726565"
+        }
+      }
+    }
+  ],
+  "expected": {
+    "exists": true,
+    "rank": 0,
+    "value_hash": "f91eb855f01d5bb7bf379141735bb57f1ffc66b1f94bc9988f10a7b91fb80bb7",
+    "value": "6f6e65"
+  }
+}

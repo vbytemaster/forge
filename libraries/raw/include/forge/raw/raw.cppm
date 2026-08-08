@@ -179,6 +179,7 @@ template <typename Stream> void host_pack(Stream& stream, const variant_object& 
 template <typename Stream> void host_unpack(Stream& stream, variant_object& value) {
    auto size = unsigned_int{};
    unpack(stream, size);
+   detail::require_container_allocation(stream, size.value, "raw variant object exceeds the element limit");
    auto decoded = mutable_variant_object{};
    decoded.reserve(size.value);
    for (auto index = std::uint32_t{0}; index < size.value; ++index) {
@@ -290,7 +291,7 @@ template <typename Stream, typename T> void host_pack(Stream& stream, const std:
 template <typename Stream, typename T> void host_unpack(Stream& stream, std::unordered_set<T>& value) {
    auto size = unsigned_int{};
    unpack(stream, size);
-   FORGE_ASSERT(size.value <= max_array_elements);
+   detail::require_container_allocation(stream, size.value, "raw unordered set exceeds the element limit");
    value.clear();
    value.reserve(size.value);
    for (auto index = std::uint32_t{0}; index < size.value; ++index) {
@@ -313,7 +314,7 @@ template <typename Stream, typename Key, typename Value>
 void host_unpack(Stream& stream, std::unordered_map<Key, Value>& value) {
    auto size = unsigned_int{};
    unpack(stream, size);
-   FORGE_ASSERT(size.value <= max_array_elements);
+   detail::require_container_allocation(stream, size.value, "raw unordered map exceeds the element limit");
    value.clear();
    value.reserve(size.value);
    for (auto index = std::uint32_t{0}; index < size.value; ++index) {
@@ -336,7 +337,7 @@ template <typename Stream, typename Key, typename Value, typename Compare, typen
 void host_unpack(Stream& stream, std::flat_map<Key, Value, Compare, Keys, Values>& value) {
    auto size = unsigned_int{};
    unpack(stream, size);
-   FORGE_ASSERT(size.value <= max_array_elements);
+   detail::require_container_allocation(stream, size.value, "raw flat map exceeds the element limit");
    value.clear();
    for (auto index = std::uint32_t{0}; index < size.value; ++index) {
       auto item = std::pair<Key, Value>{};
@@ -361,7 +362,7 @@ template <typename Stream> void host_unpack(Stream& stream, forge::dynamic_bitse
    unpack(stream, size);
    constexpr auto bits_per_block = sizeof(forge::dynamic_bitset::block_type) * CHAR_BIT;
    const auto block_count = (size.value + bits_per_block - 1U) / bits_per_block;
-   FORGE_ASSERT(block_count <= max_array_elements);
+   detail::require_container_allocation(stream, block_count, "raw dynamic bitset exceeds the element limit");
    auto blocks = std::vector<forge::dynamic_bitset::block_type>(block_count);
    for (auto& block : blocks) {
       unpack(stream, block);

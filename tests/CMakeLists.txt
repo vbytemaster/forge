@@ -51,6 +51,7 @@ add_test(
    COMMAND
       ${CMAKE_COMMAND}
       -DFORGE_CONTRACT_CONFIG_TEMPLATE=${CMAKE_SOURCE_DIR}/guest/cmake/ForgeContractConfig.cmake.in
+      -DFORGE_CONTRACT_PATHS_TEMPLATE=${CMAKE_SOURCE_DIR}/guest/cmake/ForgeContractPaths.cmake.in
       -DFORGE_CONTRACT_TOOLCHAIN_TEMPLATE=${CMAKE_SOURCE_DIR}/guest/cmake/ForgeContractToolchain.cmake.in
       -DFORGE_CONTRACT_FUNCTIONS=${CMAKE_SOURCE_DIR}/guest/cmake/ForgeContractFunctions.cmake
       -DFORGE_CONTRACT_LIBRARIES=${CMAKE_SOURCE_DIR}/guest/cmake/ForgeContractLibraries.cmake
@@ -66,6 +67,40 @@ add_test(
       -DFORGE_CONTRACT_TOOLCHAIN_SELECTOR=${CMAKE_SOURCE_DIR}/guest/cmake/select_developer_toolchain.cmake
       -DFORGE_CONTRACT_TEST_ROOT=${CMAKE_BINARY_DIR}/tests/contract-developer-toolchain
       -P ${CMAKE_SOURCE_DIR}/guest/tests/tooling/check_developer_toolchain.cmake
+)
+get_property(_forge_test_generator_is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+set(_forge_vendor_compile_policy_configuration_options)
+if(_forge_test_generator_is_multi_config)
+   list(APPEND _forge_vendor_compile_policy_configuration_options --multi-config)
+endif()
+
+add_test(
+   NAME test_forge_vendor_compile_policy
+   COMMAND
+      ${Python3_EXECUTABLE}
+      ${CMAKE_SOURCE_DIR}/tests/vendor_compile_policy/check_compile_policy.py
+      --cmake ${CMAKE_COMMAND}
+      --source ${CMAKE_SOURCE_DIR}/tests/vendor_compile_policy
+      --binary ${CMAKE_BINARY_DIR}/tests/vendor-compile-policy
+      --forge-source ${CMAKE_SOURCE_DIR}
+      --generator ${CMAKE_GENERATOR}
+      ${_forge_vendor_compile_policy_configuration_options}
+      --c-compiler ${CMAKE_C_COMPILER}
+      --cxx-compiler ${CMAKE_CXX_COMPILER}
+)
+add_test(
+   NAME test_forge_vendor_compile_policy_multi_config
+   COMMAND
+      ${Python3_EXECUTABLE}
+      ${CMAKE_SOURCE_DIR}/tests/vendor_compile_policy/check_compile_policy.py
+      --cmake ${CMAKE_COMMAND}
+      --source ${CMAKE_SOURCE_DIR}/tests/vendor_compile_policy
+      --binary ${CMAKE_BINARY_DIR}/tests/vendor-compile-policy-multi-config
+      --forge-source ${CMAKE_SOURCE_DIR}
+      --generator "Ninja Multi-Config"
+      --multi-config
+      --c-compiler ${CMAKE_C_COMPILER}
+      --cxx-compiler ${CMAKE_CXX_COMPILER}
 )
 
 add_executable(
@@ -193,6 +228,64 @@ target_link_libraries(
 add_test(NAME test_forge_chain_protocol COMMAND test_forge_chain_protocol WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
+   test_forge_chain_protocol_query
+   unit/main.cpp
+   chain_protocol/query_tests.cpp
+)
+target_link_libraries(
+   test_forge_chain_protocol_query
+   forge_chain_protocol
+   forge_codec_json
+   Boost::included_unit_test_framework
+)
+add_test(
+   NAME test_forge_chain_protocol_query
+   COMMAND test_forge_chain_protocol_query
+   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+add_executable(
+   test_forge_chain_api
+   unit/main.cpp
+   chain_api/abi_tests.cpp
+   chain_api/chain_api_tests.cpp
+)
+target_link_libraries(
+   test_forge_chain_api
+   forge_chain_api
+   forge_api_http
+   forge_codec_xml
+   Boost::included_unit_test_framework
+)
+add_test(NAME test_forge_chain_api COMMAND test_forge_chain_api WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(
+   NAME test_forge_chain_api_spring_manifest
+   COMMAND
+      ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/chain_api/check_spring_api_manifest.py
+      ${CMAKE_SOURCE_DIR}
+      --manifest-only
+   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(test_forge_chain_api_spring_manifest PROPERTIES SKIP_RETURN_CODE 125)
+
+add_executable(
+   test_forge_plugins_http_server
+   unit/main.cpp
+   http_server_auth/bearer_auth_tests.cpp
+)
+target_link_libraries(
+   test_forge_plugins_http_server
+   forge_plugins_http_server
+   Boost::included_unit_test_framework
+)
+add_test(
+   NAME test_forge_plugins_http_server
+   COMMAND test_forge_plugins_http_server
+   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+add_executable(
    test_forge_chain_quorum
    unit/main.cpp
    chain_quorum/quorum_tests.cpp
@@ -295,6 +388,123 @@ if(FORGE_HAS_MDBX)
    )
    add_test(NAME test_forge_db_mdbx COMMAND test_forge_db_mdbx WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+   add_executable(
+      test_forge_db_authenticated
+      unit/main.cpp
+      db_authenticated/authenticated_benchmark_options_tests.cpp
+      db_authenticated/authenticated_crash_tests.cpp
+      db_authenticated/db_authenticated_tests.cpp
+      db_authenticated/ranked_range_proof_adversarial_tests.cpp
+   )
+   add_executable(
+      forge_db_authenticated_crash_helper
+      db_authenticated/authenticated_crash_helper.cpp
+   )
+   target_link_libraries(
+      forge_db_authenticated_crash_helper
+      forge_asio
+      forge_db_authenticated
+      forge_db_mdbx
+      forge_db_object
+      forge_db_revision
+   )
+   add_dependencies(test_forge_db_authenticated forge_db_authenticated_crash_helper)
+   target_compile_definitions(
+      test_forge_db_authenticated PRIVATE
+      FORGE_DB_AUTHENTICATED_CRASH_HELPER="$<TARGET_FILE:forge_db_authenticated_crash_helper>"
+   )
+   target_link_libraries(
+      test_forge_db_authenticated
+      forge_asio
+      forge_db_authenticated
+      forge_db_mdbx
+      forge_db_object
+      forge_db_revision
+      Boost::included_unit_test_framework
+   )
+   add_test(NAME test_forge_db_authenticated COMMAND test_forge_db_authenticated WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+   add_executable(
+      benchmark_forge_db_authenticated
+      db_authenticated/authenticated_benchmark.cpp
+   )
+   target_link_libraries(
+      benchmark_forge_db_authenticated
+      forge_asio
+      forge_db_authenticated
+      forge_db_mdbx
+   )
+   add_test(
+      NAME test_forge_db_authenticated_benchmark_cli
+      COMMAND
+         ${Python3_EXECUTABLE}
+         ${CMAKE_CURRENT_SOURCE_DIR}/db_authenticated/check_authenticated_benchmark.py
+         $<TARGET_FILE:benchmark_forge_db_authenticated>
+      WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+   )
+   set_tests_properties(
+      test_forge_db_authenticated_benchmark_cli
+      PROPERTIES
+         LABELS "db_authenticated;benchmark;smoke"
+         TIMEOUT 60
+   )
+
+   option(
+      FORGE_DB_AUTHENTICATED_ENABLE_1M_PERFORMANCE_TEST
+      "Register the provisional authenticated DB 1M-key performance gate"
+      OFF
+   )
+   option(
+      FORGE_DB_AUTHENTICATED_ENABLE_10M_PERFORMANCE_TEST
+      "Register the provisional authenticated DB 10M-key performance gate"
+      OFF
+   )
+   if(FORGE_DB_AUTHENTICATED_ENABLE_1M_PERFORMANCE_TEST)
+      add_test(
+         NAME test_forge_db_authenticated_performance_1m
+         COMMAND
+            $<TARGET_FILE:benchmark_forge_db_authenticated>
+            --baseline 1m
+            --machine-label ${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}-$<CONFIG>
+      )
+      set_tests_properties(
+         test_forge_db_authenticated_performance_1m
+         PROPERTIES
+            LABELS "db_authenticated;performance;provisional"
+            RESOURCE_LOCK forge_db_authenticated_performance
+            RUN_SERIAL TRUE
+            TIMEOUT 5400
+      )
+   endif()
+   if(FORGE_DB_AUTHENTICATED_ENABLE_10M_PERFORMANCE_TEST)
+      add_test(
+         NAME test_forge_db_authenticated_performance_10m
+         COMMAND
+            $<TARGET_FILE:benchmark_forge_db_authenticated>
+            --baseline 10m
+            --machine-label ${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}-$<CONFIG>
+      )
+      set_tests_properties(
+         test_forge_db_authenticated_performance_10m
+         PROPERTIES
+            LABELS "db_authenticated;performance;provisional"
+            RESOURCE_LOCK forge_db_authenticated_performance
+            RUN_SERIAL TRUE
+            TIMEOUT 43200
+      )
+   endif()
+
+   option(FORGE_DB_AUTHENTICATED_ENABLE_FUZZ_TESTS "Build authenticated proof libFuzzer target" OFF)
+   if(FORGE_DB_AUTHENTICATED_ENABLE_FUZZ_TESTS)
+      add_executable(forge_db_authenticated_fuzz db_authenticated/fuzz_driver.cpp)
+      target_link_libraries(forge_db_authenticated_fuzz PRIVATE forge_db_authenticated)
+      target_compile_options(
+         forge_db_authenticated_fuzz
+         PRIVATE -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer
+      )
+      target_link_options(forge_db_authenticated_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+   endif()
+
    if(FORGE_HAS_ROCKSDB)
       add_executable(
          benchmark_forge_db_backends
@@ -308,6 +518,23 @@ if(FORGE_HAS_MDBX)
       )
    endif()
 endif()
+
+option(FORGE_DB_AUTHENTICATED_ENABLE_GO_VECTOR_TESTS "Run authenticated proof cross-language Go vectors" OFF)
+if(FORGE_DB_AUTHENTICATED_ENABLE_GO_VECTOR_TESTS)
+   find_program(FORGE_GO_EXECUTABLE NAMES go REQUIRED)
+   add_test(
+      NAME test_forge_db_authenticated_go_vectors
+      COMMAND
+         ${CMAKE_COMMAND} -E env GOWORK=off
+         ${FORGE_GO_EXECUTABLE} test -mod=readonly ./...
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/db_authenticated/ics23_harness
+   )
+   set_tests_properties(
+      test_forge_db_authenticated_go_vectors
+      PROPERTIES LABELS "db_authenticated;cross_language"
+   )
+endif()
+
 add_test(NAME test_forge_db_object COMMAND test_forge_db_object WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 add_executable(
@@ -386,12 +613,14 @@ add_test(
 add_executable(
    test_forge_crypto_asymmetric
    unit/main.cpp
+   crypto/test_asymmetric_serialization.cpp
    crypto/test_cypher_suites.cpp
    crypto/test_secp256k1_recover.cpp
    crypto/test_webauthn.cpp
 )
 target_link_libraries(
    test_forge_crypto_asymmetric
+   forge_codec_json
    forge_crypto_asymmetric
    forge_crypto_symmetric
    Boost::included_unit_test_framework
@@ -689,12 +918,68 @@ else()
 endif()
 
 set(FORGE_PACKAGE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/forge-package-install")
+set(FORGE_PACKAGE_DIR "${FORGE_PACKAGE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/cmake/Forge")
+set(FORGE_PACKAGE_CONSUMER_PREFIX_PATH ${CMAKE_PREFIX_PATH})
+list(REMOVE_DUPLICATES FORGE_PACKAGE_CONSUMER_PREFIX_PATH)
+set(FORGE_PACKAGE_CONSUMER_CACHE "${CMAKE_BINARY_DIR}/tests/ForgePackageConsumerCache.cmake")
+string(
+   CONCAT FORGE_PACKAGE_CONSUMER_CACHE_CONTENT
+   "set(Forge_DIR [==[${FORGE_PACKAGE_DIR}]==] CACHE PATH \"Exact Forge test package\" FORCE)\n"
+   "set(CMAKE_PREFIX_PATH [==[${FORGE_PACKAGE_CONSUMER_PREFIX_PATH}]==] CACHE STRING \"Package dependency prefixes\" FORCE)\n"
+   "set(glaze_DIR [==[${glaze_DIR}]==] CACHE PATH \"Exact Glaze package\" FORCE)\n"
+   "set(FORGE_EXPECTED_PACKAGE_DIR [==[${FORGE_PACKAGE_DIR}]==] CACHE PATH \"Expected Forge test package\" FORCE)\n"
+   "set(FORGE_EXPECTED_GLAZE_DIR [==[${glaze_DIR}]==] CACHE PATH \"Expected Glaze package\" FORCE)\n"
+)
+file(
+   GENERATE
+   OUTPUT "${FORGE_PACKAGE_CONSUMER_CACHE}"
+   CONTENT "${FORGE_PACKAGE_CONSUMER_CACHE_CONTENT}"
+)
+
+set(FORGE_PACKAGE_EXPLICIT_GLAZE_DIR_PREFIX_PATH ${CMAKE_PREFIX_PATH})
+list(REMOVE_DUPLICATES FORGE_PACKAGE_EXPLICIT_GLAZE_DIR_PREFIX_PATH)
+set(
+   FORGE_PACKAGE_EXPLICIT_GLAZE_DIR_CACHE
+   "${CMAKE_BINARY_DIR}/tests/ForgePackageExplicitGlazeDirCache.cmake"
+)
+string(
+   CONCAT FORGE_PACKAGE_EXPLICIT_GLAZE_DIR_CACHE_CONTENT
+   "set(Forge_DIR [==[${FORGE_PACKAGE_DIR}]==] CACHE PATH \"Exact Forge test package\" FORCE)\n"
+   "set(CMAKE_PREFIX_PATH [==[${FORGE_PACKAGE_EXPLICIT_GLAZE_DIR_PREFIX_PATH}]==] CACHE STRING \"Shared dependency prefixes\" FORCE)\n"
+   "set(glaze_DIR [==[${glaze_DIR}]==] CACHE PATH \"Explicit Glaze package hint\" FORCE)\n"
+   "set(FORGE_EXPECTED_PREFIX_PATH [==[${FORGE_PACKAGE_CONSUMER_PREFIX_PATH}]==] CACHE STRING \"Expected shared dependency prefixes\" FORCE)\n"
+   "set(FORGE_EXPECTED_PACKAGE_DIR [==[${FORGE_PACKAGE_DIR}]==] CACHE PATH \"Expected Forge test package\" FORCE)\n"
+   "set(FORGE_EXPECTED_GLAZE_DIR [==[${glaze_DIR}]==] CACHE PATH \"Expected Glaze package\" FORCE)\n"
+)
+file(
+   GENERATE
+   OUTPUT "${FORGE_PACKAGE_EXPLICIT_GLAZE_DIR_CACHE}"
+   CONTENT "${FORGE_PACKAGE_EXPLICIT_GLAZE_DIR_CACHE_CONTENT}"
+)
 set(
    FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS
-   -DCMAKE_PREFIX_PATH=${FORGE_PACKAGE_INSTALL_PREFIX}
+   -C${FORGE_PACKAGE_CONSUMER_CACHE}
    -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
    -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
    -DCMAKE_OSX_SYSROOT=${CMAKE_OSX_SYSROOT}
+)
+
+add_test(
+   NAME test_forge_package_explicit_glaze_dir
+   COMMAND
+      ${CMAKE_COMMAND}
+      --fresh
+      -S ${CMAKE_CURRENT_SOURCE_DIR}/package_codec_json_component
+      -B ${CMAKE_BINARY_DIR}/forge-package-codec-json-explicit-glaze-dir
+      -G ${CMAKE_GENERATOR}
+      -C${FORGE_PACKAGE_EXPLICIT_GLAZE_DIR_CACHE}
+      -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+      -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+      -DCMAKE_OSX_SYSROOT=${CMAKE_OSX_SYSROOT}
+)
+set_tests_properties(
+   test_forge_package_explicit_glaze_dir
+   PROPERTIES DEPENDS test_forge_package_install
 )
 
 add_custom_target(
@@ -1133,6 +1418,19 @@ add_custom_target(
    DEPENDS test_forge_package_install
 )
 add_custom_target(
+   test_forge_package_chain_api_component
+   COMMAND
+      ${CMAKE_COMMAND} -E env CMAKE_BUILD_PARALLEL_LEVEL=4
+      ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_chain_api_component
+      ${CMAKE_BINARY_DIR}/forge-package-chain-api-component
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_chain_api_component
+   DEPENDS test_forge_package_install
+)
+add_custom_target(
    test_forge_package_chain_quorum_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
@@ -1190,6 +1488,17 @@ add_custom_target(
       --build-generator ${CMAKE_GENERATOR}
       --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
       --test-command forge_package_db_core_component
+   DEPENDS test_forge_package_install
+)
+add_custom_target(
+   test_forge_package_db_authenticated_component
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_db_authenticated_component
+      ${CMAKE_BINARY_DIR}/forge-package-db-authenticated-component
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_db_authenticated_component
    DEPENDS test_forge_package_install
 )
 add_custom_target(
@@ -1916,6 +2225,19 @@ add_test(
 )
 set_tests_properties(test_forge_package_chain_protocol_component PROPERTIES DEPENDS test_forge_package_install)
 add_test(
+   NAME test_forge_package_chain_api_component
+   COMMAND
+      ${CMAKE_COMMAND} -E env CMAKE_BUILD_PARALLEL_LEVEL=4
+      ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_chain_api_component
+      ${CMAKE_BINARY_DIR}/forge-package-chain-api-component
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_chain_api_component
+)
+set_tests_properties(test_forge_package_chain_api_component PROPERTIES DEPENDS test_forge_package_install)
+add_test(
    NAME test_forge_package_chain_quorum_component
    COMMAND ${CMAKE_CTEST_COMMAND}
       --build-and-test
@@ -2028,6 +2350,17 @@ add_test(
       --test-command forge_package_db_core_component
 )
 set_tests_properties(test_forge_package_db_core_component PROPERTIES DEPENDS test_forge_package_install)
+add_test(
+   NAME test_forge_package_db_authenticated_component
+   COMMAND ${CMAKE_CTEST_COMMAND}
+      --build-and-test
+      ${CMAKE_CURRENT_SOURCE_DIR}/package_db_authenticated_component
+      ${CMAKE_BINARY_DIR}/forge-package-db-authenticated-component
+      --build-generator ${CMAKE_GENERATOR}
+      --build-options ${FORGE_PACKAGE_CONSUMER_BUILD_OPTIONS}
+      --test-command forge_package_db_authenticated_component
+)
+set_tests_properties(test_forge_package_db_authenticated_component PROPERTIES DEPENDS test_forge_package_install)
 add_test(
    NAME test_forge_package_db_object_component
    COMMAND ${CMAKE_CTEST_COMMAND}

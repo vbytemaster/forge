@@ -229,6 +229,70 @@ def check_chain_savanna_boundaries(root: Path, errors: list[str]) -> None:
             errors.append(f"{relative}: Savanna kernel must not depend on {owner} ({token})")
 
 
+def check_chain_api_shape(root: Path, errors: list[str]) -> None:
+   component = root / "libraries" / "chain" / "api"
+   if not component.exists():
+      return
+
+   include = component / "include" / "forge" / "chain" / "api"
+   nested_modules = sorted(path for path in include.rglob("*.cppm") if path.parent != include)
+   if nested_modules:
+      rendered = ", ".join(str(path.relative_to(root)) for path in nested_modules)
+      errors.append("chain API modules must use a flat public include layout: " + rendered)
+
+   forbidden_directories = {
+      "types",
+      "info",
+      "block",
+      "state",
+      "transaction",
+      "admin",
+      "client",
+   }
+   nested_components = sorted(
+      path.name
+      for path in component.iterdir()
+      if path.is_dir() and path.name in forbidden_directories
+   )
+   if nested_components:
+      errors.append("chain API must be one flat library, found nested components: " + ", ".join(nested_components))
+
+   cmake = (component / "CMakeLists.txt").read_text()
+   if not re.search(r"add_library\s*\(\s*forge_chain_api\s+STATIC\b", cmake):
+      errors.append("libraries/chain/api/CMakeLists.txt: expected one compiled forge_chain_api target")
+   if re.search(r"\bforge_chain_api_(?:types|info|block|state|transaction|admin|client)\b", cmake):
+      errors.append("libraries/chain/api/CMakeLists.txt: split chain API targets are forbidden")
+
+   nested_api_namespace = re.compile(r"\bnamespace\s+forge::chain::api::(?:info|block|state|transaction|admin)\b")
+   wire_record = re.compile(
+      r"^\s*(?:export\s+)?(?:struct|enum\s+class)\s+\w*(?:request|result|response)\b",
+      re.MULTILINE,
+   )
+   for path in sorted(include.glob("*.cppm")):
+      source = path.read_text(errors="ignore")
+      if nested_api_namespace.search(source):
+         errors.append(f"{path.relative_to(root)}: API names must be classes in forge::chain::api")
+      if "BOOST_DESCRIBE" in source or wire_record.search(source):
+         errors.append(f"{path.relative_to(root)}: chain API wire records belong to forge.chain.protocol")
+
+   protocol_include = root / "libraries" / "chain" / "protocol" / "include" / "forge" / "chain" / "protocol"
+   get_dto = re.compile(r"^\s*(?:export\s+)?(?:struct|class|using)\s+get_\w+", re.MULTILINE)
+   query_modules = ("audit.cppm", "info.cppm", "block_query.cppm", "state_query.cppm",
+                    "transaction_query.cppm", "admin.cppm")
+   for name in query_modules:
+      path = protocol_include / name
+      if not path.exists():
+         errors.append(f"{path.relative_to(root)}: missing chain protocol query module")
+         continue
+      source = path.read_text(errors="ignore")
+      if get_dto.search(source):
+         errors.append(f"{path.relative_to(root)}: DTO names must not repeat the get operation")
+      if re.search(r"\busing\s+\w+_response\s*=", source):
+         errors.append(f"{path.relative_to(root)}: response DTOs must be concrete records, not aliases")
+   if sorted(protocol_include.glob("api_*.cppm")):
+      errors.append("chain protocol query modules must not use the api_* filename prefix")
+
+
 def check_contract_sdk_workflow(root: Path, errors: list[str]) -> None:
    path = root / ".github" / "workflows" / "contract-sdk.yml"
    if not path.exists():
@@ -318,6 +382,125 @@ def check_contract_sdk_workflow(root: Path, errors: list[str]) -> None:
          f"{path.relative_to(root)}: release consumer must build E2E contracts before configuration: "
          f"{', '.join(missing_release_contracts)}"
       )
+
+
+def check_chain_audited_api_workflow(root: Path, errors: list[str]) -> None:
+   path = root / ".github" / "workflows" / "chain-audited-api.yml"
+   if not path.exists():
+      return
+
+   source = path.read_text(errors="ignore")
+   required_developer_dir = (
+      "FORGE_MACOS_DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer"
+   )
+   if required_developer_dir not in source:
+      errors.append(
+         f"{path.relative_to(root)}: macOS acceptance must pin the Xcode 26.3 developer directory"
+      )
+
+   sdkroot_export = 'echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"'
+   if source.count(sdkroot_export) != 2:
+      errors.append(
+         f"{path.relative_to(root)}: native and performance jobs must export the selected macOS SDKROOT"
+      )
+
+   osx_sysroot = 'osx_options+=("-DCMAKE_OSX_SYSROOT=$SDKROOT")'
+   if source.count(osx_sysroot) != 2:
+      errors.append(
+         f"{path.relative_to(root)}: native and performance configure steps must use the selected macOS SDKROOT"
+      )
+
+   isolated_glaze_prefix = 'CMAKE_PREFIX_PATH=$RUNNER_TEMP/forge-glaze;'
+   if isolated_glaze_prefix in source:
+      errors.append(
+         f"{path.relative_to(root)}: isolated Glaze prefix must not enter CMAKE_PREFIX_PATH"
+      )
+
+   exact_glaze_config = 'glaze_config="$RUNNER_TEMP/forge-glaze/share/glaze/glazeConfig.cmake"'
+   resolved_glaze_dir = 'echo "FORGE_GLAZE_DIR=$(cd "$(dirname "$glaze_config")" && pwd -P)"'
+   explicit_glaze_dir = '-Dglaze_DIR="$FORGE_GLAZE_DIR"'
+   shared_dependency_prefixes = (
+      'CMAKE_PREFIX_PATH=$(brew --prefix);$(brew --prefix boost);'
+      '$(brew --prefix libngtcp2);$(brew --prefix openssl@3)'
+   )
+   if (
+      source.count(exact_glaze_config) != 3
+      or source.count(resolved_glaze_dir) != 3
+      or source.count(explicit_glaze_dir) != 4
+      or source.count(shared_dependency_prefixes) != 3
+   ):
+      errors.append(
+         f"{path.relative_to(root)}: every configure lane must isolate Glaze and preserve shared dependency prefixes"
+      )
+
+   for baseline, upper_bytes in (("1m", "8589934592"), ("10m", "68719476736")):
+      invocation = re.compile(
+         rf"--baseline {baseline}\s+--mdbx-upper-bytes {upper_bytes}\s+\\\s+--machine-label"
+      )
+      if invocation.search(source) is None:
+         errors.append(
+            f"{path.relative_to(root)}: {baseline} performance baseline must use its measured MDBX upper size"
+         )
+
+   try:
+      native_acceptance = source.split("      - name: Build acceptance targets\n", 1)[1].split(
+         "      - name: Run acceptance\n", 1
+      )
+      build_acceptance = native_acceptance[0]
+      run_acceptance = native_acceptance[1].split("\n  sanitizer:\n", 1)[0]
+   except IndexError:
+      errors.append(f"{path.relative_to(root)}: cannot locate native acceptance steps")
+      return
+
+   for required_target in ("test_forge_package_chain_api_component", "test_forge_package_db_mdbx_component"):
+      if required_target not in build_acceptance:
+         errors.append(f"{path.relative_to(root)}: acceptance build is missing {required_target}")
+
+   for required_test in (
+      "test_forge_structure",
+      "test_forge_vendor_compile_policy",
+      "test_forge_vendor_compile_policy_multi_config",
+      "test_forge_package_chain_api_component",
+      "test_forge_package_db_mdbx_component",
+      "test_forge_package_explicit_glaze_dir",
+   ):
+      if required_test not in run_acceptance:
+         errors.append(f"{path.relative_to(root)}: acceptance test run is missing {required_test}")
+
+
+def check_mdbx_module_boundary(root: Path, errors: list[str]) -> None:
+   component = root / "libraries" / "db" / "mdbx"
+   if not component.exists():
+      return
+
+   legacy_header = component / "details" / "error.hxx"
+   if legacy_header.exists():
+      errors.append(
+         f"{legacy_header.relative_to(root)}: MDBX error declarations must use a private module partition"
+      )
+
+   partition = component / "include" / "forge" / "db" / "mdbx" / "error.cppm"
+   if not partition.exists():
+      errors.append(f"{partition.relative_to(root)}: MDBX error module partition is missing")
+      return
+
+   source = partition.read_text(errors="ignore")
+   declaration = "export module forge.db.mdbx.driver:error;"
+   if declaration not in source:
+      errors.append(f"{partition.relative_to(root)}: expected private partition {declaration}")
+   include_position = source.find("#include <string_view>")
+   declaration_position = source.find(declaration)
+   if include_position < 0 or declaration_position < 0 or include_position > declaration_position:
+      errors.append(
+         f"{partition.relative_to(root)}: string_view must be included in the global module fragment"
+      )
+
+   for implementation in sorted(component.glob("*.cpp")):
+      implementation_source = implementation.read_text(errors="ignore")
+      if "require_mdbx_success(" in implementation_source and "import :error;" not in implementation_source:
+         errors.append(
+            f"{implementation.relative_to(root)}: MDBX error helpers must come from the private module partition"
+         )
 
 
 def check_contract_sdk_components(root: Path, errors: list[str]) -> None:
@@ -768,6 +951,7 @@ def check_modules(root: Path, files: list[Path], errors: list[str]) -> None:
       seen_includes: dict[tuple[str, tuple[tuple[int, int], ...]], int] = {}
       conditional_stack: list[list[int]] = []
       next_conditional = 0
+      named_module_declared = False
 
       for line_number, line in enumerate(source_lines, 1):
          if CONDITIONAL_START.match(line):
@@ -781,6 +965,9 @@ def check_modules(root: Path, files: list[Path], errors: list[str]) -> None:
          declaration = MODULE_DECLARATION.match(line)
          if declaration:
             declarations[declaration.group(1)].append((relative, line_number))
+
+         if MODULE_UNIT.match(line):
+            named_module_declared = True
 
          imported = MODULE_IMPORT.match(line)
          if imported:
@@ -801,6 +988,10 @@ def check_modules(root: Path, files: list[Path], errors: list[str]) -> None:
 
          included = INCLUDE.match(line)
          if included:
+            if path.suffix == ".cppm" and named_module_declared and included.group(1).startswith("<"):
+               errors.append(
+                  f"{relative}:{line_number}: system header include must stay in the global module fragment"
+               )
             context = tuple((block, branch) for block, branch in conditional_stack)
             key = (included.group(1), context)
             if key in seen_includes:
@@ -840,6 +1031,9 @@ def main() -> int:
    check_vm_wasm_boundaries(root, errors)
    check_plugin_impl_ownership(root, errors)
    check_chain_savanna_boundaries(root, errors)
+   check_chain_api_shape(root, errors)
+   check_chain_audited_api_workflow(root, errors)
+   check_mdbx_module_boundary(root, errors)
    check_contract_sdk_workflow(root, errors)
    check_contract_sdk_components(root, errors)
    check_eosio_veneer(root, errors)

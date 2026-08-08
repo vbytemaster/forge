@@ -36,9 +36,9 @@ boost::asio::awaitable<void> run_after_rollback_hooks(std::vector<transaction::a
    co_return;
 }
 
-boost::asio::awaitable<void> rollback_dropped_transaction(std::unique_ptr<session> active,
-                                                          std::vector<transaction::after_rollback_fn> hooks,
-                                                          std::vector<std::shared_ptr<transaction_participant>> participants) {
+boost::asio::awaitable<void>
+rollback_dropped_transaction(std::unique_ptr<session> active, std::vector<transaction::after_rollback_fn> hooks,
+                             std::vector<std::shared_ptr<transaction_participant>> participants) {
    try {
       co_await active->rollback();
    } catch (...) {
@@ -84,10 +84,10 @@ void transaction::impl::rollback_on_drop() noexcept {
    after_rollback_hooks.clear();
 
    try {
-      boost::asio::co_spawn(cleanup_executor,
-                            rollback_dropped_transaction(
-                               std::move(dropped), std::move(hooks), std::move(active_participants)),
-                            boost::asio::detached);
+      boost::asio::co_spawn(
+          cleanup_executor,
+          rollback_dropped_transaction(std::move(dropped), std::move(hooks), std::move(active_participants)),
+          boost::asio::detached);
    } catch (...) {
       dropped.reset();
    }
@@ -123,14 +123,17 @@ boost::asio::awaitable<std::optional<std::vector<std::byte>>> transaction::get(f
    if (impl_->current == impl::phase::rollback_only) {
       FORGE_THROW_EXCEPTION(exceptions::transaction_rollback_only, "db transaction is rollback-only");
    }
+   if (impl_->current == impl::phase::preparing) {
+      FORGE_THROW_EXCEPTION(exceptions::participant_conflict, "db transaction commit is already preparing");
+   }
    if (impl_->current != impl::phase::active) {
       FORGE_THROW_EXCEPTION(exceptions::participant_conflict, "db transaction is preparing or prepared");
    }
    co_return co_await impl_->active->get(std::move(column_family), std::move(key));
 }
 
-boost::asio::awaitable<std::optional<std::vector<std::byte>>>
-transaction::get_for_update(family column_family, record_key key) {
+boost::asio::awaitable<std::optional<std::vector<std::byte>>> transaction::get_for_update(family column_family,
+                                                                                          record_key key) {
    if (!active()) {
       FORGE_THROW_EXCEPTION(exceptions::transaction_closed, "db transaction is closed");
    }
@@ -163,10 +166,11 @@ boost::asio::awaitable<void> transaction::prepare_prewrite_locks() {
       }
       return left.key.bytes() < right.key.bytes();
    });
-   claims.erase(std::unique(claims.begin(), claims.end(), [](const record_lock_claim& left,
-                                                             const record_lock_claim& right) {
-      return left.column_family.name == right.column_family.name && left.key == right.key;
-   }), claims.end());
+   claims.erase(std::unique(claims.begin(), claims.end(),
+                            [](const record_lock_claim& left, const record_lock_claim& right) {
+                               return left.column_family.name == right.column_family.name && left.key == right.key;
+                            }),
+                claims.end());
 
    if (!claims.empty() && !impl_->active->capabilities().record_locks) {
       FORGE_THROW_EXCEPTION(exceptions::unsupported_operation,
@@ -192,8 +196,8 @@ boost::asio::awaitable<void> transaction::erase(family column_family, record_key
    co_await mutate(std::move(column_family), std::move(key), std::nullopt);
 }
 
-boost::asio::awaitable<void>
-transaction::mutate(family column_family, record_key key, std::optional<std::vector<std::byte>> after) {
+boost::asio::awaitable<void> transaction::mutate(family column_family, record_key key,
+                                                 std::optional<std::vector<std::byte>> after) {
    if (!active()) {
       FORGE_THROW_EXCEPTION(exceptions::transaction_closed, "db transaction is closed");
    }
@@ -234,11 +238,11 @@ transaction::mutate(family column_family, record_key key, std::optional<std::vec
    }
 
    const auto mutation = record_mutation{
-      .kind = kind,
-      .column_family = column_family,
-      .key = key,
-      .before = std::nullopt,
-      .after = after,
+       .kind = kind,
+       .column_family = column_family,
+       .key = key,
+       .before = std::nullopt,
+       .after = after,
    };
 
    if (policy == mutation_policy::reversible && !capture.empty()) {
@@ -291,8 +295,7 @@ transaction::mutate(family column_family, record_key key, std::optional<std::vec
    impl_->mutation_started = true;
 }
 
-boost::asio::awaitable<record_page> transaction::scan_page(family column_family,
-                                                           record_range range,
+boost::asio::awaitable<record_page> transaction::scan_page(family column_family, record_range range,
                                                            page_request request) {
    if (!active()) {
       FORGE_THROW_EXCEPTION(exceptions::transaction_closed, "db transaction is closed");
@@ -314,9 +317,8 @@ void transaction::attach_participant(std::shared_ptr<transaction_participant> pa
    if (!participant) {
       FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor, "db transaction participant is null");
    }
-   if (impl_->current != impl::phase::active || impl_->mutation_started ||
-       !impl_->savepoints.empty() ||
-       (impl_->prewrite_locks_prepared && !participant->prewrite_locks().empty())) {
+   if (impl_->current != impl::phase::active || impl_->before_commit_started || impl_->mutation_started ||
+       !impl_->savepoints.empty() || (impl_->prewrite_locks_prepared && !participant->prewrite_locks().empty())) {
       FORGE_THROW_EXCEPTION(exceptions::participant_conflict,
                             "db transaction participants must attach before locks, mutations, or savepoints");
    }
@@ -327,16 +329,14 @@ void transaction::attach_participant(std::shared_ptr<transaction_participant> pa
 
       for (const auto& claimed : participant->exclusive_families()) {
          const auto existing_claims = existing->exclusive_families();
-         const auto overlap = std::find_if(
-            existing_claims.begin(), existing_claims.end(),
-            [&claimed](const family& value) { return value.name == claimed.name; });
+         const auto overlap = std::find_if(existing_claims.begin(), existing_claims.end(),
+                                           [&claimed](const family& value) { return value.name == claimed.name; });
          if (overlap != existing_claims.end()) {
-            FORGE_THROW_EXCEPTION(
-               exceptions::participant_conflict,
-               "db transaction family is already claimed by another participant",
-               forge::exceptions::ctx("family", claimed.name),
-               forge::exceptions::ctx("participant", participant->name()),
-               forge::exceptions::ctx("existing-participant", existing->name()));
+            FORGE_THROW_EXCEPTION(exceptions::participant_conflict,
+                                  "db transaction family is already claimed by another participant",
+                                  forge::exceptions::ctx("family", claimed.name),
+                                  forge::exceptions::ctx("participant", participant->name()),
+                                  forge::exceptions::ctx("existing-participant", existing->name()));
          }
       }
    }
@@ -347,10 +347,8 @@ bool transaction::has_participant(std::string_view name) const noexcept {
    if (!active()) {
       return false;
    }
-   return std::any_of(
-      impl_->participants.begin(),
-      impl_->participants.end(),
-      [name](const auto& participant) { return participant && participant->name() == name; });
+   return std::any_of(impl_->participants.begin(), impl_->participants.end(),
+                      [name](const auto& participant) { return participant && participant->name() == name; });
 }
 
 bool transaction::claims_family(const family& column_family) const noexcept {
@@ -358,28 +356,22 @@ bool transaction::claims_family(const family& column_family) const noexcept {
       return false;
    }
    return std::any_of(
-      impl_->participants.begin(),
-      impl_->participants.end(),
-      [&column_family](const auto& participant) {
-         if (!participant) {
-            return false;
-         }
-         const auto claims = participant->exclusive_families();
-         return std::any_of(
-            claims.begin(),
-            claims.end(),
-            [&column_family](const family& claimed) { return claimed.name == column_family.name; });
-      });
+       impl_->participants.begin(), impl_->participants.end(), [&column_family](const auto& participant) {
+          if (!participant) {
+             return false;
+          }
+          const auto claims = participant->exclusive_families();
+          return std::any_of(claims.begin(), claims.end(),
+                             [&column_family](const family& claimed) { return claimed.name == column_family.name; });
+       });
 }
 
 bool transaction::captures_mutations() const noexcept {
    if (!active()) {
       return false;
    }
-   return std::any_of(
-      impl_->participants.begin(),
-      impl_->participants.end(),
-      [](const auto& participant) { return participant && participant->captures_mutations(); });
+   return std::any_of(impl_->participants.begin(), impl_->participants.end(),
+                      [](const auto& participant) { return participant && participant->captures_mutations(); });
 }
 
 boost::asio::awaitable<savepoint_id_t> transaction::create_savepoint() {
@@ -490,13 +482,37 @@ boost::asio::awaitable<void> transaction::release_savepoint(savepoint_id_t savep
    }
 }
 
+void transaction::before_commit(before_commit_fn hook) {
+   if (!active()) {
+      FORGE_THROW_EXCEPTION(exceptions::transaction_closed, "db transaction is closed");
+   }
+   if (impl_->current != impl::phase::active || impl_->before_commit_started) {
+      FORGE_THROW_EXCEPTION(exceptions::participant_conflict, "db transaction before-commit phase has already started");
+   }
+   if (hook) {
+      impl_->before_commit_hooks.push_back(std::move(hook));
+   }
+}
+
 void transaction::after_commit(after_commit_fn hook) {
+   if (!active()) {
+      FORGE_THROW_EXCEPTION(exceptions::transaction_closed, "db transaction is closed");
+   }
+   if (impl_->current != impl::phase::active || impl_->before_commit_started) {
+      FORGE_THROW_EXCEPTION(exceptions::participant_conflict, "db transaction before-commit phase has already started");
+   }
    if (hook) {
       impl_->after_commit_hooks.push_back(std::move(hook));
    }
 }
 
 void transaction::after_rollback(after_rollback_fn hook) {
+   if (!active()) {
+      FORGE_THROW_EXCEPTION(exceptions::transaction_closed, "db transaction is closed");
+   }
+   if (impl_->current != impl::phase::active || impl_->before_commit_started) {
+      FORGE_THROW_EXCEPTION(exceptions::participant_conflict, "db transaction before-commit phase has already started");
+   }
    if (hook) {
       impl_->after_rollback_hooks.push_back(std::move(hook));
    }
@@ -510,8 +526,33 @@ boost::asio::awaitable<void> transaction::commit() {
    if (impl_->current == impl::phase::rollback_only) {
       FORGE_THROW_EXCEPTION(exceptions::transaction_rollback_only, "db transaction is rollback-only");
    }
+   if (impl_->commit_in_progress) {
+      FORGE_THROW_EXCEPTION(exceptions::participant_conflict, "db transaction commit is already in progress");
+   }
+   if (impl_->current != impl::phase::active && impl_->current != impl::phase::prepared) {
+      FORGE_THROW_EXCEPTION(exceptions::participant_conflict, "db transaction commit is already preparing");
+   }
 
+   impl_->commit_in_progress = true;
    if (impl_->current == impl::phase::active) {
+      if (impl_->before_commit_started) {
+         impl_->commit_in_progress = false;
+         FORGE_THROW_EXCEPTION(exceptions::participant_conflict, "db transaction before-commit phase already ran");
+      }
+      impl_->before_commit_started = true;
+      auto before_commit_hooks = std::move(impl_->before_commit_hooks);
+      try {
+         for (auto& hook : before_commit_hooks) {
+            if (hook) {
+               co_await hook();
+            }
+         }
+      } catch (...) {
+         impl_->current = impl::phase::rollback_only;
+         impl_->commit_in_progress = false;
+         throw;
+      }
+
       impl_->current = impl::phase::preparing;
       auto access = participant_access_impl{*impl_->active};
       try {
@@ -520,14 +561,22 @@ boost::asio::awaitable<void> transaction::commit() {
          }
       } catch (...) {
          impl_->current = impl::phase::rollback_only;
+         impl_->commit_in_progress = false;
          throw;
       }
       impl_->current = impl::phase::prepared;
    }
 
-   co_await impl_->active->commit();
+   try {
+      co_await impl_->active->commit();
+   } catch (...) {
+      impl_->commit_in_progress = false;
+      throw;
+   }
 
    auto active_session = std::move(impl_->active);
+   impl_->commit_in_progress = false;
+   impl_->before_commit_hooks.clear();
    auto after_commit_hooks = std::move(impl_->after_commit_hooks);
    auto active_participants = std::move(impl_->participants);
    impl_->after_rollback_hooks.clear();
@@ -549,8 +598,12 @@ boost::asio::awaitable<void> transaction::rollback() {
    if (!active()) {
       co_return;
    }
+   if (impl_->commit_in_progress) {
+      FORGE_THROW_EXCEPTION(exceptions::participant_conflict, "db transaction commit is in progress");
+   }
 
    auto active_session = std::move(impl_->active);
+   impl_->before_commit_hooks.clear();
    auto hooks = std::move(impl_->after_rollback_hooks);
    auto active_participants = std::move(impl_->participants);
    impl_->after_commit_hooks.clear();

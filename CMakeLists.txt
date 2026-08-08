@@ -1,11 +1,12 @@
 cmake_minimum_required(VERSION 3.31)
 
-project(forge VERSION 8.20.0 LANGUAGES C CXX ASM)
+project(forge VERSION 8.21.0 LANGUAGES C CXX ASM)
 
 include(GNUInstallDirs)
 include(CheckCXXSourceCompiles)
 include(CMakePackageConfigHelpers)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(ForgeVendorCompilePolicy)
 
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
    include(CTest)
@@ -251,6 +252,7 @@ set(
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/db/object/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/db/blob/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/db/revision/include"
+   "${CMAKE_CURRENT_SOURCE_DIR}/libraries/db/authenticated/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/codec/base32/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/codec/base64/include"
    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/codec/base58/include"
@@ -440,6 +442,14 @@ set_property(
       "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
 
+set(FORGE_VENDORED_IMPLEMENTATION_TARGETS secp256k1 bn256 bls12-381 softfloat)
+foreach(_forge_vendor_target IN LISTS FORGE_VENDORED_IMPLEMENTATION_TARGETS)
+   forge_apply_vendored_implementation_policy(${_forge_vendor_target})
+endforeach()
+if(TARGET mdbx-internal)
+   forge_apply_vendored_implementation_policy(mdbx-internal DISABLED_SANITIZERS alignment)
+endif()
+
 if(NOT FORGE_ENABLE_VENDOR_TESTS)
    file(
       WRITE "${CMAKE_CURRENT_BINARY_DIR}/CTestCustom.cmake"
@@ -530,6 +540,14 @@ function(forge_target_contract_guest_component target)
    )
       message(FATAL_ERROR "Forge target ${target} has no guest component descriptor for ${ARG_ID}")
    endif()
+   if(TARGET "Forge::${target}")
+      get_target_property(_alias_target "Forge::${target}" ALIASED_TARGET)
+      if(NOT "${_alias_target}" STREQUAL "${target}")
+         message(FATAL_ERROR "Forge build-tree target Forge::${target} is already owned by ${_alias_target}")
+      endif()
+   else()
+      add_library("Forge::${target}" ALIAS "${target}")
+   endif()
    list(
       APPEND _exported
       FORGE_CONTRACT_GUEST_COMPONENT_ID
@@ -604,6 +622,7 @@ set(
 if(NOT FORGE_CONTRACT_SDK_HOST_PROFILE)
    add_subdirectory(libraries/db/blob)
    add_subdirectory(libraries/db/revision)
+   add_subdirectory(libraries/db/authenticated)
    add_subdirectory(libraries/config/env)
    add_subdirectory(libraries/config/program_options)
    add_subdirectory(libraries/codec/yaml)
@@ -630,6 +649,8 @@ if(NOT FORGE_CONTRACT_SDK_HOST_PROFILE)
       APPEND FORGE_LEAF_TARGETS
       forge_db_blob
       forge_db_revision
+      forge_db_authenticated
+      forge_chain_api
       forge_codec_yaml
       forge_codec_xml
       forge_config_program_options
@@ -697,6 +718,19 @@ if(FORGE_ENABLE_CONTRACT_TOOLING)
    )
 endif()
 
+foreach(_forge_leaf_target IN LISTS FORGE_LEAF_TARGETS)
+   if(TARGET "Forge::${_forge_leaf_target}")
+      get_target_property(_forge_alias_target "Forge::${_forge_leaf_target}" ALIASED_TARGET)
+      if(NOT "${_forge_alias_target}" STREQUAL "${_forge_leaf_target}")
+         message(FATAL_ERROR
+            "Forge build-tree target Forge::${_forge_leaf_target} is already owned by ${_forge_alias_target}"
+         )
+      endif()
+   else()
+      add_library("Forge::${_forge_leaf_target}" ALIAS "${_forge_leaf_target}")
+   endif()
+endforeach()
+
 set(
    FORGE_BUILT_COMPONENTS
    core
@@ -738,6 +772,8 @@ if(NOT FORGE_CONTRACT_SDK_HOST_PROFILE)
       APPEND FORGE_BUILT_COMPONENTS
       db_blob
       db_revision
+      db_authenticated
+      chain_api
       codec_yaml
       codec_xml
       config_program_options
@@ -800,6 +836,7 @@ if(FORGE_ENABLE_CONTRACT_TOOLING)
 endif()
 
 add_library(forge STATIC forge.cpp)
+add_library(Forge::forge ALIAS forge)
 
 target_include_directories(forge PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 
@@ -874,6 +911,8 @@ if(NOT FORGE_CONTRACT_SDK_HOST_PROFILE)
       APPEND FORGE_INSTALL_INCLUDE_DIRS
       libraries/db/blob/include/forge
       libraries/db/revision/include/forge
+      libraries/db/authenticated/include/forge
+      libraries/chain/api/include/forge
       libraries/codec/yaml/include/forge
       libraries/codec/xml/include/forge
       libraries/config/program_options/include/forge

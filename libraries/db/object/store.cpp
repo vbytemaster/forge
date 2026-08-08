@@ -42,9 +42,12 @@ boost::asio::awaitable<store> store::open(std::shared_ptr<forge::db::core::drive
    co_return co_await open(std::move(value), std::move(settings), options{});
 }
 
-boost::asio::awaitable<store> store::open(std::shared_ptr<forge::db::core::driver> value,
-                                         config settings,
-                                         options runtime) {
+boost::asio::awaitable<store> store::open(std::shared_ptr<forge::db::core::driver> value, config settings,
+                                          options runtime) {
+   if (runtime.id_allocation == id_allocation_policy::transactional && runtime.writes != write_policy::single_writer) {
+      FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor,
+                            "transactional db object id allocation requires single-writer policy");
+   }
    auto result = store{std::make_shared<impl>(std::move(value), std::move(settings), runtime)};
    auto ticket = co_await result.impl_->runtime->write_gate->acquire();
    auto active = forge::db::core::transaction{};
@@ -119,24 +122,19 @@ boost::asio::awaitable<transaction> store::begin_transaction() {
    }
 
    auto result = detail::transaction_access::make_owned(
-      std::move(active),
-      impl_->config.family,
-      [impl = impl_](forge::db::ids::object_id type, std::type_index model) {
-         impl->ensure_registered_type(type, model);
-      },
-      [impl = impl_](forge::db::ids::object_id type,
-                     forge::db::core::transaction& active) -> boost::asio::awaitable<forge::db::ids::object_id> {
-         co_return co_await impl->allocate_id(type, active);
-      },
-      [impl = impl_](transaction::allocation_seal_map seals) -> boost::asio::awaitable<void> {
-         co_await impl->seal_allocations(std::move(seals));
-         co_return;
-      },
-      impl_->interceptors,
-      impl_->observers,
-      std::move(release),
-      executor,
-      impl_->settings.writes == write_policy::backend);
+       std::move(active), impl_->config.family,
+       [impl = impl_](forge::db::ids::object_id type, std::type_index model) {
+          impl->ensure_registered_type(type, model);
+       },
+       [impl = impl_](forge::db::ids::object_id type, forge::db::core::transaction& active)
+           -> boost::asio::awaitable<forge::db::ids::object_id> { co_return co_await impl->allocate_id(type, active); },
+       [impl = impl_](transaction::allocation_seal_map seals) -> boost::asio::awaitable<void> {
+          co_await impl->seal_allocations(std::move(seals));
+          co_return;
+       },
+       impl_->interceptors, impl_->observers, std::move(release), executor,
+       impl_->settings.writes == write_policy::backend,
+       impl_->settings.id_allocation == id_allocation_policy::transactional);
    detail::transaction_access::bind_store(result, impl_);
    co_return result;
 }
@@ -156,15 +154,11 @@ snapshot store::join(const forge::db::core::snapshot& active) {
       FORGE_THROW_EXCEPTION(exceptions::transaction_closed, "db object snapshot is closed");
    }
    if (!active.belongs_to(*impl_->driver)) {
-      FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor,
-                            "db object snapshot belongs to another driver");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor, "db object snapshot belongs to another driver");
    }
-   return snapshot{
-      active,
-      impl_->config.family,
-      [impl = impl_](forge::db::ids::object_id type, std::type_index model) {
-         impl->ensure_registered_type(type, model);
-      }};
+   return snapshot{active, impl_->config.family, [impl = impl_](forge::db::ids::object_id type, std::type_index model) {
+                      impl->ensure_registered_type(type, model);
+                   }};
 }
 
 boost::asio::awaitable<transaction> store::join(forge::db::core::transaction& active) {
@@ -185,31 +179,25 @@ boost::asio::awaitable<transaction> store::join(forge::db::core::transaction& ac
    }
 
    auto result = detail::transaction_access::make_joined(
-      active,
-      impl_->config.family,
-      [impl = impl_](forge::db::ids::object_id type, std::type_index model) {
-         impl->ensure_registered_type(type, model);
-      },
-      [impl = impl_](forge::db::ids::object_id type,
-                     forge::db::core::transaction& active) -> boost::asio::awaitable<forge::db::ids::object_id> {
-         co_return co_await impl->allocate_id(type, active);
-      },
-      [impl = impl_](transaction::allocation_seal_map seals) -> boost::asio::awaitable<void> {
-         co_await impl->seal_allocations(std::move(seals));
-         co_return;
-      },
-      impl_->interceptors,
-      impl_->observers,
-      std::move(release),
-      impl_->settings.writes == write_policy::backend);
+       active, impl_->config.family,
+       [impl = impl_](forge::db::ids::object_id type, std::type_index model) {
+          impl->ensure_registered_type(type, model);
+       },
+       [impl = impl_](forge::db::ids::object_id type, forge::db::core::transaction& active)
+           -> boost::asio::awaitable<forge::db::ids::object_id> { co_return co_await impl->allocate_id(type, active); },
+       [impl = impl_](transaction::allocation_seal_map seals) -> boost::asio::awaitable<void> {
+          co_await impl->seal_allocations(std::move(seals));
+          co_return;
+       },
+       impl_->interceptors, impl_->observers, std::move(release), impl_->settings.writes == write_policy::backend,
+       impl_->settings.id_allocation == id_allocation_policy::transactional);
    detail::transaction_access::bind_store(result, impl_);
    co_return result;
 }
 
 boost::asio::awaitable<transaction> store::join(transaction& active) {
    if (!detail::transaction_access::belongs_to(active, impl_.get())) {
-      FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor,
-                            "db object transaction belongs to another store");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_descriptor, "db object transaction belongs to another store");
    }
    co_return detail::transaction_access::joined(active);
 }

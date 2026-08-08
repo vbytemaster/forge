@@ -23,6 +23,7 @@ enum class code : std::uint16_t {
    closed = 8,
    canceled = 9,
    io_error = 10,
+   timeout = 11,
 };
 
 FORGE_DECLARE_EXCEPTION_CATEGORY(code, "forge.net.stcp")
@@ -37,6 +38,7 @@ using verification_failed = forge::exceptions::coded_exception<code, code::verif
 using closed = forge::exceptions::coded_exception<code, code::closed>;
 using canceled = forge::exceptions::coded_exception<code, code::canceled>;
 using io_error = forge::exceptions::coded_exception<code, code::io_error>;
+using timeout = forge::exceptions::coded_exception<code, code::timeout>;
 
 [[nodiscard]] inline std::optional<code> code_of(const forge::exceptions::base& value) noexcept {
    const auto& actual = value.code();
@@ -72,6 +74,9 @@ using io_error = forge::exceptions::coded_exception<code, code::io_error>;
    }
    if (actual == forge::exceptions::make_error_code(code::io_error)) {
       return code::io_error;
+   }
+   if (actual == forge::exceptions::make_error_code(code::timeout)) {
+      return code::timeout;
    }
    return std::nullopt;
 }

@@ -237,8 +237,9 @@ BOOST_AUTO_TEST_CASE(serialization_macros_instantiate_raw_variant_and_digest_pac
 
    forge::crypto::digest::sha256::encoder digest_stream;
    forge::raw::pack(digest_stream, value);
-   BOOST_CHECK_EQUAL(digest_stream.result().str(),
-                     forge::crypto::digest::sha256::hash(std::span<const std::uint8_t>{buffer, write_stream.tellp()}).str());
+   BOOST_CHECK_EQUAL(
+       digest_stream.result().str(),
+       forge::crypto::digest::sha256::hash(std::span<const std::uint8_t>{buffer, write_stream.tellp()}).str());
 }
 
 BOOST_AUTO_TEST_CASE(raw_pack_uses_canonical_uint8_byte_container) {
@@ -254,6 +255,48 @@ BOOST_AUTO_TEST_CASE(raw_pack_uses_canonical_uint8_byte_container) {
 
    const auto view = std::span<const std::uint8_t>{bytes.data(), bytes.size()};
    BOOST_CHECK(forge::raw::unpack<macro_serialized_record>(view) == value);
+}
+
+BOOST_AUTO_TEST_CASE(raw_unpack_limits_reject_container_allocation_before_resize) {
+   const auto payload = forge::raw::bytes{0x03U};
+   auto values = std::vector<std::uint32_t>{};
+
+   BOOST_CHECK_THROW(forge::raw::unpack_exact(std::span<const std::uint8_t>{payload}, values,
+                                              forge::raw::unpack_limits{.max_container_elements = 2U}),
+                     forge::raw::exceptions::allocation_limit);
+   BOOST_CHECK(values.empty());
+}
+
+BOOST_AUTO_TEST_CASE(raw_unpack_limits_reject_byte_allocation_before_resize) {
+   const auto payload = forge::raw::bytes{0x40U};
+   auto values = forge::raw::bytes{};
+
+   BOOST_CHECK_THROW(forge::raw::unpack_exact(std::span<const std::uint8_t>{payload}, values,
+                                              forge::raw::unpack_limits{.max_bytes = 8U}),
+                     forge::raw::exceptions::allocation_limit);
+   BOOST_CHECK(values.empty());
+}
+
+BOOST_AUTO_TEST_CASE(raw_unpack_limits_apply_the_root_container_budget_once) {
+   const auto payload = forge::raw::pack(std::vector<std::vector<std::uint32_t>>{{1U}, {2U}});
+   auto values = std::vector<std::vector<std::uint32_t>>{};
+
+   BOOST_CHECK_THROW(forge::raw::unpack_exact(
+                         std::span<const std::uint8_t>{payload}, values,
+                         forge::raw::unpack_limits{.max_container_elements = 8U, .first_container_elements = 1U}),
+                     forge::raw::exceptions::allocation_limit);
+   BOOST_CHECK(values.empty());
+}
+
+BOOST_AUTO_TEST_CASE(raw_unpack_limits_apply_a_cumulative_container_budget) {
+   const auto payload = forge::raw::pack(std::vector<std::vector<std::uint32_t>>{{1U}, {2U}});
+   auto values = std::vector<std::vector<std::uint32_t>>{};
+
+   BOOST_CHECK_THROW(forge::raw::unpack_exact(std::span<const std::uint8_t>{payload}, values,
+                                              forge::raw::unpack_limits{.max_container_elements = 8U,
+                                                                        .max_total_container_elements = 3U,
+                                                                        .first_container_elements = 2U}),
+                     forge::raw::exceptions::allocation_limit);
 }
 
 BOOST_AUTO_TEST_CASE(custom_stream_codec_precedes_aggregate_fallback) {

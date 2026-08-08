@@ -6,6 +6,7 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -55,6 +56,7 @@ class session {
 
 class transaction {
  public:
+   using before_commit_fn = std::function<boost::asio::awaitable<void>()>;
    using after_commit_fn = std::function<boost::asio::awaitable<void>()>;
    using after_rollback_fn = std::function<boost::asio::awaitable<void>()>;
 
@@ -87,6 +89,7 @@ class transaction {
    boost::asio::awaitable<void> rollback_to_savepoint(savepoint_id_t savepoint);
    boost::asio::awaitable<void> release_savepoint(savepoint_id_t savepoint);
 
+   void before_commit(before_commit_fn hook);
    void after_commit(after_commit_fn hook);
    void after_rollback(after_rollback_fn hook);
 
@@ -134,6 +137,7 @@ class driver {
 
    boost::asio::awaitable<transaction> begin_transaction();
    boost::asio::awaitable<snapshot> begin_read();
+   boost::asio::awaitable<void> create_checkpoint(std::filesystem::path destination);
    boost::asio::awaitable<void> async_close();
    virtual boost::asio::awaitable<void> async_flush(bool sync) = 0;
 
@@ -161,6 +165,7 @@ class driver {
  private:
    virtual boost::asio::awaitable<std::unique_ptr<session>> open_transaction() = 0;
    virtual boost::asio::awaitable<std::unique_ptr<session>> open_snapshot() = 0;
+   virtual boost::asio::awaitable<void> create_checkpoint_impl(std::filesystem::path destination);
    virtual boost::asio::awaitable<void> close_driver();
 
    std::shared_ptr<const void> snapshot_origin_ = std::make_shared<std::byte>();

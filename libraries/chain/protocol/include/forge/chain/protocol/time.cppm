@@ -9,6 +9,9 @@ export module forge.chain.protocol.time;
 
 import forge.chain.protocol.values;
 import forge.raw.codec;
+#if !defined(FORGE_CONTRACT_GUEST)
+import forge.variant.value;
+#endif
 
 export namespace forge::chain::protocol {
 
@@ -284,6 +287,15 @@ struct block_timestamp {
 };
 
 using block_timestamp_type = block_timestamp;
+
+#if !defined(FORGE_CONTRACT_GUEST)
+void to_variant(const time_point& value, forge::variant& output);
+void from_variant(const forge::variant& value, time_point& output);
+void to_variant(const time_point_sec& value, forge::variant& output);
+void from_variant(const forge::variant& value, time_point_sec& output);
+void to_variant(const block_timestamp& value, forge::variant& output);
+void from_variant(const forge::variant& value, block_timestamp& output);
+#endif
 
 template <typename Stream> void raw_pack(Stream& stream, const microseconds& value) {
    forge::raw::pack(stream, value.count());

@@ -1,8 +1,9 @@
 add_library(
    forge_plugins_http_server STATIC
-   plugin.cpp
    api_impl.cpp
+   bearer_auth.cpp
    config.cpp
+   plugin.cpp
    plugin_impl.cpp
 )
 forge_target_modules_at(forge_plugins_http_server plugins/http/server)
@@ -24,6 +25,7 @@ target_link_libraries(
       forge_net_http
       forge_api_http
       forge_asio
+      forge_crypto_digest
       forge_exceptions
       Boost::asio
 )

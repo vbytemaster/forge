@@ -13,6 +13,7 @@ module;
 #include <boost/asio/use_future.hpp>
 
 #include <atomic>
+#include <barrier>
 #include <chrono>
 #include <future>
 #include <memory>
@@ -30,6 +31,7 @@ import forge.net.transport.session;
 
 #include "../../libraries/net/p2p/details/direct_transport.hxx"
 #include "../../libraries/net/p2p/details/libp2p_identity_material.hxx"
+#include "../../libraries/net/p2p/details/operation_deadline.hxx"
 #include "../../libraries/net/p2p/details/session_teardown.hxx"
 
 namespace forge::net::p2p {
@@ -79,6 +81,75 @@ BOOST_AUTO_TEST_CASE(p2p_session_teardown_waits_for_started_transport_cleanup) {
    BOOST_REQUIRE(cleanup_completed);
    stopped.get();
    BOOST_TEST(cancel_called.load(std::memory_order_acquire) == 0U);
+}
+
+BOOST_AUTO_TEST_CASE(p2p_session_teardown_waits_for_tracked_background_operation) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto teardown = detail::session_teardown{runtime.context().get_executor()};
+   auto tracked = teardown.track();
+   BOOST_REQUIRE(tracked.active());
+
+   teardown.start({});
+   auto stopped = boost::asio::co_spawn(runtime.context(), teardown.wait(), boost::asio::use_future);
+   const auto waits_for_background_operation =
+       stopped.wait_for(std::chrono::milliseconds{50}) == std::future_status::timeout;
+   BOOST_TEST(waits_for_background_operation);
+
+   tracked.release();
+   BOOST_REQUIRE(stopped.wait_for(std::chrono::seconds{2}) == std::future_status::ready);
+   stopped.get();
+}
+
+BOOST_AUTO_TEST_CASE(p2p_session_teardown_handles_concurrent_track_release_and_start) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   for (auto iteration = 0U; iteration < 1'000U; ++iteration) {
+      auto teardown = detail::session_teardown{runtime.context().get_executor()};
+      auto tracked = teardown.track();
+      auto start = std::barrier{2};
+      auto releaser = std::thread{[&] {
+         start.arrive_and_wait();
+         tracked.release();
+      }};
+      start.arrive_and_wait();
+      teardown.start({});
+      releaser.join();
+      forge::asio::blocking::run(runtime, teardown.wait());
+   }
+}
+
+BOOST_AUTO_TEST_CASE(p2p_operation_deadline_preserves_shutdown_winner_past_timeout) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
+   auto deadline = operation_deadline{runtime.context(), std::chrono::milliseconds{10}};
+   auto canceled = std::atomic_bool{false};
+   auto stopping = deadline.stopping();
+
+   BOOST_REQUIRE(stopping.request_stop());
+   deadline.arm([&] { canceled.store(true, std::memory_order_release); });
+   std::this_thread::sleep_for(std::chrono::milliseconds{50});
+
+   BOOST_TEST(deadline.stopped());
+   BOOST_TEST(!deadline.timed_out());
+   BOOST_TEST(!canceled.load(std::memory_order_acquire));
+   BOOST_TEST(deadline.finish());
+}
+
+BOOST_AUTO_TEST_CASE(p2p_operation_deadline_preserves_timeout_winner_after_shutdown) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
+   auto deadline = operation_deadline{runtime.context(), std::chrono::milliseconds{10}};
+   auto canceled = std::atomic_bool{false};
+   auto stopping = deadline.stopping();
+   deadline.arm([&] { canceled.store(true, std::memory_order_release); });
+
+   const auto timeout_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+   while (!canceled.load(std::memory_order_acquire)) {
+      BOOST_REQUIRE(std::chrono::steady_clock::now() < timeout_deadline);
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+   }
+
+   BOOST_TEST(deadline.timed_out());
+   BOOST_TEST(!deadline.stopped());
+   BOOST_TEST(!stopping.request_stop());
+   BOOST_TEST(!deadline.finish());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_direct_transport_teardown_continues_after_profile_failure) {

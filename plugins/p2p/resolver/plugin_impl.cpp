@@ -88,6 +88,10 @@ std::chrono::milliseconds plugin::impl::open_deadline(resolve_options value) con
    return value.open_deadline.count() > 0 ? value.open_deadline : to_ms(settings.open_deadline_ms);
 }
 
+std::chrono::milliseconds plugin::impl::request_deadline(resolve_options value) const {
+   return value.request_deadline.count() > 0 ? value.request_deadline : to_ms(settings.request_deadline_ms);
+}
+
 void plugin::impl::evict_cache_locked() {
    while (cache.size() > settings.max_cached_peers) {
       auto expired = std::ranges::find_if(cache, [](const auto& item) {

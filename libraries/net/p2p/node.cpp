@@ -26,6 +26,7 @@ module;
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/experimental/concurrent_channel.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -35,6 +36,7 @@ module;
 
 module forge.net.p2p.node;
 
+import forge.asio.gate;
 import forge.crypto.symmetric.chacha20_poly1305;
 import forge.crypto.pki.der;
 import forge.crypto.asymmetric.ed25519;
@@ -1044,8 +1046,8 @@ boost::asio::awaitable<pubsub::subscription> node::async_subscribe(pubsub::topic
       try {
          co_await self->send_pubsub_rpc(peer,
                                         pubsub::rpc{.subscriptions = std::vector<pubsub::subscription>{subscription}});
-      } catch (const forge::exceptions::base&) {
-         self->store.mark_failure(peer);
+      } catch (const forge::exceptions::base& error) {
+         self->record_pubsub_send_failure(peer, error);
       }
    }
    co_return subscription;
@@ -1067,8 +1069,8 @@ boost::asio::awaitable<void> node::async_unsubscribe(pubsub::topic subject) {
       try {
          co_await self->send_pubsub_rpc(peer,
                                         pubsub::rpc{.subscriptions = std::vector<pubsub::subscription>{subscription}});
-      } catch (const forge::exceptions::base&) {
-         self->store.mark_failure(peer);
+      } catch (const forge::exceptions::base& error) {
+         self->record_pubsub_send_failure(peer, error);
       }
    }
    co_return;
@@ -1084,6 +1086,12 @@ boost::asio::awaitable<pubsub::message> node::async_publish(pubsub::topic subjec
       FORGE_THROW_EXCEPTION(exceptions::invalid_options, "GossipSub publish requires topic");
    }
    auto self = impl_;
+   {
+      auto lock = std::scoped_lock{self->mutex};
+      if (self->stopped) {
+         FORGE_THROW_EXCEPTION(exceptions::closed, "cannot publish GossipSub message after node shutdown");
+      }
+   }
    if (data.size() > self->options.limits.pubsub.limits.max_data_size) {
       FORGE_THROW_EXCEPTION(exceptions::backpressure_rejected, "GossipSub publish exceeds max data size");
    }
@@ -1111,16 +1119,27 @@ boost::asio::awaitable<pubsub::message> node::async_publish(pubsub::topic subjec
 
    auto attempted = std::size_t{};
    auto sent = std::size_t{};
+   auto terminal_kind = std::optional<exceptions::code>{};
+   auto terminal_message = std::string{};
    for (const auto& peer : self->pubsub_candidate_peers(value.subject.value)) {
       ++attempted;
       try {
          co_await self->send_pubsub_rpc(peer, pubsub::rpc{.messages = std::vector<pubsub::message>{value}});
          ++sent;
-      } catch (const forge::exceptions::base&) {
-         self->store.mark_failure(peer);
+      } catch (const forge::exceptions::base& error) {
+         const auto kind = p2p_code(error);
+         if (!terminal_kind && (kind == exceptions::code::closed || kind == exceptions::code::canceled ||
+                                kind == exceptions::code::timeout || kind == exceptions::code::backpressure_rejected)) {
+            terminal_kind = kind;
+            terminal_message = error.what();
+         }
+         self->record_pubsub_send_failure(peer, error);
       }
    }
    if (attempted > 0 && sent == 0) {
+      if (terminal_kind) {
+         FORGE_THROW_CODE(*terminal_kind, terminal_message);
+      }
       FORGE_THROW_EXCEPTION(exceptions::protocol_error, "GossipSub publish could not reach any candidate peer");
    }
    co_return value;
@@ -1279,6 +1298,9 @@ void node::stop() {
       }
       operations.reserve(impl_->sessions.size() + 1);
       operations.push_back(impl_->direct_registry.teardown_operation());
+      for (const auto& [_, deadline] : impl_->protocol_open_deadlines) {
+         static_cast<void>(deadline.request_stop());
+      }
       for (auto& [_, session] : impl_->sessions) {
          operations.push_back(detail::session_teardown::operation{
              .close = [session]() -> boost::asio::awaitable<void> { co_await session->connection.async_close(); },
@@ -1294,7 +1316,7 @@ void node::stop() {
       impl_->sessions.clear();
       impl_->inbound_relay_reservations.clear();
       impl_->outbound_relay_reservations.clear();
-      impl_->pubsub_value.outbound_streams.clear();
+      impl_->clear_pubsub_outbound_locked();
       impl_->pubsub_value.active_validations_by_peer.clear();
       impl_->pubsub_value.active_validations = 0;
       impl_->metrics_value.active_sessions = 0;

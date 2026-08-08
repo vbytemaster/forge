@@ -2,6 +2,7 @@ add_library(
    forge_net_stcp STATIC
    connection.cpp
    connector.cpp
+   details/handshake_deadline.hxx
    listener.cpp
 )
 forge_target_modules_at(forge_net_stcp net/stcp)
@@ -16,4 +17,6 @@ target_link_libraries(
       forge_crypto_pki
       Boost::asio
       OpenSSL::SSL
+   PRIVATE
+      forge_asio
 )

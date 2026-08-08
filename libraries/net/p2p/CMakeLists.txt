@@ -32,12 +32,19 @@ add_library(
    details/libp2p_identity_material.hxx
    node_impl.cpp
    details/node_impl.hxx
+   connection_singleflight_registry.cpp
+   details/connection_singleflight_registry.hxx
    operation_deadline.cpp
    details/operation_deadline.hxx
    path_selector.cpp
    details/path_selector.hxx
    peer_exchange_codec.cpp
    details/peer_exchange_codec.hxx
+   peer_exchange_learning.cpp
+   details/peer_exchange_learning.hxx
+   pubsub_outbound_budget.cpp
+   details/pubsub_outbound_budget.hxx
+   details/peer_failure.hxx
    relay_discovery.cpp
    details/relay_discovery.hxx
    relay_transport.cpp

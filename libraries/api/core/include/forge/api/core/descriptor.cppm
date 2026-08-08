@@ -150,13 +150,29 @@ struct method_descriptor {
    std::string deprecation_reason;
    std::type_index request_type = typeid(void);
    std::type_index response_type = typeid(void);
+   std::vector<std::type_index> response_traits;
    std::vector<std::string> argument_names;
    std::vector<error_descriptor> errors;
+   std::function<bytes(const void*)> request_encoder;
+   std::function<bytes(const void*)> response_encoder;
+   std::function<void(const bytes&, forge::raw::unpack_limits)> request_decoder;
+   std::function<void(const bytes&, forge::raw::unpack_limits)> response_decoder;
+   std::function<void(const bytes&)> request_validator;
+   std::function<void(const bytes&, const bytes&)> response_validator;
    std::function<boost::asio::awaitable<bytes>(std::shared_ptr<void>, bytes)> raw_invoker;
    std::function<boost::asio::awaitable<std::vector<bytes>>(std::shared_ptr<void>, bytes)> raw_stream_invoker;
    std::function<boost::asio::awaitable<bytes>(std::shared_ptr<void>, std::vector<bytes>)> raw_client_stream_invoker;
    std::function<boost::asio::awaitable<std::vector<bytes>>(std::shared_ptr<void>, std::vector<bytes>)>
        raw_bidirectional_stream_invoker;
+
+   template <typename Trait> [[nodiscard]] bool has_response_trait() const noexcept {
+      for (const auto& value : response_traits) {
+         if (value == typeid(Trait)) {
+            return true;
+         }
+      }
+      return false;
+   }
 };
 
 struct descriptor {
@@ -179,6 +195,15 @@ template <typename Exception> error_identity exception_identity() {
 }
 
 template <typename Interface, bool EnableRaw> class method_builder;
+
+template <typename Interface> struct method_descriptor_customization {
+   template <auto Method, bool EnableRaw> static void apply(method_builder<Interface, EnableRaw>&) {}
+};
+
+template <typename Interface, auto Method, bool EnableRaw>
+void customize_method_descriptor(method_builder<Interface, EnableRaw>& method) {
+   method_descriptor_customization<Interface>::template apply<Method>(method);
+}
 
 template <typename Interface, bool EnableRaw> class contract_builder {
  public:
@@ -321,6 +346,16 @@ template <typename Interface, bool EnableRaw> class contract_builder {
           .argument_names = std::move(argument_names),
       };
       if constexpr (EnableRaw) {
+         value.request_encoder = [](const void* request) { return pack_body(*static_cast<const Request*>(request)); };
+         value.response_encoder = [](const void* response) {
+            return pack_body(*static_cast<const Response*>(response));
+         };
+         value.request_decoder = [](const bytes& payload, forge::raw::unpack_limits limits) {
+            static_cast<void>(forge::raw::unpack_exact<Request>(payload, limits));
+         };
+         value.response_decoder = [](const bytes& payload, forge::raw::unpack_limits limits) {
+            static_cast<void>(forge::raw::unpack_exact<Response>(payload, limits));
+         };
          value.raw_invoker = [](std::shared_ptr<void> implementation, bytes payload) -> boost::asio::awaitable<bytes> {
             auto typed = std::static_pointer_cast<Interface>(std::move(implementation));
             if constexpr (argument_count == 1U) {
@@ -355,6 +390,16 @@ template <typename Interface, bool EnableRaw> class contract_builder {
           .response_type = typeid(Response),
       };
       if constexpr (EnableRaw) {
+         value.request_encoder = [](const void* request) { return pack_body(*static_cast<const Request*>(request)); };
+         value.response_encoder = [](const void* response) {
+            return pack_body(*static_cast<const Response*>(response));
+         };
+         value.request_decoder = [](const bytes& payload, forge::raw::unpack_limits limits) {
+            static_cast<void>(forge::raw::unpack_exact<Request>(payload, limits));
+         };
+         value.response_decoder = [](const bytes& payload, forge::raw::unpack_limits limits) {
+            static_cast<void>(forge::raw::unpack_exact<Response>(payload, limits));
+         };
          value.raw_invoker = [](std::shared_ptr<void> implementation, bytes payload) -> boost::asio::awaitable<bytes> {
             auto typed = std::static_pointer_cast<Interface>(std::move(implementation));
             auto request = unpack_body<Request>(payload);
@@ -418,6 +463,13 @@ template <typename Interface, bool EnableRaw> class method_builder {
    method_builder& deprecated(std::string reason) {
       method_->deprecated = true;
       method_->deprecation_reason = std::move(reason);
+      return *this;
+   }
+
+   template <typename Trait> method_builder& response_trait() {
+      if (!method_->template has_response_trait<Trait>()) {
+         method_->response_traits.emplace_back(typeid(Trait));
+      }
       return *this;
    }
 

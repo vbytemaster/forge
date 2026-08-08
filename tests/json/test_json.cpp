@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <variant>
 #include <vector>
@@ -50,6 +51,8 @@ struct dotted_config {
    path_policy policy = path_policy::direct_only;
 };
 
+struct throwing_json_value {};
+
 } // namespace forge_json_tests
 
 BOOST_DESCRIBE_STRUCT(forge_json_tests::http_config, (), (bind_port, bind_host, tls_enabled, tags))
@@ -79,6 +82,14 @@ import forge.variant.multiprecision;
 import forge.variant.format;
 import forge.variant.described;
 import forge.tests.codec.json.exact_types;
+
+namespace forge_json_tests {
+
+void to_variant(const throwing_json_value&, forge::variant&) {
+   throw std::runtime_error{"test JSON conversion failure"};
+}
+
+} // namespace forge_json_tests
 
 template <> struct forge::schema::rules<forge_json_tests::http_config> {
    [[nodiscard]] static forge::schema::object_schema<forge_json_tests::http_config> define() {
@@ -264,6 +275,23 @@ BOOST_AUTO_TEST_CASE(json_value_roundtrip_preserves_generic_shapes) {
    BOOST_TEST(reparsed.value.get_object()["i"].as_int64() == -2);
    BOOST_TEST(reparsed.value.get_object()["u"].as_uint64() == 7U);
    BOOST_REQUIRE_EQUAL(reparsed.value.get_object()["a"].get_array().size(), 2U);
+}
+
+BOOST_AUTO_TEST_CASE(json_typed_writers_return_diagnostics_for_conversion_failures) {
+   const auto written = forge::codec::json::write(forge_json_tests::throwing_json_value{});
+   BOOST_TEST(!written.ok());
+   BOOST_REQUIRE_EQUAL(written.diagnostics.size(), 1U);
+   BOOST_TEST(written.diagnostics.front().code == "json.type");
+   BOOST_TEST(written.diagnostics.front().message == "test JSON conversion failure");
+
+   const auto path = std::filesystem::temp_directory_path() / "forge-json-conversion-failure.json";
+   std::error_code ignored;
+   std::filesystem::remove(path, ignored);
+   const auto saved = forge::codec::json::save(path, forge_json_tests::throwing_json_value{});
+   BOOST_TEST(!saved.ok());
+   BOOST_REQUIRE_EQUAL(saved.diagnostics.size(), 1U);
+   BOOST_TEST(saved.diagnostics.front().code == "json.type");
+   BOOST_TEST(!std::filesystem::exists(path));
 }
 
 BOOST_AUTO_TEST_CASE(json_large_uint64_is_not_silently_converted_to_double) {

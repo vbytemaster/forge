@@ -13,6 +13,7 @@ Documents below explain cross-library architecture decisions.
 
 | Document | Purpose |
 | --- | --- |
+| [releases/8.21.0.md](releases/8.21.0.md) | Forge 8.21.0 verified Chain API, Experimental authenticated state and HTTP deadline fixes. |
 | [releases/8.20.0.md](releases/8.20.0.md) | Forge 8.20.0 native guest Contract SDK projects and manifest schema v3 migration. |
 | [releases/8.19.0.md](releases/8.19.0.md) | Forge 8.19.0 exact typed JSON and complete Chain Protocol host serialization. |
 | [releases/8.18.0.md](releases/8.18.0.md) | Forge 8.18.0 installed Contract Testing component and contract-library workflow. |
@@ -40,6 +41,7 @@ Documents below explain cross-library architecture decisions.
 | [iterations/forge-db-revisions-migrations-v1.md](iterations/forge-db-revisions-migrations-v1.md) | Future schema migration boundary and its optional use of DB Revision and savepoints. |
 | [iterations/forge-db-savepoints-v1.md](iterations/forge-db-savepoints-v1.md) | Accepted DB Core savepoint semantics, backend mapping and Object/Blob/revision participant invariants. |
 | [iterations/forge-db-state-services-v1.md](iterations/forge-db-state-services-v1.md) | Scope decisions for shared read views, physical checkpoints, deferred migrations and DB Store revision integration. |
+| [security/authenticated-state-production-gate.md](security/authenticated-state-production-gate.md) | Mandatory independent review gate before production activation of authenticated state roots. |
 | [iterations/forge-db-mdbx-v1.md](iterations/forge-db-mdbx-v1.md) | Production design for a libmdbx DB Core backend, including thread affinity, snapshot cloning, durability, geometry and parity requirements. |
 | [iterations/forge-contract-sdk-toolchain-v1.md](iterations/forge-contract-sdk-toolchain-v1.md) | Accepted baseline for the wasm32 contract SDK, vanilla Clang toolchain, legacy EOSIO compatibility and modern C++23 contract surface. |
 | [donors/forge-contract-dual-target-graph-v1.md](donors/forge-contract-dual-target-graph-v1.md) | Bazel, Cargo, CDT and CMake donor boundaries for immutable dual-target contract-library descriptors. |
@@ -75,10 +77,12 @@ Each library guide must be useful without reading source first:
 - [db_ids](../libraries/db/ids/README.md)
 - [compression](../libraries/compression/README.md)
 - [chain](../libraries/chain/README.md)
+- [chain_api](../libraries/chain/api/README.md)
 - [db_core](../libraries/db/core/README.md)
 - [db_object](../libraries/db/object/README.md)
 - [db_blob](../libraries/db/blob/README.md)
 - [db_revision](../libraries/db/revision/README.md)
+- [db_authenticated](../libraries/db/authenticated/README.md)
 - [db_rocksdb](../libraries/db/rocksdb/README.md)
 - [json](../libraries/codec/json/README.md)
 - [yaml](../libraries/codec/yaml/README.md)

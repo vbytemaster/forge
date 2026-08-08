@@ -23,6 +23,7 @@ target_link_libraries(
       forge_api_core
       forge_config_core
       forge_schema
+      forge_db_authenticated
       forge_db_core
       forge_db_object
       forge_db_blob

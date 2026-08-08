@@ -5,6 +5,7 @@ target_include_directories(forge_schema PUBLIC ${FORGE_PUBLIC_INCLUDE_DIRS})
 
 target_link_libraries(
    forge_schema PUBLIC
+      forge_exceptions
       forge_reflect
       Boost::headers
 )

@@ -1,15 +1,20 @@
 module;
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/error.hpp>
+#include <boost/system/system_error.hpp>
 #include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <chrono>
+#include <concepts>
 #include <cctype>
 #include <cstddef>
 #include <cstring>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -27,10 +32,12 @@ import forge.api.core.connection;
 import forge.api.core.descriptor;
 import forge.api.core.error_projection;
 import forge.api.core.types;
+import forge.asio.exceptions;
 import forge.net.http.body;
 import forge.api.http.client_request;
 import forge.api.http.parameters;
 export import forge.net.http.client;
+import forge.net.http.connection;
 import forge.net.http.exceptions;
 import forge.net.http.file;
 export import forge.api.http.mapping;
@@ -79,11 +86,122 @@ using namespace forge::net::http;
 
 namespace detail {
 
+inline constexpr auto request_timeout_grace = std::chrono::seconds{5};
+
+[[nodiscard]] inline forge::net::http::request_options default_request_options(const route& route) {
+   const auto retry_idempotent = forge::net::http::is_idempotent(route.verb);
+   return forge::net::http::request_options{
+       .retry_idempotent = retry_idempotent,
+       .max_retries = retry_idempotent ? 1U : 0U,
+   };
+}
+
+template <typename Value>
+void set_request_timeout(forge::net::http::request_options& options, const route& route, const Value& value) {
+   using value_type = std::remove_cvref_t<Value>;
+   if constexpr (!std::unsigned_integral<value_type>) {
+      FORGE_THROW_EXCEPTION(forge::api::core::exceptions::protocol_error,
+                            "HTTP timeout field must be an unsigned integer",
+                            forge::exceptions::ctx("field", *route.timeout_field));
+   } else {
+      const auto timeout = static_cast<std::uint64_t>(value);
+      constexpr auto max_milliseconds = static_cast<std::uint64_t>((std::chrono::milliseconds::max)().count());
+      const auto grace = static_cast<std::uint64_t>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(request_timeout_grace).count());
+      if (timeout > max_milliseconds - grace) {
+         FORGE_THROW_EXCEPTION(forge::api::core::exceptions::protocol_error, "HTTP timeout field exceeds clock range",
+                               forge::exceptions::ctx("field", *route.timeout_field),
+                               forge::exceptions::ctx("value", timeout));
+      }
+      options.timeout = std::chrono::milliseconds{timeout + grace};
+   }
+}
+
+[[noreturn]] inline void throw_missing_timeout_field(const route& route) {
+   FORGE_THROW_EXCEPTION(forge::api::core::exceptions::protocol_error, "HTTP timeout field is not declared",
+                         forge::exceptions::ctx("field", *route.timeout_field));
+}
+
+template <typename Request>
+[[nodiscard]] forge::net::http::request_options request_options_for(const route& route, const Request& value) {
+   auto options = default_request_options(route);
+   if (!route.timeout_field) {
+      return options;
+   }
+
+   auto found = false;
+   if constexpr (forge::reflect::is_described_object_v<Request>) {
+      forge::reflect::for_each_member<Request>([&](const char* name, auto member) {
+         if (*route.timeout_field != name) {
+            return;
+         }
+         found = true;
+         set_request_timeout(options, route, value.*member);
+      });
+   }
+   if (!found) {
+      throw_missing_timeout_field(route);
+   }
+   return options;
+}
+
+template <typename Tuple>
+[[nodiscard]] forge::net::http::request_options
+request_options_for_arguments(const route& route, const Tuple& value, const std::vector<std::string>& argument_names) {
+   auto options = default_request_options(route);
+   if (!route.timeout_field) {
+      return options;
+   }
+
+   auto found = false;
+   [&]<std::size_t... Index>(std::index_sequence<Index...>) {
+      (([&] {
+          if (Index < argument_names.size() && argument_names[Index] == *route.timeout_field) {
+             found = true;
+             set_request_timeout(options, route, std::get<Index>(value));
+          }
+       }()),
+       ...);
+   }(std::make_index_sequence<std::tuple_size_v<Tuple>>{});
+   if (!found) {
+      throw_missing_timeout_field(route);
+   }
+   return options;
+}
+
+[[noreturn]] inline void rethrow_client_failure(std::exception_ptr failure, const route& route) {
+   try {
+      std::rethrow_exception(std::move(failure));
+   } catch (const forge::net::http::exceptions::gateway_timeout&) {
+      FORGE_THROW_EXCEPTION(forge::api::core::exceptions::deadline_exceeded, "HTTP API request deadline expired",
+                            forge::exceptions::ctx("method", route.method_name));
+   } catch (const forge::asio::exceptions::canceled&) {
+      FORGE_THROW_EXCEPTION(forge::api::core::exceptions::cancelled, "HTTP API request was canceled",
+                            forge::exceptions::ctx("method", route.method_name));
+   } catch (const forge::exceptions::base&) {
+      throw;
+   } catch (const boost::system::system_error& error) {
+      if (error.code() == boost::asio::error::operation_aborted) {
+         FORGE_THROW_EXCEPTION(forge::api::core::exceptions::cancelled, "HTTP API request was canceled",
+                               forge::exceptions::ctx("method", route.method_name));
+      }
+      FORGE_THROW_EXCEPTION(forge::api::core::exceptions::remote_internal, "HTTP API transport failed",
+                            forge::exceptions::ctx("method", route.method_name),
+                            forge::exceptions::ctx("cause", error.what()));
+   } catch (const std::exception& error) {
+      FORGE_THROW_EXCEPTION(forge::api::core::exceptions::remote_internal, "HTTP API transport failed",
+                            forge::exceptions::ctx("method", route.method_name),
+                            forge::exceptions::ctx("cause", error.what()));
+   } catch (...) {
+      FORGE_THROW_EXCEPTION(forge::api::core::exceptions::remote_internal, "HTTP API transport failed",
+                            forge::exceptions::ctx("method", route.method_name));
+   }
+}
+
 [[nodiscard]] inline const forge::codec::xml::element* find_xml_child(const forge::codec::xml::element& parent,
-                                                              std::string_view name) noexcept {
-   const auto found = std::find_if(parent.children.begin(), parent.children.end(), [&](const forge::codec::xml::element& child) {
-      return child.name == name;
-   });
+                                                                      std::string_view name) noexcept {
+   const auto found = std::find_if(parent.children.begin(), parent.children.end(),
+                                   [&](const forge::codec::xml::element& child) { return child.name == name; });
    return found == parent.children.end() ? nullptr : &*found;
 }
 
@@ -106,7 +224,8 @@ namespace detail {
 }
 
 [[nodiscard]] inline forge::api::core::error_payload decode_xml_error_payload(const response& value) {
-   auto decoded = forge::codec::xml::read_value(value.body(), forge::codec::xml::read_options{.source_name = "http.error"});
+   auto decoded =
+       forge::codec::xml::read_value(value.body(), forge::codec::xml::read_options{.source_name = "http.error"});
    if (!decoded.ok()) {
       return {};
    }
@@ -118,11 +237,11 @@ namespace detail {
       identity.code = parse_u32(xml_child_text(*identity_node, "code"), 0);
    }
    return forge::api::core::error_payload{
-      .error = xml_child_text(root, "error"),
-      .message = xml_child_text(root, "message"),
-      .retryable = xml_child_text(root, "retryable") == "true" || xml_child_text(root, "retryable") == "1",
-      .status_code = core_status_from_http(status_code),
-      .identity = std::move(identity),
+       .error = xml_child_text(root, "error"),
+       .message = xml_child_text(root, "message"),
+       .retryable = xml_child_text(root, "retryable") == "true" || xml_child_text(root, "retryable") == "1",
+       .status_code = core_status_from_http(status_code),
+       .identity = std::move(identity),
    };
 }
 
@@ -130,8 +249,9 @@ namespace detail {
    switch (codec) {
    case error_codec::json: {
       auto decoded = forge::codec::json::read<forge::api::core::error_payload>(
-         value.body(), forge::codec::json::read_options{.source_name = "http.error",
-                                               .unknown_fields = forge::codec::json::unknown_field_policy::ignore});
+          value.body(),
+          forge::codec::json::read_options{.source_name = "http.error",
+                                           .unknown_fields = forge::codec::json::unknown_field_policy::ignore});
       if (decoded.ok()) {
          return std::move(decoded.value);
       }
@@ -146,26 +266,26 @@ namespace detail {
    }
    }
    return forge::api::core::error_payload{
-      .error = "http_error",
-      .message = value.body().empty() ? "HTTP API request failed" : value.body(),
-      .retryable = false,
-      .status_code = core_status_from_http(value.result_int()),
-      .identity =
-         {
-            .category = "forge.api",
-            .code = static_cast<std::uint32_t>(forge::api::core::exceptions::code::remote_internal),
-         },
+       .error = "http_error",
+       .message = value.body().empty() ? "HTTP API request failed" : value.body(),
+       .retryable = false,
+       .status_code = core_status_from_http(value.result_int()),
+       .identity =
+           {
+               .category = "forge.api",
+               .code = static_cast<std::uint32_t>(forge::api::core::exceptions::code::remote_internal),
+           },
    };
 }
 
-template <typename Response> [[nodiscard]] Response decode_response_body(const response& response_value,
-                                                                         body_codec codec) {
+template <typename Response>
+[[nodiscard]] Response decode_response_body(const response& response_value, body_codec codec) {
    switch (codec) {
    case body_codec::json: {
       auto decoded = forge::codec::json::read<Response>(
-         response_value.body(),
-         forge::codec::json::read_options{.source_name = "http.response",
-                                 .unknown_fields = forge::codec::json::unknown_field_policy::error});
+          response_value.body(),
+          forge::codec::json::read_options{.source_name = "http.response",
+                                           .unknown_fields = forge::codec::json::unknown_field_policy::error});
       if (!decoded.ok()) {
          FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request, "HTTP API response JSON is invalid");
       }
@@ -173,9 +293,9 @@ template <typename Response> [[nodiscard]] Response decode_response_body(const r
    }
    case body_codec::xml: {
       auto decoded = forge::codec::xml::read<Response>(
-         response_value.body(),
-         forge::codec::xml::read_options{.source_name = "http.response",
-                                .unknown_fields = forge::codec::xml::unknown_field_policy::error});
+          response_value.body(),
+          forge::codec::xml::read_options{.source_name = "http.response",
+                                          .unknown_fields = forge::codec::xml::unknown_field_policy::error});
       if (!decoded.ok()) {
          FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request, "HTTP API response XML is invalid");
       }
@@ -192,7 +312,7 @@ boost::asio::awaitable<std::string> read_bounded_error_body(body_reader& body) {
    while (auto chunk = co_await body.async_read()) {
       if (chunk->bytes.size() > max_stream_error_body_bytes - output.size()) {
          FORGE_THROW_EXCEPTION(forge::net::http::exceptions::payload_too_large,
-                             "HTTP API error response body exceeds the streaming client limit");
+                               "HTTP API error response body exceeds the streaming client limit");
       }
       output.append(reinterpret_cast<const char*>(chunk->bytes.data()), chunk->bytes.size());
    }
@@ -201,14 +321,16 @@ boost::asio::awaitable<std::string> read_bounded_error_body(body_reader& body) {
 
 template <typename Request, typename Response>
 boost::asio::awaitable<Response> call(client& target, const forge::api::core::descriptor& descriptor,
-                                      const route& route, Request value) {
+                                      const route& route, Request value) try {
+   const auto request_options = request_options_for(route, value);
    if constexpr (detail::response_needs_stream_v<Response>) {
       auto request_value = make_client_request(target, route, value);
       auto body = bind_dto_request_body(request_value, route, value);
 
-      auto response_value = body.has_value()
-         ? co_await target.async_stream_request(std::move(request_value), std::move(*body))
-         : co_await target.async_stream_request(std::move(request_value));
+      auto response_value =
+          body.has_value()
+              ? co_await target.async_stream_request(std::move(request_value), std::move(*body), request_options)
+              : co_await target.async_stream_request(std::move(request_value), request_options);
       if (response_value.head.result_int() < 200U || response_value.head.result_int() >= 300U) {
          response_value.head.body() = co_await read_bounded_error_body(response_value.body);
          auto error = decode_error_payload(response_value.head, route.error_body_codec);
@@ -222,9 +344,10 @@ boost::asio::awaitable<Response> call(client& target, const forge::api::core::de
    } else if constexpr (detail::is_bytes_response_v<Response>) {
       auto request_value = make_client_request(target, route, value);
       auto body = bind_dto_request_body(request_value, route, value);
-      auto response_value = body.has_value()
-         ? co_await target.async_streaming_request(std::move(request_value), std::move(*body))
-         : co_await target.async_request(std::move(request_value));
+      auto response_value =
+          body.has_value()
+              ? co_await target.async_streaming_request(std::move(request_value), std::move(*body), request_options)
+              : co_await target.async_request(std::move(request_value), request_options);
       if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
          auto error = decode_error_payload(response_value, route.error_body_codec);
          forge::api::core::raise_remote_error(error, forge::api::core::find_method(descriptor, route.method_name));
@@ -238,16 +361,17 @@ boost::asio::awaitable<Response> call(client& target, const forge::api::core::de
          content_type = std::string{iterator->value()};
       }
       co_return Response{
-         .bytes = std::move(bytes),
-         .content_type = content_type.empty() ? std::string{"application/octet-stream"} : std::move(content_type),
-         .status_code = response_value.result(),
+          .bytes = std::move(bytes),
+          .content_type = content_type.empty() ? std::string{"application/octet-stream"} : std::move(content_type),
+          .status_code = response_value.result(),
       };
    } else if constexpr (detail::is_empty_response_v<Response>) {
       auto request_value = make_client_request(target, route, value);
       auto body = bind_dto_request_body(request_value, route, value);
-      auto response_value = body.has_value()
-         ? co_await target.async_streaming_request(std::move(request_value), std::move(*body))
-         : co_await target.async_request(std::move(request_value));
+      auto response_value =
+          body.has_value()
+              ? co_await target.async_streaming_request(std::move(request_value), std::move(*body), request_options)
+              : co_await target.async_request(std::move(request_value), request_options);
       if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
          auto error = decode_error_payload(response_value, route.error_body_codec);
          forge::api::core::raise_remote_error(error, forge::api::core::find_method(descriptor, route.method_name));
@@ -256,30 +380,33 @@ boost::asio::awaitable<Response> call(client& target, const forge::api::core::de
    } else {
       auto request_value = make_client_request(target, route, value);
       auto body = bind_dto_request_body(request_value, route, value);
-      auto response_value = body.has_value()
-         ? co_await target.async_streaming_request(std::move(request_value), std::move(*body))
-         : co_await target.async_request(std::move(request_value));
+      auto response_value =
+          body.has_value()
+              ? co_await target.async_streaming_request(std::move(request_value), std::move(*body), request_options)
+              : co_await target.async_request(std::move(request_value), request_options);
       if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
          auto error = decode_error_payload(response_value, route.error_body_codec);
          forge::api::core::raise_remote_error(error, forge::api::core::find_method(descriptor, route.method_name));
       }
       co_return decode_response_body<Response>(response_value, route.response_body_codec);
    }
+} catch (...) {
+   rethrow_client_failure(std::current_exception(), route);
 }
 
 template <typename Tuple, typename Response>
-boost::asio::awaitable<Response> call_arguments(client& target,
-                                                const forge::api::core::descriptor& descriptor,
-                                                const route& route,
-                                                Tuple value,
-                                                const std::vector<std::string>& argument_names) {
+boost::asio::awaitable<Response> call_arguments(client& target, const forge::api::core::descriptor& descriptor,
+                                                const route& route, Tuple value,
+                                                const std::vector<std::string>& argument_names) try {
    reject_http_positional_parameters(value);
+   const auto request_options = request_options_for_arguments(route, value, argument_names);
    auto request_parts = make_client_request(target, route, value, argument_names);
    auto request_body = bind_positional_request_body(request_parts.value, route, value, request_parts.consumed);
    if constexpr (detail::response_needs_stream_v<Response>) {
       auto response_value = request_body.has_value()
-         ? co_await target.async_stream_request(std::move(request_parts.value), std::move(*request_body))
-         : co_await target.async_stream_request(std::move(request_parts.value));
+                                ? co_await target.async_stream_request(std::move(request_parts.value),
+                                                                       std::move(*request_body), request_options)
+                                : co_await target.async_stream_request(std::move(request_parts.value), request_options);
       if (response_value.head.result_int() < 200U || response_value.head.result_int() >= 300U) {
          response_value.head.body() = co_await read_bounded_error_body(response_value.body);
          auto error = decode_error_payload(response_value.head, route.error_body_codec);
@@ -292,8 +419,9 @@ boost::asio::awaitable<Response> call_arguments(client& target,
       }
    } else {
       auto response_value = request_body.has_value()
-         ? co_await target.async_streaming_request(std::move(request_parts.value), std::move(*request_body))
-         : co_await target.async_request(std::move(request_parts.value));
+                                ? co_await target.async_streaming_request(std::move(request_parts.value),
+                                                                          std::move(*request_body), request_options)
+                                : co_await target.async_request(std::move(request_parts.value), request_options);
       if (response_value.result_int() < 200U || response_value.result_int() >= 300U) {
          auto error = decode_error_payload(response_value, route.error_body_codec);
          forge::api::core::raise_remote_error(error, forge::api::core::find_method(descriptor, route.method_name));
@@ -308,9 +436,9 @@ boost::asio::awaitable<Response> call_arguments(client& target,
             content_type = std::string{iterator->value()};
          }
          co_return Response{
-            .bytes = std::move(bytes),
-            .content_type = content_type.empty() ? std::string{"application/octet-stream"} : std::move(content_type),
-            .status_code = response_value.result(),
+             .bytes = std::move(bytes),
+             .content_type = content_type.empty() ? std::string{"application/octet-stream"} : std::move(content_type),
+             .status_code = response_value.result(),
          };
       } else if constexpr (detail::is_empty_response_v<Response>) {
          co_return Response{.status_code = response_value.result()};
@@ -318,6 +446,8 @@ boost::asio::awaitable<Response> call_arguments(client& target,
          co_return decode_response_body<Response>(response_value, route.response_body_codec);
       }
    }
+} catch (...) {
+   rethrow_client_failure(std::current_exception(), route);
 }
 
 } // namespace detail

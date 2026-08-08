@@ -1119,6 +1119,7 @@ def validate(
     cxx_compiler: Path,
     forge_package: Path,
     contract_package: Path,
+    forge_source_root: Path | None = None,
     source: Path,
     output: Path,
 ) -> None:
@@ -1146,6 +1147,30 @@ def validate(
     )
     run(str(host_build / "product_protocol_host_tests"))
     run(str(host_build / "product_protocol_vm_tests"))
+
+    if forge_source_root is not None:
+        source_helper_build = output / "source-helper-host"
+        source_helper_command = [
+            cmake,
+            "-S",
+            str(producer),
+            "-B",
+            str(source_helper_build),
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DCMAKE_NO_SYSTEM_FROM_IMPORTED=ON",
+            f"-DCMAKE_CXX_COMPILER={cxx_compiler}",
+            f"-DForge_DIR={forge_package}",
+            f"-DForgeContract_DIR={contract_package}",
+            f"-DPRODUCT_FORGE_SOURCE_ROOT={forge_source_root}",
+        ]
+        if sys.platform == "darwin":
+            sdk = run("xcrun", "--sdk", "macosx", "--show-sdk-path").strip()
+            source_helper_command.append(f"-DCMAKE_OSX_SYSROOT={sdk}")
+        run(*source_helper_command)
+        build(cmake, source_helper_build, "product_protocol_vm_tests")
+        run(str(source_helper_build / "product_protocol_vm_tests"))
     install_prefix = output / "native-install"
     run(
         cmake,
@@ -1237,6 +1262,7 @@ def main() -> None:
     parser.add_argument("--cxx-compiler", required=True, type=Path)
     parser.add_argument("--forge-package", required=True, type=Path)
     parser.add_argument("--contract-package", required=True, type=Path)
+    parser.add_argument("--forge-source-root", type=Path)
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
@@ -1245,6 +1271,11 @@ def main() -> None:
         cxx_compiler=args.cxx_compiler,
         forge_package=args.forge_package,
         contract_package=args.contract_package,
+        forge_source_root=(
+            args.forge_source_root.resolve()
+            if args.forge_source_root is not None
+            else None
+        ),
         source=args.source.resolve(),
         output=args.output.resolve(),
     )

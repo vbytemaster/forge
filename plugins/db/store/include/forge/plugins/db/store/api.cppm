@@ -6,8 +6,10 @@ module;
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,6 +20,9 @@ export import forge.plugins.db.store.exceptions;
 export import forge.plugins.db.store.types;
 
 import forge.api.core.binding;
+import forge.db.authenticated.store;
+import forge.db.authenticated.transaction;
+import forge.db.authenticated.types;
 import forge.db.blob.ref;
 import forge.db.blob.snapshot;
 import forge.db.blob.store;
@@ -48,10 +53,8 @@ class snapshot {
    [[nodiscard]] forge::db::blob::snapshot blobs() const;
 
  private:
-   snapshot(forge::db::core::snapshot active,
-            std::string store_name,
-            std::optional<forge::db::object::snapshot> objects,
-            std::optional<forge::db::blob::snapshot> blobs);
+   snapshot(forge::db::core::snapshot active, std::string store_name,
+            std::optional<forge::db::object::snapshot> objects, std::optional<forge::db::blob::snapshot> blobs);
 
    forge::db::core::snapshot active_;
    std::string store_name_;
@@ -87,6 +90,7 @@ class transaction {
    std::string store_name_;
 
    friend class blob_handle;
+   friend class authenticated_handle;
    friend class object_handle;
    friend class revision_handle;
 };
@@ -96,12 +100,19 @@ class store_handle_state {
    virtual ~store_handle_state() = default;
 
    [[nodiscard]] virtual std::string name() const = 0;
-   [[nodiscard]] virtual std::shared_ptr<forge::db::core::driver> require_driver() const = 0;
    [[nodiscard]] virtual std::shared_ptr<forge::db::object::store> require_objects() const = 0;
    [[nodiscard]] virtual std::shared_ptr<forge::db::blob::store> require_blobs() const = 0;
    [[nodiscard]] virtual std::shared_ptr<forge::db::revision::store> require_revisions() const;
    virtual boost::asio::awaitable<transaction> begin_transaction() const = 0;
    virtual boost::asio::awaitable<snapshot> begin_read() const;
+
+ private:
+   [[nodiscard]] virtual std::shared_ptr<forge::db::core::driver> require_driver() const = 0;
+
+   friend class authenticated_handle;
+   friend class object_handle;
+   friend class revision_handle;
+   friend class store_handle;
 };
 
 class object_handle {
@@ -115,8 +126,7 @@ class object_handle {
 
    [[nodiscard]] std::string name() const;
 
-   template <forge::db::object::application_object_model Object>
-   void register_object() const {
+   template <forge::db::object::application_object_model Object> void register_object() const {
       require_setup_store()->template register_object<Object>();
    }
 
@@ -142,8 +152,7 @@ class object_handle {
    }
 
    template <forge::db::ids::typed_id_like Id>
-   boost::asio::awaitable<std::optional<typename forge::db::object::index_for_id_t<Id>::value_type>>
-   find(Id id) const {
+   boost::asio::awaitable<std::optional<typename forge::db::object::index_for_id_t<Id>::value_type>> find(Id id) const {
       co_return co_await require_store()->find(id);
    }
 
@@ -157,8 +166,7 @@ class object_handle {
       co_return co_await require_store()->template find<Object>(id);
    }
 
-   template <forge::db::object::application_object_value Value>
-   boost::asio::awaitable<void> insert(Value value) const {
+   template <forge::db::object::application_object_value Value> boost::asio::awaitable<void> insert(Value value) const {
       co_await require_store()->insert(std::move(value));
    }
 
@@ -188,9 +196,7 @@ class object_handle {
    [[nodiscard]] forge::db::object::index_view<Object, Tag> index() const {
       auto state = state_;
       auto view = require_setup_store()->template index<Object, Tag>();
-      return view.guarded([state = std::move(state)] {
-         (void)object_handle{state}.require_store();
-      });
+      return view.guarded([state = std::move(state)] { (void)object_handle{state}.require_store(); });
    }
 
  private:
@@ -301,17 +307,59 @@ class revision_handle {
    [[nodiscard]] std::string name() const;
 
    boost::asio::awaitable<forge::db::revision::scope> join(transaction& active) const;
-   boost::asio::awaitable<void>
-   revert(transaction& active, forge::db::revision::revision_id_t expected_head) const;
+   boost::asio::awaitable<void> revert(transaction& active, forge::db::revision::revision_id_t expected_head) const;
    boost::asio::awaitable<forge::db::revision::prune_result>
-   prune_through(transaction& active,
-                 forge::db::revision::revision_id_t inclusive_boundary,
+   prune_through(transaction& active, forge::db::revision::revision_id_t inclusive_boundary,
                  forge::db::revision::prune_options options) const;
 
  private:
    [[nodiscard]] std::shared_ptr<forge::db::revision::store> require_store() const;
 
    std::shared_ptr<store_handle_state> state_;
+
+   friend class store_handle;
+};
+
+class authenticated_handle {
+ public:
+   authenticated_handle() = default;
+
+   [[nodiscard]] explicit operator bool() const noexcept {
+      return static_cast<bool>(state_);
+   }
+
+   [[nodiscard]] std::string name() const;
+
+   boost::asio::awaitable<std::optional<forge::db::authenticated::root>> earliest() const;
+   boost::asio::awaitable<std::optional<forge::db::authenticated::root>> latest() const;
+   boost::asio::awaitable<std::optional<forge::db::authenticated::root>>
+   find_root(forge::db::authenticated::version_id_t version) const;
+   boost::asio::awaitable<std::optional<forge::db::authenticated::bytes>>
+   get(forge::db::authenticated::version_id_t version, std::span<const std::byte> key) const;
+   boost::asio::awaitable<forge::db::authenticated::point_proof> prove(forge::db::authenticated::version_id_t version,
+                                                                       std::span<const std::byte> key,
+                                                                       bool include_value = true) const;
+   boost::asio::awaitable<forge::db::authenticated::range_proof>
+   prove_range(forge::db::authenticated::version_id_t version, forge::db::authenticated::range_request request,
+               forge::db::authenticated::proof_tree tree = forge::db::authenticated::proof_tree::state) const;
+   boost::asio::awaitable<forge::db::authenticated::verified_range>
+   scan_range(forge::db::authenticated::version_id_t version, forge::db::authenticated::range_request request,
+              forge::db::authenticated::proof_tree tree = forge::db::authenticated::proof_tree::state) const;
+
+   boost::asio::awaitable<forge::db::authenticated::transaction>
+   join(transaction& active, forge::db::authenticated::version_id_t version) const;
+   boost::asio::awaitable<forge::db::authenticated::prune_result>
+   prune_through(transaction& active, forge::db::authenticated::version_id_t inclusive_boundary,
+                 forge::db::authenticated::prune_options options = {}) const;
+
+ private:
+   authenticated_handle(std::shared_ptr<store_handle_state> state, forge::db::authenticated::store value)
+       : state_{std::move(state)}, store_{std::move(value)} {}
+
+   [[nodiscard]] const forge::db::authenticated::store& require_store() const;
+
+   std::shared_ptr<store_handle_state> state_;
+   forge::db::authenticated::store store_;
 
    friend class store_handle;
 };
@@ -329,10 +377,12 @@ class store_handle {
 
    boost::asio::awaitable<transaction> begin_transaction() const;
    boost::asio::awaitable<snapshot> begin_read() const;
+   boost::asio::awaitable<void> create_checkpoint(std::filesystem::path destination) const;
 
    [[nodiscard]] object_handle objects() const;
    [[nodiscard]] blob_handle blobs() const;
    [[nodiscard]] revision_handle revisions() const;
+   [[nodiscard]] authenticated_handle authenticated(forge::db::authenticated::store::config settings) const;
 
  private:
    [[nodiscard]] std::shared_ptr<forge::db::core::driver> require_driver() const;
@@ -347,10 +397,8 @@ class api : public forge::api::core::contract<api, forge::api::core::surface::lo
  public:
    virtual ~api() = default;
 
-   virtual boost::asio::awaitable<void>
-   add_store(std::string name,
-             std::shared_ptr<forge::db::core::driver> driver,
-             store_options options = {}) = 0;
+   virtual boost::asio::awaitable<void> add_store(std::string name, std::shared_ptr<forge::db::core::driver> driver,
+                                                  store_options options = {}) = 0;
    virtual boost::asio::awaitable<store_handle> store(std::string name) = 0;
    virtual boost::asio::awaitable<void> flush(std::string name, bool sync = true) = 0;
    virtual boost::asio::awaitable<void> flush_all(bool sync = true) = 0;

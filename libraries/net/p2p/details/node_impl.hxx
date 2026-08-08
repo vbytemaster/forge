@@ -1,12 +1,14 @@
 #pragma once
 
 #include "connection_manager.hxx"
+#include "connection_singleflight_registry.hxx"
 #include "direct_transport.hxx"
 #include "host_addresses.hxx"
 #include "libp2p_identity_material.hxx"
 #include "operation_deadline.hxx"
 #include "path_selector.hxx"
 #include "peer_exchange_codec.hxx"
+#include "pubsub_outbound_budget.hxx"
 #include "relay_discovery.hxx"
 #include "relay_transport.hxx"
 #include "session_teardown.hxx"
@@ -43,7 +45,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
       std::optional<forge::net::p2p::endpoint> direct_endpoint;
       std::optional<forge::net::p2p::endpoint> remote_endpoint;
       connection_manager::direction direction = connection_manager::direction::outbound;
-      bool closed = false;
+      std::atomic_bool closed = false;
    };
 
    struct relay_reservation_state {
@@ -60,6 +62,12 @@ struct node::impl : std::enable_shared_from_this<impl> {
    };
 
    struct pubsub_state {
+      struct outbound_generation {
+         std::uint64_t session_id = 0;
+         std::shared_ptr<forge::asio::gate> write_gate;
+         std::shared_ptr<forge::net::p2p::stream> stream;
+      };
+
       struct validation {
          enum class status : std::uint8_t {
             claimed,
@@ -100,7 +108,9 @@ struct node::impl : std::enable_shared_from_this<impl> {
       std::map<std::string, validation> validations;
       std::string retry_cursor;
       std::map<peer_id, pubsub::score> scores;
-      std::map<peer_id, std::shared_ptr<forge::net::p2p::stream>> outbound_streams;
+      std::map<peer_id, outbound_generation> outbound;
+      detail::connection_singleflight_registry connection_gates;
+      detail::pubsub_outbound_budget outbound_budget;
       std::map<peer_id, std::size_t> active_validations_by_peer;
       std::size_t active_validations = 0;
       std::uint64_t next_validation_generation = 1;
@@ -129,11 +139,13 @@ struct node::impl : std::enable_shared_from_this<impl> {
    mutable connection_manager connections{connection_policy_for(options.limits)};
    std::map<protocol_id, node::protocol_handler> handlers;
    std::map<std::uint64_t, std::shared_ptr<session_state>> sessions;
+   std::map<std::uint64_t, operation_deadline::stop_token> protocol_open_deadlines;
    std::map<peer_id, relay_reservation_state> inbound_relay_reservations;
    std::map<peer_id, relay_reservation_state> outbound_relay_reservations;
    std::map<peer_id, std::uint64_t> pending_autonat_v2_nonces;
    std::uint64_t next_reservation_id = 1;
    std::uint64_t next_session_id = 1;
+   std::uint64_t next_protocol_open_deadline_id = 1;
    resource_manager resources{resource_limits_for(options.limits)};
    pubsub_state pubsub_value;
    relay_discovery_state relay_discovery_value;
@@ -142,11 +154,16 @@ struct node::impl : std::enable_shared_from_this<impl> {
    std::size_t active_ping_streams = 0;
    bool stopped = false;
 
+   void invalidate_pubsub_outbound_locked(const peer_id& peer,
+                                          std::optional<std::uint64_t> owner_session_id = std::nullopt);
+   void clear_pubsub_outbound_locked();
+
+   void reserve_pubsub_outbound_bytes(const peer_id& peer, std::size_t bytes);
+
+   void release_pubsub_outbound_bytes(const peer_id& peer, std::size_t bytes) noexcept;
+
    [[nodiscard]] std::vector<forge::net::p2p::endpoint> local_endpoints_for_control() const;
    [[nodiscard]] std::vector<forge::net::p2p::endpoint> local_endpoints_for_control_locked() const;
-
-   void learn_from_message(const peer_exchange_message& message,
-                           std::optional<forge::net::p2p::endpoint> remote_endpoint = std::nullopt);
 
    [[nodiscard]] identify::document local_identify_document() const;
 
@@ -161,6 +178,7 @@ struct node::impl : std::enable_shared_from_this<impl> {
    void forget_session(const std::shared_ptr<session_state>& session);
 
    [[nodiscard]] std::shared_ptr<session_state> session_for(const peer_id& peer) const;
+   [[nodiscard]] std::shared_ptr<session_state> session_for_locked(const peer_id& peer) const;
 
    [[nodiscard]] std::optional<node::protocol_handler> handler_for(const protocol_id& protocol) const;
 
@@ -246,8 +264,6 @@ struct node::impl : std::enable_shared_from_this<impl> {
 
    void increment_pubsub_control();
 
-   void increment_pubsub_backpressure();
-
    [[nodiscard]] std::vector<std::uint8_t> next_pubsub_seqno();
 
    [[nodiscard]] pubsub::snapshot pubsub_snapshot() const;
@@ -258,6 +274,9 @@ struct node::impl : std::enable_shared_from_this<impl> {
                                                              std::optional<peer_id> except = std::nullopt) const;
 
    boost::asio::awaitable<void> send_pubsub_rpc(const peer_id& peer, const pubsub::rpc& value);
+   void record_pubsub_send_failure(const peer_id& peer, const forge::exceptions::base& error);
+
+   boost::asio::awaitable<std::shared_ptr<session_state>> ensure_pubsub_direct_session(const peer_id& peer);
 
    boost::asio::awaitable<void> announce_pubsub_subscriptions(const peer_id& peer);
 
@@ -293,6 +312,10 @@ struct node::impl : std::enable_shared_from_this<impl> {
        const peer_id& peer, std::chrono::milliseconds timeout = node::connect_options{}.timeout,
        std::size_t max_direct_endpoints = node::connect_options{}.max_direct_endpoints,
        std::chrono::milliseconds direct_attempt_timeout = node::connect_options{}.direct_attempt_timeout);
+
+   boost::asio::awaitable<forge::net::p2p::stream>
+   open_protocol_on_direct_session(const peer_id& peer, const protocol_id& protocol,
+                                   std::shared_ptr<session_state> session, std::chrono::milliseconds timeout);
 
    boost::asio::awaitable<forge::net::p2p::stream>
    open_protocol_direct(const peer_id& peer, const protocol_id& protocol, std::chrono::milliseconds timeout,

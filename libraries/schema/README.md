@@ -22,13 +22,15 @@ diagnostics. It is not a full business validation framework.
 ## Public Modules
 
 - `forge.schema.diagnostic` — `severity`, `diagnostic`.
+- `forge.schema.exceptions` — typed failures for invalid values that cannot be
+  represented as ordinary decode diagnostics.
 - `forge.schema.value_kind` — supported scalar/list kind metadata.
 - `forge.schema.object` — `rules<T>`, `object<T>()`, field builders.
 - `forge.schema.enums` — described enum conversion helpers.
 
 Target: `forge_schema`.
 
-Dependencies: `forge_reflect` and Boost.Describe headers.
+Dependencies: `forge_exceptions`, `forge_reflect` and Boost.Describe headers.
 
 ## Examples
 
@@ -151,6 +153,10 @@ Diagnostics carry:
 - `code` — stable machine-readable reason;
 - `level` — info/warning/error/critical;
 - `message` — human-facing explanation.
+
+Scalar conversion and schema materialization failures that cannot be returned
+as diagnostics throw `forge::schema::exceptions::invalid_value`. Standard and
+Boost exceptions are confined to their implementation boundaries.
 
 ## Risks And Anti-Patterns
 

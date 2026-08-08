@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace forge_yaml_tests {
@@ -145,6 +146,33 @@ BOOST_AUTO_TEST_CASE(yaml_document_roundtrip_uses_config_document) {
    BOOST_REQUIRE(parsed.ok());
    BOOST_REQUIRE(parsed.value.try_get("http.bind-host") != nullptr);
    BOOST_REQUIRE(parsed.value.try_get("http.bind-port") != nullptr);
+}
+
+BOOST_AUTO_TEST_CASE(yaml_document_roundtrip_preserves_empty_mappings_in_array_records) {
+   auto store = forge::config::core::value::object_type{};
+   store.emplace("name", "state");
+   store.emplace("revision", forge::config::core::value::object_type{});
+
+   auto document = forge::config::core::document{};
+   document.set("plugins.db.store.stores",
+                forge::config::core::value::array_type{forge::config::core::value{std::move(store)}});
+
+   const auto written = forge::codec::yaml::write_document(document);
+   BOOST_REQUIRE(written.ok());
+   BOOST_TEST(written.text.find("revision: {}") != std::string::npos);
+
+   const auto parsed = forge::codec::yaml::read_document(written.text);
+   BOOST_REQUIRE(parsed.ok());
+   const auto* stores = parsed.value.try_get("plugins.db.store.stores");
+   BOOST_REQUIRE(stores != nullptr);
+   BOOST_REQUIRE(stores->as_array() != nullptr);
+   BOOST_REQUIRE_EQUAL(stores->as_array()->size(), 1U);
+   const auto* decoded_store = stores->as_array()->front().as_object();
+   BOOST_REQUIRE(decoded_store != nullptr);
+   BOOST_TEST(std::get<std::string>(decoded_store->at("name").storage) == "state");
+   const auto* revision = decoded_store->at("revision").as_object();
+   BOOST_REQUIRE(revision != nullptr);
+   BOOST_TEST(revision->empty());
 }
 
 BOOST_AUTO_TEST_CASE(yaml_typed_read_uses_schema_defaults_validation_and_unknown_policy) {

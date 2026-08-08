@@ -10,9 +10,9 @@ module;
 
 module forge.db.mdbx.driver;
 
+import :error;
 import forge.db.core.record;
 
-#include "details/error.hxx"
 #include "details/scan.hxx"
 
 namespace forge::db::mdbx::detail {

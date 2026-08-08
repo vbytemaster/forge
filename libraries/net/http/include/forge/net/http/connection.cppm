@@ -53,21 +53,20 @@ class connection {
    connection(const connection&) = delete;
    connection& operator=(const connection&) = delete;
 
-   boost::asio::awaitable<response> async_request(forge::net::http::request request_value, request_options options = {});
-   boost::asio::awaitable<response> async_streaming_request(forge::net::http::request request_value,
-                                                            body_reader body,
+   boost::asio::awaitable<response> async_request(forge::net::http::request request_value,
+                                                  request_options options = {});
+   boost::asio::awaitable<response> async_streaming_request(forge::net::http::request request_value, body_reader body,
                                                             request_options options = {});
    boost::asio::awaitable<response_stream> async_stream_request(forge::net::http::request request_value,
                                                                 request_options options = {});
    boost::asio::awaitable<response_stream> async_stream_request(forge::net::http::request request_value,
-                                                                body_reader body,
-                                                                request_options options = {});
+                                                                body_reader body, request_options options = {});
    [[nodiscard]] connection_metrics metrics() const;
 
  private:
    struct impl;
 
-   std::unique_ptr<impl> impl_;
+   std::shared_ptr<impl> impl_;
 };
 
 } // namespace forge::net::http

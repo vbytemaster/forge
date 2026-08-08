@@ -7,9 +7,14 @@ add_library(
    softfloat.cpp
 )
 
+get_filename_component(
+   _forge_contract_testing_source_root
+   "${CMAKE_CURRENT_LIST_DIR}/../../.."
+   ABSOLUTE
+)
 set(_forge_contract_testing_generated_include "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
 configure_file(
-   "${PROJECT_SOURCE_DIR}/guest/cmake/types.h.in"
+   "${_forge_contract_testing_source_root}/guest/cmake/types.h.in"
    "${_forge_contract_testing_generated_include}/forge/contract/types.h"
    COPYONLY
 )
@@ -30,7 +35,7 @@ target_include_directories(
    forge_contract_testing
    PRIVATE
       "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>"
-      "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/guest/libraries/contract/include>"
+      "$<BUILD_INTERFACE:${_forge_contract_testing_source_root}/guest/libraries/contract/include>"
       "$<BUILD_INTERFACE:${_forge_contract_testing_generated_include}>"
 )
 
@@ -61,7 +66,7 @@ target_compile_features(forge_contract_testing PUBLIC cxx_std_23)
 if(BUILD_TESTING OR FORGE_CONTRACT_SDK_HOST_PROFILE)
    add_executable(
       forge_contract_testing_tests
-      "${PROJECT_SOURCE_DIR}/tests/contract_testing/compiler_builtins_tests.cpp"
+      "${_forge_contract_testing_source_root}/tests/contract_testing/compiler_builtins_tests.cpp"
    )
    target_include_directories(forge_contract_testing_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
    target_link_libraries(

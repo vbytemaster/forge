@@ -274,6 +274,54 @@ BOOST_AUTO_TEST_CASE(db_mdbx_shared_snapshot_keeps_object_and_blob_visible) {
    std::filesystem::remove_all(root);
 }
 
+BOOST_AUTO_TEST_CASE(db_mdbx_checkpoint_is_a_durable_point_in_time_copy) {
+   const auto root = make_layer_root("forge_db_mdbx_checkpoint");
+   auto runtime = forge::asio::runtime{};
+   auto lane = forge::asio::affine::lane{};
+
+   forge::asio::blocking::run(runtime, [&]() -> boost::asio::awaitable<void> {
+      auto driver = co_await open_layer_driver(root / "store", lane);
+      {
+         auto active = co_await driver->begin_transaction();
+         co_await active.put(forge::db::core::family{"records"}, layer_key("state"), layer_bytes("before"));
+         co_await active.commit();
+      }
+      {
+         auto view = co_await driver->begin_read();
+         const auto stored = co_await view.get(forge::db::core::family{"records"}, layer_key("state"));
+         BOOST_REQUIRE(stored.has_value());
+         BOOST_CHECK(*stored == layer_bytes("before"));
+      }
+
+      const auto checkpoint_path = root / "checkpoints" / "state.mdbx";
+      co_await driver->create_checkpoint(checkpoint_path);
+
+      {
+         auto active = co_await driver->begin_transaction();
+         co_await active.put(forge::db::core::family{"records"}, layer_key("state"), layer_bytes("after"));
+         co_await active.commit();
+      }
+
+      auto checkpoint_config = layer_config(checkpoint_path);
+      checkpoint_config.create_if_missing = false;
+      checkpoint_config.create_missing_families = false;
+      auto checkpoint = co_await forge::db::mdbx::driver::open(checkpoint_config, lane.get_executor());
+      auto view = co_await checkpoint->begin_read();
+      const auto stored = co_await view.get(forge::db::core::family{"records"}, layer_key("state"));
+      BOOST_REQUIRE(stored.has_value());
+      BOOST_CHECK(*stored == layer_bytes("before"));
+
+      view = {};
+      co_await checkpoint->async_close();
+      checkpoint.reset();
+      co_await driver->async_close();
+      driver.reset();
+      co_await lane.shutdown();
+   }());
+
+   std::filesystem::remove_all(root);
+}
+
 BOOST_AUTO_TEST_CASE(db_mdbx_revision_revert_prune_and_blob_barrier_are_atomic) {
    const auto root = make_layer_root("forge_db_mdbx_revision");
    auto runtime = forge::asio::runtime{};

@@ -7,6 +7,7 @@ import forge.chain.protocol.finalizer_policy;
 import forge.chain.protocol.producer_authority;
 import forge.chain.protocol.producer_schedule;
 import forge.codec.json;
+import forge.raw.codec;
 import forge.variant.described;
 import forge.variant.static_variant;
 import forge.variant.value;
@@ -48,5 +49,7 @@ bool producer_authority_json_roundtrip() {
    }
    const auto exact = forge::codec::json::read<forge::chain::protocol::producer_authority_schedule>(
        json.text, {.described_records = forge::codec::json::described_record_policy::exact});
-   return exact.ok() && exact.value == authority_schedule;
+   const auto raw = forge::raw::pack(authority_schedule);
+   const auto raw_decoded = forge::raw::unpack_exact<forge::chain::protocol::producer_authority_schedule>(raw);
+   return exact.ok() && exact.value == authority_schedule && raw_decoded == authority_schedule;
 }

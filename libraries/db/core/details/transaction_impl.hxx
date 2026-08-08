@@ -27,6 +27,7 @@ struct transaction::impl {
 
    std::unique_ptr<session> active;
    boost::asio::any_io_executor cleanup_executor;
+   std::vector<before_commit_fn> before_commit_hooks;
    std::vector<after_commit_fn> after_commit_hooks;
    std::vector<after_rollback_fn> after_rollback_hooks;
    std::vector<std::shared_ptr<transaction_participant>> participants;
@@ -35,6 +36,8 @@ struct transaction::impl {
    phase current = phase::active;
    bool mutation_started = false;
    bool prewrite_locks_prepared = false;
+   bool before_commit_started = false;
+   bool commit_in_progress = false;
    bool closed = false;
    bool committed = false;
 };

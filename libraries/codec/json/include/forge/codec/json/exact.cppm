@@ -1,6 +1,7 @@
 module;
 
 #include <boost/multi_index_container.hpp>
+#include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <array>
@@ -34,6 +35,7 @@ import forge.config.core.component;
 import forge.config.core.decode;
 import forge.config.core.migration;
 import forge.schema.diagnostic;
+import forge.schema.exceptions;
 import forge.schema.value_kind;
 import forge.schema.object;
 import forge.schema.enums;

@@ -15,8 +15,7 @@ module forge.api.core.dispatcher;
 namespace forge::api::core {
 namespace {
 
-[[nodiscard]] const descriptor* find_export(const std::vector<descriptor>& exports,
-                                            const api_ref& requested) noexcept {
+[[nodiscard]] const descriptor* find_export(const std::vector<descriptor>& exports, const api_ref& requested) noexcept {
    for (const auto& available : exports) {
       if (compatible(available, requested)) {
          return &available;
@@ -66,8 +65,7 @@ struct frame_dispatcher::impl {
    std::unordered_map<std::uint64_t, std::vector<frame>> grouped;
 
    impl(binding_plan plan_value, dispatch_options options_value)
-       : plan(std::move(plan_value)),
-         options(std::move(options_value)),
+       : plan(std::move(plan_value)), options(std::move(options_value)),
          calls(call_runtime_options{.max_inflight = options.max_inflight, .deadline = options.deadline}) {}
 };
 
@@ -82,32 +80,31 @@ boost::asio::awaitable<std::vector<frame>> frame_dispatcher::dispatch(frame valu
    if (!impl_) {
       FORGE_THROW_EXCEPTION(exceptions::protocol_error, "invalid API frame dispatcher");
    }
+   if (value.kind == frame_kind::cancel) {
+      static_cast<void>(cancel(std::move(value)));
+      co_return std::vector<frame>{};
+   }
    apply_remote_metadata_boundary(value, impl_->options.trusted_metadata);
    if (value.codec != impl_->options.codec) {
       FORGE_THROW_EXCEPTION(exceptions::codec_failed, "API frame codec is not accepted",
-                          forge::exceptions::ctx("codec", value.codec.value));
+                            forge::exceptions::ctx("codec", value.codec.value));
    }
 
    if (value.kind == frame_kind::request && grouped_stream_method(impl_->plan, value)) {
       impl_->calls.observe(value);
       if (impl_->grouped.size() >= impl_->options.max_inflight) {
          FORGE_THROW_EXCEPTION(exceptions::resource_exhausted, "API grouped stream limit exceeded",
-                             forge::exceptions::ctx("max_inflight", impl_->options.max_inflight));
+                               forge::exceptions::ctx("max_inflight", impl_->options.max_inflight));
       }
       const auto id = value.id.value;
       if (!impl_->grouped.emplace(id, std::vector<frame>{std::move(value)}).second) {
          FORGE_THROW_EXCEPTION(exceptions::protocol_error, "duplicate active API stream",
-                             forge::exceptions::ctx("call_id", id));
+                               forge::exceptions::ctx("call_id", id));
       }
       co_return std::vector<frame>{};
    }
 
    if (auto active = impl_->grouped.find(value.id.value); active != impl_->grouped.end()) {
-      if (value.kind == frame_kind::cancel) {
-         impl_->calls.observe(value);
-         impl_->grouped.erase(active);
-         co_return std::vector<frame>{};
-      }
       if (value.kind == frame_kind::stream_end) {
          try {
             impl_->calls.observe_input_stream_end(value);
@@ -130,6 +127,31 @@ boost::asio::awaitable<std::vector<frame>> frame_dispatcher::dispatch(frame valu
    co_return co_await impl_->plan.dispatch_many(std::move(value), impl_->calls);
 }
 
+bool frame_dispatcher::cancel(frame value) {
+   if (!impl_) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "invalid API frame dispatcher");
+   }
+   if (value.kind != frame_kind::cancel) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API dispatcher cancel requires a cancel frame",
+                            forge::exceptions::ctx("call_id", value.id.value));
+   }
+   apply_remote_metadata_boundary(value, impl_->options.trusted_metadata);
+   if (value.codec != impl_->options.codec) {
+      FORGE_THROW_EXCEPTION(exceptions::codec_failed, "API frame codec is not accepted",
+                            forge::exceptions::ctx("codec", value.codec.value));
+   }
+   if (value.id.value == 0) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API frame call_id must not be zero");
+   }
+
+   const auto grouped = impl_->grouped.erase(value.id.value) != 0;
+   const auto active = impl_->calls.active(value.id);
+   if (active) {
+      impl_->calls.observe(value);
+   }
+   return grouped || active;
+}
+
 const dispatch_options& frame_dispatcher::options() const noexcept {
    return impl_->options;
 }
@@ -142,4 +164,4 @@ std::size_t frame_dispatcher::grouped_calls() const noexcept {
    return impl_ ? impl_->grouped.size() : 0;
 }
 
-} // namespace forge::api
+} // namespace forge::api::core

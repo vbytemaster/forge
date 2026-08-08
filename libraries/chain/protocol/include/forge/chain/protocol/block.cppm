@@ -8,6 +8,7 @@ module;
 #include <deque>
 #include <new>
 #include <optional>
+#include <utility>
 #include <variant>
 
 export module forge.chain.protocol.block;
@@ -53,6 +54,7 @@ struct transaction_receipt_header {
       delayed = 3,
       expired = 4,
    };
+   BOOST_DESCRIBE_NESTED_ENUM(status, executed, soft_fail, hard_fail, delayed, expired)
 
    status status = status::hard_fail;
    std::uint32_t cpu_usage_us = 0;
@@ -102,6 +104,10 @@ BOOST_DESCRIBE_STRUCT(producer_confirmation, (), (block_id, block_digest, produc
 } // namespace forge::chain::protocol
 
 export namespace forge::raw {
+
+template <> struct enum_wire_type<decltype(std::declval<forge::chain::protocol::transaction_receipt_header>().status)> {
+   using type = std::uint8_t;
+};
 
 template <typename Stream> void pack(Stream& stream, const forge::chain::protocol::signed_block& value) {
    forge::raw::pack(stream, static_cast<const forge::chain::protocol::signed_block_header&>(value));

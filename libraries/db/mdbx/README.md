@@ -74,6 +74,10 @@ when the application has a tested replay source.
 `async_flush(true)` creates a forced steady checkpoint. `async_flush(false)`
 performs a non-blocking sync poll. Both are serialized with the writer gate.
 
+`create_checkpoint(path)` creates a compact, self-contained MDBX environment in
+a new destination directory. It is serialized with the writer gate, never
+overwrites an existing destination and removes a partial destination on failure.
+
 ## Geometry And Snapshots
 
 Production deployments should configure an explicit upper map size and a

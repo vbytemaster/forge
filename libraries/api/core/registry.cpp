@@ -36,16 +36,16 @@ namespace {
 
 [[nodiscard]] frame make_local_only_response(const frame& request) {
    return make_error_response(request, error_payload{
-      .error = "protocol_error",
-      .message = "API is local-only and cannot be invoked through a wire binding",
-      .retryable = false,
-      .status_code = status::failed_precondition,
-      .identity =
-         {
-            .category = "forge.api",
-            .code = static_cast<std::uint32_t>(exceptions::code::protocol_error),
-         },
-   });
+                                           .error = "protocol_error",
+                                           .message = "API is local-only and cannot be invoked through a wire binding",
+                                           .retryable = false,
+                                           .status_code = status::failed_precondition,
+                                           .identity =
+                                               {
+                                                   .category = "forge.api",
+                                                   .code = static_cast<std::uint32_t>(exceptions::code::protocol_error),
+                                               },
+                                       });
 }
 
 } // namespace
@@ -63,17 +63,18 @@ boost::asio::awaitable<frame> registry::dispatch(frame request) const {
 
    const auto* entry = find(request.api);
    if (entry == nullptr) {
-      co_return make_error_response(request, error_payload{
-          .error = "incompatible_version",
-          .message = "API is not available or version is incompatible",
-          .retryable = false,
-          .status_code = status::failed_precondition,
-          .identity =
-              {
-                  .category = "forge.api",
-                  .code = static_cast<std::uint32_t>(exceptions::code::incompatible_version),
-              },
-      });
+      co_return make_error_response(
+          request, error_payload{
+                       .error = "incompatible_version",
+                       .message = "API is not available or version is incompatible",
+                       .retryable = false,
+                       .status_code = status::failed_precondition,
+                       .identity =
+                           {
+                               .category = "forge.api",
+                               .code = static_cast<std::uint32_t>(exceptions::code::incompatible_version),
+                           },
+                   });
    }
    if (!supports(entry->descriptor.supported_surfaces, surface::remote)) {
       co_return make_local_only_response(request);
@@ -81,21 +82,29 @@ boost::asio::awaitable<frame> registry::dispatch(frame request) const {
 
    const auto* method = find_method(entry->descriptor, request.method);
    if (method == nullptr || !method->raw_invoker) {
-      co_return make_error_response(request, error_payload{
-          .error = "method_not_found",
-          .message = "API method is not available",
-          .retryable = false,
-          .status_code = status::not_found,
-          .identity =
-              {
-                  .category = "forge.api",
-                  .code = static_cast<std::uint32_t>(exceptions::code::method_not_found),
-              },
-      });
+      co_return make_error_response(request,
+                                    error_payload{
+                                        .error = "method_not_found",
+                                        .message = "API method is not available",
+                                        .retryable = false,
+                                        .status_code = status::not_found,
+                                        .identity =
+                                            {
+                                                .category = "forge.api",
+                                                .code = static_cast<std::uint32_t>(exceptions::code::method_not_found),
+                                            },
+                                    });
    }
 
    try {
+      if (method->request_validator) {
+         method->request_validator(request.payload);
+      }
+      auto request_payload = method->response_validator ? request.payload : bytes{};
       response.payload = co_await method->raw_invoker(entry->implementation, std::move(request.payload));
+      if (method->response_validator) {
+         method->response_validator(request_payload, response.payload);
+      }
       co_return response;
    } catch (const forge::exceptions::base& error) {
       response.kind = frame_kind::error;
@@ -149,18 +158,18 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_many(frame request
    }
 
    if (method->kind == method_kind::client_stream || method->kind == method_kind::bidirectional_stream) {
-      co_return std::vector<frame>{make_error_response(
-          request, error_payload{
-                       .error = "protocol_error",
-                       .message = "API streaming method requires stream frames",
-                       .retryable = false,
-                       .status_code = status::invalid_argument,
-                       .identity =
-                           {
-                               .category = "forge.api",
-                               .code = static_cast<std::uint32_t>(exceptions::code::protocol_error),
-                           },
-                   })};
+      co_return std::vector<frame>{
+          make_error_response(request, error_payload{
+                                           .error = "protocol_error",
+                                           .message = "API streaming method requires stream frames",
+                                           .retryable = false,
+                                           .status_code = status::invalid_argument,
+                                           .identity =
+                                               {
+                                                   .category = "forge.api",
+                                                   .code = static_cast<std::uint32_t>(exceptions::code::protocol_error),
+                                               },
+                                       })};
    }
 
    if (method->kind != method_kind::server_stream) {
@@ -210,18 +219,18 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_stream(std::vector
 
    const auto request = frames.front();
    if (request.kind != frame_kind::request) {
-      co_return std::vector<frame>{make_error_response(
-          request, error_payload{
-                       .error = "protocol_error",
-                       .message = "API stream must start with request frame",
-                       .retryable = false,
-                       .status_code = status::invalid_argument,
-                       .identity =
-                           {
-                               .category = "forge.api",
-                               .code = static_cast<std::uint32_t>(exceptions::code::protocol_error),
-                           },
-                   })};
+      co_return std::vector<frame>{
+          make_error_response(request, error_payload{
+                                           .error = "protocol_error",
+                                           .message = "API stream must start with request frame",
+                                           .retryable = false,
+                                           .status_code = status::invalid_argument,
+                                           .identity =
+                                               {
+                                                   .category = "forge.api",
+                                                   .code = static_cast<std::uint32_t>(exceptions::code::protocol_error),
+                                               },
+                                       })};
    }
 
    const auto* entry = find(request.api);
@@ -264,25 +273,25 @@ boost::asio::awaitable<std::vector<frame>> registry::dispatch_stream(std::vector
    }
 
    if (frames.size() < 2 || frames.back().kind != frame_kind::stream_end) {
-      co_return std::vector<frame>{make_error_response(
-          request, error_payload{
-                       .error = "protocol_error",
-                       .message = "API client stream must end with stream_end frame",
-                       .retryable = false,
-                       .status_code = status::invalid_argument,
-                       .identity =
-                           {
-                               .category = "forge.api",
-                               .code = static_cast<std::uint32_t>(exceptions::code::protocol_error),
-                           },
-                   })};
+      co_return std::vector<frame>{
+          make_error_response(request, error_payload{
+                                           .error = "protocol_error",
+                                           .message = "API client stream must end with stream_end frame",
+                                           .retryable = false,
+                                           .status_code = status::invalid_argument,
+                                           .identity =
+                                               {
+                                                   .category = "forge.api",
+                                                   .code = static_cast<std::uint32_t>(exceptions::code::protocol_error),
+                                               },
+                                       })};
    }
 
    auto payloads = std::vector<bytes>{};
    for (auto index = std::size_t{1}; index + 1 < frames.size(); ++index) {
       const auto& item = frames[index];
-      if (item.id != request.id || item.api != request.api || item.method != request.method || item.codec != request.codec ||
-          item.kind != frame_kind::stream_item) {
+      if (item.id != request.id || item.api != request.api || item.method != request.method ||
+          item.codec != request.codec || item.kind != frame_kind::stream_item) {
          co_return std::vector<frame>{make_error_response(
              request, error_payload{
                           .error = "protocol_error",
@@ -370,4 +379,4 @@ const registry::entry* registry::find(api_ref requested) const noexcept {
    return &iterator->second;
 }
 
-} // namespace forge::api
+} // namespace forge::api::core

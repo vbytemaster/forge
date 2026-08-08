@@ -8,6 +8,7 @@ module;
 #include <concepts>
 #include <cstddef>
 #include <deque>
+#include <exception>
 #include <filesystem>
 #include <flat_map>
 #include <limits>
@@ -356,65 +357,53 @@ template <typename T> [[nodiscard]] read_result<T> load(const std::filesystem::p
 }
 
 template <typename T> [[nodiscard]] write_result write(const T& input, write_options options = {}) {
-   const auto rules = schema::rules<T>::define();
-   if (!rules.fields().empty()) {
-      try {
+   try {
+      const auto rules = schema::rules<T>::define();
+      if (!rules.fields().empty()) {
          return write_document(config::core::encode(input), std::move(options));
-      } catch (const schema::encoding_error& error) {
-         return detail::encoding_failure(error);
-      } catch (const std::exception& error) {
-         return detail::encoding_failure(error);
       }
-   }
-   if constexpr (requires(const T& source, variant& output) { to_variant(source, output); }) {
-      try {
+      if constexpr (requires(const T& source, variant& output) { to_variant(source, output); }) {
          return write_value(detail::to_schema_aware_variant(input), std::move(options));
-      } catch (const schema::encoding_error& error) {
-         return detail::encoding_failure(error);
-      } catch (const std::exception& error) {
-         return detail::encoding_failure(error);
+      } else {
+         return write_result{
+             .diagnostics = {schema::diagnostic{
+                 .path = {},
+                 .code = "json.type",
+                 .level = schema::severity::error,
+                 .message = "type is not writable to JSON without schema rules or forge::to_variant",
+             }},
+         };
       }
-   } else {
-      return write_result{
-          .diagnostics = {schema::diagnostic{
-              .path = {},
-              .code = "json.type",
-              .level = schema::severity::error,
-              .message = "type is not writable to JSON without schema rules or forge::to_variant",
-          }},
-      };
+   } catch (const schema::encoding_error& error) {
+      return detail::encoding_failure(error);
+   } catch (const std::exception& error) {
+      return detail::encoding_failure(error);
    }
 }
 
 template <typename T>
 [[nodiscard]] write_result save(const std::filesystem::path& path, const T& input, write_options options = {}) {
-   const auto rules = schema::rules<T>::define();
-   if (!rules.fields().empty()) {
-      try {
+   try {
+      const auto rules = schema::rules<T>::define();
+      if (!rules.fields().empty()) {
          return save_document(path, config::core::encode(input), std::move(options));
-      } catch (const schema::encoding_error& error) {
-         return detail::encoding_failure(error);
-      } catch (const std::exception& error) {
-         return detail::encoding_failure(error);
       }
-   }
-   if constexpr (requires(const T& source, variant& output) { to_variant(source, output); }) {
-      try {
+      if constexpr (requires(const T& source, variant& output) { to_variant(source, output); }) {
          return save_value(path, detail::to_schema_aware_variant(input), std::move(options));
-      } catch (const schema::encoding_error& error) {
-         return detail::encoding_failure(error);
-      } catch (const std::exception& error) {
-         return detail::encoding_failure(error);
+      } else {
+         return write_result{
+             .diagnostics = {schema::diagnostic{
+                 .path = {},
+                 .code = "json.type",
+                 .level = schema::severity::error,
+                 .message = "type is not writable to JSON without schema rules or forge::to_variant",
+             }},
+         };
       }
-   } else {
-      return write_result{
-          .diagnostics = {schema::diagnostic{
-              .path = {},
-              .code = "json.type",
-              .level = schema::severity::error,
-              .message = "type is not writable to JSON without schema rules or forge::to_variant",
-          }},
-      };
+   } catch (const schema::encoding_error& error) {
+      return detail::encoding_failure(error);
+   } catch (const std::exception& error) {
+      return detail::encoding_failure(error);
    }
 }
 

@@ -1,6 +1,7 @@
 #include <concepts>
 #include <cstdint>
 #include <flat_map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -8,12 +9,17 @@ import forge.chain.protocol.action;
 import forge.chain.protocol.action_receipt;
 import forge.chain.protocol.block;
 import forge.chain.protocol.fixed_key;
+import forge.chain.protocol.state_query;
 import forge.chain.protocol.transaction;
 
 bool producer_authority_json_roundtrip();
 
 int main() {
    static_assert(std::same_as<forge::chain::protocol::bytes, std::vector<std::uint8_t>>);
+   static_assert(std::same_as<decltype(forge::chain::protocol::table_scope_request{}.cursor),
+                              std::optional<forge::chain::protocol::bytes>>);
+   static_assert(std::same_as<decltype(forge::chain::protocol::table_scope_response{}.next),
+                              std::optional<forge::chain::protocol::bytes>>);
    const auto digest = forge::chain::protocol::digest::hash(std::string{"package-chain-protocol"});
    auto transaction = forge::chain::protocol::transaction{};
    auto action = forge::chain::protocol::action{};

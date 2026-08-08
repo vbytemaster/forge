@@ -4,14 +4,19 @@ module;
 #include <forge/exceptions/macros.hpp>
 
 #include <cstddef>
+#include <filesystem>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
 module forge.plugins.db.store.api;
 
+import forge.db.authenticated.store;
+import forge.db.authenticated.transaction;
+import forge.db.authenticated.types;
 import forge.db.blob.ref;
 import forge.db.blob.snapshot;
 import forge.db.blob.store;
@@ -31,13 +36,9 @@ import forge.plugins.db.store.exceptions;
 
 namespace forge::plugins::db::store {
 
-snapshot::snapshot(forge::db::core::snapshot active,
-                   std::string store_name,
-                   std::optional<forge::db::object::snapshot> objects,
-                   std::optional<forge::db::blob::snapshot> blobs)
-    : active_{std::move(active)},
-      store_name_{std::move(store_name)},
-      objects_{std::move(objects)},
+snapshot::snapshot(forge::db::core::snapshot active, std::string store_name,
+                   std::optional<forge::db::object::snapshot> objects, std::optional<forge::db::blob::snapshot> blobs)
+    : active_{std::move(active)}, store_name_{std::move(store_name)}, objects_{std::move(objects)},
       blobs_{std::move(blobs)} {}
 
 bool snapshot::active() const noexcept {
@@ -50,8 +51,7 @@ std::string snapshot::name() const {
 
 forge::db::object::snapshot snapshot::objects() const {
    if (!objects_.has_value()) {
-      FORGE_THROW_EXCEPTION(exceptions::unavailable_layer,
-                            "db store object layer is not configured",
+      FORGE_THROW_EXCEPTION(exceptions::unavailable_layer, "db store object layer is not configured",
                             forge::exceptions::ctx("store", store_name_));
    }
    return *objects_;
@@ -59,8 +59,7 @@ forge::db::object::snapshot snapshot::objects() const {
 
 forge::db::blob::snapshot snapshot::blobs() const {
    if (!blobs_.has_value()) {
-      FORGE_THROW_EXCEPTION(exceptions::unavailable_layer,
-                            "db store blob layer is not configured",
+      FORGE_THROW_EXCEPTION(exceptions::unavailable_layer, "db store blob layer is not configured",
                             forge::exceptions::ctx("store", store_name_));
    }
    return *blobs_;
@@ -94,21 +93,18 @@ boost::asio::awaitable<snapshot> store_handle_state::begin_read() const {
       blob_view.emplace(blobs->join(active));
    }
 
-   co_return snapshot{
-      std::move(active), name(), std::move(object_view), std::move(blob_view)};
+   co_return snapshot{std::move(active), name(), std::move(object_view), std::move(blob_view)};
 }
 
 transaction::transaction(forge::db::core::transaction active, std::string store_name)
-   : core_{std::make_unique<forge::db::core::transaction>(std::move(active))},
-     store_name_{std::move(store_name)} {}
+    : core_{std::make_unique<forge::db::core::transaction>(std::move(active))}, store_name_{std::move(store_name)} {}
 
 transaction::transaction(forge::db::object::transaction active, std::string store_name)
-   : object_{std::move(active)}, store_name_{std::move(store_name)} {}
+    : object_{std::move(active)}, store_name_{std::move(store_name)} {}
 
 void transaction::require_named_store(const std::string& expected) const {
    if (store_name_.empty() || store_name_ != expected) {
-      FORGE_THROW_EXCEPTION(exceptions::invalid_argument,
-                            "db store transaction belongs to another named store");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_argument, "db store transaction belongs to another named store");
    }
 }
 
@@ -192,13 +188,11 @@ boost::asio::awaitable<forge::db::object::snapshot> object_handle::begin_read() 
    co_return co_await require_store()->begin_read();
 }
 
-boost::asio::awaitable<forge::db::object::transaction>
-object_handle::join(forge::db::core::transaction& active) const {
+boost::asio::awaitable<forge::db::object::transaction> object_handle::join(forge::db::core::transaction& active) const {
    co_return co_await require_store()->join(active);
 }
 
-boost::asio::awaitable<forge::db::object::transaction>
-object_handle::join(transaction& active) const {
+boost::asio::awaitable<forge::db::object::transaction> object_handle::join(transaction& active) const {
    active.require_named_store(name());
 
    auto objects = require_store();
@@ -206,8 +200,7 @@ object_handle::join(transaction& active) const {
       try {
          co_return co_await objects->join(*active.object_);
       } catch (const forge::db::object::exceptions::invalid_descriptor&) {
-         FORGE_THROW_EXCEPTION(exceptions::invalid_argument,
-                               "db store transaction belongs to another object store");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_argument, "db store transaction belongs to another object store");
       }
    }
    co_return co_await objects->join(active.db_transaction());
@@ -246,8 +239,7 @@ forge::db::blob::transaction blob_handle::join(transaction& active) const {
       try {
          return blobs->join(*active.blob_);
       } catch (const forge::db::blob::exceptions::invalid_descriptor&) {
-         FORGE_THROW_EXCEPTION(exceptions::invalid_argument,
-                               "db store transaction belongs to another blob store");
+         FORGE_THROW_EXCEPTION(exceptions::invalid_argument, "db store transaction belongs to another blob store");
       }
    }
 
@@ -285,8 +277,7 @@ std::shared_ptr<forge::db::revision::store> revision_handle::require_store() con
    return result;
 }
 
-boost::asio::awaitable<forge::db::revision::scope>
-revision_handle::join(transaction& active) const {
+boost::asio::awaitable<forge::db::revision::scope> revision_handle::join(transaction& active) const {
    active.require_named_store(name());
    if (active.object_.has_value()) {
       co_return co_await require_store()->join(*active.object_);
@@ -294,9 +285,8 @@ revision_handle::join(transaction& active) const {
    co_return co_await require_store()->join(active.db_transaction());
 }
 
-boost::asio::awaitable<void>
-revision_handle::revert(transaction& active,
-                        forge::db::revision::revision_id_t expected_head) const {
+boost::asio::awaitable<void> revision_handle::revert(transaction& active,
+                                                     forge::db::revision::revision_id_t expected_head) const {
    active.require_named_store(name());
    if (active.object_.has_value()) {
       co_await require_store()->revert(*active.object_, expected_head);
@@ -306,16 +296,79 @@ revision_handle::revert(transaction& active,
 }
 
 boost::asio::awaitable<forge::db::revision::prune_result>
-revision_handle::prune_through(transaction& active,
-                               forge::db::revision::revision_id_t inclusive_boundary,
+revision_handle::prune_through(transaction& active, forge::db::revision::revision_id_t inclusive_boundary,
                                forge::db::revision::prune_options options) const {
    active.require_named_store(name());
    if (active.object_.has_value()) {
-      co_return co_await require_store()->prune_through(
-         *active.object_, inclusive_boundary, options);
+      co_return co_await require_store()->prune_through(*active.object_, inclusive_boundary, options);
    }
-   co_return co_await require_store()->prune_through(
-      active.db_transaction(), inclusive_boundary, options);
+   co_return co_await require_store()->prune_through(active.db_transaction(), inclusive_boundary, options);
+}
+
+std::string authenticated_handle::name() const {
+   if (!state_) {
+      return {};
+   }
+   return state_->name();
+}
+
+const forge::db::authenticated::store& authenticated_handle::require_store() const {
+   if (!state_) {
+      FORGE_THROW_EXCEPTION(exceptions::stopped, "db store authenticated handle is empty");
+   }
+   (void)state_->require_driver();
+   return store_;
+}
+
+boost::asio::awaitable<std::optional<forge::db::authenticated::root>> authenticated_handle::earliest() const {
+   co_return co_await require_store().earliest();
+}
+
+boost::asio::awaitable<std::optional<forge::db::authenticated::root>> authenticated_handle::latest() const {
+   co_return co_await require_store().latest();
+}
+
+boost::asio::awaitable<std::optional<forge::db::authenticated::root>>
+authenticated_handle::find_root(forge::db::authenticated::version_id_t version) const {
+   co_return co_await require_store().find_root(version);
+}
+
+boost::asio::awaitable<std::optional<forge::db::authenticated::bytes>>
+authenticated_handle::get(forge::db::authenticated::version_id_t version, std::span<const std::byte> key) const {
+   co_return co_await require_store().get(version, key);
+}
+
+boost::asio::awaitable<forge::db::authenticated::point_proof>
+authenticated_handle::prove(forge::db::authenticated::version_id_t version, std::span<const std::byte> key,
+                            bool include_value) const {
+   co_return co_await require_store().prove(version, key, include_value);
+}
+
+boost::asio::awaitable<forge::db::authenticated::range_proof>
+authenticated_handle::prove_range(forge::db::authenticated::version_id_t version,
+                                  forge::db::authenticated::range_request request,
+                                  forge::db::authenticated::proof_tree tree) const {
+   co_return co_await require_store().prove_range(version, std::move(request), tree);
+}
+
+boost::asio::awaitable<forge::db::authenticated::verified_range>
+authenticated_handle::scan_range(forge::db::authenticated::version_id_t version,
+                                 forge::db::authenticated::range_request request,
+                                 forge::db::authenticated::proof_tree tree) const {
+   co_return co_await require_store().scan_range(version, std::move(request), tree);
+}
+
+boost::asio::awaitable<forge::db::authenticated::transaction>
+authenticated_handle::join(transaction& active, forge::db::authenticated::version_id_t version) const {
+   active.require_named_store(name());
+   co_return co_await require_store().join(active.db_transaction(), version);
+}
+
+boost::asio::awaitable<forge::db::authenticated::prune_result>
+authenticated_handle::prune_through(transaction& active, forge::db::authenticated::version_id_t inclusive_boundary,
+                                    forge::db::authenticated::prune_options options) const {
+   active.require_named_store(name());
+   co_return co_await require_store().prune_through(active.db_transaction(), inclusive_boundary, options);
 }
 
 std::string store_handle::name() const {
@@ -346,6 +399,10 @@ boost::asio::awaitable<snapshot> store_handle::begin_read() const {
    co_return co_await state_->begin_read();
 }
 
+boost::asio::awaitable<void> store_handle::create_checkpoint(std::filesystem::path destination) const {
+   co_await require_driver()->create_checkpoint(std::move(destination));
+}
+
 object_handle store_handle::objects() const {
    auto handle = object_handle{state_};
    (void)handle.require_setup_store();
@@ -362,6 +419,14 @@ revision_handle store_handle::revisions() const {
    auto handle = revision_handle{state_};
    (void)handle.require_store();
    return handle;
+}
+
+authenticated_handle store_handle::authenticated(forge::db::authenticated::store::config settings) const {
+   auto driver = require_driver();
+   return authenticated_handle{
+       state_,
+       forge::db::authenticated::store{std::move(driver), std::move(settings)},
+   };
 }
 
 } // namespace forge::plugins::db::store

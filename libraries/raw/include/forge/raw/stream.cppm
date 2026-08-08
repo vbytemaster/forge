@@ -5,6 +5,7 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -17,7 +18,14 @@ static_assert(CHAR_BIT == 8, "Forge datastream requires 8-bit bytes");
 
 namespace raw::detail {
 [[noreturn]] void raise_stream_range(const char* operation, std::size_t length, std::int64_t overrun);
-}
+
+struct allocation_limits {
+   std::size_t elements = std::numeric_limits<std::size_t>::max();
+   std::size_t total_elements = std::numeric_limits<std::size_t>::max();
+   std::size_t bytes = std::numeric_limits<std::size_t>::max();
+   std::size_t first_container_elements = std::numeric_limits<std::size_t>::max();
+};
+} // namespace raw::detail
 
 template <typename Storage, typename Enable = void> class datastream;
 
@@ -145,7 +153,9 @@ class datastream<std::vector<Byte, Allocator>,
  public:
    using storage_type = std::vector<Byte, Allocator>;
 
-   explicit datastream(storage_type storage = {}) : storage_(std::move(storage)) {}
+   explicit datastream(storage_type storage = {}, raw::detail::allocation_limits allocation_limits = {})
+       : storage_(std::move(storage)), allocation_limits_(allocation_limits),
+         remaining_elements_(allocation_limits.total_elements) {}
 
    std::size_t read(char* destination, std::size_t size) {
       if (size > remaining()) {
@@ -196,6 +206,21 @@ class datastream<std::vector<Byte, Allocator>,
       return storage_.size() - position_;
    }
 
+   [[nodiscard]] const raw::detail::allocation_limits& allocation_limits() const noexcept {
+      return allocation_limits_;
+   }
+
+   bool consume_container_elements(std::size_t count) noexcept {
+      const auto limit =
+          std::min({allocation_limits_.elements, allocation_limits_.first_container_elements, remaining_elements_});
+      allocation_limits_.first_container_elements = std::numeric_limits<std::size_t>::max();
+      if (count > limit) {
+         return false;
+      }
+      remaining_elements_ -= count;
+      return true;
+   }
+
    storage_type& storage() {
       return storage_;
    }
@@ -207,6 +232,8 @@ class datastream<std::vector<Byte, Allocator>,
  private:
    storage_type storage_;
    std::size_t position_ = 0;
+   raw::detail::allocation_limits allocation_limits_;
+   std::size_t remaining_elements_;
 };
 
 template <typename Storage> datastream<Storage>& operator<<(datastream<Storage>& stream, const __int128& value) {

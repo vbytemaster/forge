@@ -12,7 +12,13 @@ find_package(
    Forge CONFIG REQUIRED
    COMPONENTS chain_protocol contract_testing crypto_digest raw vm_wasm
 )
-find_package(ForgeContract CONFIG REQUIRED)
+if(PRODUCT_FORGE_SOURCE_ROOT)
+   include(
+      "${PRODUCT_FORGE_SOURCE_ROOT}/guest/cmake/ForgeContractFunctions.cmake"
+   )
+else()
+   find_package(ForgeContract CONFIG REQUIRED)
+endif()
 
 add_subdirectory(libraries/chain)
 

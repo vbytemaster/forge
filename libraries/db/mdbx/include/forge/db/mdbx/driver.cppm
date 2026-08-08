@@ -5,6 +5,7 @@ module;
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -71,6 +72,7 @@ class driver final : public forge::db::core::driver {
    open_transaction() override;
    boost::asio::awaitable<std::unique_ptr<forge::db::core::session>>
    open_snapshot() override;
+   boost::asio::awaitable<void> create_checkpoint_impl(std::filesystem::path destination) override;
    boost::asio::awaitable<void> close_driver() override;
 
    std::shared_ptr<detail::driver_impl> impl_;

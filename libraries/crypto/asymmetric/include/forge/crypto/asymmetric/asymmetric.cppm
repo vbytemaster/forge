@@ -19,6 +19,8 @@ export module forge.crypto.asymmetric;
 export import forge.crypto.asymmetric.values;
 
 #if !defined(FORGE_CONTRACT_GUEST)
+export import forge.crypto.asymmetric.serialization;
+
 import forge.core.utility;
 import forge.crypto.asymmetric.ed25519;
 import forge.crypto.asymmetric.p256;
@@ -188,14 +190,6 @@ class encoding {
 void to_variant(const private_key& value, forge::variant& output,
                 const forge::yield_function_t& yield = forge::yield_function_t());
 void from_variant(const forge::variant& value, private_key& output);
-
-void to_variant(const public_key& value, forge::variant& output,
-                const forge::yield_function_t& yield = forge::yield_function_t());
-void from_variant(const forge::variant& value, public_key& output);
-
-void to_variant(const signature& value, forge::variant& output,
-                const forge::yield_function_t& yield = forge::yield_function_t());
-void from_variant(const forge::variant& value, signature& output);
 
 } // namespace forge::crypto::asymmetric
 

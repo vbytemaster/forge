@@ -1,20 +1,23 @@
 module;
 
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include <forge/exceptions/macros.hpp>
+
 #include <boost/url.hpp>
 
 module forge.net.http.target;
+
+import forge.net.http.exceptions;
 
 namespace forge::net::http {
 
 target parse_target(std::string_view value) {
    const auto parsed = boost::urls::parse_origin_form(value);
    if (!parsed.has_value()) {
-      throw std::invalid_argument{"invalid HTTP request target"};
+      FORGE_THROW_EXCEPTION(exceptions::bad_request, "invalid HTTP request target");
    }
 
    const auto& url = parsed.value();

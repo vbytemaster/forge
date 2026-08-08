@@ -14,6 +14,7 @@ add_library(
    producer_authority.cpp
    finalizer_authority.cpp
    finalizer_policy.cpp
+   state_query.cpp
 )
 forge_target_modules_at(forge_chain_protocol chain/protocol)
 

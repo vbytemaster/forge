@@ -43,6 +43,20 @@ BOOST_AUTO_TEST_CASE(block_and_authority_modules_share_the_canonical_schedule_ty
    auto decoded = protocol::producer_schedule{};
    forge::from_variant(encoded, decoded);
    BOOST_CHECK(decoded == schedule);
+
+   const auto json = forge::codec::json::write(schedule);
+   BOOST_REQUIRE(json.ok());
+   const auto parsed_json = forge::codec::json::read_value(json.text);
+   BOOST_REQUIRE(parsed_json.ok());
+   const auto& json_signing_key =
+       parsed_json.value.get_object()["producers"].get_array().front().get_object()["block_signing_key"];
+   BOOST_REQUIRE(json_signing_key.is_string());
+   BOOST_CHECK(json_signing_key.get_string().starts_with("PUB_SECP256K1_"));
+
+   const auto exact = forge::codec::json::read<protocol::producer_schedule>(
+       json.text, {.described_records = forge::codec::json::described_record_policy::exact});
+   BOOST_REQUIRE(exact.ok());
+   BOOST_CHECK(exact.value == schedule);
 }
 
 BOOST_AUTO_TEST_CASE(authority_records_use_spring_variant_shape_and_roundtrip) {
@@ -86,6 +100,9 @@ BOOST_AUTO_TEST_CASE(authority_records_use_spring_variant_shape_and_roundtrip) {
        parsed_json.value.get_object()["producers"].get_array().front().get_object()["authority"].get_array();
    BOOST_REQUIRE_EQUAL(json_authority.size(), 2U);
    BOOST_TEST(json_authority[0].as_uint64() == 0U);
+   const auto& json_authority_key = json_authority[1].get_object()["keys"].get_array().front().get_object()["key"];
+   BOOST_REQUIRE(json_authority_key.is_string());
+   BOOST_CHECK(json_authority_key.get_string().starts_with("PUB_SECP256K1_"));
 
    const auto exact = forge::codec::json::read<protocol::producer_authority_schedule>(
        json.text, {.described_records = forge::codec::json::described_record_policy::exact});

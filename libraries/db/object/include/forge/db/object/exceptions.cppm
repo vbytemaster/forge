@@ -23,6 +23,7 @@ enum class code : std::uint16_t {
    aggregate_rebuild_required = 11,
    aggregate_corruption = 12,
    aggregate_overflow = 13,
+   stale_precommit_projection = 14,
 };
 
 FORGE_DECLARE_EXCEPTION_CATEGORY(code, "forge.db.object")
@@ -40,5 +41,6 @@ using incompatible_version = forge::exceptions::coded_exception<code, code::inco
 using aggregate_rebuild_required = forge::exceptions::coded_exception<code, code::aggregate_rebuild_required>;
 using aggregate_corruption = forge::exceptions::coded_exception<code, code::aggregate_corruption>;
 using aggregate_overflow = forge::exceptions::coded_exception<code, code::aggregate_overflow>;
+using stale_precommit_projection = forge::exceptions::coded_exception<code, code::stale_precommit_projection>;
 
 } // namespace forge::db::object::exceptions

@@ -35,6 +35,8 @@ clients.
 - `forge.api.http.client_response` — typed proxy response materialization and
   bounded error decode internals.
 - `forge.api.http.proxy` — `remote<T>()` and remote invoker glue.
+- `forge.api.http.openapi` — OpenAPI 3.1 generation from the same typed contract
+  and route descriptors used by the HTTP binding.
 
 Macro header: `<forge/api/http/macros.hpp>`.
 

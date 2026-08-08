@@ -83,13 +83,19 @@ class router {
       stream_route_handler handler;
    };
 
+   struct middleware_entry {
+      middleware_descriptor descriptor;
+      std::vector<std::string> path_segments;
+      bool trailing_slash = false;
+   };
+
    void add_route(method verb, std::string path, route_handler handler);
    void add_stream_route(method verb, std::string path, stream_route_handler handler);
 
    std::vector<route_entry> routes_;
    std::vector<websocket_route_entry> websocket_routes_;
    std::vector<stream_route_entry> stream_routes_;
-   std::vector<middleware_descriptor> middlewares_;
+   std::vector<middleware_entry> middlewares_;
    std::uint64_t anonymous_middleware_id_ = 0;
 };
 

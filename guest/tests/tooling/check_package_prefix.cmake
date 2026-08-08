@@ -3,6 +3,7 @@ include(CMakePackageConfigHelpers)
 foreach(
    _required
    FORGE_CONTRACT_CONFIG_TEMPLATE
+   FORGE_CONTRACT_PATHS_TEMPLATE
    FORGE_CONTRACT_TOOLCHAIN_TEMPLATE
    FORGE_CONTRACT_FUNCTIONS
    FORGE_CONTRACT_LIBRARIES
@@ -45,6 +46,11 @@ configure_package_config_file(
    INSTALL_PREFIX "${_prefix}"
    NO_SET_AND_CHECK_MACRO
    NO_CHECK_REQUIRED_COMPONENTS_MACRO
+)
+configure_file(
+   "${FORGE_CONTRACT_PATHS_TEMPLATE}"
+   "${_config_dir}/ForgeContractPaths.cmake"
+   @ONLY
 )
 configure_file(
    "${FORGE_CONTRACT_TOOLCHAIN_TEMPLATE}"
@@ -178,6 +184,38 @@ execute_process(
 )
 if(NOT _configure_result EQUAL 0)
    message(FATAL_ERROR "nested-libdir ForgeContract consumer configuration failed")
+endif()
+
+set(_source_helper_consumer "${FORGE_CONTRACT_TEST_ROOT}/source-helper-consumer")
+file(MAKE_DIRECTORY "${_source_helper_consumer}/guest")
+file(WRITE "${_source_helper_consumer}/guest/CMakeLists.txt" "cmake_minimum_required(VERSION 3.31)\nproject(guest NONE)\n")
+set(_source_helper_cmake [=[
+cmake_minimum_required(VERSION 3.31)
+project(ForgeContractSourceHelperPrefixTest NONE)
+set(ForgeContract_DIR "@_config_dir@")
+include("@FORGE_CONTRACT_FUNCTIONS@")
+forge_add_contract_project(
+   fixture_guest
+   SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/guest"
+   BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/guest-build"
+   CONTRACT fixture
+)
+get_target_property(_resolved_prefix fixture_guest FORGE_CONTRACT_SDK_PREFIX)
+if(NOT _resolved_prefix STREQUAL "@_prefix@")
+   message(FATAL_ERROR "source helper resolved the wrong SDK prefix: ${_resolved_prefix}")
+endif()
+]=])
+string(CONFIGURE "${_source_helper_cmake}" _source_helper_cmake @ONLY)
+file(WRITE "${_source_helper_consumer}/CMakeLists.txt" "${_source_helper_cmake}")
+execute_process(
+   COMMAND
+      "${CMAKE_COMMAND}"
+      -S "${_source_helper_consumer}"
+      -B "${FORGE_CONTRACT_TEST_ROOT}/source-helper-build"
+   RESULT_VARIABLE _source_helper_result
+)
+if(NOT _source_helper_result EQUAL 0)
+   message(FATAL_ERROR "source helper failed to resolve the nested-libdir SDK prefix")
 endif()
 
 file(APPEND "${_prefix}/sysroot/lib/libforge_guest_raw.a" "tampered")

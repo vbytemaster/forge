@@ -118,7 +118,7 @@ is opt-in per route for typed DTO bodies.
 
 ```cpp
 FORGE_HTTP_API(catalog_api,
-   FORGE_HTTP_GET(read_item, "/items/:id", ok),
+   FORGE_HTTP_GET(read_item, "/items/:id"),
    FORGE_HTTP_PUT(update_item, "/items/:id", ok,
       FORGE_HTTP_REQUEST_BODY(xml),
       FORGE_HTTP_RESPONSE_BODY(xml)))
@@ -148,6 +148,7 @@ registry.register_plugin(forge::plugins::crypto::secrets::descriptor());
 | [compression](libraries/compression/README.md) | `forge_compression` | Bounded zlib compression/decompression helpers. | Boost.Iostreams, ZLIB, `forge_exceptions`. |
 | [chain/core](libraries/chain/core/README.md) | `forge_chain_core` | Fundamental chain digest and Merkle primitives. | `forge_crypto_digest`, `forge_exceptions`, `forge_raw`. |
 | [chain/protocol](libraries/chain/protocol/README.md) | `forge_chain_protocol` | Canonical protocol values, ordered keys, transactions, blocks, ABI and signing rules. | `forge_chain_core`, `forge_compression`, `forge_raw`, `forge_variant`, `forge_crypto_asymmetric_values`, `forge_crypto_digest`. |
+| [chain/api](libraries/chain/api/README.md) | `forge_chain_api` | Transport-neutral chain contracts, HTTP/P2P clients and verified audited reads. | `forge_api_core`, `forge_api_http`, `forge_chain_protocol`, `forge_db_authenticated`, `forge_net_http`. |
 | [vm/wasm](libraries/vm/wasm/README.md) | `forge_vm_wasm` | Native WebAssembly parser, validator, interpreter, host-function runtime and x86_64 JIT. | `forge_exceptions`, threads, internal SoftFloat. |
 | [contract/abi](libraries/contract/abi/README.md) | `forge_contract_abi` | Optional Clang AST based contract ABI and dispatcher generation. | Clang/LLVM privately, `forge_chain_protocol`, `forge_codec_json`. |
 | [contract/attributes](libraries/contract/attributes/README.md) | `forge_contract_attributes` | Optional Forge/EOSIO Clang attribute registrations. | Clang/LLVM privately. |
@@ -195,6 +196,7 @@ registry.register_plugin(forge::plugins::crypto::secrets::descriptor());
 | [db/object](libraries/db/object/README.md) | `forge_db_object` | Typed object/index store over the shared DB driver. | Boost.Asio, `forge_db_core`, `forge_db_ids`, `forge_raw`, `forge_exceptions`. |
 | [db/blob](libraries/db/blob/README.md) | `forge_db_blob` | Content-addressed blob store with typed refs and explicit retention primitives. | Boost.Asio, `forge_db_core`, `forge_crypto_digest`, `forge_raw`, `forge_variant`, `forge_exceptions`. |
 | [db/revision](libraries/db/revision/README.md) | `forge_db_revision` | Durable before-image revisions with strict-head revert and bounded whole-revision prune. | Boost.Asio, `forge_db_core`, `forge_db_object`, `forge_raw`, `forge_exceptions`. |
+| [db/authenticated](libraries/db/authenticated/README.md) | `forge_db_authenticated` | Experimental persistent authenticated ordered state and transferable proofs. | Boost.Asio, `forge_crypto_digest`, `forge_db_core`, `forge_exceptions`. |
 | [db/mdbx](libraries/db/mdbx/README.md) | `forge_db_mdbx` | Vendored libmdbx implementation of the shared DB driver contract. | `forge_asio`, `forge_db_core`, `forge_exceptions`; libmdbx privately. |
 | [rocksdb](libraries/rocksdb/README.md) | `forge_rocksdb` | Optional RocksDB TransactionDB wrapper. | RocksDB privately, `forge_exceptions`, `forge_schema`. |
 | [db/rocksdb](libraries/db/rocksdb/README.md) | `forge_db_rocksdb` | RocksDB implementation of the shared DB driver contract. | `forge_db_core`, `forge_rocksdb`. |
@@ -258,7 +260,7 @@ FORGE использует версию `MAJOR.MINOR.PATCH` вместе с яв
 описано в release notes вместе с migration path.
 
 Текущие изменения и переходы описаны в
-[Forge 8.20.0 release notes](docs/releases/8.20.0.md).
+[Forge 8.21.0 release notes](docs/releases/8.21.0.md).
 
 ## Совместимость
 
@@ -305,6 +307,90 @@ rg "glz::|YAML::Node|notcurses" libraries/*/include -g '*.cppm'
 
 Expected result: no product hits, except explicitly documented macro-only
 headers such as `libraries/exceptions/include/forge/exceptions/macros.hpp`.
+
+## Authenticated DB Performance Acceptance
+
+`benchmark_forge_db_authenticated` always writes one JSON document to stdout.
+An invocation without `--baseline` is a measurement-only 10K-key smoke run and
+does not enforce a gate. The explicit `1m` and `10m` profiles enforce these
+provisional throughput floors:
+
+| Profile | Keys | Initial batch | Point proofs | Ranked range proofs |
+| --- | ---: | ---: | ---: | ---: |
+| `1m` | 1,000,000 | 250 keys/s | 2 proofs/s | 0.2 proofs/s |
+| `10m` | 10,000,000 | 250 keys/s | 2 proofs/s | 0.2 proofs/s |
+
+These are deliberately broad measurement guardrails for detecting stalled or
+grossly regressed runs. They are not supported latency SLOs or product promises.
+Proof latency, encoded size and node-count fields remain measurements until
+representative ARM64 and Linux x86_64 baselines have been collected. The JSON
+records `format`, `machine_label`, observed metrics, thresholds, per-check
+booleans and `acceptance.status`; a failed profile exits with status `2`.
+
+Both CTest registrations are off by default, run serially and have explicit
+timeouts. Configure only the scale that the machine is intended to measure:
+
+```bash
+cmake -S . -B build/forge-authenticated-acceptance -G Ninja \
+  -DBUILD_TESTING=ON \
+  -DFORGE_ENABLE_MODULES=ON \
+  -DFORGE_DB_AUTHENTICATED_ENABLE_1M_PERFORMANCE_TEST=ON \
+  -DFORGE_DB_AUTHENTICATED_ENABLE_10M_PERFORMANCE_TEST=ON \
+  -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang \
+  -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ \
+  -DCMAKE_OSX_SYSROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+
+cmake --build build/forge-authenticated-acceptance \
+  --target benchmark_forge_db_authenticated -j 4
+
+ctest --test-dir build/forge-authenticated-acceptance \
+  -R '^test_forge_db_authenticated_performance_(1m|10m)$' \
+  --output-on-failure -V
+```
+
+For clean machine-readable artifacts, invoke the target directly:
+
+```bash
+mkdir -p build/forge-authenticated-acceptance/results
+
+./build/forge-authenticated-acceptance/tests/benchmark_forge_db_authenticated \
+  --baseline 1m --machine-label "$(uname -s)-$(uname -m)" \
+  > build/forge-authenticated-acceptance/results/authenticated-1m.json
+
+./build/forge-authenticated-acceptance/tests/benchmark_forge_db_authenticated \
+  --baseline 10m --machine-label "$(uname -s)-$(uname -m)" \
+  > build/forge-authenticated-acceptance/results/authenticated-10m.json
+```
+
+The authenticated proof fuzzer remains a separate opt-in target. Its single
+[`fuzz_driver.cpp`](tests/db_authenticated/fuzz_driver.cpp) dispatches both point
+and ranked-range inputs; CMake compiles that driver with libFuzzer, ASan (Address
+Sanitizer) and UBSan (UndefinedBehaviorSanitizer) together. ASan/UBSan CI lanes
+therefore consume the same corpus and binary, while varying runtime budget and
+environment policy rather than maintaining divergent drivers:
+
+```bash
+cmake -S . -B build/forge-authenticated-fuzz -G Ninja \
+  -DBUILD_TESTING=ON \
+  -DFORGE_ENABLE_MODULES=ON \
+  -DFORGE_DB_AUTHENTICATED_ENABLE_FUZZ_TESTS=ON \
+  -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang \
+  -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ \
+  -DCMAKE_OSX_SYSROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+
+cmake --build build/forge-authenticated-fuzz \
+  --target forge_db_authenticated_fuzz -j 4
+
+mkdir -p build/forge-authenticated-fuzz/corpus \
+  build/forge-authenticated-fuzz/artifacts
+
+ASAN_OPTIONS=abort_on_error=1:detect_leaks=1 \
+UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+./build/forge-authenticated-fuzz/tests/forge_db_authenticated_fuzz \
+  build/forge-authenticated-fuzz/corpus \
+  -max_total_time=900 -timeout=10 -rss_limit_mb=4096 \
+  -artifact_prefix=build/forge-authenticated-fuzz/artifacts/
+```
 
 ## Install And Consume
 

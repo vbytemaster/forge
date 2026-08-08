@@ -15,7 +15,8 @@ release. This status does not relax backend data or transaction correctness.
 - `forge::db::core::record_key`, `record_range`, `record_entry`, `record_page`,
   `cursor`, `page_request` and `family`.
 - `forge::db::core::session`: backend-owned async record session.
-- `forge::db::core::driver`: opens write transactions and read snapshots.
+- `forge::db::core::driver`: opens write transactions and read snapshots and
+  exposes an optional durable checkpoint boundary.
 - `forge::db::core::transaction`: move-only commit/rollback boundary with
   savepoints, optional record locks and participant hooks.
 - `forge::db::core::snapshot`: stable read-only view.
@@ -49,6 +50,10 @@ or `begin_read()`, such as a driver's flush operation, must hold the protected
 `driver::admit_operation()` result until backend access finishes. Once a close
 request starts, new admissions report `driver_closed`; an admitted operation makes
 close report `driver_busy` until its admission is released.
+
+`create_checkpoint(path)` asks the backend for a self-contained durable copy at
+one committed point. Unsupported drivers report typed `unsupported_operation`;
+Core does not emulate a checkpoint by scanning records or expose backend files.
 
 ## Snapshot Ownership
 
@@ -98,6 +103,21 @@ operations that cannot be represented in a captured history. This contract is
 implementer-facing; savepoints themselves do not create durable revisions.
 Higher-level operation guards can use `transaction::captures_mutations()`
 without depending on a participant name or concrete revision implementation.
+
+`transaction::before_commit()` registers an awaited one-shot projection hook.
+Hooks run while the Core transaction is still active, after the caller has
+finished its savepoint work and before participant prepare begins. They may use
+the normal transaction read/write API, which lets a higher-level participant
+materialize derived records inside the same physical commit. Hooks may not
+commit, roll back, attach another participant or register another pre-commit
+hook reentrantly. A hook failure makes the transaction rollback-only; a backend
+commit failure after successful prepare still permits an explicit rollback or
+a retry of the prepared backend commit.
+
+Before-, after-commit and after-rollback hooks must all be registered while the
+transaction is active and before the before-commit phase starts. Registration
+on a default, closed or already-finalizing transaction is rejected rather than
+silently retaining a callback that can no longer run.
 
 Participants that own a physical record layout declare their
 `exclusive_families()`. Core rejects overlapping claims before the first

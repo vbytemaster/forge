@@ -9,23 +9,17 @@ class transaction_participant_impl;
 }
 
 struct transaction::impl {
-   impl(forge::db::core::transaction&& active_value,
-        forge::db::core::family family_value,
-        transaction::ensure_registered_fn ensure,
-        transaction::allocate_id_fn allocate,
-        transaction::seal_allocations_fn seal,
-        std::vector<std::shared_ptr<interceptor>> interceptors_value,
-        std::vector<std::shared_ptr<observer>> observers_value,
-        transaction::release_fn release);
+   impl(forge::db::core::transaction&& active_value, forge::db::core::family family_value,
+        transaction::ensure_registered_fn ensure, transaction::allocate_id_fn allocate,
+        transaction::seal_allocations_fn seal, std::vector<std::shared_ptr<interceptor>> interceptors_value,
+        std::vector<std::shared_ptr<observer>> observers_value, transaction::release_fn release,
+        bool reuse_rolled_back_ids = false);
 
-   impl(forge::db::core::transaction& active_value,
-        forge::db::core::family family_value,
-        transaction::ensure_registered_fn ensure,
-        transaction::allocate_id_fn allocate,
-        transaction::seal_allocations_fn seal,
-        std::vector<std::shared_ptr<interceptor>> interceptors_value,
-        std::vector<std::shared_ptr<observer>> observers_value,
-        transaction::release_fn release);
+   impl(forge::db::core::transaction& active_value, forge::db::core::family family_value,
+        transaction::ensure_registered_fn ensure, transaction::allocate_id_fn allocate,
+        transaction::seal_allocations_fn seal, std::vector<std::shared_ptr<interceptor>> interceptors_value,
+        std::vector<std::shared_ptr<observer>> observers_value, transaction::release_fn release,
+        bool reuse_rolled_back_ids = false);
 
    std::optional<forge::db::core::transaction> owned;
    forge::db::core::transaction* active = nullptr;

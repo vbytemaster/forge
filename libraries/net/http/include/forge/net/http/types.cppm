@@ -45,6 +45,8 @@ enum class method {
    put,
 };
 
+[[nodiscard]] bool is_idempotent(method value) noexcept;
+
 enum class status : unsigned {
    continue_ = 100,
    ok = 200,

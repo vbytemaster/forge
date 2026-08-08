@@ -24,6 +24,7 @@ struct server_config {
    std::uint64_t max_request_body_bytes = 16 * 1024 * 1024;
    std::uint64_t max_header_bytes = 64 * 1024;
    std::chrono::milliseconds read_timeout{30'000};
+   // Bounds socket I/O and keep-alive gaps; handlers and body producers own their deadlines.
    std::chrono::milliseconds idle_timeout{120'000};
 };
 

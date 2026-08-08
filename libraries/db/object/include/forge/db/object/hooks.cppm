@@ -47,4 +47,10 @@ class observer {
    virtual boost::asio::awaitable<void> after_commit(const change_set& changes) = 0;
 };
 
+class precommit_observer {
+ public:
+   virtual ~precommit_observer() = default;
+   virtual boost::asio::awaitable<void> before_commit(const change_set& changes) = 0;
+};
+
 } // namespace forge::db::object

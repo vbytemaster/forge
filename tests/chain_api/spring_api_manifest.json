@@ -1,0 +1,566 @@
+{
+  "schema": 3,
+  "donor": {
+    "repository": "https://github.com/AntelopeIO/spring",
+    "commit": "e6a99f68b67abc4d89fe716755b2e1394a4991f7",
+    "license": "MIT"
+  },
+  "spine": {
+    "repository": "https://github.com/vbytemaster/blockchain"
+  },
+  "sources": {
+    "chain_registration": {"path": "plugins/chain_api_plugin/chain_api_plugin.cpp", "sha256": "913f705ccea61c6fc9f5926c00dee2e14c03e4fdc7fa543f0db89544da0d8ab5"},
+    "producer_registration": {"path": "plugins/producer_api_plugin/producer_api_plugin.cpp", "sha256": "1e159c03859c5e7240dac74745cce646560215c1a815e41ee2d1abcdd9086eda"},
+    "chain_dto": {"path": "plugins/chain_plugin/include/eosio/chain_plugin/chain_plugin.hpp", "sha256": "d4a97d48235599407168d47e45e6b7ae25f22d394d476278f37ef762bd68b261"},
+    "chain_info_dto": {"path": "plugins/chain_plugin/include/eosio/chain_plugin/get_info_db.hpp", "sha256": "317154a6bf9fd0922cc3119db91cde1d7b848fa8334b43f905c1c4aebd611db6"},
+    "account_query_dto": {"path": "plugins/chain_plugin/include/eosio/chain_plugin/account_query_db.hpp", "sha256": "ec4f1b7d91252520581b3ccd628feabdb24a9af145a6d0a90a1c7d674b400eb5"},
+    "chain_behavior": {"path": "plugins/chain_plugin/chain_plugin.cpp", "sha256": "b21ae5df990c0fd046e76dc319f126e730616fe225ec1d6d619aa3c377c84d98"},
+    "account_query_behavior": {"path": "plugins/chain_plugin/account_query_db.cpp", "sha256": "9dea67be79ba94d4dd4dc823c34538a6ea6d51c413383b0656d8149ac0521b2c"},
+    "producer_dto": {"path": "plugins/producer_plugin/include/eosio/producer_plugin/producer_plugin.hpp", "sha256": "9f0aafb34ce972347af1be399efbbd3fb5d0dd9f1d2a62f312e9cab8254b63f4"},
+    "producer_behavior": {"path": "plugins/producer_plugin/producer_plugin.cpp", "sha256": "b7fa8b8cb4c27f407660625c59b4274776f27a40fd090848391a342cb69621f2"},
+    "snapshot_dto": {"path": "libraries/chain/include/eosio/chain/snapshot_scheduler.hpp", "sha256": "591324bb8333803cad536dbacd8d3c0b67411b2b79375f19d1d4c79900345391"}
+  },
+  "endpoints": [
+    {
+      "group": "chain", "donor": "get_info",
+      "registration": {"source": "chain_registration", "symbol": "get_info"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_info_params"}, {"source": "chain_info_dto", "symbol": "get_info_db::get_info_results"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_info"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_info"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "info", "method": "get", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-INFO", "path": "tests/unit/programs/spineos/chain_api_wiring_tests.cpp", "test": "spineos_controller_publishes_genesis_chain_api_and_fails_closed"}
+    },
+    {
+      "group": "chain", "donor": "get_activated_protocol_features",
+      "registration": {"source": "chain_registration", "symbol": "get_activated_protocol_features"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_activated_protocol_features_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_activated_protocol_features"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_activated_protocol_features"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "block", "method": "get_activated_protocol_features", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-ACTIVATED-PROTOCOL-FEATURES", "path": "tests/unit/plugins/chain/controller/block_service_tests.cpp", "test": "get_activated_protocol_features_projects_bounds_order_pagination_and_audit"}
+    },
+    {
+      "group": "chain", "donor": "get_block",
+      "registration": {"source": "chain_registration", "symbol": "get_block"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_block_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_block"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_block"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "block", "method": "get_block", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-BLOCK", "path": "tests/unit/programs/spineos/chain_api_wiring_tests.cpp", "test": "spineos_controller_publishes_genesis_chain_api_and_fails_closed"}
+    },
+    {
+      "group": "chain", "donor": "get_block_info",
+      "registration": {"source": "chain_registration", "symbol": "get_block_info"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_block_info_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_block_info"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_block_info"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "block", "method": "get_header", "mapping": "client_projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-BLOCK-INFO", "path": "tests/unit/programs/spineos/chain_api_wiring_tests.cpp", "test": "spineos_controller_publishes_genesis_chain_api_and_fails_closed"}
+    },
+    {
+      "group": "chain", "donor": "get_block_header_state",
+      "registration": {"source": "chain_registration", "symbol": "get_block_header_state"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_block_header_state_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_block_header_state"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_block_header_state"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "block", "method": "get_block_state", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-BLOCK-HEADER-STATE", "path": "tests/unit/plugins/chain/controller/block_service_tests.cpp", "test": "get_block_state_projects_canonical_header_by_id_and_number"}
+    },
+    {
+      "group": "chain", "donor": "get_account",
+      "registration": {"source": "chain_registration", "symbol": "get_account"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_account_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_account"}],
+      "donor_evidence": {"status": "present", "path": "tests/get_account_test.py", "id": "get_account_test"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "state", "method": "get_account", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-ACCOUNT", "path": "tests/unit/plugins/chain/controller/state_service_tests.cpp", "test": "get_account_required_returns_verified_membership_proofs_and_missing_is_typed"}
+    },
+    {
+      "group": "chain", "donor": "get_code",
+      "registration": {"source": "chain_registration", "symbol": "get_code"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_code_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_code"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_code"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "state", "method": "get_code", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-CODE", "path": "tests/unit/plugins/chain/controller/state_service_tests.cpp", "test": "get_code_returns_hash_payloads_abi_and_verified_composite_proofs"}
+    },
+    {
+      "group": "chain", "donor": "get_code_hash",
+      "registration": {"source": "chain_registration", "symbol": "get_code_hash"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_code_hash_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_code_hash"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_code_hash"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "state", "method": "get_code", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-CODE-HASH", "path": "tests/unit/plugins/chain/controller/state_service_tests.cpp", "test": "get_code_returns_hash_payloads_abi_and_verified_composite_proofs"}
+    },
+    {
+      "group": "chain", "donor": "get_consensus_parameters",
+      "registration": {"source": "chain_registration", "symbol": "get_consensus_parameters"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_consensus_parameters_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_consensus_parameters"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_consensus_parameters"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "block", "method": "get_consensus_parameters", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-CONSENSUS-PARAMETERS", "path": "tests/unit/plugins/chain/controller/block_service_tests.cpp", "test": "get_consensus_parameters_projects_the_authenticated_global_property"}
+    },
+    {
+      "group": "chain", "donor": "get_abi",
+      "registration": {"source": "chain_registration", "symbol": "get_abi"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_abi_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_abi"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_abi"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "state", "method": "get_code", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-ABI", "path": "tests/unit/plugins/chain/controller/state_service_tests.cpp", "test": "get_code_returns_hash_payloads_abi_and_verified_composite_proofs"}
+    },
+    {
+      "group": "chain", "donor": "get_raw_code_and_abi",
+      "registration": {"source": "chain_registration", "symbol": "get_raw_code_and_abi"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_raw_code_and_abi_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_raw_code_and_abi"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_raw_code_and_abi"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "state", "method": "get_code", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-RAW-CODE-AND-ABI", "path": "tests/unit/plugins/chain/controller/state_service_tests.cpp", "test": "get_code_returns_hash_payloads_abi_and_verified_composite_proofs"}
+    },
+    {
+      "group": "chain", "donor": "get_raw_abi",
+      "registration": {"source": "chain_registration", "symbol": "get_raw_abi"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_raw_abi_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_raw_abi"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_raw_abi"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "state", "method": "get_code", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-RAW-ABI", "path": "tests/unit/plugins/chain/controller/state_service_tests.cpp", "test": "get_code_returns_hash_payloads_abi_and_verified_composite_proofs"}
+    },
+    {
+      "group": "chain", "donor": "get_finalizer_info",
+      "registration": {"source": "chain_registration", "symbol": "get_finalizer_info"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_finalizer_info_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_finalizer_info"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test_savanna.py", "id": "get_finalizer_info RPC cases"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "block", "method": "get_finalizer_info", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-FINALIZER-INFO", "path": "tests/unit/plugins/chain/controller/block_service_tests.cpp", "test": "get_finalizer_info_reconstructs_sorted_last_votes_from_persisted_finalizer_state"}
+    },
+    {
+      "group": "chain", "donor": "get_table_rows",
+      "registration": {"source": "chain_registration", "symbol": "get_table_rows"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_table_rows_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_table_rows"}],
+      "donor_evidence": {"status": "present", "path": "tests/get_table_seckey_tests.cpp", "id": "get_table_rows secondary-key fixture"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "state", "method": "get_table_rows", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-TABLE-ROWS", "path": "tests/unit/plugins/chain/controller/state_service_tests.cpp", "test": "verified_binary_table_rows_accepts_all_families_reverse_and_zero_limit"}
+    },
+    {
+      "group": "chain", "donor": "get_table_by_scope",
+      "registration": {"source": "chain_registration", "symbol": "get_table_by_scope"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_table_by_scope_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_table_by_scope"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_table_by_scope"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "state", "method": "get_table_scope", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-TABLE-BY-SCOPE", "path": "tests/unit/plugins/chain/controller/state_service_tests.cpp", "test": "verified_get_table_scope_accepts_canonical_forward_reverse_cursor_and_zero_limit_pages"}
+    },
+    {
+      "group": "chain", "donor": "get_currency_balance",
+      "registration": {"source": "chain_registration", "symbol": "get_currency_balance"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_currency_balance_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_currency_balance"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_currency_balance"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "state", "method": "get_currency_balance", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-CURRENCY-BALANCE", "path": "tests/unit/plugins/chain/controller/state_service_tests.cpp", "test": "currency_balance_and_stats_are_authenticated_spring_projections"}
+    },
+    {
+      "group": "chain", "donor": "get_currency_stats",
+      "registration": {"source": "chain_registration", "symbol": "get_currency_stats"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_currency_stats_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_currency_stats"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_currency_stats"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "state", "method": "get_currency_stats", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-CURRENCY-STATS", "path": "tests/unit/plugins/chain/controller/state_service_tests.cpp", "test": "currency_balance_and_stats_are_authenticated_spring_projections"}
+    },
+    {
+      "group": "chain", "donor": "get_producers",
+      "registration": {"source": "chain_registration", "symbol": "get_producers"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_producers_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_producers"}],
+      "donor_evidence": {"status": "present", "path": "tests/get_producers_tests.cpp", "id": "get_producers_tests.get_producers"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "block", "method": "get_producers", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-PRODUCERS", "path": "tests/unit/plugins/chain/controller/block_service_tests.cpp", "test": "verified_get_producers_reconstructs_donor_pagination_json_and_binary_rows"}
+    },
+    {
+      "group": "chain", "donor": "get_producer_schedule",
+      "registration": {"source": "chain_registration", "symbol": "get_producer_schedule"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_producer_schedule_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_producer_schedule"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_producer_schedule"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "block", "method": "get_producer_schedule", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-PRODUCER-SCHEDULE", "path": "tests/unit/plugins/chain/controller/block_service_tests.cpp", "test": "get_producer_schedule_returns_all_stages_and_rejects_a_mismatched_finalized_anchor"}
+    },
+    {
+      "group": "chain", "donor": "get_scheduled_transactions",
+      "registration": {"source": "chain_registration", "symbol": "get_scheduled_transactions"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_scheduled_transactions_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_scheduled_transactions"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_scheduled_transactions"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "state", "method": "get_scheduled_transactions", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-SCHEDULED-TRANSACTIONS", "path": "tests/unit/plugins/chain/controller/state_service_tests.cpp", "test": "scheduled_transactions_support_bounds_zero_limit_pagination_and_adversarial_audit"}
+    },
+    {
+      "group": "chain", "donor": "get_required_keys",
+      "registration": {"source": "chain_registration", "symbol": "get_required_keys"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_required_keys_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_required_keys"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_required_keys"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "transaction", "method": "get_required_keys", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-REQUIRED-KEYS", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "chain_transaction_read_only_methods_delegate_to_controller"}
+    },
+    {
+      "group": "chain", "donor": "get_transaction_id",
+      "registration": {"source": "chain_registration", "symbol": "get_transaction_id"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_transaction_id_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_transaction_id"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_transaction_id"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "protocol", "method": "transaction.id", "mapping": "local_utility"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-TRANSACTION-ID", "path": "tests/chain_protocol/protocol_tests.cpp", "test": "action_transaction_and_signed_transaction_match_spring_fixtures"}
+    },
+    {
+      "group": "chain", "donor": "compute_transaction",
+      "registration": {"source": "chain_registration", "symbol": "compute_transaction"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::compute_transaction_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::compute_transaction"}],
+      "donor_evidence": {"status": "present", "path": "tests/compute_transaction_test.py", "id": "compute_transaction_tests"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "transaction", "method": "compute_transaction", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-COMPUTE-TRANSACTION", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "chain_transaction_read_only_methods_delegate_to_controller"}
+    },
+    {
+      "group": "chain", "donor": "push_transaction",
+      "registration": {"source": "chain_registration", "symbol": "push_transaction"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_write::push_transaction_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_write::push_transaction"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:push_transaction"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "submission", "method": "submit", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-PUSH-TRANSACTION", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "chain_transaction_submission_announces_only_new_mempool_entries"}
+    },
+    {
+      "group": "chain", "donor": "push_transactions",
+      "registration": {"source": "chain_registration", "symbol": "push_transactions"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_write::push_transactions_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_write::push_transactions"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:push_transactions"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "submission", "method": "submit_batch", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-PUSH-TRANSACTIONS", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "chain_transaction_batch_admits_and_announces_each_transaction"}
+    },
+    {
+      "group": "chain", "donor": "send_transaction",
+      "registration": {"source": "chain_registration", "symbol": "send_transaction"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_write::send_transaction_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_write::send_transaction"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:send_transaction"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "submission", "method": "submit", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-SEND-TRANSACTION", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "producer_owns_the_canonical_chain_transaction_api_without_network"}
+    },
+    {
+      "group": "chain", "donor": "send_transaction2",
+      "registration": {"source": "chain_registration", "symbol": "send_transaction2"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_write::send_transaction2_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_write::send_transaction2"}],
+      "donor_evidence": {"status": "none", "reason": "No endpoint-specific donor test or fixture was found at the pinned baseline; registration and behavior remain source-defined."},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "submission", "method": "submit", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-SEND-TRANSACTION2", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": ["chain_transaction_retry_waits_for_finality_without_a_second_retry_queue", "chain_transaction_retry_blocks_survives_a_canonical_fork_out"]}
+    },
+    {
+      "group": "chain", "donor": "push_block",
+      "registration": {"source": "chain_registration", "symbol": "push_block"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_write::push_block_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_write::push_block"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:push_block"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "push_block", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-PUSH-BLOCK", "path": "tests/unit/plugins/chain/admin/admin_plugin_tests.cpp", "test": "canonical_admin_delegates_to_controller_and_producer_owners"}
+    },
+    {
+      "group": "chain", "donor": "get_accounts_by_authorizers",
+      "registration": {"source": "chain_registration", "symbol": "get_accounts_by_authorizers"},
+      "dto": [{"source": "account_query_dto", "symbol": "account_query_db::get_accounts_by_authorizers_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_accounts_by_authorizers"}, {"source": "account_query_behavior", "symbol": "account_query_db_impl::get_accounts_by_authorizers"}],
+      "donor_evidence": {"status": "present", "path": "plugins/chain_plugin/test/test_account_query_db.cpp", "id": "account_query_db_tests.newaccount_test/updateauth_test/fork_test"},
+      "condition": {"kind": "runtime", "expression": "chain_api_plugin enabled and chain.account_queries_enabled()"},
+      "forge": {"api": "state", "method": "get_accounts_by_authorizers", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-ACCOUNTS-BY-AUTHORIZERS", "path": "tests/unit/plugins/chain/controller/state_service_tests.cpp", "test": "accounts_by_authorizers_use_authenticated_reverse_relations_and_preserve_weights"}
+    },
+    {
+      "group": "chain", "donor": "send_read_only_transaction",
+      "registration": {"source": "chain_registration", "symbol": "send_read_only_transaction"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::send_read_only_transaction_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::send_read_only_transaction"}],
+      "donor_evidence": {"status": "present", "path": "tests/read_only_trx_test.py", "id": "basicTests/multiReadOnlyTests"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "transaction", "method": "send_read_only_transaction", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-SEND-READ-ONLY-TRANSACTION", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "chain_transaction_read_only_methods_delegate_to_controller"}
+    },
+    {
+      "group": "chain", "donor": "get_raw_block",
+      "registration": {"source": "chain_registration", "symbol": "get_raw_block"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_raw_block_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_raw_block"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_raw_block"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "block", "method": "get_block", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-RAW-BLOCK", "path": "tests/unit/programs/spineos/chain_api_wiring_tests.cpp", "test": "spineos_controller_publishes_genesis_chain_api_and_fails_closed"}
+    },
+    {
+      "group": "chain", "donor": "get_block_header",
+      "registration": {"source": "chain_registration", "symbol": "get_block_header"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_block_header_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_block_header"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ChainApi:get_block_header"},
+      "condition": {"kind": "plugin", "expression": "chain_api_plugin is enabled"},
+      "forge": {"api": "block", "method": "get_header", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-BLOCK-HEADER", "path": "tests/unit/programs/spineos/chain_api_wiring_tests.cpp", "test": "spineos_controller_publishes_genesis_chain_api_and_fails_closed"}
+    },
+    {
+      "group": "chain", "donor": "get_transaction_status",
+      "registration": {"source": "chain_registration", "symbol": "get_transaction_status"},
+      "dto": [{"source": "chain_dto", "symbol": "chain_apis::read_only::get_transaction_status_params"}],
+      "behavior": [{"source": "chain_behavior", "symbol": "chain_apis::read_only::get_transaction_status"}],
+      "donor_evidence": {"status": "present", "path": "plugins/chain_plugin/test/test_trx_finality_status_processing.cpp", "id": "trx_finality_status_processing_test.trx_finality_status_logic"},
+      "condition": {"kind": "runtime", "expression": "chain_api_plugin enabled and chain.transaction_finality_status_enabled()"},
+      "forge": {"api": "transaction", "method": "get_status", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-CHAIN-GET-TRANSACTION-STATUS", "path": "tests/unit/plugins/chain/controller/transaction_status_tests.cpp", "test": "selects_only_canonical_inclusion_and_builds_finalized_proof"}
+    },
+
+    {
+      "group": "producer", "donor": "paused",
+      "registration": {"source": "producer_registration", "symbol": "paused"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::paused() -> bool"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::paused"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ProducerApi:paused"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "producer_status", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-PAUSED", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "immediate_and_scheduled_pause_are_enforced_by_production"}
+    },
+    {
+      "group": "producer", "donor": "get_runtime_options",
+      "registration": {"source": "producer_registration", "symbol": "get_runtime_options"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::runtime_options"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::get_runtime_options"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ProducerApi:get_runtime_options"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "producer_status", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-GET-RUNTIME-OPTIONS", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "producer_admin_validates_and_reports_runtime_options"}
+    },
+    {
+      "group": "producer", "donor": "get_greylist",
+      "registration": {"source": "producer_registration", "symbol": "get_greylist"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::greylist_params"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::get_greylist"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ProducerApi:get_greylist"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "producer_status", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-GET-GREYLIST", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "producer_admin_tracks_normalized_greylist_and_scheduled_features"}
+    },
+    {
+      "group": "producer", "donor": "get_whitelist_blacklist",
+      "registration": {"source": "producer_registration", "symbol": "get_whitelist_blacklist"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::whitelist_blacklist"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::get_whitelist_blacklist"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ProducerApi:get_whitelist_blacklist"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "producer_status", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-GET-WHITELIST-BLACKLIST", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "producer_passes_admin_policy_and_scheduled_features_to_controller_begin"}
+    },
+    {
+      "group": "producer", "donor": "get_scheduled_protocol_feature_activations",
+      "registration": {"source": "producer_registration", "symbol": "get_scheduled_protocol_feature_activations"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::scheduled_protocol_feature_activations"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::get_scheduled_protocol_feature_activations"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ProducerApi:get_scheduled_protocol_feature_activations"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "producer_status", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-GET-SCHEDULED-PROTOCOL-FEATURE-ACTIVATIONS", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "producer_admin_tracks_normalized_greylist_and_scheduled_features"}
+    },
+    {
+      "group": "producer", "donor": "get_supported_protocol_features",
+      "registration": {"source": "producer_registration", "symbol": "get_supported_protocol_features"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::get_supported_protocol_features_params"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::get_supported_protocol_features"}],
+      "donor_evidence": {"status": "present", "path": "tests/prod_preactivation_test.py", "id": "get_supported_protocol_features cases"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "supported_protocol_features", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-GET-SUPPORTED-PROTOCOL-FEATURES", "path": "tests/unit/plugins/chain/admin/admin_plugin_tests.cpp", "test": "supported_features_are_canonical_typed_and_dependency_ordered_for_filters"}
+    },
+    {
+      "group": "producer", "donor": "get_account_ram_corrections",
+      "registration": {"source": "producer_registration", "symbol": "get_account_ram_corrections"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::get_account_ram_corrections_params"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::get_account_ram_corrections"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ProducerApi:get_account_ram_corrections"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "account_ram_corrections", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-GET-ACCOUNT-RAM-CORRECTIONS", "path": "tests/unit/programs/spineos/spineos_plugin_wiring_tests.cpp", "test": "spineos_controller_admin_queries_real_ranked_and_authenticated_state"}
+    },
+    {
+      "group": "producer", "donor": "get_unapplied_transactions",
+      "registration": {"source": "producer_registration", "symbol": "get_unapplied_transactions"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::get_unapplied_transactions_params"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::get_unapplied_transactions"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ProducerApi:get_unapplied_transactions"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "unapplied_transactions", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-GET-UNAPPLIED-TRANSACTIONS", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "unapplied_transactions_are_coherent_id_ordered_and_bounded"}
+    },
+    {
+      "group": "producer", "donor": "get_snapshot_requests",
+      "registration": {"source": "producer_registration", "symbol": "get_snapshot_requests"},
+      "dto": [{"source": "snapshot_dto", "symbol": "chain::snapshot_scheduler::get_snapshot_requests_result"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::get_snapshot_requests"}],
+      "donor_evidence": {"status": "present", "path": "tests/test_snapshot_scheduler.cpp", "id": "producer_snapshot_scheduler_tests.snapshot_scheduler_test"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "snapshot_requests", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-GET-SNAPSHOT-REQUESTS", "path": "tests/unit/plugins/chain/admin/admin_plugin_tests.cpp", "test": "snapshot_schedules_validate_and_survive_unschedule_and_restart"}
+    },
+    {
+      "group": "producer", "donor": "pause",
+      "registration": {"source": "producer_registration", "symbol": "pause"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::pause()"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::pause"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ProducerApi:pause"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "configure_pause", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-PAUSE", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "immediate_and_scheduled_pause_are_enforced_by_production"}
+    },
+    {
+      "group": "producer", "donor": "pause_at_block",
+      "registration": {"source": "producer_registration", "symbol": "pause_at_block"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::pause_at_block_params"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::pause_at_block"}],
+      "donor_evidence": {"status": "present", "path": "tests/pause_at_block_test.py", "id": "pause_at_block_test"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "configure_pause", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-PAUSE-AT-BLOCK", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "immediate_and_scheduled_pause_are_enforced_by_production"}
+    },
+    {
+      "group": "producer", "donor": "resume",
+      "registration": {"source": "producer_registration", "symbol": "resume"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::resume()"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::resume"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ProducerApi:resume"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "configure_pause", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-RESUME", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "immediate_and_scheduled_pause_are_enforced_by_production"}
+    },
+    {
+      "group": "producer", "donor": "update_runtime_options",
+      "registration": {"source": "producer_registration", "symbol": "update_runtime_options"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::runtime_options"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::update_runtime_options"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ProducerApi:update_runtime_options"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "update_runtime_options", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-UPDATE-RUNTIME-OPTIONS", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "producer_admin_validates_and_reports_runtime_options"}
+    },
+    {
+      "group": "producer", "donor": "add_greylist_accounts",
+      "registration": {"source": "producer_registration", "symbol": "add_greylist_accounts"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::greylist_params"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::add_greylist_accounts"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ProducerApi:add_greylist_accounts"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "update_greylist", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-ADD-GREYLIST-ACCOUNTS", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "producer_admin_tracks_normalized_greylist_and_scheduled_features"}
+    },
+    {
+      "group": "producer", "donor": "remove_greylist_accounts",
+      "registration": {"source": "producer_registration", "symbol": "remove_greylist_accounts"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::greylist_params"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::remove_greylist_accounts"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ProducerApi:remove_greylist_accounts"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "update_greylist", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-REMOVE-GREYLIST-ACCOUNTS", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "producer_admin_tracks_normalized_greylist_and_scheduled_features"}
+    },
+    {
+      "group": "producer", "donor": "set_whitelist_blacklist",
+      "registration": {"source": "producer_registration", "symbol": "set_whitelist_blacklist"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::whitelist_blacklist"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::set_whitelist_blacklist"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ProducerApi:set_whitelist_blacklist"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "set_access_policy", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-SET-WHITELIST-BLACKLIST", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "access_policy_is_enforced_at_admission_and_selection"}
+    },
+    {
+      "group": "producer", "donor": "create_snapshot",
+      "registration": {"source": "producer_registration", "symbol": "create_snapshot"},
+      "dto": [{"source": "snapshot_dto", "symbol": "chain::snapshot_scheduler::snapshot_information"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::create_snapshot"}],
+      "donor_evidence": {"status": "present", "path": "tests/plugin_http_api_test.py", "id": "PluginHttpTest.test_ProducerApi:create_snapshot"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "create_snapshot", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-CREATE-SNAPSHOT", "path": "tests/unit/plugins/chain/admin/admin_plugin_tests.cpp", "test": "snapshot_stays_pending_until_finalized_and_forked_out_snapshot_is_removed"}
+    },
+    {
+      "group": "producer", "donor": "schedule_snapshot",
+      "registration": {"source": "producer_registration", "symbol": "schedule_snapshot"},
+      "dto": [{"source": "snapshot_dto", "symbol": "chain::snapshot_scheduler::snapshot_request_params"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::schedule_snapshot"}],
+      "donor_evidence": {"status": "present", "path": "tests/test_snapshot_scheduler.cpp", "id": "producer_snapshot_scheduler_tests.snapshot_scheduler_test"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "schedule_snapshot", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-SCHEDULE-SNAPSHOT", "path": "tests/unit/plugins/chain/admin/admin_plugin_tests.cpp", "test": "snapshot_schedules_validate_and_survive_unschedule_and_restart"}
+    },
+    {
+      "group": "producer", "donor": "unschedule_snapshot",
+      "registration": {"source": "producer_registration", "symbol": "unschedule_snapshot"},
+      "dto": [{"source": "snapshot_dto", "symbol": "chain::snapshot_scheduler::snapshot_request_id_information"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::unschedule_snapshot"}],
+      "donor_evidence": {"status": "present", "path": "tests/test_snapshot_scheduler.cpp", "id": "producer_snapshot_scheduler_tests.snapshot_scheduler_test"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "unschedule_snapshot", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-UNSCHEDULE-SNAPSHOT", "path": "tests/unit/plugins/chain/admin/admin_plugin_tests.cpp", "test": "snapshot_schedules_validate_and_survive_unschedule_and_restart"}
+    },
+    {
+      "group": "producer", "donor": "get_integrity_hash",
+      "registration": {"source": "producer_registration", "symbol": "get_integrity_hash"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::integrity_hash_information"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::get_integrity_hash"}],
+      "donor_evidence": {"status": "present", "path": "plugins/producer_plugin/test/test_trx_full.cpp", "id": "get_integrity_hash aborts current block fixture"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "integrity_hash", "mapping": "direct"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-GET-INTEGRITY-HASH", "path": "tests/unit/programs/spineos/spineos_plugin_wiring_tests.cpp", "test": "spineos_controller_admin_queries_real_ranked_and_authenticated_state"}
+    },
+    {
+      "group": "producer", "donor": "schedule_protocol_feature_activations",
+      "registration": {"source": "producer_registration", "symbol": "schedule_protocol_feature_activations"},
+      "dto": [{"source": "producer_dto", "symbol": "producer_plugin::scheduled_protocol_feature_activations"}],
+      "behavior": [{"source": "producer_behavior", "symbol": "producer_plugin::schedule_protocol_feature_activations"}],
+      "donor_evidence": {"status": "present", "path": "tests/prod_preactivation_test.py", "id": "schedule_protocol_feature_activations cases"},
+      "condition": {"kind": "plugin", "expression": "producer_api_plugin is enabled"},
+      "forge": {"api": "admin", "method": "schedule_protocol_features", "mapping": "projection"},
+      "spine_acceptance": {"status": "present", "id": "SPINE-PRODUCER-SCHEDULE-PROTOCOL-FEATURE-ACTIVATIONS", "path": "tests/unit/plugins/chain/producer/producer_plugin_tests.cpp", "test": "producer_passes_admin_policy_and_scheduled_features_to_controller_begin"}
+    }
+  ]
+}

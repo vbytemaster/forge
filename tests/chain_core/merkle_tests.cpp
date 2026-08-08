@@ -81,6 +81,35 @@ BOOST_AUTO_TEST_CASE(modern_merkle_preserves_left_right_order) {
    BOOST_TEST(core::calculate_merkle_root(leaves) != core::calculate_merkle_root(reversed));
 }
 
+BOOST_AUTO_TEST_CASE(merkle_paths_cover_every_leaf_in_unbalanced_trees) {
+   for (auto count = std::size_t{1}; count <= 65U; ++count) {
+      const auto leaves = make_leaves(count);
+      const auto root = core::calculate_merkle_root(leaves);
+      for (auto index = std::size_t{0}; index < count; ++index) {
+         const auto path = core::calculate_merkle_path(leaves, index);
+         BOOST_TEST(core::verify_merkle_path(leaves[index], index, count, path, root));
+
+         if (!path.empty()) {
+            auto malformed = path;
+            malformed.front().sibling_on_left = !malformed.front().sibling_on_left;
+            BOOST_TEST(!core::verify_merkle_path(leaves[index], index, count, malformed, root));
+         }
+      }
+   }
+}
+
+BOOST_AUTO_TEST_CASE(merkle_paths_reject_invalid_positions_and_shapes) {
+   const auto leaves = make_leaves(3);
+   const auto root = core::calculate_merkle_root(leaves);
+   const auto path = core::calculate_merkle_path(leaves, 1U);
+
+   BOOST_CHECK_THROW((void)core::calculate_merkle_path({}, 0U), core::exceptions::invalid_leaf_index);
+   BOOST_CHECK_THROW((void)core::calculate_merkle_path(leaves, leaves.size()), core::exceptions::invalid_leaf_index);
+   BOOST_TEST(!core::verify_merkle_path(leaves[1], 1U, 0U, path, root));
+   BOOST_TEST(!core::verify_merkle_path(leaves[1], leaves.size(), leaves.size(), path, root));
+   BOOST_TEST(!core::verify_merkle_path(leaves[1], 1U, leaves.size(), std::span{path}.first(path.size() - 1U), root));
+}
+
 BOOST_AUTO_TEST_CASE(incremental_merkle_matches_batch_root_after_every_append) {
    const auto leaves = make_leaves(1001);
    auto tree = core::incremental_merkle_tree{};
@@ -124,7 +153,7 @@ BOOST_AUTO_TEST_CASE(incremental_merkle_append_overflow_preserves_state) {
        encode_state(std::numeric_limits<std::uint64_t>::max(), trees));
    const auto root = tree.root();
 
-   BOOST_CHECK_THROW(tree.append(core::digest::hash(std::string{"overflow"})), std::overflow_error);
+   BOOST_CHECK_THROW(tree.append(core::digest::hash(std::string{"overflow"})), core::exceptions::leaf_count_overflow);
    BOOST_TEST(tree.size() == std::numeric_limits<std::uint64_t>::max());
    BOOST_TEST(tree.root() == root);
 }

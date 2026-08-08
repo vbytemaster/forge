@@ -143,6 +143,9 @@ struct symbol_code {
    constexpr explicit symbol_code(std::uint64_t raw_value = 0) : value(raw_value) {}
    constexpr explicit symbol_code(std::string_view text) : value(encode_symbol_code(text)) {}
 
+   [[nodiscard]] static symbol_code from_string(std::string_view text);
+   [[nodiscard]] std::string to_string() const;
+
    constexpr std::uint64_t raw() const noexcept {
       return value;
    }
@@ -420,6 +423,14 @@ inline symbol make_symbol(std::string_view code, std::uint8_t precision) {
 
 inline std::string to_string(const symbol_code& value) {
    return decode_symbol_code(value.value);
+}
+
+inline symbol_code symbol_code::from_string(std::string_view text) {
+   return symbol_code{text};
+}
+
+inline std::string symbol_code::to_string() const {
+   return protocol::to_string(*this);
 }
 
 inline std::string to_string(const symbol& value) {

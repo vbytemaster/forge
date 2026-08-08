@@ -14,6 +14,7 @@ secp256k1 or RSA implementations.
 `forge_crypto_asymmetric` / `crypto_asymmetric` exports:
 
 - `forge.crypto.asymmetric`
+- `forge.crypto.asymmetric.serialization`
 - `forge.crypto.asymmetric.secp256k1`
 - `forge.crypto.asymmetric.p256`
 - `forge.crypto.asymmetric.ed25519`
@@ -33,6 +34,9 @@ const auto signature = key.sign_digest(digest);
 ```
 
 The host component adds OpenSSL and dedicated K1 implementation dependencies.
+`forge.crypto.asymmetric.serialization` is the narrow host-side Variant/JSON
+surface for canonical public-key and signature strings. Protocol libraries may
+re-export this module without exposing asymmetric signing operations.
 Text profiles are explicit encoding boundaries; binary protocol models should
 depend only on `crypto_asymmetric_values`. `test_forge_crypto_asymmetric_values`
 locks value tags/bytes, while `test_forge_crypto_asymmetric` covers signing,

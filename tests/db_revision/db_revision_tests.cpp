@@ -52,15 +52,15 @@ using family_map = std::map<std::string, record_map>;
 
 std::vector<std::byte> bytes(std::string value) {
    return {
-      reinterpret_cast<const std::byte*>(value.data()),
-      reinterpret_cast<const std::byte*>(value.data() + value.size()),
+       reinterpret_cast<const std::byte*>(value.data()),
+       reinterpret_cast<const std::byte*>(value.data() + value.size()),
    };
 }
 
 std::string text(const std::vector<std::byte>& value) {
    return {
-      reinterpret_cast<const char*>(value.data()),
-      reinterpret_cast<const char*>(value.data() + value.size()),
+       reinterpret_cast<const char*>(value.data()),
+       reinterpret_cast<const char*>(value.data() + value.size()),
    };
 }
 
@@ -68,11 +68,9 @@ forge::db::core::record_key key(std::string value) {
    return forge::db::core::record_key{bytes(std::move(value))};
 }
 
-bool starts_with(const forge::db::core::record_key& value,
-                 const forge::db::core::record_key& prefix) {
-   return prefix.empty() ||
-          (value.bytes().size() >= prefix.bytes().size() &&
-           std::equal(prefix.bytes().begin(), prefix.bytes().end(), value.bytes().begin()));
+bool starts_with(const forge::db::core::record_key& value, const forge::db::core::record_key& prefix) {
+   return prefix.empty() || (value.bytes().size() >= prefix.bytes().size() &&
+                             std::equal(prefix.bytes().begin(), prefix.bytes().end(), value.bytes().begin()));
 }
 
 struct memory_state {
@@ -106,15 +104,15 @@ class memory_session final : public forge::db::core::session {
 
    [[nodiscard]] forge::db::core::capabilities capabilities() const noexcept override {
       return forge::db::core::capabilities{
-         .snapshot_reads = snapshot_,
-         .writes = writable_,
-         .savepoints = writable_ && state_->savepoints,
-         .record_locks = writable_ && state_->record_locks,
+          .snapshot_reads = snapshot_,
+          .writes = writable_,
+          .savepoints = writable_ && state_->savepoints,
+          .record_locks = writable_ && state_->record_locks,
       };
    }
 
-   boost::asio::awaitable<std::optional<std::vector<std::byte>>>
-   get(forge::db::core::family family, forge::db::core::record_key record) override {
+   boost::asio::awaitable<std::optional<std::vector<std::byte>>> get(forge::db::core::family family,
+                                                                     forge::db::core::record_key record) override {
       const auto family_found = working_.find(family.name);
       if (family_found == working_.end()) {
          co_return std::nullopt;
@@ -127,8 +125,7 @@ class memory_session final : public forge::db::core::session {
    }
 
    boost::asio::awaitable<std::optional<std::vector<std::byte>>>
-   get_for_update(forge::db::core::family family,
-                  forge::db::core::record_key record) override {
+   get_for_update(forge::db::core::family family, forge::db::core::record_key record) override {
       if (!record_lock_owned_) {
          const auto executor = co_await boost::asio::this_coro::executor;
          auto waiter = std::make_shared<memory_state::lock_waiter>(executor);
@@ -145,13 +142,11 @@ class memory_session final : public forge::db::core::session {
 
          if (!record_lock_owned_) {
             auto error = boost::system::error_code{};
-            co_await waiter->timer.async_wait(
-               boost::asio::redirect_error(boost::asio::use_awaitable, error));
+            co_await waiter->timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
             {
                auto lock = std::scoped_lock{state_->mutex};
                if (!waiter->granted) {
-                  throw boost::system::system_error{
-                     error ? error : boost::asio::error::operation_aborted};
+                  throw boost::system::system_error{error ? error : boost::asio::error::operation_aborted};
                }
                record_lock_owned_ = true;
                working_ = state_->records;
@@ -161,24 +156,20 @@ class memory_session final : public forge::db::core::session {
       co_return co_await get(std::move(family), std::move(record));
    }
 
-   boost::asio::awaitable<void>
-   put(forge::db::core::family family,
-       forge::db::core::record_key record,
-       std::vector<std::byte> value) override {
+   boost::asio::awaitable<void> put(forge::db::core::family family, forge::db::core::record_key record,
+                                    std::vector<std::byte> value) override {
       working_[family.name][std::move(record)] = std::move(value);
       co_return;
    }
 
-   boost::asio::awaitable<void>
-   erase(forge::db::core::family family, forge::db::core::record_key record) override {
+   boost::asio::awaitable<void> erase(forge::db::core::family family, forge::db::core::record_key record) override {
       working_[family.name].erase(record);
       co_return;
    }
 
-   boost::asio::awaitable<forge::db::core::record_page>
-   scan_page(forge::db::core::family family,
-             forge::db::core::record_range range,
-             forge::db::core::page_request request) override {
+   boost::asio::awaitable<forge::db::core::record_page> scan_page(forge::db::core::family family,
+                                                                  forge::db::core::record_range range,
+                                                                  forge::db::core::page_request request) override {
       forge::db::core::validate_page_request(request);
       auto result = forge::db::core::record_page{};
       const auto family_found = working_.find(family.name);
@@ -186,10 +177,8 @@ class memory_session final : public forge::db::core::session {
          co_return result;
       }
 
-      auto current = family_found->second.lower_bound(
-         request.after ? request.after->boundary : range.begin);
-      if (request.after && current != family_found->second.end() &&
-          current->first == request.after->boundary) {
+      auto current = family_found->second.lower_bound(request.after ? request.after->boundary : range.begin);
+      if (request.after && current != family_found->second.end() && current->first == request.after->boundary) {
          ++current;
       }
 
@@ -206,8 +195,7 @@ class memory_session final : public forge::db::core::session {
             break;
          }
       }
-      if (last && current != family_found->second.end() &&
-          starts_with(current->first, range.prefix) &&
+      if (last && current != family_found->second.end() && starts_with(current->first, range.prefix) &&
           (!range.has_end || current->first.bytes() < range.end.bytes())) {
          result.next = forge::db::core::cursor{.boundary = *last};
       }
@@ -295,13 +283,11 @@ class memory_driver final : public forge::db::core::driver {
    }
 
  private:
-   boost::asio::awaitable<std::unique_ptr<forge::db::core::session>>
-   open_transaction() override {
+   boost::asio::awaitable<std::unique_ptr<forge::db::core::session>> open_transaction() override {
       co_return std::make_unique<memory_session>(state_, false, true);
    }
 
-   boost::asio::awaitable<std::unique_ptr<forge::db::core::session>>
-   open_snapshot() override {
+   boost::asio::awaitable<std::unique_ptr<forge::db::core::session>> open_snapshot() override {
       co_return std::make_unique<memory_session>(state_, true, false);
    }
 
@@ -315,30 +301,27 @@ struct environment {
 };
 
 boost::asio::awaitable<environment>
-open_environment(std::shared_ptr<memory_state> state = std::make_shared<memory_state>()) {
+open_environment(std::shared_ptr<memory_state> state = std::make_shared<memory_state>(),
+                 forge::db::object::store::options object_options = {}) {
    auto driver = std::make_shared<memory_driver>(std::move(state));
-   auto objects = co_await forge::db::object::store::open(driver);
+   auto objects = co_await forge::db::object::store::open(driver, object_options);
    auto revisions = co_await forge::db::revision::store::open(driver, objects);
    co_return environment{
-      .driver = std::move(driver),
-      .objects = std::move(objects),
-      .revisions = std::move(revisions),
+       .driver = std::move(driver),
+       .objects = std::move(objects),
+       .revisions = std::move(revisions),
    };
 }
 
-boost::asio::awaitable<std::optional<std::vector<std::byte>>>
-read_record(const std::shared_ptr<memory_driver>& driver,
-            forge::db::core::family family,
-            forge::db::core::record_key record) {
+boost::asio::awaitable<std::optional<std::vector<std::byte>>> read_record(const std::shared_ptr<memory_driver>& driver,
+                                                                          forge::db::core::family family,
+                                                                          forge::db::core::record_key record) {
    auto read = co_await driver->begin_read();
    co_return co_await read.get(std::move(family), std::move(record));
 }
 
-boost::asio::awaitable<void>
-seed_record(const std::shared_ptr<memory_driver>& driver,
-            forge::db::core::family family,
-            forge::db::core::record_key record,
-            std::vector<std::byte> value) {
+boost::asio::awaitable<void> seed_record(const std::shared_ptr<memory_driver>& driver, forge::db::core::family family,
+                                         forge::db::core::record_key record, std::vector<std::byte> value) {
    auto active = co_await driver->begin_transaction();
    co_await active.put(std::move(family), std::move(record), std::move(value));
    co_await active.commit();
@@ -363,12 +346,9 @@ struct account : forge::db::object::object<account, 1, 1> {
 BOOST_DESCRIBE_STRUCT(account, (forge::db::object::object<account, 1, 1>), (name))
 
 using account_object = forge::db::object::object_index<
-   account,
-   forge::db::object::indexed_by<
-      forge::db::object::primary_unique<account_by_id>,
-      forge::db::object::ordered_unique<
-         account_by_name,
-         forge::db::object::member<&account::name>>>>;
+    account, forge::db::object::indexed_by<
+                 forge::db::object::primary_unique<account_by_id>,
+                 forge::db::object::ordered_unique<account_by_name, forge::db::object::member<&account::name>>>>;
 
 struct usage : forge::db::object::object<usage, 1, 2> {
    std::uint32_t state = 0;
@@ -379,22 +359,17 @@ struct usage : forge::db::object::object<usage, 1, 2> {
 
 BOOST_DESCRIBE_STRUCT(usage, (forge::db::object::object<usage, 1, 2>), (state, bytes))
 
-using usage_sum = forge::db::object::sum<
-   usage_bytes, forge::db::object::member<&usage::bytes>>;
+using usage_sum = forge::db::object::sum<usage_bytes, forge::db::object::member<&usage::bytes>>;
 
 using usage_object = forge::db::object::object_index<
-   usage,
-   forge::db::object::indexed_by<
-      forge::db::object::ranked_primary_unique<
-         usage_by_id, forge::db::object::ranked_schema<1>, usage_sum>,
-      forge::db::object::ranked_non_unique<
-         usage_by_state, forge::db::object::member<&usage::state>,
-         forge::db::object::ranked_schema<1>, usage_sum>>>;
+    usage, forge::db::object::indexed_by<
+               forge::db::object::ranked_primary_unique<usage_by_id, forge::db::object::ranked_schema<1>, usage_sum>,
+               forge::db::object::ranked_non_unique<usage_by_state, forge::db::object::member<&usage::state>,
+                                                    forge::db::object::ranked_schema<1>, usage_sum>>>;
 
 class counting_observer final : public forge::db::object::observer {
  public:
-   boost::asio::awaitable<void>
-   after_commit(const forge::db::object::change_set& changes) override {
+   boost::asio::awaitable<void> after_commit(const forge::db::object::change_set& changes) override {
       ++calls;
       mutation_count += changes.mutations.size();
       co_return;
@@ -441,8 +416,7 @@ BOOST_AUTO_TEST_CASE(db_revision_commits_before_images_and_reverts_only_current_
       BOOST_CHECK_EQUAL(current.next_revision, 3U);
 
       auto stale = co_await env.driver->begin_transaction();
-      BOOST_CHECK_THROW(co_await env.revisions.revert(stale, 1U),
-                        forge::db::revision::exceptions::stale_head);
+      BOOST_CHECK_THROW(co_await env.revisions.revert(stale, 1U), forge::db::revision::exceptions::stale_head);
       co_await stale.rollback();
 
       auto revert = co_await env.driver->begin_transaction();
@@ -502,19 +476,19 @@ BOOST_AUTO_TEST_CASE(db_revision_serializes_concurrent_candidates_and_rechecks_l
       auto second_error = std::exception_ptr{};
       const auto executor = co_await boost::asio::this_coro::executor;
       boost::asio::co_spawn(
-         executor,
-         [&]() -> boost::asio::awaitable<void> {
-            try {
-               auto second = co_await env.revisions.begin_transaction();
-               second_id = second.id();
-               co_await second.rollback();
-            } catch (...) {
-               second_error = std::current_exception();
-            }
-            second_done.store(true, std::memory_order_release);
-            co_return;
-         },
-         boost::asio::detached);
+          executor,
+          [&]() -> boost::asio::awaitable<void> {
+             try {
+                auto second = co_await env.revisions.begin_transaction();
+                second_id = second.id();
+                co_await second.rollback();
+             } catch (...) {
+                second_error = std::current_exception();
+             }
+             second_done.store(true, std::memory_order_release);
+             co_return;
+          },
+          boost::asio::detached);
 
       auto wait = boost::asio::steady_timer{executor};
       for (auto attempt = 0; attempt < 50; ++attempt) {
@@ -529,9 +503,7 @@ BOOST_AUTO_TEST_CASE(db_revision_serializes_concurrent_candidates_and_rechecks_l
 
       co_await first.commit();
 
-      for (auto attempt = 0;
-           attempt < 200 && !second_done.load(std::memory_order_acquire);
-           ++attempt) {
+      for (auto attempt = 0; attempt < 200 && !second_done.load(std::memory_order_acquire); ++attempt) {
          wait.expires_after(std::chrono::milliseconds{1});
          co_await wait.async_wait(boost::asio::use_awaitable);
       }
@@ -552,8 +524,7 @@ BOOST_AUTO_TEST_CASE(db_revision_join_reserves_object_writer_lane_before_locking
       auto first = co_await env.driver->begin_transaction();
       const auto revision = co_await env.revisions.join(first);
       BOOST_CHECK_EQUAL(revision.id(), 1U);
-      BOOST_CHECK_THROW(co_await env.revisions.join(first),
-                        forge::db::revision::exceptions::unsupported_operation);
+      BOOST_CHECK_THROW(co_await env.revisions.join(first), forge::db::revision::exceptions::unsupported_operation);
 
       auto second = co_await env.driver->begin_transaction();
       auto second_objects = std::optional<forge::db::object::transaction>{};
@@ -561,32 +532,27 @@ BOOST_AUTO_TEST_CASE(db_revision_join_reserves_object_writer_lane_before_locking
       auto second_joined = std::atomic_bool{false};
       const auto executor = co_await boost::asio::this_coro::executor;
       boost::asio::co_spawn(
-         executor,
-         [&]() -> boost::asio::awaitable<void> {
-            try {
-               second_objects.emplace(co_await env.objects.join(second));
-            } catch (...) {
-               second_error = std::current_exception();
-            }
-            second_joined.store(true, std::memory_order_release);
-            co_return;
-         },
-         boost::asio::detached);
+          executor,
+          [&]() -> boost::asio::awaitable<void> {
+             try {
+                second_objects.emplace(co_await env.objects.join(second));
+             } catch (...) {
+                second_error = std::current_exception();
+             }
+             second_joined.store(true, std::memory_order_release);
+             co_return;
+          },
+          boost::asio::detached);
 
       auto timer = boost::asio::steady_timer{executor};
-      for (auto attempt = 0;
-           attempt < 50 && !second_joined.load(std::memory_order_acquire);
-           ++attempt) {
+      for (auto attempt = 0; attempt < 50 && !second_joined.load(std::memory_order_acquire); ++attempt) {
          timer.expires_after(std::chrono::milliseconds{1});
          co_await timer.async_wait(boost::asio::use_awaitable);
       }
-      const auto joined_before_revision_closed =
-         second_joined.load(std::memory_order_acquire);
+      const auto joined_before_revision_closed = second_joined.load(std::memory_order_acquire);
 
       co_await first.rollback();
-      for (auto attempt = 0;
-           attempt < 500 && !second_joined.load(std::memory_order_acquire);
-           ++attempt) {
+      for (auto attempt = 0; attempt < 500 && !second_joined.load(std::memory_order_acquire); ++attempt) {
          timer.expires_after(std::chrono::milliseconds{1});
          co_await timer.async_wait(boost::asio::use_awaitable);
       }
@@ -614,7 +580,7 @@ BOOST_AUTO_TEST_CASE(db_revision_core_join_reuses_existing_object_writer_lane) {
 
       BOOST_CHECK_EQUAL(revision.id(), 1U);
       const auto created = co_await objects.create<db_revision_tests::account>(
-         [](db_revision_tests::account& value) { value.name = "joined-first"; });
+          [](db_revision_tests::account& value) { value.name = "joined-first"; });
       co_await active.commit();
 
       const auto stored = co_await env.objects.get(created.id);
@@ -628,18 +594,15 @@ BOOST_AUTO_TEST_CASE(db_revision_core_join_does_not_reuse_non_object_family_owne
 
    forge::asio::blocking::run(runtime, [&]() -> boost::asio::awaitable<void> {
       auto env = co_await open_environment();
-      auto blobs = forge::db::blob::store{
-         env.driver,
-         forge::db::blob::store::config{
-            .data_family = env.objects.family(),
-            .refs_family = forge::db::core::family{"blob.refs"},
-         }};
+      auto blobs = forge::db::blob::store{env.driver, forge::db::blob::store::config{
+                                                          .data_family = env.objects.family(),
+                                                          .refs_family = forge::db::core::family{"blob.refs"},
+                                                      }};
 
       auto active = co_await env.driver->begin_transaction();
       auto blob_tx = blobs.join(active);
       static_cast<void>(blob_tx);
-      BOOST_CHECK_THROW(co_await env.revisions.join(active),
-                        forge::db::core::exceptions::participant_conflict);
+      BOOST_CHECK_THROW(co_await env.revisions.join(active), forge::db::core::exceptions::participant_conflict);
       co_await active.rollback();
       co_return;
    }());
@@ -698,15 +661,13 @@ BOOST_AUTO_TEST_CASE(db_revision_revert_rejects_corrupt_journal_before_applicati
 
       auto corrupt = co_await env.driver->begin_transaction();
       co_await corrupt.put(
-         env.objects.family(),
-         forge::db::object::system::access::record_key(
-            forge::db::revision::entry::id_t{1U}.as_object_id()),
-         bytes("not-a-valid-entry"));
+          env.objects.family(),
+          forge::db::object::system::access::record_key(forge::db::revision::entry::id_t{1U}.as_object_id()),
+          bytes("not-a-valid-entry"));
       co_await corrupt.commit();
 
       auto revert = co_await env.driver->begin_transaction();
-      BOOST_CHECK_THROW(co_await env.revisions.revert(revert, 1U),
-                        forge::db::revision::exceptions::corrupt_state);
+      BOOST_CHECK_THROW(co_await env.revisions.revert(revert, 1U), forge::db::revision::exceptions::corrupt_state);
       co_await revert.rollback();
 
       const auto still_committed = co_await read_record(env.driver, records, key("item"));
@@ -724,14 +685,13 @@ BOOST_AUTO_TEST_CASE(db_revision_prune_is_bounded_and_removes_only_complete_revi
       const auto records = forge::db::core::family{"records"};
       for (auto id = 1U; id <= 3U; ++id) {
          auto revision = co_await env.revisions.begin_transaction();
-         co_await revision.db_transaction().put(
-            records, key("item-" + std::to_string(id)), bytes("value"));
+         co_await revision.db_transaction().put(records, key("item-" + std::to_string(id)), bytes("value"));
          co_await revision.commit();
       }
 
       auto first_batch = co_await env.driver->begin_transaction();
-      const auto first = co_await env.revisions.prune_through(
-         first_batch, 2U, {.max_revisions = 1U, .max_deltas = 10U});
+      const auto first =
+          co_await env.revisions.prune_through(first_batch, 2U, {.max_revisions = 1U, .max_deltas = 10U});
       BOOST_CHECK_EQUAL(first.revisions_pruned, 1U);
       BOOST_CHECK_EQUAL(first.deltas_pruned, 1U);
       BOOST_CHECK(!first.complete);
@@ -741,8 +701,8 @@ BOOST_AUTO_TEST_CASE(db_revision_prune_is_bounded_and_removes_only_complete_revi
       BOOST_CHECK((co_await env.objects.find(forge::db::revision::entry::id_t{2U})).has_value());
 
       auto second_batch = co_await env.driver->begin_transaction();
-      const auto second = co_await env.revisions.prune_through(
-         second_batch, 2U, {.max_revisions = 1U, .max_deltas = 10U});
+      const auto second =
+          co_await env.revisions.prune_through(second_batch, 2U, {.max_revisions = 1U, .max_deltas = 10U});
       BOOST_CHECK_EQUAL(second.revisions_pruned, 1U);
       BOOST_CHECK(second.complete);
       co_await second_batch.commit();
@@ -780,15 +740,15 @@ BOOST_AUTO_TEST_CASE(db_revision_prune_skips_committed_ids_removed_by_revert) {
       co_await head.commit();
 
       auto first_batch = co_await env.driver->begin_transaction();
-      const auto first_result = co_await env.revisions.prune_through(
-         first_batch, third.id(), {.max_revisions = 1U, .max_deltas = 1U});
+      const auto first_result =
+          co_await env.revisions.prune_through(first_batch, third.id(), {.max_revisions = 1U, .max_deltas = 1U});
       BOOST_CHECK_EQUAL(first_result.revisions_pruned, 1U);
       BOOST_CHECK(!first_result.complete);
       co_await first_batch.commit();
 
       auto second_batch = co_await env.driver->begin_transaction();
-      const auto second_result = co_await env.revisions.prune_through(
-         second_batch, third.id(), {.max_revisions = 1U, .max_deltas = 1U});
+      const auto second_result =
+          co_await env.revisions.prune_through(second_batch, third.id(), {.max_revisions = 1U, .max_deltas = 1U});
       BOOST_CHECK_EQUAL(second_result.revisions_pruned, 1U);
       BOOST_CHECK(second_result.complete);
       co_await second_batch.commit();
@@ -816,8 +776,8 @@ BOOST_AUTO_TEST_CASE(db_revision_cannot_revert_pruned_head_baseline) {
       co_await head.commit();
 
       auto prune = co_await env.driver->begin_transaction();
-      const auto pruned = co_await env.revisions.prune_through(
-         prune, baseline.id(), {.max_revisions = 1U, .max_deltas = 1U});
+      const auto pruned =
+          co_await env.revisions.prune_through(prune, baseline.id(), {.max_revisions = 1U, .max_deltas = 1U});
       BOOST_CHECK(pruned.complete);
       co_await prune.commit();
 
@@ -826,9 +786,8 @@ BOOST_AUTO_TEST_CASE(db_revision_cannot_revert_pruned_head_baseline) {
       co_await revert_head.commit();
 
       auto revert_baseline = co_await env.driver->begin_transaction();
-      BOOST_CHECK_THROW(
-         co_await env.revisions.revert(revert_baseline, baseline.id()),
-         forge::db::revision::exceptions::revision_pruned);
+      BOOST_CHECK_THROW(co_await env.revisions.revert(revert_baseline, baseline.id()),
+                        forge::db::revision::exceptions::revision_pruned);
       co_await revert_baseline.rollback();
       co_return;
    }());
@@ -848,10 +807,8 @@ BOOST_AUTO_TEST_CASE(db_revision_prune_rejects_too_small_delta_batch_without_mut
       co_await second.commit();
 
       auto prune = co_await env.driver->begin_transaction();
-      BOOST_CHECK_THROW(
-         co_await env.revisions.prune_through(
-            prune, 1U, {.max_revisions = 1U, .max_deltas = 1U}),
-         forge::db::revision::exceptions::prune_limit_too_small);
+      BOOST_CHECK_THROW(co_await env.revisions.prune_through(prune, 1U, {.max_revisions = 1U, .max_deltas = 1U}),
+                        forge::db::revision::exceptions::prune_limit_too_small);
       co_await prune.rollback();
 
       const auto current = co_await env.objects.get(forge::db::revision::state_id);
@@ -905,7 +862,7 @@ BOOST_AUTO_TEST_CASE(db_revision_coexists_with_independent_object_and_blob_parti
       auto blob_tx = blobs.join(active);
 
       const auto created = co_await objects.create<db_revision_tests::account>(
-         [](db_revision_tests::account& value) { value.name = "shared"; });
+          [](db_revision_tests::account& value) { value.name = "shared"; });
       const auto payload = co_await blob_tx.put(bytes("payload"));
       co_await active.commit();
 
@@ -928,8 +885,7 @@ BOOST_AUTO_TEST_CASE(db_revision_rejects_blob_payload_deletion_for_any_join_orde
       auto blob_tx = blobs.join(active);
       auto revision = co_await env.revisions.join(active);
       BOOST_CHECK_EQUAL(revision.id(), 1U);
-      BOOST_CHECK_THROW(co_await blob_tx.erase(value),
-                        forge::db::core::exceptions::mutation_forbidden);
+      BOOST_CHECK_THROW(co_await blob_tx.erase(value), forge::db::core::exceptions::mutation_forbidden);
       co_await active.rollback();
       BOOST_CHECK(co_await blobs.has(value));
       co_return;
@@ -975,35 +931,64 @@ BOOST_AUTO_TEST_CASE(db_revision_reverts_generated_object_without_reusing_id_or_
       auto objects = co_await env.objects.join(active);
       auto revision = co_await env.revisions.join(objects);
       const auto created = co_await objects.create<db_revision_tests::account>(
-         [](db_revision_tests::account& value) { value.name = "alice"; });
+          [](db_revision_tests::account& value) { value.name = "alice"; });
       BOOST_CHECK_EQUAL(created.id.instance, 0U);
       co_await active.commit();
 
       BOOST_CHECK_EQUAL(observer->calls, 1U);
       BOOST_CHECK_EQUAL(observer->mutation_count, 1U);
       BOOST_CHECK_EQUAL((co_await env.objects.get(created.id)).name, "alice");
-      BOOST_REQUIRE((co_await env.objects
-                        .index<db_revision_tests::account_object,
-                               db_revision_tests::account_by_name>()
-                        .find("alice"))
-                       .has_value());
+      BOOST_REQUIRE(
+          (co_await env.objects.index<db_revision_tests::account_object, db_revision_tests::account_by_name>().find(
+               "alice"))
+              .has_value());
 
       auto revert = co_await env.driver->begin_transaction();
       co_await env.revisions.revert(revert, revision.id());
       co_await revert.commit();
 
       BOOST_CHECK(!(co_await env.objects.find(created.id)).has_value());
-      BOOST_CHECK(!(co_await env.objects
-                       .index<db_revision_tests::account_object,
-                              db_revision_tests::account_by_name>()
-                       .find("alice"))
-                      .has_value());
+      BOOST_CHECK(
+          !(co_await env.objects.index<db_revision_tests::account_object, db_revision_tests::account_by_name>().find(
+                "alice"))
+               .has_value());
       BOOST_CHECK_EQUAL(observer->calls, 1U);
 
       const auto next = co_await env.objects.create<db_revision_tests::account>(
-         [](db_revision_tests::account& value) { value.name = "bob"; });
+          [](db_revision_tests::account& value) { value.name = "bob"; });
       BOOST_CHECK_EQUAL(next.id.instance, 1U);
       BOOST_CHECK_EQUAL(observer->calls, 2U);
+      co_return;
+   }());
+}
+
+BOOST_AUTO_TEST_CASE(db_revision_revert_restores_transactional_object_id_sequence) {
+   auto runtime = forge::asio::runtime{};
+
+   forge::asio::blocking::run(runtime, [&]() -> boost::asio::awaitable<void> {
+      const auto options = forge::db::object::store::options{
+          .writes = forge::db::object::write_policy::single_writer,
+          .id_allocation = forge::db::object::id_allocation_policy::transactional,
+      };
+      auto env = co_await open_environment(std::make_shared<memory_state>(), options);
+      env.objects.register_object<db_revision_tests::account_object>();
+
+      auto active = co_await env.driver->begin_transaction();
+      auto objects = co_await env.objects.join(active);
+      auto revision = co_await env.revisions.join(objects);
+      const auto created = co_await objects.create<db_revision_tests::account>(
+          [](db_revision_tests::account& value) { value.name = "alice"; });
+      BOOST_CHECK_EQUAL(created.id.instance, 0U);
+      co_await active.commit();
+
+      auto revert = co_await env.driver->begin_transaction();
+      co_await env.revisions.revert(revert, revision.id());
+      co_await revert.commit();
+
+      const auto replacement = co_await env.objects.create<db_revision_tests::account>(
+          [](db_revision_tests::account& value) { value.name = "bob"; });
+      BOOST_CHECK_EQUAL(replacement.id.instance, 0U);
+      BOOST_CHECK_EQUAL((co_await env.objects.get(replacement.id)).name, "bob");
       co_return;
    }());
 }
@@ -1037,8 +1022,7 @@ BOOST_AUTO_TEST_CASE(db_revision_revert_restores_ranked_positions_and_aggregates
       co_await objects.insert(added);
       co_await active.commit();
 
-      auto current = env.objects.index<
-         db_revision_tests::usage_object, db_revision_tests::usage_by_state>();
+      auto current = env.objects.index<db_revision_tests::usage_object, db_revision_tests::usage_by_state>();
       BOOST_CHECK_EQUAL(co_await current.count(), 2U);
       BOOST_CHECK_EQUAL(co_await current.sum<db_revision_tests::usage_bytes>(), 35U);
       BOOST_CHECK_EQUAL((co_await current.nth(0))->id.instance, 2U);
@@ -1067,9 +1051,8 @@ BOOST_AUTO_TEST_CASE(db_revision_requires_record_lock_capability) {
       state->record_locks = false;
       auto driver = std::make_shared<memory_driver>(state);
       auto objects = co_await forge::db::object::store::open(driver);
-      BOOST_CHECK_THROW(
-         co_await forge::db::revision::store::open(driver, objects),
-         forge::db::revision::exceptions::unsupported_operation);
+      BOOST_CHECK_THROW(co_await forge::db::revision::store::open(driver, objects),
+                        forge::db::revision::exceptions::unsupported_operation);
       co_return;
    }());
 }

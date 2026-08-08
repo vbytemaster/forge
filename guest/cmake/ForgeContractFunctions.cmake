@@ -35,6 +35,45 @@ function(forge_add_contract_project target)
       message(FATAL_ERROR "forge_add_contract_project target already exists: ${target}")
    endif()
 
+   set(_contract_package_dir "${CMAKE_CURRENT_FUNCTION_LIST_DIR}")
+   set(_contract_prefix "${ForgeContract_PREFIX}")
+   set(_contract_toolchain "${ForgeContract_TOOLCHAIN}")
+   if(ForgeContract_DIR)
+      get_filename_component(
+         _contract_package_dir "${ForgeContract_DIR}" REALPATH
+         BASE_DIR "${CMAKE_CURRENT_BINARY_DIR}"
+      )
+      if(NOT _contract_prefix)
+         if(NOT EXISTS "${_contract_package_dir}/ForgeContractPaths.cmake")
+            message(
+               FATAL_ERROR
+               "ForgeContract package does not expose relocatable SDK paths: "
+               "${_contract_package_dir}/ForgeContractPaths.cmake"
+            )
+         endif()
+         include("${_contract_package_dir}/ForgeContractPaths.cmake")
+         set(_contract_prefix "${ForgeContract_PREFIX}")
+      endif()
+      if(NOT _contract_toolchain)
+         set(
+            _contract_toolchain
+            "${_contract_package_dir}/ForgeContractToolchain.cmake"
+         )
+      endif()
+   endif()
+   if(NOT EXISTS "${_contract_package_dir}/ForgeContractConfig.cmake")
+      message(
+         FATAL_ERROR
+         "forge_add_contract_project requires an installed ForgeContract_DIR"
+      )
+   endif()
+   if(NOT EXISTS "${_contract_toolchain}")
+      message(
+         FATAL_ERROR
+         "Forge Contract toolchain does not exist: ${_contract_toolchain}"
+      )
+   endif()
+
    get_filename_component(
       _source_dir "${ARG_SOURCE_DIR}" ABSOLUTE
       BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -74,7 +113,7 @@ function(forge_add_contract_project target)
       set(_artifact_dir "${_artifact_root}")
    endif()
    set(_prefix_path ${CMAKE_PREFIX_PATH})
-   list(APPEND _prefix_path "${ForgeContract_PREFIX}")
+   list(APPEND _prefix_path "${_contract_prefix}")
    list(REMOVE_DUPLICATES _prefix_path)
    string(REPLACE ";" "|" _prefix_path "${_prefix_path}")
 
@@ -91,8 +130,8 @@ function(forge_add_contract_project target)
       LIST_SEPARATOR "|"
       CMAKE_ARGS
          "-DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}"
-         "-DCMAKE_TOOLCHAIN_FILE:FILEPATH=${ForgeContract_TOOLCHAIN}"
-         "-DForgeContract_DIR:PATH=${CMAKE_CURRENT_FUNCTION_LIST_DIR}"
+         "-DCMAKE_TOOLCHAIN_FILE:FILEPATH=${_contract_toolchain}"
+         "-DForgeContract_DIR:PATH=${_contract_package_dir}"
          "-DCMAKE_PREFIX_PATH:PATH=${_prefix_path}"
          "-DFORGE_CONTRACT_ARTIFACT_DIR:PATH=${_artifact_root}"
          "-DFORGE_CONTRACT_SOURCE_ROOT:PATH=${_source_root}"
@@ -111,6 +150,7 @@ function(forge_add_contract_project target)
          FORGE_CONTRACT_WASM_FILE "${_artifact_dir}/${ARG_CONTRACT}.wasm"
          FORGE_CONTRACT_ABI_FILE "${_artifact_dir}/${ARG_CONTRACT}.abi"
          FORGE_CONTRACT_MANIFEST_FILE "${_artifact_dir}/${ARG_CONTRACT}.contract.json"
+         FORGE_CONTRACT_SDK_PREFIX "${_contract_prefix}"
    )
    foreach(_configuration IN LISTS CMAKE_CONFIGURATION_TYPES)
       string(TOUPPER "${_configuration}" _configuration_upper)

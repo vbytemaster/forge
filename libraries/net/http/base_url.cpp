@@ -1,12 +1,15 @@
 module;
 
-#include <stdexcept>
 #include <string>
 #include <string_view>
+
+#include <forge/exceptions/macros.hpp>
 
 #include <boost/url.hpp>
 
 module forge.net.http.base_url;
+
+import forge.net.http.exceptions;
 
 namespace forge::net::http {
 
@@ -46,7 +49,7 @@ std::string base_url::make_target(std::string_view path) const {
 base_url parse_base_url(std::string_view value) {
    const auto parsed = boost::urls::parse_uri(value);
    if (!parsed.has_value()) {
-      throw std::invalid_argument{"invalid HTTP base URL"};
+      FORGE_THROW_EXCEPTION(exceptions::bad_request, "invalid HTTP base URL");
    }
 
    const auto& uri = parsed.value();
@@ -59,10 +62,10 @@ base_url parse_base_url(std::string_view value) {
    };
 
    if (result.scheme != "http" && result.scheme != "https" && result.scheme != "ws" && result.scheme != "wss") {
-      throw std::invalid_argument{"unsupported HTTP base URL scheme"};
+      FORGE_THROW_EXCEPTION(exceptions::bad_request, "unsupported HTTP base URL scheme");
    }
    if (result.host.empty()) {
-      throw std::invalid_argument{"HTTP base URL host must not be empty"};
+      FORGE_THROW_EXCEPTION(exceptions::bad_request, "HTTP base URL host must not be empty");
    }
    if (result.port.empty()) {
       result.port = result.secure() ? "443" : "80";

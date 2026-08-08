@@ -4,11 +4,12 @@ module;
 #include <algorithm>
 #include <coroutine>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include <forge/exceptions/macros.hpp>
 
 #include <boost/asio/awaitable.hpp>
 
@@ -149,8 +150,8 @@ std::optional<std::string> header_value(const response& value, field name) {
 
 stream_transfer_framing capture_stream_transfer_framing(const response& value) {
    return stream_transfer_framing{
-      .content_length = header_value(value, field::content_length),
-      .transfer_encoding = header_value(value, field::transfer_encoding),
+       .content_length = header_value(value, field::content_length),
+       .transfer_encoding = header_value(value, field::transfer_encoding),
    };
 }
 
@@ -180,7 +181,7 @@ response make_exception_response(const request& request, const forge::exceptions
 
 std::vector<std::string> split_route_path(const std::string& path) {
    if (path.empty() || path.front() != '/') {
-      throw std::invalid_argument{"route path must start with /"};
+      FORGE_THROW_EXCEPTION(exceptions::bad_request, "route path must start with /");
    }
    if (path == "/") {
       return {};
@@ -210,21 +211,23 @@ bool method_path_exists(const std::vector<Entry>& entries, method verb, const ta
    return false;
 }
 
-bool path_prefix_matches(const std::string& prefix, const target& parsed_target) {
-   if (prefix.empty() || prefix == "/") {
+bool path_prefix_matches(const std::vector<std::string>& prefix, bool trailing_slash, const target& parsed_target) {
+   if (prefix.empty()) {
       return true;
    }
-   if (!parsed_target.path.starts_with(prefix)) {
+   if (parsed_target.segments.size() < prefix.size() ||
+       !std::equal(prefix.begin(), prefix.end(), parsed_target.segments.begin())) {
       return false;
    }
-   return parsed_target.path.size() == prefix.size() || prefix.back() == '/' || parsed_target.path[prefix.size()] == '/';
+   return !trailing_slash || parsed_target.segments.size() > prefix.size() || parsed_target.path.ends_with('/');
 }
 
-middleware_list matching_middlewares(const std::vector<middleware_descriptor>& middlewares, const target& parsed_target) {
+template <typename Entry>
+middleware_list matching_middlewares(const std::vector<Entry>& middlewares, const target& parsed_target) {
    auto result = middleware_list{};
-   for (const auto& descriptor : middlewares) {
-      if (path_prefix_matches(descriptor.path_prefix, parsed_target)) {
-         result.push_back(descriptor.handler);
+   for (const auto& entry : middlewares) {
+      if (path_prefix_matches(entry.path_segments, entry.trailing_slash, parsed_target)) {
+         result.push_back(entry.descriptor.handler);
       }
    }
    return result;
@@ -252,20 +255,33 @@ void router::use(middleware_descriptor descriptor) {
    if (descriptor.path_prefix.empty()) {
       descriptor.path_prefix = "/";
    }
+   const auto prefix = parse_target(descriptor.path_prefix);
+   if (!prefix.query.empty()) {
+      throw exceptions::bad_request{"HTTP middleware path prefix must not contain a query"};
+   }
+   auto prefix_segments = prefix.segments;
+   const auto trailing_slash = prefix.path.size() > 1U && prefix.path.ends_with('/');
+   if (trailing_slash && !prefix_segments.empty() && prefix_segments.back().empty()) {
+      prefix_segments.pop_back();
+   }
    for (const auto& existing : middlewares_) {
-      if (existing.id == descriptor.id) {
+      if (existing.descriptor.id == descriptor.id) {
          throw exceptions::conflict{"duplicate HTTP middleware id"};
       }
    }
-   middlewares_.push_back(std::move(descriptor));
+   middlewares_.push_back(middleware_entry{
+       .descriptor = std::move(descriptor),
+       .path_segments = std::move(prefix_segments),
+       .trailing_slash = trailing_slash,
+   });
    std::sort(middlewares_.begin(), middlewares_.end(), [](const auto& left, const auto& right) {
-      if (left.phase != right.phase) {
-         return static_cast<int>(left.phase) < static_cast<int>(right.phase);
+      if (left.descriptor.phase != right.descriptor.phase) {
+         return static_cast<int>(left.descriptor.phase) < static_cast<int>(right.descriptor.phase);
       }
-      if (left.order != right.order) {
-         return left.order < right.order;
+      if (left.descriptor.order != right.descriptor.order) {
+         return left.descriptor.order < right.descriptor.order;
       }
-      return left.id < right.id;
+      return left.descriptor.id < right.descriptor.id;
    });
 }
 
@@ -400,20 +416,21 @@ boost::asio::awaitable<stream_response> router::handle_stream(stream_request& re
             auto result = std::optional<stream_response>{};
             auto framing = stream_transfer_framing{};
             auto stream_state = stream_pass_through_state{};
-            auto head = co_await run_middleware_chain(
-               matching_middlewares(middlewares_, context.parsed_target), context,
-               [&request, &route, &result, &framing, &stream_state](route_context&) -> boost::asio::awaitable<response> {
-                  result = co_await route.handler(request);
-                  framing = capture_stream_transfer_framing(result->head);
-                  stream_state = mark_stream_pass_through(result->head);
-                  co_return std::move(result->head);
-               });
+            auto head =
+                co_await run_middleware_chain(matching_middlewares(middlewares_, context.parsed_target), context,
+                                              [&request, &route, &result, &framing,
+                                               &stream_state](route_context&) -> boost::asio::awaitable<response> {
+                                                 result = co_await route.handler(request);
+                                                 framing = capture_stream_transfer_framing(result->head);
+                                                 stream_state = mark_stream_pass_through(result->head);
+                                                 co_return std::move(result->head);
+                                              });
             if (!result.has_value()) {
                clear_stream_pass_through(head);
                co_return stream_response::buffered(std::move(head));
             }
             const auto preserve_stream_body =
-               static_cast<bool>(result->body) && is_stream_pass_through(head, stream_state) && head.body().empty();
+                static_cast<bool>(result->body) && is_stream_pass_through(head, stream_state) && head.body().empty();
             clear_stream_pass_through(head);
             if (!preserve_stream_body) {
                co_return stream_response::buffered(std::move(head));
@@ -428,27 +445,27 @@ boost::asio::awaitable<stream_response> router::handle_stream(stream_request& re
 
       if (path_exists(stream_routes_, context.parsed_target)) {
          co_return stream_response::buffered(
-            make_text_response(context.request, status::method_not_allowed, "method not allowed"));
+             make_text_response(context.request, status::method_not_allowed, "method not allowed"));
       }
       co_return stream_response::buffered(make_text_response(context.request, status::not_found, "not found"));
    } catch (const forge::exceptions::base& error) {
       co_return stream_response::buffered(make_exception_response(context.request, error));
    } catch (const std::exception&) {
-      co_return stream_response::buffered(make_text_response(context.request, status::internal_server_error,
-                                                            encode_error_payload(forge::api::core::error_payload{
-                                                                .error = "internal",
-                                                                .message = "internal error",
-                                                                .identity =
-                                                                    {
-                                                                        .category = "forge.net.http",
-                                                                        .code = static_cast<std::uint32_t>(
-                                                                           status::internal_server_error),
-                                                                    },
-                                                            }),
-                                                            "application/json"));
+      co_return stream_response::buffered(
+          make_text_response(context.request, status::internal_server_error,
+                             encode_error_payload(forge::api::core::error_payload{
+                                 .error = "internal",
+                                 .message = "internal error",
+                                 .identity =
+                                     {
+                                         .category = "forge.net.http",
+                                         .code = static_cast<std::uint32_t>(status::internal_server_error),
+                                     },
+                             }),
+                             "application/json"));
    } catch (...) {
       co_return stream_response::buffered(
-         make_text_response(context.request, status::internal_server_error, "internal server error"));
+          make_text_response(context.request, status::internal_server_error, "internal server error"));
    }
 }
 

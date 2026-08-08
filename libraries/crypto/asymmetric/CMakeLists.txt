@@ -22,6 +22,7 @@ add_library(
    p256.cpp
    private_key_impl.cpp
    rsa.cpp
+   serialization.cpp
    secp256k1.cpp
    secp256k1_backend.cpp
    secp256k1_common.cpp

@@ -622,22 +622,4 @@ void from_variant(const variant& var, private_key& vo) {
    vo = encoding::forge().parse_private(var.as_string());
 }
 
-void to_variant(const public_key& var, variant& vo, const forge::yield_function_t& yield) {
-   yield();
-   vo = encoding::forge().format(var);
-}
-
-void from_variant(const variant& var, public_key& vo) {
-   vo = encoding::forge().parse_public(var.as_string());
-}
-
-void to_variant(const signature& var, variant& vo, const forge::yield_function_t& yield) {
-   yield();
-   vo = encoding::forge().format(var);
-}
-
-void from_variant(const variant& var, signature& vo) {
-   vo = encoding::forge().parse_signature(var.as_string());
-}
-
 } // namespace forge::crypto::asymmetric

@@ -1,0 +1,6 @@
+get_filename_component(
+   ForgeContract_PREFIX
+   "${CMAKE_CURRENT_LIST_DIR}/@FORGE_CONTRACT_PREFIX_FROM_CONFIG_DIR@"
+   ABSOLUTE
+)
+set(ForgeContract_TOOLCHAIN "${CMAKE_CURRENT_LIST_DIR}/ForgeContractToolchain.cmake")

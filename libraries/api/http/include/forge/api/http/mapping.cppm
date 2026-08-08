@@ -19,6 +19,7 @@ export module forge.api.http.mapping;
 import forge.api.core.connection;
 import forge.api.core.descriptor;
 import forge.api.core.types;
+import forge.codec.json;
 import forge.api.http.parameters;
 import forge.net.http.exceptions;
 import forge.net.http.negotiation;
@@ -40,6 +41,11 @@ enum class error_codec {
    xml,
 };
 
+enum class cache_policy {
+   unspecified,
+   no_store,
+};
+
 struct field_binding {
    std::string field;
    std::string name;
@@ -58,6 +64,8 @@ struct route {
    body_codec request_body_codec = body_codec::json;
    body_codec response_body_codec = body_codec::json;
    error_codec error_body_codec = error_codec::json;
+   cache_policy cache = cache_policy::unspecified;
+   std::optional<std::string> timeout_field;
 };
 
 class route_builder {
@@ -93,6 +101,11 @@ class route_builder {
       return std::move(*this);
    }
 
+   route_builder&& success_status(status value) && {
+      route_.success_status = value;
+      return std::move(*this);
+   }
+
    route_builder&& request_body_codec(body_codec value) && {
       route_.request_body_codec = value;
       return std::move(*this);
@@ -105,6 +118,16 @@ class route_builder {
 
    route_builder&& error_body_codec(error_codec value) && {
       route_.error_body_codec = value;
+      return std::move(*this);
+   }
+
+   route_builder&& cache(cache_policy value) && {
+      route_.cache = value;
+      return std::move(*this);
+   }
+
+   route_builder&& timeout(std::string field) && {
+      route_.timeout_field = std::move(field);
       return std::move(*this);
    }
 
@@ -124,6 +147,11 @@ struct parsed_route {
 template <typename Interface> struct traits;
 
 namespace detail {
+
+[[noreturn]] inline void throw_positional_proxy_not_supported() {
+   FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
+                         "HTTP positional proxy requires forge::api remote proxy");
+}
 
 using ::forge::api::http::detail::is_body;
 using ::forge::api::http::detail::is_body_bytes_v;
@@ -149,13 +177,13 @@ using ::forge::api::http::detail::response_needs_stream_v;
 
 [[nodiscard]] inline std::span<const forge::net::http::media_type_match> media_types(body_codec codec) noexcept {
    static constexpr auto json = std::array{
-      forge::net::http::media_type_match{.type = "application/json", .structured_suffix = {}},
-      forge::net::http::media_type_match{.type = {}, .structured_suffix = "+json"},
+       forge::net::http::media_type_match{.type = "application/json", .structured_suffix = {}},
+       forge::net::http::media_type_match{.type = {}, .structured_suffix = "+json"},
    };
    static constexpr auto xml = std::array{
-      forge::net::http::media_type_match{.type = "application/xml", .structured_suffix = {}},
-      forge::net::http::media_type_match{.type = "text/xml", .structured_suffix = {}},
-      forge::net::http::media_type_match{.type = {}, .structured_suffix = "+xml"},
+       forge::net::http::media_type_match{.type = "application/xml", .structured_suffix = {}},
+       forge::net::http::media_type_match{.type = "text/xml", .structured_suffix = {}},
+       forge::net::http::media_type_match{.type = {}, .structured_suffix = "+xml"},
    };
    switch (codec) {
    case body_codec::json:
@@ -166,12 +194,13 @@ using ::forge::api::http::detail::response_needs_stream_v;
    return {};
 }
 
-[[nodiscard]] inline std::span<const forge::net::http::media_type_match> response_media_types(body_codec codec) noexcept {
+[[nodiscard]] inline std::span<const forge::net::http::media_type_match>
+response_media_types(body_codec codec) noexcept {
    static constexpr auto json = std::array{
-      forge::net::http::media_type_match{.type = "application/json", .structured_suffix = {}},
+       forge::net::http::media_type_match{.type = "application/json", .structured_suffix = {}},
    };
    static constexpr auto xml = std::array{
-      forge::net::http::media_type_match{.type = "application/xml", .structured_suffix = {}},
+       forge::net::http::media_type_match{.type = "application/xml", .structured_suffix = {}},
    };
    switch (codec) {
    case body_codec::json:
@@ -212,8 +241,16 @@ using ::forge::api::http::detail::response_needs_stream_v;
 
 template <auto Method, typename Request>
 inline constexpr auto is_positional_http_method_v =
-   forge::api::core::method_argument_count_v<Method> != 1U ||
-   !forge::reflect::is_described_object_v<std::remove_cvref_t<Request>>;
+    forge::api::core::method_argument_count_v<Method> != 1U ||
+    !forge::reflect::is_described_object_v<std::remove_cvref_t<Request>>;
+
+template <typename T> struct optional_field : std::false_type {};
+template <typename T> struct optional_field<std::optional<T>> : std::true_type {
+   using value_type = T;
+};
+
+template <typename T> struct byte_vector_field : std::false_type {};
+template <typename Allocator> struct byte_vector_field<std::vector<std::uint8_t, Allocator>> : std::true_type {};
 
 [[nodiscard]] inline bool unreserved(char value) noexcept {
    const auto ch = static_cast<unsigned char>(value);
@@ -247,7 +284,12 @@ inline constexpr auto is_positional_http_method_v =
 
 template <typename T> [[nodiscard]] std::optional<std::string> format_http_field(const T& value) {
    using clean = std::remove_cvref_t<T>;
-   if constexpr (detail::is_header<clean>::value) {
+   if constexpr (optional_field<clean>::value) {
+      if (!value.has_value()) {
+         return std::nullopt;
+      }
+      return format_http_field(*value);
+   } else if constexpr (detail::is_header<clean>::value) {
       if (!value.present) {
          return std::nullopt;
       }
@@ -277,6 +319,9 @@ template <typename T> [[nodiscard]] std::optional<std::string> format_http_field
          return std::nullopt;
       }
       return format_http_field(value.value);
+   } else if constexpr (byte_vector_field<clean>::value) {
+      auto encoded = forge::codec::json::write(value);
+      return encoded.ok() ? std::optional<std::string>{std::move(encoded.text)} : std::nullopt;
    } else {
       return forge::schema::format_scalar_text(value);
    }
@@ -300,7 +345,7 @@ template <typename Request>
    auto value = request_field_text(request, name);
    if (!value.has_value()) {
       FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request, "HTTP API route field is not available",
-                          forge::exceptions::ctx("field", std::string{name}));
+                            forge::exceptions::ctx("field", std::string{name}));
    }
    return *value;
 }
@@ -326,13 +371,13 @@ template <typename Request>
          if (segment.find('{') != std::string_view::npos || segment.find('}') != std::string_view::npos) {
             if (segment.size() <= 2U || segment.front() != '{' || segment.back() != '}') {
                FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
-                                   "HTTP API path placeholders must occupy a complete segment");
+                                     "HTTP API path placeholders must occupy a complete segment");
             }
             const auto name = segment.substr(1U, segment.size() - 2U);
             for (const auto value : name) {
                if (std::isalnum(static_cast<unsigned char>(value)) == 0 && value != '_') {
                   FORGE_THROW_EXCEPTION(forge::net::http::exceptions::bad_request,
-                                      "HTTP API path placeholder name is invalid");
+                                        "HTTP API path placeholder name is invalid");
                }
             }
             output.push_back(':');
@@ -363,8 +408,8 @@ template <typename Request>
       if (equals != std::string_view::npos && equals + 2U <= part.size() && part[equals + 1U] == '{' &&
           part.back() == '}') {
          parsed.query.push_back(field_binding{
-            .field = std::string{part.substr(equals + 2U, part.size() - equals - 3U)},
-            .name = std::string{part.substr(0, equals)},
+             .field = std::string{part.substr(equals + 2U, part.size() - equals - 3U)},
+             .name = std::string{part.substr(0, equals)},
          });
       }
       if (separator == std::string_view::npos) {
@@ -376,15 +421,17 @@ template <typename Request>
 }
 
 template <typename Request> [[nodiscard]] std::string render_route_target(const route& route, const Request& request) {
+   const auto query_start = route.target.find('?');
+   const auto path = std::string_view{route.target}.substr(0, query_start);
    auto output = std::string{};
    output.reserve(route.target.size() + 32U);
 
-   for (auto index = std::size_t{0}; index != route.target.size();) {
-      const auto current = route.target[index];
+   for (auto index = std::size_t{0}; index != path.size();) {
+      const auto current = path[index];
       if (current == ':') {
          auto end = index + 1U;
-         while (end != route.target.size()) {
-            const auto value = route.target[end];
+         while (end != path.size()) {
+            const auto value = path[end];
             if (std::isalnum(static_cast<unsigned char>(value)) == 0 && value != '_') {
                break;
             }
@@ -395,17 +442,14 @@ template <typename Request> [[nodiscard]] std::string render_route_target(const 
             ++index;
             continue;
          }
-         output += encode_path_segment(require_request_field(request, std::string_view{route.target}.substr(index + 1U,
-                                                                                                            end - index - 1U)));
+         output += encode_path_segment(require_request_field(request, path.substr(index + 1U, end - index - 1U)));
          index = end;
          continue;
       }
       if (current == '{') {
-         const auto end = route.target.find('}', index + 1U);
-         if (end != std::string::npos) {
-            output += encode_query_component(require_request_field(request,
-                                                                   std::string_view{route.target}.substr(index + 1U,
-                                                                                                         end - index - 1U)));
+         const auto end = path.find('}', index + 1U);
+         if (end != std::string_view::npos) {
+            output += encode_path_segment(require_request_field(request, path.substr(index + 1U, end - index - 1U)));
             index = end + 1U;
             continue;
          }
@@ -413,18 +457,50 @@ template <typename Request> [[nodiscard]] std::string render_route_target(const 
       output.push_back(current);
       ++index;
    }
+
+   if (query_start == std::string::npos) {
+      return output;
+   }
+
+   auto query = std::string_view{route.target}.substr(query_start + 1U);
+   auto separator = '?';
+   for (auto offset = std::size_t{0}; offset <= query.size();) {
+      const auto next = query.find('&', offset);
+      const auto end = next == std::string_view::npos ? query.size() : next;
+      const auto part = query.substr(offset, end - offset);
+      const auto equals = part.find('=');
+      if (equals != std::string_view::npos && equals + 2U <= part.size() && part[equals + 1U] == '{' &&
+          part.back() == '}') {
+         const auto field = part.substr(equals + 2U, part.size() - equals - 3U);
+         if (const auto value = request_field_text(request, field); value.has_value()) {
+            output.push_back(separator);
+            output.append(part.substr(0, equals + 1U));
+            output += encode_query_component(*value);
+            separator = '&';
+         }
+      } else if (!part.empty()) {
+         output.push_back(separator);
+         output.append(part);
+         separator = '&';
+      }
+      if (next == std::string_view::npos) {
+         break;
+      }
+      offset = next + 1U;
+   }
    return output;
 }
 
 [[nodiscard]] inline std::vector<route> validate_routes(const forge::api::core::descriptor& descriptor,
-                                                            std::vector<route> routes) {
+                                                        std::vector<route> routes) {
    for (const auto& route : routes) {
       if (route.method_name.empty()) {
          FORGE_THROW_EXCEPTION(forge::api::core::exceptions::method_not_found, "HTTP API route method is empty");
       }
       if (forge::api::core::find_method(descriptor, route.method_name) == nullptr) {
-         FORGE_THROW_EXCEPTION(forge::api::core::exceptions::method_not_found, "HTTP API route method is not in descriptor",
-                             forge::exceptions::ctx("method", route.method_name));
+         FORGE_THROW_EXCEPTION(forge::api::core::exceptions::method_not_found,
+                               "HTTP API route method is not in descriptor",
+                               forge::exceptions::ctx("method", route.method_name));
       }
       static_cast<void>(parse_route_template(route.target));
    }

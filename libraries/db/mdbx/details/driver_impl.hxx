@@ -21,6 +21,7 @@ class driver_impl final : public std::enable_shared_from_this<driver_impl> {
    boost::asio::awaitable<std::unique_ptr<forge::db::core::session>>
    open_transaction();
    std::unique_ptr<forge::db::core::session> open_snapshot();
+   boost::asio::awaitable<void> create_checkpoint(std::string destination);
    boost::asio::awaitable<void> flush(bool sync);
    boost::asio::awaitable<void> close();
    boost::asio::awaitable<void> shutdown_managed_lane();

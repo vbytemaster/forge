@@ -15,12 +15,12 @@ module;
 
 module forge.db.mdbx.driver;
 
+import :error;
 import forge.db.core.record;
 import forge.db.core.exceptions;
 import forge.db.mdbx.exceptions;
 
 #include "details/environment.hxx"
-#include "details/error.hxx"
 
 namespace forge::db::mdbx::detail {
 namespace {

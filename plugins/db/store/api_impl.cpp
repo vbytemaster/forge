@@ -41,14 +41,12 @@ boost::asio::awaitable<store_handle> plugin::api_impl::store(std::string name) {
 }
 
 boost::asio::awaitable<void> plugin::api_impl::flush(std::string name, bool sync) {
-   auto state = std::make_shared<store_handle_state_impl>(owner_, std::move(name));
-   co_await state->require_driver()->async_flush(sync);
+   co_await owner_->require_started_store(name).driver->async_flush(sync);
 }
 
 boost::asio::awaitable<void> plugin::api_impl::flush_all(bool sync) {
    for (const auto& item : owner_->current_status().stores) {
-      auto state = std::make_shared<store_handle_state_impl>(owner_, item.name);
-      co_await state->require_driver()->async_flush(sync);
+      co_await owner_->require_started_store(item.name).driver->async_flush(sync);
    }
 }
 

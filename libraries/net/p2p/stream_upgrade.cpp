@@ -637,6 +637,8 @@ template <typename Connection> boost::asio::awaitable<void> negotiate_yamux(Conn
       return exceptions::code::peer_verification_failed;
    case stcp_kind::canceled:
       return exceptions::code::canceled;
+   case stcp_kind::timeout:
+      return exceptions::code::timeout;
    case stcp_kind::closed:
       return exceptions::code::closed;
    }

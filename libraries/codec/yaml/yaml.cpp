@@ -3,6 +3,7 @@ module;
 #include <glaze/glaze.hpp>
 #include <glaze/yaml/read.hpp>
 #include <glaze/yaml/write.hpp>
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <exception>
@@ -86,6 +87,26 @@ template <class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 [[nodiscard]] config::core::value to_config_value(const codec_value& input);
 [[nodiscard]] codec_value from_variant_value(const variant& input);
 [[nodiscard]] codec_value from_config_value(const config::core::value& input);
+
+[[nodiscard]] bool contains_empty_mapping(const codec_value& input) {
+   return std::visit(
+       overloaded{
+           [](std::nullptr_t) { return false; },
+           [](std::uint64_t) { return false; },
+           [](std::int64_t) { return false; },
+           [](double) { return false; },
+           [](const std::string&) { return false; },
+           [](bool) { return false; },
+           [](const codec_value::array_t& value) {
+              return std::ranges::any_of(value, [](const auto& entry) { return contains_empty_mapping(entry); });
+           },
+           [](const codec_value::object_t& value) {
+              return value.empty() ||
+                     std::ranges::any_of(value, [](const auto& entry) { return contains_empty_mapping(entry.second); });
+           },
+       },
+       input.data);
+}
 
 [[nodiscard]] variant to_variant_value(const codec_value& input) {
    return std::visit(overloaded{
@@ -274,8 +295,11 @@ template <class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
    }
 
    auto text = std::string{};
-   const auto error = options.flow_style ? glz::write<yaml_write_flow_options>(input, text)
-                                         : glz::write<yaml_write_block_options>(input, text);
+   // Glaze 7.5 cannot emit an empty mapping held by generic_json in block
+   // context. Flow style preserves the exact value tree, including nested {}.
+   const auto use_flow_style = options.flow_style || contains_empty_mapping(input);
+   const auto error = use_flow_style ? glz::write<yaml_write_flow_options>(input, text)
+                                     : glz::write<yaml_write_block_options>(input, text);
    if (error) {
       result.diagnostics.push_back(make_error({}, "yaml.write", glz::format_error(error, text)));
       return result;

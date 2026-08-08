@@ -50,22 +50,21 @@ namespace {
 }
 
 [[nodiscard]] frame make_api_not_exported_response(const frame& request) {
-   return make_error_response(
-       request, error_payload{
-                    .error = "api_not_exported",
-                    .message = "API is not exported by this binding plan",
-                    .retryable = false,
-                    .status_code = status::permission_denied,
-                    .identity =
-                        {
-                            .category = "forge.api",
-                            .code = static_cast<std::uint32_t>(exceptions::code::incompatible_version),
-                        },
-                });
+   return make_error_response(request,
+                              error_payload{
+                                  .error = "api_not_exported",
+                                  .message = "API is not exported by this binding plan",
+                                  .retryable = false,
+                                  .status_code = status::permission_denied,
+                                  .identity =
+                                      {
+                                          .category = "forge.api",
+                                          .code = static_cast<std::uint32_t>(exceptions::code::incompatible_version),
+                                      },
+                              });
 }
 
-[[nodiscard]] const descriptor* find_export(const std::vector<descriptor>& exports,
-                                            const api_ref& requested) noexcept {
+[[nodiscard]] const descriptor* find_export(const std::vector<descriptor>& exports, const api_ref& requested) noexcept {
    for (const auto& available : exports) {
       if (compatible(available, requested)) {
          return &available;
@@ -115,11 +114,11 @@ void validate_interceptors(const std::vector<interceptor_step>& interceptors) {
       }
       if (!step.handler) {
          FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API interceptor handler must not be empty",
-                             forge::exceptions::ctx("interceptor", step.id));
+                               forge::exceptions::ctx("interceptor", step.id));
       }
       if (!ids.insert(step.id).second) {
          FORGE_THROW_EXCEPTION(exceptions::protocol_error, "duplicate API interceptor id",
-                             forge::exceptions::ctx("interceptor", step.id));
+                               forge::exceptions::ctx("interceptor", step.id));
       }
    }
 }
@@ -165,27 +164,36 @@ void call_runtime::observe(const frame& value) {
    if (value.kind == frame_kind::request) {
       if (active_.contains(id)) {
          FORGE_THROW_EXCEPTION(exceptions::protocol_error, "duplicate active API call_id",
-                             forge::exceptions::ctx("call_id", id));
+                               forge::exceptions::ctx("call_id", id));
       }
       if (active_.size() >= options_.max_inflight) {
          FORGE_THROW_EXCEPTION(exceptions::resource_exhausted, "API max inflight calls exceeded",
-                             forge::exceptions::ctx("max_inflight", options_.max_inflight));
+                               forge::exceptions::ctx("max_inflight", options_.max_inflight));
       }
-      active_.emplace(id, active_call{.started_at = std::chrono::steady_clock::now()});
+      if (next_generation_ == 0) {
+         FORGE_THROW_EXCEPTION(exceptions::resource_exhausted, "API call generation space is exhausted");
+      }
+      active_.emplace(id,
+                      active_call{.started_at = std::chrono::steady_clock::now(), .generation = next_generation_++});
       return;
    }
 
    const auto active = active_.find(id);
    if (active == active_.end()) {
       FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API frame references unknown call_id",
-                          forge::exceptions::ctx("call_id", id));
+                            forge::exceptions::ctx("call_id", id));
+   }
+
+   if (value.kind == frame_kind::cancel) {
+      active_.erase(active);
+      return;
    }
 
    if (options_.deadline.count() > 0 &&
        std::chrono::steady_clock::now() - active->second.started_at > options_.deadline) {
       active_.erase(active);
       FORGE_THROW_EXCEPTION(exceptions::deadline_exceeded, "API call deadline exceeded",
-                          forge::exceptions::ctx("call_id", id));
+                            forge::exceptions::ctx("call_id", id));
    }
 
    if (terminal(value.kind)) {
@@ -193,10 +201,32 @@ void call_runtime::observe(const frame& value) {
    }
 }
 
+call_runtime::generation_token call_runtime::current(call_id id) const {
+   const auto active = active_.find(id.value);
+   if (active == active_.end()) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API call generation references an inactive call_id",
+                            forge::exceptions::ctx("call_id", id.value));
+   }
+   return {.id = id, .generation = active->second.generation};
+}
+
+void call_runtime::observe(const frame& value, generation_token expected) {
+   if (value.id != expected.id) {
+      FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API response call_id does not match its dispatch generation",
+                            forge::exceptions::ctx("call_id", value.id.value),
+                            forge::exceptions::ctx("expected_call_id", expected.id.value));
+   }
+   const auto active = active_.find(value.id.value);
+   if (active == active_.end() || active->second.generation != expected.generation) {
+      return;
+   }
+   observe(value);
+}
+
 void call_runtime::observe_input_stream_end(const frame& value) {
    if (value.kind != frame_kind::stream_end) {
       FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API input stream end observer received non-terminal frame",
-                          forge::exceptions::ctx("call_id", value.id.value));
+                            forge::exceptions::ctx("call_id", value.id.value));
    }
 
    const auto id = value.id.value;
@@ -207,14 +237,14 @@ void call_runtime::observe_input_stream_end(const frame& value) {
    const auto active = active_.find(id);
    if (active == active_.end()) {
       FORGE_THROW_EXCEPTION(exceptions::protocol_error, "API frame references unknown call_id",
-                          forge::exceptions::ctx("call_id", id));
+                            forge::exceptions::ctx("call_id", id));
    }
 
    if (options_.deadline.count() > 0 &&
        std::chrono::steady_clock::now() - active->second.started_at > options_.deadline) {
       active_.erase(active);
       FORGE_THROW_EXCEPTION(exceptions::deadline_exceeded, "API call deadline exceeded",
-                          forge::exceptions::ctx("call_id", id));
+                            forge::exceptions::ctx("call_id", id));
    }
 }
 
@@ -250,6 +280,7 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_many(frame req
    }
 
    calls.observe(request);
+   const auto generation = calls.current(request.id);
 
    auto context = make_context(request);
    for (const auto& step : interceptors) {
@@ -265,13 +296,12 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_many(frame req
    for (auto& response : responses) {
       auto response_context = make_context(response);
       for (const auto& step : interceptors) {
-         if (step.handler &&
-             ((response.kind == frame_kind::error && step.phase == interceptor_phase::error) ||
-              (response.kind != frame_kind::error && step.phase == interceptor_phase::after_call))) {
+         if (step.handler && ((response.kind == frame_kind::error && step.phase == interceptor_phase::error) ||
+                              (response.kind != frame_kind::error && step.phase == interceptor_phase::after_call))) {
             co_await step.handler(response_context);
          }
       }
-      calls.observe(response);
+      calls.observe(response, generation);
    }
 
    co_return responses;
@@ -294,7 +324,8 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::ve
        method_hidden_by_export(*this, frames.front().api, frames.front().method)) {
       auto response = make_api_not_exported_response(frames.front());
       if (calls.active(frames.front().id)) {
-         calls.observe(response);
+         const auto generation = calls.current(frames.front().id);
+         calls.observe(response, generation);
       }
       co_return std::vector<frame>{std::move(response)};
    }
@@ -302,6 +333,7 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::ve
    if (!calls.active(frames.front().id)) {
       calls.observe(frames.front());
    }
+   const auto generation = calls.current(frames.front().id);
    for (auto index = std::size_t{1}; index != frames.size(); ++index) {
       const auto& frame_value = frames[index];
       if (index + 1U == frames.size() && frame_value.kind == frame_kind::stream_end) {
@@ -325,13 +357,12 @@ boost::asio::awaitable<std::vector<frame>> binding_plan::dispatch_stream(std::ve
    for (auto& response : responses) {
       auto response_context = make_context(response);
       for (const auto& step : interceptors) {
-         if (step.handler &&
-             ((response.kind == frame_kind::error && step.phase == interceptor_phase::error) ||
-              (response.kind != frame_kind::error && step.phase == interceptor_phase::after_call))) {
+         if (step.handler && ((response.kind == frame_kind::error && step.phase == interceptor_phase::error) ||
+                              (response.kind != frame_kind::error && step.phase == interceptor_phase::after_call))) {
             co_await step.handler(response_context);
          }
       }
-      calls.observe(response);
+      calls.observe(response, generation);
    }
 
    co_return responses;
@@ -362,4 +393,4 @@ binding_builder binding() {
    return binding_builder{};
 }
 
-} // namespace forge::api
+} // namespace forge::api::core

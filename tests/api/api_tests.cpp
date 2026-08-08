@@ -103,13 +103,12 @@ template <typename Stream> Stream& operator>>(Stream& stream, chunk& value) {
 
 } // namespace protocol
 
-template <typename T>
-forge::api::core::bytes pack_api_payload(const T& value) {
+template <typename T> forge::api::core::bytes pack_api_payload(const T& value) {
    return forge::api::core::pack_body(value);
 }
 
-class cache_api
-    : public forge::api::core::contract<cache_api, forge::api::core::surface::local | forge::api::core::surface::remote> {
+class cache_api : public forge::api::core::contract<cache_api, forge::api::core::surface::local |
+                                                                   forge::api::core::surface::remote> {
  public:
    virtual ~cache_api() = default;
 
@@ -121,8 +120,8 @@ class cache_api
 };
 
 FORGE_API(cache_api, FORGE_API_CONTRACT("cache", 1, 8), FORGE_API_METHOD(read),
-        FORGE_API_METHOD_DEPRECATED(read_old, "use read"), FORGE_API_METHOD_SINCE(watch, 2),
-        FORGE_API_METHOD_SINCE(upload, 3), FORGE_API_METHOD_SINCE(sync, 4))
+          FORGE_API_METHOD_DEPRECATED(read_old, "use read"), FORGE_API_METHOD_SINCE(watch, 2),
+          FORGE_API_METHOD_SINCE(upload, 3), FORGE_API_METHOD_SINCE(sync, 4))
 
 class local_only_api : public forge::api::core::contract<local_only_api> {
  public:
@@ -197,10 +196,10 @@ class overloaded_api : public forge::api::core::contract<overloaded_api, forge::
 };
 
 FORGE_API(overloaded_api, FORGE_API_CONTRACT("overloaded", 1, 3),
-        FORGE_API_METHOD_TYPED(sign, protocol::read_chunk, protocol::chunk),
-        FORGE_API_METHOD_TYPED_SINCE(sign_since, protocol::read_chunk, protocol::chunk, 2),
-        FORGE_API_METHOD_TYPED_DEPRECATED(sign_old, protocol::read_chunk, protocol::chunk, "use sign"),
-        FORGE_API_METHOD_TYPED_DEPRECATED_SINCE(sign_old_since, protocol::read_chunk, protocol::chunk, 2, "use sign"))
+          FORGE_API_METHOD_TYPED(sign, protocol::read_chunk, protocol::chunk),
+          FORGE_API_METHOD_TYPED_SINCE(sign_since, protocol::read_chunk, protocol::chunk, 2),
+          FORGE_API_METHOD_TYPED_DEPRECATED(sign_old, protocol::read_chunk, protocol::chunk, "use sign"),
+          FORGE_API_METHOD_TYPED_DEPRECATED_SINCE(sign_old_since, protocol::read_chunk, protocol::chunk, 2, "use sign"))
 
 static_assert(forge::api::core::interface<cache_api>);
 static_assert(forge::api::core::local_interface<cache_api>);
@@ -217,8 +216,8 @@ static_assert(!forge::api::core::local_interface<remote_only_api>);
 static_assert(forge::api::core::remote_interface<remote_only_api>);
 static_assert(forge::api::core::remote_interface<overloaded_api>);
 
-class positional_api
-    : public forge::api::core::contract<positional_api, forge::api::core::surface::local | forge::api::core::surface::remote> {
+class positional_api : public forge::api::core::contract<positional_api, forge::api::core::surface::local |
+                                                                             forge::api::core::surface::remote> {
  public:
    virtual ~positional_api() = default;
 
@@ -227,10 +226,9 @@ class positional_api
    virtual boost::asio::awaitable<protocol::chunk> concat_old(std::string left, std::string right) = 0;
 };
 
-FORGE_API(positional_api, FORGE_API_CONTRACT("positional", 1, 2),
-        FORGE_API_METHOD(concat, left, right),
-        FORGE_API_METHOD_SINCE(concat_since, 2, left, right),
-        FORGE_API_METHOD_DEPRECATED(concat_old, "use concat", left, right))
+FORGE_API(positional_api, FORGE_API_CONTRACT("positional", 1, 2), FORGE_API_METHOD(concat, left, right),
+          FORGE_API_METHOD_SINCE(concat_since, 2, left, right),
+          FORGE_API_METHOD_DEPRECATED(concat_old, "use concat", left, right))
 
 static_assert(forge::api::core::interface<positional_api>);
 static_assert(forge::api::core::local_interface<positional_api>);
@@ -388,12 +386,9 @@ BOOST_AUTO_TEST_CASE(error_payload_raw_roundtrip) {
 
 BOOST_AUTO_TEST_CASE(frame_raw_roundtrip) {
    const auto kinds = std::vector<forge::api::core::frame_kind>{
-       forge::api::core::frame_kind::request,
-       forge::api::core::frame_kind::response,
-       forge::api::core::frame_kind::error,
-       forge::api::core::frame_kind::cancel,
-       forge::api::core::frame_kind::stream_item,
-       forge::api::core::frame_kind::stream_end,
+       forge::api::core::frame_kind::request,     forge::api::core::frame_kind::response,
+       forge::api::core::frame_kind::error,       forge::api::core::frame_kind::cancel,
+       forge::api::core::frame_kind::stream_item, forge::api::core::frame_kind::stream_end,
    };
 
    for (const auto kind : kinds) {
@@ -415,9 +410,10 @@ BOOST_AUTO_TEST_CASE(frame_raw_roundtrip) {
 }
 
 BOOST_AUTO_TEST_CASE(method_descriptor_records_stream_method_kind) {
-   auto descriptor = forge::api::core::define<cache_api>({.id = {"cache.streams"}, .version = {.major = 1, .revision = 0}})
-                         .server_stream<&cache_api::watch, protocol::read_chunk, protocol::chunk>("watch")
-                         .build();
+   auto descriptor =
+       forge::api::core::define<cache_api>({.id = {"cache.streams"}, .version = {.major = 1, .revision = 0}})
+           .server_stream<&cache_api::watch, protocol::read_chunk, protocol::chunk>("watch")
+           .build();
 
    const auto* method = forge::api::core::find_method(descriptor, "watch");
    BOOST_REQUIRE(method != nullptr);
@@ -432,7 +428,8 @@ class recording_invoker final : public forge::api::core::remote_invoker {
           .api = last.api,
           .method = last.method,
           .codec = last.codec,
-          .body = forge::api::core::pack_body(protocol::chunk{.bytes = "remote:" + forge::api::core::unpack_body<protocol::read_chunk>(last.body).ref}),
+          .body = forge::api::core::pack_body(
+              protocol::chunk{.bytes = "remote:" + forge::api::core::unpack_body<protocol::read_chunk>(last.body).ref}),
       };
    }
 
@@ -466,7 +463,8 @@ class recording_positional_invoker final : public forge::api::core::remote_invok
           .api = last.api,
           .method = last.method,
           .codec = last.codec,
-          .body = forge::api::core::pack_body(protocol::chunk{.bytes = "remote:" + std::get<0>(args) + ":" + std::get<1>(args)}),
+          .body = forge::api::core::pack_body(
+              protocol::chunk{.bytes = "remote:" + std::get<0>(args) + ":" + std::get<1>(args)}),
       };
    }
 
@@ -562,16 +560,15 @@ BOOST_AUTO_TEST_CASE(local_api_does_not_require_raw_serialization) {
    BOOST_TEST(response.value() == "local:payload");
 
    const auto wire_response = forge::asio::blocking::run(runtime, registry.dispatch(forge::api::core::frame{
-      .kind = forge::api::core::frame_kind::request,
-      .api = local_data_api::ref(),
-      .method = "transform",
-      .codec = {.value = "forge.raw"},
-   }));
+                                                                      .kind = forge::api::core::frame_kind::request,
+                                                                      .api = local_data_api::ref(),
+                                                                      .method = "transform",
+                                                                      .codec = {.value = "forge.raw"},
+                                                                  }));
    BOOST_CHECK(wire_response.kind == forge::api::core::frame_kind::error);
    const auto error = forge::raw::unpack<forge::api::core::error_payload>(wire_response.payload);
    BOOST_CHECK(error.status_code == forge::api::core::status::failed_precondition);
-   BOOST_TEST(error.identity.code ==
-              static_cast<std::uint32_t>(forge::api::core::exceptions::code::protocol_error));
+   BOOST_TEST(error.identity.code == static_cast<std::uint32_t>(forge::api::core::exceptions::code::protocol_error));
 }
 
 BOOST_AUTO_TEST_CASE(generated_proxy_invokes_remote_through_typed_handle) {
@@ -592,7 +589,8 @@ BOOST_AUTO_TEST_CASE(generated_proxy_invokes_remote_through_typed_handle) {
 BOOST_AUTO_TEST_CASE(generated_proxy_invokes_typed_overload_method) {
    auto runtime = forge::asio::runtime{};
    auto invoker = std::make_shared<recording_invoker>();
-   auto handle = forge::api::core::handle<overloaded_api>{std::make_shared<forge::api::core::proxy<overloaded_api>>(invoker)};
+   auto handle =
+       forge::api::core::handle<overloaded_api>{std::make_shared<forge::api::core::proxy<overloaded_api>>(invoker)};
 
    const auto response = forge::asio::blocking::run(runtime, handle->sign({.ref = "payload"}));
 
@@ -606,7 +604,8 @@ BOOST_AUTO_TEST_CASE(generated_proxy_invokes_typed_overload_method) {
 BOOST_AUTO_TEST_CASE(generated_proxy_invokes_positional_method) {
    auto runtime = forge::asio::runtime{};
    auto invoker = std::make_shared<recording_positional_invoker>();
-   auto handle = forge::api::core::handle<positional_api>{std::make_shared<forge::api::core::proxy<positional_api>>(invoker)};
+   auto handle =
+       forge::api::core::handle<positional_api>{std::make_shared<forge::api::core::proxy<positional_api>>(invoker)};
 
    const auto response = forge::asio::blocking::run(runtime, handle->concat("a", "b"));
 
@@ -658,8 +657,9 @@ BOOST_AUTO_TEST_CASE(binding_export_rejects_revision_above_implementation) {
    auto requested = cache_api::ref();
    ++requested.min_revision;
 
-   BOOST_CHECK_THROW(static_cast<void>(forge::api::core::binding().serve(registry).export_api<cache_api>(requested).build()),
-                     forge::api::core::exceptions::incompatible_version);
+   BOOST_CHECK_THROW(
+       static_cast<void>(forge::api::core::binding().serve(registry).export_api<cache_api>(requested).build()),
+       forge::api::core::exceptions::incompatible_version);
 }
 
 BOOST_AUTO_TEST_CASE(api_body_decode_rejects_trailing_bytes) {
@@ -671,10 +671,11 @@ BOOST_AUTO_TEST_CASE(api_body_decode_rejects_trailing_bytes) {
 }
 
 BOOST_AUTO_TEST_CASE(method_descriptor_records_client_and_bidirectional_stream_kinds) {
-   auto descriptor = forge::api::core::define<cache_api>({.id = {"cache.streams"}, .version = {.major = 1, .revision = 0}})
-                         .client_stream<&cache_api::upload, protocol::read_chunk, protocol::chunk>("upload")
-                         .bidirectional_stream<&cache_api::sync, protocol::read_chunk, protocol::chunk>("sync")
-                         .build();
+   auto descriptor =
+       forge::api::core::define<cache_api>({.id = {"cache.streams"}, .version = {.major = 1, .revision = 0}})
+           .client_stream<&cache_api::upload, protocol::read_chunk, protocol::chunk>("upload")
+           .bidirectional_stream<&cache_api::sync, protocol::read_chunk, protocol::chunk>("sync")
+           .build();
 
    const auto* upload = forge::api::core::find_method(descriptor, "upload");
    const auto* sync = forge::api::core::find_method(descriptor, "sync");
@@ -718,8 +719,8 @@ BOOST_AUTO_TEST_CASE(call_runtime_rejects_duplicate_unknown_and_post_terminal_fr
 }
 
 BOOST_AUTO_TEST_CASE(call_runtime_enforces_deadline_before_non_terminal_frames) {
-   auto calls =
-       forge::api::core::call_runtime{forge::api::core::call_runtime_options{.max_inflight = 1, .deadline = std::chrono::milliseconds{1}}};
+   auto calls = forge::api::core::call_runtime{
+       forge::api::core::call_runtime_options{.max_inflight = 1, .deadline = std::chrono::milliseconds{1}}};
    const auto request = forge::api::core::frame{
        .kind = forge::api::core::frame_kind::request,
        .id = {.value = 101},
@@ -806,18 +807,19 @@ BOOST_AUTO_TEST_CASE(binding_plan_interceptor_sees_request_payload) {
    registry.install<cache_api>(cache_api::describe(), std::make_shared<cache_impl>());
 
    auto observed = std::make_shared<std::string>();
-   auto plan = forge::api::core::binding()
-                   .serve(registry)
-                   .interceptor(forge::api::core::interceptor()
-                                    .id("payload")
-                                    .phase(forge::api::core::interceptor_phase::authorize)
-                                    .handler([observed](forge::api::core::call_context& context)
-                                                 -> boost::asio::awaitable<void> {
-                                       *observed = forge::raw::unpack<protocol::read_chunk>(context.payload).ref;
-                                       co_return;
-                                    })
-                                    .build())
-                   .build();
+   auto plan =
+       forge::api::core::binding()
+           .serve(registry)
+           .interceptor(
+               forge::api::core::interceptor()
+                   .id("payload")
+                   .phase(forge::api::core::interceptor_phase::authorize)
+                   .handler([observed](forge::api::core::call_context& context) -> boost::asio::awaitable<void> {
+                      *observed = forge::raw::unpack<protocol::read_chunk>(context.payload).ref;
+                      co_return;
+                   })
+                   .build())
+           .build();
 
    const auto request = forge::api::core::frame{
        .kind = forge::api::core::frame_kind::request,
@@ -999,25 +1001,23 @@ BOOST_AUTO_TEST_CASE(api_dispatcher_strips_reserved_metadata_before_interceptors
 
    auto observed_reserved = std::make_shared<std::string>();
    auto observed_public = std::make_shared<std::string>();
-   auto plan = forge::api::core::binding()
-                  .serve(registry)
-                  .interceptor(forge::api::core::interceptor()
-                                  .id("metadata")
-                                  .phase(forge::api::core::interceptor_phase::authorize)
-                                  .handler([observed_reserved, observed_public](
-                                              forge::api::core::call_context& context)
-                                               -> boost::asio::awaitable<void> {
-                                     *observed_reserved = forge::api::core::metadata_value(
-                                                             context.meta,
-                                                             forge::api::core::p2p_remote_peer_metadata_key)
-                                                             .value_or("missing");
-                                     *observed_public =
-                                        forge::api::core::metadata_value(context.meta, "x-client-trace")
-                                           .value_or("missing");
-                                     co_return;
-                                  })
-                                  .build())
-                  .build();
+   auto plan =
+       forge::api::core::binding()
+           .serve(registry)
+           .interceptor(forge::api::core::interceptor()
+                            .id("metadata")
+                            .phase(forge::api::core::interceptor_phase::authorize)
+                            .handler([observed_reserved, observed_public](
+                                         forge::api::core::call_context& context) -> boost::asio::awaitable<void> {
+                               *observed_reserved = forge::api::core::metadata_value(
+                                                        context.meta, forge::api::core::p2p_remote_peer_metadata_key)
+                                                        .value_or("missing");
+                               *observed_public =
+                                   forge::api::core::metadata_value(context.meta, "x-client-trace").value_or("missing");
+                               co_return;
+                            })
+                            .build())
+           .build();
    auto dispatcher = forge::api::core::frame_dispatcher{std::move(plan)};
    auto request = forge::api::core::frame{
        .kind = forge::api::core::frame_kind::request,
@@ -1025,10 +1025,10 @@ BOOST_AUTO_TEST_CASE(api_dispatcher_strips_reserved_metadata_before_interceptors
        .api = {.id = {"cache"}, .major = 1, .min_revision = 8},
        .method = "read",
        .meta =
-          {
-             {.key = std::string{forge::api::core::p2p_remote_peer_metadata_key}, .value = "spoofed"},
-             {.key = "x-client-trace", .value = "trace-1"},
-          },
+           {
+               {.key = std::string{forge::api::core::p2p_remote_peer_metadata_key}, .value = "spoofed"},
+               {.key = "x-client-trace", .value = "trace-1"},
+           },
        .codec = {.value = "forge.raw"},
        .payload = pack_api_payload(protocol::read_chunk{.ref = "metadata"}),
    };
@@ -1047,26 +1047,26 @@ BOOST_AUTO_TEST_CASE(api_dispatcher_injects_trusted_metadata_after_scrub) {
    registry.install<cache_api>(cache_api::describe(), std::make_shared<cache_impl>());
 
    auto observed = std::make_shared<std::string>();
-   auto plan = forge::api::core::binding()
-                  .serve(registry)
-                  .interceptor(forge::api::core::interceptor()
-                                  .id("trusted")
-                                  .phase(forge::api::core::interceptor_phase::authorize)
-                                  .handler([observed](forge::api::core::call_context& context)
-                                               -> boost::asio::awaitable<void> {
-                                     *observed = forge::api::core::metadata_value(
-                                                    context.meta,
-                                                    forge::api::core::p2p_remote_peer_metadata_key)
-                                                    .value_or("missing");
-                                     co_return;
-                                  })
-                                  .build())
-                  .build();
+   auto plan =
+       forge::api::core::binding()
+           .serve(registry)
+           .interceptor(
+               forge::api::core::interceptor()
+                   .id("trusted")
+                   .phase(forge::api::core::interceptor_phase::authorize)
+                   .handler([observed](forge::api::core::call_context& context) -> boost::asio::awaitable<void> {
+                      *observed =
+                          forge::api::core::metadata_value(context.meta, forge::api::core::p2p_remote_peer_metadata_key)
+                              .value_or("missing");
+                      co_return;
+                   })
+                   .build())
+           .build();
    auto dispatcher = forge::api::core::frame_dispatcher{
        std::move(plan),
        forge::api::core::dispatch_options{
-          .trusted_metadata =
-             {{.key = std::string{forge::api::core::p2p_remote_peer_metadata_key}, .value = "trusted"}},
+           .trusted_metadata = {{.key = std::string{forge::api::core::p2p_remote_peer_metadata_key},
+                                 .value = "trusted"}},
        },
    };
    auto request = forge::api::core::frame{
@@ -1095,26 +1095,26 @@ BOOST_AUTO_TEST_CASE(api_dispatcher_sanitizes_grouped_stream_metadata) {
    registry.install<cache_api>(std::move(descriptor), std::make_shared<cache_impl>());
 
    auto observed = std::make_shared<std::string>();
-   auto plan = forge::api::core::binding()
-                  .serve(registry)
-                  .interceptor(forge::api::core::interceptor()
-                                  .id("stream-metadata")
-                                  .phase(forge::api::core::interceptor_phase::authorize)
-                                  .handler([observed](forge::api::core::call_context& context)
-                                               -> boost::asio::awaitable<void> {
-                                     *observed = forge::api::core::metadata_value(
-                                                    context.meta,
-                                                    forge::api::core::p2p_remote_peer_metadata_key)
-                                                    .value_or("missing");
-                                     co_return;
-                                  })
-                                  .build())
-                  .build();
+   auto plan =
+       forge::api::core::binding()
+           .serve(registry)
+           .interceptor(
+               forge::api::core::interceptor()
+                   .id("stream-metadata")
+                   .phase(forge::api::core::interceptor_phase::authorize)
+                   .handler([observed](forge::api::core::call_context& context) -> boost::asio::awaitable<void> {
+                      *observed =
+                          forge::api::core::metadata_value(context.meta, forge::api::core::p2p_remote_peer_metadata_key)
+                              .value_or("missing");
+                      co_return;
+                   })
+                   .build())
+           .build();
    auto dispatcher = forge::api::core::frame_dispatcher{
        std::move(plan),
        forge::api::core::dispatch_options{
-          .trusted_metadata =
-             {{.key = std::string{forge::api::core::p2p_remote_peer_metadata_key}, .value = "trusted-stream"}},
+           .trusted_metadata = {{.key = std::string{forge::api::core::p2p_remote_peer_metadata_key},
+                                 .value = "trusted-stream"}},
        },
    };
    auto start = forge::api::core::frame{
@@ -1189,9 +1189,9 @@ BOOST_AUTO_TEST_CASE(binding_plan_releases_preobserved_grouped_call_on_export_de
    registry.install<cache_api>(std::move(descriptor), std::make_shared<tracking_cache_impl>(upload_calls));
 
    auto plan = forge::api::core::binding()
-                  .serve(registry)
-                  .export_api<remote_only_api>({.id = {"remote.only"}, .major = 1, .min_revision = 0})
-                  .build();
+                   .serve(registry)
+                   .export_api<remote_only_api>({.id = {"remote.only"}, .major = 1, .min_revision = 0})
+                   .build();
    auto calls = forge::api::core::call_runtime{forge::api::core::call_runtime_options{.max_inflight = 1}};
    auto start = forge::api::core::frame{
        .kind = forge::api::core::frame_kind::request,
@@ -1306,8 +1306,8 @@ BOOST_AUTO_TEST_CASE(binding_plan_dispatch_stream_honors_preobserved_runtime_dea
    auto end = start;
    end.kind = forge::api::core::frame_kind::stream_end;
 
-   auto calls =
-       forge::api::core::call_runtime{forge::api::core::call_runtime_options{.max_inflight = 1, .deadline = std::chrono::milliseconds{1}}};
+   auto calls = forge::api::core::call_runtime{
+       forge::api::core::call_runtime_options{.max_inflight = 1, .deadline = std::chrono::milliseconds{1}}};
    calls.observe(start);
    std::this_thread::sleep_for(std::chrono::milliseconds{3});
 
@@ -1335,8 +1335,8 @@ BOOST_AUTO_TEST_CASE(binding_plan_dispatch_stream_checks_terminal_stream_end_dea
    auto end = start;
    end.kind = forge::api::core::frame_kind::stream_end;
 
-   auto calls =
-       forge::api::core::call_runtime{forge::api::core::call_runtime_options{.max_inflight = 1, .deadline = std::chrono::milliseconds{1}}};
+   auto calls = forge::api::core::call_runtime{
+       forge::api::core::call_runtime_options{.max_inflight = 1, .deadline = std::chrono::milliseconds{1}}};
    calls.observe(start);
    std::this_thread::sleep_for(std::chrono::milliseconds{3});
 
@@ -1418,8 +1418,7 @@ BOOST_AUTO_TEST_CASE(descriptor_declared_exception_maps_to_error_payload) {
    BOOST_REQUIRE(method != nullptr);
 
    try {
-      FORGE_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found",
-                          forge::exceptions::ctx("ref", "bafk..."));
+      FORGE_THROW_EXCEPTION(cache_errors::chunk_not_found, "chunk not found", forge::exceptions::ctx("ref", "bafk..."));
    } catch (const forge::exceptions::base& error) {
       const auto payload = forge::api::core::project_error(*method, error);
 
@@ -1461,34 +1460,31 @@ BOOST_AUTO_TEST_CASE(registry_install_normalizes_custom_descriptor_surfaces) {
    auto registry = forge::api::core::registry{};
    auto generated = cache_api::describe();
    auto descriptor = forge::api::core::descriptor{
-      .id = {"cache.alias"},
-      .version = generated.version,
-      .methods = std::move(generated.methods),
+       .id = {"cache.alias"},
+       .version = generated.version,
+       .methods = std::move(generated.methods),
    };
-   BOOST_CHECK(!forge::api::core::supports(
-      descriptor.supported_surfaces, forge::api::core::surface::remote));
+   BOOST_CHECK(!forge::api::core::supports(descriptor.supported_surfaces, forge::api::core::surface::remote));
 
    registry.install<cache_api>(std::move(descriptor), std::make_shared<cache_impl>());
 
    const auto requested = forge::api::core::api_ref{
-      .id = {"cache.alias"},
-      .major = 1,
-      .min_revision = 8,
+       .id = {"cache.alias"},
+       .major = 1,
+       .min_revision = 8,
    };
    const auto* installed = registry.describe(requested);
    BOOST_REQUIRE(installed != nullptr);
-   BOOST_CHECK(forge::api::core::supports(
-      installed->supported_surfaces, forge::api::core::surface::local));
-   BOOST_CHECK(forge::api::core::supports(
-      installed->supported_surfaces, forge::api::core::surface::remote));
+   BOOST_CHECK(forge::api::core::supports(installed->supported_surfaces, forge::api::core::surface::local));
+   BOOST_CHECK(forge::api::core::supports(installed->supported_surfaces, forge::api::core::surface::remote));
 
    const auto request = forge::api::core::frame{
-      .kind = forge::api::core::frame_kind::request,
-      .id = {.value = 8},
-      .api = requested,
-      .method = "read",
-      .codec = {.value = "forge.raw"},
-      .payload = pack_api_payload(protocol::read_chunk{.ref = "alias"}),
+       .kind = forge::api::core::frame_kind::request,
+       .id = {.value = 8},
+       .api = requested,
+       .method = "read",
+       .codec = {.value = "forge.raw"},
+       .payload = pack_api_payload(protocol::read_chunk{.ref = "alias"}),
    };
    const auto response = forge::asio::blocking::run(runtime, registry.dispatch(request));
 
@@ -1558,8 +1554,7 @@ BOOST_AUTO_TEST_CASE(registry_builtin_errors_set_semantic_status) {
    BOOST_REQUIRE_EQUAL(responses.size(), 1U);
    payload = forge::raw::unpack<forge::api::core::error_payload>(responses.front().payload);
    BOOST_CHECK(payload.status_code == forge::api::core::status::invalid_argument);
-   BOOST_TEST(payload.identity.code ==
-              static_cast<std::uint32_t>(forge::api::core::exceptions::code::protocol_error));
+   BOOST_TEST(payload.identity.code == static_cast<std::uint32_t>(forge::api::core::exceptions::code::protocol_error));
 }
 
 class throwing_cache_impl final : public cache_api {
@@ -1623,6 +1618,13 @@ BOOST_AUTO_TEST_CASE(remote_declared_exception_restores_typed_exception) {
    };
 
    BOOST_CHECK_THROW(forge::api::core::raise_remote_error(payload, method), cache_errors::chunk_not_found);
+}
+
+BOOST_AUTO_TEST_CASE(remote_core_exception_restores_typed_exception) {
+   const auto payload = forge::api::core::make_core_error_payload(forge::api::core::exceptions::code::deadline_exceeded,
+                                                                  "remote deadline expired");
+
+   BOOST_CHECK_THROW(forge::api::core::raise_remote_error(payload), forge::api::core::exceptions::deadline_exceeded);
 }
 
 BOOST_AUTO_TEST_CASE(remote_unknown_exception_preserves_identity_in_generic_error) {

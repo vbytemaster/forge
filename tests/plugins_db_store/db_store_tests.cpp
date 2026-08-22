@@ -770,6 +770,60 @@ template <typename AppFactory> void check_p2p_private_peer_state_reopens(AppFact
    }
 }
 
+#if FORGE_HAS_MDBX || FORGE_HAS_ROCKSDB
+void configure_static_topology(forge::config::core::document& document) {
+   document.set("plugins.p2p.node.topology.mode", std::string{"static-only"});
+   document.set("plugins.p2p.node.topology.peers.low", std::uint64_t{3});
+   document.set("plugins.p2p.node.topology.peers.target", std::uint64_t{5});
+   document.set("plugins.p2p.node.topology.peers.high", std::uint64_t{7});
+   document.set("plugins.p2p.node.topology.refresh-interval-ms", std::uint64_t{321});
+   document.set("plugins.p2p.node.topology.query-timeout-ms", std::uint64_t{123});
+   document.set("plugins.p2p.node.topology.max-candidates", std::uint64_t{11});
+   document.set("plugins.p2p.node.topology.max-parallel-queries", std::uint64_t{2});
+   document.set("plugins.p2p.node.topology.max-parallel-dials", std::uint64_t{1});
+   document.set("plugins.p2p.node.peer-exchange.enabled", true);
+   document.set("plugins.p2p.node.peer-exchange.max-peers", std::uint64_t{2});
+}
+
+void check_static_topology_snapshot(forge::app::application_shell& app) {
+   auto diagnostics = app.apis().get<p2p_node::diagnostics_source>(p2p_node::diagnostics_source::ref());
+   const auto snapshot = diagnostics->snapshot();
+   BOOST_TEST(snapshot.topology.mode == "static-only");
+   BOOST_TEST(snapshot.topology.phase == "idle");
+   BOOST_TEST(snapshot.topology.low_watermark == 3U);
+   BOOST_TEST(snapshot.topology.target_watermark == 5U);
+   BOOST_TEST(snapshot.topology.high_watermark == 7U);
+   BOOST_TEST(snapshot.topology.refresh_interval == std::chrono::milliseconds{321});
+   BOOST_TEST(snapshot.topology.query_timeout == std::chrono::milliseconds{123});
+   BOOST_TEST(snapshot.topology.max_candidates == 11U);
+   BOOST_TEST(snapshot.topology.max_parallel_queries == 2U);
+   BOOST_TEST(snapshot.topology.max_parallel_dials == 1U);
+   BOOST_TEST(snapshot.topology.max_peer_exchange_peers == 2U);
+   BOOST_TEST(!snapshot.topology.dht_enabled);
+   BOOST_TEST(snapshot.topology.peer_exchange_enabled);
+   BOOST_TEST(snapshot.topology.completed_refreshes == 0U);
+   BOOST_TEST(!snapshot.topology.refresh_queued);
+   BOOST_TEST(!snapshot.topology.refresh_in_flight);
+   BOOST_TEST(snapshot.topology.active_operations == 0U);
+   BOOST_TEST(snapshot.connections.active_sessions == 0U);
+   BOOST_TEST(snapshot.metrics.sessions_opened == 0U);
+   BOOST_TEST(snapshot.metrics.dht_queries == 0U);
+   BOOST_TEST(snapshot.metrics.peer_exchange_messages == 0U);
+   BOOST_TEST(snapshot.metrics.rendezvous_registrations == 0U);
+   BOOST_TEST(snapshot.metrics.rendezvous_discovers == 0U);
+}
+
+template <typename AppFactory> void check_p2p_static_topology_reopens(AppFactory&& make_client) {
+   const auto identity = forge::tests::p2p::make_identity_fixture("p2p-static-topology-reopen");
+   for (auto attempt = 0U; attempt < 2U; ++attempt) {
+      auto app = make_client(identity);
+      forge::asio::blocking::run(app->runtime(), app->startup());
+      check_static_topology_snapshot(*app);
+      forge::asio::blocking::run(app->runtime(), app->shutdown());
+   }
+}
+#endif
+
 } // namespace
 
 FORGE_DB_OBJECT(account_object)
@@ -818,7 +872,7 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_descriptor_keeps_production_dependencies_an
 
    const auto plugin = descriptor.factory();
    BOOST_REQUIRE(plugin != nullptr);
-   BOOST_TEST(plugin->version() == "3.0.0");
+   BOOST_TEST(plugin->version() == "4.0.0");
 
    const auto api_descriptor = p2p_node::api::describe();
    BOOST_TEST(api_descriptor.id.value == "forge.plugins.p2p.node");
@@ -2186,6 +2240,21 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_mdbx_private_peer_state_persists_across_reo
        });
 }
 
+BOOST_AUTO_TEST_CASE(p2p_node_plugin_mdbx_static_topology_configuration_has_parity_after_reopen) {
+   auto root = root_guard{};
+   const auto path = root.root / "p2p-static-topology-mdbx";
+
+   check_p2p_static_topology_reopens([&](const forge::tests::p2p::identity_fixture& identity) {
+      auto document = p2p_production_config(identity);
+      configure_static_topology(document);
+      document.set("plugins.db.store.stores",
+                   forge::config::core::value::array_type{
+                       configured_mdbx_store(std::string{p2p_peer_store_name}, path, false, false),
+                   });
+      return make_p2p_app({}, std::move(document));
+   });
+}
+
 BOOST_AUTO_TEST_CASE(store_plugin_configured_mdbx_exposes_extra_family_through_driver) {
    auto root = root_guard{};
    auto document = forge::config::core::document{};
@@ -2423,6 +2492,20 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_rocksdb_private_peer_state_persists_across_
                                                   });
           return make_p2p_app({}, std::move(document));
        });
+}
+
+BOOST_AUTO_TEST_CASE(p2p_node_plugin_rocksdb_static_topology_configuration_has_parity_after_reopen) {
+   auto root = root_guard{};
+   const auto path = root.root / "p2p-static-topology-rocksdb";
+
+   check_p2p_static_topology_reopens([&](const forge::tests::p2p::identity_fixture& identity) {
+      auto document = p2p_production_config(identity);
+      configure_static_topology(document);
+      document.set("plugins.db.store.stores", forge::config::core::value::array_type{
+                                                  configured_store(std::string{p2p_peer_store_name}, path),
+                                              });
+      return make_p2p_app({}, std::move(document));
+   });
 }
 
 BOOST_AUTO_TEST_CASE(store_plugin_configured_rocksdb_store_persists_across_reopen) {

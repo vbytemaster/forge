@@ -10,6 +10,7 @@
 #include <memory>
 #include <limits>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <ostream>
 #include <span>
@@ -293,6 +294,7 @@ struct pipe_state {
    std::size_t active_reads = 0;
    std::size_t max_active_reads = 0;
    std::size_t fail_writes = 0;
+   std::size_t fail_write_allocations = 0;
    std::size_t failed_writes = 0;
    std::size_t cancel_calls = 0;
    bool throw_after_cancel = false;
@@ -365,6 +367,11 @@ class pipe_stream final : public forge::net::transport::detail::stream_concept {
          ++outbound_->write_calls;
          if (outbound_->closed) {
             FORGE_THROW_EXCEPTION(forge::net::transport::exceptions::closed, "pipe stream closed");
+         }
+         if (outbound_->fail_write_allocations > 0) {
+            --outbound_->fail_write_allocations;
+            ++outbound_->failed_writes;
+            throw std::bad_alloc{};
          }
          if (outbound_->fail_writes > 0) {
             --outbound_->fail_writes;
@@ -540,6 +547,11 @@ void hold_writes(const std::shared_ptr<pipe_state>& state, bool value) {
 void fail_next_write(const std::shared_ptr<pipe_state>& state) {
    auto lock = std::scoped_lock{state->mutex};
    ++state->fail_writes;
+}
+
+void fail_next_write_allocation(const std::shared_ptr<pipe_state>& state) {
+   auto lock = std::scoped_lock{state->mutex};
+   ++state->fail_write_allocations;
 }
 
 void retain_write_lifetimes(const std::shared_ptr<pipe_state>& state, bool value) {
@@ -1200,6 +1212,97 @@ boost::asio::awaitable<void> yamux_reset_streams_are_invalid_and_cancel_reaches_
    }
 }
 
+boost::asio::awaitable<void> yamux_request_cancel_resets_only_the_selected_stream() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto pair = make_stream_pair(executor);
+   auto left = forge::net::yamux::session{std::move(pair.left), forge::net::yamux::side::initiator};
+   auto right = forge::net::yamux::session{std::move(pair.right), forge::net::yamux::side::responder};
+
+   auto first_accept = spawn_result<forge::net::transport::stream>(executor, right.async_accept_stream());
+   auto first = co_await left.async_open_stream();
+   auto first_inbound = co_await take_result_for(first_accept, std::chrono::seconds{1});
+   auto second_accept = spawn_result<forge::net::transport::stream>(executor, right.async_accept_stream());
+   auto second = co_await left.async_open_stream();
+   auto second_inbound = co_await take_result_for(second_accept, std::chrono::seconds{1});
+
+   auto canceled_read = spawn_result<bytes>(executor, first_inbound.async_read());
+   first.request_cancel();
+   BOOST_CHECK_THROW((void)co_await take_result_for(canceled_read, std::chrono::seconds{1}),
+                     forge::net::yamux::exceptions::stream_reset);
+
+   const auto payload = text_bytes("unaffected yamux sibling");
+   co_await second.async_write(payload);
+   const auto received = co_await second_inbound.async_read();
+   BOOST_CHECK_EQUAL_COLLECTIONS(received.begin(), received.end(), payload.begin(), payload.end());
+
+   co_await second.async_close();
+   co_await second_inbound.async_close();
+   co_await left.async_close();
+   co_await right.async_close();
+}
+
+boost::asio::awaitable<void> yamux_close_joins_stream_cancel_worker_after_wire_rst() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto pair = make_stream_pair(executor);
+   auto right = forge::net::yamux::session{std::move(pair.right), forge::net::yamux::side::responder};
+   auto accept = spawn_result<forge::net::transport::stream>(executor, right.async_accept_stream());
+   co_await pair.left.async_write(frame(frame_type::window_update, syn, 1, 0));
+   auto inbound = co_await take_result_for(accept, std::chrono::seconds{1});
+   (void)co_await read_transport_for_test(pair.left, "persistent reset worker setup ACK");
+
+   hold_writes(pair.left_state, true);
+   inbound.request_cancel();
+   BOOST_TEST(!inbound.valid());
+   co_await wait_for_pending_writes(pair.left_state, 1);
+
+   auto close = spawn_result<void>(executor, right.async_close());
+   co_await boost::asio::post(executor, boost::asio::use_awaitable);
+   BOOST_TEST(!close->done.load(std::memory_order_acquire));
+   {
+      auto lock = std::scoped_lock{pair.left_state->mutex};
+      BOOST_REQUIRE_EQUAL(pair.left_state->pending_writes.size(), 1U);
+   }
+
+   release_next_write(pair.left_state);
+   const auto reset = co_await read_transport_for_test(pair.left, "persistent reset worker RST");
+   BOOST_CHECK_EQUAL(type_of(reset), frame_type::data);
+   BOOST_CHECK_EQUAL(flags_of(reset), rst);
+   BOOST_CHECK_EQUAL(stream_id_of(reset), 1U);
+
+   co_await wait_for_pending_writes(pair.left_state, 1);
+   BOOST_TEST(!close->done.load(std::memory_order_acquire));
+   release_next_write(pair.left_state);
+   const auto go_away = co_await read_transport_for_test(pair.left, "close after reset worker join");
+   BOOST_CHECK_EQUAL(type_of(go_away), frame_type::go_away);
+   co_await take_result_for(close, std::chrono::seconds{1});
+   co_await close_transport_for_test(pair.left);
+}
+
+boost::asio::awaitable<void> yamux_reset_write_allocation_failure_is_session_terminal() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto pair = make_stream_pair(executor);
+   auto right = forge::net::yamux::session{std::move(pair.right), forge::net::yamux::side::responder};
+   auto accept = spawn_result<forge::net::transport::stream>(executor, right.async_accept_stream());
+   co_await pair.left.async_write(frame(frame_type::window_update, syn, 1, 0));
+   auto inbound = co_await take_result_for(accept, std::chrono::seconds{1});
+   (void)co_await read_transport_for_test(pair.left, "reset allocation failure setup ACK");
+
+   fail_next_write_allocation(pair.left_state);
+   inbound.request_cancel();
+   for (auto attempt = 0; attempt < 100 && right.valid(); ++attempt) {
+      co_await boost::asio::post(executor, boost::asio::use_awaitable);
+   }
+
+   BOOST_TEST(!right.valid());
+   BOOST_TEST(!inbound.valid());
+   {
+      auto lock = std::scoped_lock{pair.left_state->mutex};
+      BOOST_CHECK_EQUAL(pair.left_state->failed_writes, 1U);
+   }
+   co_await right.async_close();
+   co_await close_transport_for_test(pair.left);
+}
+
 boost::asio::awaitable<void> yamux_normalizes_underlying_write_failure() {
    auto executor = co_await boost::asio::this_coro::executor;
    auto pair = make_stream_pair(executor);
@@ -1399,6 +1502,19 @@ boost::asio::awaitable<void> yamux_limits_and_malformed_frames_are_typed() {
                             forge::net::yamux::side::responder,
                             forge::net::yamux::options{
                                 .max_session_buffer = initial_stream_window - 1U,
+                            },
+                        }),
+                        forge::net::yamux::exceptions::invalid_options);
+      co_await pair.left.async_close();
+   }
+
+   {
+      auto pair = make_stream_pair(executor);
+      BOOST_CHECK_THROW((forge::net::yamux::session{
+                            std::move(pair.right),
+                            forge::net::yamux::side::responder,
+                            forge::net::yamux::options{
+                                .write_timeout = std::chrono::milliseconds{0},
                             },
                         }),
                         forge::net::yamux::exceptions::invalid_options);
@@ -1698,6 +1814,10 @@ boost::asio::awaitable<void> yamux_configured_limits_are_behavioral() {
       BOOST_CHECK_EQUAL(flags_of(local_syn), syn);
       BOOST_CHECK_EQUAL(stream_id_of(local_syn), 2U);
       (void)co_await take_result(local_open);
+      auto local_reset = co_await pair.left.async_read();
+      BOOST_CHECK_EQUAL(type_of(local_reset), frame_type::data);
+      BOOST_CHECK_EQUAL(flags_of(local_reset), rst);
+      BOOST_CHECK_EQUAL(stream_id_of(local_reset), 2U);
 
       co_await pair.left.async_write(frame(frame_type::window_update, syn, 1, 0));
       auto first_response = co_await pair.left.async_read();
@@ -2314,6 +2434,142 @@ boost::asio::awaitable<void> yamux_protocol_error_deadline_cancels_blocked_trans
    co_await close_transport_for_test(pair.left);
 }
 
+boost::asio::awaitable<void> yamux_protocol_error_cancels_blocked_reset_writer() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto pair = make_stream_pair(executor);
+   auto right = forge::net::yamux::session{
+       std::move(pair.right), forge::net::yamux::side::responder,
+       forge::net::yamux::options{.close_timeout = std::chrono::milliseconds{25}}};
+   auto accept = spawn_result<forge::net::transport::stream>(executor, right.async_accept_stream());
+   co_await pair.left.async_write(frame(frame_type::window_update, syn, 1, 0));
+   auto inbound = co_await take_result_for(accept, std::chrono::seconds{1});
+   (void)co_await read_transport_for_test(pair.left, "blocked reset protocol failure setup ACK");
+
+   hold_writes(pair.left_state, true);
+   inbound.request_cancel();
+   co_await wait_for_pending_writes(pair.left_state, 1);
+
+   auto malformed = frame(frame_type::data, 0, 1, 0);
+   malformed[0] = 1;
+   co_await pair.left.async_write(malformed);
+   auto terminal = spawn_result<forge::net::transport::stream>(executor, right.async_accept_stream());
+   BOOST_CHECK_THROW((void)co_await take_result_for(terminal, std::chrono::milliseconds{250}),
+                     forge::net::yamux::exceptions::protocol_error);
+
+   co_await right.async_close();
+   {
+      auto lock = std::scoped_lock{pair.left_state->mutex, pair.right_state->mutex};
+      BOOST_CHECK_GE(pair.right_state->cancel_calls, 1U);
+      BOOST_TEST(pair.left_state->closed);
+      BOOST_TEST(pair.right_state->closed);
+   }
+   co_await close_transport_for_test(pair.left);
+}
+
+boost::asio::awaitable<void> yamux_cancel_during_active_frame_write_finishes_frame_then_resets_stream() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto pair = make_stream_pair(executor);
+   auto right = forge::net::yamux::session{
+       std::move(pair.right), forge::net::yamux::side::responder,
+       forge::net::yamux::options{.close_timeout = std::chrono::milliseconds{25},
+                                  .write_timeout = std::chrono::milliseconds{250}}};
+   auto accept = spawn_result<forge::net::transport::stream>(executor, right.async_accept_stream());
+   co_await pair.left.async_write(frame(frame_type::window_update, syn, 1, 0));
+   auto inbound = co_await take_result_for(accept, std::chrono::seconds{1});
+   (void)co_await read_transport_for_test(pair.left, "active frame cancellation setup ACK");
+
+   hold_writes(pair.left_state, true);
+   auto write = spawn_result<void>(executor, inbound.async_write(bytes{0x41}));
+   co_await wait_for_pending_writes(pair.left_state, 1);
+   inbound.request_cancel();
+
+   release_pending_writes_if_any(pair.left_state);
+   co_await take_result_for(write, std::chrono::seconds{1});
+   const auto data = co_await read_transport_for_test(pair.left, "completed DATA before canceled stream reset");
+   BOOST_CHECK_EQUAL(type_of(data), frame_type::data);
+   BOOST_CHECK_EQUAL(flags_of(data), 0U);
+   const auto reset = co_await read_transport_for_test(pair.left, "stream-local reset after completed DATA");
+   BOOST_CHECK_EQUAL(type_of(reset), frame_type::data);
+   BOOST_CHECK_EQUAL(flags_of(reset), rst);
+   BOOST_TEST(right.valid());
+   {
+      auto lock = std::scoped_lock{pair.left_state->mutex, pair.right_state->mutex};
+      BOOST_CHECK_EQUAL(pair.right_state->cancel_calls, 0U);
+      BOOST_TEST(!pair.left_state->closed);
+      BOOST_TEST(!pair.right_state->closed);
+   }
+
+   pair.left.request_cancel();
+   co_await right.async_close();
+   co_await close_transport_for_test(pair.left);
+}
+
+boost::asio::awaitable<void> yamux_stalled_frame_write_expires_and_closes_session() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto pair = make_stream_pair(executor);
+   auto right = forge::net::yamux::session{
+       std::move(pair.right), forge::net::yamux::side::responder,
+       forge::net::yamux::options{.close_timeout = std::chrono::milliseconds{25},
+                                  .write_timeout = std::chrono::milliseconds{25}}};
+   auto accept = spawn_result<forge::net::transport::stream>(executor, right.async_accept_stream());
+   co_await pair.left.async_write(frame(frame_type::window_update, syn, 1, 0));
+   auto inbound = co_await take_result_for(accept, std::chrono::seconds{1});
+   (void)co_await read_transport_for_test(pair.left, "stalled frame timeout setup ACK");
+
+   hold_writes(pair.left_state, true);
+   auto write = spawn_result<void>(executor, inbound.async_write(bytes{0x41}));
+   co_await wait_for_pending_writes(pair.left_state, 1);
+   inbound.request_cancel();
+
+   BOOST_CHECK_THROW((void)co_await take_result_for(write, std::chrono::seconds{1}),
+                     forge::net::yamux::exceptions::closed);
+   BOOST_TEST(!right.valid());
+   {
+      auto lock = std::scoped_lock{pair.left_state->mutex, pair.right_state->mutex};
+      BOOST_CHECK_GE(pair.right_state->cancel_calls, 1U);
+      BOOST_TEST(pair.left_state->closed);
+      BOOST_TEST(pair.right_state->closed);
+   }
+
+   co_await right.async_close();
+   co_await close_transport_for_test(pair.left);
+}
+
+boost::asio::awaitable<void> yamux_maximum_write_timeout_does_not_wrap() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto pair = make_stream_pair(executor);
+   const auto limits = forge::net::yamux::options{
+       .write_timeout = (std::chrono::milliseconds::max)(),
+   };
+   auto left = forge::net::yamux::session{std::move(pair.left), forge::net::yamux::side::initiator, limits};
+   auto right = forge::net::yamux::session{std::move(pair.right), forge::net::yamux::side::responder, limits};
+   auto accept = spawn_result<forge::net::transport::stream>(executor, right.async_accept_stream());
+   auto outbound = co_await left.async_open_stream();
+   auto inbound = co_await take_result_for(accept, std::chrono::seconds{1});
+
+   const auto payload = text_bytes("maximum timeout remains in the future");
+   co_await outbound.async_write(payload);
+   const auto received = co_await inbound.async_read();
+   BOOST_CHECK_EQUAL_COLLECTIONS(received.begin(), received.end(), payload.begin(), payload.end());
+
+   co_await left.async_close();
+   co_await right.async_close();
+}
+
+boost::asio::awaitable<void> yamux_failed_first_syn_write_terminalizes_session() {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto pair = make_stream_pair(executor);
+   auto left = forge::net::yamux::session{std::move(pair.left), forge::net::yamux::side::initiator};
+   fail_next_write_allocation(pair.right_state);
+
+   BOOST_CHECK_THROW((void)co_await left.async_open_stream(), forge::net::yamux::exceptions::closed);
+   BOOST_TEST(!left.valid());
+   BOOST_CHECK_THROW((void)co_await left.async_open_stream(), forge::net::yamux::exceptions::closed);
+
+   co_await left.async_close();
+   co_await close_transport_for_test(pair.right);
+}
+
 boost::asio::awaitable<void> yamux_graceful_close_and_protocol_failure_share_terminal_owner() {
    BOOST_TEST_CHECKPOINT("creating close/error race fixture");
    auto executor = co_await boost::asio::this_coro::executor;
@@ -2495,6 +2751,52 @@ BOOST_AUTO_TEST_CASE(yamux_protocol_error_deadline_cancels_blocked_transport_wri
    forge::asio::blocking::run(runtime, yamux_protocol_error_deadline_cancels_blocked_transport());
 }
 
+BOOST_AUTO_TEST_CASE(yamux_protocol_error_deadline_cancels_blocked_reset_writer) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
+   BOOST_CHECK(forge::asio::blocking::run_for(
+       runtime, yamux_protocol_error_cancels_blocked_reset_writer(), std::chrono::seconds{3}));
+}
+
+BOOST_AUTO_TEST_CASE(yamux_cancel_during_active_frame_write_finishes_frame_before_stream_reset) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
+   BOOST_CHECK(forge::asio::blocking::run_for(
+       runtime, yamux_cancel_during_active_frame_write_finishes_frame_then_resets_stream(),
+       std::chrono::seconds{3}));
+}
+
+BOOST_AUTO_TEST_CASE(yamux_stalled_frame_write_is_bounded_and_closes_session) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 4}};
+   BOOST_CHECK(forge::asio::blocking::run_for(
+       runtime, yamux_stalled_frame_write_expires_and_closes_session(), std::chrono::seconds{3}));
+}
+
+BOOST_AUTO_TEST_CASE(yamux_extreme_write_timeout_is_saturated) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   BOOST_CHECK(forge::asio::blocking::run_for(
+       runtime, yamux_maximum_write_timeout_does_not_wrap(), std::chrono::seconds{3}));
+}
+
+BOOST_AUTO_TEST_CASE(yamux_failed_first_syn_write_does_not_leave_a_ghost_stream) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   BOOST_CHECK(forge::asio::blocking::run_for(
+       runtime, yamux_failed_first_syn_write_terminalizes_session(), std::chrono::seconds{3}));
+}
+
+BOOST_AUTO_TEST_CASE(yamux_options_preserve_the_legacy_positional_close_timeout) {
+   const auto value = forge::net::yamux::options{
+       256U * 1024U,
+       16U * 1024U * 1024U,
+       256U * 1024U,
+       4096,
+       256,
+       1024U * 1024U,
+       16U * 1024U * 1024U,
+       std::chrono::milliseconds{123},
+   };
+   BOOST_TEST(value.close_timeout == std::chrono::milliseconds{123});
+   BOOST_TEST(value.write_timeout == std::chrono::milliseconds{5'000});
+}
+
 BOOST_AUTO_TEST_CASE(yamux_graceful_and_error_close_have_one_terminal_writer) {
    auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 1}};
    forge::asio::blocking::run(runtime, yamux_graceful_close_and_protocol_failure_share_terminal_owner());
@@ -2553,6 +2855,24 @@ BOOST_AUTO_TEST_CASE(yamux_canceled_writes_do_not_publish_stream_state_or_credit
 BOOST_AUTO_TEST_CASE(yamux_reset_invalidates_stream_and_cancel_sends_rst) {
    auto runtime = forge::asio::runtime{};
    forge::asio::blocking::run(runtime, yamux_reset_streams_are_invalid_and_cancel_reaches_peer());
+}
+
+BOOST_AUTO_TEST_CASE(yamux_request_cancel_preserves_sibling_stream) {
+   auto runtime = forge::asio::runtime{};
+   BOOST_CHECK(forge::asio::blocking::run_for(
+       runtime, yamux_request_cancel_resets_only_the_selected_stream(), std::chrono::seconds{3}));
+}
+
+BOOST_AUTO_TEST_CASE(yamux_close_joins_persistent_stream_cancel_worker_after_rst) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   BOOST_CHECK(forge::asio::blocking::run_for(
+       runtime, yamux_close_joins_stream_cancel_worker_after_wire_rst(), std::chrono::seconds{3}));
+}
+
+BOOST_AUTO_TEST_CASE(yamux_stream_cancel_allocation_failure_terminalizes_session) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   BOOST_CHECK(forge::asio::blocking::run_for(
+       runtime, yamux_reset_write_allocation_failure_is_session_terminal(), std::chrono::seconds{3}));
 }
 
 BOOST_AUTO_TEST_CASE(yamux_write_failure_throws_typed_yamux_closed) {

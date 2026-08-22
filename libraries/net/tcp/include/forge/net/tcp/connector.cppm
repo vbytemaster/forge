@@ -33,6 +33,7 @@ class connector {
    boost::asio::awaitable<transport::stream_connection>
    async_connect(transport::endpoint remote, transport::connect_options connect_options = {});
    void cancel();
+   void request_cancel() noexcept;
 
    [[nodiscard]] transport::stream_connector as_transport() const;
 

@@ -27,6 +27,8 @@ module;
 
 module forge.api.stream.session;
 
+import forge.asio.notification;
+
 #include "details/session_impl.hxx"
 
 namespace forge::api::stream {
@@ -36,12 +38,10 @@ session::session() = default;
 session::session(forge::net::transport::stream stream, options value)
     : impl_{std::make_shared<impl>(std::move(stream), std::move(value))} {}
 
-session::session(forge::net::transport::stream stream,
-                 forge::api::core::binding_plan plan, options value,
+session::session(forge::net::transport::stream stream, forge::api::core::binding_plan plan, options value,
                  forge::api::core::metadata trusted_metadata)
-    : impl_{std::make_shared<impl>(std::move(stream), std::move(plan),
-                                  std::move(value),
-                                  std::move(trusted_metadata))} {}
+    : impl_{std::make_shared<impl>(std::move(stream), std::move(plan), std::move(value), std::move(trusted_metadata))} {
+}
 
 session::~session() {
    cancel();
@@ -65,93 +65,81 @@ const options& session::settings() const noexcept {
 }
 
 boost::asio::awaitable<forge::api::core::frame>
-session::async_call(
-   forge::api::core::frame request, call_options value,
-   std::optional<forge::api::core::method_descriptor> descriptor) {
-   return async_call_impl(impl_, std::move(request),
-                          forge::api::core::method_kind::unary, {}, {},
-                          std::move(value), descriptor);
+session::async_call(forge::api::core::frame request, call_options value,
+                    std::optional<forge::api::core::method_descriptor> descriptor) {
+   return async_call_impl(impl_, std::move(request), forge::api::core::method_kind::unary, {}, {}, std::move(value),
+                          descriptor);
 }
 
 boost::asio::awaitable<forge::api::core::frame>
-session::async_stream_call(
-   forge::api::core::frame request, forge::api::core::method_kind kind,
-   std::shared_ptr<forge::api::core::detail::stream_endpoint> input,
-   std::shared_ptr<forge::api::core::detail::stream_endpoint> output,
-   call_options value,
-   std::optional<forge::api::core::method_descriptor> descriptor) {
-   return async_call_impl(impl_, std::move(request), kind, std::move(input),
-                          std::move(output), std::move(value), descriptor);
+session::async_stream_call(forge::api::core::frame request, forge::api::core::method_kind kind,
+                           std::shared_ptr<forge::api::core::detail::stream_endpoint> input,
+                           std::shared_ptr<forge::api::core::detail::stream_endpoint> output, call_options value,
+                           std::optional<forge::api::core::method_descriptor> descriptor) {
+   return async_call_impl(impl_, std::move(request), kind, std::move(input), std::move(output), std::move(value),
+                          descriptor);
 }
 
 boost::asio::awaitable<forge::api::core::frame>
-session::async_call_impl(
-   std::shared_ptr<impl> self, forge::api::core::frame request,
-   forge::api::core::method_kind kind,
-   std::shared_ptr<forge::api::core::detail::stream_endpoint> input,
-   std::shared_ptr<forge::api::core::detail::stream_endpoint> output,
-   call_options value,
-   std::optional<forge::api::core::method_descriptor> descriptor) {
+session::async_call_impl(std::shared_ptr<impl> self, forge::api::core::frame request,
+                         forge::api::core::method_kind kind,
+                         std::shared_ptr<forge::api::core::detail::stream_endpoint> input,
+                         std::shared_ptr<forge::api::core::detail::stream_endpoint> output, call_options value,
+                         std::optional<forge::api::core::method_descriptor> descriptor) {
    if (!self) {
-      throw forge::api::core::exceptions::cancelled{
-         "API stream session is closed"};
+      throw forge::api::core::exceptions::cancelled{"API stream session is closed"};
    }
    const auto executor = co_await boost::asio::this_coro::executor;
    auto strand = self->ensure_strand(executor);
    co_return co_await boost::asio::co_spawn(
-      strand,
-      [self, request = std::move(request), kind, input = std::move(input),
-       output = std::move(output), value = std::move(value),
-       descriptor = std::move(descriptor)]() mutable
-         -> boost::asio::awaitable<forge::api::core::frame> {
-         const auto executor = co_await boost::asio::this_coro::executor;
-         self->initialize_on_strand(self->ensure_strand(executor));
-         co_return co_await self->async_call_on_strand(
-            std::move(request), kind, std::move(input), std::move(output),
-            std::move(value), descriptor ? &*descriptor : nullptr);
-      },
-      boost::asio::use_awaitable);
+       strand,
+       [self, request = std::move(request), kind, input = std::move(input), output = std::move(output),
+        value = std::move(value),
+        descriptor = std::move(descriptor)]() mutable -> boost::asio::awaitable<forge::api::core::frame> {
+          const auto executor = co_await boost::asio::this_coro::executor;
+          self->initialize_on_strand(self->ensure_strand(executor));
+          co_return co_await self->async_call_on_strand(std::move(request), kind, std::move(input), std::move(output),
+                                                        std::move(value), descriptor ? &*descriptor : nullptr);
+       },
+       boost::asio::use_awaitable);
 }
 
 boost::asio::awaitable<void> session::async_serve() {
    return async_serve_impl(impl_);
 }
 
-boost::asio::awaitable<void>
-session::async_serve_impl(std::shared_ptr<impl> self) {
+boost::asio::awaitable<void> session::async_serve_impl(std::shared_ptr<impl> self) {
    if (!self) {
-      throw forge::api::core::exceptions::cancelled{
-         "API stream session is closed"};
+      throw forge::api::core::exceptions::cancelled{"API stream session is closed"};
    }
    const auto executor = co_await boost::asio::this_coro::executor;
    auto strand = self->ensure_strand(executor);
    co_await boost::asio::co_spawn(
-      strand,
-      [self, strand]() -> boost::asio::awaitable<void> {
-         self->initialize_on_strand(strand);
-         co_await self->async_serve_on_strand();
-      },
-      boost::asio::use_awaitable);
+       strand,
+       [self, strand]() -> boost::asio::awaitable<void> {
+          self->initialize_on_strand(strand);
+          co_await self->async_serve_on_strand();
+       },
+       boost::asio::use_awaitable);
 }
 
 boost::asio::awaitable<void> session::async_close() {
    return async_close_impl(impl_);
 }
 
-boost::asio::awaitable<void>
-session::async_close_impl(std::shared_ptr<impl> self) {
+boost::asio::awaitable<void> session::async_close_impl(std::shared_ptr<impl> self) {
    if (!self) {
       co_return;
    }
    const auto executor = co_await boost::asio::this_coro::executor;
    auto strand = self->ensure_strand(executor);
    co_await boost::asio::co_spawn(
-      strand,
-      [self, strand]() -> boost::asio::awaitable<void> {
-         self->initialize_on_strand(strand);
-         co_await self->async_close_on_strand();
-      },
-      boost::asio::use_awaitable);
+       strand,
+       [self, strand]() -> boost::asio::awaitable<void> {
+          self->initialize_on_strand(strand);
+          co_await self->async_close_on_strand();
+       },
+       boost::asio::use_awaitable);
 }
 
 void session::cancel() noexcept {
@@ -171,9 +159,8 @@ void session::cancel() noexcept {
    }
    try {
       boost::asio::dispatch(*executor, [self] {
-         self->fail_session(std::make_exception_ptr(
-            forge::api::core::exceptions::cancelled{
-               "API stream session was cancelled"}));
+         self->fail_session(
+             std::make_exception_ptr(forge::api::core::exceptions::cancelled{"API stream session was cancelled"}));
          self->stop_transport();
       });
    } catch (...) {

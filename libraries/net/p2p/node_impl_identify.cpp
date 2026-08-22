@@ -60,6 +60,7 @@ import forge.net.p2p.peer_store;
 import forge.net.p2p.protocol;
 import forge.net.p2p.rendezvous;
 import forge.net.p2p.stream;
+import forge.net.p2p.topology;
 import forge.net.transport.session;
 import forge.net.transport.stream;
 import forge.net.yamux.session;
@@ -692,9 +693,11 @@ void node::impl::learn_from_identify(const std::shared_ptr<session_state>& sessi
       if (!received_push) {
          session->info.capabilities = remote_capabilities;
          session->info.identify_state = identify::state::identified;
+         session->remote_protocols = record.protocols;
          session->identify_error = std::move(certified_error);
       } else if (session->info.identify_state == identify::state::identified) {
          session->info.capabilities = remote_capabilities;
+         session->remote_protocols = record.protocols;
          if (!certified_error.empty()) {
             session->identify_error = std::move(certified_error);
          }
@@ -807,7 +810,7 @@ node::impl::identify_peer_for_discovery(const peer_id& peer, discovery::source s
        store.apply_discovery(peer, peer_store::discovery_update{
                                        .source = source,
                                        .observed_at = discovered_at,
-                                       .expires_at = discovered_at + options.limits.discovery.refresh_interval,
+                                       .expires_at = discovered_at + options.limits.topology.refresh_interval,
                                    });
    if (!record) {
       co_return std::nullopt;

@@ -56,7 +56,7 @@ class registry {
    void add(profile value);
    [[nodiscard]] forge::net::p2p::endpoint listen(forge::net::p2p::endpoint endpoint);
    void stop() noexcept;
-   [[nodiscard]] detail::session_teardown::operation teardown_operation() const;
+   [[nodiscard]] forge::net::p2p::detail::session_teardown::operation teardown_operation() const;
 
    boost::asio::awaitable<connection>
    async_connect(forge::net::p2p::endpoint endpoint, const node::connect_options& options,

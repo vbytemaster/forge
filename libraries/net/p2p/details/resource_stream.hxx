@@ -1,13 +1,15 @@
 #pragma once
 
+#include <functional>
+
 namespace forge::net::p2p::detail {
 
 class resource_stream final : public forge::net::transport::detail::stream_concept {
  public:
-   resource_stream(forge::net::transport::stream stream, resource_manager manager,
-                   resource_manager::stream_reservation reservation);
-   ~resource_stream() override;
+   resource_stream(resource_manager manager, resource_manager::stream_reservation reservation);
+   ~resource_stream() noexcept override;
 
+   void attach(forge::net::transport::stream stream) noexcept;
    [[nodiscard]] bool valid() const noexcept override;
    [[nodiscard]] std::int64_t id() const noexcept override;
    [[nodiscard]] bool bind(resource_manager::scope value) noexcept;
@@ -20,18 +22,46 @@ class resource_stream final : public forge::net::transport::detail::stream_conce
    boost::asio::awaitable<forge::net::transport::chunk> async_read_chunk() override;
    boost::asio::awaitable<void> async_close() override;
    void cancel() override;
+   void request_cancel() noexcept;
 
  private:
+   enum class terminal_state : std::uint8_t {
+      active,
+      cancel_requested,
+      owner,
+      owner_cancel_requested,
+      released,
+   };
+
+   [[nodiscard]] bool claim_terminal_owner() noexcept;
+   void release_terminal_owner() noexcept;
+
    forge::net::transport::stream stream_;
    resource_manager manager_;
    resource_manager::stream_reservation reservation_;
+   std::atomic<terminal_state> terminal_{terminal_state::active};
+};
+
+class stream_admission_handler final {
+ public:
+   using callback = std::function<void()>;
+   using admitted_callback = std::function<void(const std::shared_ptr<resource_stream>&)>;
+
+   stream_admission_handler() = default;
+   stream_admission_handler(admitted_callback admitted, callback commit);
+
+   [[nodiscard]] explicit operator bool() const noexcept;
+   void operator()(const std::shared_ptr<resource_stream>& resource) const;
+   void commit() const;
+
+ private:
+   admitted_callback admitted_;
+   callback commit_;
 };
 
 [[nodiscard]] std::pair<forge::net::transport::stream, std::shared_ptr<resource_stream>>
-make_resource_stream(forge::net::transport::stream stream, resource_manager manager,
-                     resource_manager::stream_reservation reservation);
+prepare_resource_stream(resource_manager manager, resource_manager::stream_reservation reservation);
 
-boost::asio::awaitable<void>
-async_close_unescaped(const std::shared_ptr<resource_stream>& resource);
+boost::asio::awaitable<void> async_close_unescaped(const std::shared_ptr<resource_stream>& resource);
 
 } // namespace forge::net::p2p::detail

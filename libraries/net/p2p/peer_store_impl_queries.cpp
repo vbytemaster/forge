@@ -284,6 +284,57 @@ std::vector<peer_store::record> peer_store::impl::candidates(std::uint64_t capab
    return result;
 }
 
+std::vector<peer_store::record> peer_store::impl::scored_candidates(std::size_t limit) const {
+   auto lock = std::scoped_lock{mutex_};
+   auto result = std::vector<peer_store::record>{};
+   if (limit == 0) {
+      return result;
+   }
+
+   result.reserve(std::min(limit, score_index_.size()));
+   const auto now = std::chrono::system_clock::now();
+   for (auto current = score_index_.begin(); current != score_index_.end() && result.size() < limit; ++current) {
+      const auto record = records_.find(current->second);
+      if (record == records_.end() ||
+          (record->second.discovery_expires_at != std::chrono::system_clock::time_point{} &&
+           record->second.discovery_expires_at <= now)) {
+         continue;
+      }
+      auto copy = record->second;
+      expire_reachability(copy, now);
+      result.push_back(std::move(copy));
+   }
+   return result;
+}
+
+std::vector<peer_store::record> peer_store::impl::scored_candidates(discovery::source source, std::size_t limit) const {
+   auto lock = std::scoped_lock{mutex_};
+   auto result = std::vector<peer_store::record>{};
+   if (limit == 0) {
+      return result;
+   }
+
+   const auto index = candidates_by_source_.find(source);
+   if (index == candidates_by_source_.end()) {
+      return result;
+   }
+
+   result.reserve(std::min(limit, index->second.size()));
+   const auto now = std::chrono::system_clock::now();
+   for (auto current = index->second.begin(); current != index->second.end() && result.size() < limit; ++current) {
+      const auto record = records_.find(current->second);
+      if (record == records_.end() || record->second.discovered_by != source ||
+          (record->second.discovery_expires_at != std::chrono::system_clock::time_point{} &&
+           record->second.discovery_expires_at <= now)) {
+         continue;
+      }
+      auto copy = record->second;
+      expire_reachability(copy, now);
+      result.push_back(std::move(copy));
+   }
+   return result;
+}
+
 std::vector<rendezvous::registration> peer_store::impl::discover_rendezvous(std::string_view namespace_name,
                                                                             std::uint64_t after_sequence,
                                                                             std::size_t limit) const {

@@ -5,14 +5,16 @@ contribution APIs for protocol handlers and API-over-P2P publication.
 
 ## Current Support State
 
-The plugin now provides the Stage 4 persistence/configuration foundation:
+The plugin provides the Stage 5 persistence and topology configuration surface:
 identity material is loaded through Crypto Secrets, peer/Rendezvous state and
 per-profile DHT values/providers are persisted through separate adapters in
 one dedicated DB Store Object layer, and hydration completes before listeners
 open. The low-level node owns bootstrap, automatic Identify/Identify Push,
 scoped network resources, multi-profile Kademlia routing, durable records and
-provider maintenance. The plugin remains a configuration adapter; autonomous
-topology and the remaining production-host work stay in Stage 5+.
+provider maintenance. It also owns the managed/static mode selection,
+watermarks and explicit Rendezvous/Forge Peer Exchange source configuration;
+all timers, queries, dials and pruning remain owned by the low-level node. The
+plugin does not contain a second network maintenance loop.
 
 Insecure memory mode remains an explicit local-test path only. Current support
 classifications live
@@ -61,16 +63,21 @@ isolated codec and interop fixtures do not promote this plugin to production.
   private cache schema, opens ObjectDB persistence and performs bounded
   hydration during `startup()` before opening any listener.
 - Maps config into listen/bootstrap/advertised endpoints and relay/path policy.
+- Maps topology watermarks, configured Rendezvous points/namespaces and Forge
+  Peer Exchange policy into the node-owned topology manager.
 - Passes bootstrap policy to the node, which owns bounded startup, reconnect
   backoff and connection-manager protection.
 - Lets application plugins publish typed APIs over a P2P protocol id.
 - Opens typed remote API handles to peers through `remote<Interface>()`.
 - Provides internal source APIs used by focused diagnostics and pubsub plugins.
 
-`request_stop()` synchronously asks the node lifecycle to stop admission,
-listeners, bootstrap, Identify Push and sessions. `shutdown()` then awaits all
-tracked network work and peer-state flush/close before releasing DB and Secrets
-handles.
+`request_stop()` synchronously closes managed-topology, Forge Peer Exchange and
+new-session admission, then requests cancellation of bootstrap and maintenance
+work. It intentionally does not tear down established sessions. `shutdown()` is
+the completion barrier: it awaits topology workers, including best-effort
+Rendezvous unregister, then tears down sessions and flushes/closes peer state
+before releasing DB and Secrets handles. Application lifecycle code calls
+`request_stop()` to initiate shutdown and awaits `shutdown()` for cleanup.
 If peer-state close fails, the stopped node and its persistence ownership are
 retained so a subsequent `shutdown()` can retry deterministic close; the plugin
 never drops a persistence backend that still reports pending close work.
@@ -108,6 +115,27 @@ plugins:
          max-sessions: 1024
          max-protocol-handlers: 1024
          allow-insecure-test-mode: false
+         topology:
+            mode: managed
+            peers:
+               low: 128
+               target: 160
+               high: 192
+            refresh-interval-ms: 600000
+            query-timeout-ms: 10000
+            max-candidates: 256
+            max-parallel-queries: 10
+            max-parallel-dials: 4
+            retry-jitter: 0.20
+         rendezvous:
+            role: client
+            max-points: 4
+            points:
+               - endpoint: "/dns4/rendezvous.example/udp/9443/quic-v1/p2p/<peer-id>"
+                 namespaces: ["forge.content"]
+         peer-exchange:
+            enabled: true
+            max-peers: 4
          path:
             policy: direct-preferred
          relay:
@@ -148,6 +176,13 @@ Plugin 3.0 replaces the single DHT capability/configuration surface with
 explicit `dht.profiles` and adds `peer-store.schema-policy` for the recoverable
 private cache. The local plugin API contract remains `1.0`; only Preview
 configuration and low-level DHT source contracts change.
+
+Plugin 4.0 adds the managed topology configuration shown above. Rendezvous
+client activity is limited to explicitly configured points and namespaces;
+Forge Peer Exchange is a Forge extension and is queried only on identified
+peers that advertise its exact protocol. Set `topology.mode: static-only` to
+disable autonomous discovery, dialing and pruning. The local plugin API
+contract remains `1.0`.
 
 ## Dependencies
 

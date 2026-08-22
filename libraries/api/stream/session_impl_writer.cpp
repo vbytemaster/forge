@@ -27,6 +27,7 @@ module;
 
 module forge.api.stream.session;
 
+import forge.asio.notification;
 import forge.net.transport.buffer;
 
 #include "details/session_impl.hxx"
@@ -68,8 +69,7 @@ void session::impl::wake_outbound_capacity() noexcept {
    }
 }
 
-void session::impl::release_outbound_capacity(
-   const queued_frame& value) noexcept {
+void session::impl::release_outbound_capacity(const queued_frame& value) noexcept {
    if (!value.buffered_item) {
       return;
    }
@@ -77,24 +77,20 @@ void session::impl::release_outbound_capacity(
       --outbound_buffered_items;
    }
    const auto bytes = static_cast<std::uint64_t>(value.buffered_item_bytes);
-   outbound_buffered_bytes = bytes > outbound_buffered_bytes
-                                ? std::uint64_t{0}
-                                : outbound_buffered_bytes - bytes;
+   outbound_buffered_bytes = bytes > outbound_buffered_bytes ? std::uint64_t{0} : outbound_buffered_bytes - bytes;
    wake_outbound_capacity();
 }
 
-std::shared_ptr<session::impl::write_receipt>
-session::impl::enqueue_call_frame(const std::shared_ptr<call_state>& call,
-                                  forge::api::core::frame value) {
+std::shared_ptr<session::impl::write_receipt> session::impl::enqueue_call_frame(const std::shared_ptr<call_state>& call,
+                                                                                forge::api::core::frame value) {
    auto receipt = std::make_shared<write_receipt>(*strand);
-   const auto buffered_item =
-      value.kind == forge::api::core::frame_kind::stream_item;
+   const auto buffered_item = value.kind == forge::api::core::frame_kind::stream_item;
    const auto buffered_item_bytes = buffered_item ? value.payload.size() : 0;
    call->write_queue.push_back(queued_frame{
-      .value = std::move(value),
-      .receipt = receipt,
-      .buffered_item_bytes = buffered_item_bytes,
-      .buffered_item = buffered_item,
+       .value = std::move(value),
+       .receipt = receipt,
+       .buffered_item_bytes = buffered_item_bytes,
+       .buffered_item = buffered_item,
    });
    if (buffered_item) {
       ++outbound_buffered_items;
@@ -108,10 +104,8 @@ session::impl::enqueue_call_frame(const std::shared_ptr<call_state>& call,
    return receipt;
 }
 
-std::optional<session::impl::queued_frame>
-session::impl::next_write_on_strand() {
-   if (!control_queue.empty() &&
-       (round_robin.empty() || control_burst < max_control_burst)) {
+std::optional<session::impl::queued_frame> session::impl::next_write_on_strand() {
+   if (!control_queue.empty() && (round_robin.empty() || control_burst < max_control_burst)) {
       auto next = std::move(control_queue.front());
       control_queue.pop_front();
       if (control_burst < max_control_burst) {
@@ -162,9 +156,7 @@ boost::asio::awaitable<void> session::impl::writer_loop() {
             next = next_write_on_strand();
             if (!next) {
                auto error = boost::system::error_code{};
-               co_await writer_wake->async_wait(
-                  boost::asio::redirect_error(boost::asio::use_awaitable,
-                                              error));
+               co_await writer_wake->async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
                continue;
             }
          }
@@ -179,8 +171,7 @@ boost::asio::awaitable<void> session::impl::writer_loop() {
          }
          writer_write_in_flight = true;
          try {
-            co_await stream.async_write(forge::net::transport::chunk{
-               encode_wire_frame(next->value)});
+            co_await stream.async_write(forge::net::transport::chunk{encode_wire_frame(next->value)});
             writer_write_in_flight = false;
             wake_session();
             touch_activity();
@@ -206,8 +197,7 @@ boost::asio::awaitable<void> session::impl::writer_loop() {
             wake_session();
          }
 
-         if (kind == forge::api::core::frame_kind::response ||
-             kind == forge::api::core::frame_kind::error ||
+         if (kind == forge::api::core::frame_kind::response || kind == forge::api::core::frame_kind::error ||
              kind == forge::api::core::frame_kind::cancel) {
             const auto found = calls.find(id);
             if (found != calls.end()) {

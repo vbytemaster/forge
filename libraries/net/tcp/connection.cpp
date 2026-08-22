@@ -4,6 +4,7 @@ module;
 
 #include <atomic>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -16,7 +17,6 @@ module;
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/post.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/strand.hpp>
 #include <boost/asio/use_awaitable.hpp>
@@ -25,6 +25,7 @@ module;
 
 module forge.net.tcp.connection;
 
+import forge.asio.notification;
 import forge.net.transport.stream;
 
 namespace forge::net::tcp {
@@ -92,11 +93,25 @@ class socket_stream final : public transport::detail::stream_concept,
                             public std::enable_shared_from_this<socket_stream> {
  public:
    socket_stream(std::shared_ptr<asio_tcp::socket> socket, asio::strand<asio::any_io_executor> strand,
-                 options tcp_options, std::int64_t id)
-       : socket_(std::move(socket)), strand_(std::move(strand)), options_(tcp_options), id_(id) {}
+                 options tcp_options, std::int64_t id,
+                 std::shared_ptr<std::atomic<socket_state>> state,
+                 std::shared_ptr<forge::asio::notification> terminal_requested,
+                 std::shared_ptr<forge::asio::notification> terminal_completed)
+       : socket_(std::move(socket)), strand_(std::move(strand)), options_(tcp_options), id_(id),
+         state_(std::move(state)), terminal_requested_(std::move(terminal_requested)),
+         terminal_completed_(std::move(terminal_completed)) {}
+
+   ~socket_stream() override {
+      request_cancel();
+   }
+
+   void activate() noexcept {
+      ownership_active_.store(true, std::memory_order_release);
+   }
 
    [[nodiscard]] bool valid() const noexcept override {
-      return state_.load(std::memory_order_acquire) == socket_state::active;
+      return ownership_active_.load(std::memory_order_acquire) &&
+             state_->load(std::memory_order_acquire) == socket_state::active;
    }
 
    [[nodiscard]] std::int64_t id() const noexcept override {
@@ -166,40 +181,30 @@ class socket_stream final : public transport::detail::stream_concept,
    }
 
    boost::asio::awaitable<void> async_close() override {
-      static_cast<void>(request_terminal(socket_state::close_requested));
-      auto self = shared_from_this();
-      co_await asio::co_spawn(
-          strand_,
-          [self = std::move(self)]() -> asio::awaitable<void> {
-             self->close_on_owner();
-             co_return;
-          },
-          asio::use_awaitable);
+      if (request_terminal(socket_state::close_requested)) {
+         terminal_requested_->notify();
+      }
+      static_cast<void>(co_await terminal_completed_->async_wait(0));
    }
 
    void cancel() override {
+      request_cancel();
+   }
+
+   void request_cancel() noexcept {
       if (request_terminal(socket_state::cancel_requested)) {
-         auto self = shared_from_this();
-         asio::post(strand_, [self = std::move(self)] { self->close_on_owner(); });
+         terminal_requested_->notify();
       }
    }
 
  private:
    [[nodiscard]] bool request_terminal(socket_state requested) noexcept {
-      auto expected = socket_state::active;
-      return state_.compare_exchange_strong(expected, requested, std::memory_order_acq_rel,
-                                            std::memory_order_acquire);
-   }
-
-   void close_on_owner() noexcept {
-      auto current = state_.load(std::memory_order_acquire);
-      while (current == socket_state::cancel_requested || current == socket_state::close_requested) {
-         if (state_.compare_exchange_weak(current, socket_state::closed, std::memory_order_acq_rel,
-                                          std::memory_order_acquire)) {
-            cancel_socket(*socket_);
-            return;
-         }
+      if (!ownership_active_.load(std::memory_order_acquire)) {
+         return false;
       }
+      auto expected = socket_state::active;
+      return state_->compare_exchange_strong(expected, requested, std::memory_order_acq_rel,
+                                             std::memory_order_acquire);
    }
 
    std::shared_ptr<asio_tcp::socket> socket_;
@@ -207,22 +212,46 @@ class socket_stream final : public transport::detail::stream_concept,
    options options_;
    transport::buffer_pool pool_;
    std::int64_t id_ = -1;
-   std::atomic<socket_state> state_{socket_state::active};
+   std::shared_ptr<std::atomic<socket_state>> state_;
+   std::shared_ptr<forge::asio::notification> terminal_requested_;
+   std::shared_ptr<forge::asio::notification> terminal_completed_;
+   std::atomic_bool ownership_active_ = false;
 };
 
-[[nodiscard]] transport::stream make_stream(std::shared_ptr<asio_tcp::socket> socket,
-                                            asio::strand<asio::any_io_executor> strand, options tcp_options,
-                                            std::int64_t id) {
-   return transport::detail::stream_access::make(
-       std::make_shared<socket_stream>(std::move(socket), std::move(strand), tcp_options, id));
+[[nodiscard]] std::pair<std::shared_ptr<socket_stream>, transport::stream>
+prepare_stream(std::shared_ptr<asio_tcp::socket> socket, asio::strand<asio::any_io_executor> strand,
+               options tcp_options, std::int64_t id,
+               std::shared_ptr<std::atomic<socket_state>> state,
+               std::shared_ptr<forge::asio::notification> terminal_requested,
+               std::shared_ptr<forge::asio::notification> terminal_completed) {
+   auto model = std::make_shared<socket_stream>(std::move(socket), std::move(strand), tcp_options, id,
+                                                std::move(state), std::move(terminal_requested),
+                                                std::move(terminal_completed));
+   auto weak = std::weak_ptr<socket_stream>{model};
+   auto stream = transport::detail::stream_access::make_cancelable(
+       model, [weak = std::move(weak)]() noexcept {
+          if (auto value = weak.lock()) {
+             value->request_cancel();
+          }
+       });
+   return {std::move(model), std::move(stream)};
 }
 
 } // namespace
 
 struct connection::impl final : std::enable_shared_from_this<connection::impl> {
+   enum class terminal_request_result {
+      requested,
+      already_terminal,
+      stream_handed_off,
+   };
+
    impl(asio_tcp::socket socket_value, options tcp_options_value)
        : socket(std::make_shared<asio_tcp::socket>(std::move(socket_value))), tcp_options(tcp_options_value),
-         strand(asio::make_strand(socket->get_executor())), id(next_stream_id()) {
+         strand(asio::make_strand(socket->get_executor())), id(next_stream_id()),
+         terminal_state(std::make_shared<std::atomic<socket_state>>(socket_state::active)),
+         terminal_requested(std::make_shared<forge::asio::notification>()),
+         terminal_completed(std::make_shared<forge::asio::notification>()) {
       validate_options(tcp_options);
       auto error = boost::system::error_code{};
       local = from_asio_endpoint(socket->local_endpoint(error));
@@ -235,9 +264,38 @@ struct connection::impl final : std::enable_shared_from_this<connection::impl> {
       }
    }
 
+   ~impl() {
+      request_cancel();
+   }
+
+   void start_terminal_worker() {
+      // The composed operation owns the socket and terminal state independently
+      // of connection::impl. handed_off is terminal for this owner but never closes
+      // the socket transferred to the stream or native caller.
+      auto current = socket;
+      auto state = terminal_state;
+      auto requested = terminal_requested;
+      auto completed = terminal_completed;
+      asio::co_spawn(
+          strand,
+          [current = std::move(current), state = std::move(state), requested = std::move(requested),
+           completed]() mutable -> asio::awaitable<void> {
+             try {
+                static_cast<void>(co_await requested->async_wait(0));
+             } catch (...) {
+                auto expected = socket_state::active;
+                state->compare_exchange_strong(expected, socket_state::cancel_requested,
+                                               std::memory_order_acq_rel, std::memory_order_acquire);
+             }
+             close_on_owner(*current, *state);
+             completed->notify();
+          },
+          [completed = std::move(completed)](std::exception_ptr) noexcept { completed->notify(); });
+   }
+
    [[nodiscard]] bool valid() const noexcept {
       const auto lock = std::scoped_lock{state_mutex};
-      return state == socket_state::active;
+      return !stream_handed_off && terminal_state->load(std::memory_order_acquire) == socket_state::active;
    }
 
    [[nodiscard]] transport::endpoint local_endpoint() const {
@@ -328,33 +386,36 @@ struct connection::impl final : std::enable_shared_from_this<connection::impl> {
    }
 
    boost::asio::awaitable<void> async_close() {
-      static_cast<void>(request_terminal(socket_state::close_requested));
-      auto self = shared_from_this();
-      co_await asio::co_spawn(
-          strand,
-          [self = std::move(self)]() -> asio::awaitable<void> {
-             self->close_on_owner();
-             co_return;
-          },
-          asio::use_awaitable);
+      if (request_terminal(socket_state::close_requested) == terminal_request_result::stream_handed_off) {
+         co_return;
+      }
+      terminal_requested->notify();
+      static_cast<void>(co_await terminal_completed->async_wait(0));
    }
 
    void cancel() {
-      if (request_terminal(socket_state::cancel_requested)) {
-         auto self = shared_from_this();
-         asio::post(strand, [self = std::move(self)] { self->close_on_owner(); });
+      request_cancel();
+   }
+
+   void request_cancel() noexcept {
+      if (request_terminal(socket_state::cancel_requested) == terminal_request_result::stream_handed_off) {
+         return;
       }
+      terminal_requested->notify();
    }
 
    [[nodiscard]] transport::stream_connection into_transport_stream() {
       if (!valid()) {
          FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
       }
-      auto current = detach_socket();
-      auto stream = make_stream(std::move(current), strand, tcp_options, id);
-      return transport::stream_connection{.local_endpoint = local,
-                                          .remote_endpoint = remote,
-                                          .stream = std::move(stream)};
+      auto [model, stream] = prepare_stream(socket, strand, tcp_options, id, terminal_state,
+                                            terminal_requested, terminal_completed);
+      auto out = transport::stream_connection{.local_endpoint = local,
+                                              .remote_endpoint = remote,
+                                              .stream = std::move(stream)};
+      commit_stream_handoff();
+      model->activate();
+      return out;
    }
 
    [[nodiscard]] asio_tcp::socket release_socket() {
@@ -366,43 +427,60 @@ struct connection::impl final : std::enable_shared_from_this<connection::impl> {
       return out;
    }
 
-   [[nodiscard]] bool request_terminal(socket_state requested) noexcept {
+   [[nodiscard]] terminal_request_result request_terminal(socket_state requested) noexcept {
       const auto lock = std::scoped_lock{state_mutex};
-      if (state != socket_state::active) {
-         return false;
+      if (stream_handed_off) {
+         return terminal_request_result::stream_handed_off;
       }
-      state = requested;
-      return true;
+      auto expected = socket_state::active;
+      if (terminal_state->compare_exchange_strong(expected, requested, std::memory_order_acq_rel,
+                                                  std::memory_order_acquire)) {
+         return terminal_request_result::requested;
+      }
+      return terminal_request_result::already_terminal;
    }
 
-   void close_on_owner() noexcept {
-      auto current = std::shared_ptr<asio_tcp::socket>{};
-      {
-         const auto lock = std::scoped_lock{state_mutex};
-         if (state != socket_state::cancel_requested && state != socket_state::close_requested) {
+   static void close_on_owner(asio_tcp::socket& current, std::atomic<socket_state>& state) noexcept {
+      auto observed = state.load(std::memory_order_acquire);
+      while (observed == socket_state::cancel_requested || observed == socket_state::close_requested) {
+         if (state.compare_exchange_weak(observed, socket_state::closed, std::memory_order_acq_rel,
+                                         std::memory_order_acquire)) {
+            cancel_socket(current);
             return;
          }
-         state = socket_state::closed;
-         current = socket;
       }
-      cancel_socket(*current);
    }
 
    [[nodiscard]] std::shared_ptr<asio_tcp::socket> detach_socket() {
       const auto lock = std::scoped_lock{state_mutex};
-      if (state != socket_state::active) {
+      if (terminal_state->load(std::memory_order_acquire) != socket_state::active) {
          FORGE_THROW_EXCEPTION(exceptions::closed, "tcp connection cannot hand off a terminal socket");
       }
       if (active_operations != 0) {
          FORGE_THROW_EXCEPTION(exceptions::io_error, "tcp connection cannot hand off while I/O is active");
       }
-      state = socket_state::handed_off;
+      auto expected = socket_state::active;
+      if (!terminal_state->compare_exchange_strong(expected, socket_state::handed_off,
+                                                   std::memory_order_acq_rel, std::memory_order_acquire)) {
+         FORGE_THROW_EXCEPTION(exceptions::closed, "tcp connection cannot hand off a terminal socket");
+      }
       return std::move(socket);
+   }
+
+   void commit_stream_handoff() {
+      const auto lock = std::scoped_lock{state_mutex};
+      if (terminal_state->load(std::memory_order_acquire) != socket_state::active) {
+         FORGE_THROW_EXCEPTION(exceptions::closed, "tcp connection cannot hand off a terminal socket");
+      }
+      if (active_operations != 0) {
+         FORGE_THROW_EXCEPTION(exceptions::io_error, "tcp connection cannot hand off while I/O is active");
+      }
+      stream_handed_off = true;
    }
 
    void claim_operation() {
       const auto lock = std::scoped_lock{state_mutex};
-      if (state != socket_state::active) {
+      if (stream_handed_off || terminal_state->load(std::memory_order_acquire) != socket_state::active) {
          FORGE_THROW_EXCEPTION(exceptions::closed, "invalid tcp connection");
       }
       ++active_operations;
@@ -420,13 +498,18 @@ struct connection::impl final : std::enable_shared_from_this<connection::impl> {
    transport::endpoint remote;
    std::int64_t id = -1;
    mutable std::mutex state_mutex;
-   socket_state state = socket_state::active;
+   std::shared_ptr<std::atomic<socket_state>> terminal_state;
+   std::shared_ptr<forge::asio::notification> terminal_requested;
+   std::shared_ptr<forge::asio::notification> terminal_completed;
    std::size_t active_operations = 0;
+   bool stream_handed_off = false;
 };
 
 connection::connection() = default;
 connection::connection(boost::asio::ip::tcp::socket socket, options tcp_options)
-    : impl_(std::make_shared<impl>(std::move(socket), tcp_options)) {}
+    : impl_(std::make_shared<impl>(std::move(socket), tcp_options)) {
+   impl_->start_terminal_worker();
+}
 connection::~connection() = default;
 connection::connection(connection&&) noexcept = default;
 connection& connection::operator=(connection&&) noexcept = default;
@@ -482,8 +565,12 @@ boost::asio::awaitable<void> connection::async_close() {
 }
 
 void connection::cancel() {
+   request_cancel();
+}
+
+void connection::request_cancel() noexcept {
    if (impl_) {
-      impl_->cancel();
+      impl_->request_cancel();
    }
 }
 

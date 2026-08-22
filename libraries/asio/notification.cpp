@@ -1,6 +1,6 @@
 module;
 
-#include "details/async_waiter.hxx"
+#include "details/notification_waiter.hxx"
 
 #include <chrono>
 #include <cstdint>
@@ -37,9 +37,22 @@ boost::asio::awaitable<notification::epoch_type> notification::async_wait(epoch_
 }
 
 boost::asio::awaitable<notification::epoch_type>
+notification::async_wait(epoch_type observed_epoch, std::stop_token stop) {
+   auto state = impl_;
+   co_return co_await state->async_wait(observed_epoch, std::move(stop));
+}
+
+boost::asio::awaitable<notification::epoch_type>
 notification::async_wait_until(epoch_type observed_epoch, std::chrono::steady_clock::time_point deadline) {
    auto state = impl_;
    co_return co_await state->async_wait_until(observed_epoch, deadline);
+}
+
+boost::asio::awaitable<notification::epoch_type>
+notification::async_wait_until(epoch_type observed_epoch, std::chrono::steady_clock::time_point deadline,
+                               std::stop_token stop) {
+   auto state = impl_;
+   co_return co_await state->async_wait_until(observed_epoch, deadline, std::move(stop));
 }
 
 void notification::notify() noexcept {

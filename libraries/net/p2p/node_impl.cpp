@@ -1,5 +1,7 @@
 module;
 
+#include "details/rendezvous_time.hxx"
+
 #include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
@@ -7,6 +9,7 @@ module;
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <deque>
@@ -16,6 +19,7 @@ module;
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <ranges>
 #include <set>
 #include <span>
 #include <string>
@@ -24,7 +28,10 @@ module;
 #include <utility>
 #include <vector>
 
+#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/cancellation_state.hpp>
+#include <boost/asio/cancellation_type.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
@@ -35,6 +42,7 @@ module;
 #include <boost/asio/strand.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/compat/move_only_function.hpp>
 #include <boost/system/system_error.hpp>
 
 module forge.net.p2p.node;
@@ -62,10 +70,10 @@ import forge.net.p2p.rendezvous;
 import forge.net.p2p.resource_manager;
 import forge.net.p2p.scoring;
 import forge.net.p2p.stream;
+import forge.net.p2p.topology;
 import forge.net.quic.exceptions;
 import forge.crypto.core.random;
 import forge.crypto.asymmetric.rsa;
-import forge.crypto.digest.sha256;
 import forge.crypto.asymmetric.x25519;
 import forge.multiformats.types;
 import forge.multiformats.varint;
@@ -77,9 +85,13 @@ import forge.net.yamux.exceptions;
 import forge.net.yamux.session;
 
 #include "details/lifecycle_wakeup.hxx"
+#include "details/cancellation_latch.hxx"
 #include "details/node_impl.hxx"
+#include "details/owner_cancellation.hxx"
 #include "details/peer_exchange_learning.hxx"
 #include "details/protocol_capabilities.hxx"
+#include "details/topology_peer_exchange_claims.hxx"
+#include "details/worker_stop_bridge.hxx"
 
 namespace forge::net::p2p {
 
@@ -209,31 +221,6 @@ namespace asio = boost::asio;
    return out == 0 ? 1 : out;
 }
 
-boost::asio::awaitable<std::vector<std::uint8_t>> async_read_length_delimited(forge::net::p2p::stream& stream,
-                                                                              std::vector<std::uint8_t>& buffer,
-                                                                              std::size_t max_payload_size) {
-   while (true) {
-      try {
-         const auto decoded = forge::multiformats::varint_decode(buffer);
-         if (decoded.value > max_payload_size) {
-            FORGE_THROW_EXCEPTION(exceptions::codec_error, "libp2p protobuf message exceeds max size");
-         }
-         const auto total = decoded.size + static_cast<std::size_t>(decoded.value);
-         if (buffer.size() >= total) {
-            auto out = std::vector<std::uint8_t>{buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(total)};
-            buffer.erase(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(total));
-            co_return out;
-         }
-      } catch (const forge::multiformats::exceptions::invalid_format& error) {
-         if (std::string_view{error.what()}.find("unterminated") == std::string_view::npos) {
-            FORGE_THROW_EXCEPTION(exceptions::codec_error, error.what());
-         }
-      }
-      auto chunk = co_await stream.async_read();
-      buffer.insert(buffer.end(), chunk.begin(), chunk.end());
-   }
-}
-
 [[nodiscard]] std::vector<std::uint8_t> wrap_length_delimited(std::span<const std::uint8_t> payload) {
    auto out = forge::multiformats::varint_encode(payload.size());
    out.insert(out.end(), payload.begin(), payload.end());
@@ -304,8 +291,76 @@ resource_manager::limits resource_limits_for(const node::limits& limits) {
    return value;
 }
 
+void normalize_legacy_discovery(node::options& options) {
+   const auto defaults = discovery::policy{};
+   const auto& legacy = options.limits.discovery;
+   auto& topology_policy = options.limits.topology;
+   const auto topology_defaults = topology::policy{};
+
+   if (legacy.query_timeout.count() <= 0 || legacy.refresh_interval.count() <= 0 || legacy.max_parallel_queries == 0 ||
+       legacy.max_results == 0 ||
+       std::ranges::any_of(legacy.rendezvous_namespaces, [](const auto& value) { return value.empty(); })) {
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "invalid legacy P2P discovery policy");
+   }
+
+   const auto map_value = [](const auto& legacy_value, const auto& legacy_default, auto& topology_value,
+                             const auto& topology_default, std::string_view name) {
+      if (legacy_value == legacy_default) {
+         return;
+      }
+      if (topology_value != topology_default && topology_value != legacy_value) {
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options,
+                               std::string{"conflicting legacy discovery and topology "} + std::string{name});
+      }
+      topology_value = legacy_value;
+   };
+
+   if (legacy.enabled != defaults.enabled) {
+      const auto operating_mode = legacy.enabled ? topology::mode::managed : topology::mode::static_only;
+      if (topology_policy.operating_mode != topology_defaults.operating_mode &&
+          topology_policy.operating_mode != operating_mode) {
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options, "conflicting legacy discovery and topology mode");
+      }
+      topology_policy.operating_mode = operating_mode;
+   }
+   map_value(legacy.dht_enabled, defaults.dht_enabled, topology_policy.dht_enabled, topology_defaults.dht_enabled,
+             "DHT setting");
+   map_value(legacy.rendezvous_enabled, defaults.rendezvous_enabled, topology_policy.rendezvous_enabled,
+             topology_defaults.rendezvous_enabled, "Rendezvous setting");
+   map_value(legacy.query_timeout, defaults.query_timeout, topology_policy.query_timeout,
+             topology_defaults.query_timeout, "query timeout");
+   map_value(legacy.refresh_interval, defaults.refresh_interval, topology_policy.refresh_interval,
+             topology_defaults.refresh_interval, "refresh interval");
+   map_value(legacy.max_parallel_queries, defaults.max_parallel_queries, topology_policy.max_parallel_queries,
+             topology_defaults.max_parallel_queries, "query concurrency");
+   map_value(legacy.max_results, defaults.max_results, topology_policy.max_candidates, topology_defaults.max_candidates,
+             "candidate limit");
+
+   if (legacy.rendezvous_namespaces != defaults.rendezvous_namespaces) {
+      if (topology_policy.rendezvous_points.empty()) {
+         FORGE_THROW_EXCEPTION(exceptions::invalid_options,
+                               "legacy P2P discovery namespaces require configured topology Rendezvous points");
+      }
+      for (const auto& point : topology_policy.rendezvous_points) {
+         if (point.namespaces != legacy.rendezvous_namespaces) {
+            FORGE_THROW_EXCEPTION(exceptions::invalid_options,
+                                  "conflicting legacy discovery and topology Rendezvous namespaces");
+         }
+      }
+   }
+}
+
 void validate(const node::options& options) {
    const auto relay_duration = std::chrono::duration_cast<std::chrono::seconds>(options.limits.relay.max_duration);
+   validate(options.limits.topology);
+   for (const auto& point : options.limits.topology.rendezvous_points) {
+      for (const auto& namespace_name : point.namespaces) {
+         if (namespace_name.size() > options.limits.rendezvous.max_namespace_size) {
+            FORGE_THROW_EXCEPTION(exceptions::invalid_options,
+                                  "P2P topology rendezvous namespace exceeds the configured limit");
+         }
+      }
+   }
    if (!options.allow_insecure_test_mode && (options.certificate_pem.empty() || options.private_key_pem.empty())) {
       FORGE_THROW_EXCEPTION(exceptions::invalid_options,
                             "production P2P node requires mTLS certificate and private key");
@@ -337,11 +392,15 @@ void validate(const node::options& options) {
        options.limits.dial_backoff_base.count() <= 0 || options.limits.dial_backoff_step.count() <= 0 ||
        options.limits.dial_backoff_max.count() <= 0 ||
        options.limits.dial_backoff_base > options.limits.dial_backoff_max ||
-       options.limits.max_protocol_handlers == 0 || options.limits.max_peer_exchange_message_size == 0 ||
-       options.limits.max_peer_exchange_records == 0 || options.limits.max_peer_exchange_queue == 0 ||
-       options.limits.relay.max_active_relays == 0 || options.limits.relay.max_reservations == 0 ||
-       options.limits.relay.max_streams_per_reservation == 0 || options.limits.relay.max_relay_bytes == 0 ||
-       options.limits.relay.max_queued_bytes == 0 || relay_duration.count() <= 0 ||
+       options.limits.max_protocol_handlers == 0 ||
+       options.limits.max_peer_exchange_message_size < peer_exchange_codec::minimum_message_size ||
+       options.limits.max_peer_exchange_message_size > std::numeric_limits<std::uint32_t>::max() ||
+       options.limits.max_peer_exchange_records == 0 ||
+       options.limits.max_peer_exchange_records > std::numeric_limits<std::uint32_t>::max() ||
+       options.limits.max_peer_exchange_queue == 0 || options.limits.relay.max_active_relays == 0 ||
+       options.limits.relay.max_reservations == 0 || options.limits.relay.max_streams_per_reservation == 0 ||
+       options.limits.relay.max_relay_bytes == 0 || options.limits.relay.max_queued_bytes == 0 ||
+       relay_duration.count() <= 0 ||
        std::chrono::duration_cast<std::chrono::milliseconds>(relay_duration) != options.limits.relay.max_duration ||
        options.limits.relay.reservation_ttl.count() <= 0 || options.limits.resources.max_streams == 0 ||
        options.limits.resources.max_streams_per_peer == 0 || options.limits.resources.max_streams_per_protocol == 0 ||
@@ -349,8 +408,6 @@ void validate(const node::options& options) {
        options.limits.resources.max_queued_bytes == 0 || options.limits.resources.max_dial_attempts == 0 ||
        options.limits.resources.max_dial_attempts_per_peer == 0 ||
        options.limits.resources.max_malformed_messages_per_peer == 0 ||
-       options.limits.discovery.query_timeout.count() <= 0 || options.limits.discovery.refresh_interval.count() <= 0 ||
-       options.limits.discovery.max_parallel_queries == 0 || options.limits.discovery.max_results == 0 ||
        options.limits.rendezvous.default_ttl.count() <= 0 || options.limits.rendezvous.min_ttl.count() <= 0 ||
        options.limits.rendezvous.max_ttl.count() <= 0 ||
        options.limits.rendezvous.min_ttl > options.limits.rendezvous.max_ttl ||
@@ -461,7 +518,8 @@ node::impl::impl(forge::asio::runtime& runtime_value, node::options options_valu
       identify_service(runtime_value.context().get_executor()), store(options.peer_state),
       dht_profiles(
           detail::make_dht_profile_states(local, options.dht_profiles, options.dht_record_persistence,
-                                          [this](const peer_id& peer) { return store.find_public_key(peer); })) {
+                                          [this](const peer_id& peer) { return store.find_public_key(peer); })),
+      peer_exchange_value(options.limits.max_peer_exchange_queue) {
    if (!options.allow_insecure_test_mode) {
       const auto identity_peer = make_peer_id(decode_public_key(identity.public_key));
       if (local != identity_peer) {
@@ -497,9 +555,16 @@ bool node::impl::launch_tracked(std::function<boost::asio::awaitable<void>()> ta
       return false;
    }
    const auto executor = operation.executor();
+   const auto lifecycle_stop = operation.stop_source();
    try {
       asio::co_spawn(
-          executor, [task = std::move(task)]() mutable -> asio::awaitable<void> { co_await task(); },
+          executor,
+          [task = std::move(task), lifecycle_stop]() mutable -> asio::awaitable<void> {
+             if (lifecycle_stop && lifecycle_stop->stop_requested()) {
+                co_return;
+             }
+             co_await task();
+          },
           [operation = std::move(operation)](std::exception_ptr error) mutable {
              static_cast<void>(error);
              operation.release();
@@ -641,25 +706,276 @@ void node::impl::increment_rendezvous_discover() {
 }
 
 boost::asio::awaitable<void> node::impl::request_peer_exchange(const peer_id& peer) {
+   if (!options.limits.topology.peer_exchange_enabled) {
+      FORGE_THROW_EXCEPTION(exceptions::unsupported_protocol, "P2P peer exchange is disabled by topology policy");
+   }
+
    auto session = co_await ensure_direct_session(peer);
-   try {
-      auto stream = co_await open_session_stream(session, builtins::peer_exchange);
-      co_await peer_exchange_codec::async_write(stream,
-                                                peer_exchange_message{
-                                                    .kind = peer_exchange_message::type::peer_exchange_request,
-                                                    .peer = local,
-                                                },
-                                                codec_for(options));
-      auto response = co_await peer_exchange_codec::async_read(stream, codec_for(options));
-      if (response.kind != peer_exchange_message::type::peer_exchange_response) {
-         FORGE_THROW_EXCEPTION(exceptions::protocol_error, "P2P peer exchange expected response");
+   co_await identify_session(session);
+   auto claim_guard = [&] {
+      const auto lock = std::scoped_lock{mutex};
+      if (stopped || peer_exchange_admission_closed) {
+         FORGE_THROW_EXCEPTION(exceptions::closed, "P2P node stopped before peer exchange");
       }
-      detail::learn_authenticated_peer_exchange_response(store, response, session->info.remote_peer,
-                                                         session->remote_endpoint);
-      increment_peer_exchange();
-      co_await stream.async_close();
+      // claim_peer commits scheduler/singleflight ownership. The single-claim
+      // guard takes that ownership without allocation before the lock is released.
+      return detail::topology_peer_exchange_claims{
+          mutex, peer_exchange_value,
+          peer_exchange_value.claim_peer(peer, peer_exchange_sessions_locked(), std::chrono::steady_clock::now(),
+                                         options.limits.topology.max_peer_exchange_peers,
+                                         runtime.context().get_executor()),
+          options.limits.topology.query_timeout};
+   }();
+   auto& claim = claim_guard.single_claim();
+   if (claim.status == detail::peer_exchange_scheduler::claim_status::unavailable) {
+      FORGE_THROW_EXCEPTION(exceptions::unsupported_protocol,
+                            "P2P peer does not advertise the exact peer exchange protocol through Identify");
+   }
+   if (claim.status == detail::peer_exchange_scheduler::claim_status::closed) {
+      FORGE_THROW_EXCEPTION(exceptions::closed, "P2P peer exchange scheduler is stopped");
+   }
+   if (claim.status == detail::peer_exchange_scheduler::claim_status::backpressure) {
+      FORGE_THROW_EXCEPTION(exceptions::backpressure_rejected, "P2P peer exchange waiter capacity reached");
+   }
+   if (claim.status == detail::peer_exchange_scheduler::claim_status::backoff ||
+       claim.status == detail::peer_exchange_scheduler::claim_status::not_selected) {
+      co_return;
+   }
+   co_await await_peer_exchange_claim(claim);
+   claim_guard.release();
+}
+
+boost::asio::awaitable<void>
+node::impl::await_peer_exchange_claim(detail::peer_exchange_scheduler::claim& claim,
+                                      std::shared_ptr<detail::worker_terminal_owner> terminal) {
+   if (claim.started()) {
+      co_await run_peer_exchange(claim, std::move(terminal));
+      co_return;
+   }
+
+   auto release_participant = [this, &claim](void*) noexcept {
+      auto lock = std::scoped_lock{mutex};
+      peer_exchange_value.leave(claim);
+   };
+   auto participant_guard = std::unique_ptr<void, decltype(release_participant)>{this, std::move(release_participant)};
+   if (terminal) {
+      static_cast<void>(terminal->publish(detail::worker_terminal_owner::callback{
+          [participant = std::addressof(claim.participant)]() noexcept { participant->request_stop(); },
+      }));
+   }
+   auto result = detail::connection_singleflight_registry::outcome{};
+   try {
+      result = co_await claim.participant.wait();
+   } catch (const boost::system::system_error& error) {
+      if (error.code() == boost::asio::error::operation_aborted) {
+         FORGE_THROW_EXCEPTION(exceptions::canceled, "P2P peer exchange canceled while waiting");
+      }
+      FORGE_THROW_EXCEPTION(exceptions::internal, "P2P peer exchange wait failed",
+                            forge::exceptions::ctx("reason", error.code().message()));
+   }
+   if (!result.succeeded) {
+      FORGE_THROW_CODE(result.error.value_or(exceptions::code::internal), std::move(result.message));
+   }
+}
+
+std::vector<detail::peer_exchange_scheduler::session> node::impl::peer_exchange_sessions_locked() const {
+   auto result = std::vector<detail::peer_exchange_scheduler::session>{};
+   result.reserve(sessions.size());
+   for (const auto& [id, session] : sessions) {
+      if (session->closed) {
+         continue;
+      }
+      result.push_back(detail::peer_exchange_scheduler::session{
+          .peer = session->info.remote_peer,
+          .session_id = id,
+          .identify_state = session->info.identify_state,
+          .capabilities = session->info.capabilities,
+          .protocols = session->remote_protocols,
+      });
+   }
+   return result;
+}
+
+void node::impl::launch_peer_exchange() {
+   if (!options.limits.topology.peer_exchange_enabled ||
+       options.limits.topology.operating_mode == topology::mode::static_only) {
+      return;
+   }
+
+   auto cancellation = std::make_shared<cancellation_latch>();
+   auto self = shared_from_this();
+   static_cast<void>(launch_tracked(
+       [self = std::move(self), cancellation = std::move(cancellation)]() mutable -> boost::asio::awaitable<void> {
+          try {
+             static_cast<void>(co_await self->async_collect_topology_peer_exchange(
+                 std::move(cancellation), self->options.limits.topology.max_parallel_queries));
+          } catch (...) {
+             auto stopping = false;
+             {
+                const auto lock = std::scoped_lock{self->mutex};
+                stopping = self->stopped || self->peer_exchange_admission_closed;
+             }
+             if (!stopping) {
+                forge::exceptions::capture_and_log("P2P peer exchange refresh failed");
+             }
+          }
+       }));
+}
+
+boost::asio::awaitable<void> node::impl::run_peer_exchange(detail::peer_exchange_scheduler::claim& claim,
+                                                           std::shared_ptr<detail::worker_terminal_owner> terminal) {
+   auto finish = [this, &claim](bool succeeded, exceptions::code error, std::string message) noexcept {
+      auto lock = std::scoped_lock{mutex};
+      if (succeeded) {
+         peer_exchange_value.succeed(claim, std::chrono::steady_clock::now(), options.limits.topology.refresh_interval);
+      } else {
+         peer_exchange_value.fail(claim, error, std::move(message), std::chrono::steady_clock::now(),
+                                  options.limits.topology.query_timeout);
+      }
+      peer_exchange_value.leave(claim);
+   };
+
+   try {
+      auto operation = std::make_shared<peer_exchange_operation>();
+      operation->cancellation.reserve(1);
+      auto operation_stop = std::make_shared<detail::worker_stop_bridge>();
+      operation->cancellation.publish([operation_stop] noexcept { operation_stop->request_stop(); });
+      auto operation_id = std::uint64_t{};
+      {
+         const auto lock = std::scoped_lock{mutex};
+         if (stopped || peer_exchange_admission_closed) {
+            FORGE_THROW_EXCEPTION(exceptions::closed, "P2P node stopped before peer exchange query");
+         }
+         operation_id = next_peer_exchange_operation_id++;
+         peer_exchange_operations.emplace(operation_id, operation);
+      }
+      const auto release_operation = [this, operation_id](peer_exchange_operation*) noexcept {
+         const auto lock = std::scoped_lock{mutex};
+         peer_exchange_operations.erase(operation_id);
+      };
+      auto operation_cleanup =
+          std::unique_ptr<peer_exchange_operation, decltype(release_operation)>{operation.get(), release_operation};
+      if (terminal) {
+         static_cast<void>(terminal->publish(detail::worker_terminal_owner::callback{
+             [operation]() noexcept { operation->cancellation.request_stop(); },
+         }));
+      }
+
+      auto session = std::shared_ptr<session_state>{};
+      {
+         auto lock = std::scoped_lock{mutex};
+         const auto found = sessions.find(claim.selected.session_id);
+         if (found != sessions.end() && found->second->info.remote_peer == claim.selected.peer &&
+             !found->second->closed &&
+             detail::peer_exchange_scheduler::eligible(detail::peer_exchange_scheduler::session{
+                 .peer = found->second->info.remote_peer,
+                 .session_id = found->second->id,
+                 .identify_state = found->second->info.identify_state,
+                 .capabilities = found->second->info.capabilities,
+                 .protocols = found->second->remote_protocols,
+             })) {
+            session = found->second;
+         }
+      }
+      if (!session) {
+         FORGE_THROW_EXCEPTION(exceptions::closed, "P2P peer exchange session is no longer Identify-eligible");
+      }
+      const auto cancel_operation = [operation] noexcept { operation->cancellation.cancel(); };
+      auto parent_cancellation = co_await boost::asio::this_coro::cancellation_state;
+      auto parent_slot = parent_cancellation.slot();
+      if (!terminal && parent_slot.is_connected()) {
+         parent_slot.assign([cancel_operation](boost::asio::cancellation_type) { cancel_operation(); });
+      }
+      const auto clear_parent_slot = [](boost::asio::cancellation_slot* slot) noexcept { slot->clear(); };
+      auto parent_slot_cleanup =
+          std::unique_ptr<boost::asio::cancellation_slot, decltype(clear_parent_slot)>{&parent_slot, clear_parent_slot};
+      if ((!terminal && parent_cancellation.cancelled() != boost::asio::cancellation_type::none) ||
+          (terminal && terminal->stop_requested())) {
+         cancel_operation();
+         FORGE_THROW_EXCEPTION(exceptions::canceled, "P2P peer exchange canceled before stream open");
+      }
+      {
+         const auto lock = std::scoped_lock{mutex};
+         if (stopped) {
+            FORGE_THROW_EXCEPTION(exceptions::closed, "P2P node stopped before peer exchange stream open");
+         }
+      }
+
+      const auto codec_options = codec_for(options);
+      auto deadline = operation_deadline{runtime.context(), options.limits.topology.query_timeout};
+      deadline.arm(cancel_operation);
+      try {
+         co_await detail::async_run_with_owner_cancellation(
+             operation_stop,
+             [this, session, operation, operation_stop,
+              codec_options](boost::asio::cancellation_slot slot) -> boost::asio::awaitable<void> {
+                if (operation->cancellation.cancel_requested()) {
+                   FORGE_THROW_EXCEPTION(exceptions::canceled, "P2P peer exchange canceled before stream open");
+                }
+                auto admission = detail::make_owner_stream_admission(slot, operation_stop);
+                auto stream = std::make_shared<forge::net::p2p::stream>(
+                    co_await open_session_stream(session, builtins::peer_exchange, false, std::move(admission)));
+                auto cancellation = detail::owner_stream_cancellation{std::move(slot), stream};
+                if (operation->cancellation.cancel_requested()) {
+                   cancellation.request_cancel();
+                   FORGE_THROW_EXCEPTION(exceptions::canceled, "P2P peer exchange canceled during stream open");
+                }
+                co_await peer_exchange_codec::async_write(
+                    *stream,
+                    peer_exchange_message{
+                        .kind = peer_exchange_message::type::peer_exchange_request,
+                        .peer = local,
+                        .max_frame_size = codec_options.max_message_size,
+                    },
+                    codec_options);
+                auto response = co_await peer_exchange_codec::async_read(*stream, codec_options);
+                if (response.kind != peer_exchange_message::type::peer_exchange_response) {
+                   FORGE_THROW_EXCEPTION(exceptions::protocol_error, "P2P peer exchange expected response");
+                }
+                const auto applied_response_limit =
+                    peer_exchange_codec::negotiate_response_max_frame_size(response.max_frame_size, codec_options);
+                if (applied_response_limit != response.max_frame_size) {
+                   FORGE_THROW_EXCEPTION(exceptions::protocol_error,
+                                         "P2P peer exchange response exceeds the advertised receive limit");
+                }
+                const auto observed_at = std::chrono::system_clock::now();
+                detail::learn_authenticated_peer_exchange_response(
+                    store, response, session->info.remote_peer, session->remote_endpoint, observed_at,
+                    detail::saturating_topology_expiry(observed_at, options.limits.topology.refresh_interval));
+                increment_peer_exchange();
+                co_await stream->async_close();
+             });
+         if (operation->cancellation.cancel_requested()) {
+            FORGE_THROW_EXCEPTION(exceptions::canceled, "P2P peer exchange canceled before operation start");
+         }
+         if (!deadline.finish()) {
+            throw_operation_timeout("P2P peer exchange");
+         }
+      } catch (...) {
+         const auto completed = deadline.finish();
+         operation->cancellation.cancel();
+         if ((terminal && terminal->stop_requested()) ||
+             (!terminal && parent_cancellation.cancelled() != boost::asio::cancellation_type::none)) {
+            FORGE_THROW_EXCEPTION(exceptions::canceled, "P2P peer exchange canceled");
+         }
+         if (operation->cancellation.stop_requested()) {
+            FORGE_THROW_EXCEPTION(exceptions::closed, "P2P node stopped during peer exchange");
+         }
+         if (deadline.timed_out() || !completed) {
+            throw_operation_timeout("P2P peer exchange");
+         }
+         throw;
+      }
+      finish(true, exceptions::code::internal, {});
    } catch (const forge::exceptions::base& error) {
+      const auto code = p2p_code(error);
+      // Claim settlement is noexcept: copying an exception message here could
+      // otherwise turn an allocation failure into an ownerless scheduler claim.
+      finish(false, code, {});
       rethrow_transport_as_p2p(error);
+   } catch (...) {
+      finish(false, exceptions::code::internal, {});
+      throw;
    }
 }
 
@@ -848,8 +1164,9 @@ namespace {
 [[nodiscard]] std::optional<rendezvous::registration>
 sanitize_registration_for_session(rendezvous::registration registration, const auto& session) {
    const auto original_endpoints = endpoints_from_registration(registration);
+   const auto signed_record = !registration.signed_peer_record.empty();
    if (original_endpoints.empty()) {
-      if (!registration.signed_peer_record.empty()) {
+      if (signed_record) {
          return std::nullopt;
       }
       return registration;
@@ -862,13 +1179,13 @@ sanitize_registration_for_session(rendezvous::registration registration, const a
    if (sanitized.empty()) {
       return std::nullopt;
    }
-   if (registration.signed_peer_record.empty() || sanitized.size() != original_endpoints.size()) {
-      registration.signed_peer_record.clear();
-   } else {
+   if (signed_record) {
+      if (sanitized.size() != original_endpoints.size()) {
+         return std::nullopt;
+      }
       for (auto index = std::size_t{0}; index < sanitized.size(); ++index) {
          if (sanitized[index].to_string() != original_endpoints[index].to_string()) {
-            registration.signed_peer_record.clear();
-            break;
+            return std::nullopt;
          }
       }
    }
@@ -930,7 +1247,7 @@ boost::asio::awaitable<void> node::impl::handle_rendezvous(std::shared_ptr<node:
                 .endpoints = std::move(endpoints),
                 .signed_peer_record = request.register_value->signed_peer_record,
                 .ttl = ttl,
-                .expires_at = std::chrono::system_clock::now() + ttl,
+                .expires_at = detail::rendezvous_expiry_after(std::chrono::system_clock::now(), ttl),
             };
             auto sanitized = sanitize_registration_for_session(std::move(registration), session);
             if (!sanitized) {
@@ -1022,47 +1339,69 @@ boost::asio::awaitable<void> node::impl::handle_rendezvous(std::shared_ptr<node:
    co_await stream.async_close();
 }
 
-boost::asio::awaitable<void> node::impl::handle_peer_exchange(forge::net::p2p::stream stream,
-                                                              std::uint64_t request_id) {
-   auto endpoints = std::vector<peer_exchange_message::endpoint_record>{};
+boost::asio::awaitable<void> node::impl::handle_peer_exchange(forge::net::p2p::stream stream, std::uint64_t request_id,
+                                                              std::uint64_t remote_receive_limit) {
+   auto response_options = codec_for(options);
+   response_options.max_message_size =
+       peer_exchange_codec::negotiate_response_max_frame_size(remote_receive_limit, response_options);
+   auto response = peer_exchange_message{
+       .kind = peer_exchange_message::type::peer_exchange_response,
+       .request_id = request_id,
+       .peer = local,
+       .capabilities = options.capabilities,
+       .max_frame_size = response_options.max_message_size,
+   };
+   if (peer_exchange_codec::encoded_size(response, response_options) > response_options.max_message_size) {
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "peer exchange receive limit cannot hold a response header");
+   }
+
+   const auto append_endpoint = [&](peer_exchange_message::endpoint_record endpoint) {
+      if (response.endpoints.size() >= response_options.max_endpoint_records) {
+         return false;
+      }
+      response.endpoints.push_back(std::move(endpoint));
+      if (peer_exchange_codec::encoded_size(response, response_options) <= response_options.max_message_size) {
+         return true;
+      }
+      response.endpoints.pop_back();
+      return false;
+   };
+
    for (const auto& endpoint : local_endpoints_for_control()) {
-      endpoints.push_back(peer_exchange_message::endpoint_record{
+      append_endpoint(peer_exchange_message::endpoint_record{
           .peer = local,
           .endpoint = endpoint,
           .capabilities = options.capabilities,
       });
-      if (endpoints.size() >= options.limits.max_peer_exchange_records) {
+      if (response.endpoints.size() >= response_options.max_endpoint_records) {
          break;
       }
    }
-   const auto snapshot = store.snapshot(options.limits.max_peer_exchange_records);
-   for (const auto& record : snapshot) {
+   const auto remaining = response_options.max_endpoint_records - response.endpoints.size();
+   const auto candidates = store.scored_candidates(remaining);
+   for (const auto& record : candidates) {
+      if (record.peer == local) {
+         continue;
+      }
       for (const auto& endpoint : record.endpoints) {
-         if (endpoints.size() >= options.limits.max_peer_exchange_records) {
+         if (response.endpoints.size() >= response_options.max_endpoint_records) {
             break;
          }
-         endpoints.push_back(peer_exchange_message::endpoint_record{
+         append_endpoint(peer_exchange_message::endpoint_record{
              .peer = record.peer,
              .endpoint = endpoint.endpoint,
              .capabilities = record.capabilities,
          });
-         if (endpoints.size() >= options.limits.max_peer_exchange_records) {
+         if (response.endpoints.size() >= response_options.max_endpoint_records) {
             break;
          }
       }
-      if (endpoints.size() >= options.limits.max_peer_exchange_records) {
+      if (response.endpoints.size() >= response_options.max_endpoint_records) {
          break;
       }
    }
    increment_peer_exchange();
-   co_await peer_exchange_codec::async_write(stream,
-                                             peer_exchange_message{
-                                                 .kind = peer_exchange_message::type::peer_exchange_response,
-                                                 .request_id = request_id,
-                                                 .peer = local,
-                                                 .endpoints = std::move(endpoints),
-                                             },
-                                             codec_for(options));
+   co_await peer_exchange_codec::async_write(stream, response, response_options);
    co_await stream.async_close();
 }
 

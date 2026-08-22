@@ -78,6 +78,7 @@ import forge.net.yamux.session;
 #include "details/dht_fanout.hxx"
 #include "details/dht_query.hxx"
 #include "details/dht_time.hxx"
+#include "details/cancellation_latch.hxx"
 #include "details/identity_signature.hxx"
 #include "details/node_impl.hxx"
 
@@ -147,33 +148,69 @@ void validate_query_options(const dht::query_options& options) {
    }
 }
 
-boost::asio::awaitable<dht_query::result> run_lookup(const auto& self, const protocol_id& protocol, dht::key target,
-                                                     std::optional<peer_id> target_peer, dht::message_type type,
-                                                     dht::query_options query_options, auto response_complete) {
+[[nodiscard]] host_addresses::learning_context
+routed_discovery_context(std::optional<endpoint> remote_endpoint, std::optional<endpoint> direct_endpoint) {
+   auto provenance_endpoint = remote_endpoint ? std::move(remote_endpoint) : std::move(direct_endpoint);
+   if (!provenance_endpoint) {
+      return third_party_discovery_context();
+   }
+   return host_addresses::learning_context{
+       .source = host_addresses::source_kind::routed,
+       .remote_endpoint = std::move(provenance_endpoint),
+   };
+}
+
+boost::asio::awaitable<dht_query::result> run_lookup_with_alpha(const auto& self, const protocol_id& protocol,
+                                                                dht::key target, std::optional<peer_id> target_peer,
+                                                                dht::message_type type,
+                                                                dht::query_options query_options,
+                                                                std::optional<std::size_t> alpha_limit,
+                                                                auto response_complete,
+                                                                std::shared_ptr<cancellation_latch> cancellation = {}) {
    validate_query_options(query_options);
+   if (cancellation && cancellation->stop_requested()) {
+      FORGE_THROW_EXCEPTION(exceptions::canceled, "P2P DHT lookup canceled before launch");
+   }
    auto& state = self->dht_profile(protocol);
+   auto limits = state.profile.limits;
+   if (alpha_limit) {
+      limits.alpha = std::min(limits.alpha, *alpha_limit);
+   }
    const auto started = std::chrono::steady_clock::now();
+   auto response_contexts =
+       std::make_shared<std::map<peer_id, std::pair<std::optional<endpoint>, std::optional<endpoint>>>>();
    auto result = co_await dht_query::run(
        dht_query::request{
            .target = target,
            .target_peer = std::move(target_peer),
-           .options = state.profile.limits,
+           .options = limits,
            // Kademlia starts from the local k-closest shortlist; alpha only bounds concurrent RPCs.
            .seeds = state.routing.query_seeds(target.bytes, state.profile.limits.replication),
            .requested_provider_count = type == dht::message_type::get_providers ? query_options.requested_count : 0,
            .collect_value_responses = type == dht::message_type::get_value,
        },
-       [self, protocol, target, type, started,
+       [self, protocol, target, type, started, response_contexts, cancellation,
         timeout = query_options.timeout](const dht::peer& candidate) -> boost::asio::awaitable<dht::message> {
-          co_return co_await self->exchange_dht(protocol, candidate.id, dht::message{.type = type, .key_value = target},
-                                                remaining_timeout(started, timeout, "P2P DHT lookup"));
+          if (cancellation && cancellation->stop_requested()) {
+             FORGE_THROW_EXCEPTION(exceptions::canceled, "P2P DHT lookup canceled");
+          }
+          auto response = co_await self->exchange_dht(
+              protocol, candidate.id, dht::message{.type = type, .key_value = target},
+              remaining_timeout(started, timeout, "P2P DHT lookup"), cancellation);
+          auto [_, inserted] = response_contexts->insert_or_assign(
+              candidate.id, std::pair{std::move(response.remote_endpoint), std::move(response.direct_endpoint)});
+          static_cast<void>(inserted);
+          co_return std::move(response.message);
        },
-       [self, protocol, response_complete = std::move(response_complete)](
+       [self, protocol, response_contexts, response_complete = std::move(response_complete)](
            const dht::peer& candidate, dht::message& response) mutable -> boost::asio::awaitable<bool> {
           auto& current = self->dht_profile(protocol);
           current.routing.upsert(candidate, dht::routing_admission::verified_server);
           self->notify_dht_routing_refresh();
-          const auto context = third_party_discovery_context();
+          auto context = third_party_discovery_context();
+          if (const auto exchanged = response_contexts->find(candidate.id); exchanged != response_contexts->end()) {
+             context = routed_discovery_context(exchanged->second.first, exchanged->second.second);
+          }
           for (auto& closer : response.closer_peers) {
              closer = sanitize_discovered_peer(std::move(closer), context);
              if (has_usable_endpoint(closer)) {
@@ -184,11 +221,17 @@ boost::asio::awaitable<dht_query::result> run_lookup(const auto& self, const pro
           response.closer_peers.erase(std::remove_if(response.closer_peers.begin(), response.closer_peers.end(),
                                                      [](const auto& peer) { return !has_usable_endpoint(peer); }),
                                       response.closer_peers.end());
+          for (auto& provider : response.provider_peers) {
+             provider = sanitize_discovered_peer(std::move(provider), context);
+          }
           co_return co_await response_complete(candidate, response);
        },
        [self](const dht::peer&, const forge::exceptions::base& error) {
           return remote_peer_attributable_failure(self->mutex, self->stopped, error);
        });
+   if (cancellation && cancellation->stop_requested()) {
+      FORGE_THROW_EXCEPTION(exceptions::canceled, "P2P DHT lookup canceled");
+   }
    for (const auto& failed : result.failed) {
       mark_dht_routing_failure(state.routing, failed);
    }
@@ -198,10 +241,30 @@ boost::asio::awaitable<dht_query::result> run_lookup(const auto& self, const pro
 
 boost::asio::awaitable<dht_query::result> run_lookup(const auto& self, const protocol_id& protocol, dht::key target,
                                                      std::optional<peer_id> target_peer, dht::message_type type,
-                                                     dht::query_options query_options) {
+                                                     dht::query_options query_options, auto response_complete,
+                                                     std::shared_ptr<cancellation_latch> cancellation = {}) {
+   co_return co_await run_lookup_with_alpha(self, protocol, std::move(target), std::move(target_peer), type,
+                                            query_options, std::nullopt, std::move(response_complete),
+                                            std::move(cancellation));
+}
+
+boost::asio::awaitable<dht_query::result> run_lookup(const auto& self, const protocol_id& protocol, dht::key target,
+                                                     std::optional<peer_id> target_peer, dht::message_type type,
+                                                     dht::query_options query_options,
+                                                     std::shared_ptr<cancellation_latch> cancellation = {}) {
    auto never_complete = [](const dht::peer&, dht::message&) -> boost::asio::awaitable<bool> { co_return false; };
    co_return co_await run_lookup(self, protocol, std::move(target), std::move(target_peer), type, query_options,
-                                 std::move(never_complete));
+                                 std::move(never_complete), std::move(cancellation));
+}
+
+boost::asio::awaitable<dht_query::result>
+run_lookup_with_alpha(const auto& self, const protocol_id& protocol, dht::key target,
+                      std::optional<peer_id> target_peer, dht::message_type type, dht::query_options query_options,
+                      std::size_t alpha_limit, std::shared_ptr<cancellation_latch> cancellation = {}) {
+   auto never_complete = [](const dht::peer&, dht::message&) -> boost::asio::awaitable<bool> { co_return false; };
+   co_return co_await run_lookup_with_alpha(self, protocol, std::move(target), std::move(target_peer), type,
+                                            query_options, alpha_limit, std::move(never_complete),
+                                            std::move(cancellation));
 }
 
 boost::asio::awaitable<std::size_t> publish_provider(const auto& self, const protocol_id& protocol, const dht::key& key,
@@ -238,13 +301,14 @@ boost::asio::awaitable<std::size_t> publish_provider(const auto& self, const pro
            .timeout = remaining_timeout(started, query_options.timeout, "P2P DHT provide"),
            .operation = "P2P DHT provide",
        },
-       [self, protocol, key, provider](const peer_id& candidate,
-                                       std::chrono::milliseconds timeout) -> boost::asio::awaitable<bool> {
+       [self, protocol, key, provider](const peer_id& candidate, std::chrono::milliseconds timeout,
+                                      std::shared_ptr<cancellation_latch> cancellation)
+           -> boost::asio::awaitable<bool> {
           try {
              co_await self->send_dht(
                  protocol, candidate,
                  dht::message{.type = dht::message_type::add_provider, .key_value = key, .provider_peers = {provider}},
-                 timeout);
+                 timeout, std::move(cancellation));
              co_return true;
           } catch (const forge::exceptions::base& error) {
              if (!remote_peer_attributable_failure(self->mutex, self->stopped, error)) {
@@ -261,12 +325,14 @@ boost::asio::awaitable<std::size_t> publish_provider(const auto& self, const pro
 } // namespace
 
 boost::asio::awaitable<bool> node::impl::async_refresh_dht_routing(protocol_id protocol, dht::key target,
-                                                                   std::chrono::milliseconds timeout) {
+                                                                   std::chrono::milliseconds timeout,
+                                                                   std::shared_ptr<cancellation_latch> cancellation) {
    auto self = shared_from_this();
    const auto requested_count = dht_profile(protocol).profile.limits.replication;
    const auto result =
        co_await run_lookup(self, protocol, std::move(target), std::nullopt, dht::message_type::find_node,
-                           dht::query_options{.requested_count = requested_count, .quorum = 1, .timeout = timeout});
+                           dht::query_options{.requested_count = requested_count, .quorum = 1, .timeout = timeout},
+                           std::move(cancellation));
    co_return result.converged;
 }
 
@@ -354,12 +420,21 @@ void node::impl::initialize_dht_provider_registry() {
 namespace {
 
 boost::asio::awaitable<dht::query_result> async_find_peer_owned(auto self, protocol_id protocol, peer_id peer,
-                                                                dht::query_options options) {
+                                                                dht::query_options options,
+                                                                std::optional<std::size_t> alpha_limit = std::nullopt,
+                                                                std::shared_ptr<cancellation_latch> cancellation = {}) {
    auto& state = self->dht_profile(protocol);
    if (!state.profile.capabilities.peers) {
       FORGE_THROW_EXCEPTION(exceptions::unsupported_protocol, "DHT profile does not enable peer routing");
    }
-   auto lookup = co_await run_lookup(self, protocol, make_dht_key(peer), peer, dht::message_type::find_node, options);
+   auto lookup = dht_query::result{};
+   if (alpha_limit) {
+      lookup = co_await run_lookup_with_alpha(self, protocol, make_dht_key(peer), peer,
+                                              dht::message_type::find_node, options, *alpha_limit, cancellation);
+   } else {
+      lookup = co_await run_lookup(self, protocol, make_dht_key(peer), peer, dht::message_type::find_node, options,
+                                   cancellation);
+   }
    if (lookup.query.complete) {
       if (const auto record = self->store.find(peer)) {
          auto exact = dht_peer_from_record(*record);
@@ -419,9 +494,7 @@ boost::asio::awaitable<std::vector<dht::peer>> async_find_providers_owned(auto s
    }
 
    auto lookup = co_await run_lookup(self, protocol, key, std::nullopt, dht::message_type::get_providers, options);
-   const auto context = third_party_discovery_context();
    for (auto provider : lookup.query.provider_peers) {
-      provider = sanitize_discovered_peer(std::move(provider), context);
       // A third-party GET_PROVIDERS response is discovery evidence, not an
       // authenticated provider announcement. Only inbound ADD_PROVIDER stores
       // durable provider ownership.
@@ -462,14 +535,15 @@ boost::asio::awaitable<dht::value_put_result> async_put_value_owned(auto self, p
            .timeout = remaining_timeout(started, options.timeout, "P2P DHT PUT_VALUE"),
            .operation = "P2P DHT PUT_VALUE",
        },
-       [self, protocol, selected](const peer_id& peer,
-                                  std::chrono::milliseconds timeout) -> boost::asio::awaitable<bool> {
+       [self, protocol, selected](const peer_id& peer, std::chrono::milliseconds timeout,
+                                  std::shared_ptr<cancellation_latch> cancellation)
+           -> boost::asio::awaitable<bool> {
           try {
              static_cast<void>(co_await self->exchange_dht(protocol, peer,
                                                            dht::message{.type = dht::message_type::put_value,
                                                                         .key_value = selected.key_value,
                                                                         .record_value = selected},
-                                                           timeout));
+                                                           timeout, std::move(cancellation)));
              co_return true;
           } catch (const forge::exceptions::base& error) {
              if (!remote_peer_attributable_failure(self->mutex, self->stopped, error)) {
@@ -559,14 +633,15 @@ boost::asio::awaitable<dht::value_get_result> async_get_value_owned(auto self, p
                     .timeout = correction_timeout,
                     .operation = "P2P DHT value correction",
                 },
-                [self, protocol, key, selected](const peer_id& peer,
-                                                std::chrono::milliseconds timeout) -> boost::asio::awaitable<bool> {
+                [self, protocol, key, selected](const peer_id& peer, std::chrono::milliseconds timeout,
+                                                std::shared_ptr<cancellation_latch> cancellation)
+                    -> boost::asio::awaitable<bool> {
                    try {
                       static_cast<void>(co_await self->exchange_dht(protocol, peer,
                                                                     dht::message{.type = dht::message_type::put_value,
                                                                                  .key_value = key,
                                                                                  .record_value = selected},
-                                                                    timeout));
+                                                                    timeout, std::move(cancellation)));
                       co_return true;
                    } catch (const forge::exceptions::base& error) {
                       if (!remote_peer_attributable_failure(self->mutex, self->stopped, error)) {
@@ -585,9 +660,17 @@ boost::asio::awaitable<dht::value_get_result> async_get_value_owned(auto self, p
 
 } // namespace
 
+boost::asio::awaitable<dht::query_result>
+node::impl::async_find_dht_peer(protocol_id protocol, peer_id peer, dht::query_options options,
+                                std::optional<std::size_t> alpha_limit,
+                                std::shared_ptr<cancellation_latch> cancellation) {
+   co_return co_await async_find_peer_owned(shared_from_this(), std::move(protocol), std::move(peer), options,
+                                             alpha_limit, std::move(cancellation));
+}
+
 boost::asio::awaitable<dht::query_result> node::async_find_peer(protocol_id protocol, peer_id peer,
                                                                 dht::query_options options) {
-   return async_find_peer_owned(impl_, std::move(protocol), std::move(peer), options);
+   return impl_->async_find_dht_peer(std::move(protocol), std::move(peer), options);
 }
 
 boost::asio::awaitable<provider_registration> node::async_provide(protocol_id protocol, dht::key key,

@@ -37,6 +37,7 @@ class connection {
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read();
    boost::asio::awaitable<void> async_close();
    void cancel();
+   void request_cancel() noexcept;
 
    [[nodiscard]] transport::stream_connection into_transport_stream() &&;
    [[nodiscard]] boost::asio::ip::tcp::socket release_socket() &&;

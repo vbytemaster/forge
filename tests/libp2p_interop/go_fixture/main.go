@@ -29,6 +29,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/libp2p/go-libp2p/p2p/host/eventbus"
 	"github.com/libp2p/go-libp2p/p2p/muxer/yamux"
 	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
@@ -51,19 +52,22 @@ const pubsubTopic = "forge.pubsub.interop"
 const pubsubPayload = "forge-gossipsub-live"
 
 type options struct {
-	command     string
-	scenario    string
-	peerID      string
-	addr        string
-	relayAddr   string
-	relayPeerID string
-	readyFile   string
-	stopFile    string
-	resultFile  string
-	seedFile    string
-	payload     string
-	transport   string
-	expected    int
+	command      string
+	scenario     string
+	peerID       string
+	addr         string
+	relayAddr    string
+	relayPeerID  string
+	readyFile    string
+	stopFile     string
+	resultFile   string
+	seedFile     string
+	seedPeerID   string
+	seedAddr     string
+	targetPeerID string
+	payload      string
+	transport    string
+	expected     int
 }
 
 func parseArgs() (options, error) {
@@ -97,6 +101,12 @@ func parseArgs() (options, error) {
 			out.resultFile = value
 		case "--seed-file":
 			out.seedFile = value
+		case "--seed-peer-id":
+			out.seedPeerID = value
+		case "--seed-addr":
+			out.seedAddr = value
+		case "--target-peer-id":
+			out.targetPeerID = value
 		case "--payload":
 			out.payload = value
 		case "--transport":
@@ -148,7 +158,7 @@ func readFrame(r *bufio.Reader) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if size == 0 || size > 16*1024 {
+	if size == 0 || size > 256*1024 {
 		return nil, fmt.Errorf("invalid frame size %d", size)
 	}
 	payload := make([]byte, size)
@@ -323,6 +333,59 @@ func hasDHTValue(ctx context.Context, h *fixtureHost, key []byte, expected []byt
 func addDHTPeer(h *fixtureHost, info *peer.AddrInfo) {
 	h.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
 	_, _ = h.kad.RoutingTable().TryAddPeer(info.ID, true, false)
+}
+
+func dhtQueryEvidence(ctx context.Context, query func(context.Context) error) (int, error) {
+	queryCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	queryCtx, events := routing.RegisterForQueryEvents(queryCtx)
+	queries := make(chan int, 1)
+	go func() {
+		count := 0
+		for event := range events {
+			if event.Type == routing.SendingQuery {
+				count++
+			}
+		}
+		queries <- count
+	}()
+	err := query(queryCtx)
+	cancel()
+	count := <-queries
+	return count, err
+}
+
+func connectDHTSeed(ctx context.Context, h *fixtureHost, seedAddr, seedPeerID string) (peer.ID, int, error) {
+	addr, err := ma.NewMultiaddr(seedAddr)
+	if err != nil {
+		return "", 0, fmt.Errorf("parse DHT seed address: %w", err)
+	}
+	info, err := peer.AddrInfoFromP2pAddr(addr)
+	if err != nil {
+		return "", 0, fmt.Errorf("parse DHT seed peer: %w", err)
+	}
+	expected, err := peer.Decode(seedPeerID)
+	if err != nil {
+		return "", 0, fmt.Errorf("parse expected DHT seed peer: %w", err)
+	}
+	if info.ID != expected {
+		return "", 0, fmt.Errorf("DHT seed address peer %s does not match supplied peer %s", info.ID, expected)
+	}
+	if err := h.Connect(ctx, *info); err != nil {
+		return "", 0, fmt.Errorf("connect DHT seed: %w", err)
+	}
+	addDHTPeer(h, info)
+	count, err := dhtQueryEvidence(ctx, func(queryCtx context.Context) error {
+		_, err := h.kad.GetClosestPeers(queryCtx, "forge-hidden-route-seed")
+		return err
+	})
+	if err != nil {
+		return "", 0, fmt.Errorf("DHT seed query failed: %w", err)
+	}
+	if count == 0 {
+		return "", 0, fmt.Errorf("DHT seed query did not negotiate /ipfs/kad/1.0.0")
+	}
+	return info.ID, count, nil
 }
 
 func waitPubSubPeer(ctx context.Context, ps *pubsub.PubSub, topic string, peerID peer.ID) bool {
@@ -529,6 +592,30 @@ func listen(opts options) error {
 				cancel()
 				seeded = true
 			}
+		}
+		if !seeded && opts.scenario == "dht_hidden_find_peer" {
+			if opts.seedPeerID == "" || opts.seedAddr == "" || opts.resultFile == "" {
+				return fmt.Errorf("dht_hidden_find_peer routing listener requires --seed-peer-id, --seed-addr and --result-file")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			seedPeer, queries, err := connectDHTSeed(ctx, h, opts.seedAddr, opts.seedPeerID)
+			cancel()
+			if err != nil {
+				return err
+			}
+			if err := writeJSON(opts.resultFile, map[string]any{
+				"implementation":      "go",
+				"role":                "routing_listener",
+				"scenario":            opts.scenario,
+				"status":              "ok",
+				"seed_peer_id":        seedPeer.String(),
+				"dht_queries_delta":   queries,
+				"negotiated_protocol": "/ipfs/kad/1.0.0",
+				"authenticated_seed":  true,
+			}); err != nil {
+				return err
+			}
+			seeded = true
 		}
 		if _, err := os.Stat(opts.stopFile); err == nil {
 			if stress != nil {
@@ -747,8 +834,15 @@ func dial(opts options) error {
 			}
 		}
 		result["payload_bytes"] = size
-	case "echo":
-		size, err := openEchoProtocol(ctx, h, info.ID, []byte(opts.payload))
+	case "echo", "echo_large":
+		payload := []byte(opts.payload)
+		if opts.scenario == "echo_large" {
+			payload = make([]byte, 192*1024)
+			for index := range payload {
+				payload[index] = byte(index % 251)
+			}
+		}
+		size, err := openEchoProtocol(ctx, h, info.ID, payload)
 		if err != nil {
 			return err
 		}
@@ -788,6 +882,38 @@ func dial(opts options) error {
 		}
 		result["found_peer"] = found.ID.String()
 		result["addr_count"] = len(found.Addrs)
+	case "dht_hidden_find_peer":
+		target, err := peer.Decode(opts.targetPeerID)
+		if err != nil {
+			return fmt.Errorf("parse hidden target peer: %w", err)
+		}
+		if target == info.ID {
+			return fmt.Errorf("hidden target must differ from the known routing peer")
+		}
+		preexisting := len(h.Peerstore().Addrs(target)) != 0 || len(h.Network().ConnsToPeer(target)) != 0
+		if preexisting {
+			return fmt.Errorf("hidden target %s was present before FindPeer", target)
+		}
+		var found peer.AddrInfo
+		queries, err := dhtQueryEvidence(ctx, func(queryCtx context.Context) error {
+			var queryErr error
+			found, queryErr = h.kad.FindPeer(queryCtx, target)
+			return queryErr
+		})
+		if err != nil {
+			return fmt.Errorf("DHT hidden FindPeer failed: %w", err)
+		}
+		if queries == 0 {
+			return fmt.Errorf("DHT hidden FindPeer did not issue /ipfs/kad/1.0.0 query")
+		}
+		if found.ID != target || len(found.Addrs) == 0 {
+			return fmt.Errorf("DHT hidden FindPeer returned %s with %d addresses, expected %s", found.ID, len(found.Addrs), target)
+		}
+		result["preexisting_target"] = false
+		result["found_peer"] = found.ID.String()
+		result["addr_count"] = len(found.Addrs)
+		result["dht_queries_delta"] = queries
+		result["negotiated_protocol"] = "/ipfs/kad/1.0.0"
 	case "dht_provide_find_provider":
 		key, err := providerCID()
 		if err != nil {

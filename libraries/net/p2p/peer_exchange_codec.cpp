@@ -6,6 +6,7 @@ module;
 #include <atomic>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -46,6 +47,7 @@ import forge.net.p2p.reachability;
 import forge.net.p2p.resource_manager;
 import forge.net.p2p.scoring;
 import forge.net.p2p.stream;
+import forge.net.transport.frame;
 import forge.crypto.core.random;
 import forge.crypto.asymmetric.rsa;
 import forge.crypto.digest.sha256;
@@ -98,6 +100,29 @@ void append_bytes(std::vector<std::uint8_t>& out, const std::vector<std::uint8_t
    }
    append_u32(out, static_cast<std::uint32_t>(value.size()));
    out.insert(out.end(), value.begin(), value.end());
+}
+
+void checked_add(std::size_t& total, std::size_t value) {
+   if (value > std::numeric_limits<std::size_t>::max() - total) {
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "peer exchange message size overflows");
+   }
+   total += value;
+}
+
+void checked_string_size(std::size_t& total, const std::string& value) {
+   if (value.size() > std::numeric_limits<std::uint32_t>::max()) {
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "P2P string field is too large");
+   }
+   checked_add(total, sizeof(std::uint32_t));
+   checked_add(total, value.size());
+}
+
+void checked_bytes_size(std::size_t& total, const std::vector<std::uint8_t>& value) {
+   if (value.size() > std::numeric_limits<std::uint32_t>::max()) {
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "P2P bytes field is too large");
+   }
+   checked_add(total, sizeof(std::uint32_t));
+   checked_add(total, value.size());
 }
 
 class reader {
@@ -190,9 +215,52 @@ class reader {
    FORGE_THROW_EXCEPTION(exceptions::codec_error, "unknown peer exchange message type");
 }
 
+[[nodiscard]] std::size_t encoded_size(const peer_exchange_message& message, options opts) {
+   if (message.endpoints.size() > opts.max_endpoint_records) {
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "too many peer exchange endpoint records");
+   }
+
+   auto total = std::size_t{0};
+   checked_add(total, sizeof(magic));
+   checked_add(total, sizeof(std::uint16_t));
+   checked_add(total, sizeof(std::uint16_t));
+   checked_add(total, sizeof(std::uint32_t));
+   checked_add(total, sizeof(std::uint64_t));
+   checked_string_size(total, message.peer.value);
+   checked_string_size(total, message.protocol.value);
+   checked_add(total, sizeof(std::uint64_t));
+   checked_add(total, sizeof(std::uint64_t));
+   checked_string_size(total, message.reason);
+   checked_add(total, sizeof(std::uint32_t));
+   for (const auto& endpoint : message.endpoints) {
+      checked_string_size(total, endpoint.peer.value);
+      checked_string_size(total, endpoint.endpoint.to_string());
+      checked_add(total, sizeof(std::uint64_t));
+   }
+   checked_bytes_size(total, message.payload);
+   return total;
+}
+
+[[nodiscard]] std::uint32_t negotiate_response_max_frame_size(std::uint64_t offered, options local) {
+   if (offered < minimum_message_size) {
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "peer exchange receive limit is too small");
+   }
+   if (offered > std::numeric_limits<std::uint32_t>::max()) {
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "peer exchange receive limit exceeds v1 framing");
+   }
+   if (local.max_message_size < minimum_message_size) {
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "local peer exchange receive limit is too small");
+   }
+   return std::min(local.max_message_size, static_cast<std::uint32_t>(offered));
+}
+
 [[nodiscard]] std::vector<std::uint8_t> encode(const peer_exchange_message& message, options opts) {
+   const auto size = encoded_size(message, opts);
+   if (size > opts.max_message_size) {
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "peer exchange message exceeds max size");
+   }
    auto out = std::vector<std::uint8_t>{};
-   out.reserve(128 + message.payload.size());
+   out.reserve(size);
    out.insert(out.end(), std::begin(magic), std::end(magic));
    append_u16(out, peer_exchange_wire_version_v1);
    append_u16(out, static_cast<std::uint16_t>(message.kind));
@@ -203,9 +271,6 @@ class reader {
    append_u64(out, message.capabilities.bits);
    append_u64(out, message.max_frame_size);
    append_string(out, message.reason);
-   if (message.endpoints.size() > opts.max_endpoint_records) {
-      FORGE_THROW_EXCEPTION(exceptions::codec_error, "too many peer exchange endpoint records");
-   }
    append_u32(out, static_cast<std::uint32_t>(message.endpoints.size()));
    for (const auto& endpoint : message.endpoints) {
       append_string(out, endpoint.peer.value);
@@ -213,9 +278,6 @@ class reader {
       append_u64(out, endpoint.capabilities.bits);
    }
    append_bytes(out, message.payload);
-   if (out.size() > opts.max_message_size) {
-      FORGE_THROW_EXCEPTION(exceptions::codec_error, "peer exchange message exceeds max size");
-   }
    return out;
 }
 
@@ -264,7 +326,8 @@ boost::asio::awaitable<void> async_write(forge::net::p2p::stream& stream, const 
 }
 
 boost::asio::awaitable<peer_exchange_message> async_read(forge::net::p2p::stream& stream, options opts) {
-   auto encoded = co_await stream.async_read_frame();
+   auto encoded = co_await stream.async_read_frame(
+       forge::net::transport::frame_options{.max_size = opts.max_message_size});
    co_return decode(encoded, opts);
 }
 

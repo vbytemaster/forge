@@ -11,8 +11,15 @@ import forge.net.quic.exceptions;
 export namespace forge::net::quic {
 
 struct endpoint {
+   enum class address_family {
+      any,
+      ipv4,
+      ipv6,
+   };
+
    std::string host;
    std::uint16_t port = 0;
+   address_family family = address_family::any;
 
    [[nodiscard]] std::string authority() const;
 };

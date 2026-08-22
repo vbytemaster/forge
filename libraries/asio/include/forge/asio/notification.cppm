@@ -3,6 +3,7 @@ module;
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <stop_token>
 
 #include <boost/asio/awaitable.hpp>
 
@@ -25,8 +26,11 @@ class notification {
 
    [[nodiscard]] epoch_type epoch() const noexcept;
    boost::asio::awaitable<epoch_type> async_wait(epoch_type observed_epoch);
+   boost::asio::awaitable<epoch_type> async_wait(epoch_type observed_epoch, std::stop_token stop);
    boost::asio::awaitable<epoch_type> async_wait_until(
        epoch_type observed_epoch, std::chrono::steady_clock::time_point deadline);
+   boost::asio::awaitable<epoch_type> async_wait_until(
+       epoch_type observed_epoch, std::chrono::steady_clock::time_point deadline, std::stop_token stop);
    void notify() noexcept;
 
  private:

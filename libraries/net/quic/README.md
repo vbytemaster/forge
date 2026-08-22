@@ -20,6 +20,18 @@ framed streams without defining application protocols.
 QUIC is already a multiplexed session transport. TCP and STCP remain
 byte-stream transports; they become sessions only after a muxer such as Yamux.
 
+## Endpoint Address Family
+
+`quic::endpoint::family` constrains DNS resolution only. `any` maps a DNS host
+to `transport::endpoint::host_kind::dns`; `ipv4` and `ipv6` map it to `dns4`
+and `dns6`, respectively. A numeric IPv4 or IPv6 `endpoint::host` determines
+its actual family regardless of this trailing field and round-trips as `ip4` or
+`ip6`.
+
+The QUIC transport connector validates `ip4` with `make_address_v4` and `ip6`
+with `make_address_v6` before opening a socket. DNS host kinds are valid only
+for connecting; listeners reject them.
+
 ## When To Use
 
 - Need multiplexed, TLS-backed streams over UDP.
@@ -31,6 +43,26 @@ byte-stream transports; they become sessions only after a muxer such as Yamux.
 - Do not put peer discovery or relay policy here; that is `forge_net_p2p`.
 - Do not put application protocol messages here; use framed streams as substrate.
 - Do not disable peer verification outside explicit tests.
+
+## Client Address Tokens
+
+QUIC Retry tokens are valid for 10 seconds. A verified server issues one opaque
+Forge regular `NEW_TOKEN` with a 60 minute validity period; connector-owned
+client caches retain one unused token per canonical remote for 55 minutes.
+The next connection consumes that token once before its Initial is created.
+
+`client_options::client_tokens` is Preview. When absent, `connector` uses its
+own bounded cache. An engaged value with both callbacks empty explicitly
+disables caching; an engaged value must otherwise provide both `take` and
+`store`. Callbacks are synchronous, nonblocking and may be invoked
+concurrently, so custom stores must be thread-safe. A received `NEW_TOKEN` is
+only stored after ALPN and configured peer verification succeed; callback
+errors or a cache refusal never fail the connection.
+
+An invalid, expired or foreign regular token is treated as unvalidated and
+receives Retry. A Retry2 token that decrypts but fails address, expiry or
+connection-ID verification is rejected with `INVALID_TOKEN`; unreadable Retry2
+and failed legacy Retry tokens receive a fresh Retry.
 
 ## Public Modules
 
@@ -210,17 +242,29 @@ released connection are isolated according to ngtcp2's silent-drop contract;
 they neither consume a listener slot indefinitely nor fail a concurrent
 `async_accept()` for another connection.
 
+## Initial Tokens
+
 The listener validates the remote address with an encrypted QUIC Retry token
 before allocating server connection or TLS state. Tokens are bound to the
 remote endpoint, Retry connection ID and original destination connection ID,
 and expire after the ngtcp2 donor-compatible ten-second validation window.
-Invalid, expired and late Retry traffic is dropped without poisoning another
-pending `async_accept()`.
+
+An empty, unknown, proprietary, or invalid `NEW_TOKEN` is unvalidated and
+receives a fresh Retry. A Retry2 (`B7`) token that is readable but fails
+address, expiry or connection-ID verification receives a stateless
+`CONNECTION_CLOSE` with `INVALID_TOKEN`. Unreadable Retry2 tokens and failed
+legacy (`B6`) tokens receive a fresh Retry because the legacy verifier cannot
+distinguish foreign ciphertext from a readable invalid token. Valid Retry and
+`NEW_TOKEN` tokens are passed to ngtcp2 with their respective token types
+without poisoning a concurrent `async_accept()`.
+
+`connection_metrics::new_tokens_submitted` counts frames accepted by ngtcp2
+for transmission. It does not claim UDP delivery or client receipt.
 
 `server_options::inbound_admission` is an optional early-admission hook for
-higher-level resource managers. QUIC invokes it only after Retry validation but
-before allocating the server connection and TLS state. Returning an empty
-token, or throwing, rejects that connection attempt; a non-empty token is held
+higher-level resource managers. QUIC invokes it only after initial-token
+validation but before allocating the server connection and TLS state. Returning
+an empty token, or throwing, rejects that connection attempt; a non-empty token is held
 until the connection closes or a higher-level transport adapter takes
 ownership through the private connection-access bridge. Leaving the callback
 empty keeps the standalone QUIC listener unrestricted by an external admission

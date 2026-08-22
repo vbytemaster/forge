@@ -23,6 +23,7 @@ import forge.net.p2p.pubsub;
 import forge.net.p2p.reachability;
 import forge.net.p2p.resource_manager;
 import forge.net.p2p.scoring;
+import forge.net.p2p.topology;
 
 export namespace forge::net::p2p {
 
@@ -197,6 +198,30 @@ struct diagnostics {
       std::string last_persistence_failure;
    };
 
+   struct topology_state {
+      std::string mode;
+      std::string phase;
+      std::size_t low_watermark = 0;
+      std::size_t target_watermark = 0;
+      std::size_t high_watermark = 0;
+      std::chrono::milliseconds refresh_interval{0};
+      std::chrono::milliseconds query_timeout{0};
+      std::size_t max_candidates = 0;
+      std::size_t max_parallel_queries = 0;
+      std::size_t max_parallel_dials = 0;
+      std::size_t configured_rendezvous_points = 0;
+      std::size_t max_peer_exchange_peers = 0;
+      bool dht_enabled = false;
+      bool peer_exchange_enabled = false;
+      bool refresh_queued = false;
+      bool refresh_in_flight = false;
+      std::size_t observations = 0;
+      std::size_t active_operations = 0;
+      std::size_t waiting_refreshes = 0;
+      std::uint64_t completed_refreshes = 0;
+      std::uint64_t failed_refreshes = 0;
+   };
+
    struct snapshot {
       network_state network;
       metrics_snapshot metrics;
@@ -209,6 +234,7 @@ struct diagnostics {
       std::vector<dht_profile_state> dht_profiles;
       lifecycle_status lifecycle;
       resource_manager::limits effective_limits;
+      topology_state topology;
    };
 };
 
@@ -253,6 +279,11 @@ BOOST_DESCRIBE_STRUCT(forge::net::p2p::diagnostics::dht_profile_state, (),
                        maintenance_in_flight, maintenance_failures, maintenance_next_attempt, persistence_failures,
                        persistence_degraded, durability_uncertain, persistence_closing, persistence_closed,
                        last_persistence_failure))
+BOOST_DESCRIBE_STRUCT(forge::net::p2p::diagnostics::topology_state, (),
+                      (mode, phase, low_watermark, target_watermark, high_watermark, refresh_interval, query_timeout,
+                       max_candidates, max_parallel_queries, max_parallel_dials, configured_rendezvous_points,
+                       max_peer_exchange_peers, dht_enabled, peer_exchange_enabled, refresh_queued, refresh_in_flight,
+                       observations, active_operations, waiting_refreshes, completed_refreshes, failed_refreshes))
 BOOST_DESCRIBE_STRUCT(forge::net::p2p::diagnostics::snapshot, (),
                       (network, metrics, resources, pubsub, connections, peers, sessions, persistence, dht_profiles,
-                       lifecycle, effective_limits))
+                       lifecycle, effective_limits, topology))

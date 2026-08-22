@@ -115,6 +115,7 @@ import forge.net.p2p.identify;
 import forge.net.p2p.diagnostics;
 import forge.net.p2p.discovery;
 import forge.net.p2p.dht;
+import forge.net.p2p.lifecycle;
 import forge.net.p2p.rendezvous;
 import forge.net.p2p.pubsub;
 import forge.net.p2p.reachability;
@@ -405,6 +406,19 @@ test_p2p_config(std::optional<forge::net::p2p::peer_id> peer = std::nullopt) {
    profile.emplace("providers", providers);
    profile.emplace("values", values);
    return profile;
+}
+
+[[nodiscard]] forge::config::core::value::object_type
+rendezvous_point_config(std::string endpoint, std::vector<std::string> namespaces) {
+   auto point = forge::config::core::value::object_type{};
+   point.emplace("endpoint", std::move(endpoint));
+   auto encoded_namespaces = forge::config::core::value::array_type{};
+   encoded_namespaces.reserve(namespaces.size());
+   for (auto& namespace_name : namespaces) {
+      encoded_namespaces.emplace_back(std::move(namespace_name));
+   }
+   point.emplace("namespaces", std::move(encoded_namespaces));
+   return point;
 }
 
 class p2p_test_dependency_plugin : public forge::app::plugin {
@@ -3287,6 +3301,27 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_config_is_described_from_public_schema) {
    BOOST_TEST(static_cast<int>(dht_profiles.kind) == static_cast<int>(forge::schema::value_kind::object_list));
    BOOST_TEST(dht_profiles.has_default);
 
+   const auto& topology_mode = require_field(*descriptor, "topology.mode");
+   BOOST_TEST(topology_mode.has_default);
+   BOOST_TEST(std::get<std::string>(topology_mode.default_value.storage) == "managed");
+   BOOST_TEST(std::get<std::uint64_t>(require_field(*descriptor, "topology.peers.low").default_value.storage) ==
+              128U);
+   BOOST_TEST(std::get<std::uint64_t>(require_field(*descriptor, "topology.peers.target").default_value.storage) ==
+              160U);
+   BOOST_TEST(std::get<std::uint64_t>(require_field(*descriptor, "topology.peers.high").default_value.storage) ==
+              192U);
+   BOOST_TEST(std::get<std::uint64_t>(require_field(*descriptor, "topology.max-parallel-dials").default_value.storage) ==
+              4U);
+
+   const auto& rendezvous_role = require_field(*descriptor, "rendezvous.role");
+   BOOST_TEST(rendezvous_role.has_default);
+   BOOST_TEST(std::get<std::string>(rendezvous_role.default_value.storage) == "disabled");
+   BOOST_TEST(static_cast<int>(require_field(*descriptor, "rendezvous.points").kind) ==
+              static_cast<int>(forge::schema::value_kind::object_list));
+   BOOST_TEST(std::get<bool>(require_field(*descriptor, "peer-exchange.enabled").default_value.storage));
+   BOOST_TEST(std::get<std::uint64_t>(require_field(*descriptor, "peer-exchange.max-peers").default_value.storage) ==
+              4U);
+
    const auto& certificate_secret = require_field(*descriptor, "identity.certificate-secret");
    BOOST_TEST(certificate_secret.has_default);
    BOOST_TEST(std::get<std::string>(certificate_secret.default_value.storage).empty());
@@ -3472,6 +3507,33 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_rejects_invalid_typed_config_before_startup
 
    {
       auto config = test_p2p_config();
+      config.set("plugins.p2p.node.topology.peers.low", std::uint64_t{5});
+      config.set("plugins.p2p.node.topology.peers.target", std::uint64_t{4});
+      auto app = p2p_only_application{};
+      BOOST_CHECK_THROW(app.configure(config), forge::plugins::p2p::node::exceptions::invalid_config);
+   }
+
+   {
+      auto config = test_p2p_config();
+      config.set("plugins.p2p.node.rendezvous.points",
+                 forge::config::core::value::array_type{forge::config::core::value{rendezvous_point_config(
+                     "/ip4/127.0.0.1/udp/4001/quic-v1/p2p/" + test_peer(91).to_string(), {"forge.content"})}});
+      auto app = p2p_only_application{};
+      BOOST_CHECK_THROW(app.configure(config), forge::plugins::p2p::node::exceptions::invalid_config);
+   }
+
+   {
+      auto config = test_p2p_config();
+      config.set("plugins.p2p.node.rendezvous.role", std::string{"client"});
+      config.set("plugins.p2p.node.rendezvous.points",
+                 forge::config::core::value::array_type{forge::config::core::value{rendezvous_point_config(
+                     "/ip4/127.0.0.1/udp/4001/quic-v1/p2p/" + test_peer(92).to_string(), {"forge.content"})}});
+      auto app = p2p_only_application{};
+      BOOST_CHECK_NO_THROW(app.configure(config));
+   }
+
+   {
+      auto config = test_p2p_config();
       config.set("plugins.p2p.node.listen",
                  forge::config::core::value::array_type{forge::config::core::value{"127.0.0.1:0"}});
       auto app = p2p_only_application{};
@@ -3578,6 +3640,25 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_accepts_complete_amino_and_provider_only_cu
               });
    auto app = p2p_only_application{};
    BOOST_CHECK_NO_THROW(app.configure(config));
+}
+
+BOOST_AUTO_TEST_CASE(p2p_node_plugin_static_topology_starts_without_autonomous_discovery) {
+   auto config = test_p2p_config(test_peer(93));
+   config.set("plugins.p2p.node.topology.mode", std::string{"static-only"});
+   auto app = p2p_only_application{};
+   app.configure(config);
+   forge::asio::blocking::run(app.runtime(), app.startup());
+
+   const auto diagnostics = app.apis().get<forge::plugins::p2p::node::diagnostics_source>(
+       {.id = {"forge.plugins.p2p.node.diagnostics_source"}, .major = 1, .min_revision = 0});
+   const auto snapshot = diagnostics->snapshot();
+   BOOST_TEST(snapshot.topology.mode == "static-only");
+   BOOST_TEST(snapshot.topology.phase == "idle");
+   BOOST_TEST(snapshot.topology.completed_refreshes == 0U);
+   BOOST_TEST(!snapshot.topology.refresh_queued);
+   BOOST_TEST(!snapshot.topology.refresh_in_flight);
+
+   forge::asio::blocking::run(app.runtime(), app.shutdown());
 }
 
 BOOST_AUTO_TEST_CASE(p2p_node_plugin_config_preserves_legacy_positional_prefix) {
@@ -3931,6 +4012,8 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_cancels_bootstrap_sleep_from_an_external_th
 
    auto server_diagnostics = server.apis().get<forge::plugins::p2p::diagnostics::api>(
        {.id = {"forge.plugins.p2p.diagnostics"}, .major = 1, .min_revision = 0});
+   auto client_diagnostics = client.apis().get<forge::plugins::p2p::diagnostics::api>(
+       {.id = {"forge.plugins.p2p.diagnostics"}, .major = 1, .min_revision = 0});
    BOOST_REQUIRE(forge::asio::blocking::run(
        server.runtime(),
        async_wait_for_condition([&] { return server_diagnostics->snapshot().metrics.active_sessions == 1U; },
@@ -3940,16 +4023,21 @@ BOOST_AUTO_TEST_CASE(p2p_node_plugin_cancels_bootstrap_sleep_from_an_external_th
    auto stop_thread = std::thread{[&] { client.request_stop(); }};
    stop_thread.join();
 
-   const auto disconnected_on_request = forge::asio::blocking::run(
-       server.runtime(),
-       async_wait_for_condition([&] { return server_diagnostics->snapshot().metrics.active_sessions == 0U; },
-                                std::chrono::seconds{5}));
-   BOOST_TEST(disconnected_on_request);
+   const auto requested_stop = client_diagnostics->snapshot();
+   BOOST_TEST(static_cast<int>(requested_stop.lifecycle.phase) ==
+              static_cast<int>(forge::net::p2p::lifecycle_phase::stopping));
+   BOOST_TEST(requested_stop.metrics.active_sessions >= 1U);
 
    const auto started = std::chrono::steady_clock::now();
    forge::asio::blocking::run(client.runtime(), client.shutdown());
    const auto elapsed = std::chrono::steady_clock::now() - started;
    BOOST_TEST(elapsed < std::chrono::milliseconds{750});
+
+   const auto disconnected_after_shutdown = forge::asio::blocking::run(
+       server.runtime(),
+       async_wait_for_condition([&] { return server_diagnostics->snapshot().metrics.active_sessions == 0U; },
+                                std::chrono::seconds{5}));
+   BOOST_TEST(disconnected_after_shutdown);
 
    forge::asio::blocking::run(server.runtime(), server.shutdown());
 }

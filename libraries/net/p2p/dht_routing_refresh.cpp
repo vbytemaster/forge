@@ -3,15 +3,21 @@ module;
 #include <forge/exceptions/macros.hpp>
 
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/cancellation_state.hpp>
 #include <boost/asio/this_coro.hpp>
+#include <boost/compat/move_only_function.hpp>
 
 #include <algorithm>
 #include <bit>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
+#include <functional>
 #include <memory>
+#include <mutex>
+#include <optional>
+#include <ranges>
 #include <span>
 #include <utility>
 #include <vector>
@@ -26,7 +32,9 @@ import forge.net.p2p.identity;
 import forge.net.p2p.protocol;
 
 #include "details/dht_routing_refresh.hxx"
+#include "details/cancellation_latch.hxx"
 #include "details/lifecycle_wakeup.hxx"
+#include "details/worker_stop_bridge.hxx"
 
 namespace forge::net::p2p::detail {
 namespace {
@@ -59,6 +67,30 @@ void append_u64(std::vector<std::uint8_t>& output, std::uint64_t value) {
    result ^= generation;
    result *= 1099511628211ULL;
    return result;
+}
+
+[[nodiscard]] std::chrono::milliseconds saturating_milliseconds_add(std::chrono::milliseconds value,
+                                                                      std::chrono::milliseconds addition) noexcept {
+   if (addition <= std::chrono::milliseconds::zero()) {
+      return value;
+   }
+   const auto available = (std::chrono::milliseconds::max)() - value;
+   return addition >= available ? (std::chrono::milliseconds::max)() : value + addition;
+}
+
+[[nodiscard]] dht_routing_refresh::time_point saturating_deadline(dht_routing_refresh::time_point now,
+                                                                    std::chrono::milliseconds delay) noexcept {
+   if (delay <= std::chrono::milliseconds::zero() || now == dht_routing_refresh::time_point::max()) {
+      return now;
+   }
+   // Converting milliseconds::max directly to steady_clock::duration can
+   // overflow before the addition is checked. Compare in the coarser unit.
+   const auto available = dht_routing_refresh::time_point::max() - now;
+   const auto available_milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(available);
+   if (delay >= available_milliseconds) {
+      return dht_routing_refresh::time_point::max();
+   }
+   return now + std::chrono::duration_cast<dht_routing_refresh::time_point::duration>(delay);
 }
 
 } // namespace
@@ -106,12 +138,17 @@ void dht_routing_refresh::notify_verified_server() noexcept {
 }
 
 void dht_routing_refresh::request_stop() noexcept {
+   auto stop = std::shared_ptr<worker_stop_bridge>{};
    {
       const auto lock = std::scoped_lock{mutex_};
       if (stopped_) {
          return;
       }
       stopped_ = true;
+      stop = active_query_stop_;
+   }
+   if (stop) {
+      stop->request_stop();
    }
    changed_->notify();
 }
@@ -161,7 +198,7 @@ std::chrono::milliseconds dht_routing_refresh::regular_delay(const profile_state
    const auto span = std::max(std::chrono::milliseconds{1}, state.config.interval / 20);
    const auto width = static_cast<std::uint64_t>(span.count()) + 1U;
    const auto offset = static_cast<std::int64_t>(stable_hash(state.config.protocol, state.generation) % width);
-   return state.config.interval + std::chrono::milliseconds{offset};
+   return saturating_milliseconds_add(state.config.interval, std::chrono::milliseconds{offset});
 }
 
 std::chrono::milliseconds dht_routing_refresh::retry_delay(const profile_state& state) const noexcept {
@@ -182,6 +219,46 @@ void dht_routing_refresh::publish_status(profile_state& state, bool in_flight) {
    state.in_flight = in_flight;
 }
 
+boost::asio::awaitable<bool> dht_routing_refresh::async_query(protocol_id protocol, dht::key target,
+                                                               std::chrono::milliseconds timeout) {
+   auto stop = std::make_shared<worker_stop_bridge>();
+   {
+      const auto lock = std::scoped_lock{mutex_};
+      if (stopped_) {
+         co_return false;
+      }
+      active_query_stop_ = stop;
+   }
+
+   const auto clear_stop = [this, &stop] {
+      const auto lock = std::scoped_lock{mutex_};
+      if (active_query_stop_ == stop) {
+         active_query_stop_.reset();
+      }
+   };
+   try {
+      auto result = std::make_shared<std::optional<bool>>();
+      auto cancellation = std::make_shared<cancellation_latch>();
+      auto query = worker_stop_work{
+          [this, protocol = std::move(protocol), target = std::move(target), timeout, result,
+           cancellation](std::shared_ptr<worker_terminal_owner> terminal) mutable -> boost::asio::awaitable<void> {
+             static_cast<void>(terminal->publish(
+                 worker_terminal_owner::callback{[cancellation]() noexcept { cancellation->request_stop(); }}));
+             if (cancellation->stop_requested()) {
+                co_return;
+             }
+             *result = co_await query_(std::move(protocol), std::move(target), timeout, cancellation);
+          },
+      };
+      co_await async_run_with_stop_bridge(stop, std::move(query));
+      clear_stop();
+      co_return !stop->stop_requested() && result->value_or(false);
+   } catch (...) {
+      clear_stop();
+      throw;
+   }
+}
+
 boost::asio::awaitable<void> dht_routing_refresh::async_refresh_profile(profile_state& state) {
    publish_status(state, true);
    try {
@@ -195,7 +272,7 @@ boost::asio::awaitable<void> dht_routing_refresh::async_refresh_profile(profile_
          auto startup_lookup_pending = true;
          try {
             startup_lookup_pending =
-                !co_await query_(state.config.protocol, make_dht_key(local_), state.config.query_timeout);
+                !co_await async_query(state.config.protocol, make_dht_key(local_), state.config.query_timeout);
             failed = startup_lookup_pending;
          } catch (...) {
             failed = true;
@@ -218,7 +295,7 @@ boost::asio::awaitable<void> dht_routing_refresh::async_refresh_profile(profile_
          }
          try {
             const auto target = refresh_target(state, bucket.common_prefix_length);
-            if (co_await query_(state.config.protocol, target, state.config.query_timeout)) {
+            if (co_await async_query(state.config.protocol, target, state.config.query_timeout)) {
                static_cast<void>(state.config.routing->mark_refreshed(bucket, time_.now()));
             } else {
                failed = true;
@@ -233,10 +310,10 @@ boost::asio::awaitable<void> dht_routing_refresh::async_refresh_profile(profile_
          ++state.generation;
          if (failed) {
             state.failures = std::min<std::uint32_t>(state.failures + 1U, 7U);
-            state.next_attempt = time_.now() + retry_delay(state);
+            state.next_attempt = saturating_deadline(time_.now(), retry_delay(state));
          } else {
             state.failures = 0;
-            state.next_attempt = time_.now() + regular_delay(state);
+            state.next_attempt = saturating_deadline(time_.now(), regular_delay(state));
          }
          state.in_flight = false;
       }
@@ -262,7 +339,8 @@ boost::asio::awaitable<void> dht_routing_refresh::async_run() {
          auto due = false;
          {
             auto lock = std::scoped_lock{mutex_};
-            due = state.next_attempt == std::chrono::steady_clock::time_point{} || state.next_attempt <= now;
+            due = state.next_attempt == std::chrono::steady_clock::time_point{} ||
+                  (state.next_attempt != std::chrono::steady_clock::time_point::max() && state.next_attempt <= now);
          }
          if (due) {
             co_await async_refresh_profile(state);

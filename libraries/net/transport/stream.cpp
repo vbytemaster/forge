@@ -2,6 +2,7 @@ module;
 
 #include <forge/exceptions/macros.hpp>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -10,52 +11,88 @@ module;
 #include <vector>
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/compat/move_only_function.hpp>
 
 module forge.net.transport.stream;
 
 import forge.net.transport.exceptions;
 
+#include "details/bounded_frame_buffer.hxx"
+
 namespace forge::net::transport {
-namespace {
-
-constexpr auto compact_threshold = std::size_t{65'536};
-
-void compact_buffer(std::vector<std::uint8_t>& buffer, std::size_t& consumed) {
-   if (consumed == 0) {
-      return;
-   }
-   if (consumed >= buffer.size()) {
-      buffer.clear();
-      consumed = 0;
-      return;
-   }
-   auto compacted = std::vector<std::uint8_t>{};
-   compacted.reserve(buffer.size() - consumed);
-   compacted.insert(compacted.end(), buffer.begin() + static_cast<std::ptrdiff_t>(consumed), buffer.end());
-   buffer = std::move(compacted);
-   consumed = 0;
-}
-
-[[nodiscard]] std::span<const std::uint8_t> available_bytes(const std::vector<std::uint8_t>& buffer,
-                                                            std::size_t consumed) noexcept {
-   if (consumed >= buffer.size()) {
-      return {};
-   }
-   return {buffer.data() + consumed, buffer.size() - consumed};
-}
-
-} // namespace
 
 struct stream::impl {
+   enum class terminal_state : std::uint8_t {
+      active,
+      close_requested,
+      cancel_requested,
+   };
+
+   impl(std::shared_ptr<detail::stream_concept> model_value,
+        detail::stream_cancel_request request_cancel_value)
+       : model(std::move(model_value)), request_cancel(std::move(request_cancel_value)) {}
+
+   ~impl() {
+      request_abandon_cancel();
+   }
+
+   [[nodiscard]] bool claim_terminal(terminal_state requested) noexcept {
+      auto expected = terminal_state::active;
+      return terminal.compare_exchange_strong(expected, requested, std::memory_order_acq_rel,
+                                              std::memory_order_acquire);
+   }
+
+   [[nodiscard]] bool claim_cancel() noexcept {
+      auto current = terminal.load(std::memory_order_acquire);
+      while (current == terminal_state::active || current == terminal_state::close_requested) {
+         if (terminal.compare_exchange_weak(current, terminal_state::cancel_requested,
+                                            std::memory_order_acq_rel, std::memory_order_acquire)) {
+            return true;
+         }
+      }
+      return false;
+   }
+
+   void invoke_cancel() noexcept {
+      if (request_cancel) {
+         request_cancel();
+         return;
+      }
+      try {
+         model->cancel();
+      } catch (...) {
+         // Legacy third-party models may expose a throwing cancel().
+      }
+   }
+
+   void request_terminal_cancel() noexcept {
+      if (claim_cancel()) {
+         invoke_cancel();
+      }
+   }
+
+   void request_abandon_cancel() noexcept {
+      if (claim_terminal(terminal_state::cancel_requested)) {
+         invoke_cancel();
+      }
+   }
+
+   void release_close_after_failure() noexcept {
+      auto expected = terminal_state::close_requested;
+      terminal.compare_exchange_strong(expected, terminal_state::active, std::memory_order_acq_rel,
+                                       std::memory_order_acquire);
+   }
+
    std::shared_ptr<detail::stream_concept> model;
-   std::vector<std::uint8_t> buffer;
-   std::size_t consumed = 0;
+   detail::bounded_frame_buffer buffer;
+   // Immutable after publication. terminal is the sole invocation gate.
+   detail::stream_cancel_request request_cancel;
+   std::atomic<terminal_state> terminal{terminal_state::active};
 };
 
 stream::stream() = default;
-stream::stream(std::shared_ptr<detail::stream_concept> model) : impl_(std::make_shared<impl>()) {
-   impl_->model = std::move(model);
-}
+stream::stream(std::shared_ptr<detail::stream_concept> model, detail::stream_cancel_request request_cancel)
+    : impl_(std::make_shared<impl>(std::move(model), std::move(request_cancel))) {}
 
 stream::~stream() = default;
 stream::stream(stream&&) noexcept = default;
@@ -73,7 +110,7 @@ boost::asio::awaitable<void> stream::async_write(std::span<const std::uint8_t> b
    if (!impl_ || !impl_->model) {
       FORGE_THROW_EXCEPTION(exceptions::closed, "invalid transport stream");
    }
-   co_await impl_->model->async_write(bytes);
+   co_await impl_->model->async_write_chunk(chunk{bytes});
 }
 
 boost::asio::awaitable<void> stream::async_write(chunk bytes) {
@@ -92,12 +129,8 @@ boost::asio::awaitable<chunk> stream::async_read_chunk() {
    if (!impl_ || !impl_->model) {
       FORGE_THROW_EXCEPTION(exceptions::closed, "invalid transport stream");
    }
-   if (!available_bytes(impl_->buffer, impl_->consumed).empty()) {
-      auto view = available_bytes(impl_->buffer, impl_->consumed);
-      auto out = chunk{view};
-      impl_->buffer.clear();
-      impl_->consumed = 0;
-      co_return out;
+   if (!impl_->buffer.empty()) {
+      co_return impl_->buffer.take_all();
    }
    co_return co_await impl_->model->async_read_chunk();
 }
@@ -106,7 +139,7 @@ boost::asio::awaitable<void> stream::async_write_frame(std::span<const std::uint
    if (!impl_ || !impl_->model) {
       FORGE_THROW_EXCEPTION(exceptions::closed, "invalid transport stream");
    }
-   co_await impl_->model->async_write_frame(bytes);
+   co_await impl_->model->async_write_frame_chunk(chunk{bytes});
 }
 
 boost::asio::awaitable<void> stream::async_write_frame(chunk bytes) {
@@ -117,39 +150,34 @@ boost::asio::awaitable<void> stream::async_write_frame(chunk bytes) {
 }
 
 boost::asio::awaitable<std::vector<std::uint8_t>> stream::async_read_frame() {
-   auto value = co_await async_read_frame_chunk();
+   co_return co_await async_read_frame(frame_options{});
+}
+
+boost::asio::awaitable<std::vector<std::uint8_t>> stream::async_read_frame(frame_options options) {
+   auto value = co_await async_read_frame_chunk(options);
    co_return std::move(value).into_vector();
 }
 
 boost::asio::awaitable<chunk> stream::async_read_frame_chunk() {
+   co_return co_await async_read_frame_chunk(frame_options{});
+}
+
+boost::asio::awaitable<chunk> stream::async_read_frame_chunk(frame_options options) {
    if (!impl_ || !impl_->model) {
       FORGE_THROW_EXCEPTION(exceptions::closed, "invalid transport stream");
    }
    while (true) {
-      const auto decoded = decode_frame_view(available_bytes(impl_->buffer, impl_->consumed));
+      impl_->buffer.enforce_limit(options);
+      const auto decoded = decode_frame_view(impl_->buffer.bytes(), options);
       if (decoded.status == frame_decode_status::complete) {
-         const auto payload_size = decoded.payload.size();
-         const auto payload_offset = static_cast<std::size_t>(decoded.payload.data() - impl_->buffer.data());
-         if (impl_->consumed == 0 && decoded.consumed == impl_->buffer.size()) {
-            auto storage = std::move(impl_->buffer);
-            impl_->buffer.clear();
-            impl_->consumed = 0;
-            co_return chunk{std::move(storage), payload_offset, payload_size};
-         }
-         auto payload = chunk{decoded.payload};
-         impl_->consumed += decoded.consumed;
-         if (impl_->consumed >= impl_->buffer.size() || impl_->consumed > compact_threshold) {
-            compact_buffer(impl_->buffer, impl_->consumed);
-         }
-         co_return payload;
+         co_return impl_->buffer.take_frame_payload(decoded.consumed, decoded.payload.size());
       }
-      compact_buffer(impl_->buffer, impl_->consumed);
       auto next = co_await impl_->model->async_read_chunk();
       auto view = next.bytes();
       if (view.empty()) {
          continue;
       }
-      impl_->buffer.insert(impl_->buffer.end(), view.begin(), view.end());
+      impl_->buffer.append(view, options);
    }
 }
 
@@ -157,12 +185,35 @@ boost::asio::awaitable<void> stream::async_close() {
    if (!impl_ || !impl_->model) {
       co_return;
    }
-   co_await impl_->model->async_close();
+   auto state = impl_;
+   auto expected = impl::terminal_state::active;
+   const auto owns_close = state->terminal.compare_exchange_strong(
+       expected, impl::terminal_state::close_requested, std::memory_order_acq_rel,
+       std::memory_order_acquire);
+   if (!owns_close && expected != impl::terminal_state::cancel_requested) {
+      co_return;
+   }
+   try {
+      co_await state->model->async_close();
+   } catch (...) {
+      if (owns_close) {
+         state->release_close_after_failure();
+      }
+      throw;
+   }
 }
 
 void stream::cancel() {
-   if (impl_ && impl_->model) {
-      impl_->model->cancel();
+   auto state = impl_;
+   if (state && state->model && state->claim_cancel()) {
+      state->model->cancel();
+   }
+}
+
+void stream::request_cancel() noexcept {
+   auto state = impl_;
+   if (state && state->model) {
+      state->request_terminal_cancel();
    }
 }
 
@@ -170,16 +221,16 @@ stream detail::stream_access::make(std::shared_ptr<stream_concept> model) {
    return stream{std::move(model)};
 }
 
+stream detail::stream_access::make_cancelable(std::shared_ptr<stream_concept> model,
+                                              stream_cancel_request request_cancel) {
+   return stream{std::move(model), std::move(request_cancel)};
+}
+
 stream detail::stream_access::with_buffer(stream value, std::vector<std::uint8_t> buffered) {
    if (!value.impl_ || buffered.empty()) {
       return value;
    }
-   compact_buffer(value.impl_->buffer, value.impl_->consumed);
-   if (!value.impl_->buffer.empty()) {
-      value.impl_->buffer.insert(value.impl_->buffer.end(), buffered.begin(), buffered.end());
-      return value;
-   }
-   value.impl_->buffer = std::move(buffered);
+   value.impl_->buffer.append_prefetched(std::move(buffered));
    return value;
 }
 

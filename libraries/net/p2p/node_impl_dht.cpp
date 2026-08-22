@@ -196,23 +196,24 @@ void node::impl::increment_dht_response() {
    ++metrics_value.dht_responses;
 }
 
-boost::asio::awaitable<dht::message> node::impl::exchange_dht(const protocol_id& protocol, const peer_id& peer,
-                                                              dht::message request, std::chrono::milliseconds timeout) {
+boost::asio::awaitable<node::impl::dht_exchange_result>
+node::impl::exchange_dht(const protocol_id& protocol, const peer_id& peer, dht::message request,
+                         std::chrono::milliseconds timeout, std::shared_ptr<cancellation_latch> cancellation) {
    const auto started = std::chrono::steady_clock::now();
    auto& state = dht_profile(protocol);
-   auto stream = std::optional<forge::net::p2p::stream>{};
+   auto opened = co_await open_protocol_direct_with_context(
+       peer, protocol, timeout, node::open_options{}.max_direct_endpoints,
+       node::open_options{}.direct_attempt_timeout, cancellation);
    try {
-      stream.emplace(co_await open_protocol_direct(peer, protocol, timeout));
-   } catch (const forge::exceptions::base& error) {
-      if (protocol_open_failure_requires_peer_penalty(error)) {
-         store.mark_failure(peer);
-      }
-      throw;
-   }
-   try {
-      co_return co_await detail::async_exchange_dht(std::move(*stream), std::move(request), state.profile,
-                                                    runtime.context(),
-                                                    remaining_timeout(started, timeout, "P2P DHT exchange"));
+      auto response = co_await detail::async_exchange_dht(std::move(opened.stream), std::move(request), state.profile,
+                                                           runtime.context(),
+                                                           remaining_timeout(started, timeout, "P2P DHT exchange"),
+                                                           std::move(cancellation));
+      co_return dht_exchange_result{
+          .message = std::move(response),
+          .remote_endpoint = std::move(opened.remote_endpoint),
+          .direct_endpoint = std::move(opened.direct_endpoint),
+      };
    } catch (const forge::exceptions::base& error) {
       record_dht_exchange_failure(mutex, stopped, store, peer, error);
       throw;
@@ -220,12 +221,15 @@ boost::asio::awaitable<dht::message> node::impl::exchange_dht(const protocol_id&
 }
 
 boost::asio::awaitable<void> node::impl::send_dht(const protocol_id& protocol, const peer_id& peer,
-                                                  dht::message request, std::chrono::milliseconds timeout) {
+                                                  dht::message request, std::chrono::milliseconds timeout,
+                                                  std::shared_ptr<cancellation_latch> cancellation) {
    const auto started = std::chrono::steady_clock::now();
    auto& state = dht_profile(protocol);
-   auto stream = std::optional<forge::net::p2p::stream>{};
+   auto stream = std::optional<opened_direct_stream>{};
    try {
-      stream.emplace(co_await open_protocol_direct(peer, protocol, timeout));
+      stream.emplace(co_await open_protocol_direct_with_context(
+          peer, protocol, timeout, node::open_options{}.max_direct_endpoints,
+          node::open_options{}.direct_attempt_timeout, cancellation));
    } catch (const forge::exceptions::base& error) {
       if (protocol_open_failure_requires_peer_penalty(error)) {
          store.mark_failure(peer);
@@ -233,8 +237,9 @@ boost::asio::awaitable<void> node::impl::send_dht(const protocol_id& protocol, c
       throw;
    }
    try {
-      co_await detail::async_send_dht(std::move(*stream), std::move(request), state.profile, runtime.context(),
-                                      remaining_timeout(started, timeout, "P2P DHT send"));
+      co_await detail::async_send_dht(std::move(stream->stream), std::move(request), state.profile, runtime.context(),
+                                      remaining_timeout(started, timeout, "P2P DHT send"),
+                                      std::move(cancellation));
    } catch (const forge::exceptions::base& error) {
       record_dht_exchange_failure(mutex, stopped, store, peer, error);
       throw;
@@ -254,7 +259,7 @@ boost::asio::awaitable<void> node::impl::handle_dht(std::shared_ptr<node::impl::
    auto buffer = std::vector<std::uint8_t>{};
    while (true) {
       auto deadline = operation_deadline{runtime.context(), profile.limits.query_timeout};
-      deadline.arm([&stream] { stream.cancel(); });
+      deadline.arm([&stream] noexcept { stream.request_cancel(); });
       try {
          auto encoded = std::vector<std::uint8_t>{};
          try {
@@ -305,15 +310,17 @@ boost::asio::awaitable<void> node::impl::handle_dht(std::shared_ptr<node::impl::
                                                   .endpoints = local_endpoints_for_control(),
                                                   .connection = dht::connection_type::connected},
                                         profile.limits.replication, response_profile);
-               } else if (const auto record = store.find(requested)) {
-                  auto exact = dht::peer{.id = requested, .connection = dht::connection_type::can_connect};
-                  for (const auto& item : record->endpoints) {
-                     auto endpoint = item.endpoint;
-                     endpoint.peer = requested;
-                     exact.endpoints.push_back(std::move(endpoint));
+               } else if (requested != session->info.remote_peer) {
+                  if (const auto record = store.find(requested)) {
+                     auto exact = dht::peer{.id = requested, .connection = dht::connection_type::can_connect};
+                     for (const auto& item : record->endpoints) {
+                        auto endpoint = item.endpoint;
+                        endpoint.peer = requested;
+                        exact.endpoints.push_back(std::move(endpoint));
+                     }
+                     append_unique_bounded(response, response.closer_peers, std::move(exact),
+                                           profile.limits.replication, response_profile);
                   }
-                  append_unique_bounded(response, response.closer_peers, std::move(exact), profile.limits.replication,
-                                        response_profile);
                }
             } catch (const forge::exceptions::base&) {
                // Arbitrary keys use ordinary XOR-distance routing.

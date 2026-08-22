@@ -2,6 +2,7 @@ module;
 
 #include <forge/exceptions/macros.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +21,7 @@ module;
 
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/bind_executor.hpp>
 #include <boost/asio/cancellation_state.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/redirect_error.hpp>
@@ -41,7 +43,7 @@ import forge.net.transport.exceptions;
 namespace forge::net::yamux {
 namespace {
 
-[[nodiscard]] std::exception_ptr make_exception(exceptions::code value, std::string message) {
+[[nodiscard]] std::exception_ptr make_exception(exceptions::code value, const char* message) noexcept {
    try {
       switch (value) {
       case exceptions::code::invalid_options:
@@ -93,6 +95,17 @@ bool session::impl::remote_opens_stream(side local_side, std::uint32_t stream_id
    return remote_is_initiator == id_is_odd;
 }
 
+std::chrono::steady_clock::time_point session::impl::deadline_after(
+    std::chrono::milliseconds timeout) noexcept {
+   const auto now = std::chrono::steady_clock::now();
+   const auto remaining = std::chrono::steady_clock::time_point::max() - now;
+   const auto maximum_timeout = std::chrono::duration_cast<std::chrono::milliseconds>(remaining);
+   if (timeout >= maximum_timeout) {
+      return std::chrono::steady_clock::time_point::max();
+   }
+   return now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(timeout);
+}
+
 void session::impl::validate_options() const {
    if (!stream_.valid()) {
       FORGE_THROW_EXCEPTION(exceptions::invalid_options, "yamux requires a valid transport stream");
@@ -101,7 +114,7 @@ void session::impl::validate_options() const {
        options_.max_stream_window < options_.initial_window || options_.max_frame_size == 0 ||
        options_.max_streams == 0 || options_.max_pending_accepts == 0 ||
        options_.max_stream_buffer < options_.initial_window || options_.max_session_buffer < options_.initial_window ||
-       options_.close_timeout.count() <= 0) {
+       options_.write_timeout.count() <= 0 || options_.close_timeout.count() <= 0) {
       FORGE_THROW_EXCEPTION(exceptions::invalid_options, "invalid yamux options");
    }
    if (options_.max_frame_size > static_cast<std::size_t>((std::numeric_limits<std::uint32_t>::max)())) {
@@ -154,18 +167,46 @@ boost::asio::awaitable<void> session::impl::ensure_started() {
          continue;
       }
 
+      auto setup_error = std::exception_ptr{};
+      auto stream_cancel_worker_started = false;
       try {
-         auto self = shared_from_this();
-         boost::asio::co_spawn(executor, self->read_loop(), [self](std::exception_ptr error) {
+         stream_cancel_worker_state_.store(
+             (stream_cancel_publication_state_.load(std::memory_order_acquire) &
+              stream_cancel_publication_closed) == 0
+                 ? stream_cancel_worker_state::running
+                 : stream_cancel_worker_state::stopping,
+             std::memory_order_release);
+         auto cancel_owner = shared_from_this();
+         boost::asio::co_spawn(
+             executor, cancel_owner->stream_cancel_loop(),
+             boost::asio::bind_executor(executor, [cancel_owner](std::exception_ptr error) noexcept {
+                if (error) {
+                   cancel_owner->fail_session(exceptions::code::closed, "yamux stream reset writer stopped");
+                   (void)cancel_owner->cancel_transport_noexcept();
+                }
+                cancel_owner->finish_stream_cancel_loop();
+             }));
+         stream_cancel_worker_started = true;
+
+         auto read_owner = shared_from_this();
+         boost::asio::co_spawn(executor, read_owner->read_loop(), [read_owner](std::exception_ptr error) noexcept {
             if (error) {
-               self->fail_session(exceptions::code::closed, "yamux read loop stopped");
-               self->finish_read_loop();
+               read_owner->fail_session(exceptions::code::closed, "yamux read loop stopped");
+               read_owner->finish_read_loop();
             }
          });
       } catch (...) {
-         auto error = std::current_exception();
-         fail_start(error);
-         std::rethrow_exception(error);
+         setup_error = std::current_exception();
+      }
+      if (setup_error) {
+         request_stream_cancel_loop_stop();
+         if (stream_cancel_worker_started) {
+            co_await wait_for_stream_cancel_loop();
+         } else {
+            finish_stream_cancel_loop();
+         }
+         fail_start(setup_error);
+         std::rethrow_exception(setup_error);
       }
       {
          auto lock = std::scoped_lock{mutex_};
@@ -190,7 +231,7 @@ boost::asio::awaitable<void> session::impl::async_close() {
    auto deadline_timer = std::shared_ptr<boost::asio::steady_timer>{};
    try {
       auto executor = co_await boost::asio::this_coro::executor;
-      const auto deadline = std::chrono::steady_clock::now() + options_.close_timeout;
+      const auto deadline = deadline_after(options_.close_timeout);
       deadline_timer = std::make_shared<boost::asio::steady_timer>(executor, deadline);
       auto weak = weak_from_this();
       deadline_timer->async_wait([weak, deadline_timer](const boost::system::error_code& timer_error) {
@@ -202,6 +243,9 @@ boost::asio::awaitable<void> session::impl::async_close() {
             (void)self->cancel_transport_noexcept();
          }
       });
+
+      request_stream_cancel_loop_stop();
+      co_await wait_for_stream_cancel_loop();
 
       auto writes_drained = true;
       transport_writes_.seal();
@@ -238,7 +282,12 @@ boost::asio::awaitable<void> session::impl::async_close() {
       }
    } catch (...) {
       error = std::current_exception();
+      request_stream_cancel_loop_stop();
       (void)cancel_transport_noexcept();
+   }
+   if (error && stream_cancel_worker_state_.load(std::memory_order_acquire) !=
+                    stream_cancel_worker_state::done) {
+      co_await wait_for_stream_cancel_loop();
    }
    if (deadline_timer) {
       cancel_timer_noexcept(*deadline_timer);
@@ -266,7 +315,7 @@ std::shared_ptr<session::impl::stream_state> session::impl::make_stream_locked(s
 }
 
 void session::impl::require_stream_owned_locked(const std::shared_ptr<stream_state>& state) const {
-   if (state->reset) {
+   if (state->cancel_requested.load(std::memory_order_acquire) || state->reset) {
       FORGE_THROW_EXCEPTION(exceptions::stream_reset, "yamux stream reset");
    }
    const auto found = streams_.find(state->id);
@@ -278,11 +327,23 @@ void session::impl::require_stream_owned_locked(const std::shared_ptr<stream_sta
 bool session::impl::stream_valid(const std::shared_ptr<stream_state>& state) const noexcept {
    auto lock = std::scoped_lock{mutex_};
    const auto found = streams_.find(state->id);
-   return found != streams_.end() && found->second == state && !closed_ && !canceled_ && !state->reset;
+   return found != streams_.end() && found->second == state && !closed_ && !canceled_ && !state->reset &&
+          !state->cancel_requested.load(std::memory_order_acquire);
 }
 
 transport::stream session::impl::make_transport_stream(const std::shared_ptr<stream_state>& state) {
-   return transport::detail::stream_access::make(std::make_shared<stream_model>(shared_from_this(), state));
+   auto model = std::make_shared<stream_model>(shared_from_this(), state);
+   auto cancel_on_failure = std::unique_ptr<stream_model, void (*)(stream_model*)>{
+       model.get(), [](stream_model* stream) { stream->request_cancel(); }};
+   auto weak = std::weak_ptr<stream_model>{model};
+   auto result = transport::detail::stream_access::make_cancelable(
+       std::move(model), [weak = std::move(weak)]() noexcept {
+          if (auto stream = weak.lock()) {
+             stream->request_cancel();
+          }
+       });
+   static_cast<void>(cancel_on_failure.release());
+   return result;
 }
 
 void session::impl::rethrow_terminal_locked() const {
@@ -310,8 +371,7 @@ bool session::impl::start_close(std::uint32_t go_away_code) {
       closed_ = true;
       wake_all_locked();
    }
-   // Publish the terminal state before closing admission so rejected writers observe its exact cause.
-   transport_writes_.seal();
+   request_stream_cancel_loop_stop();
    return true;
 }
 
@@ -348,12 +408,8 @@ void session::impl::finish_close(std::exception_ptr error) noexcept {
 }
 
 bool session::impl::cancel_transport_noexcept() noexcept {
-   try {
-      stream_.cancel();
-      return true;
-   } catch (...) {
-      return false;
-   }
+   stream_.request_cancel();
+   return true;
 }
 
 void session::impl::fail_start(std::exception_ptr error) noexcept {
@@ -379,17 +435,18 @@ void session::impl::fail_start(std::exception_ptr error) noexcept {
    }
    start_notification_.notify();
    read_loop_notification_.notify();
+   request_stream_cancel_loop_stop();
    (void)cancel_transport_noexcept();
 }
 
-void session::impl::fail_session(exceptions::code value, std::string message) {
+void session::impl::fail_session(exceptions::code value, const char* message) noexcept {
    auto first_transition = false;
    {
       auto lock = std::scoped_lock{mutex_};
       if (terminal_error_) {
          return;
       }
-      terminal_error_ = make_exception(value, std::move(message));
+      terminal_error_ = make_exception(value, message);
       first_transition = true;
       if (value == exceptions::code::canceled) {
          canceled_ = true;
@@ -403,6 +460,7 @@ void session::impl::fail_session(exceptions::code value, std::string message) {
    }
    if (first_transition) {
       // Writers rejected after this point must see the terminal error published above.
+      request_stream_cancel_loop_stop();
       transport_writes_.seal();
       write_gate_.close();
    }
@@ -418,7 +476,8 @@ void session::impl::wake_all_locked() {
 }
 
 boost::asio::awaitable<bool> session::impl::write_prepared(std::function<std::optional<detail::bytes>()> prepare,
-                                                           bool allow_after_close, std::shared_ptr<void> lifetime) {
+                                                           bool allow_after_close, std::shared_ptr<void> lifetime,
+                                                           std::shared_ptr<stream_state> frame_state) {
    if (!allow_after_close) {
       auto lock = std::scoped_lock{mutex_};
       rethrow_terminal_locked();
@@ -431,11 +490,13 @@ boost::asio::awaitable<bool> session::impl::write_prepared(std::function<std::op
       FORGE_THROW_EXCEPTION(exceptions::closed, "yamux transport write admission is closed");
    }
    auto operation_lifetime = std::move(lifetime);
-   co_return co_await write_admitted(std::move(prepare), allow_after_close, std::move(operation_lifetime));
+   co_return co_await write_admitted(std::move(prepare), allow_after_close, std::move(operation_lifetime),
+                                     std::move(frame_state));
 }
 
 boost::asio::awaitable<bool> session::impl::write_admitted(std::function<std::optional<detail::bytes>()> prepare,
-                                                           bool allow_after_close, std::shared_ptr<void> lifetime) {
+                                                           bool allow_after_close, std::shared_ptr<void> lifetime,
+                                                           std::shared_ptr<stream_state> frame_state) {
    auto wrote = false;
    auto ticket = forge::asio::gate::ticket{};
    try {
@@ -456,31 +517,86 @@ boost::asio::awaitable<bool> session::impl::write_admitted(std::function<std::op
       rethrow_terminal_locked();
    }
 
-   auto encoded = prepare();
-   if (!encoded) {
-      co_return false;
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto deadline_state = std::make_shared<std::atomic<transport_write_state>>(transport_write_state::active);
+   auto deadline_timer = std::make_shared<boost::asio::steady_timer>(executor, deadline_after(options_.write_timeout));
+   auto weak = weak_from_this();
+   deadline_timer->async_wait([weak, deadline_state, deadline_timer](const boost::system::error_code& error) noexcept {
+      if (error) {
+         return;
+      }
+      auto expected = transport_write_state::active;
+      if (!deadline_state->compare_exchange_strong(expected, transport_write_state::expired,
+                                                   std::memory_order_acq_rel, std::memory_order_acquire)) {
+         return;
+      }
+      if (auto self = weak.lock()) {
+         self->fail_session(exceptions::code::closed, "yamux transport write deadline expired");
+         (void)self->cancel_transport_noexcept();
+      }
+   });
+
+   auto encoded = std::optional<detail::bytes>{};
+   try {
+      encoded = prepare();
+      if (!encoded) {
+         deadline_state->store(transport_write_state::completed, std::memory_order_release);
+         cancel_timer_noexcept(*deadline_timer);
+         co_return false;
+      }
+
+      if (frame_state) {
+         auto lock = std::scoped_lock{mutex_};
+         if (allow_after_close) {
+            const auto found = streams_.find(frame_state->id);
+            if (found == streams_.end() || found->second != frame_state) {
+               FORGE_THROW_EXCEPTION(exceptions::stream_reset, "yamux stream is no longer owned by this session");
+            }
+         } else {
+            require_stream_owned_locked(frame_state);
+         }
+      }
+   } catch (...) {
+      deadline_state->store(transport_write_state::completed, std::memory_order_release);
+      cancel_timer_noexcept(*deadline_timer);
+      throw;
+   }
+
+   if (deadline_state->load(std::memory_order_acquire) != transport_write_state::active) {
+      FORGE_THROW_EXCEPTION(exceptions::closed, "yamux transport write deadline expired");
    }
    try {
       auto outbound = transport::chunk{std::move(*encoded)};
       transport::detail::chunk_access::attach_lifetime(outbound, std::move(lifetime));
       co_await stream_.async_write(std::move(outbound));
+      auto expected = transport_write_state::active;
+      if (!deadline_state->compare_exchange_strong(expected, transport_write_state::completed,
+                                                   std::memory_order_acq_rel, std::memory_order_acquire)) {
+         FORGE_THROW_EXCEPTION(exceptions::closed, "yamux transport write deadline expired");
+      }
       wrote = true;
    } catch (...) {
+      auto expected = transport_write_state::active;
+      static_cast<void>(deadline_state->compare_exchange_strong(
+          expected, transport_write_state::completed, std::memory_order_acq_rel, std::memory_order_acquire));
+      cancel_timer_noexcept(*deadline_timer);
       fail_session(exceptions::code::closed, "yamux underlying stream write failed");
       FORGE_THROW_EXCEPTION(exceptions::closed, "yamux underlying stream write failed");
    }
+   cancel_timer_noexcept(*deadline_timer);
    co_return wrote;
 }
 
 boost::asio::awaitable<void> session::impl::write_frame(detail::frame_type type, std::uint16_t flags,
                                                         std::uint32_t stream_id, std::uint32_t length,
                                                         std::span<const std::uint8_t> payload, bool allow_after_close,
-                                                        std::shared_ptr<void> lifetime) {
+                                                        std::shared_ptr<void> lifetime,
+                                                        std::shared_ptr<stream_state> frame_state) {
    (void)co_await write_prepared(
        [type, flags, stream_id, length, payload]() -> std::optional<detail::bytes> {
           return detail::encode_frame(type, flags, stream_id, length, payload);
        },
-       allow_after_close, std::move(lifetime));
+       allow_after_close, std::move(lifetime), std::move(frame_state));
 }
 
 boost::asio::awaitable<void> session::impl::wait_for_read_loop() {
@@ -518,7 +634,7 @@ boost::asio::awaitable<bool> session::impl::wait_for_read_loop_until(std::chrono
    }
 }
 
-void session::impl::finish_read_loop() {
+void session::impl::finish_read_loop() noexcept {
    {
       auto lock = std::scoped_lock{mutex_};
       read_loop_done_ = true;

@@ -406,6 +406,67 @@ boost::asio::awaitable<void> session_loopback_roundtrip(forge::asio::runtime& ru
    co_await listener.async_close();
 }
 
+boost::asio::awaitable<void> request_cancel_preserves_quic_sibling(
+    forge::asio::runtime& runtime, std::atomic<int>& progress) {
+   progress.store(1, std::memory_order_relaxed);
+   BOOST_TEST_CHECKPOINT("creating QUIC cancel-isolation sessions");
+   const auto material = make_tls_material();
+   auto listener = forge::net::quic::make_session_listener(runtime, loopback_quic(0), make_server_options(material));
+   auto connector = forge::net::quic::make_session_connector(runtime, make_client_options(material));
+   auto executor = co_await boost::asio::this_coro::executor;
+
+   auto accepted_session = spawn_result<forge::net::transport::session_connection>(executor, listener.async_accept());
+   auto client = co_await connector.async_connect(listener.local_endpoint());
+   auto server = co_await take_result(accepted_session);
+
+   progress.store(2, std::memory_order_relaxed);
+   BOOST_TEST_CHECKPOINT("opening first QUIC stream");
+   auto first_accept = spawn_result<forge::net::transport::stream>(executor, server.session.async_accept_stream());
+   auto first = co_await client.session.async_open_stream();
+   co_await first.async_write(bytes{0x01});
+   auto first_inbound = co_await take_result(first_accept);
+   BOOST_TEST((co_await first_inbound.async_read()) == bytes{0x01}, boost::test_tools::per_element());
+   progress.store(3, std::memory_order_relaxed);
+   BOOST_TEST_CHECKPOINT("opening sibling QUIC stream");
+   auto second_accept = spawn_result<forge::net::transport::stream>(executor, server.session.async_accept_stream());
+   auto second = co_await client.session.async_open_stream();
+   co_await second.async_write(bytes{0x02});
+   auto second_inbound = co_await take_result(second_accept);
+   BOOST_TEST((co_await second_inbound.async_read()) == bytes{0x02}, boost::test_tools::per_element());
+
+   progress.store(4, std::memory_order_relaxed);
+   auto canceled_read = spawn_result<bytes>(executor, first_inbound.async_read());
+   BOOST_TEST_CHECKPOINT("requesting first QUIC stream cancellation");
+   first.request_cancel();
+   try {
+      BOOST_TEST_CHECKPOINT("waiting for peer RESET_STREAM");
+      static_cast<void>(co_await take_result(canceled_read));
+      BOOST_FAIL("QUIC peer stream should observe RESET_STREAM");
+   } catch (const forge::exceptions::base& error) {
+      require_quic_code(error, forge::net::quic::exceptions::code::stream_reset);
+   }
+
+   progress.store(5, std::memory_order_relaxed);
+   const auto payload = text_bytes("unaffected quic sibling");
+   BOOST_TEST_CHECKPOINT("writing unaffected QUIC sibling");
+   co_await second.async_write(payload);
+   BOOST_TEST_CHECKPOINT("reading unaffected QUIC sibling");
+   const auto received = co_await second_inbound.async_read();
+   BOOST_TEST(received == payload, boost::test_tools::per_element());
+
+   progress.store(6, std::memory_order_relaxed);
+   BOOST_TEST_CHECKPOINT("closing unaffected QUIC sibling");
+   co_await second.async_close();
+   co_await second_inbound.async_close();
+   progress.store(7, std::memory_order_relaxed);
+   BOOST_TEST_CHECKPOINT("closing QUIC cancel-isolation sessions");
+   co_await client.session.async_close();
+   co_await server.session.async_close();
+   co_await listener.async_close();
+   progress.store(8, std::memory_order_relaxed);
+   BOOST_TEST_CHECKPOINT("closed QUIC cancel-isolation sessions");
+}
+
 boost::asio::awaitable<bool> read_payload_and_fin(forge::net::transport::stream stream) {
    auto payload = co_await stream.async_read();
    if (payload != bytes{0x42}) {
@@ -828,6 +889,16 @@ BOOST_AUTO_TEST_CASE(endpoint_conversion_preserves_transport_shape) {
 BOOST_AUTO_TEST_CASE(loopback_session_connector_listener_transfer_frames) {
    auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    forge::asio::blocking::run(runtime, session_loopback_roundtrip(runtime));
+}
+
+BOOST_AUTO_TEST_CASE(stream_request_cancel_preserves_quic_sibling) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto progress = std::atomic<int>{0};
+   const auto completed = forge::asio::blocking::run_for(
+       runtime, request_cancel_preserves_quic_sibling(runtime, progress), std::chrono::seconds{10});
+   BOOST_TEST_CONTEXT("QUIC cancel-isolation progress=" << progress.load(std::memory_order_relaxed)) {
+      BOOST_CHECK(completed);
+   }
 }
 
 BOOST_AUTO_TEST_CASE(concurrent_streams_deliver_fin_without_cross_stream_starvation) {

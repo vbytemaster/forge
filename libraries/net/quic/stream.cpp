@@ -127,6 +127,12 @@ void stream::cancel() {
    }
 }
 
+void stream::request_cancel() noexcept {
+   if (impl_ && impl_->engine) {
+      impl_->engine->request_cancel();
+   }
+}
+
 stream detail::stream_access::make(detail::stream_handle handle) {
    return stream{std::move(handle)};
 }

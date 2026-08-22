@@ -8,6 +8,10 @@ add_library(
    runtime.cpp
    acknowledged_ranges.cpp
    details/acknowledged_ranges.hxx
+   initial_token.cpp
+   details/initial_token.hxx
+   client_token_cache.cpp
+   details/client_token_cache.hxx
    quic_engine.cpp
    details/quic_engine.hxx
    details/engine_client_options.hxx

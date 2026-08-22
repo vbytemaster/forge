@@ -66,6 +66,7 @@ import forge.net.p2p.rendezvous;
 import forge.net.p2p.resource_manager;
 import forge.net.p2p.scoring;
 import forge.net.p2p.stream;
+import forge.net.p2p.topology;
 import forge.net.transport.session;
 import forge.net.transport.stream;
 import forge.net.yamux.exceptions;
@@ -75,7 +76,7 @@ import forge.net.yamux.session;
 #include "details/lifecycle_wakeup.hxx"
 #include "details/node_impl.hxx"
 #include "details/resource_stream.hxx"
-#include "details/operation_deadline.hxx"
+#include "details/relay_hop_exchange.hxx"
 #include "details/relay_discovery.hxx"
 #include "details/relay_pair.hxx"
 #include "details/relay_transport.hxx"
@@ -385,18 +386,16 @@ node::impl::request_relay_reservation(const peer_id& relay_peer, relay::reservat
    }
    const auto started = std::chrono::steady_clock::now();
    auto relay_session = co_await ensure_direct_session(relay_peer, timeout);
-   auto deadline = operation_deadline{runtime.context(), remaining_timeout(started, timeout, "P2P relay reservation")};
-   deadline.arm([relay_session] { relay_session->connection.cancel(); });
    try {
-      auto stream = co_await open_session_stream(relay_session, builtins::relay_hop, true);
-      co_await stream.async_write(
-          relay::codec::encode_hop(relay::hop_message{.kind = relay::hop_message::message_kind::reserve}));
-      auto relay_buffer = std::vector<std::uint8_t>{};
-      auto response = relay::codec::decode_hop(
-          co_await async_read_length_delimited(stream, relay_buffer, reachability::options{}.max_message_size));
-      if (!deadline.finish()) {
-         throw_operation_timeout("P2P relay reservation");
-      }
+      auto exchange = co_await detail::async_exchange_relay_hop(
+          runtime.context(), remaining_timeout(started, timeout, "P2P relay reservation"), "P2P relay reservation",
+          [this, relay_session](detail::stream_admission_handler admitted)
+              -> boost::asio::awaitable<forge::net::p2p::stream> {
+             co_return co_await open_session_stream(relay_session, builtins::relay_hop, true, std::move(admitted));
+          },
+          relay::hop_message{.kind = relay::hop_message::message_kind::reserve},
+          reachability::options{}.max_message_size);
+      auto response = std::move(exchange.response);
       if (response.kind != relay::hop_message::message_kind::status || response.status != relay::status::ok ||
           !response.reservation_value) {
          FORGE_THROW_CODE(response.kind == relay::hop_message::message_kind::status ? exceptions::code::relay_rejected
@@ -437,11 +436,6 @@ node::impl::request_relay_reservation(const peer_id& relay_peer, relay::reservat
       remember_relay_reservation_in_store(info);
       co_return info;
    } catch (const forge::exceptions::base& error) {
-      if (deadline.timed_out()) {
-         relay_session->closed = true;
-         forget_session(relay_session);
-         throw_operation_timeout("P2P relay reservation");
-      }
       rethrow_transport_as_p2p(error);
    }
 }
@@ -564,8 +558,11 @@ void node::impl::launch_relay_discovery_maintenance() {
           const auto wakeup = self->lifecycle_wakeup;
           auto observed = wakeup->epoch();
           while (true) {
+             if (self->lifecycle.stop_requested()) {
+                co_return;
+             }
              observed = co_await wakeup->async_wait_until(
-                 observed, std::chrono::steady_clock::now() + self->options.limits.discovery.refresh_interval);
+                 observed, std::chrono::steady_clock::now() + self->options.limits.topology.refresh_interval);
              {
                 auto lock = std::scoped_lock{self->mutex};
                 if (self->stopped) {
@@ -574,7 +571,7 @@ void node::impl::launch_relay_discovery_maintenance() {
              }
              try {
                 (void)co_await self->refresh_relay_candidates(std::nullopt,
-                                                              self->options.limits.discovery.query_timeout);
+                                                              self->options.limits.topology.query_timeout);
              } catch (const forge::exceptions::base&) {
                 auto lock = std::scoped_lock{self->mutex};
                 ++self->metrics_value.relay_discovery_failures;
@@ -591,21 +588,19 @@ node::impl::open_relay_yamux(const peer_id& peer, const peer_id& relay_peer, std
    const auto started = std::chrono::steady_clock::now();
    record_path_attempt(path::kind::relay);
    auto relay_session = co_await ensure_direct_session(relay_peer, timeout);
-   auto deadline =
-       operation_deadline{runtime.context(), remaining_timeout(started, timeout, "P2P relay protocol open")};
-   deadline.arm([relay_session] { relay_session->connection.cancel(); });
    try {
-      auto stream = co_await open_session_stream(relay_session, builtins::relay_hop, true);
-      co_await stream.async_write(relay::codec::encode_hop(relay::hop_message{
-          .kind = relay::hop_message::message_kind::connect,
-          .target = relay::peer{.id = peer},
-      }));
-      auto relay_buffer = std::vector<std::uint8_t>{};
-      auto response = relay::codec::decode_hop(
-          co_await async_read_length_delimited(stream, relay_buffer, reachability::options{}.max_message_size));
-      if (!deadline.finish()) {
-         throw_operation_timeout("P2P relay protocol open");
-      }
+      auto exchange = co_await detail::async_exchange_relay_hop(
+          runtime.context(), remaining_timeout(started, timeout, "P2P relay protocol open"), "P2P relay protocol open",
+          [this, relay_session](detail::stream_admission_handler admitted)
+              -> boost::asio::awaitable<forge::net::p2p::stream> {
+             co_return co_await open_session_stream(relay_session, builtins::relay_hop, true, std::move(admitted));
+          },
+          relay::hop_message{
+              .kind = relay::hop_message::message_kind::connect,
+              .target = relay::peer{.id = peer},
+          },
+          reachability::options{}.max_message_size);
+      auto response = std::move(exchange.response);
       if (response.kind != relay::hop_message::message_kind::status || response.status != relay::status::ok) {
          FORGE_THROW_CODE(response.kind == relay::hop_message::message_kind::status ? exceptions::code::relay_rejected
                                                                                     : exceptions::code::protocol_error,
@@ -615,15 +610,10 @@ node::impl::open_relay_yamux(const peer_id& peer, const peer_id& relay_peer, std
                               : "P2P relay open rejected with unexpected response");
       }
       record_path_open(path::kind::relay);
-      stream = detail::stream_access::with_buffer(std::move(stream), std::move(relay_buffer));
+      auto stream = detail::stream_access::with_buffer(std::move(exchange.stream), std::move(exchange.buffered));
       co_return co_await upgrade_relay_outbound_session(std::move(stream), options, identity, peer);
    } catch (const forge::exceptions::base& error) {
       record_relay_failure();
-      if (deadline.timed_out()) {
-         relay_session->closed = true;
-         forget_session(relay_session);
-         throw_operation_timeout("P2P relay protocol open");
-      }
       rethrow_transport_as_p2p(error);
    }
 }

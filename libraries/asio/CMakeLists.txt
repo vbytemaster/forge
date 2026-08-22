@@ -6,6 +6,7 @@ add_library(
    gate.cpp
    notification.cpp
    notification_impl.cpp
+   notification_waiter.cpp
    runtime.cpp
    stop_state.cpp
    task.cpp

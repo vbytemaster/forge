@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstdint>
 #include <deque>
@@ -22,7 +23,10 @@
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/asio/cancellation_signal.hpp>
+#include <boost/asio/cancellation_type.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/host_name.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/strand.hpp>
@@ -40,6 +44,11 @@
 #include <openssl/x509v3.h>
 
 #include "../../libraries/net/quic/details/acknowledged_ranges.hxx"
+#include "../../libraries/net/quic/details/client_token_cache.hxx"
+#include "../../libraries/net/quic/details/initial_token.hxx"
+
+#include <ngtcp2/ngtcp2.h>
+#include <ngtcp2/ngtcp2_crypto.h>
 
 import forge.asio.blocking;
 import forge.asio.runtime;
@@ -53,12 +62,77 @@ import forge.net.quic.options;
 import forge.net.quic.runtime;
 import forge.net.quic.security;
 import forge.net.quic.stream;
+import forge.net.quic.transport;
 import forge.net.transport.buffer;
+import forge.net.transport.connector;
+import forge.net.transport.endpoint;
+import forge.net.transport.listener;
 
 namespace forge::net::quic {
 namespace {
 
 using udp = boost::asio::ip::udp;
+
+constexpr auto initial_token_lifetime = 10 * NGTCP2_SECONDS;
+constexpr auto regular_token_lifetime = 60 * 60 * NGTCP2_SECONDS;
+constexpr auto initial_token_timestamp = ngtcp2_tstamp{3'600 * NGTCP2_SECONDS};
+
+[[nodiscard]] detail::initial_token_validator::secret initial_token_secret(std::uint8_t seed = 0x10U) {
+   auto value = detail::initial_token_validator::secret{};
+   for (auto index = std::size_t{0}; index < value.size(); ++index) {
+      value[index] = static_cast<std::uint8_t>(seed + index);
+   }
+   return value;
+}
+
+[[nodiscard]] ngtcp2_cid initial_token_cid(std::uint8_t seed) {
+   auto value = ngtcp2_cid{};
+   value.datalen = 8;
+   for (auto index = std::size_t{0}; index < value.datalen; ++index) {
+      value.data[index] = static_cast<std::uint8_t>(seed + index);
+   }
+   return value;
+}
+
+[[nodiscard]] ngtcp2_sockaddr_in initial_token_address(std::uint32_t address, std::uint16_t port) {
+   auto value = ngtcp2_sockaddr_in{};
+   value.sin_family = NGTCP2_AF_INET;
+   value.sin_port = port;
+   value.sin_addr.s_addr = address;
+   return value;
+}
+
+[[nodiscard]] detail::initial_token_remote_address initial_token_remote(const ngtcp2_sockaddr_in& address) {
+   return {
+       .address = reinterpret_cast<const ngtcp2_sockaddr*>(&address),
+       .length = static_cast<ngtcp2_socklen>(sizeof(address)),
+   };
+}
+
+[[nodiscard]] std::vector<std::uint8_t>
+generate_regular_initial_token(const detail::initial_token_validator::secret& secret,
+                               detail::initial_token_remote_address remote,
+                               ngtcp2_tstamp now = initial_token_timestamp) {
+   auto token = std::vector<std::uint8_t>(NGTCP2_CRYPTO_MAX_REGULAR_TOKENLEN);
+   const auto length = ngtcp2_crypto_generate_regular_token(token.data(), secret.data(), secret.size(), remote.address,
+                                                            remote.length, now);
+   BOOST_REQUIRE(length > 0);
+   token.resize(static_cast<std::size_t>(length));
+   return token;
+}
+
+[[nodiscard]] std::vector<std::uint8_t>
+generate_legacy_retry_token(const detail::initial_token_validator::secret& secret,
+                            detail::initial_token_remote_address remote, const ngtcp2_cid& retry_scid,
+                            const ngtcp2_cid& original_dcid, ngtcp2_tstamp now = initial_token_timestamp) {
+   auto token = std::vector<std::uint8_t>(NGTCP2_CRYPTO_MAX_RETRY_TOKENLEN);
+   const auto length =
+       ngtcp2_crypto_generate_retry_token(token.data(), secret.data(), secret.size(), NGTCP2_PROTO_VER_V1,
+                                          remote.address, remote.length, &retry_scid, &original_dcid, now);
+   BOOST_REQUIRE(length > 0);
+   token.resize(static_cast<std::size_t>(length));
+   return token;
+}
 
 BOOST_AUTO_TEST_CASE(quic_acknowledged_ranges_require_complete_contiguous_coverage) {
    auto acknowledged = detail::acknowledged_ranges{};
@@ -74,6 +148,230 @@ BOOST_AUTO_TEST_CASE(quic_acknowledged_ranges_require_complete_contiguous_covera
    acknowledged.discard_before(32);
    BOOST_TEST(!acknowledged.covers(0, 32));
    BOOST_TEST(acknowledged.covers(32, 32));
+}
+
+BOOST_AUTO_TEST_CASE(quic_initial_token_unknown_opaque_token_retries) {
+   auto validator =
+       detail::initial_token_validator{initial_token_secret(), initial_token_lifetime, regular_token_lifetime};
+   const auto remote = initial_token_address(0x0100007FU, 4433);
+   const auto opaque = std::vector<std::uint8_t>(78, 0xA5U);
+   const auto result = validator.validate(opaque, NGTCP2_PROTO_VER_V1, initial_token_remote(remote),
+                                          initial_token_cid(0x31U), initial_token_timestamp);
+
+   BOOST_TEST(static_cast<int>(result.disposition) == static_cast<int>(detail::initial_token_disposition::retry));
+}
+
+BOOST_AUTO_TEST_CASE(quic_initial_token_retry2_accepts_and_extracts_original_dcid) {
+   auto validator =
+       detail::initial_token_validator{initial_token_secret(), initial_token_lifetime, regular_token_lifetime};
+   const auto remote = initial_token_address(0x0100007FU, 4433);
+   const auto retry_scid = initial_token_cid(0x21U);
+   const auto original_dcid = initial_token_cid(0x11U);
+   const auto token = validator.generate_retry(NGTCP2_PROTO_VER_V1, initial_token_remote(remote), retry_scid,
+                                               original_dcid, initial_token_timestamp);
+   BOOST_REQUIRE(token.has_value());
+   BOOST_REQUIRE(!token->empty());
+   BOOST_TEST(token->front() == NGTCP2_CRYPTO_TOKEN_MAGIC_RETRY2);
+
+   const auto result = validator.validate(*token, NGTCP2_PROTO_VER_V1, initial_token_remote(remote), retry_scid,
+                                          initial_token_timestamp);
+   BOOST_TEST(static_cast<int>(result.disposition) == static_cast<int>(detail::initial_token_disposition::accept));
+   BOOST_TEST(static_cast<int>(result.token_type) == static_cast<int>(NGTCP2_TOKEN_TYPE_RETRY));
+   BOOST_TEST(ngtcp2_cid_eq(&result.original_dcid, &original_dcid) != 0);
+}
+
+BOOST_AUTO_TEST_CASE(quic_initial_token_foreign_retry2_is_unreadable_and_retries) {
+   auto validator =
+       detail::initial_token_validator{initial_token_secret(), initial_token_lifetime, regular_token_lifetime};
+   auto foreign =
+       detail::initial_token_validator{initial_token_secret(0x70U), initial_token_lifetime, regular_token_lifetime};
+   const auto remote = initial_token_address(0x0100007FU, 4433);
+   const auto retry_scid = initial_token_cid(0x21U);
+   const auto token = foreign.generate_retry(NGTCP2_PROTO_VER_V1, initial_token_remote(remote), retry_scid,
+                                             initial_token_cid(0x11U), initial_token_timestamp);
+   BOOST_REQUIRE(token.has_value());
+   BOOST_TEST(token->front() == NGTCP2_CRYPTO_TOKEN_MAGIC_RETRY2);
+
+   const auto result = validator.validate(*token, NGTCP2_PROTO_VER_V1, initial_token_remote(remote), retry_scid,
+                                          initial_token_timestamp);
+   BOOST_TEST(static_cast<int>(result.disposition) == static_cast<int>(detail::initial_token_disposition::retry));
+}
+
+BOOST_AUTO_TEST_CASE(quic_initial_token_legacy_retry_accepts_and_extracts_original_dcid) {
+   const auto secret = initial_token_secret();
+   auto validator = detail::initial_token_validator{secret, initial_token_lifetime, regular_token_lifetime};
+   const auto remote = initial_token_address(0x0100007FU, 4433);
+   const auto retry_scid = initial_token_cid(0x21U);
+   const auto original_dcid = initial_token_cid(0x11U);
+   const auto token = generate_legacy_retry_token(secret, initial_token_remote(remote), retry_scid, original_dcid);
+   BOOST_REQUIRE(!token.empty());
+   BOOST_TEST(token.front() == NGTCP2_CRYPTO_TOKEN_MAGIC_RETRY);
+
+   const auto result = validator.validate(token, NGTCP2_PROTO_VER_V1, initial_token_remote(remote), retry_scid,
+                                          initial_token_timestamp);
+   BOOST_TEST(static_cast<int>(result.disposition) == static_cast<int>(detail::initial_token_disposition::accept));
+   BOOST_TEST(static_cast<int>(result.token_type) == static_cast<int>(NGTCP2_TOKEN_TYPE_RETRY));
+   BOOST_TEST(ngtcp2_cid_eq(&result.original_dcid, &original_dcid) != 0);
+}
+
+BOOST_AUTO_TEST_CASE(quic_initial_token_invalid_legacy_retry_is_unvalidated_and_retries) {
+   auto validator =
+       detail::initial_token_validator{initial_token_secret(), initial_token_lifetime, regular_token_lifetime};
+   const auto foreign_secret = initial_token_secret(0x70U);
+   const auto remote = initial_token_address(0x0100007FU, 4433);
+   const auto retry_scid = initial_token_cid(0x21U);
+   const auto token =
+       generate_legacy_retry_token(foreign_secret, initial_token_remote(remote), retry_scid, initial_token_cid(0x11U));
+   BOOST_REQUIRE(!token.empty());
+   BOOST_TEST(token.front() == NGTCP2_CRYPTO_TOKEN_MAGIC_RETRY);
+
+   const auto result = validator.validate(token, NGTCP2_PROTO_VER_V1, initial_token_remote(remote), retry_scid,
+                                          initial_token_timestamp);
+   BOOST_TEST(static_cast<int>(result.disposition) == static_cast<int>(detail::initial_token_disposition::retry));
+}
+
+BOOST_AUTO_TEST_CASE(quic_initial_token_retry2_wrong_address_and_expiry_reject) {
+   auto validator =
+       detail::initial_token_validator{initial_token_secret(), initial_token_lifetime, regular_token_lifetime};
+   const auto original_remote = initial_token_address(0x0100007FU, 4433);
+   const auto changed_remote = initial_token_address(0x0200007FU, 4433);
+   const auto retry_scid = initial_token_cid(0x21U);
+   const auto token = validator.generate_retry(NGTCP2_PROTO_VER_V1, initial_token_remote(original_remote), retry_scid,
+                                               initial_token_cid(0x11U), initial_token_timestamp);
+   BOOST_REQUIRE(token.has_value());
+
+   const auto wrong_address = validator.validate(*token, NGTCP2_PROTO_VER_V1, initial_token_remote(changed_remote),
+                                                 retry_scid, initial_token_timestamp);
+   BOOST_TEST(static_cast<int>(wrong_address.disposition) ==
+              static_cast<int>(detail::initial_token_disposition::reject_invalid));
+
+   const auto expired = validator.validate(*token, NGTCP2_PROTO_VER_V1, initial_token_remote(original_remote),
+                                           retry_scid, initial_token_timestamp + initial_token_lifetime + 1);
+   BOOST_TEST(static_cast<int>(expired.disposition) ==
+              static_cast<int>(detail::initial_token_disposition::reject_invalid));
+}
+
+BOOST_AUTO_TEST_CASE(quic_initial_token_regular_token_accepts_new_token) {
+   const auto secret = initial_token_secret();
+   auto validator = detail::initial_token_validator{secret, initial_token_lifetime, regular_token_lifetime};
+   const auto remote = initial_token_address(0x0100007FU, 4433);
+   const auto current_dcid = initial_token_cid(0x41U);
+   const auto token = generate_regular_initial_token(secret, initial_token_remote(remote));
+   BOOST_REQUIRE(!token.empty());
+   BOOST_TEST(token.front() == NGTCP2_CRYPTO_TOKEN_MAGIC_REGULAR);
+
+   const auto result = validator.validate(token, NGTCP2_PROTO_VER_V1, initial_token_remote(remote), current_dcid,
+                                          initial_token_timestamp);
+   BOOST_TEST(static_cast<int>(result.disposition) == static_cast<int>(detail::initial_token_disposition::accept));
+   BOOST_TEST(static_cast<int>(result.token_type) == static_cast<int>(NGTCP2_TOKEN_TYPE_NEW_TOKEN));
+   BOOST_TEST(ngtcp2_cid_eq(&result.original_dcid, &current_dcid) != 0);
+}
+
+BOOST_AUTO_TEST_CASE(quic_initial_token_invalid_regular_token_retries) {
+   auto validator =
+       detail::initial_token_validator{initial_token_secret(), initial_token_lifetime, regular_token_lifetime};
+   const auto remote = initial_token_address(0x0100007FU, 4433);
+   const auto token = generate_regular_initial_token(initial_token_secret(0x70U), initial_token_remote(remote));
+   BOOST_REQUIRE(!token.empty());
+   BOOST_TEST(token.front() == NGTCP2_CRYPTO_TOKEN_MAGIC_REGULAR);
+
+   const auto result = validator.validate(token, NGTCP2_PROTO_VER_V1, initial_token_remote(remote),
+                                          initial_token_cid(0x41U), initial_token_timestamp);
+   BOOST_TEST(static_cast<int>(result.disposition) == static_cast<int>(detail::initial_token_disposition::retry));
+}
+
+BOOST_AUTO_TEST_CASE(quic_initial_token_regular_token_uses_independent_lifetime) {
+   const auto secret = initial_token_secret();
+   auto validator = detail::initial_token_validator{secret, initial_token_lifetime, regular_token_lifetime};
+   const auto remote = initial_token_address(0x0100007FU, 4433);
+   const auto token = validator.generate_regular(initial_token_remote(remote), initial_token_timestamp);
+   BOOST_REQUIRE(token.has_value());
+
+   const auto accepted =
+       validator.validate(*token, NGTCP2_PROTO_VER_V1, initial_token_remote(remote), initial_token_cid(0x41U),
+                          initial_token_timestamp + initial_token_lifetime + 1);
+   BOOST_TEST(static_cast<int>(accepted.disposition) == static_cast<int>(detail::initial_token_disposition::accept));
+   const auto expired =
+       validator.validate(*token, NGTCP2_PROTO_VER_V1, initial_token_remote(remote), initial_token_cid(0x41U),
+                          initial_token_timestamp + regular_token_lifetime + 1);
+   BOOST_TEST(static_cast<int>(expired.disposition) == static_cast<int>(detail::initial_token_disposition::retry));
+}
+
+BOOST_AUTO_TEST_CASE(quic_client_token_cache_is_atomic_bounded_and_expires) {
+   auto limits = detail::client_token_cache::limits{
+       .max_entries = 2,
+       .max_token_bytes = 8,
+       .max_key_bytes = 8,
+       .max_raw_bytes = 128,
+       .max_seen_digests = 3,
+   };
+   auto cache = detail::client_token_cache{limits};
+   const auto now = detail::client_token_cache::clock::time_point{};
+   BOOST_REQUIRE(cache.store("peer-a", {1, 2, 3}, now));
+   BOOST_REQUIRE(cache.store("peer-b", {4, 5, 6}, now));
+   BOOST_TEST(!cache.store("peer-c", {1, 2, 3}, now));
+
+   auto taken = std::atomic_size_t{0};
+   auto first = std::thread{[&] {
+      if (cache.take("peer-a", now)) {
+         taken.fetch_add(1, std::memory_order_relaxed);
+      }
+   }};
+   auto second = std::thread{[&] {
+      if (cache.take("peer-a", now)) {
+         taken.fetch_add(1, std::memory_order_relaxed);
+      }
+   }};
+   first.join();
+   second.join();
+   BOOST_TEST(taken.load(std::memory_order_relaxed) == 1U);
+   BOOST_TEST(cache.take("peer-b", now).has_value());
+
+   BOOST_REQUIRE(cache.store("peer-c", {7, 8, 9}, now));
+   const auto active = cache.snapshot(now);
+   BOOST_TEST(active.entries <= limits.max_entries);
+   BOOST_TEST(active.seen_digests <= limits.max_seen_digests);
+   BOOST_TEST(active.raw_bytes <= limits.max_raw_bytes);
+   BOOST_TEST(!cache.take("peer-c", now + std::chrono::minutes{55}));
+   const auto expired = cache.snapshot(now + std::chrono::minutes{55});
+   BOOST_TEST(expired.entries == 0U);
+   BOOST_TEST(expired.seen_digests == 0U);
+   BOOST_TEST(expired.raw_bytes == 0U);
+}
+
+BOOST_AUTO_TEST_CASE(quic_client_token_cache_rejects_entry_that_cannot_fit_raw_limit) {
+   auto cache = detail::client_token_cache{detail::client_token_cache::limits{
+       .max_entries = 1,
+       .max_token_bytes = 8,
+       .max_key_bytes = 8,
+       .max_raw_bytes = 8,
+       .max_seen_digests = 1,
+   }};
+   const auto now = detail::client_token_cache::clock::time_point{};
+   BOOST_TEST(!cache.store("key", {1, 2, 3, 4}, now));
+   const auto state = cache.snapshot(now);
+   BOOST_TEST(state.entries == 0U);
+   BOOST_TEST(state.seen_digests == 0U);
+   BOOST_TEST(state.raw_bytes == 0U);
+}
+
+BOOST_AUTO_TEST_CASE(quic_client_token_callbacks_support_default_custom_and_disabled_states) {
+   auto options = client_options{.security = security_options{.verify_peer = false}};
+   BOOST_CHECK_NO_THROW(validate(options));
+
+   options.client_tokens = client_token_callbacks{};
+   BOOST_CHECK_NO_THROW(validate(options));
+
+   options.client_tokens = client_token_callbacks{
+       .take = [] { return std::optional<std::vector<std::uint8_t>>{}; },
+   };
+   BOOST_CHECK_THROW(validate(options), forge::exceptions::base);
+
+   options.client_tokens = client_token_callbacks{
+       .take = [] { return std::optional<std::vector<std::uint8_t>>{}; },
+       .store = [](std::vector<std::uint8_t>) {},
+   };
+   BOOST_CHECK_NO_THROW(validate(options));
 }
 
 std::string_view test_certificate() {
@@ -519,6 +817,23 @@ class udp_fault_proxy : public std::enable_shared_from_this<udp_fault_proxy> {
    std::atomic_bool drop_next_client_to_server_{false};
 };
 
+boost::asio::awaitable<void> async_wait_for_new_token(connection& value) {
+   auto executor = co_await boost::asio::this_coro::executor;
+   auto timer = boost::asio::steady_timer{executor};
+   for (auto attempt = std::size_t{}; attempt < 100; ++attempt) {
+      if (value.metrics().new_tokens_received != 0) {
+         co_return;
+      }
+      timer.expires_after(std::chrono::milliseconds{10});
+      auto error = boost::system::error_code{};
+      co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+      if (error) {
+         throw std::runtime_error{"waiting for QUIC NEW_TOKEN was canceled"};
+      }
+   }
+   throw std::runtime_error{"timed out waiting for QUIC NEW_TOKEN"};
+}
+
 BOOST_AUTO_TEST_CASE(quic_endpoint_parses_ipv4_authority) {
    const auto host = std::string{"127.0.0.1"};
    const auto authority = host + ":" + std::to_string(9443);
@@ -546,11 +861,287 @@ BOOST_AUTO_TEST_CASE(quic_endpoint_rejects_non_quic_scheme) {
    }
 }
 
+BOOST_AUTO_TEST_CASE(quic_transport_roundtrips_dns_address_family) {
+   const auto dns4 = forge::net::transport::endpoint{
+       .host_type = forge::net::transport::endpoint::host_kind::dns4,
+       .protocol = forge::net::transport::endpoint::protocol_kind::quic_v1,
+       .host = "peer.example.test",
+       .port = 9443,
+   };
+   const auto dns6 = forge::net::transport::endpoint{
+       .host_type = forge::net::transport::endpoint::host_kind::dns6,
+       .protocol = forge::net::transport::endpoint::protocol_kind::quic_v1,
+       .host = "peer.example.test",
+       .port = 9443,
+   };
+
+   const auto quic_dns4 = from_transport_endpoint(dns4);
+   const auto quic_dns6 = from_transport_endpoint(dns6);
+   BOOST_TEST(static_cast<int>(quic_dns4.family) == static_cast<int>(endpoint::address_family::ipv4));
+   BOOST_TEST(static_cast<int>(quic_dns6.family) == static_cast<int>(endpoint::address_family::ipv6));
+   BOOST_TEST(static_cast<int>(to_transport_endpoint(quic_dns4).host_type) == static_cast<int>(dns4.host_type));
+   BOOST_TEST(static_cast<int>(to_transport_endpoint(quic_dns6).host_type) == static_cast<int>(dns6.host_type));
+
+   const auto literal = endpoint{.host = "127.0.0.1", .port = 9443, .family = endpoint::address_family::ipv6};
+   BOOST_TEST(static_cast<int>(to_transport_endpoint(literal).host_type) ==
+              static_cast<int>(forge::net::transport::endpoint::host_kind::ip4));
+}
+
+BOOST_AUTO_TEST_CASE(quic_transport_dns4_connector_uses_ipv4_resolution) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto server = listener{runtime, endpoint{.host = "0.0.0.0", .port = 0}, loopback_server_options()};
+   auto accepted = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
+   auto client = make_session_connector(runtime, loopback_client_options());
+   const auto remote = forge::net::transport::endpoint{
+       .host_type = forge::net::transport::endpoint::host_kind::dns4,
+       .protocol = forge::net::transport::endpoint::protocol_kind::quic_v1,
+       .host = boost::asio::ip::host_name(),
+       .port = server.local_endpoint().port,
+   };
+
+   auto client_connection = run_with_deadline(runtime, client.async_connect(remote), std::chrono::milliseconds{5'000},
+                                              "DNS4 QUIC transport connect");
+   auto server_connection =
+       get_with_deadline_or_stop(runtime, accepted, std::chrono::milliseconds{5'000}, "DNS4 QUIC transport accept");
+   const auto selected = boost::asio::ip::make_address(client_connection.remote_endpoint.host);
+
+   BOOST_TEST(static_cast<int>(client_connection.remote_endpoint.host_type) ==
+              static_cast<int>(forge::net::transport::endpoint::host_kind::ip4));
+   BOOST_TEST(selected.is_v4());
+
+   run_with_deadline(runtime, client_connection.session.async_close(), std::chrono::milliseconds{5'000},
+                     "DNS4 QUIC transport client close");
+   run_with_deadline(runtime, server_connection.async_close(), std::chrono::milliseconds{5'000},
+                     "DNS4 QUIC transport server close");
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(quic_connector_numeric_host_overrides_dns_family_constraint) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto server = listener{runtime, endpoint{.host = "0.0.0.0", .port = 0}, loopback_server_options()};
+   auto accepted = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
+   auto client = connector{runtime};
+   const auto remote = endpoint{
+       .host = "127.0.0.1",
+       .port = server.local_endpoint().port,
+       .family = endpoint::address_family::ipv6,
+   };
+
+   auto client_connection = run_with_deadline(runtime, client.async_connect(remote, loopback_client_options()),
+                                              std::chrono::milliseconds{5'000}, "numeric IPv4 QUIC connect");
+   auto server_connection =
+       get_with_deadline_or_stop(runtime, accepted, std::chrono::milliseconds{5'000}, "numeric IPv4 QUIC accept");
+   BOOST_TEST(boost::asio::ip::make_address(client_connection.remote_endpoint().host).is_v4());
+
+   run_with_deadline(runtime, client_connection.async_close(), std::chrono::milliseconds{5'000},
+                     "numeric IPv4 QUIC client close");
+   run_with_deadline(runtime, server_connection.async_close(), std::chrono::milliseconds{5'000},
+                     "numeric IPv4 QUIC server close");
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(quic_connector_reuses_verified_new_token_without_retry) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options()};
+   auto client = connector{runtime};
+
+   auto first_accept = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
+   auto first = run_with_deadline(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()),
+                                  std::chrono::milliseconds{5'000}, "initial tokenless connect");
+   auto first_server = get_with_deadline(first_accept, std::chrono::milliseconds{5'000}, "initial token accept");
+   run_with_deadline(runtime, async_wait_for_new_token(first), std::chrono::milliseconds{2'000}, "receive NEW_TOKEN");
+   BOOST_TEST(first.metrics().retry_packets_received == 1U);
+   BOOST_TEST(first_server.metrics().new_tokens_submitted == 1U);
+   run_with_deadline(runtime, first.async_close(), std::chrono::milliseconds{5'000}, "initial token client close");
+   run_with_deadline(runtime, first_server.async_close(), std::chrono::milliseconds{5'000},
+                     "initial token server close");
+
+   auto second_accept = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
+   auto second = run_with_deadline(runtime, client.async_connect(server.local_endpoint(), loopback_client_options()),
+                                   std::chrono::milliseconds{5'000}, "cached token connect");
+   auto second_server = get_with_deadline(second_accept, std::chrono::milliseconds{5'000}, "cached token accept");
+   BOOST_TEST(second.metrics().retry_packets_received == 0U);
+   run_with_deadline(runtime, second.async_close(), std::chrono::milliseconds{5'000}, "cached token client close");
+   run_with_deadline(runtime, second_server.async_close(), std::chrono::milliseconds{5'000},
+                     "cached token server close");
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(quic_foreign_regular_token_retries_after_listener_restart) {
+   struct token_state {
+      std::mutex mutex;
+      std::condition_variable changed;
+      std::optional<std::vector<std::uint8_t>> token;
+   };
+
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto state = std::make_shared<token_state>();
+   const auto options_for = [state] {
+      auto options = loopback_client_options();
+      options.client_tokens = client_token_callbacks{
+          .take =
+              [state] {
+                 auto lock = std::scoped_lock{state->mutex};
+                 auto token = std::move(state->token);
+                 state->token.reset();
+                 return token;
+              },
+          .store =
+              [state](std::vector<std::uint8_t> token) {
+                 auto lock = std::scoped_lock{state->mutex};
+                 state->token = std::move(token);
+                 state->changed.notify_all();
+              },
+      };
+      return options;
+   };
+
+   auto remote = endpoint{};
+   {
+      auto first_server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options()};
+      remote = first_server.local_endpoint();
+      auto accepted = boost::asio::co_spawn(runtime.context(), first_server.async_accept(), boost::asio::use_future);
+      auto client = connector{runtime};
+      auto connection = run_with_deadline(runtime, client.async_connect(remote, options_for()),
+                                          std::chrono::milliseconds{5'000}, "foreign token initial connect");
+      auto inbound = get_with_deadline(accepted, std::chrono::milliseconds{5'000}, "foreign token initial accept");
+      {
+         auto lock = std::unique_lock{state->mutex};
+         BOOST_REQUIRE(
+             state->changed.wait_for(lock, std::chrono::seconds{2}, [&] { return state->token.has_value(); }));
+      }
+      run_with_deadline(runtime, connection.async_close(), std::chrono::milliseconds{5'000},
+                        "foreign token initial close");
+      run_with_deadline(runtime, inbound.async_close(), std::chrono::milliseconds{5'000},
+                        "foreign token initial inbound close");
+      run_with_deadline(runtime, first_server.async_stop(), std::chrono::milliseconds{5'000},
+                        "foreign token initial listener stop");
+
+      auto replacement = listener{runtime, remote, loopback_server_options()};
+      auto replacement_accept =
+          boost::asio::co_spawn(runtime.context(), replacement.async_accept(), boost::asio::use_future);
+      auto retrying = run_with_deadline(runtime, client.async_connect(remote, options_for()),
+                                        std::chrono::milliseconds{5'000}, "foreign token retry connect");
+      auto replacement_connection =
+          get_with_deadline(replacement_accept, std::chrono::milliseconds{5'000}, "foreign token retry accept");
+      BOOST_TEST(retrying.metrics().retry_packets_received == 1U);
+      run_with_deadline(runtime, retrying.async_close(), std::chrono::milliseconds{5'000}, "foreign token retry close");
+      run_with_deadline(runtime, replacement_connection.async_close(), std::chrono::milliseconds{5'000},
+                        "foreign token retry inbound close");
+      replacement.stop();
+   }
+}
+
+BOOST_AUTO_TEST_CASE(quic_client_token_callback_failures_do_not_close_verified_connection) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options()};
+   auto accepted = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
+   auto client = connector{runtime};
+   auto options = loopback_client_options();
+   options.client_tokens = client_token_callbacks{
+       .take = []() -> std::optional<std::vector<std::uint8_t>> { throw std::runtime_error{"take failure"}; },
+       .store = [](std::vector<std::uint8_t>) { throw std::runtime_error{"store failure"}; },
+   };
+
+   auto connection = run_with_deadline(runtime, client.async_connect(server.local_endpoint(), std::move(options)),
+                                       std::chrono::milliseconds{5'000}, "throwing token callback connect");
+   auto inbound = get_with_deadline(accepted, std::chrono::milliseconds{5'000}, "throwing token callback accept");
+   BOOST_TEST(connection.valid());
+   BOOST_TEST(!connection.metrics().closed);
+   BOOST_TEST(inbound.metrics().new_tokens_submitted == 1U);
+
+   run_with_deadline(runtime, connection.async_close(), std::chrono::milliseconds{5'000}, "throwing callback close");
+   run_with_deadline(runtime, inbound.async_close(), std::chrono::milliseconds{5'000},
+                     "throwing callback inbound close");
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(quic_failed_peer_verification_drops_pending_new_token) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto server = listener{runtime, endpoint{.host = "127.0.0.1", .port = 0}, loopback_server_options()};
+   auto accepted = boost::asio::co_spawn(runtime.context(), server.async_accept(), boost::asio::use_future);
+   auto stores = std::atomic_size_t{0};
+   auto options = loopback_client_options();
+   options.security = security_options{
+       .verify_peer = true,
+       .expected_sha256_fingerprint = std::string(64, '0'),
+   };
+   options.client_tokens = client_token_callbacks{
+       .take = [] { return std::optional<std::vector<std::uint8_t>>{}; },
+       .store = [&stores](std::vector<std::uint8_t>) { stores.fetch_add(1, std::memory_order_relaxed); },
+   };
+   auto client = connector{runtime};
+   try {
+      (void)run_with_deadline(runtime, client.async_connect(server.local_endpoint(), std::move(options)),
+                              std::chrono::milliseconds{5'000}, "failed verified token connect");
+      BOOST_FAIL("expected peer verification failure");
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::net::quic::exceptions::code_of(error).value()) ==
+                 static_cast<int>(exceptions::code::peer_verification_failed));
+   }
+   auto inbound = get_with_deadline(accepted, std::chrono::milliseconds{5'000}, "failed verified token accept");
+   BOOST_TEST(inbound.metrics().new_tokens_submitted == 1U);
+   BOOST_TEST(stores.load(std::memory_order_relaxed) == 0U);
+   run_with_deadline(runtime, inbound.async_close(), std::chrono::milliseconds{5'000},
+                     "failed verified token inbound close");
+   server.stop();
+}
+
+BOOST_AUTO_TEST_CASE(quic_transport_rejects_invalid_literal_host_kinds_before_io) {
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto client = make_session_connector(runtime, loopback_client_options());
+   const auto expect_invalid_connect = [&](forge::net::transport::endpoint remote) {
+      try {
+         static_cast<void>(forge::asio::blocking::run(runtime, client.async_connect(std::move(remote))));
+         BOOST_FAIL("expected typed QUIC transport endpoint failure");
+      } catch (const forge::exceptions::base& error) {
+         BOOST_TEST(static_cast<int>(forge::net::quic::exceptions::code_of(error).value()) ==
+                    static_cast<int>(exceptions::code::invalid_endpoint));
+      }
+   };
+   const auto expect_invalid_listener = [&](forge::net::transport::endpoint local) {
+      try {
+         static_cast<void>(make_session_listener(runtime, std::move(local), loopback_server_options()));
+         BOOST_FAIL("expected typed QUIC transport listener endpoint failure");
+      } catch (const forge::exceptions::base& error) {
+         BOOST_TEST(static_cast<int>(forge::net::quic::exceptions::code_of(error).value()) ==
+                    static_cast<int>(exceptions::code::invalid_endpoint));
+      }
+   };
+
+   expect_invalid_connect(forge::net::transport::endpoint{
+       .host_type = forge::net::transport::endpoint::host_kind::ip4,
+       .protocol = forge::net::transport::endpoint::protocol_kind::quic_v1,
+       .host = "::1",
+       .port = 9443,
+   });
+   expect_invalid_connect(forge::net::transport::endpoint{
+       .host_type = forge::net::transport::endpoint::host_kind::ip6,
+       .protocol = forge::net::transport::endpoint::protocol_kind::quic_v1,
+       .host = "127.0.0.1",
+       .port = 9443,
+   });
+   expect_invalid_listener(forge::net::transport::endpoint{
+       .host_type = forge::net::transport::endpoint::host_kind::ip4,
+       .protocol = forge::net::transport::endpoint::protocol_kind::quic_v1,
+       .host = "not-an-ip-address",
+       .port = 9443,
+   });
+   expect_invalid_listener(forge::net::transport::endpoint{
+       .host_type = forge::net::transport::endpoint::host_kind::ip6,
+       .protocol = forge::net::transport::endpoint::protocol_kind::quic_v1,
+       .host = "not-an-ip-address",
+       .port = 9443,
+   });
+}
+
 BOOST_AUTO_TEST_CASE(quic_connect_timeout_wins_over_pre_connection_error_race) {
    auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto client = connector{runtime};
    auto options = loopback_client_options();
+   options.connect_timeout = std::chrono::milliseconds{100};
    options.test_failpoint = [](std::string_view name) { return name == "timeout_before_pre_connection_error_finish"; };
+   const auto started = std::chrono::steady_clock::now();
 
    try {
       (void)run_with_deadline(
@@ -558,8 +1149,66 @@ BOOST_AUTO_TEST_CASE(quic_connect_timeout_wins_over_pre_connection_error_race) {
           std::chrono::milliseconds{2'000}, "pre-connection error timeout winner");
       BOOST_FAIL("expected QUIC connect timeout");
    } catch (const forge::exceptions::base& error) {
+      const auto elapsed =
+          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started);
+      BOOST_TEST(elapsed.count() < 1'000);
       BOOST_TEST(static_cast<int>(forge::net::quic::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::connect_timeout));
+   }
+}
+
+BOOST_AUTO_TEST_CASE(quic_connect_awaits_dns_completion_after_inherited_cancellation) {
+   struct resolution_barrier {
+      std::mutex mutex;
+      std::condition_variable entered_changed;
+      std::condition_variable release_changed;
+      bool entered = false;
+      bool released = false;
+   };
+
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
+   auto client = connector{runtime};
+   auto barrier = std::make_shared<resolution_barrier>();
+   auto options = loopback_client_options();
+   options.connect_timeout = std::chrono::seconds{30};
+   options.test_failpoint = [barrier](std::string_view name) {
+      if (name != "after_resolution_completion") {
+         return false;
+      }
+      auto lock = std::unique_lock{barrier->mutex};
+      barrier->entered = true;
+      barrier->entered_changed.notify_all();
+      barrier->release_changed.wait(lock, [&] { return barrier->released; });
+      return false;
+   };
+   const auto release_barrier = [](resolution_barrier* value) noexcept {
+      auto lock = std::scoped_lock{value->mutex};
+      value->released = true;
+      value->release_changed.notify_all();
+   };
+   auto release_guard = std::unique_ptr<resolution_barrier, decltype(release_barrier)>{barrier.get(), release_barrier};
+   auto cancellation = boost::asio::cancellation_signal{};
+   auto pending = boost::asio::co_spawn(
+       runtime.context(), client.async_connect(endpoint{.host = "127.0.0.1", .port = 443}, std::move(options)),
+       boost::asio::bind_cancellation_slot(cancellation.slot(), boost::asio::use_future));
+
+   {
+      auto lock = std::unique_lock{barrier->mutex};
+      BOOST_REQUIRE(barrier->entered_changed.wait_for(lock, std::chrono::seconds{2}, [&] { return barrier->entered; }));
+   }
+   BOOST_CHECK(pending.wait_for(std::chrono::milliseconds{0}) == std::future_status::timeout);
+
+   cancellation.emit(boost::asio::cancellation_type::terminal);
+   BOOST_CHECK(pending.wait_for(std::chrono::milliseconds{0}) == std::future_status::timeout);
+
+   release_guard.reset();
+   BOOST_REQUIRE(pending.wait_for(std::chrono::seconds{2}) == std::future_status::ready);
+   try {
+      static_cast<void>(pending.get());
+      BOOST_FAIL("expected inherited cancellation to win QUIC connect");
+   } catch (const forge::exceptions::base& error) {
+      BOOST_TEST(static_cast<int>(forge::net::quic::exceptions::code_of(error).value()) ==
+                 static_cast<int>(exceptions::code::canceled));
    }
 }
 
@@ -624,6 +1273,18 @@ BOOST_AUTO_TEST_CASE(quic_options_validation_rejects_bad_alpn) {
       BOOST_TEST(static_cast<int>(forge::net::quic::exceptions::code_of(error).value()) ==
                  static_cast<int>(exceptions::code::invalid_options));
    }
+}
+
+BOOST_AUTO_TEST_CASE(quic_client_options_legacy_positional_initializer_keeps_test_failpoint) {
+   const auto options = client_options{
+       "legacy", std::chrono::milliseconds{1}, std::chrono::milliseconds{2}, std::chrono::milliseconds{3},
+       transport_limits{}, security_options{}, "certificate", "private-key",
+       [](std::string_view) { return true; },
+   };
+
+   BOOST_REQUIRE(static_cast<bool>(options.test_failpoint));
+   BOOST_TEST(options.test_failpoint("test"));
+   BOOST_TEST(!options.client_tokens);
 }
 
 BOOST_AUTO_TEST_CASE(quic_runtime_initializes_ngtcp2_crypto_ossl) {
@@ -1299,7 +1960,7 @@ BOOST_AUTO_TEST_CASE(quic_fault_proxy_repeated_connect_transfer_close) {
                                                                  .drop_after = 16,
                                                                  .delay = std::chrono::milliseconds{1},
                                                              },
-      });
+                                                     });
       proxy->start();
       auto server_task = boost::asio::co_spawn(
           runtime.context(),
@@ -1826,9 +2487,9 @@ BOOST_AUTO_TEST_CASE(quic_canceled_stream_credit_wait_does_not_consume_capacity)
 
    for (auto attempt = 0U; attempt < 64U; ++attempt) {
       auto cancellation = boost::asio::cancellation_signal{};
-      auto canceled_open = boost::asio::co_spawn(
-          runtime.context(), connection.async_open_stream(),
-          boost::asio::bind_cancellation_slot(cancellation.slot(), boost::asio::use_future));
+      auto canceled_open =
+          boost::asio::co_spawn(runtime.context(), connection.async_open_stream(),
+                                boost::asio::bind_cancellation_slot(cancellation.slot(), boost::asio::use_future));
       BOOST_REQUIRE(canceled_open.wait_for(std::chrono::milliseconds{10}) == std::future_status::timeout);
 
       cancellation.emit(boost::asio::cancellation_type::terminal);
@@ -1842,8 +2503,8 @@ BOOST_AUTO_TEST_CASE(quic_canceled_stream_credit_wait_does_not_consume_capacity)
    }
    first.cancel();
 
-   auto replacement_accept = boost::asio::co_spawn(
-       runtime.context(), server_connection->async_accept_stream(), boost::asio::use_future);
+   auto replacement_accept =
+       boost::asio::co_spawn(runtime.context(), server_connection->async_accept_stream(), boost::asio::use_future);
    auto replacement = run_with_deadline(runtime, connection.async_open_stream(), std::chrono::milliseconds{5'000},
                                         "replacement after canceled stream-credit wait");
    run_with_deadline(runtime, replacement.async_write(first_payload), std::chrono::milliseconds{5'000},
@@ -1967,9 +2628,8 @@ BOOST_AUTO_TEST_CASE(quic_large_partial_write_releases_lifetime_after_complete_a
 
    auto received = std::size_t{};
    while (received < payload_size) {
-      received += run_with_deadline(runtime, inbound.async_read(), std::chrono::milliseconds{10'000},
-                                    "large ACK read")
-                      .size();
+      received +=
+          run_with_deadline(runtime, inbound.async_read(), std::chrono::milliseconds{10'000}, "large ACK read").size();
    }
    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
    while ((!weak_owner.expired() || connection.metrics().queued_bytes != 0U) &&
@@ -2006,8 +2666,8 @@ BOOST_AUTO_TEST_CASE(quic_peer_reset_closes_only_the_remote_read_direction) {
 
    auto server_reset = boost::asio::co_spawn(
        runtime.context(),
-       [server_connection = std::move(server_connection)]() mutable
-       -> boost::asio::awaitable<forge::net::quic::connection> {
+       [server_connection =
+            std::move(server_connection)]() mutable -> boost::asio::awaitable<forge::net::quic::connection> {
           auto inbound = co_await server_connection.async_accept_stream();
           detail::stream_access::cancel_write(inbound);
           auto executor = co_await boost::asio::this_coro::executor;

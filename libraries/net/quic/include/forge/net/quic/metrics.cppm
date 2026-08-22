@@ -28,6 +28,9 @@ struct connection_metrics {
    std::size_t queued_bytes = 0;
    std::size_t active_streams = 0;
    bool closed = false;
+   std::uint64_t retry_packets_received = 0;
+   std::uint64_t new_tokens_received = 0;
+   std::uint64_t new_tokens_submitted = 0;
 };
 
 } // namespace forge::net::quic

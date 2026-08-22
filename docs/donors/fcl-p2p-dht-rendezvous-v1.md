@@ -10,10 +10,11 @@ lifetimes belong to `dht::record_store`.
 
 Supported claims stay tied to evidence. The current slice has component proof
 for wire codecs, FCL-to-FCL negotiated streams, routing/provider state and
-rendezvous register/discover state. Live donor interop proves DHT
-peer/provider lookup, Rendezvous register/discover and a three-process `/pk`
-and `/ipns` value flow: one implementation writes, the listener persists, and
-a distinct fresh implementation reads remotely.
+rendezvous register/discover state. The interop harness registers DHT
+peer/provider lookup, Forge-Rust Rendezvous register/discover and lifecycle,
+and a three-process `/pk` and `/ipns` value flow. Coordinator-owned live
+execution and its artifacts are required before a registered scenario is
+credited as live donor proof.
 
 ## Donor Sources
 
@@ -30,8 +31,20 @@ a distinct fresh implementation reads remotely.
 
 - DHT and rendezvous mechanics live in `forge_net_p2p`, not in the official
   P2P plugin.
+- Managed topology uses only explicitly configured Rendezvous points and
+  namespaces. Cookies are opaque and isolated per `(point, namespace)`;
+  invalid-cookie recovery clears only that pair and retries once without a
+  cookie. Registration renewal follows the server-returned TTL and changes to
+  the local signed PeerRecord. Shutdown unregister is best-effort and one-way,
+  matching the protocol.
+- Forge Peer Exchange is a Forge extension. It is queried only on identified
+  peers advertising the exact Forge protocol, and third-party addresses remain
+  untrusted hints until authenticated connect and Identify.
 - Public API stays owner-shaped: `dht::options`, `dht::query_result`,
   `rendezvous::options`, `rendezvous::registration`, `discovery::policy`.
+  The Stable legacy discovery policy is normalized into the node-owned Stage 5
+  topology manager; incompatible non-default legacy and topology values are
+  rejected rather than creating a second orchestrator.
 - `peer_store::persistence` and `dht::record_store::persistence` are
   backend-neutral and asynchronous. The official plugin owns private ObjectDB
   adapters for both; `forge_net_p2p` has no RocksDB or DB Store dependency.
@@ -68,6 +81,7 @@ a distinct fresh implementation reads remotely.
 | DHT bounded async persistence | Ported | `dht_record_store_hydrates_bounded_pages_across_reopen`, `dht_record_store_enforces_value_provider_and_per_key_capacity`, `dht_record_store_enforces_record_and_total_byte_capacity` |
 | DHT ObjectDB adapter reopen | Ported | `p2p_dht_record_state_mdbx_reopens_prunes_and_isolates_profiles`, `p2p_dht_record_state_rocksdb_reopens_prunes_and_isolates_profiles`; plugin lifecycle config/ownership is covered separately and is not claimed as a DHT reopen test |
 | DHT live peer lookup fixture | Limited | `test_forge_libp2p_interop dht_find_peer`; direct-peer setup is not credited as outbound iterative lookup proof |
+| DHT live hidden-peer FindPeer fixture | Registered | `test_forge_libp2p_interop dht_hidden_find_peer`: a fresh seeker knows only an authenticated routing seed; the hidden target is supplied only as the query key. Three Forge/Go/Rust role permutations are registered. Coordinator must publish live artifacts before this is credited as evidence. |
 | DHT live provider lookup | Ported | `test_forge_libp2p_interop dht_provide_find_provider` against go-libp2p/rust-libp2p |
 | DHT validated value store and bounded prune | Ported | `dht_record_store_tests`, MDBX/RocksDB reopen and expiry parity |
 | DHT autonomous routing refresh | Ported | `dht_routing_refresh_tests` with fake clock, coalescing, backoff and cancellation |
@@ -79,21 +93,24 @@ a distinct fresh implementation reads remotely.
 | Rendezvous node handler over negotiated stream | Ported | `p2p_rendezvous_node_registers_and_discovers_over_negotiated_stream` |
 | Rendezvous refresh, replacement and cookie continuation | Ported | `p2p_rendezvous_refresh_replaces_registration_and_cookie_discovers_new_records` |
 | Rendezvous durable registration state | Ported | async persistence fixtures and official-plugin ObjectDB reopen coverage |
-| Rendezvous live register/discover | Ported | `test_forge_libp2p_interop rendezvous_register_discover` against rust-libp2p |
+| Rendezvous live register/discover | Registered | `test_forge_libp2p_interop rendezvous_register_discover` is registered only for Forge-Rust directions. Its runner requires one wire registration, valid/matching signed legacy PeerRecord, exact `forge.discovery`, positive sequence/address count, 7200-second TTLs and non-empty cookie; Forge additionally proves third-party loopback filtering. Coordinator must publish live artifacts before it is credited as evidence. |
+| Rendezvous live lifecycle | Registered | `test_forge_libp2p_interop rendezvous_lifecycle` registers Forge-to-Rust and Rust-to-Forge only: legacy signed PeerRecord, cookie delta after sequence/address change, TTL renewal/expiry, unregister and final empty discovery. Coordinator must publish live artifacts before it is credited as evidence. |
 | Discovery refresh feeds AutoRelay | Ported | `p2p_discovery_refresh_learns_dht_and_rendezvous_relay_candidates_for_autorelay` |
 
 ## Unsupported Gaps
 
 - Live donor fixtures for repeated many-peer DHT/rendezvous refresh topologies
-  are still limited. Forge component simulations cover the lifecycle; live matrix
-  artifacts remain peer/provider lookup and Rust rendezvous register/discover.
+  are still limited. Forge component simulations cover the lifecycle; the
+  registered hidden-peer and Forge-Rust Rendezvous scenarios await coordinator
+  live artifacts.
 - The `/pk` and `/ipns` matrix does not credit same-process local reads. Each
   artifact records distinct writer, listener and reader implementations and
   resets the reader store before every attempt.
 - Go Rendezvous behaviour proof is not claimed because no official go-libp2p
   rendezvous behaviour donor is present in the workspace.
-- Full topology management remains Stage 5 work; completing Kademlia does not
-  promote the whole host or GossipSub to production readiness.
+- Stage 5 integrates these sources into one node-owned topology manager.
+  Completing that lifecycle does not promote the whole host or GossipSub to
+  production readiness without the exact-head hidden-peer and donor evidence.
 
 These gaps are also tracked in `tests/libp2p_interop/donor_cases.json`.
 They must not be described as supported until matching donor-derived tests and

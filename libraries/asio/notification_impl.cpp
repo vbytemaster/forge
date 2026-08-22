@@ -1,6 +1,6 @@
 module;
 
-#include "details/async_waiter.hxx"
+#include "details/notification_waiter.hxx"
 
 #include <algorithm>
 #include <chrono>
@@ -14,7 +14,6 @@ module;
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/bind_cancellation_slot.hpp>
-#include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -36,7 +35,7 @@ notification::epoch_type notification::impl::epoch() const noexcept {
 
 std::optional<notification::epoch_type>
 notification::impl::subscribe(epoch_type observed_epoch,
-                              const std::shared_ptr<detail::async_waiter>& value) {
+                              const std::shared_ptr<detail::notification_waiter>& value) {
    auto lock = std::scoped_lock{mutex};
    if (current_epoch != observed_epoch) {
       return current_epoch;
@@ -46,7 +45,7 @@ notification::impl::subscribe(epoch_type observed_epoch,
    return std::nullopt;
 }
 
-void notification::impl::unsubscribe(const std::shared_ptr<detail::async_waiter>& value) noexcept {
+void notification::impl::unsubscribe(const std::shared_ptr<detail::notification_waiter>& value) noexcept {
    auto lock = std::scoped_lock{mutex};
    std::erase_if(waiters, [&value](const auto& candidate) {
       const auto pending = candidate.lock();
@@ -60,17 +59,46 @@ notification::impl::async_wait(epoch_type observed_epoch) {
 }
 
 boost::asio::awaitable<notification::epoch_type>
+notification::impl::async_wait(epoch_type observed_epoch, std::stop_token stop) {
+   co_return co_await async_wait_until(observed_epoch, boost::asio::steady_timer::time_point::max(),
+                                      std::move(stop));
+}
+
+boost::asio::awaitable<notification::epoch_type>
 notification::impl::async_wait_until(epoch_type observed_epoch,
                                      std::chrono::steady_clock::time_point deadline) {
+   co_return co_await async_wait_until_impl(observed_epoch, deadline, std::nullopt);
+}
+
+boost::asio::awaitable<notification::epoch_type>
+notification::impl::async_wait_until(epoch_type observed_epoch,
+                                     std::chrono::steady_clock::time_point deadline,
+                                     std::stop_token stop) {
+   co_return co_await async_wait_until_impl(observed_epoch, deadline, std::move(stop));
+}
+
+boost::asio::awaitable<notification::epoch_type>
+notification::impl::async_wait_until_impl(epoch_type observed_epoch,
+                                          std::chrono::steady_clock::time_point deadline,
+                                          std::optional<std::stop_token> stop) {
    auto executor = co_await boost::asio::this_coro::executor;
-   auto pending = std::make_shared<detail::async_waiter>(executor);
+   auto pending = std::make_shared<detail::notification_waiter>(executor);
    if (const auto current = subscribe(observed_epoch, pending)) {
       co_return *current;
    }
 
-   const auto wait_error = co_await pending->wait_until_cancellable(deadline);
+   auto wait_error = boost::system::error_code{};
+   try {
+      wait_error = stop ? co_await pending->wait_until(deadline, *stop)
+                        : co_await pending->wait_until_cancellable(deadline);
+   } catch (...) {
+      unsubscribe(pending);
+      throw;
+   }
    unsubscribe(pending);
 
+   // Terminal delivery already completed. This dispatch only restores the
+   // caller executor before exposing the epoch or wait error to the caller.
    auto restore_error = boost::system::error_code{};
    co_await boost::asio::dispatch(
        executor,
@@ -87,23 +115,21 @@ notification::impl::async_wait_until(epoch_type observed_epoch,
 }
 
 void notification::impl::notify() noexcept {
-   auto pending = std::vector<std::shared_ptr<detail::async_waiter>>{};
+   auto pending = std::vector<std::weak_ptr<detail::notification_waiter>>{};
    {
       auto lock = std::scoped_lock{mutex};
       ++current_epoch;
       if (current_epoch == 0) {
          ++current_epoch;
       }
-      pending.reserve(waiters.size());
-      for (const auto& value : waiters) {
-         if (auto waiter = value.lock()) {
-            pending.push_back(std::move(waiter));
-         }
-      }
-      waiters.clear();
+      // Transfer the already allocated waiter storage. notify() is a noexcept
+      // terminal path, so it must not reserve or materialize strong references.
+      pending.swap(waiters);
    }
-   for (const auto& waiter : pending) {
-      waiter->wake();
+   for (const auto& value : pending) {
+      if (const auto waiter = value.lock()) {
+         waiter->wake();
+      }
    }
 }
 

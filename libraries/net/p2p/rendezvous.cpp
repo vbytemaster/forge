@@ -1,5 +1,7 @@
 module;
 
+#include "details/rendezvous_time.hxx"
+
 #include <forge/exceptions/macros.hpp>
 
 #include <chrono>
@@ -78,8 +80,8 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
    if (opts.require_signed_peer_record && value.signed_peer_record.empty()) {
       FORGE_THROW_EXCEPTION(exceptions::invalid_options, "rendezvous registration requires signed peer record");
    }
-   if (value.ttl.count() > 0 && (value.ttl < opts.min_ttl || value.ttl > opts.max_ttl)) {
-      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "rendezvous registration TTL outside allowed range");
+   if (value.ttl < std::chrono::seconds::zero()) {
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "rendezvous registration TTL must not be negative");
    }
    auto out = std::vector<std::uint8_t>{};
    if (!value.namespace_name.empty()) {
@@ -118,7 +120,11 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
          if (type != detail::wire_type::varint) {
             FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous registration TTL must be varint");
          }
-         out.ttl = std::chrono::seconds{static_cast<std::int64_t>(in.read_varint())};
+         if (const auto ttl = detail::rendezvous_ttl_from_wire(in.read_varint())) {
+            out.ttl = *ttl;
+         } else {
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous registration TTL exceeds signed range");
+         }
          break;
       default:
          in.skip(type);
@@ -167,7 +173,11 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
          if (type != detail::wire_type::varint) {
             FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous response TTL must be varint");
          }
-         out.ttl = std::chrono::seconds{static_cast<std::int64_t>(in.read_varint())};
+         if (const auto ttl = detail::rendezvous_ttl_from_wire(in.read_varint())) {
+            out.ttl = *ttl;
+         } else {
+            FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous response TTL exceeds signed range");
+         }
          break;
       default:
          in.skip(type);
@@ -386,8 +396,7 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
    return address.to_bytes();
 }
 
-[[nodiscard]] std::optional<endpoint> decode_peer_record_address(std::span<const std::uint8_t> bytes,
-                                                                 const peer_id& peer) {
+[[nodiscard]] endpoint decode_peer_record_address(std::span<const std::uint8_t> bytes, const peer_id& peer) {
    try {
       auto out = parse_endpoint(forge::multiformats::multiaddr::from_bytes(bytes).to_string());
       if (!out.peer) {
@@ -395,7 +404,7 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
       }
       return out;
    } catch (const forge::exceptions::base&) {
-      return std::nullopt;
+      FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous peer record contains invalid multiaddr");
    }
 }
 
@@ -405,7 +414,7 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
    return out;
 }
 
-[[nodiscard]] std::optional<endpoint> decode_address_info(std::span<const std::uint8_t> bytes, const peer_id& peer) {
+[[nodiscard]] endpoint decode_address_info(std::span<const std::uint8_t> bytes, const peer_id& peer) {
    auto in = detail::reader{bytes};
    while (!in.done()) {
       const auto [field, type] = in.key();
@@ -417,7 +426,7 @@ void validate_namespace(std::string_view value, const rendezvous::options& opts)
       }
       in.skip(type);
    }
-   return std::nullopt;
+   FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous peer record address info is missing multiaddr");
 }
 
 } // namespace
@@ -581,10 +590,7 @@ rendezvous::peer_record rendezvous::codec::decode_peer_record(std::span<const st
       FORGE_THROW_EXCEPTION(exceptions::codec_error, "rendezvous peer record missing peer id");
    }
    for (const auto& value : address_infos) {
-      const auto address = decode_address_info(value, out.peer);
-      if (address) {
-         out.endpoints.push_back(*address);
-      }
+      out.endpoints.push_back(decode_address_info(value, out.peer));
    }
    return out;
 }

@@ -232,16 +232,18 @@ class tcp_profile final {
       auto expected_peer = expected_peer_for(endpoint, options);
       auto remote_transport = endpoint.transport;
       auto connector = forge::net::tcp::connector{runtime_.context().get_executor()};
-      auto cancel_current = cancellation ? std::move(cancellation) : std::make_shared<cancellation_latch>();
+      auto cancel_current = std::make_shared<cancellation_latch>();
+      auto parent_subscription = cancellation_latch::subscribe(
+          cancellation, [cancel_current] noexcept { cancel_current->request_stop(); });
       track(cancel_current);
-      cancel_current->arm([&connector] { connector.cancel(); });
+      cancel_current->arm([&connector] noexcept { connector.request_cancel(); });
       auto deadline = operation_deadline{runtime_.context(), options.timeout};
       auto cancel_scope = cancel_current_scope{cancel_current};
-      deadline.arm([cancel_current] { cancel_current->request_stop(); });
+      deadline.arm([cancel_current] noexcept { cancel_current->request_stop(); });
       try {
          auto tcp = std::make_shared<forge::net::tcp::connection>(
              co_await connector.async_connect_connection(std::move(remote_transport)));
-         cancel_current->arm([tcp] { tcp->cancel(); });
+         cancel_current->arm([tcp] noexcept { tcp->request_cancel(); });
          const auto local_endpoint = p2p_endpoint_for(tcp->local_endpoint());
          const auto remote_endpoint = p2p_endpoint_for(tcp->remote_endpoint());
          cancel_current->clear();
@@ -308,10 +310,10 @@ class tcp_profile final {
          const auto remote_endpoint = p2p_endpoint_for(tcp->remote_endpoint());
          auto cancel_current = std::make_shared<cancellation_latch>();
          track(cancel_current);
-         cancel_current->arm([tcp] { tcp->cancel(); });
+         cancel_current->arm([tcp] noexcept { tcp->request_cancel(); });
          auto deadline = operation_deadline{runtime_.context(), node::connect_options{}.timeout};
          auto cancel_scope = cancel_current_scope{cancel_current};
-         deadline.arm([cancel_current] { cancel_current->request_stop(); });
+         deadline.arm([cancel_current] noexcept { cancel_current->request_stop(); });
          auto upgraded = upgraded_session{};
          try {
             cancel_current->clear();

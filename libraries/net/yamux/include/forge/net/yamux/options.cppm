@@ -22,6 +22,7 @@ struct options {
    std::size_t max_stream_buffer = 1024 * 1024;
    std::size_t max_session_buffer = 16 * 1024 * 1024;
    std::chrono::milliseconds close_timeout{5'000};
+   std::chrono::milliseconds write_timeout{5'000};
 };
 
 } // namespace forge::net::yamux

@@ -69,6 +69,7 @@ import forge.net.p2p.rendezvous;
 import forge.net.p2p.resource_manager;
 import forge.net.p2p.scoring;
 import forge.net.p2p.stream;
+import forge.net.p2p.topology;
 import forge.net.transport.session;
 import forge.net.transport.stream;
 import forge.net.yamux.session;
@@ -77,95 +78,6 @@ import forge.net.yamux.session;
 #include "details/node_impl.hxx"
 
 namespace forge::net::p2p {
-
-[[nodiscard]] bool remote_peer_attributable_failure(std::mutex& mutex, const bool& stopped,
-                                                    const forge::exceptions::base& error);
-[[nodiscard]] host_addresses::learning_context third_party_discovery_context();
-[[nodiscard]] dht::peer sanitize_discovered_peer(dht::peer value, host_addresses::learning_context context);
-[[nodiscard]] bool has_usable_endpoint(const dht::peer& value) noexcept;
-[[nodiscard]] std::optional<rendezvous::registration>
-sanitize_discovered_registration(rendezvous::registration registration, host_addresses::learning_context context);
-
-namespace {
-
-[[nodiscard]] bool supports(const peer_store::record& record, std::uint64_t capability) noexcept {
-   return record.capabilities.has(capability);
-}
-
-[[nodiscard]] bool queryable(const peer_store::record& record) noexcept {
-   return !record.endpoints.empty() && (record.discovery_backoff_until == std::chrono::system_clock::time_point{} ||
-                                        record.discovery_backoff_until <= std::chrono::system_clock::now());
-}
-
-[[nodiscard]] std::vector<peer_store::record> discovery_records(std::span<const peer_store::record> records,
-                                                                std::uint64_t capability, std::size_t limit) {
-   auto out = std::vector<peer_store::record>{};
-   if (limit == 0) {
-      return out;
-   }
-   for (const auto& record : records) {
-      if (!valid_peer_id(record.peer) || !supports(record, capability) || !queryable(record)) {
-         continue;
-      }
-      out.push_back(record);
-   }
-   std::stable_sort(out.begin(), out.end(), [](const auto& left, const auto& right) {
-      if (left.score != right.score) {
-         return left.score > right.score;
-      }
-      return left.peer.to_string() < right.peer.to_string();
-   });
-   if (out.size() > limit) {
-      out.resize(limit);
-   }
-   return out;
-}
-
-void append_result(std::vector<discovery::result>& out, const peer_store::record& record, discovery::source source,
-                   std::chrono::system_clock::time_point expires_at, std::size_t limit) {
-   if (record.peer.value.empty() || out.size() >= limit) {
-      return;
-   }
-   const auto exists = std::ranges::any_of(out, [&](const auto& current) { return current.peer == record.peer; });
-   if (exists) {
-      return;
-   }
-   auto endpoints = std::vector<endpoint>{};
-   endpoints.reserve(record.endpoints.size());
-   for (const auto& item : record.endpoints) {
-      endpoints.push_back(item.endpoint);
-   }
-   out.push_back(discovery::result{
-       .peer = record.peer,
-       .endpoints = std::move(endpoints),
-       .capabilities = record.capabilities,
-       .discovered_by = source,
-       .preferred_path = path::kind::direct,
-       .expires_at = expires_at,
-       .score = record.score,
-   });
-}
-
-[[nodiscard]] std::optional<std::vector<std::uint8_t>> make_local_rendezvous_record(const auto& self,
-                                                                                    std::uint64_t sequence) {
-   if (self.options.public_key.empty() || self.options.private_key_pem.empty()) {
-      return std::nullopt;
-   }
-   auto endpoints = self.local_endpoints_for_control();
-   if (endpoints.empty()) {
-      return std::nullopt;
-   }
-   return rendezvous::codec::seal_peer_record(
-              rendezvous::peer_record{
-                  .peer = self.local,
-                  .endpoints = std::move(endpoints),
-                  .sequence = sequence,
-              },
-              decode_public_key(self.identity.public_key), require_libp2p_identity_private_key(self.identity))
-       .encode();
-}
-
-} // namespace
 
 boost::asio::awaitable<relay::reservation::info> node::async_reserve_relay(peer_id relay_peer) {
    return async_reserve_relay(std::move(relay_peer), relay::reservation::options{});
@@ -179,126 +91,12 @@ boost::asio::awaitable<relay::reservation::info> node::async_reserve_relay(peer_
 
 boost::asio::awaitable<std::vector<relay::reservation::info>> node::async_refresh_relay_candidates() {
    auto self = impl_;
-   co_return co_await self->refresh_relay_candidates(std::nullopt, self->options.limits.discovery.query_timeout);
+   co_return co_await self->refresh_relay_candidates(std::nullopt, self->options.limits.topology.query_timeout);
 }
 
 boost::asio::awaitable<std::vector<discovery::result>> node::async_refresh_discovery() {
    auto self = impl_;
-   validate_operation_timeout(self->options.limits.discovery.query_timeout, "P2P discovery refresh timeout");
-   if (!self->options.limits.discovery.enabled) {
-      co_return std::vector<discovery::result>{};
-   }
-
-   const auto now = std::chrono::system_clock::now();
-   const auto expires_at = now + self->options.limits.discovery.refresh_interval;
-   const auto query_started = std::chrono::steady_clock::now();
-   const auto query_timeout = self->options.limits.discovery.query_timeout;
-   auto out = std::vector<discovery::result>{};
-   out.reserve(self->options.limits.discovery.max_results);
-
-   if (self->options.limits.discovery.dht_enabled) {
-      for (const auto& [protocol, state] : self->dht_profiles) {
-         if (!state->profile.capabilities.peers || out.size() >= self->options.limits.discovery.max_results) {
-            continue;
-         }
-         auto lookup = co_await async_find_peer(
-             protocol, self->local,
-             dht::query_options{
-                 .requested_count = self->options.limits.discovery.max_results,
-                 .quorum = 1,
-                 .timeout = remaining_timeout(query_started, query_timeout, "P2P discovery refresh"),
-             });
-         for (const auto& peer : lookup.closest_peers) {
-            if (peer.id == self->local || out.size() >= self->options.limits.discovery.max_results) {
-               continue;
-            }
-            (void)co_await self->identify_peer_for_discovery(
-                peer.id, discovery::source::dht,
-                remaining_timeout(query_started, query_timeout, "P2P discovery refresh"));
-            if (const auto record = self->store.find(peer.id)) {
-               append_result(out, *record, discovery::source::dht, expires_at,
-                             self->options.limits.discovery.max_results);
-            }
-         }
-         (void)remaining_timeout(query_started, query_timeout, "P2P discovery refresh");
-      }
-   }
-
-   if (self->options.limits.discovery.rendezvous_enabled) {
-      const auto rendezvous_candidates =
-          self->store.candidates(capabilities::rendezvous, self->options.limits.discovery.max_parallel_queries);
-      for (const auto& record : discovery_records(rendezvous_candidates, capabilities::rendezvous,
-                                                  self->options.limits.discovery.max_parallel_queries)) {
-         if (record.peer == self->local) {
-            continue;
-         }
-         for (const auto& namespace_name : self->options.limits.discovery.rendezvous_namespaces) {
-            if (namespace_name.empty() || out.size() >= self->options.limits.discovery.max_results) {
-               continue;
-            }
-            if (auto signed_record = make_local_rendezvous_record(*self, random_nonce())) {
-               try {
-                  (void)co_await async_rendezvous_register(record.peer,
-                                                           rendezvous::register_request{
-                                                               .namespace_name = namespace_name,
-                                                               .signed_peer_record = std::move(*signed_record),
-                                                               .ttl = self->options.limits.rendezvous.default_ttl,
-                                                           });
-               } catch (const forge::exceptions::base& error) {
-                  if (remote_peer_attributable_failure(self->mutex, self->stopped, error)) {
-                     self->store.mark_failure(record.peer);
-                  }
-               }
-            }
-
-            auto cookie = std::vector<std::uint8_t>{};
-            {
-               auto lock = std::scoped_lock{self->mutex};
-               const auto it = self->discovery_value.rendezvous_cookies.find({record.peer, namespace_name});
-               if (it != self->discovery_value.rendezvous_cookies.end()) {
-                  cookie = it->second;
-               }
-            }
-
-            try {
-               auto response = co_await async_rendezvous_discover(
-                   record.peer, rendezvous::discover_request{
-                                    .namespace_name = namespace_name,
-                                    .limit = self->options.limits.discovery.max_results,
-                                    .cookie = std::move(cookie),
-                                });
-               {
-                  auto lock = std::scoped_lock{self->mutex};
-                  self->discovery_value.rendezvous_cookies[{record.peer, namespace_name}] = response.cookie;
-               }
-               for (const auto& registration : response.registrations) {
-                  if (registration.peer == self->local || out.size() >= self->options.limits.discovery.max_results) {
-                     continue;
-                  }
-                  auto sanitized = sanitize_discovered_registration(registration, third_party_discovery_context());
-                  if (!sanitized) {
-                     continue;
-                  }
-                  for (const auto& endpoint : sanitized->endpoints) {
-                     self->store.learn_endpoint(registration.peer, endpoint);
-                  }
-                  (void)co_await self->identify_peer_for_discovery(registration.peer, discovery::source::rendezvous,
-                                                                   self->options.limits.discovery.query_timeout);
-                  if (const auto learned = self->store.find(registration.peer)) {
-                     append_result(out, *learned, discovery::source::rendezvous, registration.expires_at,
-                                   self->options.limits.discovery.max_results);
-                  }
-               }
-            } catch (const forge::exceptions::base& error) {
-               if (remote_peer_attributable_failure(self->mutex, self->stopped, error)) {
-                  self->store.mark_failure(record.peer);
-               }
-            }
-         }
-      }
-   }
-
-   co_return out;
+   co_return co_await self->topology_manager_value->async_refresh();
 }
 
 boost::asio::awaitable<void> node::async_cancel_relay(peer_id relay_peer) {

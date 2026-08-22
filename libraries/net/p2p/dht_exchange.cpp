@@ -4,8 +4,12 @@ module;
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <memory>
+#include <mutex>
 #include <ranges>
 #include <span>
 #include <string_view>
@@ -26,6 +30,7 @@ import forge.net.p2p.identity;
 import forge.net.p2p.stream;
 
 #include "details/dht_exchange.hxx"
+#include "details/cancellation_latch.hxx"
 #include "details/operation_deadline.hxx"
 
 namespace forge::net::p2p::detail {
@@ -121,25 +126,36 @@ void validate_dht_response(const dht::message& request, const dht::message& resp
 
 boost::asio::awaitable<dht::message> async_exchange_dht(forge::net::p2p::stream stream, dht::message request,
                                                         const dht::profile& profile, boost::asio::io_context& context,
-                                                        std::chrono::milliseconds timeout) {
+                                                        std::chrono::milliseconds timeout,
+                                                        std::shared_ptr<cancellation_latch> cancellation) {
    if (request.type != dht::message_type::ping && request.key_value.bytes.empty()) {
       FORGE_THROW_EXCEPTION(exceptions::invalid_options, "DHT request key must not be empty");
    }
    auto deadline = operation_deadline{context, timeout};
-   deadline.arm([&stream] { stream.cancel(); });
+   auto stop_subscription = cancellation_latch::subscribe(cancellation, [stop = deadline.stopping()] noexcept {
+      static_cast<void>(stop.request_stop());
+   });
+   deadline.arm([&stream] noexcept { stream.request_cancel(); });
    try {
       co_await stream.async_write(dht::codec::encode(request, profile));
       auto response =
           dht::codec::decode(co_await async_read_dht_message(stream, profile.limits.max_inbound_message_size), profile);
       validate_dht_response(request, response, profile);
       co_await stream.async_close();
-      if (!deadline.finish()) {
+      const auto completed = deadline.finish();
+      if (cancellation && cancellation->stop_requested()) {
+         FORGE_THROW_EXCEPTION(exceptions::canceled, "P2P DHT exchange canceled");
+      }
+      if (!completed) {
          throw_operation_timeout("P2P DHT exchange");
       }
       co_return response;
    } catch (...) {
       const auto completed = deadline.finish();
       stream.cancel();
+      if (cancellation && cancellation->stop_requested()) {
+         FORGE_THROW_EXCEPTION(exceptions::canceled, "P2P DHT exchange canceled");
+      }
       if (deadline.timed_out() || !completed) {
          throw_operation_timeout("P2P DHT exchange");
       }
@@ -149,21 +165,32 @@ boost::asio::awaitable<dht::message> async_exchange_dht(forge::net::p2p::stream 
 
 boost::asio::awaitable<void> async_send_dht(forge::net::p2p::stream stream, dht::message request,
                                             const dht::profile& profile, boost::asio::io_context& context,
-                                            std::chrono::milliseconds timeout) {
+                                            std::chrono::milliseconds timeout,
+                                            std::shared_ptr<cancellation_latch> cancellation) {
    if (request.type != dht::message_type::ping && request.key_value.bytes.empty()) {
       FORGE_THROW_EXCEPTION(exceptions::invalid_options, "DHT request key must not be empty");
    }
    auto deadline = operation_deadline{context, timeout};
-   deadline.arm([&stream] { stream.cancel(); });
+   auto stop_subscription = cancellation_latch::subscribe(cancellation, [stop = deadline.stopping()] noexcept {
+      static_cast<void>(stop.request_stop());
+   });
+   deadline.arm([&stream] noexcept { stream.request_cancel(); });
    try {
       co_await stream.async_write(dht::codec::encode(request, profile));
       co_await stream.async_close();
-      if (!deadline.finish()) {
+      const auto completed = deadline.finish();
+      if (cancellation && cancellation->stop_requested()) {
+         FORGE_THROW_EXCEPTION(exceptions::canceled, "P2P DHT send canceled");
+      }
+      if (!completed) {
          throw_operation_timeout("P2P DHT send");
       }
    } catch (...) {
       const auto completed = deadline.finish();
       stream.cancel();
+      if (cancellation && cancellation->stop_requested()) {
+         FORGE_THROW_EXCEPTION(exceptions::canceled, "P2P DHT send canceled");
+      }
       if (deadline.timed_out() || !completed) {
          throw_operation_timeout("P2P DHT send");
       }

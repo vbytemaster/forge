@@ -360,8 +360,20 @@ class secure_io : public std::enable_shared_from_this<secure_io> {
    }
 
    boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> bytes) {
-      auto encrypted = write_state_.encrypt({}, bytes);
-      co_await write_plain_frame(encrypted);
+      constexpr auto authentication_tag_size = std::size_t{16};
+      constexpr auto maximum_plaintext =
+          static_cast<std::size_t>((std::numeric_limits<std::uint16_t>::max)()) - authentication_tag_size;
+      if (bytes.empty()) {
+         auto encrypted = write_state_.encrypt({}, bytes);
+         co_await write_plain_frame(encrypted);
+         co_return;
+      }
+      for (auto offset = std::size_t{}; offset < bytes.size();) {
+         const auto size = std::min(maximum_plaintext, bytes.size() - offset);
+         auto encrypted = write_state_.encrypt({}, bytes.subspan(offset, size));
+         co_await write_plain_frame(encrypted);
+         offset += size;
+      }
    }
 
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read() {
@@ -376,6 +388,10 @@ class secure_io : public std::enable_shared_from_this<secure_io> {
 
    void cancel() {
       stream_.cancel();
+   }
+
+   void request_cancel() noexcept {
+      stream_.request_cancel();
    }
 
  private:
@@ -428,13 +444,25 @@ class secure_stream_concept final : public forge::net::transport::detail::stream
       }
    }
 
+   void request_cancel() noexcept {
+      if (secure_) {
+         secure_->request_cancel();
+      }
+   }
+
  private:
    std::shared_ptr<secure_io> secure_;
 };
 
 [[nodiscard]] forge::net::transport::stream secure_transport_stream(std::shared_ptr<secure_io> secure) {
-   return forge::net::transport::detail::stream_access::make(
-       std::make_shared<secure_stream_concept>(std::move(secure)));
+   auto model = std::make_shared<secure_stream_concept>(std::move(secure));
+   auto weak = std::weak_ptr<secure_stream_concept>{model};
+   return forge::net::transport::detail::stream_access::make_cancelable(
+       std::move(model), [weak = std::move(weak)]() noexcept {
+          if (auto stream = weak.lock()) {
+             stream->request_cancel();
+          }
+       });
 }
 
 struct noise_result {
@@ -701,11 +729,13 @@ boost::asio::awaitable<upgraded_session> finish_noise_outbound(forge::net::p2p::
    auto secure = co_await noise_initiator(std::move(stream), identity,
                                           options.allow_insecure_test_mode ? std::nullopt : std::move(expected_peer),
                                           deadline.cancel_current);
+   auto muxer_stream = secure_transport_stream(std::move(secure.secure));
    if (!secure.early_yamux) {
-      (void)co_await protocol_negotiation::async_select(secure_transport_stream(secure.secure),
-                                                        protocol_id{.value = "/yamux/1.0.0"});
+      auto negotiated = co_await protocol_negotiation::async_select(
+          std::move(muxer_stream), protocol_id{.value = "/yamux/1.0.0"});
+      muxer_stream = std::move(negotiated).into_transport_stream();
    }
-   auto yamux = std::make_shared<forge::net::yamux::session>(secure_transport_stream(std::move(secure.secure)),
+   auto yamux = std::make_shared<forge::net::yamux::session>(std::move(muxer_stream),
                                                              forge::net::yamux::side::initiator);
    set_cancel(deadline, [yamux] { yamux->cancel(); });
    co_return upgraded_session{.peer = std::move(secure.peer), .session = std::move(yamux)};
@@ -720,11 +750,13 @@ boost::asio::awaitable<upgraded_session> finish_noise_inbound(forge::net::p2p::s
    auto secure = co_await noise_responder(std::move(stream), identity,
                                           options.allow_insecure_test_mode ? std::nullopt : std::move(expected_peer),
                                           deadline.cancel_current);
+   auto muxer_stream = secure_transport_stream(std::move(secure.secure));
    if (!secure.early_yamux) {
-      (void)co_await protocol_negotiation::async_accept(secure_transport_stream(secure.secure),
-                                                        {protocol_id{.value = "/yamux/1.0.0"}});
+      auto negotiated = co_await protocol_negotiation::async_accept(
+          std::move(muxer_stream), {protocol_id{.value = "/yamux/1.0.0"}});
+      muxer_stream = std::move(negotiated.stream).into_transport_stream();
    }
-   auto yamux = std::make_shared<forge::net::yamux::session>(secure_transport_stream(std::move(secure.secure)),
+   auto yamux = std::make_shared<forge::net::yamux::session>(std::move(muxer_stream),
                                                              forge::net::yamux::side::responder);
    set_cancel(deadline, [yamux] { yamux->cancel(); });
    co_return upgraded_session{.peer = std::move(secure.peer), .session = std::move(yamux)};

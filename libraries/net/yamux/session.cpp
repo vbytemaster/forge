@@ -2,6 +2,7 @@ module;
 
 #include <forge/exceptions/macros.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>

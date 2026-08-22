@@ -6,6 +6,7 @@ module;
 #include <vector>
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/compat/move_only_function.hpp>
 
 export module forge.net.transport.stream;
 
@@ -17,6 +18,7 @@ export namespace forge::net::transport {
 namespace detail {
 class stream_concept;
 struct stream_access;
+using stream_cancel_request = boost::compat::move_only_function<void() noexcept>;
 } // namespace detail
 
 class stream {
@@ -40,15 +42,19 @@ class stream {
    boost::asio::awaitable<void> async_write_frame(std::span<const std::uint8_t> bytes);
    boost::asio::awaitable<void> async_write_frame(chunk bytes);
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read_frame();
+   boost::asio::awaitable<std::vector<std::uint8_t>> async_read_frame(frame_options options);
    boost::asio::awaitable<chunk> async_read_frame_chunk();
+   boost::asio::awaitable<chunk> async_read_frame_chunk(frame_options options);
    boost::asio::awaitable<void> async_close();
    void cancel();
+   void request_cancel() noexcept;
 
  private:
    friend struct detail::stream_access;
 
    struct impl;
-   explicit stream(std::shared_ptr<detail::stream_concept> model);
+   explicit stream(std::shared_ptr<detail::stream_concept> model,
+                   detail::stream_cancel_request request_cancel = {});
 
    std::shared_ptr<impl> impl_;
 };
@@ -74,6 +80,8 @@ class stream_concept {
 
 struct stream_access {
    [[nodiscard]] static stream make(std::shared_ptr<stream_concept> model);
+   [[nodiscard]] static stream make_cancelable(std::shared_ptr<stream_concept> model,
+                                               stream_cancel_request request_cancel);
    [[nodiscard]] static stream with_buffer(stream value, std::vector<std::uint8_t> buffered);
 };
 

@@ -74,6 +74,8 @@ struct peer_store::impl {
    [[nodiscard]] std::optional<public_key> find_public_key(const peer_id& peer) const;
    [[nodiscard]] std::vector<peer_store::record> snapshot(std::size_t limit) const;
    [[nodiscard]] std::vector<peer_store::record> candidates(std::uint64_t capability, std::size_t limit) const;
+   [[nodiscard]] std::vector<peer_store::record> scored_candidates(std::size_t limit) const;
+   [[nodiscard]] std::vector<peer_store::record> scored_candidates(discovery::source source, std::size_t limit) const;
    [[nodiscard]] std::vector<rendezvous::registration>
    discover_rendezvous(std::string_view namespace_name, std::uint64_t after_sequence, std::size_t limit) const;
    [[nodiscard]] peer_store::persistence_status persistence_state() const;
@@ -125,6 +127,7 @@ struct peer_store::impl {
    std::set<score_key> score_index_;
    std::set<peer_expiry_key> peer_expiry_index_;
    std::map<std::uint64_t, std::set<score_key>> candidates_by_capability_;
+   std::map<discovery::source, std::set<score_key>> candidates_by_source_;
    std::map<rendezvous_map_key, rendezvous::registration> rendezvous_;
    std::map<peer_id, std::size_t> rendezvous_per_peer_;
    std::map<rendezvous_sequence_key, rendezvous_map_key> rendezvous_by_sequence_;

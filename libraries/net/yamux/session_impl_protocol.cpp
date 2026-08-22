@@ -3,6 +3,7 @@ module;
 #include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -42,7 +43,7 @@ inline constexpr std::size_t read_compact_threshold = 65'536;
 
 boost::asio::awaitable<void> session::impl::read_loop() {
    auto terminal = exceptions::code::closed;
-   auto message = std::string{"yamux read loop stopped"};
+   auto message = "yamux read loop stopped";
    auto go_away = std::optional<std::uint32_t>{};
    try {
       auto buffer = detail::bytes{};
@@ -66,8 +67,25 @@ boost::asio::awaitable<void> session::impl::read_loop() {
       terminal = exceptions::code::closed;
       message = "yamux read loop stopped";
    }
-   fail_session(terminal, std::move(message));
-   const auto owns_close = go_away && start_close(*go_away);
+   fail_session(terminal, message);
+   request_stream_cancel_loop_stop();
+   const auto cancel_deadline = deadline_after(options_.close_timeout);
+   auto reset_writer_drained = false;
+   try {
+      reset_writer_drained = co_await wait_for_stream_cancel_loop_until(cancel_deadline);
+   } catch (...) {
+      (void)cancel_transport_noexcept();
+   }
+   if (!reset_writer_drained) {
+      (void)cancel_transport_noexcept();
+      try {
+         co_await wait_for_stream_cancel_loop();
+      } catch (...) {
+         // The reset writer owns the session until its completion handler
+         // publishes done. Transport cancellation still guarantees progress.
+      }
+   }
+   const auto owns_close = reset_writer_drained && go_away && start_close(*go_away);
    if (owns_close) {
       try {
          co_await async_send_terminal_go_away(*go_away);
@@ -83,7 +101,7 @@ boost::asio::awaitable<void> session::impl::read_loop() {
 
 boost::asio::awaitable<void> session::impl::async_send_terminal_go_away(std::uint32_t code) {
    auto executor = co_await boost::asio::this_coro::executor;
-   const auto deadline = std::chrono::steady_clock::now() + options_.close_timeout;
+   const auto deadline = deadline_after(options_.close_timeout);
    transport_writes_.seal();
    if (!co_await transport_writes_.async_wait_until(deadline)) {
       (void)cancel_transport_noexcept();

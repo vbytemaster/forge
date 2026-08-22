@@ -13,6 +13,8 @@ export namespace forge::net::transport {
 
 struct frame_options {
    std::uint32_t max_size = 16 * 1024 * 1024;
+   // Zero retains at most two max-sized frames, including each four-byte header.
+   std::size_t max_buffered_size = 0;
 };
 
 enum class frame_decode_status {
@@ -39,5 +41,6 @@ void encode_frame_to(std::vector<std::uint8_t>& out, std::span<const std::uint8_
 [[nodiscard]] frame_decode_result decode_frame(std::span<const std::uint8_t> bytes, frame_options options = {});
 [[nodiscard]] frame_view_decode_result decode_frame_view(std::span<const std::uint8_t> bytes,
                                                          frame_options options = {});
+[[nodiscard]] std::size_t frame_buffer_limit(frame_options options = {});
 
 } // namespace forge::net::transport

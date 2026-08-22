@@ -2,6 +2,7 @@ module;
 
 #include <forge/exceptions/macros.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -87,9 +88,13 @@ boost::asio::awaitable<void> session::impl::stream_model::async_close() {
 }
 
 void session::impl::stream_model::cancel() {
+   request_cancel();
+}
+
+void session::impl::stream_model::request_cancel() noexcept {
    auto owner = owner_.lock();
    if (owner) {
-      owner->cancel_stream(state_);
+      owner->request_cancel_stream(state_);
    }
 }
 

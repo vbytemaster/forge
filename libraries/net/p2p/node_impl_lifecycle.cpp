@@ -187,6 +187,19 @@ void node::impl::initialize_lifecycle() {
 }
 
 void node::impl::request_lifecycle_stop() noexcept {
+   auto active_peer_exchange_operations = std::map<std::uint64_t, std::shared_ptr<peer_exchange_operation>>{};
+   {
+      const auto lock = std::scoped_lock{mutex};
+      peer_exchange_admission_closed = true;
+      peer_exchange_value.close();
+      active_peer_exchange_operations.swap(peer_exchange_operations);
+   }
+   for (const auto& [_, operation] : active_peer_exchange_operations) {
+      operation->cancellation.request_stop();
+   }
+   if (topology_manager_value) {
+      topology_manager_value->request_stop();
+   }
    if (routing_refresh) {
       routing_refresh->request_stop();
    }
@@ -237,12 +250,20 @@ boost::asio::awaitable<void> node::impl::async_hydrate_peer_state() {
 
 void node::impl::listen(forge::net::p2p::endpoint endpoint) {
    auto local_endpoint = forge::net::p2p::endpoint{};
+   auto launch_identify_push = false;
    {
       const auto lock = std::scoped_lock{mutex};
       if (stopped) {
          FORGE_THROW_EXCEPTION(exceptions::closed, "P2P node is stopped");
       }
       local_endpoint = direct_registry.listen(std::move(endpoint));
+      launch_identify_push = advance_identify_generation_locked() && schedule_identify_push_locked();
+   }
+   if (provider_registry) {
+      provider_registry->notify_endpoints_changed();
+   }
+   if (launch_identify_push) {
+      launch_identify_pushes();
    }
    launch_accept_loop(std::move(local_endpoint));
    launch_pubsub_heartbeat();
@@ -263,6 +284,7 @@ boost::asio::awaitable<lifecycle_status> node::impl::async_start_lifecycle() {
                             "P2P initial bootstrap did not establish a required connection within startup budget");
    }
 
+   start_topology_manager();
    lifecycle.set_phase(lifecycle_phase::maintenance);
    bootstrap->start_maintenance(lifecycle);
    co_return lifecycle_status{

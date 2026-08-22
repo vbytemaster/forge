@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
 import argparse
+import io
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
 import sys
+import tarfile
 import time
 from pathlib import Path
 from typing import Optional
 
+sys.dont_write_bytecode = True
+
+from provenance import WorktreeIdentity, sha256_file, worktree_identity
+
 
 LIVE_SCENARIO_PROFILES = {
     "quic_base": ("ping", "identify", "autonatv2", "relay_reserve", "unknown_protocol"),
-    "tcp_noise": ("ping", "identify", "echo"),
+    "tcp_noise": ("ping", "identify", "echo", "echo_large"),
     "tcp_tls": ("ping", "identify", "echo"),
     "quic_dht": (
         "dht_find_peer",
@@ -21,13 +28,15 @@ LIVE_SCENARIO_PROFILES = {
         "dht_pk_put_get",
         "dht_ipns_put_get",
     ),
-    "quic_rendezvous": ("rendezvous_register_discover",),
+    "quic_dht_hidden": ("dht_hidden_find_peer",),
+    "quic_rendezvous": ("rendezvous_register_discover", "rendezvous_lifecycle"),
     "quic_pubsub": ("gossipsub_publish",),
     "mixed_pubsub": ("gossipsub_mixed_mesh_stress",),
     "quic_topology": ("relay_echo_topology", "dcutr_relay_topology"),
 }
 SCENARIOS = LIVE_SCENARIO_PROFILES["quic_base"]
 DHT_SCENARIOS = LIVE_SCENARIO_PROFILES["quic_dht"]
+HIDDEN_DHT_SCENARIO = LIVE_SCENARIO_PROFILES["quic_dht_hidden"][0]
 RENDEZVOUS_SCENARIOS = LIVE_SCENARIO_PROFILES["quic_rendezvous"]
 PUBSUB_SCENARIOS = LIVE_SCENARIO_PROFILES["quic_pubsub"]
 DHT_VALUE_SCENARIOS = ("dht_pk_put_get", "dht_ipns_put_get")
@@ -40,6 +49,16 @@ NATIVE_TOPOLOGIES = (
     ("forge", "rust", "rust"),
     ("rust", "forge", "forge"),
 )
+HIDDEN_DHT_PERMUTATIONS = (
+    ("forge", "go", "rust"),
+    ("go", "forge", "rust"),
+    ("rust", "go", "forge"),
+)
+SUPPORTED_FORGE_BUILD_PROFILES = ("default", "Debug", "Release", "RelWithDebInfo", "MinSizeRel")
+LOCKED_FORGE_FIXTURE_COMPILER = {
+    "compiler_id": "Clang",
+    "compiler_version": "22.1.8",
+}
 
 
 def run(command: list[str], cwd: Optional[Path] = None, env: Optional[dict[str, str]] = None) -> None:
@@ -60,11 +79,182 @@ def require_tool(name: str) -> str:
     return path
 
 
+def command_output(command: list[str], cwd: Optional[Path] = None,
+                   env: Optional[dict[str, str]] = None) -> str:
+    return subprocess.check_output(command, cwd=cwd, env=env, text=True).strip()
+
+
+def tool_identity(name: str, command: list[str], version_pattern: str, expected_version: str,
+                  cwd: Optional[Path] = None, env: Optional[dict[str, str]] = None) -> dict:
+    path = Path(require_tool(name)).resolve()
+    output = command_output([str(path), *command], cwd=cwd, env=env)
+    match = re.match(version_pattern, output)
+    if not match:
+        raise RuntimeError(f"could not parse {name} version output: {output!r}")
+    version = match.group("version")
+    if version != expected_version:
+        raise RuntimeError(f"{name} version must be {expected_version}, got {version}: {output}")
+    return {
+        "path": str(path),
+        "version": version,
+        "version_output": output,
+    }
+
+
+def require_toolchain(fixture_lock: dict, source_dir: Path) -> tuple[dict, dict[str, str], dict[str, str]]:
+    requirements = fixture_lock.get("toolchains")
+    if not isinstance(requirements, dict):
+        raise RuntimeError("fixture lock has no toolchain requirements")
+    go_requirements = requirements.get("go")
+    rust_requirements = requirements.get("rust")
+    if not isinstance(go_requirements, dict) or not isinstance(rust_requirements, dict):
+        raise RuntimeError("fixture lock toolchain requirements are malformed")
+    go_version = go_requirements.get("version")
+    rustc_version = rust_requirements.get("rustc_version")
+    cargo_version = rust_requirements.get("cargo_version")
+    if not all(isinstance(value, str) and value for value in (go_version, rustc_version, cargo_version)):
+        raise RuntimeError("fixture lock toolchain versions are malformed")
+
+    go_environment = os.environ.copy()
+    go_environment.update({"GOTOOLCHAIN": "local", "GOPROXY": "off", "GOSUMDB": "off"})
+    rust_environment = os.environ.copy()
+    rust_environment.update({"CARGO_NET_OFFLINE": "true", "RUSTUP_OFFLINE": "true"})
+    rust_fixture = source_dir / "rust_fixture"
+    tools = {
+        "go": tool_identity("go", ["version"], r"^go version go(?P<version>\d+\.\d+\.\d+)\b", go_version,
+                            env=go_environment),
+        "rustc": tool_identity("rustc", ["--version"], r"^rustc (?P<version>\d+\.\d+\.\d+)\b",
+                                rustc_version, cwd=rust_fixture, env=rust_environment),
+        "cargo": tool_identity("cargo", ["--version"], r"^cargo (?P<version>\d+\.\d+\.\d+)\b",
+                               cargo_version, cwd=rust_fixture, env=rust_environment),
+    }
+    return tools, go_environment, rust_environment
+
+
+def fixture_build_info(binary: Path) -> tuple[dict, dict]:
+    if not binary.is_file():
+        raise RuntimeError(f"Forge interop fixture is missing: {binary}")
+    command = [str(binary), "build-info"]
+    try:
+        value = json.loads(command_output(command))
+    except (subprocess.CalledProcessError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Forge interop fixture did not return machine-readable build-info: {error}") from error
+    if not isinstance(value, dict):
+        raise RuntimeError("Forge interop fixture build-info must be an object")
+    return value, {"command": command}
+
+
+def forge_fixture_requirements(fixture_lock: dict) -> dict:
+    if fixture_lock.get("schema_version") != 2:
+        raise RuntimeError("fixture lock schema_version must be 2")
+    toolchains = fixture_lock.get("toolchains")
+    if not isinstance(toolchains, dict):
+        raise RuntimeError("fixture lock has no toolchain requirements")
+    requirements = toolchains.get("forge_fixture")
+    expected_fields = {"compiler_id", "compiler_version", "build_profiles"}
+    if not isinstance(requirements, dict) or set(requirements) != expected_fields:
+        raise RuntimeError("fixture lock Forge fixture requirements are malformed")
+    if (
+        requirements.get("compiler_id") != LOCKED_FORGE_FIXTURE_COMPILER["compiler_id"]
+        or requirements.get("compiler_version") != LOCKED_FORGE_FIXTURE_COMPILER["compiler_version"]
+        or requirements.get("build_profiles") != list(SUPPORTED_FORGE_BUILD_PROFILES)
+    ):
+        raise RuntimeError("fixture lock Forge fixture requirements are malformed")
+    return requirements
+
+
+def require_supported_forge_build_profile(build_profile: object, requirements: dict) -> None:
+    if not isinstance(build_profile, str) or build_profile not in requirements["build_profiles"]:
+        raise RuntimeError(
+            "Forge interop fixture build profile is not supported by the locked baseline: "
+            f"embedded={build_profile!r}, supported={requirements['build_profiles']!r}"
+        )
+
+
+def require_fixture_provenance(binary: Path, expected: WorktreeIdentity, fixture_lock: dict) -> tuple[dict, dict]:
+    requirements = forge_fixture_requirements(fixture_lock)
+    build_info, command = fixture_build_info(binary)
+    forge = build_info.get("forge")
+    compiler = build_info.get("compiler")
+    build_profile = build_info.get("build_profile")
+    if build_info.get("schema_version") != 2 or not isinstance(forge, dict) or not isinstance(compiler, dict):
+        raise RuntimeError(f"Forge interop fixture build-info is incomplete: {build_info}")
+    if forge.get("head") != expected.head or forge.get("worktree_sha256") != expected.fingerprint:
+        raise RuntimeError(
+            "Forge interop fixture provenance does not match the current worktree: "
+            f"embedded={forge}, current={expected.as_json()}"
+        )
+    if forge.get("exact_identity") != expected.as_json()["exact_identity"]:
+        raise RuntimeError(f"Forge interop fixture exact identity is malformed: {forge}")
+    if not isinstance(forge.get("dirty"), bool):
+        raise RuntimeError(f"Forge interop fixture dirty state is malformed: {forge}")
+    if forge["dirty"] != expected.dirty:
+        raise RuntimeError(
+            "Forge interop fixture dirty state does not match the current worktree: "
+            f"embedded={forge['dirty']}, current={expected.dirty}"
+        )
+    for field in ("path", "id", "version"):
+        if not isinstance(compiler.get(field), str) or not compiler[field]:
+            raise RuntimeError(f"Forge interop fixture compiler identity is incomplete: {compiler}")
+    if not Path(compiler["path"]).is_absolute():
+        raise RuntimeError(f"Forge interop fixture compiler path is not absolute: {compiler}")
+    if compiler["id"] != requirements["compiler_id"] or compiler["version"] != requirements["compiler_version"]:
+        raise RuntimeError(
+            "Forge interop fixture compiler does not match the locked baseline: "
+            f"embedded={compiler}, required={requirements}"
+        )
+    require_supported_forge_build_profile(build_profile, requirements)
+    return build_info, command
+
+
 def require_donor(root: Path, name: str) -> Path:
     path = root / name
     if not path.exists():
         raise RuntimeError(f"required donor repository is missing: {path}")
     return path
+
+
+def load_fixture_lock(source_dir: Path) -> dict:
+    lock_path = source_dir / "fixture-lock.json"
+    try:
+        lock = json.loads(lock_path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"invalid fixture lock {lock_path}: {error}") from error
+    if not isinstance(lock, dict) or not isinstance(lock.get("donors"), list):
+        raise RuntimeError(f"fixture lock {lock_path} has no donor list")
+    return lock
+
+
+def export_fixture_deps(build_dir: Path, donors_root: Path, fixture_lock: dict, git_tool: str,
+                        command_records: list[dict]) -> Path:
+    dependencies = build_dir / "fixture-deps"
+    if dependencies.exists():
+        shutil.rmtree(dependencies)
+    dependencies.mkdir(parents=True)
+    for donor in fixture_lock["donors"]:
+        if not isinstance(donor, dict):
+            raise RuntimeError("fixture lock donor entry must be an object")
+        name = donor.get("name")
+        directory = donor.get("directory")
+        commit = donor.get("commit")
+        if not all(isinstance(value, str) and value for value in (name, directory, commit)):
+            raise RuntimeError(f"invalid fixture lock donor entry: {donor}")
+        source = require_donor(donors_root, directory)
+        destination = dependencies / directory
+        destination.mkdir()
+        command = [git_tool, "-C", str(source), "archive", "--format=tar", commit]
+        command_records.append({"kind": "donor_archive", "donor": name, "command": command})
+        archive = subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.PIPE,
+        ).stdout
+        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as values:
+            members = values.getmembers()
+            if any(Path(member.name).is_absolute() or ".." in Path(member.name).parts for member in members):
+                raise RuntimeError(f"refusing unsafe donor archive entry for {name}")
+            values.extractall(destination, members=members)
+    return dependencies
 
 
 def wait_json(path: Path, timeout: float) -> dict:
@@ -169,7 +359,8 @@ def attach_attempts(result: dict, attempts: list[dict]) -> dict:
 
 def start_listener(binary: Path, implementation: str, work: Path, scenario: Optional[str] = None,
                    result_file: Optional[Path] = None, seed_file: Optional[Path] = None,
-                   expected_messages: Optional[int] = None, transport: str = "quic") -> Listener:
+                   expected_messages: Optional[int] = None, transport: str = "quic",
+                   seed_peer_id: Optional[str] = None, seed_addr: Optional[str] = None) -> Listener:
     ready_file = work / f"{implementation}-ready.json"
     stop_file = work / f"{implementation}.stop"
     log_file = work / f"{implementation}.log"
@@ -194,6 +385,10 @@ def start_listener(binary: Path, implementation: str, work: Path, scenario: Opti
         command.extend(["--result-file", str(result_file)])
     if seed_file is not None:
         command.extend(["--seed-file", str(seed_file)])
+    if (seed_peer_id is None) != (seed_addr is None):
+        raise ValueError("seed peer id and address must be supplied together")
+    if seed_peer_id is not None and seed_addr is not None:
+        command.extend(["--seed-peer-id", seed_peer_id, "--seed-addr", seed_addr])
     if expected_messages is not None:
         command.extend(["--expected-messages", str(expected_messages)])
     log = log_file.open("w")
@@ -240,7 +435,8 @@ def start_destination(binary: Path, implementation: str, relay_addr: str, relay_
 
 
 def run_dial(binary: Path, implementation: str, scenario: str, peer_id: str, addr: str, work: Path,
-             payload: Optional[str] = None, transport: str = "quic", fresh_store_each_attempt: bool = False) -> dict:
+             payload: Optional[str] = None, transport: str = "quic", fresh_store_each_attempt: bool = False,
+             target_peer_id: Optional[str] = None) -> dict:
     payload_suffix = "" if payload is None else f"-{payload}"
     result_file = work / f"{implementation}-dial-{scenario}{payload_suffix}.json"
     log_file = work / f"{implementation}-dial-{scenario}{payload_suffix}.log"
@@ -263,6 +459,8 @@ def run_dial(binary: Path, implementation: str, scenario: str, peer_id: str, add
     ]
     if payload is not None:
         command.extend(["--payload", payload])
+    if target_peer_id is not None:
+        command.extend(["--target-peer-id", target_peer_id])
     try:
         reset_paths = (store_dir, result_file) if fresh_store_each_attempt else ()
         attempts = run_command_with_attempts(
@@ -274,6 +472,93 @@ def run_dial(binary: Path, implementation: str, scenario: str, peer_id: str, add
             detail += f"; result={result_file.read_text(errors='replace')}"
         raise RuntimeError(detail)
     return attach_attempts(json.loads(result_file.read_text()), attempts)
+
+
+def listener_evidence(listener: Listener) -> dict:
+    return {
+        "pid": listener.process.pid,
+        "command": listener.command,
+        "log_file": str(listener.log_file),
+        "peer_id": listener.ready["peer_id"],
+        "listen_addrs": listener.ready.get("listen_addrs", []),
+    }
+
+
+def run_hidden_dht_find_peer(binaries: dict[str, Path], seeker: str, routing: str, hidden: str, root: Path) -> dict:
+    work = root / f"quic-{seeker}-via-{routing}-to-{hidden}-{HIDDEN_DHT_SCENARIO}"
+    work.mkdir(parents=True, exist_ok=True)
+    hidden_listener = start_listener(binaries[hidden], f"{hidden}-hidden", work)
+    routing_listener = None
+    try:
+        routing_seed_result = work / f"{routing}-routing-seed.json"
+        routing_listener = start_listener(
+            binaries[routing],
+            f"{routing}-routing",
+            work,
+            HIDDEN_DHT_SCENARIO,
+            routing_seed_result,
+            seed_peer_id=hidden_listener.ready["peer_id"],
+            seed_addr=hidden_listener.ready["listen_addrs"][0],
+        )
+        routing_seed = wait_json(routing_seed_result, 30)
+        if routing_seed.get("status") != "ok" or routing_seed.get("negotiated_protocol") != "/ipfs/kad/1.0.0":
+            raise RuntimeError(f"{routing} did not establish a real Kademlia seed route: {routing_seed}")
+
+        seeker_result = run_dial(
+            binaries[seeker],
+            f"{seeker}-seeker",
+            HIDDEN_DHT_SCENARIO,
+            routing_listener.ready["peer_id"],
+            routing_listener.ready["listen_addrs"][0],
+            work,
+            target_peer_id=hidden_listener.ready["peer_id"],
+        )
+        if seeker_result.get("preexisting_target") is not False:
+            raise RuntimeError(f"{seeker} knew hidden peer before FindPeer: {seeker_result}")
+        if seeker_result.get("found_peer") != hidden_listener.ready["peer_id"]:
+            raise RuntimeError(f"{seeker} did not find the hidden peer: {seeker_result}")
+        if seeker_result.get("negotiated_protocol") != "/ipfs/kad/1.0.0":
+            raise RuntimeError(f"{seeker} did not prove the Amino Kademlia protocol: {seeker_result}")
+        if seeker_result.get("dht_queries_delta", 0) < 1:
+            raise RuntimeError(f"{seeker} FindPeer did not issue a DHT query: {seeker_result}")
+        if seeker == "rust":
+            for field in (
+                "target_dialed",
+                "target_connected",
+                "routing_updated",
+                "followup_exact_rpc",
+                "closest_peers",
+            ):
+                if not seeker_result.get(field):
+                    raise RuntimeError(f"Rust seeker did not prove {field}: {seeker_result}")
+            if seeker_result.get("address_count", 0) <= 0:
+                raise RuntimeError(f"Rust seeker did not learn a routable target address: {seeker_result}")
+
+        return {
+            "implementation": "mixed",
+            "scenario": HIDDEN_DHT_SCENARIO,
+            "transport": "quic",
+            "seeker": seeker,
+            "routing": routing,
+            "hidden": hidden,
+            "target_peer_id": hidden_listener.ready["peer_id"],
+            "negotiated_protocol": "/ipfs/kad/1.0.0",
+            "processes": {
+                "hidden": listener_evidence(hidden_listener),
+                "routing": listener_evidence(routing_listener),
+                "seeker": {
+                    "peer_id": seeker_result.get("local_peer_id"),
+                    "command": seeker_result["attempts"][-1]["command"],
+                    "log_file": seeker_result["attempts"][-1]["log_file"],
+                },
+            },
+            "routing_seed": routing_seed,
+            "result": seeker_result,
+        }
+    finally:
+        if routing_listener is not None:
+            routing_listener.close()
+        hidden_listener.close()
 
 
 def run_pubsub_mixed_mesh_stress(binaries: dict[str, Path], root: Path) -> dict:
@@ -398,50 +683,171 @@ def run_relay_dial(binary: Path, implementation: str, scenario: str, target_peer
     return attach_attempts(json.loads(result_file.read_text()), attempts)
 
 
-def prepare_go_fixture(source_dir: Path, build_dir: Path, donors_root: Path) -> Path:
+def prepare_go_fixture(source_dir: Path, build_dir: Path, go_tool: str,
+                       environment: dict[str, str]) -> tuple[Path, list[dict]]:
     work = build_dir / "go_fixture"
-    work.mkdir(parents=True, exist_ok=True)
-    (work / "main.go").write_text((source_dir / "go_fixture" / "main.go").read_text())
-    (work / "go.mod").write_text(
-        "module forge-libp2p-go-fixture\n\n"
-        "go 1.24\n\n"
-        "require (\n"
-        "\tgithub.com/libp2p/go-libp2p v0.0.0\n"
-        "\tgithub.com/libp2p/go-libp2p-kad-dht v0.0.0\n"
-        "\tgithub.com/libp2p/go-libp2p-pubsub v0.0.0\n"
-        ")\n\n"
-        f"replace github.com/libp2p/go-libp2p => {donors_root / 'go-libp2p'}\n"
-        f"replace github.com/libp2p/go-libp2p-kad-dht => {donors_root / 'go-libp2p-kad-dht'}\n"
-        f"replace github.com/libp2p/go-libp2p-pubsub => {donors_root / 'go-libp2p-pubsub'}\n"
-    )
+    if work.exists():
+        shutil.rmtree(work)
+    shutil.copytree(source_dir / "go_fixture", work)
     binary = work / "go_fixture"
-    if binary.exists():
-        binary.unlink()
-    run(["go", "mod", "tidy"], cwd=work)
-    run(["go", "build", "-o", str(binary), "."], cwd=work)
-    return binary
+    policy = {"GOTOOLCHAIN": "local", "GOPROXY": "off", "GOSUMDB": "off"}
+    commands = [
+        {"command": [go_tool, "mod", "verify"], "cwd": str(work), "environment": policy},
+        {
+            "command": [go_tool, "build", "-mod=readonly", "-trimpath", "-o", str(binary), "."],
+            "cwd": str(work),
+            "environment": policy,
+        },
+    ]
+    for command in commands:
+        run(command["command"], cwd=work, env=environment)
+    return binary, commands
 
 
-def prepare_rust_fixture(source_dir: Path, build_dir: Path, donors_root: Path) -> Path:
+def prepare_rust_fixture(source_dir: Path, build_dir: Path, cargo_tool: str,
+                         environment: dict[str, str]) -> tuple[Path, list[dict]]:
     work = build_dir / "rust_fixture"
-    src = work / "src"
-    src.mkdir(parents=True, exist_ok=True)
-    (src / "main.rs").write_text((source_dir / "rust_fixture" / "main.rs").read_text())
-    (work / "Cargo.toml").write_text(
-        "[package]\n"
-        "name = \"forge-libp2p-rust-fixture\"\n"
-        "version = \"0.1.0\"\n"
-        "edition = \"2024\"\n\n"
-        "[dependencies]\n"
-        f"libp2p = {{ path = \"{donors_root / 'rust-libp2p' / 'libp2p'}\", features = [\"tokio\", \"tcp\", \"dns\", \"noise\", \"tls\", \"yamux\", \"quic\", \"ping\", \"identify\", \"autonat\", \"relay\", \"dcutr\", \"kad\", \"rendezvous\", \"gossipsub\", \"macros\"] }}\n"
-        f"libp2p-stream = {{ path = \"{donors_root / 'rust-libp2p' / 'protocols' / 'stream'}\" }}\n"
-        "futures = \"0.3\"\n"
-        "rand = \"0.8.5\"\n"
-        "serde_json = \"1\"\n"
-        "tokio = { version = \"1\", features = [\"macros\", \"rt-multi-thread\", \"time\"] }\n"
+    if work.exists():
+        shutil.rmtree(work)
+    shutil.copytree(source_dir / "rust_fixture", work)
+    commands = [{
+        "command": [cargo_tool, "build", "--release", "--frozen"],
+        "cwd": str(work),
+        "environment": {"CARGO_NET_OFFLINE": "true", "RUSTUP_OFFLINE": "true"},
+    }]
+    run(commands[0]["command"], cwd=work, env=environment)
+    return work / "target" / "release" / "forge-libp2p-rust-fixture", commands
+
+
+def require_rendezvous_register_discover_evidence(result: dict, implementation: str) -> None:
+    required = (
+        "negotiated_protocol",
+        "wire_registration_count",
+        "signed_peer_record_valid",
+        "matching_peer_record",
+        "record_sequence",
+        "record_address_count",
+        "registered_ttl_seconds",
+        "discovered_ttl_seconds",
+        "cookie_bytes",
     )
-    run(["cargo", "build", "--release"], cwd=work)
-    return work / "target" / "release" / "forge-libp2p-rust-fixture"
+    missing = [field for field in required if field not in result]
+    if missing:
+        raise RuntimeError(f"{implementation} rendezvous evidence is missing {missing}: {result}")
+    if result["negotiated_protocol"] != "/rendezvous/1.0.0":
+        raise RuntimeError(f"{implementation} rendezvous protocol mismatch: {result}")
+    if result["wire_registration_count"] != 1:
+        raise RuntimeError(f"{implementation} rendezvous did not return exactly one wire registration: {result}")
+    if result["signed_peer_record_valid"] is not True or result["matching_peer_record"] is not True:
+        raise RuntimeError(f"{implementation} rendezvous signed peer record did not validate and match: {result}")
+    for field in ("record_sequence", "record_address_count", "cookie_bytes"):
+        if type(result[field]) is not int or result[field] <= 0:
+            raise RuntimeError(f"{implementation} rendezvous {field} must be a positive integer: {result}")
+    for field in ("registered_ttl_seconds", "discovered_ttl_seconds"):
+        if result[field] != 7_200:
+            raise RuntimeError(f"{implementation} rendezvous {field} must be donor default 7200: {result}")
+    if implementation == "forge":
+        if result.get("sanitized_registration_count") != 0 or result.get("loopback_filtered") is not True:
+            raise RuntimeError(f"Forge rendezvous loopback filtering proof is incomplete: {result}")
+
+
+def require_rendezvous_lifecycle_evidence(result: dict, dialer: str, listener: str) -> None:
+    required = (
+        "negotiated_protocol",
+        "legacy_signed_peer_record",
+        "initial_ttl_seconds",
+        "updated_ttl_seconds",
+        "renewed_ttl_seconds",
+        "initial_record_sequence",
+        "updated_record_sequence",
+        "renewed_record_sequence",
+        "pre_unregister_record_sequence",
+        "initial_cookie_bytes",
+        "delta_cookie_bytes",
+        "cookie_changed",
+        "initial_visible_count",
+        "updated_visible_count",
+        "renewed_visible_after_original_expiry",
+        "renewed_visible_count",
+        "expired_registration_count",
+        "pre_unregister_count",
+        "final_registration_count",
+    )
+    missing = [field for field in required if field not in result]
+    if missing:
+        raise RuntimeError(f"{dialer} rendezvous lifecycle evidence is missing {missing}: {result}")
+    if result["negotiated_protocol"] != "/rendezvous/1.0.0":
+        raise RuntimeError(f"{dialer} did not negotiate rendezvous lifecycle protocol: {result}")
+    if result["legacy_signed_peer_record"] is not True:
+        raise RuntimeError(f"{dialer} did not prove a signed legacy rendezvous record: {result}")
+
+    ttl_fields = ("initial_ttl_seconds", "updated_ttl_seconds", "renewed_ttl_seconds")
+    if any(type(result[field]) is not int or not 2 <= result[field] <= 3 for field in ttl_fields):
+        raise RuntimeError(f"{listener} did not return bounded lifecycle TTLs with a renewal window: {result}")
+
+    sequence_fields = (
+        "initial_record_sequence",
+        "updated_record_sequence",
+        "renewed_record_sequence",
+        "pre_unregister_record_sequence",
+    )
+    if any(type(result[field]) is not int or result[field] <= 0 for field in sequence_fields):
+        raise RuntimeError(f"{dialer} rendezvous lifecycle has an invalid PeerRecord sequence: {result}")
+    if not (
+        result["initial_record_sequence"]
+        < result["updated_record_sequence"]
+        < result["renewed_record_sequence"]
+        < result["pre_unregister_record_sequence"]
+    ):
+        raise RuntimeError(f"{dialer} did not advance each rendezvous lifecycle PeerRecord: {result}")
+
+    if (
+        type(result["initial_cookie_bytes"]) is not int
+        or result["initial_cookie_bytes"] <= 0
+        or type(result["delta_cookie_bytes"]) is not int
+        or result["delta_cookie_bytes"] <= 0
+        or result["cookie_changed"] is not True
+    ):
+        raise RuntimeError(f"{dialer} did not prove a non-empty changed rendezvous cookie: {result}")
+
+    for field in (
+        "initial_visible_count",
+        "updated_visible_count",
+        "renewed_visible_count",
+        "pre_unregister_count",
+    ):
+        if result[field] != 1:
+            raise RuntimeError(f"{dialer} rendezvous lifecycle did not prove one {field}: {result}")
+    if result["renewed_visible_after_original_expiry"] is not True:
+        raise RuntimeError(f"{dialer} did not prove renewed visibility after original expiry: {result}")
+    if result["expired_registration_count"] != 0 or result["final_registration_count"] != 0:
+        raise RuntimeError(f"{dialer} rendezvous lifecycle did not expire and unregister: {result}")
+
+
+def require_dht_provider_evidence(result: dict, dialer: str) -> None:
+    provider_count = result.get("provider_count")
+    if type(provider_count) is not int or provider_count < 1:
+        raise RuntimeError(f"{dialer} DHT provider lookup did not return a provider: {result}")
+    if dialer != "forge":
+        return
+    provider_peer = result.get("provider_peer")
+    querier_peer = result.get("querier_peer")
+    if not isinstance(provider_peer, str) or not provider_peer:
+        raise RuntimeError(f"FORGE DHT provider proof did not identify the provider: {result}")
+    if not isinstance(querier_peer, str) or not querier_peer:
+        raise RuntimeError(f"FORGE DHT provider proof did not identify the querier: {result}")
+    if provider_peer == querier_peer:
+        raise RuntimeError(f"FORGE DHT provider proof reused the provider as its querier: {result}")
+    if result.get("returned_provider_peer") != provider_peer:
+        raise RuntimeError(f"FORGE DHT provider proof returned a different provider: {result}")
+    address_count = result.get("address_count")
+    if type(address_count) is not int or address_count < 1:
+        raise RuntimeError(f"FORGE DHT provider proof returned no provider address: {result}")
+    stream_delta = result.get("protocol_streams_opened_delta")
+    if type(stream_delta) is not int or stream_delta < 1:
+        raise RuntimeError(f"FORGE DHT provider proof did not open a DHT protocol stream: {result}")
+    if result.get("negotiated_protocol") != "/ipfs/kad/1.0.0":
+        raise RuntimeError(f"FORGE DHT provider proof negotiated the wrong protocol: {result}")
 
 
 def run_pair(dialer_binary: Path, dialer: str, listener_binary: Path, listener: str, scenario: str, root: Path) -> dict:
@@ -513,6 +919,12 @@ def run_pair_with_transport(dialer_binary: Path, dialer: str, listener_binary: P
         if scenario == "identify" and dialer == "go" and listener == "forge":
             if result.get("signed_peer_record") is not True:
                 raise RuntimeError("Go libp2p did not receive Forge's signed Identify peer record")
+        if scenario == "rendezvous_register_discover":
+            require_rendezvous_register_discover_evidence(result, dialer)
+        if scenario == "rendezvous_lifecycle":
+            require_rendezvous_lifecycle_evidence(result, dialer, listener)
+        if scenario == "dht_provide_find_provider":
+            require_dht_provider_evidence(result, dialer)
         delivered = wait_json(listener_result, 20) if listener_result is not None else None
         if delivered is not None and delivered.get("status") != "ok":
             raise RuntimeError(f"{listener} listener reported {delivered}")
@@ -546,6 +958,23 @@ def run_pair_with_transport(dialer_binary: Path, dialer: str, listener_binary: P
         server.close()
 
 
+def require_local_topology_evidence(result: dict, scenario: str) -> None:
+    if result.get("status") != "ok":
+        raise RuntimeError(f"Forge topology fixture reported non-success: {result}")
+    if scenario == "relay_echo_topology":
+        if result.get("relay_echo") is not True or result.get("relay_bytes", 0) <= 0:
+            raise RuntimeError(f"Forge relay topology lacks successful relay evidence: {result}")
+        return
+    if scenario == "dcutr_relay_topology":
+        if (
+            result.get("hole_punch_status") != 3
+            or result.get("relay_echo") is not True
+            or result.get("source_hole_punch_successes", 0) <= 0
+            or result.get("relay_bytes", 0) <= 0
+        ):
+            raise RuntimeError(f"Forge DCUtR topology lacks successful hole-punch and direct-echo evidence: {result}")
+
+
 def run_topology(binary: Path, implementation: str, scenario: str, root: Path) -> dict:
     work = root / f"{implementation}-{scenario}"
     work.mkdir(parents=True, exist_ok=True)
@@ -568,10 +997,12 @@ def run_topology(binary: Path, implementation: str, scenario: str, root: Path) -
         if result_file.exists():
             detail += f"; result={result_file.read_text(errors='replace')}"
         raise RuntimeError(detail)
+    result = attach_attempts(json.loads(result_file.read_text()), attempts)
+    require_local_topology_evidence(result, scenario)
     return {
         "implementation": implementation,
         "scenario": scenario,
-        "result": attach_attempts(json.loads(result_file.read_text()), attempts),
+        "result": result,
     }
 
 
@@ -615,127 +1046,226 @@ def run_native_relay_topology(binaries: dict[str, Path], source: str, relay_impl
         relay.close()
 
 
+def write_artifact(path: Path, root: Path, provenance: dict, artifacts: list[dict], failures: list[str]) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "artifact_root": str(root),
+                "fixture_provenance": provenance,
+                "artifacts": artifacts,
+                "failures": failures,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--enabled", required=True)
+    parser.add_argument("--provenance-only", action="store_true")
     parser.add_argument("--forge-fixture", required=True)
     parser.add_argument("--source-dir", required=True)
     parser.add_argument("--build-dir", required=True)
+    parser.add_argument("--forge-root", required=True)
     parser.add_argument("--donors-root", required=True)
     args = parser.parse_args()
 
-    if not enabled_from_args(args.enabled):
+    if not args.provenance_only and not enabled_from_args(args.enabled):
         print("SKIP: live libp2p interop disabled; configure FORGE_ENABLE_LIBP2P_INTEROP=ON or set FORGE_ENABLE_LIBP2P_INTEROP=1.")
         return 0
 
     donors_root = Path(args.donors_root).resolve()
     source_dir = Path(args.source_dir).resolve()
     build_dir = Path(args.build_dir).resolve()
+    forge_root = Path(args.forge_root).resolve()
     build_dir.mkdir(parents=True, exist_ok=True)
-
-    require_tool("go")
-    require_tool("cargo")
-    require_donor(donors_root, "go-libp2p")
-    require_donor(donors_root, "go-libp2p-kad-dht")
-    require_donor(donors_root, "go-libp2p-pubsub")
-    require_donor(donors_root, "rust-libp2p")
-    require_donor(donors_root, "libp2p-specs")
-
-    forge_fixture = Path(args.forge_fixture).resolve()
-    go_fixture = prepare_go_fixture(source_dir, build_dir, donors_root)
-    rust_fixture = prepare_rust_fixture(source_dir, build_dir, donors_root)
-
-    binaries = {
-        "forge": forge_fixture,
-        "go": go_fixture,
-        "rust": rust_fixture,
-    }
-
     artifacts: list[dict] = []
     failures: list[str] = []
     root = build_dir / "interop-run"
-    if root.exists():
-        shutil.rmtree(root)
-    root.mkdir(parents=True)
-    for listener in ("go", "rust", "forge"):
-        for dialer in ("forge", "go", "rust"):
-            if listener == dialer:
-                continue
-            for scenario in SCENARIOS:
-                try:
-                    artifacts.append(run_pair(binaries[dialer], dialer, binaries[listener], listener, scenario, root))
-                except Exception as error:
-                    failures.append(f"{dialer}->{listener} {scenario}: {error}")
-            for scenario in DHT_SCENARIOS:
-                try:
-                    if scenario in DHT_VALUE_SCENARIOS:
-                        artifacts.append(run_dht_value_remote_get(binaries, dialer, listener, scenario, root))
-                    else:
+    artifact_path = build_dir / (
+        "interop-provenance-artifacts.json" if args.provenance_only else "interop-artifacts.json"
+    )
+    provenance = {
+        "forge_worktree": {"start": None, "end": None, "changed_during_run": None},
+        "fixture_build_info": None,
+        "binaries": {},
+        "tools": {},
+        "commands": [],
+    }
+    start_identity = None
+    try:
+        python_path = str(Path(sys.executable).resolve())
+        git_path = str(Path(require_tool("git")).resolve())
+        provenance["tools"]["python"] = {
+            "path": python_path,
+            "version_output": command_output([python_path, "--version"]),
+        }
+        provenance["tools"]["git"] = {
+            "path": git_path,
+            "version_output": command_output([git_path, "--version"]),
+        }
+        start_identity = worktree_identity(forge_root)
+        provenance["forge_worktree"]["start"] = start_identity.as_json()
+        fixture_lock = load_fixture_lock(source_dir)
+        forge_fixture = Path(args.forge_fixture).resolve()
+        build_info, build_info_command = require_fixture_provenance(forge_fixture, start_identity, fixture_lock)
+        provenance["fixture_build_info"] = build_info
+        provenance["commands"].append({"kind": "forge_build_info", **build_info_command})
+        provenance["binaries"]["forge"] = {
+            "path": str(forge_fixture),
+            "sha256": sha256_file(forge_fixture),
+        }
+
+        if not args.provenance_only:
+            require_donor(donors_root, "go-libp2p")
+            require_donor(donors_root, "go-libp2p-kad-dht")
+            require_donor(donors_root, "go-libp2p-pubsub")
+            require_donor(donors_root, "rust-libp2p")
+            require_donor(donors_root, "libp2p-specs")
+
+            fixture_check = source_dir / "check_fixture_lock.py"
+            fixture_check_command = [
+                python_path,
+                str(fixture_check),
+                str(source_dir),
+                str(donors_root),
+            ]
+            provenance["commands"].append({"kind": "fixture_lock_check", "command": fixture_check_command})
+            run(fixture_check_command)
+            tools, go_environment, rust_environment = require_toolchain(fixture_lock, source_dir)
+            provenance["tools"].update(tools)
+            fixture_deps = export_fixture_deps(
+                build_dir, donors_root, fixture_lock, git_path, provenance["commands"]
+            )
+            go_fixture, go_build_commands = prepare_go_fixture(
+                source_dir, build_dir, tools["go"]["path"], go_environment
+            )
+            rust_fixture, rust_build_commands = prepare_rust_fixture(
+                source_dir, build_dir, tools["cargo"]["path"], rust_environment
+            )
+            provenance.update({
+                "lock_file": str(source_dir / "fixture-lock.json"),
+                "fixture_deps": str(fixture_deps),
+                "donors": fixture_lock["donors"],
+                "dependency_graphs": fixture_lock.get("dependency_graphs", {}),
+            })
+            provenance["commands"].extend(go_build_commands + rust_build_commands)
+            binaries = {
+                "forge": forge_fixture,
+                "go": go_fixture,
+                "rust": rust_fixture,
+            }
+            provenance["binaries"].update({
+                implementation: {"path": str(binary), "sha256": sha256_file(binary)}
+                for implementation, binary in binaries.items()
+            })
+
+            if root.exists():
+                shutil.rmtree(root)
+            root.mkdir(parents=True)
+            for listener in ("go", "rust", "forge"):
+                for dialer in ("forge", "go", "rust"):
+                    if listener == dialer:
+                        continue
+                    for scenario in SCENARIOS:
+                        try:
+                            artifacts.append(
+                                run_pair(binaries[dialer], dialer, binaries[listener], listener, scenario, root)
+                            )
+                        except Exception as error:
+                            failures.append(f"{dialer}->{listener} {scenario}: {error}")
+                    for scenario in DHT_SCENARIOS:
+                        try:
+                            if scenario in DHT_VALUE_SCENARIOS:
+                                artifacts.append(run_dht_value_remote_get(binaries, dialer, listener, scenario, root))
+                            else:
+                                artifacts.append(
+                                    run_pair(binaries[dialer], dialer, binaries[listener], listener, scenario, root)
+                                )
+                        except Exception as error:
+                            failures.append(f"{dialer}->{listener} {scenario}: {error}")
+                    for scenario in PUBSUB_SCENARIOS:
+                        if "forge" not in (dialer, listener):
+                            continue
+                        try:
+                            artifacts.append(
+                                run_pair(binaries[dialer], dialer, binaries[listener], listener, scenario, root)
+                            )
+                        except Exception as error:
+                            failures.append(f"{dialer}->{listener} {scenario}: {error}")
+            for dialer, listener in (("forge", "go"), ("go", "forge"), ("forge", "rust"), ("rust", "forge")):
+                for transport, profile in (("tcp", "tcp_noise"), ("tcp-tls", "tcp_tls")):
+                    for scenario in LIVE_SCENARIO_PROFILES[profile]:
+                        try:
+                            artifacts.append(
+                                run_pair_with_transport(
+                                    binaries[dialer], dialer, binaries[listener], listener, scenario, root, transport
+                                )
+                            )
+                        except Exception as error:
+                            failures.append(f"{dialer}->{listener} {transport} {scenario}: {error}")
+            try:
+                artifacts.append(run_pubsub_mixed_mesh_stress(binaries, root))
+            except Exception as error:
+                failures.append(f"{PUBSUB_STRESS_SCENARIO}: {error}")
+            for listener, dialer in (("rust", "forge"), ("forge", "rust")):
+                for scenario in RENDEZVOUS_SCENARIOS:
+                    try:
                         artifacts.append(
                             run_pair(binaries[dialer], dialer, binaries[listener], listener, scenario, root)
                         )
-                except Exception as error:
-                    failures.append(f"{dialer}->{listener} {scenario}: {error}")
-            for scenario in PUBSUB_SCENARIOS:
-                if "forge" not in (dialer, listener):
-                    continue
+                    except Exception as error:
+                        failures.append(f"{dialer}->{listener} {scenario}: {error}")
+            for seeker, routing, hidden in HIDDEN_DHT_PERMUTATIONS:
                 try:
-                    artifacts.append(run_pair(binaries[dialer], dialer, binaries[listener], listener, scenario, root))
+                    artifacts.append(run_hidden_dht_find_peer(binaries, seeker, routing, hidden, root))
                 except Exception as error:
-                    failures.append(f"{dialer}->{listener} {scenario}: {error}")
-    for dialer, listener in (("forge", "go"), ("go", "forge"), ("forge", "rust"), ("rust", "forge")):
-        for transport, profile in (("tcp", "tcp_noise"), ("tcp-tls", "tcp_tls")):
-            for scenario in LIVE_SCENARIO_PROFILES[profile]:
+                    failures.append(f"{seeker}->{routing}->{hidden} {HIDDEN_DHT_SCENARIO}: {error}")
+            for scenario in TOPOLOGY_SCENARIOS:
                 try:
-                    artifacts.append(
-                        run_pair_with_transport(
-                            binaries[dialer], dialer, binaries[listener], listener, scenario, root, transport
+                    artifacts.append(run_topology(binaries["forge"], "forge", scenario, root))
+                except Exception as error:
+                    failures.append(f"forge topology {scenario}: {error}")
+                for source, relay_impl, destination_impl in NATIVE_TOPOLOGIES:
+                    try:
+                        artifacts.append(
+                            run_native_relay_topology(binaries, source, relay_impl, destination_impl, scenario, root)
                         )
-                    )
-                except Exception as error:
-                    failures.append(f"{dialer}->{listener} {transport} {scenario}: {error}")
-    try:
-        artifacts.append(run_pubsub_mixed_mesh_stress(binaries, root))
+                    except Exception as error:
+                        failures.append(
+                            f"{source}->{relay_impl}->{destination_impl} native relay topology {scenario}: {error}"
+                        )
     except Exception as error:
-        failures.append(f"{PUBSUB_STRESS_SCENARIO}: {error}")
-    for listener, dialer in (("rust", "forge"), ("forge", "rust")):
-        for scenario in RENDEZVOUS_SCENARIOS:
-            try:
-                artifacts.append(run_pair(binaries[dialer], dialer, binaries[listener], listener, scenario, root))
-            except Exception as error:
-                failures.append(f"{dialer}->{listener} {scenario}: {error}")
-    for scenario in TOPOLOGY_SCENARIOS:
+        failures.append(f"preflight: {error}")
+    finally:
         try:
-            artifacts.append(run_topology(binaries["forge"], "forge", scenario, root))
-        except Exception as error:
-            failures.append(f"forge topology {scenario}: {error}")
-        for source, relay_impl, destination_impl in NATIVE_TOPOLOGIES:
-            try:
-                artifacts.append(run_native_relay_topology(binaries, source, relay_impl, destination_impl, scenario, root))
-            except Exception as error:
-                failures.append(
-                    f"{source}->{relay_impl}->{destination_impl} native relay topology {scenario}: {error}"
+            end_identity = worktree_identity(forge_root)
+            provenance["forge_worktree"]["end"] = end_identity.as_json()
+            if start_identity is not None:
+                changed = (
+                    start_identity.head != end_identity.head or start_identity.fingerprint != end_identity.fingerprint
                 )
-
-    artifact_path = build_dir / "interop-artifacts.json"
-    artifact_path.write_text(
-        json.dumps(
-            {
-                "artifact_root": str(root),
-                "artifacts": artifacts,
-                "failures": failures,
-            },
-            indent=2,
-        ) +
-        "\n"
-    )
+                provenance["forge_worktree"]["changed_during_run"] = changed
+                if changed:
+                    failures.append(
+                        "Forge worktree changed during interop run: "
+                        f"start={start_identity.as_json()}, end={end_identity.as_json()}"
+                    )
+        except Exception as error:
+            failures.append(f"provenance end fingerprint: {error}")
+        write_artifact(artifact_path, root, provenance, artifacts, failures)
 
     if failures:
         for failure in failures:
             print(f"INTEROP FAILURE: {failure}", file=sys.stderr)
-        print(f"interop artifacts: {build_dir / 'interop-artifacts.json'}", file=sys.stderr)
+        print(f"interop artifacts: {artifact_path}", file=sys.stderr)
         return 1
 
+    if args.provenance_only:
+        print("forge interop fixture provenance ok")
+        return 0
     print(f"live libp2p interop ok: {len(artifacts)} scenarios")
     return 0
 

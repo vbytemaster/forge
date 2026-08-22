@@ -9,6 +9,7 @@ module;
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <boost/asio/awaitable.hpp>
@@ -36,6 +37,7 @@ import forge.net.p2p.relay;
 import forge.net.p2p.resource_manager;
 import forge.net.p2p.scoring;
 import forge.net.p2p.stream;
+import forge.net.p2p.topology;
 import forge.net.transport.limits;
 
 export namespace forge::net::p2p {
@@ -64,6 +66,7 @@ class node {
       discovery::policy discovery{};
       rendezvous::options rendezvous{};
       pubsub::options pubsub{};
+      topology::policy topology{};
    };
 
    struct options {
@@ -151,6 +154,8 @@ class node {
    void protect_peer(peer_id peer, std::string tag = "manual");
    [[nodiscard]] bool unprotect_peer(peer_id peer, std::string tag = "manual");
    [[nodiscard]] bool is_peer_protected(const peer_id& peer) const;
+   void tag_peer(peer_id peer, std::string tag, std::int64_t value);
+   [[nodiscard]] bool untag_peer(peer_id peer, std::string_view tag);
 
    void register_protocol_handler(protocol_id protocol, protocol_handler handler);
    [[nodiscard]] bool unregister_protocol_handler(const protocol_id& protocol);
@@ -200,6 +205,8 @@ class node {
    boost::asio::awaitable<forge::net::p2p::stream> async_open_protocol_stream(peer_id peer, protocol_id protocol);
    boost::asio::awaitable<forge::net::p2p::stream> async_open_protocol_stream(peer_id peer, protocol_id protocol,
                                                                               open_options options);
+   // Preview: begins graceful lifecycle shutdown without tearing down sessions.
+   void request_stop() noexcept;
    boost::asio::awaitable<void> async_stop();
    void stop();
 

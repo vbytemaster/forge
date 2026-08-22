@@ -7,6 +7,7 @@ namespace forge::net::p2p::host_addresses {
 
 enum class source_kind {
    authenticated,
+   routed,
    third_party,
 };
 

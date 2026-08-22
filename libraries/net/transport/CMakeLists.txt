@@ -1,6 +1,7 @@
 add_library(
    forge_net_transport STATIC
    buffer.cpp
+   bounded_frame_buffer.cpp
    connector.cpp
    endpoint.cpp
    frame.cpp

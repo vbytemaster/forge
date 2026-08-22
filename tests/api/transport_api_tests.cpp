@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <deque>
 #include <exception>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -27,6 +28,7 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/use_future.hpp>
 #include <boost/system/error_code.hpp>
 
 import forge.api.core.binding;
@@ -66,53 +68,41 @@ struct total {
    bool operator==(const total&) const = default;
 };
 
-template <typename Stream>
-Stream& operator<<(Stream& stream, const item& value) {
+template <typename Stream> Stream& operator<<(Stream& stream, const item& value) {
    forge::raw::pack(stream, value.value);
    return stream;
 }
 
-template <typename Stream>
-Stream& operator>>(Stream& stream, item& value) {
+template <typename Stream> Stream& operator>>(Stream& stream, item& value) {
    forge::raw::unpack(stream, value.value);
    return stream;
 }
 
-template <typename Stream>
-Stream& operator<<(Stream& stream, const total& value) {
+template <typename Stream> Stream& operator<<(Stream& stream, const total& value) {
    forge::raw::pack(stream, value.value);
    return stream;
 }
 
-template <typename Stream>
-Stream& operator>>(Stream& stream, total& value) {
+template <typename Stream> Stream& operator>>(Stream& stream, total& value) {
    forge::raw::unpack(stream, value.value);
    return stream;
 }
 
-class live_api
-    : public forge::api::core::contract<
-         live_api, forge::api::core::surface::local |
-                      forge::api::core::surface::remote> {
+class live_api : public forge::api::core::contract<live_api, forge::api::core::surface::local |
+                                                                 forge::api::core::surface::remote> {
  public:
    virtual ~live_api() = default;
 
    virtual boost::asio::awaitable<item> echo(item value) = 0;
-   virtual boost::asio::awaitable<void>
-   download(std::uint32_t count,
-            forge::api::core::stream_writer<item> output) = 0;
-   virtual boost::asio::awaitable<total>
-   upload(forge::api::core::stream_reader<item> input) = 0;
-   virtual boost::asio::awaitable<void>
-   exchange(forge::api::core::duplex_stream<item, item> stream) = 0;
+   virtual boost::asio::awaitable<void> download(std::uint32_t count, forge::api::core::stream_writer<item> output) = 0;
+   virtual boost::asio::awaitable<total> upload(forge::api::core::stream_reader<item> input) = 0;
+   virtual boost::asio::awaitable<void> exchange(forge::api::core::duplex_stream<item, item> stream) = 0;
 };
 
 } // namespace transport_live_types
 
-FORGE_API(::transport_live_types::live_api,
-          FORGE_API_CONTRACT("transport.live", 1, 0),
-          FORGE_API_METHOD(echo), FORGE_API_METHOD(download, count),
-          FORGE_API_METHOD(upload), FORGE_API_METHOD(exchange))
+FORGE_API(::transport_live_types::live_api, FORGE_API_CONTRACT("transport.live", 1, 0), FORGE_API_METHOD(echo),
+          FORGE_API_METHOD(download, count), FORGE_API_METHOD(upload), FORGE_API_METHOD(exchange))
 
 namespace {
 
@@ -127,9 +117,7 @@ class live_impl final : public live_api {
       co_return value;
    }
 
-   boost::asio::awaitable<void>
-   download(std::uint32_t count,
-            forge::api::core::stream_writer<item> output) override {
+   boost::asio::awaitable<void> download(std::uint32_t count, forge::api::core::stream_writer<item> output) override {
       download_started.store(true, std::memory_order_release);
       for (auto index = std::uint32_t{0}; index < count; ++index) {
          co_await output.async_write(item{.value = index + 1});
@@ -138,30 +126,22 @@ class live_impl final : public live_api {
       co_await output.async_close();
    }
 
-   boost::asio::awaitable<total>
-   upload(forge::api::core::stream_reader<item> input) override {
+   boost::asio::awaitable<total> upload(forge::api::core::stream_reader<item> input) override {
       upload_started.store(true, std::memory_order_release);
       if (fail_upload.load(std::memory_order_acquire)) {
-         FORGE_THROW_EXCEPTION(
-            forge::api::core::exceptions::protocol_error,
-            "declared upload failure");
+         FORGE_THROW_EXCEPTION(forge::api::core::exceptions::protocol_error, "declared upload failure");
       }
       if (hold_upload_reads.load(std::memory_order_acquire)) {
          const auto executor = co_await boost::asio::this_coro::executor;
          auto delay = boost::asio::steady_timer{executor};
          while (hold_upload_reads.load(std::memory_order_acquire)) {
-            const auto cancellation =
-               co_await boost::asio::this_coro::cancellation_state;
-            if (cancellation.cancelled() !=
-                boost::asio::cancellation_type::none) {
-               FORGE_THROW_EXCEPTION(
-                  forge::api::core::exceptions::cancelled,
-                  "held upload was cancelled");
+            const auto cancellation = co_await boost::asio::this_coro::cancellation_state;
+            if (cancellation.cancelled() != boost::asio::cancellation_type::none) {
+               FORGE_THROW_EXCEPTION(forge::api::core::exceptions::cancelled, "held upload was cancelled");
             }
             delay.expires_after(std::chrono::milliseconds{1});
             auto error = boost::system::error_code{};
-            co_await delay.async_wait(boost::asio::redirect_error(
-               boost::asio::use_awaitable, error));
+            co_await delay.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
          }
       }
       auto sum = std::uint32_t{0};
@@ -184,8 +164,7 @@ class live_impl final : public live_api {
       co_return total{.value = sum};
    }
 
-   boost::asio::awaitable<void>
-   exchange(forge::api::core::duplex_stream<item, item> stream) override {
+   boost::asio::awaitable<void> exchange(forge::api::core::duplex_stream<item, item> stream) override {
       while (auto value = co_await stream.async_read()) {
          co_await stream.async_write(item{.value = value->value * 2});
          if (return_exchange_after_first.load(std::memory_order_acquire)) {
@@ -218,8 +197,7 @@ class live_impl final : public live_api {
    std::atomic_uint32_t upload_completions{0};
 };
 
-class fake_stream final
-    : public forge::net::transport::detail::stream_concept {
+class fake_stream final : public forge::net::transport::detail::stream_concept {
  public:
    [[nodiscard]] bool valid() const noexcept override {
       const auto lock = std::scoped_lock{mutex_};
@@ -230,13 +208,11 @@ class fake_stream final
       return 7;
    }
 
-   boost::asio::awaitable<void>
-   async_write(std::span<const std::uint8_t> value) override {
+   boost::asio::awaitable<void> async_write(std::span<const std::uint8_t> value) override {
       co_await deliver(bytes{value.begin(), value.end()});
    }
 
-   boost::asio::awaitable<void>
-   async_write_chunk(forge::net::transport::chunk value) override {
+   boost::asio::awaitable<void> async_write_chunk(forge::net::transport::chunk value) override {
       co_await deliver(std::move(value).into_vector());
    }
 
@@ -244,8 +220,7 @@ class fake_stream final
       co_return (co_await async_read_chunk()).into_vector();
    }
 
-   boost::asio::awaitable<forge::net::transport::chunk>
-   async_read_chunk() override {
+   boost::asio::awaitable<forge::net::transport::chunk> async_read_chunk() override {
       const auto executor = co_await boost::asio::this_coro::executor;
       while (true) {
          std::shared_ptr<boost::asio::steady_timer> wake;
@@ -258,20 +233,16 @@ class fake_stream final
                co_return forge::net::transport::chunk{std::move(value)};
             }
             if (!open_) {
-               FORGE_THROW_EXCEPTION(
-                  forge::net::transport::exceptions::closed,
-                  "fake API transport stream closed");
+               FORGE_THROW_EXCEPTION(forge::net::transport::exceptions::closed, "fake API transport stream closed");
             }
             if (!read_wake_) {
-               read_wake_ =
-                  std::make_shared<boost::asio::steady_timer>(executor);
+               read_wake_ = std::make_shared<boost::asio::steady_timer>(executor);
             }
             wake = read_wake_;
             wake->expires_at(boost::asio::steady_timer::time_point::max());
          }
          auto error = boost::system::error_code{};
-         co_await wake->async_wait(boost::asio::redirect_error(
-            boost::asio::use_awaitable, error));
+         co_await wake->async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
       }
    }
 
@@ -344,27 +315,21 @@ class fake_stream final
       while (hold_writes_.load(std::memory_order_acquire)) {
          delay.expires_after(std::chrono::milliseconds{1});
          auto error = boost::system::error_code{};
-         co_await delay.async_wait(boost::asio::redirect_error(
-            boost::asio::use_awaitable, error));
+         co_await delay.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
       }
       {
          const auto lock = std::scoped_lock{mutex_};
          if (!open_) {
             write_active_.store(false, std::memory_order_release);
-            FORGE_THROW_EXCEPTION(
-               forge::net::transport::exceptions::closed,
-               "fake API transport stream closed");
+            FORGE_THROW_EXCEPTION(forge::net::transport::exceptions::closed, "fake API transport stream closed");
          }
          writes_.push_back(value);
       }
       if (auto target = peer_.lock()) {
          const auto split = std::min<std::size_t>(3, value.size());
-         target->push(bytes{value.begin(), value.begin() +
-                                          static_cast<std::ptrdiff_t>(split)});
+         target->push(bytes{value.begin(), value.begin() + static_cast<std::ptrdiff_t>(split)});
          if (split < value.size()) {
-            target->push(bytes{value.begin() +
-                                  static_cast<std::ptrdiff_t>(split),
-                               value.end()});
+            target->push(bytes{value.begin() + static_cast<std::ptrdiff_t>(split), value.end()});
          }
       }
       write_active_.store(false, std::memory_order_release);
@@ -396,8 +361,7 @@ class fake_stream final
 };
 
 struct service_state {
-   explicit service_state(boost::asio::any_io_executor executor)
-       : wake{std::move(executor)} {
+   explicit service_state(boost::asio::any_io_executor executor) : wake{std::move(executor)} {
       wake.expires_at(boost::asio::steady_timer::time_point::max());
    }
 
@@ -406,15 +370,12 @@ struct service_state {
    bool done = false;
 };
 
-[[nodiscard]] forge::net::transport::stream
-make_stream(const std::shared_ptr<fake_stream>& model) {
+[[nodiscard]] forge::net::transport::stream make_stream(const std::shared_ptr<fake_stream>& model) {
    return forge::net::transport::detail::stream_access::make(model);
 }
 
-[[nodiscard]] std::pair<forge::net::transport::stream,
-                        forge::net::transport::stream>
-make_stream_pair(const std::shared_ptr<fake_stream>& client,
-                 const std::shared_ptr<fake_stream>& server) {
+[[nodiscard]] std::pair<forge::net::transport::stream, forge::net::transport::stream>
+make_stream_pair(const std::shared_ptr<fake_stream>& client, const std::shared_ptr<fake_stream>& server) {
    client->connect(server);
    server->connect(client);
    return {make_stream(client), make_stream(server)};
@@ -424,19 +385,17 @@ make_stream_pair(const std::shared_ptr<fake_stream>& client,
    return forge::net::transport::encode_frame(forge::raw::pack(value));
 }
 
-[[nodiscard]] forge::api::core::frame hello_frame(
-   forge::api::core::session_hello value = {}) {
+[[nodiscard]] forge::api::core::frame hello_frame(forge::api::core::session_hello value = {}) {
    return forge::api::core::frame{
-      .kind = forge::api::core::frame_kind::session_hello,
-      .id = {},
-      .codec = {.value = "forge.raw"},
-      .payload = forge::raw::pack(value),
+       .kind = forge::api::core::frame_kind::session_hello,
+       .id = {},
+       .codec = {.value = "forge.raw"},
+       .payload = forge::raw::pack(value),
    };
 }
 
 template <typename Error>
-[[nodiscard]] bool session_rejects(std::vector<bytes> inbound,
-                                   forge::api::stream::options options = {}) {
+[[nodiscard]] bool session_rejects(std::vector<bytes> inbound, forge::api::stream::options options = {}) {
    auto runtime = forge::asio::runtime{};
    auto model = std::make_shared<fake_stream>();
    for (auto& frame : inbound) {
@@ -444,14 +403,13 @@ template <typename Error>
    }
    auto live = forge::api::stream::session{make_stream(model), options};
    try {
-      static_cast<void>(forge::asio::blocking::run(
-         runtime, live.async_call(forge::api::core::frame{
-                     .kind = forge::api::core::frame_kind::request,
-                     .api = {.id = {"transport.live"}, .major = 1},
-                     .method = "echo",
-                     .codec = {.value = "forge.raw"},
-                     .payload = forge::raw::pack(item{.value = 1}),
-                  })));
+      static_cast<void>(forge::asio::blocking::run(runtime, live.async_call(forge::api::core::frame{
+                                                                .kind = forge::api::core::frame_kind::request,
+                                                                .api = {.id = {"transport.live"}, .major = 1},
+                                                                .method = "echo",
+                                                                .codec = {.value = "forge.raw"},
+                                                                .payload = forge::raw::pack(item{.value = 1}),
+                                                            })));
    } catch (const Error&) {
       return true;
    } catch (...) {
@@ -461,45 +419,40 @@ template <typename Error>
 }
 
 template <typename Error>
-[[nodiscard]] bool server_stream_rejects(
-   std::vector<forge::api::core::frame> inbound,
-   forge::api::stream::options options = {}) {
+[[nodiscard]] bool server_stream_rejects(std::vector<forge::api::core::frame> inbound,
+                                         forge::api::stream::options options = {}) {
    auto runtime = forge::asio::runtime{};
    auto model = std::make_shared<fake_stream>();
    model->push(pack_api_frame(hello_frame()));
    boost::asio::co_spawn(
-      runtime.context(),
-      [model, inbound = std::move(inbound)]() mutable
-         -> boost::asio::awaitable<void> {
-         co_await wait_until([model] { return model->write_count() >= 3U; },
-                             std::chrono::milliseconds{250});
-         for (auto& frame : inbound) {
-            model->push(pack_api_frame(frame));
-         }
-      },
-      boost::asio::detached);
+       runtime.context(),
+       [model, inbound = std::move(inbound)]() mutable -> boost::asio::awaitable<void> {
+          co_await wait_until([model] { return model->write_count() >= 3U; }, std::chrono::milliseconds{250});
+          for (auto& frame : inbound) {
+             model->push(pack_api_frame(frame));
+          }
+       },
+       boost::asio::detached);
 
-   auto output = forge::api::core::detail::make_local_stream_pair(
-      runtime.context().get_executor(), options.max_item_size,
-      options.initial_window_items, options.max_buffered_bytes);
+   auto output =
+       forge::api::core::detail::make_local_stream_pair(runtime.context().get_executor(), options.max_item_size,
+                                                        options.initial_window_items, options.max_buffered_bytes);
    auto live = forge::api::stream::session{make_stream(model), options};
    const auto api = live_api::describe();
    const auto* descriptor = forge::api::core::find_method(api, "download");
    BOOST_REQUIRE(descriptor != nullptr);
    try {
-      static_cast<void>(forge::asio::blocking::run(
-         runtime,
-         live.async_stream_call(
-            forge::api::core::frame{
-               .kind = forge::api::core::frame_kind::request,
-               .api = live_api::ref(),
-               .method = "download",
-               .codec = {.value = "forge.raw"},
-               .payload = forge::raw::pack(std::uint32_t{1}),
-            },
-            forge::api::core::method_kind::server_stream, nullptr,
-            output.writer, forge::api::stream::call_options{.id = {.value = 1}},
-            *descriptor)));
+      static_cast<void>(
+          forge::asio::blocking::run(runtime, live.async_stream_call(
+                                                  forge::api::core::frame{
+                                                      .kind = forge::api::core::frame_kind::request,
+                                                      .api = live_api::ref(),
+                                                      .method = "download",
+                                                      .codec = {.value = "forge.raw"},
+                                                      .payload = forge::raw::pack(std::uint32_t{1}),
+                                                  },
+                                                  forge::api::core::method_kind::server_stream, nullptr, output.writer,
+                                                  forge::api::stream::call_options{.id = {.value = 1}}, *descriptor)));
    } catch (const Error&) {
       return true;
    } catch (...) {
@@ -508,17 +461,14 @@ template <typename Error>
    return false;
 }
 
-[[nodiscard]] forge::api::core::frame
-unpack_api_frame(const bytes& value) {
+[[nodiscard]] forge::api::core::frame unpack_api_frame(const bytes& value) {
    const auto decoded = forge::net::transport::decode_frame(value);
-   BOOST_REQUIRE(decoded.status ==
-                 forge::net::transport::frame_decode_status::complete);
+   BOOST_REQUIRE(decoded.status == forge::net::transport::frame_decode_status::complete);
    return forge::raw::unpack_exact<forge::api::core::frame>(decoded.payload);
 }
 
-[[nodiscard]] std::size_t count_written_frames(
-   const std::shared_ptr<fake_stream>& stream,
-   forge::api::core::frame_kind kind, const std::string& method) {
+[[nodiscard]] std::size_t count_written_frames(const std::shared_ptr<fake_stream>& stream,
+                                               forge::api::core::frame_kind kind, const std::string& method) {
    auto count = std::size_t{0};
    const auto size = stream->write_count();
    for (auto index = std::size_t{0}; index < size; ++index) {
@@ -530,32 +480,28 @@ unpack_api_frame(const bytes& value) {
    return count;
 }
 
-[[nodiscard]] std::shared_ptr<service_state>
-start_service(boost::asio::any_io_executor executor,
-              boost::asio::awaitable<void> operation) {
+[[nodiscard]] std::shared_ptr<service_state> start_service(boost::asio::any_io_executor executor,
+                                                           boost::asio::awaitable<void> operation) {
    auto state = std::make_shared<service_state>(executor);
    boost::asio::co_spawn(
-      executor,
-      [state, operation = std::move(operation)]() mutable
-         -> boost::asio::awaitable<void> {
-         try {
-            co_await std::move(operation);
-         } catch (...) {
-            state->error = std::current_exception();
-         }
-         state->done = true;
-         state->wake.cancel();
-      },
-      boost::asio::detached);
+       executor,
+       [state, operation = std::move(operation)]() mutable -> boost::asio::awaitable<void> {
+          try {
+             co_await std::move(operation);
+          } catch (...) {
+             state->error = std::current_exception();
+          }
+          state->done = true;
+          state->wake.cancel();
+       },
+       boost::asio::detached);
    return state;
 }
 
-boost::asio::awaitable<void>
-wait_service(const std::shared_ptr<service_state>& state) {
+boost::asio::awaitable<void> wait_service(const std::shared_ptr<service_state>& state) {
    while (!state->done) {
       auto error = boost::system::error_code{};
-      co_await state->wake.async_wait(boost::asio::redirect_error(
-         boost::asio::use_awaitable, error));
+      co_await state->wake.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
    }
    if (state->error) {
       std::rethrow_exception(state->error);
@@ -563,35 +509,30 @@ wait_service(const std::shared_ptr<service_state>& state) {
 }
 
 template <typename Predicate>
-boost::asio::awaitable<void>
-wait_until(Predicate predicate, std::chrono::milliseconds timeout) {
+boost::asio::awaitable<void> wait_until(Predicate predicate, std::chrono::milliseconds timeout) {
    const auto executor = co_await boost::asio::this_coro::executor;
    auto delay = boost::asio::steady_timer{executor};
    const auto deadline = std::chrono::steady_clock::now() + timeout;
    while (!predicate()) {
-      BOOST_REQUIRE_MESSAGE(std::chrono::steady_clock::now() < deadline,
-                            "timed out waiting for API session state");
+      BOOST_REQUIRE_MESSAGE(std::chrono::steady_clock::now() < deadline, "timed out waiting for API session state");
       delay.expires_after(std::chrono::milliseconds{1});
       co_await delay.async_wait(boost::asio::use_awaitable);
    }
 }
 
-using exchange_call =
-   forge::api::core::bidirectional_stream_call<item, item>;
+using exchange_call = forge::api::core::bidirectional_stream_call<item, item>;
 
-boost::asio::awaitable<void> produce_until_stopped(
-   const std::shared_ptr<exchange_call>& call,
-   const std::shared_ptr<std::atomic_bool>& stop) {
+boost::asio::awaitable<void> produce_until_stopped(const std::shared_ptr<exchange_call>& call,
+                                                   const std::shared_ptr<std::atomic_bool>& stop) {
    auto value = std::uint32_t{1};
    while (!stop->load(std::memory_order_acquire)) {
       co_await call->async_write(item{.value = value++});
    }
 }
 
-boost::asio::awaitable<void> consume_until_closed(
-   const std::shared_ptr<exchange_call>& call,
-   const std::shared_ptr<std::atomic_bool>& stop,
-   const std::shared_ptr<std::atomic_bool>& observed) {
+boost::asio::awaitable<void> consume_until_closed(const std::shared_ptr<exchange_call>& call,
+                                                  const std::shared_ptr<std::atomic_bool>& stop,
+                                                  const std::shared_ptr<std::atomic_bool>& observed) {
    const auto first = co_await call->async_read();
    BOOST_REQUIRE(first.has_value());
    observed->store(true, std::memory_order_release);
@@ -608,153 +549,137 @@ BOOST_AUTO_TEST_CASE(session_rejects_incompatible_hello_before_request) {
    auto runtime = forge::asio::runtime{};
    auto model = std::make_shared<fake_stream>();
    model->push(pack_api_frame(forge::api::core::frame{
-      .kind = forge::api::core::frame_kind::session_hello,
-      .id = {},
-      .codec = {.value = "forge.raw"},
-      .payload = forge::raw::pack(forge::api::core::session_hello{
-         .version = {.major = 1, .minor = 0},
-      }),
+       .kind = forge::api::core::frame_kind::session_hello,
+       .id = {},
+       .codec = {.value = "forge.raw"},
+       .payload = forge::raw::pack(forge::api::core::session_hello{
+           .version = {.major = 1, .minor = 0},
+       }),
    }));
 
    auto live = forge::api::stream::session{make_stream(model)};
    auto rejected = false;
    try {
-      static_cast<void>(forge::asio::blocking::run(
-         runtime, live.async_call(forge::api::core::frame{
-                     .kind = forge::api::core::frame_kind::request,
-                     .api = {.id = {"transport.live"}, .major = 1},
-                     .method = "echo",
-                     .codec = {.value = "forge.raw"},
-                     .payload = forge::raw::pack(item{.value = 1}),
-                  })));
+      static_cast<void>(forge::asio::blocking::run(runtime, live.async_call(forge::api::core::frame{
+                                                                .kind = forge::api::core::frame_kind::request,
+                                                                .api = {.id = {"transport.live"}, .major = 1},
+                                                                .method = "echo",
+                                                                .codec = {.value = "forge.raw"},
+                                                                .payload = forge::raw::pack(item{.value = 1}),
+                                                            })));
    } catch (const forge::api::core::exceptions::incompatible_version&) {
       rejected = true;
    }
    BOOST_TEST(rejected);
    BOOST_REQUIRE(model->write_count() >= 1U);
    BOOST_TEST(static_cast<int>(unpack_api_frame(model->written(0)).kind) ==
-              static_cast<int>(
-                 forge::api::core::frame_kind::session_hello));
-   const auto local_hello = forge::raw::unpack_exact<
-      forge::api::core::session_hello>(
-      unpack_api_frame(model->written(0)).payload);
+              static_cast<int>(forge::api::core::frame_kind::session_hello));
+   const auto local_hello =
+       forge::raw::unpack_exact<forge::api::core::session_hello>(unpack_api_frame(model->written(0)).payload);
    BOOST_TEST(local_hello.limits.max_inflight_calls == 16U);
 }
 
 BOOST_AUTO_TEST_CASE(session_rejects_application_data_before_hello) {
    auto request = forge::api::core::frame{
-      .kind = forge::api::core::frame_kind::request,
-      .id = {.value = 9},
-      .api = {.id = {"transport.live"}, .major = 1},
-      .method = "echo",
-      .codec = {.value = "forge.raw"},
-      .payload = forge::raw::pack(item{.value = 1}),
+       .kind = forge::api::core::frame_kind::request,
+       .id = {.value = 9},
+       .api = {.id = {"transport.live"}, .major = 1},
+       .method = "echo",
+       .codec = {.value = "forge.raw"},
+       .payload = forge::raw::pack(item{.value = 1}),
    };
-   BOOST_TEST((session_rejects<forge::api::core::exceptions::protocol_error>(
-      {pack_api_frame(request)})));
+   BOOST_TEST((session_rejects<forge::api::core::exceptions::protocol_error>({pack_api_frame(request)})));
 }
 
 BOOST_AUTO_TEST_CASE(session_rejects_duplicate_or_non_control_hello) {
    auto duplicate = hello_frame();
    BOOST_TEST((session_rejects<forge::api::core::exceptions::protocol_error>(
-      {pack_api_frame(hello_frame()), pack_api_frame(duplicate)})));
+       {pack_api_frame(hello_frame()), pack_api_frame(duplicate)})));
 
    auto non_control = hello_frame();
    non_control.id.value = 3;
-   BOOST_TEST((session_rejects<forge::api::core::exceptions::protocol_error>(
-      {pack_api_frame(non_control)})));
+   BOOST_TEST((session_rejects<forge::api::core::exceptions::protocol_error>({pack_api_frame(non_control)})));
 
    BOOST_TEST((session_rejects<forge::api::core::exceptions::protocol_error>(
-      {pack_api_frame(hello_frame()),
-       pack_api_frame(forge::api::core::frame{
-          .kind = forge::api::core::frame_kind::cancel,
-          .id = {},
-          .codec = {.value = "forge.raw"},
-       })})));
+       {pack_api_frame(hello_frame()), pack_api_frame(forge::api::core::frame{
+                                           .kind = forge::api::core::frame_kind::cancel,
+                                           .id = {},
+                                           .codec = {.value = "forge.raw"},
+                                       })})));
 }
 
 BOOST_AUTO_TEST_CASE(session_rejects_incompatible_codec_capabilities_and_limits) {
    auto codec = hello_frame();
    codec.codec.value = "forge.json";
-   BOOST_TEST((session_rejects<forge::api::core::exceptions::protocol_error>(
-      {pack_api_frame(codec)})));
+   BOOST_TEST((session_rejects<forge::api::core::exceptions::protocol_error>({pack_api_frame(codec)})));
 
    auto capabilities = forge::api::core::session_hello{};
-   capabilities.capabilities.bits =
-      static_cast<std::uint64_t>(forge::api::core::capability::unary);
+   capabilities.capabilities.bits = static_cast<std::uint64_t>(forge::api::core::capability::unary);
    BOOST_TEST((session_rejects<forge::api::core::exceptions::incompatible_version>(
-      {pack_api_frame(hello_frame(capabilities))})));
+       {pack_api_frame(hello_frame(capabilities))})));
 
    auto limits = forge::api::core::session_hello{};
    limits.limits.max_frame_bytes = 1U;
    limits.limits.max_item_bytes = 2U;
-   BOOST_TEST((session_rejects<forge::api::core::exceptions::incompatible_version>(
-      {pack_api_frame(hello_frame(limits))})));
+   BOOST_TEST(
+       (session_rejects<forge::api::core::exceptions::incompatible_version>({pack_api_frame(hello_frame(limits))})));
 }
 
 BOOST_AUTO_TEST_CASE(session_rejects_malformed_trailing_and_oversized_frames) {
    auto malformed = forge::net::transport::encode_frame(bytes{0xffU});
-   BOOST_TEST((session_rejects<forge::api::core::exceptions::protocol_error>(
-      {std::move(malformed)})));
+   BOOST_TEST((session_rejects<forge::api::core::exceptions::protocol_error>({std::move(malformed)})));
 
    auto trailing_payload = forge::raw::pack(hello_frame());
    trailing_payload.push_back(0xffU);
    BOOST_TEST((session_rejects<forge::api::core::exceptions::protocol_error>(
-      {forge::net::transport::encode_frame(trailing_payload)})));
+       {forge::net::transport::encode_frame(trailing_payload)})));
 
    auto oversized = bytes{0x00U, 0x00U, 0x01U, 0x01U};
-   BOOST_TEST((session_rejects<forge::api::core::exceptions::resource_exhausted>(
-      {std::move(oversized)},
-      forge::api::stream::options{
-         .max_frame_size = 256,
-         .max_item_size = 128,
-         .initial_window_bytes = 128,
-         .max_buffered_bytes = 512,
-      })));
+   BOOST_TEST((session_rejects<forge::api::core::exceptions::resource_exhausted>({std::move(oversized)},
+                                                                                 forge::api::stream::options{
+                                                                                     .max_frame_size = 256,
+                                                                                     .max_item_size = 128,
+                                                                                     .initial_window_bytes = 128,
+                                                                                     .max_buffered_bytes = 512,
+                                                                                 })));
 }
 
 BOOST_AUTO_TEST_CASE(session_rejects_credit_direction_and_item_limit_violations) {
    auto item_before_credit = forge::api::core::frame{
-      .kind = forge::api::core::frame_kind::stream_item,
-      .id = {.value = 1},
-      .api = live_api::ref(),
-      .method = "download",
-      .codec = {.value = "forge.raw"},
-      .payload = forge::raw::pack(item{.value = 1}),
+       .kind = forge::api::core::frame_kind::stream_item,
+       .id = {.value = 1},
+       .api = live_api::ref(),
+       .method = "download",
+       .codec = {.value = "forge.raw"},
+       .payload = forge::raw::pack(item{.value = 1}),
    };
-   BOOST_TEST((server_stream_rejects<
-               forge::api::core::exceptions::resource_exhausted>(
-      {item_before_credit, item_before_credit},
-      forge::api::stream::options{
-         .initial_window_items = 1,
-         .initial_window_bytes = 4,
-      })));
+   BOOST_TEST((server_stream_rejects<forge::api::core::exceptions::resource_exhausted>(
+       {item_before_credit, item_before_credit}, forge::api::stream::options{
+                                                     .initial_window_items = 1,
+                                                     .initial_window_bytes = 4,
+                                                 })));
 
    auto wrong_direction = forge::api::core::frame{
-      .kind = forge::api::core::frame_kind::stream_end,
-      .id = {.value = 1},
-      .api = live_api::ref(),
-      .method = "download",
-      .codec = {.value = "forge.raw"},
-      .payload = forge::raw::pack(forge::api::core::stream_end{
-         .direction = forge::api::core::stream_direction::input,
-      }),
+       .kind = forge::api::core::frame_kind::stream_end,
+       .id = {.value = 1},
+       .api = live_api::ref(),
+       .method = "download",
+       .codec = {.value = "forge.raw"},
+       .payload = forge::raw::pack(forge::api::core::stream_end{
+           .direction = forge::api::core::stream_direction::input,
+       }),
    };
-   BOOST_TEST((server_stream_rejects<
-               forge::api::core::exceptions::protocol_error>(
-      {wrong_direction})));
+   BOOST_TEST((server_stream_rejects<forge::api::core::exceptions::protocol_error>({wrong_direction})));
 
    auto oversized_item = item_before_credit;
    oversized_item.payload.resize(33U, 0xffU);
-   BOOST_TEST((server_stream_rejects<
-               forge::api::core::exceptions::protocol_error>(
-      {oversized_item},
-      forge::api::stream::options{
-         .max_frame_size = 256,
-         .max_item_size = 32,
-         .initial_window_bytes = 32,
-         .max_buffered_bytes = 256,
-      })));
+   BOOST_TEST((server_stream_rejects<forge::api::core::exceptions::protocol_error>({oversized_item},
+                                                                                   forge::api::stream::options{
+                                                                                       .max_frame_size = 256,
+                                                                                       .max_item_size = 32,
+                                                                                       .initial_window_bytes = 32,
+                                                                                       .max_buffered_bytes = 256,
+                                                                                   })));
 }
 
 BOOST_AUTO_TEST_CASE(transport_session_runs_all_method_kinds_incrementally) {
@@ -763,42 +688,33 @@ BOOST_AUTO_TEST_CASE(transport_session_runs_all_method_kinds_incrementally) {
       const auto executor = co_await boost::asio::this_coro::executor;
       auto client_model = std::make_shared<fake_stream>();
       auto server_model = std::make_shared<fake_stream>();
-      auto [client_stream, server_stream] =
-         make_stream_pair(client_model, server_model);
+      auto [client_stream, server_stream] = make_stream_pair(client_model, server_model);
 
       auto implementation = std::make_shared<live_impl>();
       auto registry = forge::api::core::registry{};
       registry.install<live_api>(live_api::describe(), implementation);
-      auto service = start_service(
-         executor,
-         forge::api::transport::serve_stream(
-            std::move(server_stream),
-            forge::api::core::binding().serve(registry).build(),
-            forge::api::transport::options{
-               .initial_window_items = 1,
-               .initial_window_bytes = 64,
-               .disconnect_grace = std::chrono::milliseconds{50},
-            }));
-      auto connection = forge::api::transport::connection{
-         std::move(client_stream),
-         forge::api::transport::options{
-            .initial_window_items = 1,
-            .initial_window_bytes = 64,
-            .disconnect_grace = std::chrono::milliseconds{50},
-         }};
+      auto service =
+          start_service(executor, forge::api::transport::serve_stream(
+                                      std::move(server_stream), forge::api::core::binding().serve(registry).build(),
+                                      forge::api::transport::options{
+                                          .initial_window_items = 1,
+                                          .initial_window_bytes = 64,
+                                          .disconnect_grace = std::chrono::milliseconds{50},
+                                      }));
+      auto connection = forge::api::transport::connection{std::move(client_stream),
+                                                          forge::api::transport::options{
+                                                              .initial_window_items = 1,
+                                                              .initial_window_bytes = 64,
+                                                              .disconnect_grace = std::chrono::milliseconds{50},
+                                                          }};
       auto remote = co_await connection.get_remote_api<live_api>();
 
       BOOST_TEST((co_await remote->echo(item{.value = 9})).value == 9U);
 
       auto download = co_await remote.async_open<&live_api::download>(4U);
-      co_await wait_until(
-         [implementation] {
-            return implementation->download_started.load(
-               std::memory_order_acquire);
-         },
-         std::chrono::milliseconds{250});
-      BOOST_TEST(implementation->produced.load(std::memory_order_acquire) <
-                 4U);
+      co_await wait_until([implementation] { return implementation->download_started.load(std::memory_order_acquire); },
+                          std::chrono::milliseconds{250});
+      BOOST_TEST(implementation->produced.load(std::memory_order_acquire) < 4U);
       for (auto expected = std::uint32_t{1}; expected <= 4; ++expected) {
          const auto value = co_await download.async_read();
          BOOST_REQUIRE(value.has_value());
@@ -807,10 +723,8 @@ BOOST_AUTO_TEST_CASE(transport_session_runs_all_method_kinds_incrementally) {
       BOOST_TEST(!(co_await download.async_read()).has_value());
       co_await download.async_finish();
 
-      auto fair_first =
-         co_await remote.async_open<&live_api::download>(2U);
-      auto fair_second =
-         co_await remote.async_open<&live_api::download>(2U);
+      auto fair_first = co_await remote.async_open<&live_api::download>(2U);
+      auto fair_second = co_await remote.async_open<&live_api::download>(2U);
       auto fair_first_one = co_await fair_first.async_read();
       auto fair_second_one = co_await fair_second.async_read();
       auto fair_first_two = co_await fair_first.async_read();
@@ -845,12 +759,10 @@ BOOST_AUTO_TEST_CASE(transport_session_runs_all_method_kinds_incrementally) {
 
       BOOST_REQUIRE(client_model->write_count() >= 1U);
       BOOST_REQUIRE(server_model->write_count() >= 1U);
-      BOOST_TEST(
-         static_cast<int>(unpack_api_frame(client_model->written(0)).kind) ==
-         static_cast<int>(forge::api::core::frame_kind::session_hello));
-      BOOST_TEST(
-         static_cast<int>(unpack_api_frame(server_model->written(0)).kind) ==
-         static_cast<int>(forge::api::core::frame_kind::session_hello));
+      BOOST_TEST(static_cast<int>(unpack_api_frame(client_model->written(0)).kind) ==
+                 static_cast<int>(forge::api::core::frame_kind::session_hello));
+      BOOST_TEST(static_cast<int>(unpack_api_frame(server_model->written(0)).kind) ==
+                 static_cast<int>(forge::api::core::frame_kind::session_hello));
 
       co_await connection.async_close();
       co_await wait_service(service);
@@ -864,39 +776,31 @@ BOOST_AUTO_TEST_CASE(duplex_data_progresses_under_continuous_window_updates) {
       const auto executor = co_await boost::asio::this_coro::executor;
       auto client_model = std::make_shared<fake_stream>();
       auto server_model = std::make_shared<fake_stream>();
-      auto [client_stream, server_stream] =
-         make_stream_pair(client_model, server_model);
+      auto [client_stream, server_stream] = make_stream_pair(client_model, server_model);
 
       auto implementation = std::make_shared<live_impl>();
       auto registry = forge::api::core::registry{};
       registry.install<live_api>(live_api::describe(), implementation);
       const auto options = forge::api::transport::options{
-         .max_item_size = sizeof(std::uint32_t),
-         .initial_window_items = 1,
-         .initial_window_bytes = sizeof(std::uint32_t),
-         .disconnect_grace = std::chrono::milliseconds{50},
+          .max_item_size = sizeof(std::uint32_t),
+          .initial_window_items = 1,
+          .initial_window_bytes = sizeof(std::uint32_t),
+          .disconnect_grace = std::chrono::milliseconds{50},
       };
       auto service = start_service(
-         executor,
-         forge::api::transport::serve_stream(
-            std::move(server_stream),
-            forge::api::core::binding().serve(registry).build(), options));
-      auto connection = forge::api::transport::connection{
-         std::move(client_stream), options};
+          executor, forge::api::transport::serve_stream(std::move(server_stream),
+                                                        forge::api::core::binding().serve(registry).build(), options));
+      auto connection = forge::api::transport::connection{std::move(client_stream), options};
       auto remote = co_await connection.get_remote_api<live_api>();
-      auto exchange = std::make_shared<exchange_call>(
-         co_await remote.async_open<&live_api::exchange>());
+      auto exchange = std::make_shared<exchange_call>(co_await remote.async_open<&live_api::exchange>());
 
       auto stop = std::make_shared<std::atomic_bool>(false);
       auto observed = std::make_shared<std::atomic_bool>(false);
-      auto producer = start_service(
-         executor, produce_until_stopped(exchange, stop));
-      auto consumer = start_service(
-         executor, consume_until_closed(exchange, stop, observed));
+      auto producer = start_service(executor, produce_until_stopped(exchange, stop));
+      auto consumer = start_service(executor, consume_until_closed(exchange, stop, observed));
 
-      co_await wait_until(
-         [observed] { return observed->load(std::memory_order_acquire); },
-         std::chrono::milliseconds{500});
+      co_await wait_until([observed] { return observed->load(std::memory_order_acquire); },
+                          std::chrono::milliseconds{500});
       co_await wait_service(producer);
       co_await exchange->async_close();
       co_await wait_service(consumer);
@@ -913,28 +817,23 @@ BOOST_AUTO_TEST_CASE(active_ingress_drains_are_not_evicted_as_tombstones) {
       const auto executor = co_await boost::asio::this_coro::executor;
       auto client_model = std::make_shared<fake_stream>();
       auto server_model = std::make_shared<fake_stream>();
-      auto [client_stream, server_stream] =
-         make_stream_pair(client_model, server_model);
+      auto [client_stream, server_stream] = make_stream_pair(client_model, server_model);
 
       auto implementation = std::make_shared<live_impl>();
-      implementation->return_upload_after_first.store(
-         true, std::memory_order_release);
+      implementation->return_upload_after_first.store(true, std::memory_order_release);
       auto registry = forge::api::core::registry{};
       registry.install<live_api>(live_api::describe(), implementation);
       const auto options = forge::api::transport::options{
-         .max_item_size = sizeof(std::uint32_t),
-         .initial_window_items = 16,
-         .initial_window_bytes = 64,
-         .disconnect_grace = std::chrono::milliseconds{50},
-         .max_tombstones = 1,
+          .max_item_size = sizeof(std::uint32_t),
+          .initial_window_items = 16,
+          .initial_window_bytes = 64,
+          .disconnect_grace = std::chrono::milliseconds{50},
+          .max_tombstones = 1,
       };
       auto service = start_service(
-         executor,
-         forge::api::transport::serve_stream(
-            std::move(server_stream),
-            forge::api::core::binding().serve(registry).build(), options));
-      auto connection = forge::api::transport::connection{
-         std::move(client_stream), options};
+          executor, forge::api::transport::serve_stream(std::move(server_stream),
+                                                        forge::api::core::binding().serve(registry).build(), options));
+      auto connection = forge::api::transport::connection{std::move(client_stream), options};
       auto remote = co_await connection.get_remote_api<live_api>();
 
       auto calls = std::vector<forge::api::core::client_stream_call<item, total>>{};
@@ -964,56 +863,43 @@ BOOST_AUTO_TEST_CASE(early_half_close_before_terminal_releases_inflight_slot) {
       const auto executor = co_await boost::asio::this_coro::executor;
       auto client_model = std::make_shared<fake_stream>();
       auto server_model = std::make_shared<fake_stream>();
-      auto [client_stream, server_stream] =
-         make_stream_pair(client_model, server_model);
+      auto [client_stream, server_stream] = make_stream_pair(client_model, server_model);
 
       auto implementation = std::make_shared<live_impl>();
-      implementation->return_upload_after_first.store(
-         true, std::memory_order_release);
+      implementation->return_upload_after_first.store(true, std::memory_order_release);
       auto registry = forge::api::core::registry{};
       registry.install<live_api>(live_api::describe(), implementation);
       const auto options = forge::api::transport::options{
-         .max_inflight = 1,
-         .max_item_size = sizeof(std::uint32_t),
-         .initial_window_items = 1,
-         .initial_window_bytes = sizeof(std::uint32_t),
-         .max_buffered_bytes = sizeof(std::uint32_t),
-         .disconnect_grace = std::chrono::milliseconds{50},
+          .max_inflight = 1,
+          .max_item_size = sizeof(std::uint32_t),
+          .initial_window_items = 1,
+          .initial_window_bytes = sizeof(std::uint32_t),
+          .max_buffered_bytes = sizeof(std::uint32_t),
+          .disconnect_grace = std::chrono::milliseconds{50},
       };
       auto service = start_service(
-         executor,
-         forge::api::transport::serve_stream(
-            std::move(server_stream),
-            forge::api::core::binding().serve(registry).build(), options));
-      auto connection = forge::api::transport::connection{
-         std::move(client_stream), options};
+          executor, forge::api::transport::serve_stream(std::move(server_stream),
+                                                        forge::api::core::binding().serve(registry).build(), options));
+      auto connection = forge::api::transport::connection{std::move(client_stream), options};
       auto remote = co_await connection.get_remote_api<live_api>();
 
       BOOST_TEST((co_await remote->echo(item{.value = 1})).value == 1U);
       const auto writes_before = server_model->write_count();
       auto upload = co_await remote.async_open<&live_api::upload>();
-      co_await wait_until(
-         [server_model, writes_before] {
-            return server_model->write_count() > writes_before;
-         },
-         std::chrono::milliseconds{250});
+      co_await wait_until([server_model, writes_before] { return server_model->write_count() > writes_before; },
+                          std::chrono::milliseconds{250});
 
       server_model->hold_writes(true);
       co_await upload.async_write(item{.value = 7});
       co_await wait_until(
-         [implementation] {
-            return implementation->upload_completions.load(
-                      std::memory_order_acquire) == 1U;
-         },
-         std::chrono::milliseconds{250});
+          [implementation] { return implementation->upload_completions.load(std::memory_order_acquire) == 1U; },
+          std::chrono::milliseconds{250});
 
       const auto reads_before_close = server_model->read_count();
       co_await upload.async_close();
       co_await wait_until(
-         [server_model, reads_before_close] {
-            return server_model->read_count() >= reads_before_close + 2U;
-         },
-         std::chrono::milliseconds{250});
+          [server_model, reads_before_close] { return server_model->read_count() >= reads_before_close + 2U; },
+          std::chrono::milliseconds{250});
       server_model->hold_writes(false);
 
       BOOST_TEST((co_await upload.async_finish()).value == 7U);
@@ -1031,31 +917,25 @@ BOOST_AUTO_TEST_CASE(early_terminal_before_half_close_releases_inflight_slot) {
       const auto executor = co_await boost::asio::this_coro::executor;
       auto client_model = std::make_shared<fake_stream>();
       auto server_model = std::make_shared<fake_stream>();
-      auto [client_stream, server_stream] =
-         make_stream_pair(client_model, server_model);
+      auto [client_stream, server_stream] = make_stream_pair(client_model, server_model);
 
       auto implementation = std::make_shared<live_impl>();
-      implementation->return_upload_after_first.store(
-         true, std::memory_order_release);
-      implementation->hold_upload_completion.store(
-         true, std::memory_order_release);
+      implementation->return_upload_after_first.store(true, std::memory_order_release);
+      implementation->hold_upload_completion.store(true, std::memory_order_release);
       auto registry = forge::api::core::registry{};
       registry.install<live_api>(live_api::describe(), implementation);
       const auto options = forge::api::transport::options{
-         .max_inflight = 1,
-         .max_item_size = sizeof(std::uint32_t),
-         .initial_window_items = 1,
-         .initial_window_bytes = sizeof(std::uint32_t),
-         .max_buffered_bytes = 4U * sizeof(std::uint32_t),
-         .disconnect_grace = std::chrono::milliseconds{50},
+          .max_inflight = 1,
+          .max_item_size = sizeof(std::uint32_t),
+          .initial_window_items = 1,
+          .initial_window_bytes = sizeof(std::uint32_t),
+          .max_buffered_bytes = 4U * sizeof(std::uint32_t),
+          .disconnect_grace = std::chrono::milliseconds{50},
       };
       auto service = start_service(
-         executor,
-         forge::api::transport::serve_stream(
-            std::move(server_stream),
-            forge::api::core::binding().serve(registry).build(), options));
-      auto connection = forge::api::transport::connection{
-         std::move(client_stream), options};
+          executor, forge::api::transport::serve_stream(std::move(server_stream),
+                                                        forge::api::core::binding().serve(registry).build(), options));
+      auto connection = forge::api::transport::connection{std::move(client_stream), options};
       auto remote = co_await connection.get_remote_api<live_api>();
 
       BOOST_TEST((co_await remote->echo(item{.value = 8})).value == 8U);
@@ -1065,21 +945,14 @@ BOOST_AUTO_TEST_CASE(early_terminal_before_half_close_releases_inflight_slot) {
       co_await upload.async_write(item{.value = 3});
       co_await upload.async_write(item{.value = 4});
       co_await wait_until(
-         [implementation] {
-            return implementation->upload_ready_to_complete.load(
-               std::memory_order_acquire);
-         },
-         std::chrono::milliseconds{250});
+          [implementation] { return implementation->upload_ready_to_complete.load(std::memory_order_acquire); },
+          std::chrono::milliseconds{250});
       co_await wait_until(
-         [client_model] {
-            return count_written_frames(
-                      client_model,
-                      forge::api::core::frame_kind::stream_item,
-                      "upload") == 2U;
-         },
-         std::chrono::milliseconds{250});
-      implementation->hold_upload_completion.store(
-         false, std::memory_order_release);
+          [client_model] {
+             return count_written_frames(client_model, forge::api::core::frame_kind::stream_item, "upload") == 2U;
+          },
+          std::chrono::milliseconds{250});
+      implementation->hold_upload_completion.store(false, std::memory_order_release);
       BOOST_TEST((co_await upload.async_finish()).value == 1U);
 
       BOOST_TEST((co_await remote->echo(item{.value = 9})).value == 9U);
@@ -1090,38 +963,31 @@ BOOST_AUTO_TEST_CASE(early_terminal_before_half_close_releases_inflight_slot) {
    forge::asio::blocking::run(runtime, scenario());
 }
 
-BOOST_AUTO_TEST_CASE(
-   early_bidirectional_terminal_before_half_close_releases_inflight_slot) {
+BOOST_AUTO_TEST_CASE(early_bidirectional_terminal_before_half_close_releases_inflight_slot) {
    auto runtime = forge::asio::runtime{};
    auto scenario = []() -> boost::asio::awaitable<void> {
       const auto executor = co_await boost::asio::this_coro::executor;
       auto client_model = std::make_shared<fake_stream>();
       auto server_model = std::make_shared<fake_stream>();
-      auto [client_stream, server_stream] =
-         make_stream_pair(client_model, server_model);
+      auto [client_stream, server_stream] = make_stream_pair(client_model, server_model);
 
       auto implementation = std::make_shared<live_impl>();
-      implementation->return_exchange_after_first.store(
-         true, std::memory_order_release);
-      implementation->hold_exchange_completion.store(
-         true, std::memory_order_release);
+      implementation->return_exchange_after_first.store(true, std::memory_order_release);
+      implementation->hold_exchange_completion.store(true, std::memory_order_release);
       auto registry = forge::api::core::registry{};
       registry.install<live_api>(live_api::describe(), implementation);
       const auto options = forge::api::transport::options{
-         .max_inflight = 1,
-         .max_item_size = sizeof(std::uint32_t),
-         .initial_window_items = 1,
-         .initial_window_bytes = sizeof(std::uint32_t),
-         .max_buffered_bytes = 4U * sizeof(std::uint32_t),
-         .disconnect_grace = std::chrono::milliseconds{50},
+          .max_inflight = 1,
+          .max_item_size = sizeof(std::uint32_t),
+          .initial_window_items = 1,
+          .initial_window_bytes = sizeof(std::uint32_t),
+          .max_buffered_bytes = 4U * sizeof(std::uint32_t),
+          .disconnect_grace = std::chrono::milliseconds{50},
       };
       auto service = start_service(
-         executor,
-         forge::api::transport::serve_stream(
-            std::move(server_stream),
-            forge::api::core::binding().serve(registry).build(), options));
-      auto connection = forge::api::transport::connection{
-         std::move(client_stream), options};
+          executor, forge::api::transport::serve_stream(std::move(server_stream),
+                                                        forge::api::core::binding().serve(registry).build(), options));
+      auto connection = forge::api::transport::connection{std::move(client_stream), options};
       auto remote = co_await connection.get_remote_api<live_api>();
 
       BOOST_TEST((co_await remote->echo(item{.value = 10})).value == 10U);
@@ -1135,21 +1001,14 @@ BOOST_AUTO_TEST_CASE(
       BOOST_TEST(response->value == 2U);
       BOOST_TEST(!(co_await exchange.async_read()).has_value());
       co_await wait_until(
-         [implementation] {
-            return implementation->exchange_ready_to_complete.load(
-               std::memory_order_acquire);
-         },
-         std::chrono::milliseconds{250});
+          [implementation] { return implementation->exchange_ready_to_complete.load(std::memory_order_acquire); },
+          std::chrono::milliseconds{250});
       co_await wait_until(
-         [client_model] {
-            return count_written_frames(
-                      client_model,
-                      forge::api::core::frame_kind::stream_item,
-                      "exchange") == 2U;
-         },
-         std::chrono::milliseconds{250});
-      implementation->hold_exchange_completion.store(
-         false, std::memory_order_release);
+          [client_model] {
+             return count_written_frames(client_model, forge::api::core::frame_kind::stream_item, "exchange") == 2U;
+          },
+          std::chrono::milliseconds{250});
+      implementation->hold_exchange_completion.store(false, std::memory_order_release);
       co_await exchange.async_finish();
 
       BOOST_TEST((co_await remote->echo(item{.value = 11})).value == 11U);
@@ -1166,33 +1025,25 @@ BOOST_AUTO_TEST_CASE(pre_request_stream_rejection_releases_inflight_slot) {
       const auto executor = co_await boost::asio::this_coro::executor;
       auto client_model = std::make_shared<fake_stream>();
       auto server_model = std::make_shared<fake_stream>();
-      auto [client_stream, server_stream] =
-         make_stream_pair(client_model, server_model);
+      auto [client_stream, server_stream] = make_stream_pair(client_model, server_model);
 
-      constexpr auto unary = static_cast<std::uint64_t>(
-         forge::api::core::capability::unary);
-      constexpr auto stream_window = static_cast<std::uint64_t>(
-         forge::api::core::capability::stream_window);
+      constexpr auto unary = static_cast<std::uint64_t>(forge::api::core::capability::unary);
+      constexpr auto stream_window = static_cast<std::uint64_t>(forge::api::core::capability::stream_window);
       auto server_options = forge::api::transport::options{
-         .capabilities = {.bits = unary | stream_window},
-         .max_inflight = 1,
-         .disconnect_grace = std::chrono::milliseconds{50},
+          .capabilities = {.bits = unary | stream_window},
+          .max_inflight = 1,
+          .disconnect_grace = std::chrono::milliseconds{50},
       };
       auto client_options = forge::api::transport::options{
-         .max_inflight = 1,
-         .disconnect_grace = std::chrono::milliseconds{50},
+          .max_inflight = 1,
+          .disconnect_grace = std::chrono::milliseconds{50},
       };
       auto registry = forge::api::core::registry{};
-      registry.install<live_api>(live_api::describe(),
-                                 std::make_shared<live_impl>());
+      registry.install<live_api>(live_api::describe(), std::make_shared<live_impl>());
       auto service = start_service(
-         executor,
-         forge::api::transport::serve_stream(
-            std::move(server_stream),
-            forge::api::core::binding().serve(registry).build(),
-            server_options));
-      auto connection = forge::api::transport::connection{
-         std::move(client_stream), client_options};
+          executor, forge::api::transport::serve_stream(
+                        std::move(server_stream), forge::api::core::binding().serve(registry).build(), server_options));
+      auto connection = forge::api::transport::connection{std::move(client_stream), client_options};
       auto remote = co_await connection.get_remote_api<live_api>();
 
       BOOST_TEST((co_await remote->echo(item{.value = 3})).value == 3U);
@@ -1216,8 +1067,7 @@ BOOST_AUTO_TEST_CASE(pre_request_stream_rejection_releases_inflight_slot) {
       BOOST_TEST(incompatible);
       BOOST_TEST((co_await remote->echo(item{.value = 5})).value == 5U);
 
-      auto rejected_exchange =
-         co_await remote.async_open<&live_api::exchange>();
+      auto rejected_exchange = co_await remote.async_open<&live_api::exchange>();
       incompatible = false;
       try {
          co_await rejected_exchange.async_finish();
@@ -1239,25 +1089,21 @@ BOOST_AUTO_TEST_CASE(streaming_terminal_errors_and_early_success_preserve_sessio
       const auto executor = co_await boost::asio::this_coro::executor;
       auto client_model = std::make_shared<fake_stream>();
       auto server_model = std::make_shared<fake_stream>();
-      auto [client_stream, server_stream] =
-         make_stream_pair(client_model, server_model);
+      auto [client_stream, server_stream] = make_stream_pair(client_model, server_model);
 
       auto implementation = std::make_shared<live_impl>();
       auto registry = forge::api::core::registry{};
       registry.install<live_api>(live_api::describe(), implementation);
-      auto service = start_service(
-         executor,
-         forge::api::transport::serve_stream(
-            std::move(server_stream),
-            forge::api::core::binding().serve(registry).build(),
-            forge::api::transport::options{
-               .disconnect_grace = std::chrono::milliseconds{50},
-            }));
-      auto connection = forge::api::transport::connection{
-         std::move(client_stream),
-         forge::api::transport::options{
-            .disconnect_grace = std::chrono::milliseconds{50},
-         }};
+      auto service =
+          start_service(executor, forge::api::transport::serve_stream(
+                                      std::move(server_stream), forge::api::core::binding().serve(registry).build(),
+                                      forge::api::transport::options{
+                                          .disconnect_grace = std::chrono::milliseconds{50},
+                                      }));
+      auto connection = forge::api::transport::connection{std::move(client_stream),
+                                                          forge::api::transport::options{
+                                                              .disconnect_grace = std::chrono::milliseconds{50},
+                                                          }};
       auto remote = co_await connection.get_remote_api<live_api>();
 
       implementation->fail_upload.store(true, std::memory_order_release);
@@ -1272,8 +1118,7 @@ BOOST_AUTO_TEST_CASE(streaming_terminal_errors_and_early_success_preserve_sessio
       BOOST_TEST(projected);
 
       implementation->fail_upload.store(false, std::memory_order_release);
-      implementation->return_upload_after_first.store(
-         true, std::memory_order_release);
+      implementation->return_upload_after_first.store(true, std::memory_order_release);
       auto early = co_await remote.async_open<&live_api::upload>();
       co_await early.async_write(item{.value = 1});
       co_await early.async_write(item{.value = 2});
@@ -1294,35 +1139,63 @@ BOOST_AUTO_TEST_CASE(lazy_session_call_snapshots_impl_before_wrapper_move) {
       const auto executor = co_await boost::asio::this_coro::executor;
       auto client_model = std::make_shared<fake_stream>();
       auto server_model = std::make_shared<fake_stream>();
-      auto [client_stream, server_stream] =
-         make_stream_pair(client_model, server_model);
+      auto [client_stream, server_stream] = make_stream_pair(client_model, server_model);
 
       auto registry = forge::api::core::registry{};
-      registry.install<live_api>(live_api::describe(),
-                                 std::make_shared<live_impl>());
-      auto service = start_service(
-         executor,
-         forge::api::transport::serve_stream(
-            std::move(server_stream),
-            forge::api::core::binding().serve(registry).build()));
+      registry.install<live_api>(live_api::describe(), std::make_shared<live_impl>());
+      auto service =
+          start_service(executor, forge::api::transport::serve_stream(
+                                      std::move(server_stream), forge::api::core::binding().serve(registry).build()));
       auto live = forge::api::stream::session{std::move(client_stream)};
       const auto descriptor = live_api::describe();
       const auto* method = forge::api::core::find_method(descriptor, "echo");
       BOOST_REQUIRE(method != nullptr);
       auto pending = live.async_call(
-         forge::api::core::frame{
-            .kind = forge::api::core::frame_kind::request,
-            .api = live_api::ref(),
-            .method = "echo",
-            .codec = {.value = "forge.raw"},
-            .payload = forge::raw::pack(item{.value = 21}),
-         },
-         {}, *method);
+          forge::api::core::frame{
+              .kind = forge::api::core::frame_kind::request,
+              .api = live_api::ref(),
+              .method = "echo",
+              .codec = {.value = "forge.raw"},
+              .payload = forge::raw::pack(item{.value = 21}),
+          },
+          {}, *method);
       auto moved = std::move(live);
       const auto response = co_await std::move(pending);
-      BOOST_TEST(forge::raw::unpack_exact<item>(response.payload).value ==
-                 21U);
+      BOOST_TEST(forge::raw::unpack_exact<item>(response.payload).value == 21U);
       co_await moved.async_close();
+      co_await wait_service(service);
+   };
+   forge::asio::blocking::run(runtime, scenario());
+}
+
+BOOST_AUTO_TEST_CASE(concurrent_initial_calls_share_session_handshake) {
+   auto runtime = forge::asio::runtime{};
+   auto scenario = []() -> boost::asio::awaitable<void> {
+      const auto executor = co_await boost::asio::this_coro::executor;
+      auto client_model = std::make_shared<fake_stream>();
+      auto server_model = std::make_shared<fake_stream>();
+      auto [client_stream, server_stream] = make_stream_pair(client_model, server_model);
+
+      auto registry = forge::api::core::registry{};
+      registry.install<live_api>(live_api::describe(), std::make_shared<live_impl>());
+      auto service =
+          start_service(executor, forge::api::transport::serve_stream(
+                                      std::move(server_stream), forge::api::core::binding().serve(registry).build()));
+      auto connection = forge::api::transport::connection{std::move(client_stream)};
+      auto remote = co_await connection.get_remote_api<live_api>();
+
+      auto first = boost::asio::co_spawn(executor, remote->echo(item{.value = 31}), boost::asio::use_future);
+      auto second = boost::asio::co_spawn(executor, remote->echo(item{.value = 32}), boost::asio::use_future);
+      co_await wait_until(
+          [&] {
+             return first.wait_for(std::chrono::seconds{0}) == std::future_status::ready &&
+                    second.wait_for(std::chrono::seconds{0}) == std::future_status::ready;
+          },
+          std::chrono::milliseconds{250});
+
+      BOOST_TEST(first.get().value == 31U);
+      BOOST_TEST(second.get().value == 32U);
+      co_await connection.async_close();
       co_await wait_service(service);
    };
    forge::asio::blocking::run(runtime, scenario());
@@ -1334,42 +1207,35 @@ BOOST_AUTO_TEST_CASE(session_rejects_reuse_of_retired_custom_call_id) {
       const auto executor = co_await boost::asio::this_coro::executor;
       auto client_model = std::make_shared<fake_stream>();
       auto server_model = std::make_shared<fake_stream>();
-      auto [client_stream, server_stream] =
-         make_stream_pair(client_model, server_model);
+      auto [client_stream, server_stream] = make_stream_pair(client_model, server_model);
 
       auto registry = forge::api::core::registry{};
-      registry.install<live_api>(live_api::describe(),
-                                 std::make_shared<live_impl>());
-      auto service = start_service(
-         executor,
-         forge::api::transport::serve_stream(
-            std::move(server_stream),
-            forge::api::core::binding().serve(registry).build(),
-            forge::api::transport::options{
-               .disconnect_grace = std::chrono::milliseconds{50},
-            }));
+      registry.install<live_api>(live_api::describe(), std::make_shared<live_impl>());
+      auto service =
+          start_service(executor, forge::api::transport::serve_stream(
+                                      std::move(server_stream), forge::api::core::binding().serve(registry).build(),
+                                      forge::api::transport::options{
+                                          .disconnect_grace = std::chrono::milliseconds{50},
+                                      }));
       auto live = forge::api::stream::session{std::move(client_stream)};
       const auto descriptor = live_api::describe();
       const auto* method = forge::api::core::find_method(descriptor, "echo");
       BOOST_REQUIRE(method != nullptr);
       const auto request = forge::api::core::frame{
-         .kind = forge::api::core::frame_kind::request,
-         .api = live_api::ref(),
-         .method = "echo",
-         .codec = {.value = "forge.raw"},
-         .payload = forge::raw::pack(item{.value = 4}),
+          .kind = forge::api::core::frame_kind::request,
+          .api = live_api::ref(),
+          .method = "echo",
+          .codec = {.value = "forge.raw"},
+          .payload = forge::raw::pack(item{.value = 4}),
       };
-      const auto first = co_await live.async_call(
-         request, forge::api::stream::call_options{.id = {.value = 41}},
-         *method);
+      const auto first =
+          co_await live.async_call(request, forge::api::stream::call_options{.id = {.value = 41}}, *method);
       BOOST_TEST(forge::raw::unpack_exact<item>(first.payload).value == 4U);
 
       auto rejected = false;
       try {
-         static_cast<void>(co_await live.async_call(
-            request,
-            forge::api::stream::call_options{.id = {.value = 41}},
-            *method));
+         static_cast<void>(
+             co_await live.async_call(request, forge::api::stream::call_options{.id = {.value = 41}}, *method));
       } catch (const forge::api::core::exceptions::protocol_error&) {
          rejected = true;
       }
@@ -1386,37 +1252,27 @@ BOOST_AUTO_TEST_CASE(deadline_cancels_one_call_and_connection_stays_live) {
       const auto executor = co_await boost::asio::this_coro::executor;
       auto client_model = std::make_shared<fake_stream>();
       auto server_model = std::make_shared<fake_stream>();
-      auto [client_stream, server_stream] =
-         make_stream_pair(client_model, server_model);
+      auto [client_stream, server_stream] = make_stream_pair(client_model, server_model);
 
       auto implementation = std::make_shared<live_impl>();
       auto registry = forge::api::core::registry{};
       registry.install<live_api>(live_api::describe(), implementation);
-      auto service = start_service(
-         executor,
-         forge::api::transport::serve_stream(
-            std::move(server_stream),
-            forge::api::core::binding().serve(registry).build(),
-            forge::api::transport::options{
-               .disconnect_grace = std::chrono::milliseconds{20},
-            }));
-      auto connection = forge::api::transport::connection{
-         std::move(client_stream),
-         forge::api::transport::options{
-            .disconnect_grace = std::chrono::milliseconds{20},
-         }};
+      auto service =
+          start_service(executor, forge::api::transport::serve_stream(
+                                      std::move(server_stream), forge::api::core::binding().serve(registry).build(),
+                                      forge::api::transport::options{
+                                          .disconnect_grace = std::chrono::milliseconds{20},
+                                      }));
+      auto connection = forge::api::transport::connection{std::move(client_stream),
+                                                          forge::api::transport::options{
+                                                              .disconnect_grace = std::chrono::milliseconds{20},
+                                                          }};
       auto remote = co_await connection.get_remote_api<live_api>();
-      auto blocked = co_await remote.async_open<&live_api::upload>(
-         forge::api::core::call_options{
-            .deadline = std::chrono::steady_clock::now() +
-                        std::chrono::milliseconds{20},
-         });
-      co_await wait_until(
-         [implementation] {
-            return implementation->upload_started.load(
-               std::memory_order_acquire);
-         },
-         std::chrono::milliseconds{250});
+      auto blocked = co_await remote.async_open<&live_api::upload>(forge::api::core::call_options{
+          .deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds{20},
+      });
+      co_await wait_until([implementation] { return implementation->upload_started.load(std::memory_order_acquire); },
+                          std::chrono::milliseconds{250});
 
       auto expired = false;
       try {
@@ -1439,40 +1295,32 @@ BOOST_AUTO_TEST_CASE(cancel_unblocks_credit_wait_without_closing_session) {
       const auto executor = co_await boost::asio::this_coro::executor;
       auto client_model = std::make_shared<fake_stream>();
       auto server_model = std::make_shared<fake_stream>();
-      auto [client_stream, server_stream] =
-         make_stream_pair(client_model, server_model);
+      auto [client_stream, server_stream] = make_stream_pair(client_model, server_model);
 
       auto implementation = std::make_shared<live_impl>();
       implementation->hold_upload_reads.store(true, std::memory_order_release);
       auto registry = forge::api::core::registry{};
       registry.install<live_api>(live_api::describe(), implementation);
       const auto options = forge::api::transport::options{
-         .max_frame_size = 512,
-         .max_item_size = sizeof(std::uint32_t),
-         .initial_window_items = 1,
-         .initial_window_bytes = sizeof(std::uint32_t),
-         .max_buffered_bytes = 512,
-         .disconnect_grace = std::chrono::milliseconds{20},
+          .max_frame_size = 512,
+          .max_item_size = sizeof(std::uint32_t),
+          .initial_window_items = 1,
+          .initial_window_bytes = sizeof(std::uint32_t),
+          .max_buffered_bytes = 512,
+          .disconnect_grace = std::chrono::milliseconds{20},
       };
       auto service = start_service(
-         executor,
-         forge::api::transport::serve_stream(std::move(server_stream),
-             forge::api::core::binding().serve(registry).build(), options));
-      auto connection = forge::api::transport::connection{
-         std::move(client_stream), options};
+          executor, forge::api::transport::serve_stream(std::move(server_stream),
+                                                        forge::api::core::binding().serve(registry).build(), options));
+      auto connection = forge::api::transport::connection{std::move(client_stream), options};
       auto remote = co_await connection.get_remote_api<live_api>();
-      auto upload = co_await remote.async_open<&live_api::upload>(
-         forge::api::core::call_options{
-            .max_item_bytes = sizeof(std::uint32_t),
-            .max_buffered_items = 1,
-            .max_buffered_bytes = sizeof(std::uint32_t),
-         });
-      co_await wait_until(
-         [implementation] {
-            return implementation->upload_started.load(
-               std::memory_order_acquire);
-         },
-         std::chrono::milliseconds{250});
+      auto upload = co_await remote.async_open<&live_api::upload>(forge::api::core::call_options{
+          .max_item_bytes = sizeof(std::uint32_t),
+          .max_buffered_items = 1,
+          .max_buffered_bytes = sizeof(std::uint32_t),
+      });
+      co_await wait_until([implementation] { return implementation->upload_started.load(std::memory_order_acquire); },
+                          std::chrono::milliseconds{250});
 
       auto delay = boost::asio::steady_timer{executor};
       co_await upload.async_write(item{.value = 1});
@@ -1482,8 +1330,7 @@ BOOST_AUTO_TEST_CASE(cancel_unblocks_credit_wait_without_closing_session) {
       co_await upload.async_write(item{.value = 3});
       delay.expires_after(std::chrono::milliseconds{10});
       co_await delay.async_wait(boost::asio::use_awaitable);
-      auto blocked = start_service(
-         executor, upload.async_write(item{.value = 4}));
+      auto blocked = start_service(executor, upload.async_write(item{.value = 4}));
       delay.expires_after(std::chrono::milliseconds{20});
       co_await delay.async_wait(boost::asio::use_awaitable);
       BOOST_TEST(!blocked->done);
@@ -1518,33 +1365,25 @@ BOOST_AUTO_TEST_CASE(close_stops_admission_and_cancels_blocked_calls) {
       const auto executor = co_await boost::asio::this_coro::executor;
       auto client_model = std::make_shared<fake_stream>();
       auto server_model = std::make_shared<fake_stream>();
-      auto [client_stream, server_stream] =
-         make_stream_pair(client_model, server_model);
+      auto [client_stream, server_stream] = make_stream_pair(client_model, server_model);
 
       auto implementation = std::make_shared<live_impl>();
       auto registry = forge::api::core::registry{};
       registry.install<live_api>(live_api::describe(), implementation);
-      auto service = start_service(
-         executor,
-         forge::api::transport::serve_stream(
-            std::move(server_stream),
-            forge::api::core::binding().serve(registry).build(),
-            forge::api::transport::options{
-               .disconnect_grace = std::chrono::milliseconds{10},
-            }));
-      auto connection = forge::api::transport::connection{
-         std::move(client_stream),
-         forge::api::transport::options{
-            .disconnect_grace = std::chrono::milliseconds{10},
-         }};
+      auto service =
+          start_service(executor, forge::api::transport::serve_stream(
+                                      std::move(server_stream), forge::api::core::binding().serve(registry).build(),
+                                      forge::api::transport::options{
+                                          .disconnect_grace = std::chrono::milliseconds{10},
+                                      }));
+      auto connection = forge::api::transport::connection{std::move(client_stream),
+                                                          forge::api::transport::options{
+                                                              .disconnect_grace = std::chrono::milliseconds{10},
+                                                          }};
       auto remote = co_await connection.get_remote_api<live_api>();
       auto blocked = co_await remote.async_open<&live_api::upload>();
-      co_await wait_until(
-         [implementation] {
-            return implementation->upload_started.load(
-               std::memory_order_acquire);
-         },
-         std::chrono::milliseconds{250});
+      co_await wait_until([implementation] { return implementation->upload_started.load(std::memory_order_acquire); },
+                          std::chrono::milliseconds{250});
 
       co_await connection.async_close();
       auto cancelled = false;
@@ -1566,46 +1405,38 @@ BOOST_AUTO_TEST_CASE(graceful_close_waits_for_active_transport_write) {
       auto model = std::make_shared<fake_stream>();
       model->push(pack_api_frame(hello_frame()));
       model->hold_writes(true);
-      auto live = forge::api::stream::session{
-         make_stream(model),
-         forge::api::stream::options{
-            .disconnect_grace = std::chrono::milliseconds{10},
-            .control_timeout = std::chrono::milliseconds{250},
-         }};
+      auto live = forge::api::stream::session{make_stream(model), forge::api::stream::options{
+                                                                      .disconnect_grace = std::chrono::milliseconds{10},
+                                                                      .control_timeout = std::chrono::milliseconds{250},
+                                                                  }};
       const auto descriptor = live_api::describe();
       const auto* method = forge::api::core::find_method(descriptor, "echo");
       BOOST_REQUIRE(method != nullptr);
-      auto call = start_service(
-         executor,
-         [&live, method]()
-            -> boost::asio::awaitable<void> {
-            try {
-               static_cast<void>(co_await live.async_call(
-                  forge::api::core::frame{
-                     .kind = forge::api::core::frame_kind::request,
-                     .api = live_api::ref(),
-                     .method = "echo",
-                     .codec = {.value = "forge.raw"},
-                     .payload = forge::raw::pack(item{.value = 1}),
-                  },
-                  {}, *method));
-            } catch (...) {
-               // Closing the session is expected to cancel the pending call.
-            }
-         }());
-      co_await wait_until(
-         [model] { return model->write_active(); },
-         std::chrono::milliseconds{250});
+      auto call = start_service(executor, [&live, method]() -> boost::asio::awaitable<void> {
+         try {
+            static_cast<void>(co_await live.async_call(
+                forge::api::core::frame{
+                    .kind = forge::api::core::frame_kind::request,
+                    .api = live_api::ref(),
+                    .method = "echo",
+                    .codec = {.value = "forge.raw"},
+                    .payload = forge::raw::pack(item{.value = 1}),
+                },
+                {}, *method));
+         } catch (...) {
+            // Closing the session is expected to cancel the pending call.
+         }
+      }());
+      co_await wait_until([model] { return model->write_active(); }, std::chrono::milliseconds{250});
       boost::asio::co_spawn(
-         executor,
-         [model]() -> boost::asio::awaitable<void> {
-            auto delay = boost::asio::steady_timer{
-               co_await boost::asio::this_coro::executor};
-            delay.expires_after(std::chrono::milliseconds{20});
-            co_await delay.async_wait(boost::asio::use_awaitable);
-            model->hold_writes(false);
-         },
-         boost::asio::detached);
+          executor,
+          [model]() -> boost::asio::awaitable<void> {
+             auto delay = boost::asio::steady_timer{co_await boost::asio::this_coro::executor};
+             delay.expires_after(std::chrono::milliseconds{20});
+             co_await delay.async_wait(boost::asio::use_awaitable);
+             model->hold_writes(false);
+          },
+          boost::asio::detached);
       co_await live.async_close();
       co_await wait_service(call);
       BOOST_TEST(!model->close_during_write());
@@ -1618,48 +1449,35 @@ BOOST_AUTO_TEST_SUITE_END()
 BOOST_AUTO_TEST_SUITE(api_websocket_stream_suite)
 
 BOOST_AUTO_TEST_CASE(one_websocket_session_supports_all_remote_method_kinds) {
-   auto runtime = forge::asio::runtime{
-      forge::asio::runtime_options{.worker_threads = 2}};
+   auto runtime = forge::asio::runtime{forge::asio::runtime_options{.worker_threads = 2}};
    auto implementation = std::make_shared<live_impl>();
    auto registry = forge::api::core::registry{};
    registry.install<live_api>(live_api::describe(), implementation);
 
    auto binding = forge::api::websocket::api()
-                     .use(forge::api::core::binding()
-                             .serve(registry)
-                             .export_api<live_api>(live_api::ref())
-                             .build())
-                     .backpressure({.max_inflight = 8,
-                                    .max_buffered_bytes = 4U * 1024U * 1024U})
-                     .initial_window(1, 64)
-                     .build();
+                      .use(forge::api::core::binding().serve(registry).export_api<live_api>(live_api::ref()).build())
+                      .backpressure({.max_inflight = 8, .max_buffered_bytes = 4U * 1024U * 1024U})
+                      .initial_window(1, 64)
+                      .build();
    auto router = forge::net::http::router{};
    router.websocket(
-      "/api",
-      [&runtime, binding = std::move(binding)](
-         forge::net::websocket::connection::ptr socket) mutable {
-         boost::asio::co_spawn(runtime.context(),
-                               binding.accept(std::move(socket)),
-                               boost::asio::detached);
-      });
+       "/api", [&runtime, binding = std::move(binding)](forge::net::websocket::connection::ptr socket) mutable {
+          boost::asio::co_spawn(runtime.context(), binding.accept(std::move(socket)), boost::asio::detached);
+       });
 
-   auto server = forge::net::http::server{
-      runtime, forge::net::http::server_config{}, std::move(router)};
+   auto server = forge::net::http::server{runtime, forge::net::http::server_config{}, std::move(router)};
    server.start();
    auto websocket_client = forge::net::websocket::client{
-      runtime,
-      forge::net::http::parse_base_url(
-         "http://127.0.0.1:" + std::to_string(server.port()))};
+       runtime, forge::net::http::parse_base_url("http://127.0.0.1:" + std::to_string(server.port()))};
    auto socket = websocket_client.connect("/api");
-   auto connection = forge::api::websocket::connection{
-      std::move(socket),
-      forge::api::stream::options{
-         .max_inflight = 8,
-         .initial_window_items = 1,
-         .initial_window_bytes = 64,
-         .max_buffered_bytes = 4U * 1024U * 1024U,
-         .disconnect_grace = std::chrono::milliseconds{50},
-      }};
+   auto connection =
+       forge::api::websocket::connection{std::move(socket), forge::api::stream::options{
+                                                                .max_inflight = 8,
+                                                                .initial_window_items = 1,
+                                                                .initial_window_bytes = 64,
+                                                                .max_buffered_bytes = 4U * 1024U * 1024U,
+                                                                .disconnect_grace = std::chrono::milliseconds{50},
+                                                            }};
 
    auto scenario = [&connection]() -> boost::asio::awaitable<void> {
       auto remote = co_await connection.get_remote_api<live_api>();
@@ -1699,34 +1517,29 @@ BOOST_AUTO_TEST_CASE(one_websocket_session_supports_all_remote_method_kinds) {
 BOOST_AUTO_TEST_CASE(binding_declares_all_wire_v2_method_capabilities) {
    const auto capabilities = forge::api::websocket::binding_capabilities();
    BOOST_TEST(capabilities.supports(forge::api::core::capability::unary));
-   BOOST_TEST(
-      capabilities.supports(forge::api::core::capability::server_stream));
-   BOOST_TEST(
-      capabilities.supports(forge::api::core::capability::client_stream));
-   BOOST_TEST(capabilities.supports(
-      forge::api::core::capability::bidirectional_stream));
-   BOOST_TEST(
-      capabilities.supports(forge::api::core::capability::stream_window));
+   BOOST_TEST(capabilities.supports(forge::api::core::capability::server_stream));
+   BOOST_TEST(capabilities.supports(forge::api::core::capability::client_stream));
+   BOOST_TEST(capabilities.supports(forge::api::core::capability::bidirectional_stream));
+   BOOST_TEST(capabilities.supports(forge::api::core::capability::stream_window));
 }
 
 BOOST_AUTO_TEST_CASE(binding_rejects_unsupported_descriptor_before_io) {
    auto registry = forge::api::core::registry{};
    auto plan = forge::api::core::binding().serve(registry).build();
    plan.exports.push_back(forge::api::core::descriptor{
-      .id = {.value = "unsupported.websocket"},
-      .version = {.major = 1, .revision = 0},
-      .methods = {
-         forge::api::core::method_descriptor{
-            .name = "unsupported",
-            .kind = static_cast<forge::api::core::method_kind>(255),
-         },
-      },
+       .id = {.value = "unsupported.websocket"},
+       .version = {.major = 1, .revision = 0},
+       .methods =
+           {
+               forge::api::core::method_descriptor{
+                   .name = "unsupported",
+                   .kind = static_cast<forge::api::core::method_kind>(255),
+               },
+           },
    });
 
-   BOOST_CHECK_THROW(
-      static_cast<void>(
-         forge::api::websocket::api().use(std::move(plan)).build()),
-      forge::api::core::exceptions::protocol_error);
+   BOOST_CHECK_THROW(static_cast<void>(forge::api::websocket::api().use(std::move(plan)).build()),
+                     forge::api::core::exceptions::protocol_error);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

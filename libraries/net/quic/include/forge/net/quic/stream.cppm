@@ -36,6 +36,7 @@ class stream {
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read();
    boost::asio::awaitable<void> async_close();
    void cancel();
+   void request_cancel() noexcept;
 
  private:
    friend struct detail::stream_access;

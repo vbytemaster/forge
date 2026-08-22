@@ -71,9 +71,16 @@ boost::asio::awaitable<void> serve_mux(forge::net::transport::stream base) {
   transport so shutdown cannot wait forever for a peer that never sends FIN.
 - Reset streams are not valid for further read/write operations.
 - Lower transport failures are translated to typed Yamux boundary errors.
+- Every physical Yamux frame write is bounded by `options::write_timeout`.
+  A stalled lower transport therefore fails the whole session closed instead
+  of leaving stream open/reset or session shutdown blocked indefinitely.
+- Canceling one stream does not interrupt a frame already accepted by the
+  lower transport. That frame completes first, then a stream-local `RST` is
+  serialized through the same write gate; sibling streams remain usable.
 - Yamux's wire-level initial stream credit is fixed at 256 KiB. A larger
   `options::initial_window` is advertised as a SYN/ACK delta; values below the
-  baseline are rejected as invalid options.
+  baseline are rejected as invalid options. Non-positive `write_timeout` and
+  `close_timeout` values are also rejected before session startup.
 
 ## Tests
 

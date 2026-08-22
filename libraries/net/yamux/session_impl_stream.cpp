@@ -3,6 +3,7 @@ module;
 #include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -20,7 +21,6 @@ module;
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/any_io_executor.hpp>
-#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
@@ -142,7 +142,7 @@ boost::asio::awaitable<void> session::impl::write_stream(const std::shared_ptr<s
              state->send_window -= static_cast<std::uint32_t>(written);
              return encoded;
           },
-          false, operation_lifetime);
+          false, operation_lifetime, state);
       if (sent) {
          offset += written;
       }
@@ -195,7 +195,8 @@ boost::asio::awaitable<detail::bytes> session::impl::read_stream(const std::shar
                    state->pending_receive_credit += consumed;
                    credit_pending = true;
                    return encoded;
-                });
+                },
+                false, {}, state);
          } catch (...) {
             if (credit_pending) {
                auto lock = std::scoped_lock{mutex_};
@@ -221,19 +222,24 @@ boost::asio::awaitable<detail::bytes> session::impl::read_stream(const std::shar
 
 boost::asio::awaitable<void> session::impl::close_stream(const std::shared_ptr<stream_state>& state) {
    co_await ensure_started();
-   co_await write_prepared([this, state]() -> std::optional<detail::bytes> {
-      auto lock = std::scoped_lock{mutex_};
-      require_stream_owned_locked(state);
-      if (state->local_fin || state->reset) {
-         return std::nullopt;
-      }
-      auto encoded = detail::encode_frame(detail::frame_type::data, detail::fin, state->id, 0);
-      state->local_fin = true;
-      return encoded;
-   });
+   co_await write_prepared(
+       [this, state]() -> std::optional<detail::bytes> {
+          auto lock = std::scoped_lock{mutex_};
+          require_stream_owned_locked(state);
+          if (state->local_fin || state->reset) {
+             return std::nullopt;
+          }
+          auto encoded = detail::encode_frame(detail::frame_type::data, detail::fin, state->id, 0);
+          state->local_fin = true;
+          return encoded;
+       },
+       false, {}, state);
 }
 
 bool session::impl::is_reclaimable_stream_locked(const stream_state& state) const noexcept {
+   if (state.cancel_requested.load(std::memory_order_acquire) && !state.local_reset_sent) {
+      return false;
+   }
    if (state.reset) {
       return true;
    }
@@ -255,22 +261,141 @@ void session::impl::reclaim_closed_streams_locked() {
 }
 
 void session::impl::cancel_stream(const std::shared_ptr<stream_state>& state) {
-   {
-      auto lock = std::scoped_lock{mutex_};
-      reset_stream_locked(state);
-   }
-   auto executor = std::optional<boost::asio::any_io_executor>{};
-   {
-      auto lock = std::scoped_lock{mutex_};
-      executor = executor_;
-   }
-   if (!executor) {
+   request_cancel_stream(state);
+}
+
+void session::impl::request_cancel_stream(const std::shared_ptr<stream_state>& state) noexcept {
+   if (!enter_stream_cancel_publication()) {
       return;
    }
+   if (!state->cancel_requested.exchange(true, std::memory_order_acq_rel)) {
+      state->read_notification.notify();
+      state->window_notification.notify();
+      state->receive_credit_notification.notify();
+   }
+   leave_stream_cancel_publication();
+   stream_cancel_notification_.notify();
+}
 
-   auto self = shared_from_this();
-   boost::asio::co_spawn(*executor, self->write_frame(detail::frame_type::data, detail::rst, state->id, 0, {}, true),
-                         [self](std::exception_ptr) { (void)self; });
+boost::asio::awaitable<void> session::impl::stream_cancel_loop() {
+   while (true) {
+      const auto observed = stream_cancel_notification_.epoch();
+      auto target = std::shared_ptr<stream_state>{};
+      {
+         auto lock = std::scoped_lock{mutex_};
+         for (const auto& [_, candidate] : streams_) {
+            if (!candidate->cancel_requested.load(std::memory_order_acquire) || candidate->local_reset_sent ||
+                candidate->cancel_in_progress) {
+               continue;
+            }
+            candidate->cancel_in_progress = true;
+            target = candidate;
+            break;
+         }
+      }
+
+      if (target) {
+         try {
+            co_await write_frame(detail::frame_type::data, detail::rst, target->id, 0, {}, true, {}, target);
+         } catch (...) {
+            {
+               auto lock = std::scoped_lock{mutex_};
+               target->cancel_in_progress = false;
+            }
+            throw;
+         }
+         {
+            auto lock = std::scoped_lock{mutex_};
+            target->cancel_in_progress = false;
+            target->local_reset_sent = true;
+            if (!target->reset) {
+               target->reset = true;
+               release_stream_buffers_locked(*target);
+            }
+         }
+         target->read_notification.notify();
+         target->window_notification.notify();
+         target->receive_credit_notification.notify();
+         continue;
+      }
+
+      if (stream_cancel_worker_state_.load(std::memory_order_acquire) ==
+              stream_cancel_worker_state::stopping &&
+          (stream_cancel_publication_state_.load(std::memory_order_acquire) &
+           stream_cancel_publication_count_mask) == 0) {
+         co_return;
+      }
+      (void)co_await stream_cancel_notification_.async_wait(observed);
+   }
+}
+
+boost::asio::awaitable<void> session::impl::wait_for_stream_cancel_loop() {
+   while (true) {
+      const auto state = stream_cancel_worker_state_.load(std::memory_order_acquire);
+      if (state == stream_cancel_worker_state::idle || state == stream_cancel_worker_state::done) {
+         co_return;
+      }
+      const auto observed = stream_cancel_done_notification_.epoch();
+      const auto rechecked = stream_cancel_worker_state_.load(std::memory_order_acquire);
+      if (rechecked != stream_cancel_worker_state::idle && rechecked != stream_cancel_worker_state::done) {
+         (void)co_await stream_cancel_done_notification_.async_wait(observed);
+      }
+   }
+}
+
+boost::asio::awaitable<bool>
+session::impl::wait_for_stream_cancel_loop_until(std::chrono::steady_clock::time_point deadline) {
+   while (true) {
+      const auto state = stream_cancel_worker_state_.load(std::memory_order_acquire);
+      if (state == stream_cancel_worker_state::idle || state == stream_cancel_worker_state::done) {
+         co_return true;
+      }
+      const auto observed = stream_cancel_done_notification_.epoch();
+      const auto rechecked = stream_cancel_worker_state_.load(std::memory_order_acquire);
+      if (rechecked != stream_cancel_worker_state::idle && rechecked != stream_cancel_worker_state::done) {
+         (void)co_await stream_cancel_done_notification_.async_wait_until(observed, deadline);
+      }
+      const auto completed = stream_cancel_worker_state_.load(std::memory_order_acquire);
+      if (completed == stream_cancel_worker_state::idle || completed == stream_cancel_worker_state::done) {
+         co_return true;
+      }
+      if (std::chrono::steady_clock::now() >= deadline) {
+         co_return false;
+      }
+   }
+}
+
+bool session::impl::enter_stream_cancel_publication() noexcept {
+   auto state = stream_cancel_publication_state_.load(std::memory_order_acquire);
+   while ((state & stream_cancel_publication_closed) == 0) {
+      if ((state & stream_cancel_publication_count_mask) == stream_cancel_publication_count_mask) {
+         return false;
+      }
+      if (stream_cancel_publication_state_.compare_exchange_weak(
+              state, state + 1U, std::memory_order_acq_rel, std::memory_order_acquire)) {
+         return true;
+      }
+   }
+   return false;
+}
+
+void session::impl::leave_stream_cancel_publication() noexcept {
+   stream_cancel_publication_state_.fetch_sub(1U, std::memory_order_acq_rel);
+}
+
+void session::impl::request_stream_cancel_loop_stop() noexcept {
+   stream_cancel_publication_state_.fetch_or(stream_cancel_publication_closed, std::memory_order_acq_rel);
+   auto state = stream_cancel_worker_state_.load(std::memory_order_acquire);
+   while (state == stream_cancel_worker_state::running &&
+          !stream_cancel_worker_state_.compare_exchange_weak(
+              state, stream_cancel_worker_state::stopping, std::memory_order_acq_rel, std::memory_order_acquire)) {
+   }
+   stream_cancel_notification_.notify();
+}
+
+void session::impl::finish_stream_cancel_loop() noexcept {
+   stream_cancel_worker_state_.store(stream_cancel_worker_state::done, std::memory_order_release);
+   stream_cancel_done_notification_.notify();
 }
 
 void session::impl::reset_stream_locked(const std::shared_ptr<stream_state>& state) {

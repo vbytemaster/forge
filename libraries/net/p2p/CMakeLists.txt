@@ -35,12 +35,23 @@ add_library(
    provider_registration.cpp
    provider_registration_impl.cpp
    details/provider_registration_impl.hxx
+   rendezvous_time.cpp
+   details/rendezvous_time.hxx
    rendezvous.cpp
    pubsub.cpp
    scoring.cpp
    reachability.cpp
    relay.cpp
+   length_delimited.cpp
+   details/length_delimited.hxx
+   relay_hop_exchange.cpp
+   details/relay_hop_exchange.hxx
    hole_punch.cpp
+   topology.cpp
+   topology_manager.cpp
+   topology_manager_discovery.cpp
+   topology_manager_sessions.cpp
+   details/topology_manager.hxx
    connection_manager.cpp
    details/connection_manager.hxx
    resource_manager.cpp
@@ -63,6 +74,10 @@ add_library(
    host_addresses.cpp
    details/host_addresses.hxx
    direct_transport_quic.cpp
+   quic_client_options.cpp
+   details/quic_client_options.hxx
+   quic_client_token_cache.cpp
+   details/quic_client_token_cache.hxx
    direct_transport_tcp.cpp
    libp2p_tls.cpp
    details/libp2p_tls.hxx
@@ -86,6 +101,7 @@ add_library(
    node_impl_dht_maintenance.cpp
    node_impl_identify.cpp
    node_impl_lifecycle.cpp
+   node_impl_topology.cpp
    details/node_impl.hxx
    bootstrap_service.cpp
    details/bootstrap_service.hxx
@@ -101,6 +117,14 @@ add_library(
    details/dht_exchange.hxx
    dht_fanout.cpp
    details/dht_fanout.hxx
+   dht_fanout_state.cpp
+   details/dht_fanout_state.hxx
+   worker_stop_bridge.cpp
+   details/worker_stop_bridge.hxx
+   owner_cancellation.cpp
+   details/owner_cancellation.hxx
+   topology_dht_fanout.cpp
+   details/topology_dht_fanout.hxx
    connection_singleflight_registry.cpp
    details/connection_singleflight_registry.hxx
    operation_deadline.cpp
@@ -109,8 +133,14 @@ add_library(
    details/path_selector.hxx
    peer_exchange_codec.cpp
    details/peer_exchange_codec.hxx
+   peer_exchange_cancellation.cpp
+   details/peer_exchange_cancellation.hxx
+   peer_exchange_scheduler.cpp
+   details/peer_exchange_scheduler.hxx
    peer_exchange_learning.cpp
    details/peer_exchange_learning.hxx
+   topology_peer_exchange_claims.cpp
+   details/topology_peer_exchange_claims.hxx
    pubsub_outbound_budget.cpp
    details/pubsub_outbound_budget.hxx
    pubsub_backoff.cpp

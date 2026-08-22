@@ -171,6 +171,7 @@ void replace_identify_endpoint_snapshot(peer_store::record& record,
 void peer_store::impl::add_peer_indexes(const peer_store::record& value) {
    const auto score = score_key{-value.score, value.peer};
    score_index_.insert(score);
+   candidates_by_source_[value.discovered_by].insert(score);
    if (value.discovery_expires_at != std::chrono::system_clock::time_point{}) {
       peer_expiry_index_.emplace(value.discovery_expires_at, value.peer);
    }
@@ -184,6 +185,12 @@ void peer_store::impl::add_peer_indexes(const peer_store::record& value) {
 void peer_store::impl::remove_peer_indexes(const peer_store::record& value) {
    const auto score = score_key{-value.score, value.peer};
    score_index_.erase(score);
+   if (const auto source = candidates_by_source_.find(value.discovered_by); source != candidates_by_source_.end()) {
+      source->second.erase(score);
+      if (source->second.empty()) {
+         candidates_by_source_.erase(source);
+      }
+   }
    if (value.discovery_expires_at != std::chrono::system_clock::time_point{}) {
       peer_expiry_index_.erase({value.discovery_expires_at, value.peer});
    }
@@ -342,8 +349,7 @@ std::optional<peer_store::record> peer_store::impl::apply_discovery(const peer_i
 }
 
 void peer_store::impl::apply_peer_exchange(const peer_id& peer, capability_set capabilities) {
-   static_cast<void>(
-       mutate_peer(peer, [&](peer_store::record& value) { value.capabilities.bits |= capabilities.bits; }));
+   static_cast<void>(mutate_peer(peer, [&](peer_store::record& value) { value.capabilities.bits |= capabilities.bits; }));
 }
 
 void peer_store::impl::upsert_relay_reservation(peer_store::relay_record value) {

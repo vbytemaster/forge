@@ -143,6 +143,8 @@ void operation_deadline::invoke_cancel(callback_claim claim) noexcept {
    try {
       claim.callback();
    } catch (...) {
+      // Deadline delivery must not escape an Asio handler or stop path.
+      // Supported callbacks publish sticky per-operation cancellation.
    }
    executing_cancel_state = previous;
    claim.state->active_callbacks.fetch_sub(1, std::memory_order_release);

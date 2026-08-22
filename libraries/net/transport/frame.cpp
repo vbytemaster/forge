@@ -4,6 +4,7 @@ module;
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <utility>
 #include <vector>
@@ -14,6 +15,15 @@ namespace forge::net::transport {
 namespace {
 
 constexpr auto header_size = std::size_t{4};
+
+[[nodiscard]] std::size_t max_frame_bytes(frame_options options) {
+   if constexpr (sizeof(std::size_t) <= sizeof(std::uint32_t)) {
+      if (options.max_size > static_cast<std::uint32_t>(std::numeric_limits<std::size_t>::max() - header_size)) {
+         FORGE_THROW_EXCEPTION(exceptions::frame_too_large, "transport frame payload exceeds addressable size");
+      }
+   }
+   return header_size + static_cast<std::size_t>(options.max_size);
+}
 
 [[nodiscard]] std::uint32_t read_u32_be(std::span<const std::uint8_t, header_size> bytes) noexcept {
    return (static_cast<std::uint32_t>(bytes[0]) << 24U) | (static_cast<std::uint32_t>(bytes[1]) << 16U) |
@@ -54,14 +64,33 @@ frame_view_decode_result decode_frame_view(std::span<const std::uint8_t> bytes, 
       FORGE_THROW_EXCEPTION(exceptions::frame_too_large, "transport frame payload exceeds max_size");
    }
 
-   if (static_cast<std::size_t>(size) > bytes.size() - header_size) {
+   const auto payload_size = static_cast<std::size_t>(size);
+   if (payload_size > std::numeric_limits<std::size_t>::max() - header_size) {
+      FORGE_THROW_EXCEPTION(exceptions::frame_too_large, "transport frame payload exceeds addressable size");
+   }
+   if (payload_size > bytes.size() - header_size) {
       return {.status = frame_decode_status::need_more_data};
    }
 
-   const auto total = header_size + static_cast<std::size_t>(size);
+   const auto total = header_size + payload_size;
    return {.status = frame_decode_status::complete,
-           .payload = {bytes.data() + header_size, static_cast<std::size_t>(size)},
+           .payload = {bytes.data() + header_size, payload_size},
            .consumed = total};
+}
+
+std::size_t frame_buffer_limit(frame_options options) {
+   const auto one_frame = max_frame_bytes(options);
+   if (options.max_buffered_size != 0) {
+      if (options.max_buffered_size < one_frame) {
+         FORGE_THROW_EXCEPTION(exceptions::frame_too_large,
+                               "transport max_buffered_size cannot hold one maximum frame");
+      }
+      return options.max_buffered_size;
+   }
+   if (one_frame > std::numeric_limits<std::size_t>::max() / 2) {
+      return std::numeric_limits<std::size_t>::max();
+   }
+   return one_frame * 2;
 }
 
 frame_decode_result decode_frame(std::span<const std::uint8_t> bytes, frame_options options) {

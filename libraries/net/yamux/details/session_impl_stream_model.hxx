@@ -14,6 +14,7 @@ class session::impl::stream_model final : public transport::detail::stream_conce
    boost::asio::awaitable<transport::chunk> async_read_chunk() override;
    boost::asio::awaitable<void> async_close() override;
    void cancel() override;
+   void request_cancel() noexcept;
 
  private:
    std::weak_ptr<impl> owner_;

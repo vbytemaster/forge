@@ -293,6 +293,20 @@ Integrate bounded DHT, Rendezvous and Peer Exchange refresh into one node-owned
 topology manager with low/target/high session watermarks. Static topology is an
 explicit supported mode, not an accidental default.
 
+> **Implementation status:** present on `forge-p2p-topology-v1`. The manager
+> owns coalesced periodic refresh, bounded per-source observations, scored
+> dialing and pruning, while the plugin only maps configuration. This status is
+> not a production promotion until the exact-head hidden-peer, donor interop,
+> shutdown and bounded-state suites pass and the inventory evidence is updated.
+
+Rendezvous client state is scoped by configured `(point, namespace)` pairs:
+cookies are opaque, registration renews from the server-returned TTL and local
+signed-address generation, and shutdown performs best-effort unregister.
+Forge Peer Exchange is a product extension rather than a libp2p standard; its
+hints remain untrusted until authenticated connect and Identify. Stage 4 owns
+Kademlia bucket refresh, so Stage 5 consumes its results without duplicating
+that maintenance loop.
+
 ### Stage 6: Reachability and path management
 
 Maintain AutoNAT observations, effective reachability, AutoRelay candidates and

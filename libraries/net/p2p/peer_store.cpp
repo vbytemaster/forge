@@ -141,6 +141,14 @@ std::vector<peer_store::record> peer_store::candidates(std::uint64_t capability,
    return impl_->candidates(capability, limit);
 }
 
+std::vector<peer_store::record> peer_store::scored_candidates(std::size_t limit) const {
+   return impl_->scored_candidates(limit);
+}
+
+std::vector<peer_store::record> peer_store::scored_candidates(discovery::source source, std::size_t limit) const {
+   return impl_->scored_candidates(source, limit);
+}
+
 std::vector<rendezvous::registration> peer_store::discover_rendezvous(std::string_view namespace_name,
                                                                       std::uint64_t after_sequence,
                                                                       std::size_t limit) const {

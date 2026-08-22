@@ -94,13 +94,13 @@ BOOST_AUTO_TEST_CASE(p2p_lifecycle_stop_is_latched_before_task_cancellation_hand
 
    auto operation = tracker.track();
    BOOST_REQUIRE(operation.active());
-   const auto stop_latch = operation.stop_latch();
+   const auto stop_source = operation.stop_source();
 
    // Request stop before any cancellation handler is installed. The durable
    // latch is the task-entry guard for this exact registration race.
    tracker.request_stop();
-   BOOST_REQUIRE(stop_latch);
-   BOOST_TEST(stop_latch->load(std::memory_order_acquire));
+   BOOST_REQUIRE(stop_source);
+   BOOST_TEST(stop_source->stop_requested());
    operation.release();
    forge::asio::blocking::run(runtime, tracker.wait());
 }
@@ -112,11 +112,11 @@ BOOST_AUTO_TEST_CASE(p2p_lifecycle_stop_latch_is_sticky_and_waits_for_operation_
 
    auto operation = tracker.track();
    BOOST_REQUIRE(operation.active());
-   const auto stop_latch = operation.stop_latch();
+   const auto stop_source = operation.stop_source();
 
    tracker.request_stop();
-   BOOST_REQUIRE(stop_latch);
-   BOOST_TEST(stop_latch->load(std::memory_order_acquire));
+   BOOST_REQUIRE(stop_source);
+   BOOST_TEST(stop_source->stop_requested());
 
    auto waiting = boost::asio::co_spawn(runtime.context(), tracker.wait(), boost::asio::use_future);
    BOOST_CHECK(waiting.wait_for(std::chrono::milliseconds{25}) == std::future_status::timeout);

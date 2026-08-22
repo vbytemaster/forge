@@ -213,6 +213,8 @@ class peer_store {
    [[nodiscard]] std::optional<public_key> find_public_key(const peer_id& peer) const;
    [[nodiscard]] std::vector<record> snapshot(std::size_t limit) const;
    [[nodiscard]] std::vector<record> candidates(std::uint64_t capability, std::size_t limit) const;
+   [[nodiscard]] std::vector<record> scored_candidates(std::size_t limit) const;
+   [[nodiscard]] std::vector<record> scored_candidates(discovery::source source, std::size_t limit) const;
    [[nodiscard]] std::vector<rendezvous::registration>
    discover_rendezvous(std::string_view namespace_name, std::uint64_t after_sequence, std::size_t limit) const;
    [[nodiscard]] persistence_status persistence_state() const;

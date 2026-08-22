@@ -112,7 +112,7 @@ forge::app::plugin_id plugin::id() const {
 }
 
 std::string plugin::version() const {
-   return "3.0.0";
+   return "4.0.0";
 }
 
 std::optional<forge::config::core::component_descriptor> plugin::describe_config() const {
@@ -257,7 +257,7 @@ boost::asio::awaitable<void> plugin::startup() {
       co_return;
    }
    if (impl_->stop_requested.load(std::memory_order_acquire)) {
-      node->stop();
+      node->request_stop();
       co_await node->async_stop();
       co_return;
    }
@@ -269,7 +269,7 @@ void plugin::request_stop() noexcept {
    impl_->phase.store(lifecycle_phase::stopping, std::memory_order_release);
    if (auto node = impl_->node_snapshot()) {
       try {
-         node->stop();
+         node->request_stop();
       } catch (...) {
          // shutdown() retries and reports a synchronous initiation failure.
       }

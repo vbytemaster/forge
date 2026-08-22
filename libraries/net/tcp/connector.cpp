@@ -5,6 +5,7 @@ module;
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <exception>
 #include <map>
 #include <memory>
 #include <string>
@@ -17,13 +18,14 @@ module;
 #include <boost/asio/error.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/post.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/strand.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/system/error_code.hpp>
 
 module forge.net.tcp.connector;
+
+import forge.asio.notification;
 
 namespace forge::net::tcp {
 namespace {
@@ -129,8 +131,49 @@ void configure_socket(asio_tcp::socket& socket, const options& tcp_options) {
 struct connector::impl final : transport::detail::stream_connector_concept,
                                std::enable_shared_from_this<connector::impl> {
    impl(boost::asio::any_io_executor executor_value, options tcp_options_value)
-       : strand(asio::make_strand(std::move(executor_value))), tcp_options(tcp_options_value) {
+       : strand(asio::make_strand(std::move(executor_value))), tcp_options(tcp_options_value),
+         sockets(std::make_shared<socket_map>()), resolvers(std::make_shared<resolver_map>()),
+         terminal_requested(std::make_shared<forge::asio::notification>()),
+         terminal_completed(std::make_shared<forge::asio::notification>()) {
       validate_options(tcp_options);
+   }
+
+   ~impl() override {
+      request_cancel();
+   }
+
+   using socket_map = std::map<std::uint64_t, std::shared_ptr<asio_tcp::socket>>;
+   using resolver_map = std::map<std::uint64_t, std::shared_ptr<asio_tcp::resolver>>;
+
+   void start_terminal_worker() {
+      // The composed operation owns only terminal resources, never connector::impl.
+      // This keeps stop sticky without creating a worker/self ownership cycle.
+      auto active_sockets = sockets;
+      auto active_resolvers = resolvers;
+      auto requested = terminal_requested;
+      auto completed = terminal_completed;
+      asio::co_spawn(
+          strand,
+          [active_sockets = std::move(active_sockets), active_resolvers = std::move(active_resolvers),
+           requested = std::move(requested), completed]() mutable -> asio::awaitable<void> {
+             try {
+                static_cast<void>(co_await requested->async_wait(0));
+             } catch (...) {
+                // Failure to arm is terminal: owner cleanup still runs below.
+             }
+             for (const auto& [_, resolver] : *active_resolvers) {
+                try {
+                   resolver->cancel();
+                } catch (...) {
+                }
+             }
+             for (const auto& [_, socket] : *active_sockets) {
+                auto ignored = boost::system::error_code{};
+                socket->cancel(ignored);
+             }
+             completed->notify();
+          },
+          [completed = std::move(completed)](std::exception_ptr) noexcept { completed->notify(); });
    }
 
    [[nodiscard]] bool valid() const noexcept override {
@@ -149,7 +192,7 @@ struct connector::impl final : transport::detail::stream_connector_concept,
 
              const auto generation = self->next_generation++;
              auto socket = std::make_shared<asio_tcp::socket>(self->strand);
-             self->sockets.emplace(generation, socket);
+             self->sockets->emplace(generation, socket);
              try {
                 auto error = boost::system::error_code{};
                 if (remote.host_type == transport::endpoint::host_kind::ip4) {
@@ -168,11 +211,11 @@ struct connector::impl final : transport::detail::stream_connector_concept,
                                                   asio::redirect_error(asio::use_awaitable, error));
                 } else {
                    auto resolver = std::make_shared<asio_tcp::resolver>(self->strand);
-                   self->resolvers.emplace(generation, resolver);
+                   self->resolvers->emplace(generation, resolver);
                    const auto service = std::to_string(remote.port);
                    auto results = co_await resolver->async_resolve(
                        remote.host, service, asio::redirect_error(asio::use_awaitable, error));
-                   self->resolvers.erase(generation);
+                   self->resolvers->erase(generation);
                    if (!error) {
                       auto filtered = filter_results(std::move(results), remote.host_type);
                       if (filtered.empty()) {
@@ -195,11 +238,11 @@ struct connector::impl final : transport::detail::stream_connector_concept,
                 }
 
                 configure_socket(*socket, self->tcp_options);
-                self->sockets.erase(generation);
+                self->sockets->erase(generation);
                 co_return connection{std::move(*socket), self->tcp_options};
              } catch (...) {
-                self->resolvers.erase(generation);
-                self->sockets.erase(generation);
+                self->resolvers->erase(generation);
+                self->sockets->erase(generation);
                 throw;
              }
           },
@@ -213,40 +256,33 @@ struct connector::impl final : transport::detail::stream_connector_concept,
    }
 
    void cancel() override {
+      request_cancel();
+   }
+
+   void request_cancel() noexcept {
       auto expected = false;
       if (!canceled.compare_exchange_strong(expected, true, std::memory_order_acq_rel,
                                             std::memory_order_acquire)) {
          return;
       }
-      auto self = shared_from_this();
-      asio::post(strand, [self = std::move(self)] { self->cancel_active_on_owner(); });
-   }
-
-   void cancel_active_on_owner() noexcept {
-      for (const auto& [_, resolver] : resolvers) {
-         try {
-            resolver->cancel();
-         } catch (...) {
-            // Cancellation is already sticky; never escape through the posted owner handler.
-         }
-      }
-      for (const auto& [_, socket] : sockets) {
-         auto ignored = boost::system::error_code{};
-         socket->cancel(ignored);
-      }
+      terminal_requested->notify();
    }
 
    asio::strand<asio::any_io_executor> strand;
    options tcp_options;
-   std::map<std::uint64_t, std::shared_ptr<asio_tcp::socket>> sockets;
-   std::map<std::uint64_t, std::shared_ptr<asio_tcp::resolver>> resolvers;
+   std::shared_ptr<socket_map> sockets;
+   std::shared_ptr<resolver_map> resolvers;
+   std::shared_ptr<forge::asio::notification> terminal_requested;
+   std::shared_ptr<forge::asio::notification> terminal_completed;
    std::uint64_t next_generation = 1;
    std::atomic_bool canceled = false;
 };
 
 connector::connector() = default;
 connector::connector(boost::asio::any_io_executor executor, options tcp_options)
-    : impl_(std::make_shared<impl>(std::move(executor), tcp_options)) {}
+    : impl_(std::make_shared<impl>(std::move(executor), tcp_options)) {
+   impl_->start_terminal_worker();
+}
 connector::~connector() = default;
 connector::connector(connector&&) noexcept = default;
 connector& connector::operator=(connector&&) noexcept = default;
@@ -274,8 +310,12 @@ boost::asio::awaitable<transport::stream_connection> connector::async_connect(tr
 }
 
 void connector::cancel() {
+   request_cancel();
+}
+
+void connector::request_cancel() noexcept {
    if (impl_) {
-      impl_->cancel();
+      impl_->request_cancel();
    }
 }
 

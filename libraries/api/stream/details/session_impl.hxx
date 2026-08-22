@@ -22,8 +22,7 @@ struct session::impl final : std::enable_shared_from_this<session::impl> {
    };
 
    struct flow_state {
-      forge::api::core::stream_direction direction =
-         forge::api::core::stream_direction::input;
+      forge::api::core::stream_direction direction = forge::api::core::stream_direction::input;
       std::shared_ptr<forge::api::core::detail::stream_endpoint> endpoint;
       std::uint64_t transferred_items = 0;
       std::uint64_t transferred_bytes = 0;
@@ -39,8 +38,7 @@ struct session::impl final : std::enable_shared_from_this<session::impl> {
    };
 
    struct tombstone_flow {
-      forge::api::core::stream_direction direction =
-         forge::api::core::stream_direction::input;
+      forge::api::core::stream_direction direction = forge::api::core::stream_direction::input;
       std::uint64_t transferred_items = 0;
       std::uint64_t transferred_bytes = 0;
       std::uint64_t limit_items = 0;
@@ -57,8 +55,7 @@ struct session::impl final : std::enable_shared_from_this<session::impl> {
 
    struct call_state {
       call_state(const strand_type& executor, forge::api::core::call_id value,
-                 forge::api::core::method_kind method_kind,
-                 bool local_origin_value);
+                 forge::api::core::method_kind method_kind, bool local_origin_value);
 
       forge::api::core::call_id id;
       forge::api::core::method_kind kind;
@@ -87,121 +84,86 @@ struct session::impl final : std::enable_shared_from_this<session::impl> {
    };
 
    impl(forge::net::transport::stream stream_value, options settings_value);
-   impl(forge::net::transport::stream stream_value,
-        forge::api::core::binding_plan plan_value, options settings_value,
+   impl(forge::net::transport::stream stream_value, forge::api::core::binding_plan plan_value, options settings_value,
         forge::api::core::metadata trusted_metadata);
 
    [[nodiscard]] bool valid() const noexcept;
-   [[nodiscard]] strand_type ensure_strand(
-      boost::asio::any_io_executor executor);
+   [[nodiscard]] strand_type ensure_strand(boost::asio::any_io_executor executor);
    [[nodiscard]] std::optional<strand_type> current_strand() const;
    void initialize_on_strand(const strand_type& executor);
    void validate_options() const;
 
    [[nodiscard]] forge::api::core::session_hello local_hello() const;
    void negotiate_hello(const forge::api::core::session_hello& peer);
-   boost::asio::awaitable<void> ensure_handshake_on_strand(
-      const std::shared_ptr<call_state>& call = {});
-   boost::asio::awaitable<void> wait_receipt_on_strand(
-      const std::shared_ptr<write_receipt>& receipt);
+   boost::asio::awaitable<void> ensure_handshake_on_strand(const std::shared_ptr<call_state>& call = {});
+   boost::asio::awaitable<void> wait_receipt_on_strand(const std::shared_ptr<write_receipt>& receipt);
 
-   [[nodiscard]] std::vector<std::uint8_t>
-   encode_wire_frame(const forge::api::core::frame& value) const;
-   [[nodiscard]] forge::api::core::frame decode_wire_frame(
-      forge::net::transport::chunk payload) const;
-   [[nodiscard]] forge::api::core::session_hello decode_hello(
-      const forge::api::core::frame& value) const;
-   [[nodiscard]] forge::api::core::stream_window decode_window(
-      const forge::api::core::frame& value) const;
-   [[nodiscard]] forge::api::core::stream_end decode_end(
-      const forge::api::core::frame& value) const;
+   [[nodiscard]] std::vector<std::uint8_t> encode_wire_frame(const forge::api::core::frame& value) const;
+   [[nodiscard]] forge::api::core::frame decode_wire_frame(forge::net::transport::chunk payload) const;
+   [[nodiscard]] forge::api::core::session_hello decode_hello(const forge::api::core::frame& value) const;
+   [[nodiscard]] forge::api::core::stream_window decode_window(const forge::api::core::frame& value) const;
+   [[nodiscard]] forge::api::core::stream_end decode_end(const forge::api::core::frame& value) const;
 
    boost::asio::awaitable<void> reader_loop();
-   boost::asio::awaitable<forge::net::transport::chunk>
-   read_wire_frame();
-   boost::asio::awaitable<void> handle_inbound_frame(
-      forge::api::core::frame value);
-   boost::asio::awaitable<void> handle_request(
-      forge::api::core::frame value);
-   void handle_stream_item(
-      const std::shared_ptr<call_state>& call,
-      forge::api::core::frame value);
-   void handle_stream_end(const std::shared_ptr<call_state>& call,
-                          const forge::api::core::frame& value);
-   void handle_stream_window(const std::shared_ptr<call_state>& call,
-                             const forge::api::core::frame& value);
-   void handle_terminal(const std::shared_ptr<call_state>& call,
-                        forge::api::core::frame value);
+   boost::asio::awaitable<forge::net::transport::chunk> read_wire_frame();
+   boost::asio::awaitable<void> handle_inbound_frame(forge::api::core::frame value);
+   boost::asio::awaitable<void> handle_request(forge::api::core::frame value);
+   void handle_stream_item(const std::shared_ptr<call_state>& call, forge::api::core::frame value);
+   void handle_stream_end(const std::shared_ptr<call_state>& call, const forge::api::core::frame& value);
+   void handle_stream_window(const std::shared_ptr<call_state>& call, const forge::api::core::frame& value);
+   void handle_terminal(const std::shared_ptr<call_state>& call, forge::api::core::frame value);
    void handle_cancel(const std::shared_ptr<call_state>& call);
-   void handle_tombstone_frame(tombstone_state& tombstone,
-                               const forge::api::core::frame& value);
+   void handle_tombstone_frame(tombstone_state& tombstone, const forge::api::core::frame& value);
 
    boost::asio::awaitable<void> writer_loop();
    [[nodiscard]] std::optional<queued_frame> next_write_on_strand();
    void enqueue_control(forge::api::core::frame value);
-   std::shared_ptr<write_receipt> enqueue_call_frame(
-      const std::shared_ptr<call_state>& call,
-      forge::api::core::frame value);
+   std::shared_ptr<write_receipt> enqueue_call_frame(const std::shared_ptr<call_state>& call,
+                                                     forge::api::core::frame value);
    void wake_writer() noexcept;
    void wake_session() noexcept;
    void touch_activity() noexcept;
    boost::asio::awaitable<void> idle_watchdog();
    void wake_call(const std::shared_ptr<call_state>& call) noexcept;
-   void complete_receipt(const std::shared_ptr<write_receipt>& receipt,
-                         std::exception_ptr error = {}) noexcept;
+   void complete_receipt(const std::shared_ptr<write_receipt>& receipt, std::exception_ptr error = {}) noexcept;
    void release_outbound_capacity(const queued_frame& value) noexcept;
    void wake_outbound_capacity() noexcept;
    [[nodiscard]] std::uint64_t outbound_item_limit() const noexcept;
 
    boost::asio::awaitable<forge::api::core::frame>
-   async_call_on_strand(forge::api::core::frame request,
-                        forge::api::core::method_kind kind,
+   async_call_on_strand(forge::api::core::frame request, forge::api::core::method_kind kind,
                         std::shared_ptr<forge::api::core::detail::stream_endpoint> input,
-                        std::shared_ptr<forge::api::core::detail::stream_endpoint> output,
-                        call_options value,
+                        std::shared_ptr<forge::api::core::detail::stream_endpoint> output, call_options value,
                         const forge::api::core::method_descriptor* descriptor);
-   [[nodiscard]] std::shared_ptr<call_state> reserve_local_call(
-      forge::api::core::frame& request, forge::api::core::method_kind kind,
-      std::shared_ptr<forge::api::core::detail::stream_endpoint> input,
-      std::shared_ptr<forge::api::core::detail::stream_endpoint> output,
-      call_options& value,
-      const forge::api::core::method_descriptor* descriptor);
-   [[nodiscard]] forge::api::core::method_kind method_kind_for(
-      const forge::api::core::frame& request) const;
-   [[nodiscard]] std::shared_ptr<call_state> make_remote_call(
-      const forge::api::core::frame& request,
-      forge::api::core::method_kind kind);
-   boost::asio::awaitable<void> run_remote_call(
-      forge::api::core::frame request,
-      const std::shared_ptr<call_state>& call);
-   boost::asio::awaitable<void> pump_outbound(
-      const std::shared_ptr<call_state>& call);
+   [[nodiscard]] std::shared_ptr<call_state>
+   reserve_local_call(forge::api::core::frame& request, forge::api::core::method_kind kind,
+                      std::shared_ptr<forge::api::core::detail::stream_endpoint> input,
+                      std::shared_ptr<forge::api::core::detail::stream_endpoint> output, call_options& value,
+                      const forge::api::core::method_descriptor* descriptor);
+   [[nodiscard]] forge::api::core::method_kind method_kind_for(const forge::api::core::frame& request) const;
+   [[nodiscard]] std::shared_ptr<call_state> make_remote_call(const forge::api::core::frame& request,
+                                                              forge::api::core::method_kind kind);
+   boost::asio::awaitable<void> run_remote_call(forge::api::core::frame request,
+                                                const std::shared_ptr<call_state>& call);
+   boost::asio::awaitable<void> pump_outbound(const std::shared_ptr<call_state>& call);
    void start_outbound_pump(const std::shared_ptr<call_state>& call);
-   boost::asio::awaitable<void> pump_inbound(
-      const std::shared_ptr<call_state>& call);
+   boost::asio::awaitable<void> pump_inbound(const std::shared_ptr<call_state>& call);
    void start_inbound_pump(const std::shared_ptr<call_state>& call);
    void finish_unstarted_pumps(const std::shared_ptr<call_state>& call) noexcept;
-   boost::asio::awaitable<void> wait_for_credit(
-      const std::shared_ptr<call_state>& call, std::size_t item_bytes);
-   boost::asio::awaitable<void> wait_for_outbound_capacity(
-      const std::shared_ptr<call_state>& call, std::size_t item_bytes);
-   boost::asio::awaitable<void> wait_for_terminal(
-      const std::shared_ptr<call_state>& call);
-   boost::asio::awaitable<void> wait_for_outbound_pump(
-      const std::shared_ptr<call_state>& call);
-   void start_deadline(const std::shared_ptr<call_state>& call,
-                       std::chrono::milliseconds value);
-   void cancel_call(const std::shared_ptr<call_state>& call,
-                    std::exception_ptr error, bool notify_peer);
+   boost::asio::awaitable<void> wait_for_credit(const std::shared_ptr<call_state>& call, std::size_t item_bytes);
+   boost::asio::awaitable<void> wait_for_outbound_capacity(const std::shared_ptr<call_state>& call,
+                                                           std::size_t item_bytes);
+   boost::asio::awaitable<void> wait_for_terminal(const std::shared_ptr<call_state>& call);
+   boost::asio::awaitable<void> wait_for_outbound_pump(const std::shared_ptr<call_state>& call);
+   void start_deadline(const std::shared_ptr<call_state>& call, std::chrono::milliseconds value);
+   void cancel_call(const std::shared_ptr<call_state>& call, std::exception_ptr error, bool notify_peer);
    void discard_inbound(const std::shared_ptr<call_state>& call) noexcept;
    void finish_call(const std::shared_ptr<call_state>& call);
    void remember_tombstone(const std::shared_ptr<call_state>& call);
    void complete_tombstone(std::uint64_t id);
    [[nodiscard]] std::size_t draining_tombstones() const noexcept;
    void install_inbound_observer(const std::shared_ptr<call_state>& call);
-   void on_inbound_event(std::uint64_t id,
-                         forge::api::core::detail::stream_event event,
-                         std::size_t bytes);
+   void on_inbound_event(std::uint64_t id, forge::api::core::detail::stream_event event, std::size_t bytes);
    void replenish_inbound_credit();
    [[nodiscard]] std::uint64_t aggregate_buffered_bytes() const noexcept;
    [[nodiscard]] std::uint64_t aggregate_outstanding_credit() const noexcept;
@@ -234,7 +196,7 @@ struct session::impl final : std::enable_shared_from_this<session::impl> {
    std::exception_ptr failure;
    mutable std::mutex executor_mutex;
    std::optional<strand_type> strand;
-   std::shared_ptr<timer> session_wake;
+   forge::asio::notification session_wake;
    std::shared_ptr<timer> writer_wake;
    std::shared_ptr<timer> idle_timer;
    std::atomic_bool closed{false};

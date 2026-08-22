@@ -96,15 +96,15 @@ BOOST_AUTO_TEST_CASE(p2p_cancellation_latch_preserves_stop_before_arm_and_termin
    BOOST_TEST(canceled.load(std::memory_order_acquire) == 1U);
 }
 
-BOOST_AUTO_TEST_CASE(p2p_cancellation_latch_stop_before_throwing_arm_completes_callback_accounting) {
+BOOST_AUTO_TEST_CASE(p2p_cancellation_latch_stop_before_throwing_arm_propagates_after_callback_accounting) {
    auto latch = cancellation_latch{};
    auto invoked = std::atomic_size_t{0};
 
    latch.request_stop();
-   BOOST_CHECK_NO_THROW(latch.arm([&] {
+   BOOST_CHECK_THROW(latch.arm([&] {
       invoked.fetch_add(1, std::memory_order_release);
       throw std::runtime_error{"injected cancellation failure"};
-   }));
+   }), std::runtime_error);
 
    BOOST_TEST(invoked.load(std::memory_order_acquire) == 1U);
    BOOST_TEST(!latch.finish());

@@ -1,8 +1,11 @@
 #include "details/quic_engine.hxx"
 #include "details/acknowledged_ranges.hxx"
+#include "details/initial_token.hxx"
 
 #include <boost/asio/bind_cancellation_slot.hpp>
+#include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/cancellation_state.hpp>
+#include <boost/asio/cancellation_type.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/ip/udp.hpp>
@@ -30,7 +33,6 @@
 #include <cassert>
 #include <cctype>
 #include <chrono>
-#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <exception>
@@ -49,7 +51,7 @@ import forge.crypto.core.random;
 import forge.crypto.core.secret_string;
 import forge.codec.hex;
 import forge.crypto.digest.sha256;
-
+import forge.asio.notification;
 #include "details/engine_client_options.hxx"
 #include "details/engine_server_options.hxx"
 
@@ -65,6 +67,8 @@ constexpr auto max_packets_per_drain = std::size_t{64};
 constexpr auto max_queued_datagram_bytes = std::size_t{16 * 1024 * 1024};
 constexpr auto stateless_reset_secret_size = std::size_t{32};
 constexpr auto retry_token_lifetime = 10 * NGTCP2_SECONDS;
+constexpr auto regular_token_lifetime = 60 * 60 * NGTCP2_SECONDS;
+constexpr auto max_client_token_bytes = std::size_t{512};
 
 using timer_ptr = std::shared_ptr<asio::steady_timer>;
 using stateless_reset_secret = std::array<std::uint8_t, stateless_reset_secret_size>;
@@ -161,6 +165,14 @@ int accept_any_certificate_cb(int, X509_STORE_CTX*) {
    auto secret = stateless_reset_secret{};
    if (!fill_random(secret)) {
       throw_engine(engine_error_kind::tls_failed, "failed to generate QUIC stateless reset secret");
+   }
+   return secret;
+}
+
+[[nodiscard]] initial_token_validator::secret random_initial_token_secret() {
+   auto secret = initial_token_validator::secret{};
+   if (!fill_random(secret)) {
+      throw_engine(engine_error_kind::tls_failed, "failed to generate QUIC initial token secret");
    }
    return secret;
 }
@@ -499,6 +511,8 @@ struct engine_stream::impl {
    bool fin_queued = false;
    bool reset = false;
    bool closed = false;
+   bool cancel_worker_started = false;
+   forge::asio::notification cancel_requested;
    std::vector<std::weak_ptr<asio::steady_timer>> read_waiters;
    std::vector<std::weak_ptr<asio::steady_timer>> write_waiters;
 };
@@ -521,6 +535,9 @@ struct engine_connection_metrics_state {
    std::atomic<std::uint64_t> timeouts{0};
    std::atomic<std::uint64_t> cancellations{0};
    std::atomic<std::uint64_t> backpressure_rejections{0};
+   std::atomic<std::uint64_t> retry_packets_received{0};
+   std::atomic<std::uint64_t> new_tokens_received{0};
+   std::atomic<std::uint64_t> new_tokens_submitted{0};
    std::atomic<std::size_t> queued_bytes{0};
    std::atomic<std::size_t> active_streams{0};
    std::atomic<bool> closed{false};
@@ -545,6 +562,9 @@ struct engine_connection_metrics_state {
           .timeouts = timeouts.load(relaxed),
           .cancellations = cancellations.load(relaxed),
           .backpressure_rejections = backpressure_rejections.load(relaxed),
+          .retry_packets_received = retry_packets_received.load(relaxed),
+          .new_tokens_received = new_tokens_received.load(relaxed),
+          .new_tokens_submitted = new_tokens_submitted.load(relaxed),
           .queued_bytes = queued_bytes.load(relaxed),
           .active_streams = active_streams.load(relaxed),
           .closed = closed.load(relaxed),
@@ -688,6 +708,9 @@ struct engine_connection::impl {
    std::function<void(std::shared_ptr<impl>)> closed_hook;
    std::function<void(const ngtcp2_cid&)> local_connection_id_issued_hook;
    std::function<void(const ngtcp2_cid&)> local_connection_id_retired_hook;
+   std::function<void(impl&)> issue_new_token;
+   std::function<void(std::vector<std::uint8_t>)> client_token_store;
+   std::optional<std::vector<std::uint8_t>> pending_client_token;
 
    asio::steady_timer handshake_timer;
    asio::steady_timer expiry_timer;
@@ -710,6 +733,8 @@ struct engine_connection::impl {
    bool server_side = false;
    bool listener_accept_notified = false;
    bool report_accept_failure = true;
+   bool client_token_store_verified = false;
+   bool new_token_submitted = false;
    std::int64_t last_writable_stream_id = -1;
 
    [[nodiscard]] udp::endpoint local_endpoint() const {
@@ -781,6 +806,70 @@ struct engine_connection::impl {
       stream->retained.clear();
    }
 
+   [[nodiscard]] bool reset_stream_on_owner(const std::shared_ptr<engine_stream::impl>& stream) noexcept {
+      assert(strand.running_in_this_thread());
+      if (!stream || stream->reset || stream->closed) {
+         return false;
+      }
+      auto shutdown_result = 0;
+      auto should_drain = false;
+      if (conn != nullptr && !closing && !canceled) {
+         shutdown_result = ngtcp2_conn_shutdown_stream(conn, 0, stream->id, 0);
+         should_drain = shutdown_result == 0;
+      }
+      release_queued_stream_writes(stream);
+      stream->reset = true;
+      wake(stream->read_waiters);
+      wake(stream->write_waiters);
+      metrics.streams_reset.fetch_add(1, std::memory_order_relaxed);
+      update_active_stream_metrics();
+      if (shutdown_result != 0) {
+         fail_all();
+         return false;
+      }
+      return should_drain;
+   }
+
+   void start_stream_cancel_worker(const std::shared_ptr<engine_stream::impl>& stream) {
+      assert(strand.running_in_this_thread());
+      if (stream->cancel_worker_started) {
+         return;
+      }
+      auto shared = self.lock();
+      if (!shared) {
+         throw_engine(engine_error_kind::connection_closed, "QUIC connection expired before stream publication");
+      }
+
+      stream->cancel_worker_started = true;
+      background_jobs.fetch_add(1, std::memory_order_release);
+      try {
+         asio::co_spawn(
+             strand,
+             [shared = std::move(shared), stream]() -> asio::awaitable<void> {
+                auto finish = std::unique_ptr<engine_connection::impl, void (*)(engine_connection::impl*)>{
+                    shared.get(), [](engine_connection::impl* value) { value->finish_background_job(); }};
+                try {
+                   static_cast<void>(co_await stream->cancel_requested.async_wait(0));
+                } catch (...) {
+                   // Failure to arm the waiter terminalizes this stream on its owner.
+                }
+                if (!shared->reset_stream_on_owner(stream)) {
+                   co_return;
+                }
+                try {
+                   co_await shared->drain_send();
+                } catch (...) {
+                   // Local stream reset is terminal; wire RESET_STREAM is best effort.
+                }
+             },
+             asio::detached);
+      } catch (...) {
+         stream->cancel_worker_started = false;
+         finish_background_job();
+         throw;
+      }
+   }
+
    void wake_and_clear_streams(bool reset_streams) {
       for (auto& [_, stream] : streams) {
          if (reset_streams) {
@@ -791,6 +880,7 @@ struct engine_connection::impl {
          wake(stream->read_waiters);
          wake(stream->write_waiters);
          release_queued_stream_writes(stream);
+         stream->cancel_requested.notify();
       }
       update_active_stream_metrics();
    }
@@ -902,6 +992,7 @@ struct engine_connection::impl {
       assert(strand.running_in_this_thread());
       canceled = true;
       closing = true;
+      pending_client_token.reset();
       metrics.closed.store(true, std::memory_order_relaxed);
       clear_queued_work();
       cancel_transport_io(!server_side);
@@ -919,6 +1010,7 @@ struct engine_connection::impl {
    void close_transport(bool cancel_socket) {
       assert(strand.running_in_this_thread());
       closing = true;
+      pending_client_token.reset();
       metrics.closed.store(true, std::memory_order_relaxed);
       clear_queued_work();
       cancel_transport_io(cancel_socket);
@@ -985,6 +1077,20 @@ struct engine_connection::impl {
       wake(handshake_waiters);
       if (handshake_completed_hook) {
          handshake_completed_hook();
+      }
+   }
+
+   void commit_pending_client_token() noexcept {
+      assert(strand.running_in_this_thread());
+      if (!client_token_store_verified || !pending_client_token || !client_token_store) {
+         return;
+      }
+      auto token = std::move(*pending_client_token);
+      pending_client_token.reset();
+      try {
+         client_token_store(std::move(token));
+      } catch (...) {
+         // Cache failures must not affect a verified QUIC connection.
       }
    }
 
@@ -1522,16 +1628,46 @@ ngtcp2_conn* get_conn_cb(ngtcp2_crypto_conn_ref* conn_ref) {
 int handshake_completed_cb(ngtcp2_conn*, void* user_data) {
    auto* connection = static_cast<engine_connection::impl*>(user_data);
    try {
-      if (connection->server_side) {
+      if (connection->server_side && !connection->handshake_done) {
          connection->verify_peer(connection->peer_security);
       }
-      connection->complete_handshake();
    } catch (const engine_failure&) {
       connection->fail_all();
       return NGTCP2_ERR_CALLBACK_FAILURE;
    } catch (...) {
       connection->fail_all();
       return NGTCP2_ERR_CALLBACK_FAILURE;
+   }
+   if (connection->server_side && !connection->handshake_done && connection->issue_new_token) {
+      try {
+         connection->issue_new_token(*connection);
+      } catch (...) {
+         // Address-token issuance is best effort after peer verification.
+      }
+   }
+   connection->complete_handshake();
+   return 0;
+}
+
+int recv_retry_cb(ngtcp2_conn* connection, const ngtcp2_pkt_hd* header, void* user_data) {
+   auto* value = static_cast<engine_connection::impl*>(user_data);
+   if (value != nullptr) {
+      value->metrics.retry_packets_received.fetch_add(1, std::memory_order_relaxed);
+   }
+   return ngtcp2_crypto_recv_retry_cb(connection, header, user_data);
+}
+
+int recv_new_token_cb(ngtcp2_conn*, const std::uint8_t* token, std::size_t token_length, void* user_data) {
+   auto* connection = static_cast<engine_connection::impl*>(user_data);
+   if (connection == nullptr || token == nullptr || token_length == 0 || token_length > max_client_token_bytes) {
+      return 0;
+   }
+   try {
+      connection->pending_client_token = std::vector<std::uint8_t>{token, token + token_length};
+      connection->metrics.new_tokens_received.fetch_add(1, std::memory_order_relaxed);
+      connection->commit_pending_client_token();
+   } catch (...) {
+      // A received token is an optimization and must never fail the connection.
    }
    return 0;
 }
@@ -1616,6 +1752,7 @@ int stream_close_cb(ngtcp2_conn* conn, std::uint32_t, std::int64_t stream_id, st
       connection->streams.erase(it);
       connection->release_queued_stream_writes(stream);
       stream->closed = true;
+      stream->cancel_requested.notify();
       if (ngtcp2_is_bidi_stream(stream_id) && ngtcp2_conn_is_local_stream(conn, stream_id) == 0) {
          ngtcp2_conn_extend_max_streams_bidi(conn, 1);
       }
@@ -1656,13 +1793,14 @@ int extend_max_local_streams_bidi_cb(ngtcp2_conn*, std::uint64_t, void* user_dat
        .acked_stream_data_offset = acked_stream_data_offset_cb,
        .stream_open = stream_open_cb,
        .stream_close = stream_close_cb,
-       .recv_retry = ngtcp2_crypto_recv_retry_cb,
+       .recv_retry = recv_retry_cb,
        .extend_max_local_streams_bidi = extend_max_local_streams_bidi_cb,
        .rand = rand_cb,
        .remove_connection_id = remove_connection_id_cb,
        .update_key = ngtcp2_crypto_update_key_cb,
        .stream_reset = stream_reset_cb,
        .handshake_confirmed = handshake_completed_cb,
+       .recv_new_token = recv_new_token_cb,
        .delete_crypto_aead_ctx = ngtcp2_crypto_delete_crypto_aead_ctx_cb,
        .delete_crypto_cipher_ctx = ngtcp2_crypto_delete_crypto_cipher_ctx_cb,
        .version_negotiation = ngtcp2_crypto_version_negotiation_cb,
@@ -2027,45 +2165,14 @@ void engine_stream::cancel_write() {
 }
 
 void engine_stream::cancel() {
+   request_cancel();
+}
+
+void engine_stream::request_cancel() noexcept {
    if (!impl_) {
       return;
    }
-   auto connection = impl_->connection.lock();
-   if (!connection) {
-      return;
-   }
-   auto stream = impl_;
-   asio::dispatch(connection->strand, [connection, stream] {
-      if (stream->reset || stream->closed) {
-         return;
-      }
-      auto shutdown_result = 0;
-      auto should_drain = false;
-      if (connection->conn != nullptr && !connection->closing && !connection->canceled) {
-         shutdown_result = ngtcp2_conn_shutdown_stream(connection->conn, 0, stream->id, 0);
-         should_drain = shutdown_result == 0;
-      }
-      connection->release_queued_stream_writes(stream);
-      stream->reset = true;
-      wake(stream->read_waiters);
-      wake(stream->write_waiters);
-      connection->metrics.streams_reset.fetch_add(1, std::memory_order_relaxed);
-      connection->update_active_stream_metrics();
-      if (shutdown_result != 0) {
-         connection->fail_all();
-         return;
-      }
-      if (!should_drain) {
-         return;
-      }
-      connection->spawn_background([](const std::shared_ptr<engine_connection::impl>& value) -> asio::awaitable<void> {
-         try {
-            co_await value->drain_send();
-         } catch (const engine_failure&) {
-            value->fail_all();
-         }
-      });
-   });
+   impl_->cancel_requested.notify();
 }
 
 engine_connection::engine_connection(std::shared_ptr<impl> impl_value) : impl_(std::move(impl_value)) {}
@@ -2151,6 +2258,21 @@ boost::asio::awaitable<std::shared_ptr<engine_stream>> engine_connection::async_
           connection->streams.emplace(stream_id, stream);
           connection->update_active_stream_metrics();
           connection->metrics.streams_opened.fetch_add(1, std::memory_order_relaxed);
+          auto cancel_worker_failure = std::exception_ptr{};
+          try {
+             connection->start_stream_cancel_worker(stream);
+          } catch (...) {
+             cancel_worker_failure = std::current_exception();
+          }
+          if (cancel_worker_failure) {
+             if (connection->reset_stream_on_owner(stream)) {
+                try {
+                   co_await connection->drain_send();
+                } catch (...) {
+                }
+             }
+             std::rethrow_exception(cancel_worker_failure);
+          }
           co_await connection->drain_send();
           if (connection->closing || connection->canceled) {
              throw_engine(engine_error_kind::connection_closed, "QUIC connection closed while opening stream");
@@ -2179,6 +2301,21 @@ boost::asio::awaitable<std::shared_ptr<engine_stream>> engine_connection::async_
           }
           auto stream = std::move(connection->accepted_streams.front());
           connection->accepted_streams.pop_front();
+          auto cancel_worker_failure = std::exception_ptr{};
+          try {
+             connection->start_stream_cancel_worker(stream);
+          } catch (...) {
+             cancel_worker_failure = std::current_exception();
+          }
+          if (cancel_worker_failure) {
+             if (connection->reset_stream_on_owner(stream)) {
+                try {
+                   co_await connection->drain_send();
+                } catch (...) {
+                }
+             }
+             std::rethrow_exception(cancel_worker_failure);
+          }
           co_return std::shared_ptr<engine_stream>{new engine_stream{std::move(stream)}};
        },
        asio::use_awaitable);
@@ -2206,18 +2343,19 @@ boost::asio::awaitable<void> engine_connection::async_close() {
              ngtcp2_ccerr_default(&close_error);
              ngtcp2_ccerr_set_application_error(&close_error, 0, nullptr, 0);
              const auto written = ngtcp2_conn_write_connection_close(
-                connection->conn, &path.path, &packet_info, packet.data(), packet.size(), &close_error, timestamp());
+                 connection->conn, &path.path, &packet_info, packet.data(), packet.size(), &close_error, timestamp());
              if (written > 0) {
                 auto send_error = boost::system::error_code{};
                 const auto packet_size = static_cast<std::size_t>(written);
                 if (connection->server_socket) {
                    send_error = co_await connection->server_socket->async_send(
-                      std::vector<std::uint8_t>{packet.begin(), packet.begin() + written}, connection->remote_endpoint);
+                       std::vector<std::uint8_t>{packet.begin(), packet.begin() + written},
+                       connection->remote_endpoint);
                    co_await asio::dispatch(connection->strand, asio::use_awaitable);
                 } else if (connection->socket) {
-                   co_await connection->socket->async_send_to(
-                      asio::buffer(packet.data(), packet_size), connection->remote_endpoint,
-                      asio::redirect_error(asio::use_awaitable, send_error));
+                   co_await connection->socket->async_send_to(asio::buffer(packet.data(), packet_size),
+                                                              connection->remote_endpoint,
+                                                              asio::redirect_error(asio::use_awaitable, send_error));
                 }
                 if (!send_error) {
                    connection->metrics.packets_sent.fetch_add(1, std::memory_order_relaxed);
@@ -2253,6 +2391,10 @@ struct engine_connector::impl {
       std::atomic<state_value> state{state_value::pending};
       std::mutex mutex;
       std::shared_ptr<udp::resolver> resolver;
+      forge::asio::notification resolution_changed;
+      std::optional<udp::resolver::results_type> resolution_results;
+      boost::system::error_code resolution_error;
+      bool resolution_completed = false;
       std::weak_ptr<udp::socket> socket;
       std::weak_ptr<engine_connection::impl> connection;
 
@@ -2279,7 +2421,74 @@ struct engine_connector::impl {
          return state.load(std::memory_order_acquire) == state_value::canceled;
       }
 
-      void cancel_io() {
+      void complete_resolution(boost::system::error_code error, udp::resolver::results_type results) noexcept {
+         {
+            auto lock = std::scoped_lock{mutex};
+            resolver.reset();
+            resolution_error = error;
+            try {
+               resolution_results.emplace(std::move(results));
+            } catch (...) {
+               resolution_error = asio::error::no_memory;
+               resolution_results.reset();
+            }
+            resolution_completed = true;
+         }
+         resolution_changed.notify();
+      }
+
+      [[nodiscard]] bool take_resolution(boost::system::error_code& error,
+                                         udp::resolver::results_type& results) {
+         auto lock = std::scoped_lock{mutex};
+         if (!resolution_completed) {
+            return false;
+         }
+         error = resolution_error;
+         if (resolution_results) {
+            results = std::move(*resolution_results);
+            resolution_results.reset();
+         }
+         return true;
+      }
+
+      void release_resolver() noexcept {
+         auto lock = std::scoped_lock{mutex};
+         resolver.reset();
+      }
+
+      static void cancel_resolver(const std::shared_ptr<udp::resolver>& value) noexcept {
+         if (!value) {
+            return;
+         }
+         try {
+            asio::dispatch(value->get_executor(), [value] {
+               try {
+                  value->cancel();
+               } catch (...) {
+                  // A terminal result is still authoritative if resolver cancellation fails.
+               }
+            });
+         } catch (...) {
+            // A terminal result is still authoritative if executor teardown rejects dispatch.
+         }
+      }
+
+      static void cancel_socket(const std::shared_ptr<udp::socket>& value) noexcept {
+         if (!value) {
+            return;
+         }
+         try {
+            asio::post(value->get_executor(), [value] {
+               auto ignored = boost::system::error_code{};
+               value->cancel(ignored);
+               value->close(ignored);
+            });
+         } catch (...) {
+            // A terminal result is still authoritative if executor teardown rejects the post.
+         }
+      }
+
+      void cancel_io() noexcept {
          if (!mark_canceled()) {
             return;
          }
@@ -2292,27 +2501,49 @@ struct engine_connector::impl {
             socket_value = socket.lock();
             connection_value = connection.lock();
          }
-         if (resolver_value) {
-            asio::post(resolver_value->get_executor(), [resolver_value] {
-               try {
-                  resolver_value->cancel();
-               } catch (...) {
-                  // Resolver cancellation is best-effort once the caller has canceled connect.
-               }
-            });
-         }
+         cancel_resolver(resolver_value);
          if (connection_value) {
-            asio::post(connection_value->strand, [connection_value] {
-               connection_value->metrics.cancellations.fetch_add(1, std::memory_order_relaxed);
-               connection_value->fail_all();
-            });
+            try {
+               asio::post(connection_value->strand, [connection_value] {
+                  connection_value->metrics.cancellations.fetch_add(1, std::memory_order_relaxed);
+                  connection_value->fail_all();
+               });
+            } catch (...) {
+               // A terminal result is still authoritative if executor teardown rejects the post.
+            }
          } else if (socket_value) {
-            asio::post(socket_value->get_executor(), [socket_value] {
-               auto ignored = boost::system::error_code{};
-               socket_value->cancel(ignored);
-               socket_value->close(ignored);
-            });
+            cancel_socket(socket_value);
          }
+         resolution_changed.notify();
+      }
+
+      void timeout_io() noexcept {
+         if (!mark_timed_out()) {
+            return;
+         }
+         auto resolver_value = std::shared_ptr<udp::resolver>{};
+         auto socket_value = std::shared_ptr<udp::socket>{};
+         auto connection_value = std::shared_ptr<engine_connection::impl>{};
+         {
+            auto lock = std::scoped_lock{mutex};
+            resolver_value = resolver;
+            socket_value = socket.lock();
+            connection_value = connection.lock();
+         }
+         cancel_resolver(resolver_value);
+         if (connection_value) {
+            try {
+               asio::post(connection_value->strand, [connection_value] {
+                  connection_value->metrics.timeouts.fetch_add(1, std::memory_order_relaxed);
+                  connection_value->fail_all();
+               });
+            } catch (...) {
+               // A terminal result is still authoritative if executor teardown rejects the post.
+            }
+         } else if (socket_value) {
+            cancel_socket(socket_value);
+         }
+         resolution_changed.notify();
       }
    };
 
@@ -2369,41 +2600,56 @@ engine_connector::async_connect(engine_endpoint remote, engine_client_options op
       throw_engine(engine_error_kind::canceled, "QUIC connector is canceled");
    }
    const auto executor = co_await asio::this_coro::executor;
+   const auto inherited_cancellation = co_await asio::this_coro::cancellation_state;
    const auto connect_started = std::chrono::steady_clock::now();
    auto resolver = std::make_shared<udp::resolver>(executor);
    auto connect_timer = std::make_shared<asio::steady_timer>(executor);
    auto active_connect = impl_->track_connect(resolver);
+   auto cancellation_slot = inherited_cancellation.slot();
+   if (cancellation_slot.is_connected()) {
+      cancellation_slot.assign([active_connect](asio::cancellation_type) { active_connect->cancel_io(); });
+   }
+   const auto clear_cancellation_slot = [](asio::cancellation_slot* slot) noexcept { slot->clear(); };
+   auto cancellation_slot_cleanup = std::unique_ptr<asio::cancellation_slot, decltype(clear_cancellation_slot)>{
+       &cancellation_slot, clear_cancellation_slot};
    connect_timer->expires_after(options.connect_timeout);
    connect_timer->async_wait([connect_timer, active_connect](boost::system::error_code ec) {
       if (ec) {
          return;
       }
-      if (!active_connect->mark_timed_out()) {
-         return;
-      }
-      auto resolver = std::shared_ptr<udp::resolver>{};
-      auto connection = std::shared_ptr<engine_connection::impl>{};
-      {
-         auto lock = std::scoped_lock{active_connect->mutex};
-         resolver = active_connect->resolver;
-         connection = active_connect->connection.lock();
-      }
-      if (connection) {
-         asio::post(connection->strand, [connection] {
-            connection->metrics.timeouts.fetch_add(1, std::memory_order_relaxed);
-            connection->fail_all();
-         });
-         return;
-      }
-      if (resolver) {
-         try {
-            resolver->cancel();
-         } catch (...) {
-            // Resolver cancellation is best-effort after the connect deadline fires.
-         }
-      }
+      active_connect->timeout_io();
    });
+   const auto throw_if_terminal = [&] {
+      if (inherited_cancellation.cancelled() != asio::cancellation_type::none) {
+         active_connect->cancel_io();
+      }
+      if (active_connect->canceled()) {
+         connect_timer->cancel();
+         active_connect->release_resolver();
+         throw_engine(engine_error_kind::canceled, "QUIC client connect canceled");
+      }
+      if (active_connect->timed_out()) {
+         connect_timer->cancel();
+         active_connect->release_resolver();
+         throw_engine(engine_error_kind::connect_timeout, "QUIC client connect timed out");
+      }
+   };
+   const auto request_inherited_cancellation = [&] {
+      if (inherited_cancellation.cancelled() != asio::cancellation_type::none) {
+         active_connect->cancel_io();
+      }
+   };
+   const auto throw_if_timed_out = [&] {
+      if (active_connect->timed_out()) {
+         connect_timer->cancel();
+         active_connect->release_resolver();
+         throw_engine(engine_error_kind::connect_timeout, "QUIC client connect timed out");
+      }
+   };
    auto finish_connect_or_throw = [&] {
+      if (inherited_cancellation.cancelled() != asio::cancellation_type::none) {
+         active_connect->cancel_io();
+      }
       if (connect_failpoint_enabled(options, "timeout_before_pre_connection_error_finish")) {
          (void)active_connect->mark_timed_out();
       }
@@ -2416,26 +2662,65 @@ engine_connector::async_connect(engine_endpoint remote, engine_client_options op
       }
       connect_timer->cancel();
    };
-   boost::system::error_code ec;
-   auto resolved = co_await resolver->async_resolve(remote.host, std::to_string(remote.port),
-                                                    asio::redirect_error(asio::use_awaitable, ec));
-   {
-      auto lock = std::scoped_lock{active_connect->mutex};
-      active_connect->resolver.reset();
-   }
-   if (active_connect->canceled()) {
-      connect_timer->cancel();
-      throw_engine(engine_error_kind::canceled, "QUIC endpoint resolution canceled");
-   }
-   if (active_connect->timed_out()) {
-      connect_timer->cancel();
-      throw_engine(engine_error_kind::connect_timeout, "QUIC endpoint resolution timed out");
-   }
-   if (ec || resolved.empty()) {
+
+   throw_if_terminal();
+   try {
+      switch (remote.family) {
+      case engine_endpoint::address_family::any:
+         resolver->async_resolve(remote.host, std::to_string(remote.port),
+                                 [active_connect](boost::system::error_code error,
+                                                  udp::resolver::results_type results) mutable {
+                                    active_connect->complete_resolution(error, std::move(results));
+                                 });
+         break;
+      case engine_endpoint::address_family::ipv4:
+         resolver->async_resolve(udp::v4(), remote.host, std::to_string(remote.port),
+                                 [active_connect](boost::system::error_code error,
+                                                  udp::resolver::results_type results) mutable {
+                                    active_connect->complete_resolution(error, std::move(results));
+                                 });
+         break;
+      case engine_endpoint::address_family::ipv6:
+         resolver->async_resolve(udp::v6(), remote.host, std::to_string(remote.port),
+                                 [active_connect](boost::system::error_code error,
+                                                  udp::resolver::results_type results) mutable {
+                                    active_connect->complete_resolution(error, std::move(results));
+                                 });
+         break;
+      }
+   } catch (...) {
+      active_connect->release_resolver();
+      throw_if_terminal();
       finish_connect_or_throw();
-      throw_engine(engine_error_kind::invalid_endpoint, "failed to resolve QUIC endpoint: " + ec.message());
+      throw;
    }
-   auto remote_endpoint = *resolved.begin();
+
+   auto resolution_error = boost::system::error_code{};
+   auto resolution_results = udp::resolver::results_type{};
+   auto observed_resolution = active_connect->resolution_changed.epoch();
+   while (!active_connect->take_resolution(resolution_error, resolution_results)) {
+      request_inherited_cancellation();
+      // getaddrinfo may not be interruptible after it starts. Timeout owns a callback-safe state and returns now;
+      // inherited cancellation instead joins the resolver callback before reporting cancellation to its caller.
+      throw_if_timed_out();
+      observed_resolution = co_await asio::co_spawn(
+          executor,
+          [active_connect, observed_resolution]() -> asio::awaitable<forge::asio::notification::epoch_type> {
+             co_return co_await active_connect->resolution_changed.async_wait(observed_resolution);
+          },
+          asio::bind_cancellation_slot(asio::cancellation_slot{}, asio::use_awaitable));
+   }
+
+   // Terminal cancellation wakes this loop, but completion stays owned until the resolver reports back.
+   static_cast<void>(connect_failpoint_enabled(options, "after_resolution_completion"));
+   throw_if_terminal();
+   if (resolution_error || resolution_results.empty()) {
+      finish_connect_or_throw();
+      throw_engine(engine_error_kind::invalid_endpoint,
+                   "failed to resolve QUIC endpoint: " + resolution_error.message());
+   }
+   auto remote_endpoint = *resolution_results.begin();
+   auto ec = boost::system::error_code{};
    auto socket = std::make_shared<udp::socket>(impl_->context);
    {
       auto lock = std::scoped_lock{active_connect->mutex};
@@ -2471,6 +2756,9 @@ engine_connector::async_connect(engine_endpoint remote, engine_client_options op
    connection_impl->metrics.connections_opened.store(1, std::memory_order_relaxed);
    connection_impl->metrics.handshakes_started.store(1, std::memory_order_relaxed);
    connection_impl->server_side = false;
+   if (options.client_tokens && options.client_tokens->store) {
+      connection_impl->client_token_store = options.client_tokens->store;
+   }
    {
       auto lock = std::scoped_lock{active_connect->mutex};
       active_connect->connection = connection_impl;
@@ -2513,6 +2801,22 @@ engine_connector::async_connect(engine_endpoint remote, engine_client_options op
              const auto dcid = random_cid(NGTCP2_MIN_INITIAL_DCIDLEN);
              const auto scid = random_cid(cid_length);
              auto path = make_path(socket->local_endpoint(), remote_endpoint.endpoint());
+             auto initial_token = std::vector<std::uint8_t>{};
+             if (options.client_tokens && options.client_tokens->take) {
+                try {
+                   if (auto token = options.client_tokens->take();
+                       token && !token->empty() && token->size() <= max_client_token_bytes) {
+                      initial_token = std::move(*token);
+                   }
+                } catch (...) {
+                   // Token cache failures must not affect a connection attempt.
+                }
+             }
+             if (!initial_token.empty()) {
+                settings.token = initial_token.data();
+                settings.tokenlen = initial_token.size();
+                settings.token_type = NGTCP2_TOKEN_TYPE_NEW_TOKEN;
+             }
              const auto rv =
                  ngtcp2_conn_client_new(&connection_impl->conn, &dcid, &scid, &path.path, NGTCP2_PROTO_VER_V1,
                                         &callbacks, &settings, &params, nullptr, connection_impl.get());
@@ -2547,6 +2851,8 @@ engine_connector::async_connect(engine_endpoint remote, engine_client_options op
              }
              connection_impl->verify_selected_alpn(options.alpn);
              connection_impl->verify_peer(options.security);
+             connection_impl->client_token_store_verified = true;
+             connection_impl->commit_pending_client_token();
           },
           asio::use_awaitable);
       finish_connect_or_throw();
@@ -2597,7 +2903,7 @@ struct engine_listener::impl {
    engine_endpoint bind_endpoint;
    engine_server_options options;
    stateless_reset_secret reset_secret = random_stateless_reset_secret();
-   stateless_reset_secret retry_secret = random_stateless_reset_secret();
+   initial_token_validator initial_tokens{random_initial_token_secret(), retry_token_lifetime, regular_token_lifetime};
    std::mutex cid_mutex;
    std::unordered_map<std::string, std::shared_ptr<engine_connection::impl>> connections_by_cid;
    std::unordered_map<engine_connection::impl*, std::vector<std::string>> cids_by_connection;
@@ -2853,9 +3159,9 @@ struct engine_listener::impl {
    void cleanup_connection(const std::shared_ptr<engine_connection::impl>& connection, bool had_connection_ids) {
       const auto has_accept_waiter = std::ranges::any_of(
           accept_waiters, [](const std::weak_ptr<asio::steady_timer>& waiter) { return !waiter.expired(); });
-      const auto failed_before_accept =
-          has_accept_waiter && connection->report_accept_failure && !connection->handshake_done &&
-          !connection->listener_accept_notified && !stopped;
+      const auto failed_before_accept = has_accept_waiter && connection->report_accept_failure &&
+                                        !connection->handshake_done && !connection->listener_accept_notified &&
+                                        !stopped;
       if (failed_before_accept && had_connection_ids) {
          const auto timed_out = connection->metrics.timeouts.load(std::memory_order_relaxed) > 0;
          pending_accept_error = timed_out ? engine_error_kind::handshake_timeout : engine_error_kind::connection_closed;
@@ -2892,18 +3198,19 @@ struct engine_listener::impl {
    boost::asio::awaitable<void> send_retry(const ngtcp2_pkt_hd& header, const udp::endpoint& remote) {
       auto path = make_path(server_socket->local_endpoint(), remote);
       const auto retry_scid = random_cid(cid_length);
-      auto token = std::array<std::uint8_t, NGTCP2_CRYPTO_MAX_RETRY_TOKENLEN>{};
-      const auto token_length = ngtcp2_crypto_generate_retry_token(
-          token.data(), retry_secret.data(), retry_secret.size(), header.version, path.path.remote.addr,
-          path.path.remote.addrlen, &retry_scid, &header.dcid, timestamp());
-      if (token_length < 0) {
+      const auto token = initial_tokens.generate_retry(header.version,
+                                                       initial_token_remote_address{
+                                                           .address = path.path.remote.addr,
+                                                           .length = path.path.remote.addrlen,
+                                                       },
+                                                       retry_scid, header.dcid, timestamp());
+      if (!token) {
          throw_engine(engine_error_kind::internal_error, "failed to generate QUIC Retry token");
       }
 
       auto packet = std::array<std::uint8_t, max_udp_payload_size>{};
-      const auto packet_length = ngtcp2_crypto_write_retry(
-          packet.data(), packet.size(), header.version, &header.scid, &retry_scid, &header.dcid, token.data(),
-          static_cast<std::size_t>(token_length));
+      const auto packet_length = ngtcp2_crypto_write_retry(packet.data(), packet.size(), header.version, &header.scid,
+                                                           &retry_scid, &header.dcid, token->data(), token->size());
       if (packet_length < 0) {
          throw_engine(engine_error_kind::internal_error, "failed to encode QUIC Retry packet");
       }
@@ -2914,20 +3221,19 @@ struct engine_listener::impl {
       }
    }
 
-   [[nodiscard]] std::optional<ngtcp2_cid> verify_retry(const ngtcp2_pkt_hd& header,
-                                                         const udp::endpoint& remote) const {
-      if (header.token == nullptr || header.tokenlen == 0) {
-         return std::nullopt;
+   boost::asio::awaitable<void> send_invalid_token_close(const ngtcp2_pkt_hd& header, const udp::endpoint& remote) {
+      auto packet = std::array<std::uint8_t, max_udp_payload_size>{};
+      const auto packet_length = ngtcp2_crypto_write_connection_close(
+          packet.data(), packet.size(), header.version, &header.scid, &header.dcid, NGTCP2_INVALID_TOKEN, nullptr, 0);
+      if (packet_length < 0) {
+         throw_engine(engine_error_kind::internal_error, "failed to encode QUIC INVALID_TOKEN connection close");
       }
-      auto path = make_path(server_socket->local_endpoint(), remote);
-      auto original_dcid = ngtcp2_cid{};
-      if (ngtcp2_crypto_verify_retry_token(&original_dcid, header.token, header.tokenlen, retry_secret.data(),
-                                           retry_secret.size(), header.version, path.path.remote.addr,
-                                           path.path.remote.addrlen, &header.dcid, retry_token_lifetime,
-                                           timestamp()) != 0) {
-         return std::nullopt;
+      const auto error = co_await server_socket->async_send(
+          std::vector<std::uint8_t>{packet.begin(), packet.begin() + packet_length}, remote);
+      if (error && error != asio::error::operation_aborted) {
+         throw_engine(engine_error_kind::internal_error,
+                      "failed to send QUIC INVALID_TOKEN connection close: " + error.message());
       }
-      return original_dcid;
    }
 
    boost::asio::awaitable<void> handle_packet(std::vector<std::uint8_t> packet, udp::endpoint from) {
@@ -2941,18 +3247,32 @@ struct engine_listener::impl {
       connection = find_connection_by_cid(key);
       if (!connection) {
          auto hd = ngtcp2_pkt_hd{};
-         if (ngtcp2_pkt_decode_hd_long(&hd, packet.data(), packet.size()) < 0 || hd.type != NGTCP2_PKT_INITIAL) {
+         const auto header_result = ngtcp2_pkt_decode_hd_long(&hd, packet.data(), packet.size());
+         if (header_result < 0 || hd.type != NGTCP2_PKT_INITIAL) {
             co_return;
          }
-         if (hd.token == nullptr || hd.tokenlen == 0) {
+         const auto token_bytes = hd.token == nullptr ? std::span<const std::uint8_t>{}
+                                                      : std::span<const std::uint8_t>{hd.token, hd.tokenlen};
+         const auto path = make_path(server_socket->local_endpoint(), from);
+         const auto token = initial_tokens.validate(token_bytes, hd.version,
+                                                    initial_token_remote_address{
+                                                        .address = path.path.remote.addr,
+                                                        .length = path.path.remote.addrlen,
+                                                    },
+                                                    hd.dcid, timestamp());
+         switch (token.disposition) {
+         case initial_token_disposition::retry:
             co_await send_retry(hd, from);
             co_return;
-         }
-         const auto original_dcid = verify_retry(hd, from);
-         if (!original_dcid) {
+         case initial_token_disposition::reject_invalid:
+            co_await send_invalid_token_close(hd, from);
             co_return;
+         case initial_token_disposition::internal_failure:
+            throw_engine(engine_error_kind::internal_error, "QUIC initial token verifier failed internally");
+         case initial_token_disposition::accept:
+            break;
          }
-         connection = create_server_connection(hd, *original_dcid, from);
+         connection = create_server_connection(hd, token, from);
          register_connection_cid(connection, cid_key(hd.dcid.data, hd.dcid.datalen));
          auto local_cid = ngtcp2_cid{};
          ngtcp2_conn_get_scid(connection->conn, &local_cid);
@@ -2968,7 +3288,11 @@ struct engine_listener::impl {
    }
 
    [[nodiscard]] std::shared_ptr<engine_connection::impl>
-   create_server_connection(const ngtcp2_pkt_hd& hd, const ngtcp2_cid& original_dcid, const udp::endpoint& from) {
+   create_server_connection(const ngtcp2_pkt_hd& hd, const initial_token_validation& token, const udp::endpoint& from) {
+      if (!token.accepted()) {
+         throw_engine(engine_error_kind::internal_error,
+                      "cannot create QUIC server connection without token validation");
+      }
       if (connection_count() >= options.limits.max_connections) {
          throw_engine(engine_error_kind::backpressure_rejected, "QUIC listener max connections exceeded");
       }
@@ -2983,8 +3307,8 @@ struct engine_listener::impl {
             throw_engine(engine_error_kind::backpressure_rejected, "QUIC inbound admission rejected");
          }
       }
-      auto connection = std::make_shared<engine_connection::impl>(context, server_socket, server_socket->local_endpoint(),
-                                                                  from, options.limits);
+      auto connection = std::make_shared<engine_connection::impl>(
+          context, server_socket, server_socket->local_endpoint(), from, options.limits);
       connection->inbound_admission = std::move(admission);
       connection->self = connection;
       connection->server_side = true;
@@ -3020,6 +3344,26 @@ struct engine_listener::impl {
              }
              listener->unregister_connection_cid(connection.get(), cid_key(cid));
           };
+      connection->issue_new_token = [listener_weak](engine_connection::impl& value) {
+         if (value.new_token_submitted || value.conn == nullptr) {
+            return;
+         }
+         const auto listener = listener_weak.lock();
+         if (!listener) {
+            return;
+         }
+         const auto path = make_path(listener->server_socket->local_endpoint(), value.remote_endpoint);
+         const auto token = listener->initial_tokens.generate_regular(
+             initial_token_remote_address{.address = path.path.remote.addr, .length = path.path.remote.addrlen},
+             timestamp());
+         if (!token || token->empty()) {
+            return;
+         }
+         if (ngtcp2_conn_submit_new_token(value.conn, token->data(), token->size()) == 0) {
+            value.new_token_submitted = true;
+            value.metrics.new_tokens_submitted.fetch_add(1, std::memory_order_relaxed);
+         }
+      };
       auto connection_weak = std::weak_ptr<engine_connection::impl>{connection};
       connection->handshake_completed_hook = [listener_weak, connection_weak] {
          auto listener = listener_weak.lock();
@@ -3044,10 +3388,15 @@ struct engine_listener::impl {
       auto params = ngtcp2_transport_params{};
       configure_settings(settings);
       configure_params(params, options.limits, options.idle_timeout);
-      params.original_dcid = original_dcid;
+      settings.token = hd.token;
+      settings.tokenlen = hd.tokenlen;
+      settings.token_type = token.token_type;
+      params.original_dcid = token.original_dcid;
       params.original_dcid_present = 1;
-      params.retry_scid = hd.dcid;
-      params.retry_scid_present = 1;
+      if (token.token_type == NGTCP2_TOKEN_TYPE_RETRY) {
+         params.retry_scid = hd.dcid;
+         params.retry_scid_present = 1;
+      }
       params.stateless_reset_token_present = 1;
 
       const auto scid = random_cid(cid_length);

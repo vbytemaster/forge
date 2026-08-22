@@ -227,7 +227,7 @@
         "test_forge_quic_p2p p2p_node_peer_protection_api_is_tagged_and_additive",
         "test_forge_quic_p2p p2p_connection_manager_prunes_unprotected_sessions_and_keeps_protected_peer",
         "test_forge_quic_p2p p2p_connection_manager_rejects_when_all_sessions_are_protected",
-        "test_forge_quic_p2p p2p_connection_manager_enforces_outbound_session_limit",
+        "test_forge_quic_p2p p2p_connection_manager_low_hard_session_limit_is_independent_of_topology_watermarks",
         "test_forge_quic_p2p p2p_connection_manager_allows_bounded_parallel_sessions_per_peer",
         "test_forge_quic_p2p p2p_connection_manager_enforces_sessions_per_peer_limit",
         "test_forge_quic_p2p p2p_connection_manager_rejects_pending_outbound_limit_without_killing_first_attempt",
@@ -344,8 +344,10 @@
         "Identify over TCP"
       ],
       "mapping_state": "mapped",
-      "forge_tests":
-          [ "test_forge_libp2p_interop ping", "test_forge_libp2p_interop identify", "test_forge_libp2p_interop echo" ],
+      "forge_tests": [
+        "test_forge_libp2p_interop ping", "test_forge_libp2p_interop identify",
+        "test_forge_libp2p_interop echo", "test_forge_libp2p_interop echo_large"
+      ],
       "forge_live_scenario": [
         {
           "profile": "tcp_noise",
@@ -358,6 +360,10 @@
         {
           "profile": "tcp_noise",
           "scenario": "echo"
+        },
+        {
+          "profile": "tcp_noise",
+          "scenario": "echo_large"
         }
       ],
       "known_gap": "`/ws` and `/wss` have parse/store coverage only; no dial/listen live scenario is claimed."
@@ -602,6 +608,24 @@
           "dht_find_peer currently connects directly to the searched peer, so local peer-store lookup can satisfy it without an outbound DHT exchange; it is not credited as live FindPeer evidence."
     },
     {
+      "id": "interop.live_dht_hidden_find_peer",
+      "protocol": "Kademlia DHT",
+      "source": "donors/libp2p-specs/kad-dht/README.md",
+      "donor": "go-libp2p-kad-dht IpfsDHT.FindPeer query events and rust-libp2p kad::Behaviour GetClosestPeers",
+      "donor_file": [
+        "donors/go-libp2p-kad-dht/routing.go", "donors/go-libp2p-kad-dht/lookup.go",
+        "donors/rust-libp2p/protocols/kad/src/behaviour.rs"
+      ],
+      "donor_case": [ "three-process hidden peer", "authenticated routing seed", "FindPeer", "/ipfs/kad/1.0.0" ],
+      "mapping_state": "mapped",
+      "forge_tests": [ "test_forge_libp2p_interop dht_hidden_find_peer" ],
+      "forge_live_scenario": [
+        { "profile": "quic_dht_hidden", "scenario": "dht_hidden_find_peer" }
+      ],
+      "known_gap":
+          "The registered runner covers exactly three mixed one-hop topologies and requires a fresh seeker artifact to show no target record before the query. Coordinator live artifacts are required before it is credited as evidence; broader churn and multi-hop convergence remain unclaimed."
+    },
+    {
       "id": "interop.live_dht_pk_ipns_values",
       "protocol": "Kademlia DHT/IPNS",
       "source": "docs/donors/fcl-p2p-dht-rendezvous-v1.md",
@@ -642,7 +666,25 @@
         }
       ],
       "known_gap":
-          "Go rendezvous remains a wire-level future scenario because no official go-libp2p rendezvous behaviour donor is present"
+          "Only Forge-Rust directions are registered. The runner rejects an artifact unless it proves one wire registration, a validated/matching signed legacy PeerRecord, a positive sequence/address count, donor-default 7200-second register/discover TTLs and a non-empty cookie. Forge additionally proves third-party loopback filtering. Coordinator live artifacts are still required before this is credited as executed evidence; Go rendezvous remains a wire-level future scenario because no official go-libp2p rendezvous behaviour donor is present."
+    },
+    {
+      "id": "interop.live_rendezvous_lifecycle",
+      "protocol": "Rendezvous",
+      "source": "donors/libp2p-specs/rendezvous/README.md",
+      "donor": "rust-libp2p rendezvous client/server lifecycle with legacy routing-state PeerRecord",
+      "donor_file": [
+        "donors/rust-libp2p/core/src/peer_record.rs", "donors/rust-libp2p/protocols/rendezvous/src/client.rs",
+        "donors/rust-libp2p/protocols/rendezvous/src/server.rs", "donors/rust-libp2p/protocols/rendezvous/tests/rendezvous.rs"
+      ],
+      "donor_case": [ "legacy signed PeerRecord", "cookie delta", "renewal visibility after original expiry", "expiry", "unregister" ],
+      "mapping_state": "mapped",
+      "forge_tests": [ "test_forge_libp2p_interop rendezvous_lifecycle" ],
+      "forge_live_scenario": [
+        { "profile": "quic_rendezvous", "scenario": "rendezvous_lifecycle" }
+      ],
+      "known_gap":
+          "Only Forge-to-Rust and Rust-to-Forge lifecycle directions are registered. Coordinator live artifacts must prove initial/update visibility and cookie change, renewed visibility after the original expiry but before renewed expiry, post-renewal absence, a visible pre-unregister record and final empty discovery before this is credited; Go rendezvous remains unclaimed because this workspace has no official Go rendezvous behaviour donor."
     },
     {
       "id": "gossipsub.protocol_ids_v11_v10",

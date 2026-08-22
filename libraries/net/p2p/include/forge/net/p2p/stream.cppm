@@ -10,6 +10,7 @@ module;
 export module forge.net.p2p.stream;
 
 export import forge.net.transport.buffer;
+export import forge.net.transport.frame;
 import forge.net.transport.stream;
 
 export namespace forge::net::p2p {
@@ -41,9 +42,13 @@ class stream {
    boost::asio::awaitable<void> async_write_frame(std::span<const std::uint8_t> bytes);
    boost::asio::awaitable<void> async_write_frame(forge::net::transport::chunk bytes);
    boost::asio::awaitable<std::vector<std::uint8_t>> async_read_frame();
+   boost::asio::awaitable<std::vector<std::uint8_t>> async_read_frame(forge::net::transport::frame_options options);
    boost::asio::awaitable<forge::net::transport::chunk> async_read_frame_chunk();
+   boost::asio::awaitable<forge::net::transport::chunk>
+   async_read_frame_chunk(forge::net::transport::frame_options options);
    boost::asio::awaitable<void> async_close();
    void cancel();
+   void request_cancel() noexcept;
    [[nodiscard]] forge::net::transport::stream into_transport_stream() &&;
 
  private:

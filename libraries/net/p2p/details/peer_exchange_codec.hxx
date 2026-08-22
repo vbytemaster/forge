@@ -24,7 +24,7 @@ struct peer_exchange_message {
    peer_id peer;
    protocol_id protocol;
    capability_set capabilities{};
-   std::uint64_t max_frame_size = 16 * 1024 * 1024;
+   std::uint64_t max_frame_size = 4 * 1024 * 1024;
    std::string reason;
    std::vector<endpoint_record> endpoints;
    std::vector<std::uint8_t> payload;
@@ -37,6 +37,10 @@ struct options {
    std::uint32_t max_endpoint_records = 1024;
 };
 
+inline constexpr std::uint32_t minimum_message_size = 56;
+
+[[nodiscard]] std::size_t encoded_size(const peer_exchange_message& message, options opts = {});
+[[nodiscard]] std::uint32_t negotiate_response_max_frame_size(std::uint64_t offered, options local);
 [[nodiscard]] std::vector<std::uint8_t> encode(const peer_exchange_message& message, options opts = {});
 [[nodiscard]] peer_exchange_message decode(std::span<const std::uint8_t> bytes, options opts = {});
 boost::asio::awaitable<void> async_write(forge::net::p2p::stream& stream, const peer_exchange_message& message,

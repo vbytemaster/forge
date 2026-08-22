@@ -44,7 +44,13 @@ void validate(const client_options& options) {
       (void)normalize_sha256_fingerprint(*options.security.expected_sha256_fingerprint);
    }
    if (options.certificate_pem.empty() != options.private_key_pem.empty()) {
-      FORGE_THROW_EXCEPTION(exceptions::invalid_options, "client certificate and private key must be provided together");
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options,
+                            "client certificate and private key must be provided together");
+   }
+   if (options.client_tokens &&
+       static_cast<bool>(options.client_tokens->take) != static_cast<bool>(options.client_tokens->store)) {
+      FORGE_THROW_EXCEPTION(exceptions::invalid_options,
+                            "QUIC client token callbacks must provide both take and store or neither");
    }
 }
 

@@ -18,21 +18,26 @@ This library contains substantial libp2p-compatible protocol substrate, but it
 is not yet a complete autonomous production host. Direct QUIC and TCP/Yamux,
 secure peer authentication, node-owned bootstrap, automatic Identify,
 session/stream/dial admission and transport-backed queued-byte accounting are
-on the normal node path. GossipSub has bounded connected-peer mechanics and live
-interop fixtures, but its overall support state remains `partial` until scoring
-and autonomous topology are complete.
+on the normal node path. Managed topology now has one node-owned lifecycle for
+bounded DHT, configured Rendezvous and Forge Peer Exchange discovery, while
+`static_only` disables autonomous discovery and dialing. GossipSub has bounded
+connected-peer mechanics and live interop fixtures, but its overall support
+state remains `partial` until donor-consistent scoring is complete.
 
 The following surfaces are not production claims yet:
 
 - Kademlia now provides isolated Amino and product profiles, bounded node-owned
-  k-buckets, autonomous refresh, durable validated values, owned provider
-  registration and `/pk`/`/ipns` interoperability; it remains `partial` until
-  Stage 5 topology and complete production-host evidence are finished;
-- Rendezvous, Peer Exchange, Ping sampling and AutoNAT still lack the complete
-  unified topology lifecycle planned for Stage 5+;
+  k-buckets, autonomous routing refresh, durable validated values, owned
+  provider registration and `/pk`/`/ipns` interoperability. Managed topology
+  consumes peer-capable profiles without creating a second routing refresh;
+- Rendezvous and the Forge-specific Peer Exchange feed the same bounded
+  topology manager. Donor/live evidence remains classified separately in the
+  inventory and must not be inferred from lifecycle activation alone;
+- Ping sampling and AutoNAT are not yet inputs to the managed topology score;
 - AutoRelay and DCUtR mechanics lack the complete verified discovery and
   reachability feed;
-- GossipSub scoring and autonomous topology remain incomplete.
+- GossipSub donor-consistent scoring and autonomous mesh selection remain incomplete;
+  transport topology is owned by the managed topology service above.
 
 The machine-readable support inventory is
 [`p2p_feature_inventory.json`](../../../tests/libp2p_interop/p2p_feature_inventory.json).
@@ -41,6 +46,13 @@ of currently executed optional interop tests or a release-readiness verdict. A
 `mapped` donor case names a compatibility fixture with declared Forge
 coverage; it does not prove normal lifecycle activation or a passing current
 donor run.
+
+`discovery::policy` and `node::limits::discovery` remain Stable source
+compatibility surfaces. Node construction normalizes non-default legacy values
+into the single managed topology policy and rejects conflicting non-default
+legacy and topology settings. `peer_store::apply_peer_exchange` likewise
+remains the legacy capability-union mutator; received third-party Forge Peer
+Exchange facts do not call it and remain capability-free until Identify.
 
 ## When To Use
 
@@ -66,7 +78,8 @@ donor run.
 - `forge.net.p2p.identity`, `forge.net.p2p.endpoint`, `forge.net.p2p.node`,
   `forge.net.p2p.lifecycle`.
 - `forge.net.p2p.protocol`, `forge.net.p2p.message`, `forge.net.p2p.negotiation`.
-- `forge.net.p2p.peer_store`, `forge.net.p2p.discovery`, `forge.net.p2p.dht`,
+- `forge.net.p2p.peer_store`, `forge.net.p2p.discovery`,
+  `forge.net.p2p.topology`, `forge.net.p2p.dht`,
   `forge.net.p2p.dht.record_store`, `forge.net.p2p.ipns`,
   `forge.net.p2p.provider_registration`, `forge.net.p2p.rendezvous`.
 - `forge.net.p2p.pubsub`.
@@ -107,6 +120,13 @@ Current direction: P2P sits above first-class multiaddr, reusable
 TCP+TLS/Noise+Yamux direct paths are wired through private direct profiles.
 Future transports must plug into the same multiaddr and transport session
 boundary, not fork P2P core.
+
+The direct QUIC profile keeps a bounded, peer-scoped cache of opaque QUIC
+`NEW_TOKEN` values only for authenticated expected peers. Its key includes the
+expected peer identity and direct endpoint host kind/address/UDP port, never
+ALPN or local port. Unknown-peer and insecure-test dials explicitly disable
+this cache. Profile stop closes the cache before active dial cancellation, so a
+late transport callback cannot repopulate it.
 
 `forge_net_transport` is the stream/session substrate for `forge_net_p2p`; it is not an API
 or RPC layer. API-over-stream serving lives in `forge.api.stream`, where QUIC/P2P
@@ -208,6 +228,12 @@ prefers libp2p TLS (`/tls/1.0.0`) and keeps Noise as fallback. `/ws` and `/wss`
 multiaddrs are parseable but direct dial/listen returns typed unsupported until
 a dedicated compatibility block wires a production transport. Future transports
 must use the same private direct profile boundary.
+
+The Noise transport treats the secured connection as a byte stream and segments
+large Yamux writes into independently authenticated Noise records whose encrypted
+length fits the protocol's 16-bit record header. The live TCP Noise matrix sends
+a 192 KiB echo payload in both Forge/Go/Rust directions so record segmentation is
+proved across donor implementations rather than inferred from raw Yamux tests.
 
 `local_endpoints()` is the full canonical listen/advertise set and each endpoint
 includes `/p2p/<local-peer>`. `local_endpoint()` remains a first-endpoint

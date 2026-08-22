@@ -33,7 +33,9 @@ import forge.net.p2p.node;
 import forge.net.p2p.peer_store;
 import forge.net.p2p.protocol;
 import forge.net.p2p.pubsub;
+import forge.net.p2p.rendezvous;
 import forge.net.p2p.scoring;
+import forge.net.p2p.topology;
 import forge.plugins.p2p.node.exceptions;
 import forge.plugins.p2p.node.types;
 import forge.plugins.crypto.secrets.api;
@@ -134,6 +136,43 @@ parse_dht_profiles(const std::vector<dht_profile_config>& configured) {
    return profiles;
 }
 
+[[nodiscard]] forge::net::p2p::topology::mode parse_topology_mode(topology_mode value) {
+   switch (value) {
+   case topology_mode::managed:
+      return forge::net::p2p::topology::mode::managed;
+   case topology_mode::static_only:
+      return forge::net::p2p::topology::mode::static_only;
+   }
+   FORGE_THROW_EXCEPTION(exceptions::invalid_config, "invalid P2P topology mode");
+}
+
+[[nodiscard]] forge::net::p2p::rendezvous::role parse_rendezvous_role(rendezvous_role value) {
+   switch (value) {
+   case rendezvous_role::disabled:
+   case rendezvous_role::client:
+      return forge::net::p2p::rendezvous::role::client;
+   case rendezvous_role::server:
+      return forge::net::p2p::rendezvous::role::server;
+   case rendezvous_role::client_and_server:
+      return forge::net::p2p::rendezvous::role::client_and_server;
+   }
+   FORGE_THROW_EXCEPTION(exceptions::invalid_config, "invalid P2P rendezvous role");
+}
+
+[[nodiscard]] std::vector<forge::net::p2p::topology::rendezvous_point>
+parse_rendezvous_points(const std::vector<rendezvous_point_config>& configured) {
+   auto points = std::vector<forge::net::p2p::topology::rendezvous_point>{};
+   points.reserve(configured.size());
+   for (const auto& item : configured) {
+      auto parsed = parse_endpoint_list({item.endpoint});
+      points.push_back(forge::net::p2p::topology::rendezvous_point{
+          .endpoint = std::move(parsed.front()),
+          .namespaces = item.namespaces,
+      });
+   }
+   return points;
+}
+
 } // namespace
 
 std::chrono::milliseconds to_ms(std::uint64_t value) {
@@ -199,11 +238,55 @@ void apply_config(plugin::impl& state, const config& config) {
    state.peer_store_name = config.peer_store;
    state.reset_incompatible_peer_state = config.peer_store_schema_policy == cache_schema_policy::reset;
    state.options.dht_profiles = parse_dht_profiles(config.dht_profiles);
+   state.options.limits.topology = forge::net::p2p::topology::policy{
+       .operating_mode = parse_topology_mode(config.topology_mode),
+       .peers = forge::net::p2p::topology::watermarks{
+           .low = static_cast<std::size_t>(config.topology_low),
+           .target = static_cast<std::size_t>(config.topology_target),
+           .high = static_cast<std::size_t>(config.topology_high),
+       },
+       .refresh_interval = to_ms(config.topology_refresh_interval_ms),
+       .query_timeout = to_ms(config.topology_query_timeout_ms),
+       .max_candidates = static_cast<std::size_t>(config.topology_max_candidates),
+       .max_parallel_queries = static_cast<std::size_t>(config.topology_max_parallel_queries),
+       .max_parallel_dials = static_cast<std::size_t>(config.topology_max_parallel_dials),
+       .max_rendezvous_points = static_cast<std::size_t>(config.rendezvous_max_points),
+       .max_peer_exchange_peers = static_cast<std::size_t>(config.peer_exchange_max_peers),
+       .retry_jitter = config.topology_retry_jitter,
+       .dht_enabled = !state.options.dht_profiles.empty(),
+       .peer_exchange_enabled = config.peer_exchange_enabled,
+       .rendezvous_points = parse_rendezvous_points(config.rendezvous_points),
+   };
+   if (config.rendezvous_role == rendezvous_role::disabled && !config.rendezvous_points.empty()) {
+      FORGE_THROW_EXCEPTION(exceptions::invalid_config, "disabled P2P rendezvous cannot configure discovery points");
+   }
+   if (config.rendezvous_role == rendezvous_role::server && !config.rendezvous_points.empty()) {
+      FORGE_THROW_EXCEPTION(exceptions::invalid_config,
+                            "server-only P2P rendezvous cannot configure client discovery points");
+   }
+   state.options.limits.rendezvous.operating_role = parse_rendezvous_role(config.rendezvous_role);
+   if (config.topology_high > config.max_sessions) {
+      FORGE_THROW_EXCEPTION(exceptions::invalid_config,
+                            "P2P topology high watermark cannot exceed the hard session limit");
+   }
+   try {
+      forge::net::p2p::validate(state.options.limits.topology);
+   } catch (const forge::plugins::p2p::node::exceptions::invalid_config&) {
+      throw;
+   } catch (const std::exception& error) {
+      FORGE_THROW_EXCEPTION(exceptions::invalid_config, "invalid P2P topology configuration",
+                            forge::exceptions::ctx("error", error.what()));
+   }
    state.certificate_secret = config.certificate_secret;
    state.private_key_secret = config.private_key_secret;
-   state.options.capabilities = forge::net::p2p::capability_set{
-       .bits = forge::net::p2p::capabilities::direct_quic | forge::net::p2p::capabilities::peer_exchange,
-   };
+   state.options.capabilities = forge::net::p2p::capability_set{.bits = forge::net::p2p::capabilities::direct_quic};
+   if (config.peer_exchange_enabled) {
+      state.options.capabilities.add(forge::net::p2p::capabilities::peer_exchange);
+   }
+   if (config.rendezvous_role == rendezvous_role::server ||
+       config.rendezvous_role == rendezvous_role::client_and_server) {
+      state.options.capabilities.add(forge::net::p2p::capabilities::rendezvous);
+   }
    if (state.policy.relay_client_enabled) {
       state.options.capabilities.add(forge::net::p2p::capabilities::hole_punching);
    }

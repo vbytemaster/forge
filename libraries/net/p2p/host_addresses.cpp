@@ -115,22 +115,31 @@ enum class scope {
 }
 
 [[nodiscard]] bool source_allows(scope candidate, const learning_context& context) {
-   if (candidate == scope::dns || candidate == scope::public_address) {
-      return true;
-   }
    if (candidate == scope::link_local || candidate == scope::unroutable) {
       return false;
+   }
+   if (context.source == source_kind::routed && !context.remote_endpoint.has_value()) {
+      return false;
+   }
+   if (candidate == scope::dns || candidate == scope::public_address) {
+      return true;
    }
    if (context.source == source_kind::third_party || !context.remote_endpoint.has_value()) {
       return false;
    }
 
    const auto remote = endpoint_scope(*context.remote_endpoint);
-   if (remote == scope::loopback) {
-      return candidate == scope::loopback || candidate == scope::private_address;
-   }
-   if (remote == scope::private_address) {
-      return candidate == scope::private_address;
+   switch (context.source) {
+   case source_kind::authenticated:
+      if (remote == scope::loopback) {
+         return candidate == scope::loopback || candidate == scope::private_address;
+      }
+      return remote == scope::private_address && candidate == scope::private_address;
+   case source_kind::routed:
+      return (remote == scope::loopback && candidate == scope::loopback) ||
+             (remote == scope::private_address && candidate == scope::private_address);
+   case source_kind::third_party:
+      return false;
    }
    return false;
 }

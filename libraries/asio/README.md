@@ -231,8 +231,11 @@ thread.
 `notification` publishes a monotonically changing epoch. A waiter supplies the
 epoch it has already observed; it completes immediately if that epoch has since
 changed, so a notification cannot be lost between checking state and starting
-the wait. `async_wait_until()` adds a bounded deadline, and caller cancellation
-remains scoped to that waiter.
+the wait. `async_wait_until()` adds a bounded deadline. The no-token overloads
+preserve the awaiting coroutine's associated Asio cancellation. The
+`std::stop_token` overloads provide explicit cancellation that remains scoped
+to one waiter and is safe when requested from another thread; they do not
+replace or assign the coroutine's Asio cancellation slot.
 
 ```cpp
 import forge.asio.notification;
@@ -244,6 +247,13 @@ publish_shared_state();
 changed.notify();
 
 const auto current = co_await changed.async_wait(observed);
+```
+
+For a cancellable wait, pass an owned stop token:
+
+```cpp
+std::stop_source stop;
+const auto current = co_await changed.async_wait(observed, stop.get_token());
 ```
 
 ### Execute Thread-Affine Native Work

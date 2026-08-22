@@ -17,6 +17,9 @@ struct session::impl::stream_state {
    bool remote_fin = false;
    bool reset = false;
    bool accepted = false;
+   bool cancel_in_progress = false;
+   bool local_reset_sent = false;
+   std::atomic_bool cancel_requested = false;
    forge::asio::notification read_notification;
    forge::asio::notification window_notification;
    forge::asio::notification receive_credit_notification;

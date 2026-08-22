@@ -100,6 +100,10 @@ class quic_stream_concept final : public forge::net::transport::detail::stream_c
       value_.cancel();
    }
 
+   void request_cancel() noexcept {
+      value_.request_cancel();
+   }
+
  private:
    stream value_;
 };
@@ -174,7 +178,27 @@ class quic_session_concept final : public forge::net::transport::detail::session
    if (value.port == 0) {
       throw_invalid_transport_endpoint(value, "QUIC transport connector requires non-zero remote port");
    }
-   return endpoint{.host = value.host, .port = value.port};
+
+   auto error = boost::system::error_code{};
+   switch (value.host_type) {
+   case forge::net::transport::endpoint::host_kind::ip4:
+      (void)boost::asio::ip::make_address_v4(value.host, error);
+      if (error) {
+         throw_invalid_transport_endpoint(value, "QUIC transport connector requires valid IPv4 host");
+      }
+      return from_transport_endpoint(value);
+   case forge::net::transport::endpoint::host_kind::ip6:
+      (void)boost::asio::ip::make_address_v6(value.host, error);
+      if (error) {
+         throw_invalid_transport_endpoint(value, "QUIC transport connector requires valid IPv6 host");
+      }
+      return from_transport_endpoint(value);
+   case forge::net::transport::endpoint::host_kind::dns:
+   case forge::net::transport::endpoint::host_kind::dns4:
+   case forge::net::transport::endpoint::host_kind::dns6:
+      return from_transport_endpoint(value);
+   }
+   throw_invalid_transport_endpoint(value, "QUIC transport connector received unsupported host kind");
 }
 
 [[nodiscard]] endpoint validate_listen_endpoint(const forge::net::transport::endpoint& value) {
@@ -185,9 +209,22 @@ class quic_session_concept final : public forge::net::transport::detail::session
       throw_invalid_transport_endpoint(value, "QUIC transport listener requires non-empty host");
    }
    switch (value.host_type) {
-   case forge::net::transport::endpoint::host_kind::ip4:
-   case forge::net::transport::endpoint::host_kind::ip6:
-      return endpoint{.host = value.host, .port = value.port};
+   case forge::net::transport::endpoint::host_kind::ip4: {
+      auto error = boost::system::error_code{};
+      (void)boost::asio::ip::make_address_v4(value.host, error);
+      if (error) {
+         throw_invalid_transport_endpoint(value, "QUIC transport listener requires valid IPv4 host");
+      }
+      return from_transport_endpoint(value);
+   }
+   case forge::net::transport::endpoint::host_kind::ip6: {
+      auto error = boost::system::error_code{};
+      (void)boost::asio::ip::make_address_v6(value.host, error);
+      if (error) {
+         throw_invalid_transport_endpoint(value, "QUIC transport listener requires valid IPv6 host");
+      }
+      return from_transport_endpoint(value);
+   }
    case forge::net::transport::endpoint::host_kind::dns:
    case forge::net::transport::endpoint::host_kind::dns4:
    case forge::net::transport::endpoint::host_kind::dns6:
@@ -318,11 +355,19 @@ transport_limits from_transport_limits(const forge::net::transport::limits& valu
    };
 }
 
-[[nodiscard]] forge::net::transport::endpoint::host_kind host_kind_for(std::string_view host) {
+[[nodiscard]] forge::net::transport::endpoint::host_kind host_kind_for(const endpoint& value) {
    auto error = boost::system::error_code{};
-   const auto address = boost::asio::ip::make_address(host, error);
+   const auto address = boost::asio::ip::make_address(value.host, error);
    if (error) {
-      return forge::net::transport::endpoint::host_kind::dns;
+      switch (value.family) {
+      case endpoint::address_family::any:
+         return forge::net::transport::endpoint::host_kind::dns;
+      case endpoint::address_family::ipv4:
+         return forge::net::transport::endpoint::host_kind::dns4;
+      case endpoint::address_family::ipv6:
+         return forge::net::transport::endpoint::host_kind::dns6;
+      }
+      FORGE_THROW_EXCEPTION(exceptions::invalid_endpoint, "unsupported QUIC endpoint address family");
    }
    if (address.is_v4()) {
       return forge::net::transport::endpoint::host_kind::ip4;
@@ -332,7 +377,7 @@ transport_limits from_transport_limits(const forge::net::transport::limits& valu
 
 forge::net::transport::endpoint to_transport_endpoint(const endpoint& value) {
    return forge::net::transport::endpoint{
-       .host_type = host_kind_for(value.host),
+       .host_type = host_kind_for(value),
        .protocol = forge::net::transport::endpoint::protocol_kind::quic_v1,
        .host = value.host,
        .port = value.port,
@@ -343,11 +388,35 @@ endpoint from_transport_endpoint(const forge::net::transport::endpoint& value) {
    if (value.protocol != forge::net::transport::endpoint::protocol_kind::quic_v1) {
       FORGE_THROW_EXCEPTION(exceptions::invalid_endpoint, "transport endpoint is not QUIC");
    }
-   return endpoint{.host = value.host, .port = value.port};
+   auto family = endpoint::address_family::any;
+   switch (value.host_type) {
+   case forge::net::transport::endpoint::host_kind::ip4:
+   case forge::net::transport::endpoint::host_kind::ip6:
+   case forge::net::transport::endpoint::host_kind::dns:
+      break;
+   case forge::net::transport::endpoint::host_kind::dns4:
+      family = endpoint::address_family::ipv4;
+      break;
+   case forge::net::transport::endpoint::host_kind::dns6:
+      family = endpoint::address_family::ipv6;
+      break;
+   }
+   return endpoint{.host = value.host, .port = value.port, .family = family};
 }
 
 forge::net::transport::stream as_transport_stream(stream value) {
-   return forge::net::transport::detail::stream_access::make(std::make_shared<quic_stream_concept>(std::move(value)));
+   auto model = std::make_shared<quic_stream_concept>(std::move(value));
+   auto cancel_on_failure = std::unique_ptr<quic_stream_concept, void (*)(quic_stream_concept*)>{
+       model.get(), [](quic_stream_concept* stream) { stream->request_cancel(); }};
+   auto weak = std::weak_ptr<quic_stream_concept>{model};
+   auto result = forge::net::transport::detail::stream_access::make_cancelable(
+       std::move(model), [weak = std::move(weak)]() noexcept {
+          if (auto stream = weak.lock()) {
+             stream->request_cancel();
+          }
+       });
+   static_cast<void>(cancel_on_failure.release());
+   return result;
 }
 
 forge::net::transport::session as_transport_session(connection value) {

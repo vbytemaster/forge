@@ -49,6 +49,17 @@ import forge.plugins.p2p.node.api;
 #include "details/managed_remote_invoker.hxx"
 
 namespace forge::plugins::p2p::resolver::detail {
+namespace {
+
+[[nodiscard]] std::exception_ptr remote_stopped_failure() noexcept {
+   try {
+      FORGE_THROW_EXCEPTION(exceptions::remote_stopped, "managed remote is stopped");
+   } catch (...) {
+      return std::current_exception();
+   }
+}
+
+} // namespace
 
 struct managed_remote_invoker::generation {
    std::shared_ptr<forge::api::transport::connection> connection;
@@ -261,14 +272,29 @@ boost::asio::awaitable<void> managed_remote_invoker::run_connect(std::shared_ptr
    } catch (...) {
       error = std::current_exception();
    }
+   const auto stopped_error = result ? remote_stopped_failure() : std::exception_ptr{};
+   auto canceled = std::shared_ptr<forge::api::transport::connection>{};
    {
       auto lock = std::scoped_lock{mutex_};
+      if (result && (stopped_ || reconnect_ != flight)) {
+         canceled = result->connection;
+         result.reset();
+         if (!error) {
+            error = stopped_error;
+         }
+      } else if (result) {
+         current_ = result;
+         next_peer_ = result->peer_index;
+      }
       flight->result = std::move(result);
       flight->error = std::move(error);
       flight->done = true;
       if (reconnect_ == flight) {
          reconnect_.reset();
       }
+   }
+   if (canceled) {
+      canceled->cancel();
    }
    flight->completed.notify();
 }
@@ -308,15 +334,6 @@ managed_remote_invoker::connect_generation() {
                 .selected = std::move(opened.selected),
                 .peer_index = index,
             });
-            {
-               auto lock = std::scoped_lock{mutex_};
-               if (stopped_) {
-                  result->connection->cancel();
-                  FORGE_THROW_EXCEPTION(exceptions::remote_stopped, "managed remote is stopped");
-               }
-               current_ = result;
-               next_peer_ = index;
-            }
             co_return result;
          } catch (const exceptions::remote_stopped&) {
             throw;

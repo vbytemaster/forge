@@ -56,6 +56,7 @@ import forge.net.p2p.negotiation;
 import forge.net.p2p.pubsub;
 import forge.net.p2p.resource_manager;
 import forge.net.p2p.stream;
+import forge.net.p2p.topology;
 import forge.net.transport.stream;
 import forge.net.yamux.session;
 
@@ -111,7 +112,7 @@ node::impl::ensure_pubsub_direct_session(const peer_id& peer) {
              static_cast<void>(tracked_operation);
              try {
                 static_cast<void>(
-                    co_await self->ensure_direct_session(peer, self->options.limits.discovery.query_timeout));
+                    co_await self->ensure_direct_session(peer, self->options.limits.topology.query_timeout));
                 auto lock = std::scoped_lock{self->mutex};
                 self->pubsub_value.connection_gates.succeed(*active);
              } catch (const forge::exceptions::base& error) {
@@ -241,7 +242,7 @@ boost::asio::awaitable<void> node::impl::send_pubsub_rpc(const peer_id& peer, co
          try {
             if (!outbound) {
                const auto open_timeout =
-                   attempt_timeout(options.limits.discovery.query_timeout, node::open_options{}.direct_attempt_timeout,
+                   attempt_timeout(options.limits.topology.query_timeout, node::open_options{}.direct_attempt_timeout,
                                    "GossipSub protocol open direct attempt");
                auto stream = co_await open_protocol_on_direct_session(peer, protocol, session, open_timeout);
                outbound = std::make_shared<forge::net::p2p::stream>(std::move(stream));

@@ -918,6 +918,7 @@ add_executable(
    quic_p2p/p2p_lifecycle_tests.cpp
    quic_p2p/p2p_tests.cpp
    quic_p2p/session_teardown_tests.cpp
+   quic_p2p/topology_tests.cpp
 )
 target_sources(
    test_forge_quic_p2p
@@ -930,10 +931,43 @@ target_compile_definitions(test_forge_quic_p2p PRIVATE FORGE_HAS_ROCKSDB=$<BOOL:
 add_test(NAME test_forge_quic_p2p COMMAND test_forge_quic_p2p WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(test_forge_quic_p2p PROPERTIES TIMEOUT 300)
 
+set(FORGE_INTEROP_PROVENANCE ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop/provenance.py)
+set(FORGE_INTEROP_ARTIFACT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/libp2p_interop)
+get_property(_forge_interop_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(_forge_interop_multi_config)
+   set(FORGE_INTEROP_ARTIFACT_DIRECTORY ${FORGE_INTEROP_ARTIFACT_DIRECTORY}/$<CONFIG>)
+   set(FORGE_INTEROP_BUILD_PROFILE "$<CONFIG>")
+elseif(CMAKE_BUILD_TYPE)
+   set(FORGE_INTEROP_BUILD_PROFILE "${CMAKE_BUILD_TYPE}")
+else()
+   set(FORGE_INTEROP_BUILD_PROFILE "default")
+endif()
+set(FORGE_INTEROP_BUILD_INFO_DIRECTORY ${FORGE_INTEROP_ARTIFACT_DIRECTORY})
+set(FORGE_INTEROP_BUILD_INFO_HEADER ${FORGE_INTEROP_BUILD_INFO_DIRECTORY}/forge_interop_build_info.hxx)
+set(FORGE_INTEROP_BUILD_INFO_STAMP ${FORGE_INTEROP_BUILD_INFO_DIRECTORY}/forge_interop_build_info.json)
+add_custom_target(
+   forge_interop_fixture_build_info
+   COMMAND ${CMAKE_COMMAND} -E make_directory ${FORGE_INTEROP_BUILD_INFO_DIRECTORY}
+   COMMAND ${Python3_EXECUTABLE}
+      ${FORGE_INTEROP_PROVENANCE}
+      emit-build-info
+      --forge-root ${CMAKE_SOURCE_DIR}
+      --output-header ${FORGE_INTEROP_BUILD_INFO_HEADER}
+      --output-stamp ${FORGE_INTEROP_BUILD_INFO_STAMP}
+      --compiler-path ${CMAKE_CXX_COMPILER}
+      --compiler-id ${CMAKE_CXX_COMPILER_ID}
+      --compiler-version ${CMAKE_CXX_COMPILER_VERSION}
+      --build-profile ${FORGE_INTEROP_BUILD_PROFILE}
+   BYPRODUCTS ${FORGE_INTEROP_BUILD_INFO_HEADER} ${FORGE_INTEROP_BUILD_INFO_STAMP}
+   DEPENDS ${FORGE_INTEROP_PROVENANCE}
+   VERBATIM
+)
 add_executable(
    forge_interop_fixture
    libp2p_interop/forge_interop_fixture.cpp
 )
+add_dependencies(forge_interop_fixture forge_interop_fixture_build_info)
+target_include_directories(forge_interop_fixture PRIVATE ${FORGE_INTEROP_BUILD_INFO_DIRECTORY})
 target_link_libraries(forge_interop_fixture forge)
 
 set(_forge_libp2p_interop_enabled 0)
@@ -948,7 +982,8 @@ add_custom_target(
       --enabled ${_forge_libp2p_interop_enabled}
       --forge-fixture $<TARGET_FILE:forge_interop_fixture>
       --source-dir ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop
-      --build-dir ${CMAKE_CURRENT_BINARY_DIR}/libp2p_interop
+      --build-dir ${FORGE_INTEROP_ARTIFACT_DIRECTORY}
+      --forge-root ${CMAKE_SOURCE_DIR}
       --donors-root ${FORGE_LIBP2P_DONORS_ROOT}
    DEPENDS forge_interop_fixture
 )
@@ -959,10 +994,29 @@ add_test(
       --enabled ${_forge_libp2p_interop_enabled}
       --forge-fixture $<TARGET_FILE:forge_interop_fixture>
       --source-dir ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop
-      --build-dir ${CMAKE_CURRENT_BINARY_DIR}/libp2p_interop
+      --build-dir ${FORGE_INTEROP_ARTIFACT_DIRECTORY}
+      --forge-root ${CMAKE_SOURCE_DIR}
       --donors-root ${FORGE_LIBP2P_DONORS_ROOT}
 )
 set_tests_properties(test_forge_libp2p_interop PROPERTIES SKIP_REGULAR_EXPRESSION "^SKIP:")
+
+add_test(
+   NAME test_forge_libp2p_fixture_provenance
+   COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop/runner.py
+      --enabled ${_forge_libp2p_interop_enabled}
+      --provenance-only
+      --forge-fixture $<TARGET_FILE:forge_interop_fixture>
+      --source-dir ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop
+      --build-dir ${FORGE_INTEROP_ARTIFACT_DIRECTORY}
+      --forge-root ${CMAKE_SOURCE_DIR}
+      --donors-root ${FORGE_LIBP2P_DONORS_ROOT}
+)
+
+add_test(
+   NAME test_forge_libp2p_worktree_fingerprint
+   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/libp2p_interop/test_provenance.py
+)
 
 add_test(
    NAME test_forge_libp2p_donor_matrix

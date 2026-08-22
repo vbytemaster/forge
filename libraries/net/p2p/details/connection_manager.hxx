@@ -22,6 +22,9 @@ class connection_manager {
       std::size_t max_inbound_sessions = 1024;
       std::size_t max_outbound_sessions = 1024;
       std::size_t max_sessions_per_peer = 4;
+      std::size_t max_tagged_peers = 1024;
+      std::size_t max_tags_per_peer = 16;
+      std::size_t max_tag_size = 128;
       std::chrono::milliseconds grace_period{60'000};
       std::chrono::milliseconds prune_silence{10'000};
    };
@@ -32,6 +35,7 @@ class connection_manager {
       direction direction = direction::outbound;
       std::chrono::steady_clock::time_point opened_at{};
       std::chrono::steady_clock::time_point last_used_at{};
+      double network_score = 0.0;
    };
 
    struct admission {
@@ -42,8 +46,15 @@ class connection_manager {
 
    struct snapshot {
       std::size_t active_sessions = 0;
+      std::size_t active_peers = 0;
       std::vector<peer_id> protected_peers;
       std::vector<session_record> sessions;
+   };
+
+   struct peer_prune_plan {
+      std::size_t connected_peers = 0;
+      std::vector<peer_id> victim_peers;
+      std::vector<std::uint64_t> session_ids;
    };
 
    explicit connection_manager(policy value);
@@ -52,6 +63,12 @@ class connection_manager {
    void protect(const peer_id& peer, std::string tag);
    [[nodiscard]] bool unprotect(const peer_id& peer, std::string_view tag);
    [[nodiscard]] bool is_protected(const peer_id& peer) const;
+   void tag(const peer_id& peer, std::string tag, std::int64_t value);
+   [[nodiscard]] bool untag(const peer_id& peer, std::string_view tag);
+   [[nodiscard]] std::int64_t aggregate_tag_value(const peer_id& peer) const;
+   void update_network_score(const peer_id& peer, double score);
+   [[nodiscard]] peer_prune_plan plan_peer_prune(std::size_t target_peers, std::size_t max_victims,
+                                                  std::chrono::steady_clock::time_point now) const;
    [[nodiscard]] admission remember(session_record record, std::chrono::steady_clock::time_point now);
    void forget(std::uint64_t id);
    void forget_peer(const peer_id& peer);
@@ -61,16 +78,27 @@ class connection_manager {
    [[nodiscard]] std::size_t size() const noexcept;
 
  private:
+   struct peer_prune_candidate {
+      peer_id peer;
+      std::int64_t tag_value = 0;
+      double network_score = 0.0;
+      std::chrono::steady_clock::time_point opened_at{};
+      std::chrono::steady_clock::time_point last_used_at{};
+   };
+
    [[nodiscard]] bool prune_one(std::vector<std::uint64_t>& pruned, std::chrono::steady_clock::time_point now,
                                 std::optional<direction> required_direction = std::nullopt);
+   [[nodiscard]] bool should_prune_before(const session_record& left, const session_record& right) const;
    [[nodiscard]] std::size_t count_peer_sessions(const peer_id& peer) const;
    [[nodiscard]] std::size_t count_direction_sessions(direction value) const;
    void erase_record(std::uint64_t id);
 
    policy policy_;
    std::map<peer_id, std::set<std::string>> protected_;
+   std::map<peer_id, std::map<std::string, std::int64_t>> tags_;
    std::map<std::uint64_t, session_record> sessions_;
    std::map<peer_id, std::set<std::uint64_t>> sessions_by_peer_;
+   std::map<peer_id, double> network_scores_;
    std::optional<std::chrono::steady_clock::time_point> last_prune_;
 };
 

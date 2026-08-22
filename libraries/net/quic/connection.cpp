@@ -86,6 +86,9 @@ namespace {
        .queued_bytes = metrics.queued_bytes,
        .active_streams = metrics.active_streams,
        .closed = metrics.closed,
+       .retry_packets_received = metrics.retry_packets_received,
+       .new_tokens_received = metrics.new_tokens_received,
+       .new_tokens_submitted = metrics.new_tokens_submitted,
    };
 }
 

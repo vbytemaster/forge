@@ -1,11 +1,14 @@
 module;
 
+#include "details/rendezvous_time.hxx"
+
 #include <forge/exceptions/macros.hpp>
 
 #include <algorithm>
 #include <atomic>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <deque>
@@ -24,6 +27,7 @@ module;
 #include <utility>
 #include <vector>
 
+#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/asio/cancellation_signal.hpp>
@@ -65,6 +69,7 @@ import forge.net.p2p.rendezvous;
 import forge.net.p2p.resource_manager;
 import forge.net.p2p.scoring;
 import forge.net.p2p.stream;
+import forge.net.p2p.topology;
 import forge.crypto.core.random;
 import forge.crypto.asymmetric.rsa;
 import forge.crypto.digest.sha256;
@@ -87,7 +92,7 @@ void remember_dht_peer(peer_store& store, const protocol_id& protocol, dht::rout
                        std::chrono::milliseconds refresh_interval, const dht::peer& value,
                        dht::routing_admission admission) {
    store.upsert_routing_peer(protocol, value, discovery::source::dht,
-                             std::chrono::system_clock::now() + refresh_interval);
+                             detail::saturating_topology_expiry(std::chrono::system_clock::now(), refresh_interval));
    routing.upsert(value, admission);
 }
 
@@ -274,11 +279,11 @@ diagnostics_relays(std::span<const peer_store::relay_record> records, std::size_
 boost::asio::awaitable<rendezvous::message>
 exchange_rendezvous(const auto& self, const peer_id& peer, rendezvous::message request, std::string_view operation) {
    const auto started = std::chrono::steady_clock::now();
-   const auto timeout = self->options.limits.discovery.query_timeout;
+   const auto timeout = self->options.limits.topology.query_timeout;
    auto stream =
        co_await self->open_protocol_direct(peer, builtins::rendezvous, remaining_timeout(started, timeout, operation));
    auto deadline = operation_deadline{self->runtime.context(), remaining_timeout(started, timeout, operation)};
-   deadline.arm([&stream] { stream.cancel(); });
+   deadline.arm([&stream] noexcept { stream.request_cancel(); });
    try {
       co_await stream.async_write(rendezvous::codec::encode(request, self->options.limits.rendezvous));
       auto buffer = std::vector<std::uint8_t>{};
@@ -298,6 +303,50 @@ exchange_rendezvous(const auto& self, const peer_id& peer, rendezvous::message r
       }
       throw;
    }
+}
+
+void stop_owned(auto self) {
+   auto operations = std::vector<detail::session_teardown::operation>{};
+   auto deadlines = std::vector<operation_deadline::stop_token>{};
+   {
+      auto lock = std::scoped_lock{self->mutex};
+      if (self->stopped) {
+         return;
+      }
+      operations.reserve(self->sessions.size() + 1);
+      operations.push_back(self->direct_registry.teardown_operation());
+      deadlines.reserve(self->protocol_open_deadlines.size());
+      for (auto& [_, deadline] : self->protocol_open_deadlines) {
+         deadlines.push_back(std::move(deadline));
+      }
+      self->protocol_open_deadlines.clear();
+      for (auto& [_, session] : self->sessions) {
+         operations.push_back(detail::session_teardown::operation{
+             .close = [session]() -> boost::asio::awaitable<void> { co_await session->connection.async_close(); },
+             .cancel = [session] { session->connection.cancel(); },
+         });
+      }
+      self->stop_requested_at = std::chrono::steady_clock::now();
+      self->stopped = true;
+      for (auto& [_, session] : self->sessions) {
+         session->closed = true;
+      }
+      self->connections.clear();
+      self->sessions.clear();
+      self->inbound_relay_reservations.clear();
+      self->outbound_relay_reservations.clear();
+      self->clear_pubsub_outbound_locked();
+      self->pubsub_value.active_validations_by_peer.clear();
+      self->pubsub_value.active_validations = 0;
+      self->metrics_value.active_sessions = 0;
+      self->metrics_value.active_relay_reservations = 0;
+      self->metrics_value.stopped = true;
+   }
+   self->direct_registry.stop();
+   for (const auto& deadline : deadlines) {
+      static_cast<void>(deadline.request_stop());
+   }
+   self->teardown.start(std::move(operations));
 }
 
 boost::asio::awaitable<void> async_stop_owned(auto self) {
@@ -334,14 +383,36 @@ boost::asio::awaitable<void> async_stop_owned(auto self) {
    }
 }
 
+boost::asio::awaitable<void> async_stop_after_topology_join(auto self) {
+   // Shutdown owns resource teardown once requested; caller cancellation cannot leave it half-complete.
+   co_await boost::asio::this_coro::reset_cancellation_state(boost::asio::disable_cancellation{});
+   const auto executor = co_await boost::asio::this_coro::executor;
+   co_await boost::asio::co_spawn(
+       executor,
+       [self = std::move(self)]() mutable -> boost::asio::awaitable<void> {
+          self->request_lifecycle_stop();
+          co_await self->async_join_topology_manager();
+          stop_owned(self);
+          co_await async_stop_owned(std::move(self));
+       },
+       boost::asio::bind_cancellation_slot(boost::asio::cancellation_slot{}, boost::asio::use_awaitable));
+}
+
 } // namespace
 
+boost::asio::awaitable<rendezvous::message>
+node::impl::exchange_rendezvous(const peer_id& peer, rendezvous::message request, std::string_view operation) {
+   co_return co_await ::forge::net::p2p::exchange_rendezvous(shared_from_this(), peer, std::move(request), operation);
+}
+
 node::node(forge::asio::runtime& runtime, node::options options) {
+   normalize_legacy_discovery(options);
    validate(options);
    impl_ = std::make_shared<impl>(runtime, std::move(options));
    impl_->validate_local_identify_document();
    impl_->initialize_dht_provider_registry();
    impl_->initialize_lifecycle();
+   impl_->initialize_topology_manager();
    // Launch the self-owning maintenance task only after every throwing
    // constructor step has completed.
    impl_->initialize_dht_routing_refresh();
@@ -440,6 +511,21 @@ forge::net::p2p::diagnostics::snapshot node::diagnostics(forge::net::p2p::diagno
           .last_persistence_failure = records_state.last_failure,
       });
    }
+   const auto topology_status = impl_->topology_manager_value->current();
+   const auto topology_phase = [&] {
+      switch (topology_status.lifecycle_phase) {
+      case detail::topology_manager::phase::idle:
+         return std::string{"idle"};
+      case detail::topology_manager::phase::running:
+         return std::string{"running"};
+      case detail::topology_manager::phase::stopping:
+         return std::string{"stopping"};
+      case detail::topology_manager::phase::stopped:
+         return std::string{"stopped"};
+      }
+      return std::string{"unknown"};
+   }();
+   const auto& topology_policy = impl_->options.limits.topology;
    auto lock = std::scoped_lock{impl_->mutex};
    auto out = forge::net::p2p::diagnostics::snapshot{};
    out.network = forge::net::p2p::diagnostics::network_state{
@@ -471,6 +557,29 @@ forge::net::p2p::diagnostics::snapshot node::diagnostics(forge::net::p2p::diagno
        .last_failure = persistence.last_failure,
    };
    out.dht_profiles = std::move(dht_profiles);
+   out.topology = forge::net::p2p::diagnostics::topology_state{
+       .mode = topology_policy.operating_mode == topology::mode::managed ? "managed" : "static-only",
+       .phase = topology_phase,
+       .low_watermark = topology_policy.peers.low,
+       .target_watermark = topology_policy.peers.target,
+       .high_watermark = topology_policy.peers.high,
+       .refresh_interval = topology_policy.refresh_interval,
+       .query_timeout = topology_policy.query_timeout,
+       .max_candidates = topology_policy.max_candidates,
+       .max_parallel_queries = topology_policy.max_parallel_queries,
+       .max_parallel_dials = topology_policy.max_parallel_dials,
+       .configured_rendezvous_points = topology_policy.rendezvous_points.size(),
+       .max_peer_exchange_peers = topology_policy.max_peer_exchange_peers,
+       .dht_enabled = topology_policy.dht_enabled,
+       .peer_exchange_enabled = topology_policy.peer_exchange_enabled,
+       .refresh_queued = topology_status.refresh_queued,
+       .refresh_in_flight = topology_status.refresh_in_flight,
+       .observations = topology_status.observations,
+       .active_operations = topology_status.active_operations,
+       .waiting_refreshes = topology_status.waiting_refreshes,
+       .completed_refreshes = topology_status.completed_refreshes,
+       .failed_refreshes = topology_status.failed_refreshes,
+   };
 
    const auto now = std::chrono::steady_clock::now();
    out.sessions.reserve(connection_snapshot.sessions.size());
@@ -527,6 +636,11 @@ void node::protect_peer(peer_id peer, std::string tag) {
    impl_->connections.protect(peer, std::move(tag));
 }
 
+void node::tag_peer(peer_id peer, std::string tag, std::int64_t value) {
+   auto lock = std::scoped_lock{impl_->mutex};
+   impl_->connections.tag(peer, std::move(tag), value);
+}
+
 boost::asio::awaitable<void> node::async_hydrate_peer_state() {
    auto self = impl_;
    co_await self->async_hydrate_peer_state();
@@ -535,6 +649,11 @@ boost::asio::awaitable<void> node::async_hydrate_peer_state() {
 bool node::unprotect_peer(peer_id peer, std::string tag) {
    auto lock = std::scoped_lock{impl_->mutex};
    return impl_->connections.unprotect(peer, tag);
+}
+
+bool node::untag_peer(peer_id peer, std::string_view tag) {
+   auto lock = std::scoped_lock{impl_->mutex};
+   return impl_->connections.untag(peer, tag);
 }
 
 bool node::is_peer_protected(const peer_id& peer) const {
@@ -674,12 +793,12 @@ boost::asio::awaitable<reachability::state> node::async_probe_reachability(peer_
 boost::asio::awaitable<rendezvous::register_response>
 node::async_rendezvous_register(peer_id rendezvous_peer, rendezvous::register_request request) {
    auto self = impl_;
-   auto response = co_await exchange_rendezvous(self, rendezvous_peer,
-                                                rendezvous::message{
-                                                    .type = rendezvous::message_type::register_peer,
-                                                    .register_value = std::move(request),
-                                                },
-                                                "P2P rendezvous registration");
+   auto response = co_await self->exchange_rendezvous(rendezvous_peer,
+                                                      rendezvous::message{
+                                                          .type = rendezvous::message_type::register_peer,
+                                                          .register_value = std::move(request),
+                                                      },
+                                                      "P2P rendezvous registration");
    if (response.type != rendezvous::message_type::register_response || !response.register_response_value) {
       FORGE_THROW_EXCEPTION(exceptions::protocol_error, "rendezvous expected register response");
    }
@@ -689,12 +808,12 @@ node::async_rendezvous_register(peer_id rendezvous_peer, rendezvous::register_re
 boost::asio::awaitable<rendezvous::discover_response>
 node::async_rendezvous_discover(peer_id rendezvous_peer, rendezvous::discover_request request) {
    auto self = impl_;
-   auto response = co_await exchange_rendezvous(self, rendezvous_peer,
-                                                rendezvous::message{
-                                                    .type = rendezvous::message_type::discover,
-                                                    .discover_value = std::move(request),
-                                                },
-                                                "P2P rendezvous discovery");
+   auto response = co_await self->exchange_rendezvous(rendezvous_peer,
+                                                      rendezvous::message{
+                                                          .type = rendezvous::message_type::discover,
+                                                          .discover_value = std::move(request),
+                                                      },
+                                                      "P2P rendezvous discovery");
    if (response.type != rendezvous::message_type::discover_response || !response.discover_response_value) {
       FORGE_THROW_EXCEPTION(exceptions::protocol_error, "rendezvous expected discover response");
    }
@@ -702,13 +821,10 @@ node::async_rendezvous_discover(peer_id rendezvous_peer, rendezvous::discover_re
    const auto context = third_party_discovery_context();
    const auto received_at = std::chrono::system_clock::now();
    for (auto& registration : response.discover_response_value->registrations) {
-      registration.expires_at = received_at + registration.ttl;
+      registration.expires_at = detail::rendezvous_expiry_after(received_at, registration.ttl);
       auto sanitized = sanitize_discovered_registration(std::move(registration), context);
       if (!sanitized) {
          continue;
-      }
-      if (valid_peer_id(sanitized->peer)) {
-         co_await self->store.async_upsert_rendezvous(*sanitized);
       }
       sanitized_registrations.push_back(std::move(*sanitized));
    }
@@ -852,54 +968,17 @@ boost::asio::awaitable<forge::net::p2p::stream> node::async_open_protocol_stream
 }
 
 boost::asio::awaitable<void> node::async_stop() {
-   auto self = impl_;
-   stop();
-   return async_stop_owned(std::move(self));
+   return async_stop_after_topology_join(impl_);
+}
+
+void node::request_stop() noexcept {
+   impl_->request_lifecycle_stop();
 }
 
 void node::stop() {
-   auto operations = std::vector<detail::session_teardown::operation>{};
-   auto deadlines = std::vector<operation_deadline::stop_token>{};
-   {
-      auto lock = std::scoped_lock{impl_->mutex};
-      if (impl_->stopped) {
-         return;
-      }
-      operations.reserve(impl_->sessions.size() + 1);
-      operations.push_back(impl_->direct_registry.teardown_operation());
-      deadlines.reserve(impl_->protocol_open_deadlines.size());
-      for (auto& [_, deadline] : impl_->protocol_open_deadlines) {
-         deadlines.push_back(std::move(deadline));
-      }
-      impl_->protocol_open_deadlines.clear();
-      for (auto& [_, session] : impl_->sessions) {
-         operations.push_back(detail::session_teardown::operation{
-             .close = [session]() -> boost::asio::awaitable<void> { co_await session->connection.async_close(); },
-             .cancel = [session] { session->connection.cancel(); },
-         });
-      }
-      impl_->stop_requested_at = std::chrono::steady_clock::now();
-      impl_->stopped = true;
-      for (auto& [_, session] : impl_->sessions) {
-         session->closed = true;
-      }
-      impl_->connections.clear();
-      impl_->sessions.clear();
-      impl_->inbound_relay_reservations.clear();
-      impl_->outbound_relay_reservations.clear();
-      impl_->clear_pubsub_outbound_locked();
-      impl_->pubsub_value.active_validations_by_peer.clear();
-      impl_->pubsub_value.active_validations = 0;
-      impl_->metrics_value.active_sessions = 0;
-      impl_->metrics_value.active_relay_reservations = 0;
-      impl_->metrics_value.stopped = true;
-   }
-   impl_->request_lifecycle_stop();
-   impl_->direct_registry.stop();
-   for (const auto& deadline : deadlines) {
-      static_cast<void>(deadline.request_stop());
-   }
-   impl_->teardown.start(std::move(operations));
+   auto self = impl_;
+   self->request_lifecycle_stop();
+   stop_owned(std::move(self));
 }
 
 } // namespace forge::net::p2p

@@ -50,8 +50,15 @@ class engine_failure final {
 };
 
 struct engine_endpoint {
+   enum class address_family {
+      any,
+      ipv4,
+      ipv6,
+   };
+
    std::string host;
    std::uint16_t port = 0;
+   address_family family = address_family::any;
 };
 
 struct engine_transport_limits {
@@ -98,6 +105,9 @@ struct engine_connection_metrics {
    std::uint64_t timeouts = 0;
    std::uint64_t cancellations = 0;
    std::uint64_t backpressure_rejections = 0;
+   std::uint64_t retry_packets_received = 0;
+   std::uint64_t new_tokens_received = 0;
+   std::uint64_t new_tokens_submitted = 0;
    std::size_t queued_bytes = 0;
    std::size_t active_streams = 0;
    bool closed = false;
@@ -124,6 +134,7 @@ class engine_stream : public std::enable_shared_from_this<engine_stream> {
    boost::asio::awaitable<void> async_close();
    void cancel_write();
    void cancel();
+   void request_cancel() noexcept;
 
  private:
    friend class engine_connection;

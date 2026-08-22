@@ -5,8 +5,10 @@ module;
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 export module forge.net.quic.options;
 
@@ -23,6 +25,13 @@ struct transport_limits {
    std::uint64_t max_frame_size = 16 * 1024 * 1024;
 };
 
+// Callbacks may be invoked concurrently by successful client connections. They
+// must be synchronous, nonblocking and internally thread-safe.
+struct client_token_callbacks {
+   std::function<std::optional<std::vector<std::uint8_t>>()> take;
+   std::function<void(std::vector<std::uint8_t>)> store;
+};
+
 struct client_options {
    std::string alpn = "forge-p2p/1";
    std::chrono::milliseconds connect_timeout{10'000};
@@ -33,6 +42,8 @@ struct client_options {
    std::string certificate_pem;
    std::string private_key_pem;
    std::function<bool(std::string_view)> test_failpoint;
+   // Absent uses connector-owned caching. Both empty explicitly disables it.
+   std::optional<client_token_callbacks> client_tokens;
 };
 
 struct server_options {

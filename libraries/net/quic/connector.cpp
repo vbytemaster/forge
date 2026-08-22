@@ -4,10 +4,27 @@ module;
 
 #include "details/wrapper_handles.hxx"
 
+#include <algorithm>
+#include <chrono>
+#include <cctype>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <map>
 #include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/error.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/system/system_error.hpp>
+
+#include "details/client_token_cache.hxx"
 
 module forge.net.quic.connector;
 
@@ -76,6 +93,25 @@ namespace {
    };
 }
 
+[[nodiscard]] detail::engine_endpoint::address_family map_address_family(const endpoint& value) noexcept {
+   auto error = boost::system::error_code{};
+   const auto address = boost::asio::ip::make_address(value.host, error);
+   if (!error) {
+      return address.is_v4() ? detail::engine_endpoint::address_family::ipv4
+                             : detail::engine_endpoint::address_family::ipv6;
+   }
+
+   switch (value.family) {
+   case endpoint::address_family::any:
+      return detail::engine_endpoint::address_family::any;
+   case endpoint::address_family::ipv4:
+      return detail::engine_endpoint::address_family::ipv4;
+   case endpoint::address_family::ipv6:
+      return detail::engine_endpoint::address_family::ipv6;
+   }
+   return detail::engine_endpoint::address_family::any;
+}
+
 [[nodiscard]] detail::engine_security_options map_security(const security_options& security) {
    auto mapped = detail::engine_security_options{
        .verify_peer = security.verify_peer,
@@ -94,7 +130,7 @@ namespace {
 }
 
 [[nodiscard]] detail::engine_client_options map_options(const client_options& options) {
-   return detail::engine_client_options{
+   auto out = detail::engine_client_options{
        .alpn = options.alpn,
        .connect_timeout = options.connect_timeout,
        .handshake_timeout = options.handshake_timeout,
@@ -105,15 +141,53 @@ namespace {
        .private_key_pem = options.private_key_pem,
        .test_failpoint = options.test_failpoint,
    };
+   if (options.client_tokens && options.client_tokens->take && options.client_tokens->store) {
+      out.client_tokens = detail::engine_client_options::token_callbacks{
+          .take = options.client_tokens->take,
+          .store = options.client_tokens->store,
+      };
+   }
+   return out;
+}
+
+[[nodiscard]] std::string normalized_host(std::string_view value) {
+   auto error = boost::system::error_code{};
+   const auto address = boost::asio::ip::make_address(value, error);
+   if (!error) {
+      return address.to_string();
+   }
+   auto out = std::string{value};
+   std::ranges::transform(out, out.begin(),
+                          [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+   return out;
+}
+
+void append_cache_key_component(std::string& out, std::string_view value) {
+   out += std::to_string(value.size());
+   out.push_back(':');
+   out.append(value);
+}
+
+[[nodiscard]] std::string standalone_cache_key(const endpoint& remote, detail::engine_endpoint::address_family family) {
+   auto out = std::string{"forge-quic-v1"};
+   append_cache_key_component(out, family == detail::engine_endpoint::address_family::ipv4   ? "ipv4"
+                                   : family == detail::engine_endpoint::address_family::ipv6 ? "ipv6"
+                                                                                             : "any");
+   append_cache_key_component(out, normalized_host(remote.host));
+   append_cache_key_component(out, std::to_string(remote.port));
+   return out;
 }
 
 } // namespace
 
 struct connector::impl {
-   explicit impl(forge::asio::runtime& runtime_value) : runtime(runtime_value), engine(runtime_value.context()) {}
+   explicit impl(forge::asio::runtime& runtime_value)
+       : runtime(runtime_value), engine(runtime_value.context()),
+         client_tokens(std::make_shared<detail::client_token_cache>()) {}
 
    forge::asio::runtime& runtime;
    detail::engine_connector engine;
+   std::shared_ptr<detail::client_token_cache> client_tokens;
 };
 
 connector::connector(forge::asio::runtime& runtime) : impl_(std::make_unique<impl>(runtime)) {}
@@ -130,11 +204,38 @@ boost::asio::awaitable<connection> connector::async_connect(endpoint remote, cli
       FORGE_THROW_EXCEPTION(exceptions::dependency_unavailable, "ngtcp2 OpenSSL crypto backend initialization failed");
    }
    try {
+      const auto family = map_address_family(remote);
+      auto engine_options = map_options(options);
+      if (!options.client_tokens) {
+         const auto key = standalone_cache_key(remote, family);
+         const auto cache = std::weak_ptr<detail::client_token_cache>{impl_->client_tokens};
+         engine_options.client_tokens = detail::engine_client_options::token_callbacks{
+             .take =
+                 [cache, key] {
+                    if (const auto owned = cache.lock()) {
+                       return owned->take(key);
+                    }
+                    return std::optional<std::vector<std::uint8_t>>{};
+                 },
+             .store =
+                 [cache, key](std::vector<std::uint8_t> token) {
+                    if (const auto owned = cache.lock()) {
+                       static_cast<void>(owned->store(key, std::move(token)));
+                    }
+                 },
+         };
+      }
       auto engine_connection = co_await impl_->engine.async_connect(
-          detail::engine_endpoint{.host = std::move(remote.host), .port = remote.port}, map_options(options));
+          detail::engine_endpoint{.host = std::move(remote.host), .port = remote.port, .family = family},
+          std::move(engine_options));
       co_return detail::connection_access::make(detail::connection_handle{.engine = std::move(engine_connection)});
    } catch (const detail::engine_failure& error) {
       raise_engine_failure(error);
+   } catch (const boost::system::system_error& error) {
+      if (error.code() == boost::asio::error::operation_aborted) {
+         FORGE_THROW_EXCEPTION(exceptions::canceled, "QUIC client connect canceled");
+      }
+      throw;
    }
 }
 

@@ -3,7 +3,6 @@ module;
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,8 +21,11 @@ struct discovery {
       identify = 1,
       dht = 2,
       rendezvous = 3,
+      peer_exchange = 4,
    };
 
+   // Stable source compatibility policy. node normalizes non-default values
+   // into its one managed topology policy before startup.
    struct policy {
       bool enabled = true;
       bool dht_enabled = true;
